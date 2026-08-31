@@ -1,0 +1,71 @@
+# Bundled with dibs-run. Override any of it in ~/.config/dibs/recipes/cubecl.toml
+#
+# The device benchmarks here are the `throughput` example package, so they are `--example`
+# targets rather than `--bench` ones, and their feature names are bare (`cuda`, `wgpu`) rather
+# than `cubecl/cuda`. That differs from cubek on both counts.
+#
+# `--release` is not optional: throughput's own README says a debug build measures the wrong
+# thing, which is true of every one of these.
+#
+# CUBECL_THROUGHPUT_CACHE=off forces a fresh peak-throughput measurement instead of reusing
+# the cached ceiling for the device. Anything reporting a percentage of peak should set it, or
+# the percentage is against a number measured at some other time under some other conditions.
+
+[build.cuda]
+  [[build.cuda.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features cuda --examples"
+
+[bench.throughput-all]
+isolation = "machine"
+  [[bench.throughput-all.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features cuda --example all"
+  [[bench.throughput-all.step]]
+  lock = "exclusive"
+  run  = "CUBECL_THROUGHPUT_CACHE=off cargo run --release -p throughput --features cuda --example all"
+
+[bench.memory]
+isolation = "machine"
+  [[bench.memory.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features cuda --example memory"
+  [[bench.memory.step]]
+  lock = "exclusive"
+  run  = "CUBECL_THROUGHPUT_CACHE=off cargo run --release -p throughput --features cuda --example memory"
+
+# compute_cmma reports `unsupported` rather than failing on a device without tensor cores: the
+# gate is `client.properties().features.matmul.cmma` being empty. That is the field a `needs`
+# expression should eventually be written against.
+[bench.compute-cmma]
+isolation = "machine"
+  [[bench.compute-cmma.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features cuda --example compute_cmma"
+  [[bench.compute-cmma.step]]
+  lock = "exclusive"
+  run  = "CUBECL_THROUGHPUT_CACHE=off cargo run --release -p throughput --features cuda --example compute_cmma"
+
+[bench.launch-overhead]
+isolation = "machine"
+  [[bench.launch-overhead.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features cuda --example launch_overhead"
+  [[bench.launch-overhead.step]]
+  lock = "exclusive"
+  run  = "cargo run --release -p throughput --features cuda --example launch_overhead"
+
+# --- tests: shared lock, because correctness runs are not measurements -------------------
+#
+# `xtask test --ci` excludes cubecl-cuda outright, along with hip and metal, because the
+# GitHub runners have no such device. So `testgen_all!` over every dtype pairing, the dynamic
+# launch count suite, and the quantized view tests have no CI coverage at all: this recipe is
+# the only place they run.
+#
+# Debug, unlike cubek's test recipe, because these assert over small tensors and the host side
+# is not what takes the time.
+
+[test.cuda]
+  [[test.cuda.step]]
+  lock = "shared"
+  run  = "cargo test -p cubecl-cuda"

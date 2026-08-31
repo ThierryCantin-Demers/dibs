@@ -1,0 +1,2259 @@
+#!/usr/bin/env bash
+# Run a command on a remote machine under a lock, so concurrent agents cannot spoil each other's
+# measurements.
+#
+#   dibs <command>              shared: builds, tests, inspection. Many at once.
+#   dibs --bench <command>      exclusive: benchmarks. One at a time, nothing else running.
+#   dibs --sync [opts] a b      rsync between here and the machine, under the shared lock.
+#                                Prefix the machine's side with a colon: --sync ./tree :~/x
+#   dibs --status               who holds it, how much longer, and the queue with ETAs
+#   dibs --watch [secs]         --status on a loop, one connection (default 5s, minimum 2)
+#   --json                       with --status or --watch: one JSON document per line
+#   dibs --peek <command>       look at the machine without taking the lock. Free things
+#                                only: ps, nvidia-smi, ls, tail, git status. It runs beside
+#                                a benchmark, so anything that costs CPU or IO spoils it.
+#   dibs --check [host]          is this machine usable, and what is in it. Run it first on a
+#                                machine you have never used. --write records what it found
+#                                as that machine's inventory entry.
+#   dibs --on <machine>         send this call to a named machine from the inventory
+#   dibs --machines             what the inventory knows, and which machine is the default
+#   dibs --forget <machine>     drop a machine from your own inventory, repointing the default
+#   dibs --registry-sync        fetch the shared machine list named by DIBS_REGISTRY
+#   dibs --detach <command>     run it on the machine named by DIBS_QUEUE, which stays up, so
+#                                the job outlives this session closing. Prints a job id.
+#   dibs --jobs                 what has been submitted there, and how each went
+#   dibs --job <id>             one job: its command, its state and its output
+#   dibs --cancel <id>          stop one of yours, or someone else's with --anyone. Reaches a
+#                                job that has not got to a machine yet. Takes
+#                                its whole process group, so the lock it was waiting for or
+#                                holding is released with it.
+#   --all                        with --status: every machine in the inventory, at once
+#   dibs --any <command>        pick the least busy machine for this shared job. DIBS_ROUTE=1
+#                                makes it the default. Never a benchmark: a measurement's
+#                                history keys on the machine it ran on.
+#   dibs --pick                 print the machine routing would choose; -v shows the ranking
+#   dibs --which                print the machine this call would go to, without routing
+#   dibs --abi [--all]          what decides whether a binary built on one machine runs on
+#                                another; --all compares every pair and says which way works
+#   --prefer <machine>           with --pick: this machine holds the build cache, so choose it
+#                                unless it cannot run the job at all
+#   dibs --out [pid]            what a running job is writing, when it redirected to a file.
+#                                Names the file and tails it; --out <pid> for one job.
+#   dibs --kill <pid>           stop a holder that is wedged (also takes no lock). Refuses a
+#                                job that is someone else's until you add --anyone.
+#   dibs --release              drop metadata left by processes that are already dead
+#   dibs --log [n]              the last n arrivals and outcomes, killings included
+#
+# A shared job quick enough to be gone before a queued benchmark could have started anyway
+# goes around it rather than waiting for the whole benchmark. DIBS_PATIENCE (60s) is how long
+# a benchmark tolerates that, DIBS_QUICK (10s) is how quick a job has to be to qualify, and
+# DIBS_BYPASS=0 turns it off. A benchmark can be delayed by their sum and no more.
+#
+#   --wait <seconds>   give up rather than queue past this
+#   --max <seconds>    kill the command if it holds the lock longer than this (default 7200)
+#   --label <name>     what shows up in --status (default: the caller's directory)
+#   -v                 with --status, also dump the raw lock directory
+#
+#   exit 69 unreachable    70 no room on the target    75 busy    124 overran --max
+#
+# --- end of the interface, everything below is why -------------------------------------
+#
+# A shared holder blocks a benchmark and a benchmark blocks everything, because a compile
+# running beside a benchmark contaminates it as surely as a second benchmark would.
+#
+# --peek and --kill deliberately ignore the lock. Looking at a wedged machine, and freeing
+# it, must not require the thing that is wedged.
+#
+# That exemption is the whole risk of --peek: it runs while a benchmark holds the machine,
+# so the cost of what you peek at is paid by whoever is being measured. Use it only for
+# things that are effectively free. Reading a small file, listing a directory, ps,
+# nvidia-smi, git status. If it compiles, copies, downloads, greps a tree, or reads
+# gigabytes, it is not a peek however read-only it looks: run it as `dibs <command>` and
+# take the shared lock, which is what the shared lock is for.
+#
+# --watch keeps one connection open and redraws from the far side, and a redraw forks
+# nothing: it reads the lock files, walks the holder's own process tree through the kernel's
+# child lists, and reuses the medians it worked out last time. That is about 2ms against the
+# 30ms a --status in a loop spends on a fresh login and a machine-wide process scan.
+# It is for a human at a terminal. An agent is told when its own job ends and has nothing
+# to watch for.
+#
+# The lock lives on the machine, not here, so it also covers agents running on it
+# itself, and it is held by the workload's own process: it releases when that process
+# exits, however it exits, with nothing left to clean up.
+#
+# A job runs with DIBS_SCRATCH and TMPDIR pointing at ~/.cache/dibs on the target, because
+# /tmp there is a shared tmpfs under a quota: one build tree in it stops everyone else from
+# running anything at all. Write build output under $DIBS_SCRATCH, never in /tmp.
+#
+# Exit codes: 69 the machine is unreachable, 70 its scratch directory is full or over quota,
+# 75 busy and the wait was bounded, 124 the command overran --max. Anything else is the
+# command's own status. DIBS_REMOTE_DIR moves the scratch directory, which is the way back
+# in when the default one has filled up.
+#
+# A job dies with the caller that started it: kill the caller, however you kill it, and the
+# work stops and the lock frees. DIBS_TRACE=1 traces the remote side, and
+# DIBS_NO_PDEATHSIG / DIBS_NO_LIVE / DIBS_NO_WATCHDOG each switch off one half of that
+# machinery, which is how it gets debugged when it misbehaves. DIBS_NO_CHILDREN forces the
+# fallback way of finding a holder's descendants, which is otherwise unreachable on a kernel
+# built the ordinary way.
+#
+# An unreachable machine fails in seconds with a diagnosis, including whether Tailscale needs a
+# login, rather than hanging on a connection or a password prompt. Never retry that in a loop.
+#
+# Runs on the machine too: it recognizes itself by hostname and takes the lock locally instead
+# of trying to ssh to itself.
+#
+# Every completed run's duration is recorded per label, and --status uses the median of
+# those to say how much longer the holder has and when each queued caller should start. It
+# says nothing rather than guessing when it has no history to go on.
+
+# Every job records which agent started it, taken from the title of its Claude Code session,
+# which is the name the user sees on the window it is running in. --status and --log carry it,
+# so a command on the machine leads back to the agent that can be asked about it. A shell that
+# is not an agent says so, and a session with no title yet is named by its id.
+#
+# It calls a holder idle when the CPU under it has not moved between two looks, which catches
+# a job that hangs after an hour of work as well as one that never started. That takes two
+# looks, and a --watch left running is what supplies them. DIBS_IDLE_AFTER sets how long a
+# stretch of nothing has to be, in seconds, before it is worth mentioning.
+#
+# Never poll this. Launch it with the Bash tool's run_in_background parameter and do other
+# work; queueing then costs nothing and the notification arrives when the command is done.
+
+set -uo pipefail
+
+# The account, not the person. Agents land on an unprivileged user whose home is the whole of
+# what they can damage. It has no sudo and is not in the docker group, which grants root
+# without needing one, and which is why running them as a human account was the exposure.
+HOST=${DIBS_HOST:-}
+# The bare name, for recognising this machine and for looking it up in tailscale. Derived
+# from HOST, which is right unless HOST is an ssh alias whose Host line names something else.
+# Set DIBS_HOSTNAME to the name the machine answers to when it is.
+TARGET=${DIBS_HOSTNAME:-${HOST##*@}}
+
+# The inventory names machines and the ssh aliases that reach them, which are yours, so it
+# lives beside the recipe overrides rather than in this repo, which is public.
+#
+# Two layers, the way recipes already have three. A shared registry is what everyone gets
+# without writing anything out, because a workplace where each person hand-lists the same
+# machines has one list per person and no two of them agree. The personal file is then what it
+# should have been all along: additions and overrides, for a machine that is yours alone.
+MACHINES=${DIBS_MACHINES:-${XDG_CONFIG_HOME:-$HOME/.config}/dibs/machines.toml}
+REGISTRY=${DIBS_REGISTRY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/dibs/registry.toml}
+# Where the shared one is fetched from, as scp spells it: dibs@host:path. Unset means there is
+# no shared layer, which is the single-user case and stays exactly as it was.
+REGISTRY_FROM=${DIBS_REGISTRY:-}
+
+# Which file defines a machine. The personal file wins outright rather than per key: half an
+# entry from each would produce a machine that exists nowhere.
+inv_file() {  # machine
+    if [ -f "$MACHINES" ] && [ -n "$(inv_from "$MACHINES" "$1" ssh)" ]; then
+        printf '%s\n' "$MACHINES"
+    elif [ -f "$REGISTRY" ] && [ -n "$(inv_from "$REGISTRY" "$1" ssh)" ]; then
+        printf '%s\n' "$REGISTRY"
+    fi
+}
+
+inv() {  # machine key
+    local f
+    f=$(inv_file "$1") || return 1
+    [ -n "$f" ] || return 1
+    inv_from "$f" "$1" "$2"
+}
+
+# A machine's own scalars. It stops at the first array-of-tables so that a device's `name`
+# cannot answer for the machine's.
+inv_from() {  # file machine key
+    [ -f "$1" ] || return 1
+    awk -v m="machine.$2" -v k="$3" '
+        /^[[:space:]]*#/    { next }
+        /^[[:space:]]*\[\[/ { in_t = 0; next }
+        /^[[:space:]]*\[/   { t = $0; sub(/^[[:space:]]*\[/, "", t); sub(/\].*$/, "", t)
+                              in_t = (t == m); next }
+        in_t && $0 ~ "^[[:space:]]*" k "[[:space:]]*=" {
+            v = $0; sub(/^[^=]*=[[:space:]]*/, "", v)
+            if (v ~ /^"/) { sub(/^"/, "", v); sub(/".*$/, "", v) }
+            else          { sub(/[[:space:]]*#.*$/, "", v); sub(/[[:space:]]+$/, "", v) }
+            print v; exit
+        }' "$1"
+}
+
+names_in() {  # file
+    [ -f "$1" ] || return 0
+    awk '/^[[:space:]]*\[machine\./ {
+             t = $0; sub(/^[[:space:]]*\[/, "", t); sub(/\].*$/, "", t)
+             sub(/^machine\./, "", t); print t }' "$1"
+}
+
+# Both layers, the personal one first so an override is listed once and in its own right.
+inv_names() {
+    { names_in "$MACHINES"; names_in "$REGISTRY"; } | awk '!seen[$0]++'
+}
+
+default_in() {  # file
+    [ -f "$1" ] || return 0
+    awk '/^[[:space:]]*\[/ { exit }
+         /^[[:space:]]*default[[:space:]]*=/ {
+             v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); gsub(/"/, "", v)
+             sub(/[[:space:]]*#.*$/, "", v); sub(/[[:space:]]+$/, "", v); print v; exit }' "$1"
+}
+
+# A personal default overrides the shared one, so choosing where your own work goes never
+# needs anyone else to agree.
+inv_default() {
+    local d
+    d=$(default_in "$MACHINES")
+    [ -n "$d" ] || d=$(default_in "$REGISTRY")
+    printf '%s\n' "$d"
+}
+
+# Everything belonging to one machine, its device tables included, written to stdout minus
+# that machine. Both writing and forgetting go through it, because a partial removal leaves a
+# device table parented to an entry that is gone.
+inv_without() {  # machine
+    awk -v n="machine.$1" '
+        /^[[:space:]]*\[\[?machine\./ {
+            t = $0; sub(/^[[:space:]]*\[+/, "", t); sub(/\]+.*$/, "", t)
+            sub(/\.device$/, "", t)
+            skip = (t == n)
+        }
+        !skip { print }
+    ' "$MACHINES"
+}
+
+# Replaces a machine's whole entry rather than editing fields: a device that was removed has to
+# disappear, and a merge that only overwrites what it recognises would leave it there.
+inv_write() {  # machine entry
+    local n=$1 body=$2 tmp
+    mkdir -p "$(dirname "$MACHINES")" || return 1
+    [ -f "$MACHINES" ] || printf 'default = "%s"\n' "$n" > "$MACHINES"
+    tmp=$(mktemp "$MACHINES.XXXXXX") || return 1
+    { inv_without "$n"; printf '\n%s\n' "$body"; } > "$tmp" && mv "$tmp" "$MACHINES" || return 1
+    # The default is where an unqualified benchmark goes, so a machine that cannot measure
+    # must not hold it while one that can exists: every --bench would fail on a machine
+    # chosen for it by nothing.
+    local d
+    d=$(inv_default)
+    if [ -n "$d" ] && [ "$(inv "$d" measure)" = false ] && [ "$(inv "$n" measure)" != false ]; then
+        tmp=$(mktemp "$MACHINES.XXXXXX") || return 1
+        sed "0,/^default[[:space:]]*=/s|^default[[:space:]]*=.*|default = \"$n\"|" \
+            "$MACHINES" > "$tmp" && mv "$tmp" "$MACHINES"
+    fi
+}
+
+# hostname -s so a machine recognises itself and locks locally instead of trying to ssh to
+# itself. The same script is on every machine; only this decides which side it is on.
+SELF=$(hostname -s 2>/dev/null || hostname)
+
+# GNU timeout is not everywhere: macOS has none by default and coreutils installs it as
+# gtimeout. A client that cannot bound a poll should still be able to dispatch, so this
+# degrades to running unbounded rather than to not running.
+if command -v timeout >/dev/null 2>&1; then
+    bounded() { timeout "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+    bounded() { gtimeout "$@"; }
+else
+    bounded() { shift; "$@"; }
+fi
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Fetched with scp because that is the form the source is written in, and because a machine
+# that can be reached at all can be reached this way. A failure leaves the cached copy in
+# place: a registry that cannot be reached should cost the freshness of a list, never the
+# ability to dispatch.
+registry_sync() {
+    local tmp
+    [ -n "$REGISTRY_FROM" ] || { echo "dibs: DIBS_REGISTRY names no source" >&2; return 1; }
+    mkdir -p "$(dirname "$REGISTRY")" 2>/dev/null || return 1
+    tmp=$(mktemp "$REGISTRY.XXXXXX") || return 1
+    if bounded "${DIBS_POLL_TIMEOUT:-10}" scp -q -o BatchMode=yes \
+            -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$REGISTRY_FROM" "$tmp" 2>/dev/null &&
+       [ -s "$tmp" ]; then
+        mv "$tmp" "$REGISTRY"
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
+# Refreshed on a clock rather than per call, because an ssh round trip on every invocation
+# would be paid by every status, every rank and every job.
+registry_fresh() {
+    [ -n "$REGISTRY_FROM" ] || return 0
+    [ -f "$REGISTRY" ] || { registry_sync || true; return 0; }
+    [ -z "$(find "$REGISTRY" -maxdepth 0 -mmin +"${DIBS_REGISTRY_TTL:-1440}" 2>/dev/null)" ] && return 0
+    registry_sync || true
+}
+
+MACHINE=""
+PINNED=0
+MEASURABLE=1
+ROUTE=${DIBS_ROUTE:-0}
+
+# Where a shared job should go. Never a benchmark: duration history and label bindings key on
+# the machine, so routing one would file two machines' numbers under a single label, which is
+# the wrong conclusion the whole thing exists to prevent. Until bindings exist, a measurement
+# goes where it is told.
+#
+# Ranking decides nothing about correctness. The acquire is still an flock, so a stale reading
+# costs a worse queue and never a double booking.
+pick_machine() {
+    local m f tmp best="" best_score="" score state cores load prefer_state=""
+    local cached="" cached_score=0 seat=""
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/dibs-route.XXXXXX") || return 1
+    while read -r m; do
+        [ -n "$m" ] || continue
+        # Bounded, because ssh can hang past its connect timeout on a machine that answered
+        # the handshake and then stopped, and one of those must not stall every dispatch.
+        ( bounded "${DIBS_POLL_TIMEOUT:-8}" "$0" --on "$m" --status --json 2>/dev/null \
+            > "$tmp/$m" ) &
+    done < <(inv_names)
+    wait
+    for f in "$tmp"/*; do
+        m=${f##*/}
+        # Never silent. A machine dropping out of the ranking without saying so degrades this
+        # to "whichever one answered", which looks exactly like a working ranking.
+        if [ ! -s "$f" ]; then
+            [ "$VERBOSE" = 1 ] && printf '  %-18s no answer\n' "$m" >&2
+            continue
+        fi
+        state=$(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$f" | head -1)
+        cores=$(sed -n 's/.*"cores":\([0-9]*\).*/\1/p' "$f" | head -1)
+        load=$(sed -n 's/.*"load":\([0-9]*\).*/\1/p' "$f" | head -1)
+        [ -n "$state" ] || continue
+        [ -n "${cores:-}" ] && [ "$cores" -gt 0 ] 2>/dev/null || cores=1
+        score=$(( ${load:-0} / cores ))
+        # A machine held exclusively cannot start a shared job at all, so it is ranked behind
+        # every machine that can, rather than excluded: it may still be the only one up.
+        [ "$state" = bench ] && score=$(( score + 1000 ))
+        # A machine someone works at costs more than its load says: a build taking every
+        # thread costs them their editor. It is a property of the machine, not of whoever
+        # dispatched. A headless box that happens to be running the agents is not a
+        # workstation, and discounting it would waste the best-placed build node there is.
+        [ "$(inv "$m" workstation)" = true ] && score=$(( score + ${DIBS_SELF_PENALTY:-25} ))
+        # A repo nobody has built yet should have its cache land where it can be measured. A
+        # machine that refuses benchmarks is a machine no benchmark can follow the cache to,
+        # and the first bench would then compile inside its own exclusive lock. This only
+        # decides the bootstrap: once a machine holds the cache it is chosen for holding it,
+        # whatever it scores here.
+        [ "$(inv "$m" measure)" = false ] && score=$(( score + 500 ))
+        # Ties broken at random rather than by name. Every client reading the same snapshot and
+        # resolving a tie the same way is how they all pick the same machine.
+        [ "$m" = "$PREFER" ] && prefer_state=$state
+        [ "$(inv "$m" workstation)" = true ] && seat=", someone works here" || seat=""
+        # An observed cache is ground truth; the recorded preference is only a memo of it.
+        if [ -n "$REPO" ] && grep -q "\"caches\":\[[^]]*\"$REPO\"" "$f"; then
+            [ -z "$cached" ] || [ "$score" -lt "$cached_score" ] && { cached=$m; cached_score=$score; }
+        fi
+        [ "$VERBOSE" = 1 ] && printf '  %-18s %s%% busy, %s%s%s\n' "$m" "$score" "$state" \
+            "$seat" "$([ "$m" = "$PREFER" ] && echo ", holds the cache")" >&2
+        if [ -z "$best_score" ] || [ "$score" -lt "$best_score" ] ||
+           { [ "$score" = "$best_score" ] && [ $(( RANDOM % 2 )) = 1 ]; }; then
+            best=$m; best_score=$score
+        fi
+    done
+    rm -rf "$tmp"
+    # A machine holding this repo's build cache wins even while it is busy, and being busy is
+    # not a reason to look elsewhere. Nothing built on another machine can be used here: there
+    # is no way to move artifacts between machines, so a build placed away from the cache is
+    # work thrown away, and the benchmark that follows it still finds nothing and compiles
+    # inside its own exclusive lock. Queueing is slower for one job; the alternative is
+    # wasted. Only a machine that did not answer at all is given up on.
+    if [ -n "$PREFER" ] && [ -n "$prefer_state" ]; then
+        printf '%s\n' "$PREFER"
+        return 0
+    fi
+    if [ -n "$cached" ]; then
+        printf '%s\n' "$cached"
+        return 0
+    fi
+    [ -n "$best" ] || return 1
+    printf '%s\n' "$best"
+}
+use_machine() {
+    local n=$1 ssh_to host_of
+    ssh_to=$(inv "$n" ssh)
+    if [ -z "$ssh_to" ]; then
+        echo "dibs: no machine named '$n' in $MACHINES" >&2
+        if [ -f "$MACHINES" ]; then
+            echo "  known:" >&2; inv_names | sed 's/^/    /' >&2
+        else
+            echo "  There is no inventory yet. Write one with:  dibs --check <host> --write" >&2
+        fi
+        exit 2
+    fi
+    MACHINE=$n
+    HOST=$ssh_to
+    host_of=$(inv "$n" hostname)
+    TARGET=${host_of:-${ssh_to##*@}}
+    [ "$(inv "$n" measure)" = false ] && MEASURABLE=0
+}
+MODE=shared
+LABEL=""
+WAIT=""
+MAXHOLD=""
+VERBOSE=0
+KILLPID=""
+OUTPID=""
+OUT_N=${DIBS_OUT_LINES:-40}
+FORCE=0
+ANYONE=0
+LOG_N=40
+WATCH_N=5
+JSON=0
+WRITE=0
+ALL=0
+FORGET=""
+JOBID=""
+PREFER=""
+REPO=""
+COMMAND=""
+SYNC=()
+
+usage() { sed -n '2,/^# --- end of the interface/p' "$0" | sed '$d; s/^# \?//'; exit "${1:-0}"; }
+
+ORIG_ARGS=("$@")
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --bench|-b)   MODE=bench; shift ;;
+        --shared)     MODE=shared; shift ;;
+        --status|-s)  MODE=status; shift ;;
+        --sync)       MODE=sync; shift; break ;;
+        --rsh)        MODE=rsh; shift; break ;;
+        --watch|-w)   MODE=watch; shift
+                      if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9]/}" ]; then
+                          WATCH_N=$1; shift
+                      fi ;;
+        --peek)       MODE=peek; shift ;;
+        -v|--verbose) VERBOSE=1; shift ;;
+        --json)       JSON=1; shift ;;
+        --release)    MODE=release; shift ;;
+        --log)        MODE=log; shift
+                      if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9]/}" ]; then
+                          LOG_N=$1; shift
+                      fi ;;
+        --on)         use_machine "${2:-}"; PINNED=1; shift 2 ;;
+        --any)        ROUTE=1; shift ;;
+        --all)        ALL=1; shift ;;
+        --forget)     MODE=forget; FORGET=${2:-}; shift 2 ;;
+        --prefer)     PREFER=${2:-}; shift 2 ;;
+        --repo)       REPO=${2:-}; shift 2 ;;
+        --pick)       MODE=pick; shift ;;
+        --registry-sync) MODE=registry; shift ;;
+        --detach)     MODE=detach; shift ;;
+        --jobs)       MODE=jobs; shift ;;
+        --job)        MODE=job; JOBID=${2:-}; shift 2 ;;
+        --cancel)     MODE=cancel; JOBID=${2:-}; shift 2 ;;
+        --abi)        MODE=abi; shift ;;
+        --which)      MODE=which; shift ;;
+        --machines)   MODE=machines; shift ;;
+        --write)      WRITE=1; shift ;;
+        --check)      MODE=check; shift
+                      # A machine that has never been used has to be nameable, or --check
+                      # cannot be what onboards it.
+                      if [ $# -gt 0 ] && [ -n "$1" ] && [ "${1#-}" = "$1" ]; then
+                          HOST=$1; TARGET=$1; PINNED=1; shift
+                      fi ;;
+        --out)        MODE=out; shift
+                      if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9]/}" ]; then
+                          OUTPID=$1; shift
+                      fi ;;
+        --kill)       MODE=kill; KILLPID=${2:-}; shift 2 ;;
+        --force)      FORCE=1; shift ;;
+        --anyone)     ANYONE=1; shift ;;
+        --wait)       WAIT=$2; shift 2 ;;
+        --max)        MAXHOLD=$2; shift 2 ;;
+        --label)      LABEL=$2; shift 2 ;;
+        -h|--help)    usage ;;
+        --)           shift; break ;;
+        -*)           echo "unknown option: $1" >&2; usage 2 ;;
+        *)            break ;;
+    esac
+done
+
+registry_fresh
+
+# Precedence: --on, then DIBS_ON, then DIBS_HOST, then the inventory's own default.
+#
+# DIBS_ON rather than DIBS_MACHINE, which the onboarding script already uses to mean the host
+# it is introducing you to. Two meanings for one name in one tool is how a new user's first
+# command fails with an error about an inventory they have never heard of.
+# DIBS_HOST outranks the file so that writing an inventory never silently moves work that
+# was already going somewhere; the file's default is what a machine with no DIBS_HOST gets.
+if [ "$PINNED" = 0 ]; then
+    if [ -n "${DIBS_ON:-}" ]; then
+        use_machine "$DIBS_ON"; PINNED=1
+    elif [ -z "$HOST" ]; then
+        d=$(inv_default)
+        [ -n "$d" ] && use_machine "$d"
+    fi
+fi
+
+# A machine can say it is not worth measuring on, and a laptop sharing one memory pool
+# between its CPU and its iGPU is the case this exists for. Left to a rule, the wrong number
+# gets produced and looks like every other number.
+if [ "$MODE" = bench ] && [ "$MEASURABLE" = 0 ]; then
+    echo "dibs: $MACHINE is marked measure = false, so a benchmark cannot run there." >&2
+    echo "  Name one that measures with --on <machine>, or run it shared if it is not a measurement." >&2
+    exit 2
+fi
+
+case "$MODE" in
+    registry)
+        registry_sync || { echo "dibs: could not fetch $REGISTRY_FROM" >&2; exit 69; }
+        echo "$(inv_names | wc -l) machines known, shared list from $REGISTRY_FROM"
+        exit 0 ;;
+    machines)
+        [ -f "$MACHINES" ] || { echo "no inventory at $MACHINES" >&2
+                                echo "Write one with:  dibs --check <host> --write" >&2; exit 2; }
+        def=$(inv_default)
+        w=0
+        while read -r m; do [ "${#m}" -gt "$w" ] && w=${#m}; done < <(inv_names)
+        while read -r m; do
+            [ -n "$m" ] || continue
+            mark=" "; [ "$m" = "$def" ] && mark="*"
+            note=""; [ "$(inv "$m" measure)" = false ] && note="  (no measurements)"
+            layer=""
+            if [ -n "$REGISTRY_FROM" ] || [ -f "$REGISTRY" ]; then
+                if [ "$(inv_file "$m")" = "$MACHINES" ]; then layer="  [yours]"; else layer="  [shared]"; fi
+            fi
+            printf ' %s %-*s %s%s%s\n' "$mark" "$w" "$m" "$(inv "$m" ssh)" "$note" "$layer"
+        done < <(inv_names)
+        exit 0 ;;
+    # Every machine at once. With routing on, a job is somewhere rather than on the machine,
+    # and asking each in turn is slow enough that nobody does it.
+    status)
+        if [ "$ALL" = 1 ]; then
+            [ -f "$MACHINES" ] || { echo "no inventory at $MACHINES" >&2; exit 2; }
+            jf=""; [ "$JSON" = 1 ] && jf="--json"
+            tmp=$(mktemp -d "${TMPDIR:-/tmp}/dibs-all.XXXXXX") || exit 1
+            while read -r m; do
+                [ -n "$m" ] || continue
+                ( bounded "${DIBS_POLL_TIMEOUT:-8}" "$0" --on "$m" --status $jf \
+                    > "$tmp/$m" 2>&1 ) &
+            done < <(inv_names)
+            wait
+            first=1
+            while read -r m; do
+                [ -n "$m" ] || continue
+                [ "$first" = 1 ] || echo
+                first=0
+                printf '%s\n' "$m"
+                if [ -s "$tmp/$m" ]; then sed 's/^/  /' "$tmp/$m"
+                else echo "  no answer"; fi
+            done < <(inv_names)
+            rm -rf "$tmp"
+            exit 0
+        fi ;;
+    # The machine this call would use, named. Empty when the target came from DIBS_HOST rather
+    # than the inventory, because a name that is not an entry cannot be handed back to --on.
+    which)
+        [ -n "$MACHINE" ] || exit 1
+        printf '%s\n' "$MACHINE"
+        exit 0 ;;
+    # Whether a binary built on one machine can run on another. Asked of every machine at
+    # once, because the answer is a relation between them and not a property of any one.
+    abi)
+        if [ "$ALL" = 1 ]; then
+            [ -f "$MACHINES" ] || { echo "no inventory at $MACHINES" >&2; exit 2; }
+            tmp=$(mktemp -d "${TMPDIR:-/tmp}/dibs-abi.XXXXXX") || exit 1
+            while read -r m; do
+                [ -n "$m" ] || continue
+                ( bounded "${DIBS_POLL_TIMEOUT:-20}" "$0" --on "$m" --abi > "$tmp/$m" 2>/dev/null ) &
+            done < <(inv_names)
+            wait
+            names=""
+            for f in "$tmp"/*; do
+                [ -s "$f" ] || continue
+                m=${f##*/}
+                names="$names $m"
+                fact() { awk -v k="$1" '$1 == k { print $2; exit }' "$2"; }
+                printf '%-18s %-8s v%-3s glibc %-8s rustc %-8s %s\n' \
+                    "$m" "$(fact arch "$f")" "$(fact level "$f")" "$(fact glibc "$f")" \
+                    "$(fact rustc "$f")" "$(fact nvidia "$f" | sed 's/^$/-/')"
+            done
+            echo
+            for a in $names; do
+                for b in $names; do
+                    [ "$a" = "$b" ] && continue
+                    why="" unknown=""
+                    ka=$(fact kernel "$tmp/$a") kb=$(fact kernel "$tmp/$b")
+                    la=$(fact level "$tmp/$a")  lb=$(fact level "$tmp/$b")
+                    ga=$(fact glibc "$tmp/$a")  gb=$(fact glibc "$tmp/$b")
+                    if [ "$ka" != "$kb" ]; then
+                        # Not a matter of degree. Mach-O and ELF are different formats and
+                        # neither kernel will load the other's, whatever the CPU underneath.
+                        why="$ka and $kb do not run each other's binaries at all"
+                    elif [ "$(fact arch "$tmp/$a")" != "$(fact arch "$tmp/$b")" ]; then
+                        why="different architectures"
+                    elif [ -z "$la" ] || [ -z "$lb" ] || [ -z "$ga" ] || [ -z "$gb" ]; then
+                        # Silence is not agreement. A machine that could not answer is one this
+                        # cannot vouch for, and saying yes on missing facts is the one answer
+                        # here with a real cost attached.
+                        unknown="one of them reported no instruction set level or no libc"
+                    elif [ "$lb" -lt "$la" ]; then
+                        why="$b is x86-64-v$lb, below v$la"
+                    else
+                        lo=$(printf '%s\n%s\n' "$ga" "$gb" | sort -V | head -1)
+                        [ "$lo" = "$gb" ] && [ "$lo" != "$ga" ] && why="$b has glibc $lo, older than $a's"
+                    fi
+                    if [ -n "$unknown" ]; then
+                        printf '  %s to %s: unknown, %s\n' "$a" "$b" "$unknown"
+                    elif [ -n "$why" ]; then
+                        printf '  %s to %s: no, %s\n' "$a" "$b" "$why"
+                    else
+                        printf '  %s to %s: yes\n' "$a" "$b"
+                    fi
+                done
+            done
+            echo
+            echo "  Equal levels do not mean equal instruction sets: -C target-cpu=native"
+            echo "  reaches past the level it lands in, and a binary built that way can still"
+            echo "  fault on a machine this says yes about. Reuse without it is what this covers."
+            rm -rf "$tmp"
+            exit 0
+        fi ;;
+    forget)
+        [ -f "$MACHINES" ] || { echo "no inventory at $MACHINES" >&2; exit 2; }
+        [ -n "$(inv "$FORGET" ssh)" ] || { echo "dibs: no machine named '$FORGET'" >&2; exit 2; }
+        # A shared machine is not yours to remove. Overriding it locally is, and that is a
+        # different act with a different file, so say which one this would have to be.
+        if [ "$(inv_file "$FORGET")" != "$MACHINES" ]; then
+            echo "dibs: '$FORGET' comes from the shared registry, not from $MACHINES" >&2
+            echo "  Nothing here can remove it. Give it an entry of your own to override it." >&2
+            exit 2
+        fi
+        tmp=$(mktemp "$MACHINES.XXXXXX") || exit 1
+        inv_without "$FORGET" > "$tmp" && mv "$tmp" "$MACHINES" || exit 1
+        # A default naming a machine that is gone sends every unpinned call somewhere that
+        # cannot answer, so it is repointed at something that can rather than left dangling.
+        if [ "$(inv_default)" = "$FORGET" ]; then
+            new=""
+            while read -r m; do
+                [ -n "$m" ] || continue
+                [ "$(inv "$m" measure)" = false ] && continue
+                new=$m; break
+            done < <(inv_names)
+            [ -n "$new" ] || new=$(inv_names | head -1)
+            if [ -n "$new" ]; then
+                tmp=$(mktemp "$MACHINES.XXXXXX") || exit 1
+                sed "0,/^default[[:space:]]*=/s|^default[[:space:]]*=.*|default = \"$new\"|" \
+                    "$MACHINES" > "$tmp" && mv "$tmp" "$MACHINES"
+                echo "forgot $FORGET; the default is now $new"
+                exit 0
+            fi
+        fi
+        echo "forgot $FORGET"
+        exit 0 ;;
+esac
+
+# Routing is opted into, because turning it on moves work that was going somewhere else and
+# that should be a decision rather than a side effect of writing an inventory.
+if [ "$MODE" = pick ] || { [ "$MODE" = shared ] && [ "$PINNED" = 0 ] && [ "$ROUTE" = 1 ] &&
+                           [ "${DIBS_FROM_RUN:-0}" != 1 ]; }; then
+    if picked=$(pick_machine); then
+        [ "$MODE" = pick ] && { printf '%s\n' "$picked"; exit 0; }
+        use_machine "$picked"
+    elif [ "$MODE" = pick ]; then
+        echo "dibs: no machine in $MACHINES answered" >&2; exit 69
+    fi
+fi
+
+# --write wants both halves of the check: the report to show and the entry to record. So it
+# runs the check itself and reads its output, which also keeps every bit of host resolution
+# in one place. The recursion terminates because the inner call has DIBS_EMIT_ENTRY set.
+if [ "$MODE" = check ] && [ "$WRITE" = 1 ] && [ "${DIBS_EMIT_ENTRY:-0}" != 1 ]; then
+    name=${MACHINE:-$TARGET}
+    [ -n "$name" ] || { echo "dibs --check --write: name the machine, with --on or a host" >&2; exit 2; }
+    out=$(DIBS_EMIT_ENTRY=1 "$0" "${ORIG_ARGS[@]}"); status=$?
+    printf '%s\n' "$out" | sed '/^--8<-- dibs inventory/,/^--8<-- end/d'
+    entry=$(printf '%s\n' "$out" | sed -n '/^--8<-- dibs inventory/,/^--8<-- end/p' | sed '1d;$d')
+    [ -n "$entry" ] || { echo "dibs: the machine reported nothing to record." >&2; exit "$status"; }
+    entry=${entry//@NAME@/$name}
+    entry=${entry//@SSH@/$HOST}
+    inv_write "$name" "$entry" || { echo "dibs: could not write $MACHINES" >&2; exit 1; }
+    echo "  recorded as [machine.$name] in $MACHINES"
+    exit "$status"
+fi
+
+case "$MODE" in
+    kill)
+        [ -n "$KILLPID" ] || { echo "--kill needs the pid from --status" >&2; exit 2; }
+        case "$KILLPID" in (*[!0-9]*) echo "not a pid: $KILLPID" >&2; exit 2 ;; esac
+        [ "$FORCE" = 1 ] && MODE=kill-force
+        LABEL=$KILLPID
+        [ "$ANYONE" = 1 ] && LABEL=$KILLPID.any ;;
+    log)
+        [ $# -eq 0 ] || { echo "--log takes only a line count" >&2; exit 2; }
+        LABEL=$LOG_N ;;
+    check)
+        [ $# -eq 0 ] || { echo "--check takes only a host" >&2; exit 2; }
+        LABEL=check
+        [ "${DIBS_EMIT_ENTRY:-0}" = 1 ] && LABEL=check-write ;;
+    out)
+        [ $# -eq 0 ] || { echo "--out takes only a pid" >&2; exit 2; }
+        # A dot because the label is sanitized down to [A-Za-z0-9._-] before it ships.
+        LABEL="${OUTPID:-all}.$OUT_N" ;;
+    watch)
+        [ $# -eq 0 ] || { echo "--watch takes only an interval in seconds" >&2; exit 2; }
+        # A reader is not a person, so the floor that protects a benchmark from a human
+        # redrawing too fast does not apply. The tick still costs what a redraw costs.
+        [ "$JSON" = 1 ] && [ "$WATCH_N" -lt 1 ] && WATCH_N=1
+        # Every tick is charged to whoever is being measured, and a human reading a queue
+        # does not need a redraw a second.
+        [ "$WATCH_N" -ge 2 ] || [ "$JSON" = 1 ] || { echo "--watch: 2 seconds is the floor. Anything faster costs the benchmark more than it tells you." >&2; exit 2; }
+        LABEL=$WATCH_N ;;
+    sync)
+        # rsync's own options pass through untouched. One side carries a leading colon for the
+        # machine, the way rsync itself spells a remote path, so both directions are one mode.
+        [ $# -ge 2 ] || { echo "--sync takes rsync options, a source and a destination" >&2; usage 2; }
+        SYNC=()
+        for a in "$@"; do
+            case "$a" in
+                :*) SYNC+=("$HOST:${a#:}") ;;
+                *)  SYNC+=("$a") ;;
+            esac
+        done
+        printf '%s\n' "${SYNC[@]}" | grep -q "^$HOST:" || {
+            echo "--sync: mark the machine's side with a leading colon, as in :~/.cache/dibs/x" >&2
+            exit 2
+        }
+        command -v rsync >/dev/null 2>&1 || { echo "--sync needs rsync on both machines" >&2; exit 2; }
+        # rsync runs here and reaches the machine through this same script, which is what takes
+        # the lock. One transfer, one holder, whichever direction it goes in.
+        SELF=$(readlink -f "$0" 2>/dev/null || echo "$0")
+        # Through bash rather than exec'ing the file: rsync runs the transport itself, and
+        # whether this copy happens to carry an exec bit is not something to depend on.
+        exec rsync -e "bash $SELF --rsh" "${SYNC[@]}"
+        ;;
+    rsh)
+        # What rsync invokes as its transport: a host it chose and the command to run there.
+        # Joined with spaces and not requoted, exactly as ssh would, since rsync has already
+        # quoted what needs it and expects the far shell to expand the rest.
+        [ $# -ge 2 ] || { echo "--rsh is rsync's transport, not for calling directly" >&2; exit 2; }
+        [ "$1" = "-l" ] && shift 2 # a user, when rsync was given one; the ssh config owns that
+        shift                      # the host, which we already know
+        COMMAND=$*
+        [ -n "$LABEL" ] || LABEL=sync
+        ;;
+    status|release|abi|jobs) [ $# -eq 0 ] || { echo "$MODE takes no command" >&2; exit 2; } ;;
+    job|cancel)
+        [ -n "$JOBID" ] || { echo "--$MODE needs an id from --jobs" >&2; exit 2; }
+        [ $# -eq 0 ] || { echo "--$MODE takes only an id" >&2; exit 2; }
+        LABEL=$JOBID ;;
+    *)              [ $# -gt 0 ] || { echo "no command given" >&2; usage 2; } ;;
+esac
+
+# A build that runs for half an hour has gone wrong; a benchmark legitimately might not.
+if [ -z "$MAXHOLD" ]; then
+    case "$MODE" in
+        bench)     MAXHOLD=7200 ;;
+        peek)      MAXHOLD=30 ;;
+        rsh|sync)  MAXHOLD=3600 ;;
+        *)     MAXHOLD=1800 ;;
+    esac
+fi
+
+# One argument is a shell string, as ssh itself treats it. Several are quoted individually,
+# so an argument containing spaces survives the trip.
+if [ "$MODE" != rsh ]; then
+    COMMAND=""
+    if [ $# -eq 1 ]; then
+        COMMAND=$1
+    elif [ $# -gt 1 ]; then
+        COMMAND=$(printf '%q ' "$@")
+    fi
+fi
+[ -n "$LABEL" ] || LABEL=$(basename "$(pwd)")
+LABEL=${LABEL//[^A-Za-z0-9._-]/_}
+
+# Who is asking. Needed by the queue below and by every mode that leaves a record.
+# The title changes, and today it is also what decides whether a job is yours. A title that
+# went stale made an agent unable to recognise its own work, and one that changes mid-session
+# would make it unable to stop it. So ownership keys on the session, which does not move, and
+# only the display uses the name.
+agent_id() {
+    printf '%s' "${CLAUDE_CODE_HOST_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-shell-${USER:-someone}}}"
+}
+
+agent_name() {
+    local id=${CLAUDE_CODE_HOST_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}} f t=""
+    [ -n "$id" ] || { printf '%s' "${USER:-someone} at a shell"; return; }
+    for f in "$HOME/.config/Claude/claude-code-sessions"/*/*/"$id.json"; do
+        [ -r "$f" ] || continue
+        if command -v jq >/dev/null 2>&1; then
+            t=$(jq -r '.title // empty' "$f" 2>/dev/null)
+        else
+            t=$(grep -o '"title":"[^"]*"' "$f" 2>/dev/null | head -1 | cut -d'"' -f4)
+        fi
+        [ -n "$t" ] && break
+    done
+    [ -n "$t" ] || t="session ${id#local_}"
+    printf '%s' "${t:0:48}"
+}
+
+# --- running somewhere that does not sleep ---------------------------------------------
+#
+# A job is killed when its caller dies, on purpose. Agents run on laptops, so the caller is
+# always something that closes. The fix is not to weaken that rule but to move the caller: the
+# command runs on a machine that stays up, holding the job for its whole life, and this session
+# only starts it. Everything below the caller is unchanged, and the lock is still an flock on
+# the benchmarking machine.
+#
+# There is no scheduler here and there does not need to be one. Contention is already settled
+# by the lock on the machine being used; the only thing missing was somewhere for the caller to
+# live. DIBS_QUEUE names that machine, and without it nothing here applies.
+QUEUE=${DIBS_QUEUE:-}
+JOBS_DIR=${DIBS_JOBS_DIR:-'$HOME/.local/state/dibs/jobs'}
+
+# The same self-recognition the machines get: pointing this at the box you are already on
+# should run there rather than ssh to itself, which is also what makes it testable at all.
+queue_run() {  # script-on-stdin, args...
+    if [ "${DIBS_QUEUE_LOCAL:-0}" = 1 ] || [ "$(lower "${QUEUE##*@}")" = "$(lower "$SELF")" ]; then
+        bash -s -- "$@"
+    else
+        ssh -o BatchMode=yes -o LogLevel=ERROR \
+            -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$QUEUE" "bash -s -- $*"
+    fi
+}
+
+case "$MODE" in
+    detach)
+        [ -n "$QUEUE" ] || {
+            echo "dibs: no DIBS_QUEUE, so there is nowhere for the job to outlive this session." >&2
+            echo "  Set it to the machine that stays up:  DIBS_QUEUE=dibs@<box>" >&2
+            exit 2; }
+        # setsid so it survives this ssh channel closing, and its own log from the first
+        # instant so that a job which dies immediately still says why.
+        queue_run <<'REMOTE' "$(printf %s "$COMMAND" | base64 | tr -d '\n')" "$JOBS_DIR" "$LABEL" \
+                              "$(agent_name | base64 | tr -d '\n')"
+set -eu
+b64=$1; jobs=$(eval echo "$2"); label=${3:-job}; who=${4:-}
+id="$(date +%Y%m%d-%H%M%S)-$$"
+d=$jobs/$id
+mkdir -p "$d"
+printf %s "$b64" | base64 -d > "$d/cmd"
+printf '%s
+' "$label" > "$d/label"
+printf %s "$who" | base64 -d 2>/dev/null > "$d/agent" || : > "$d/agent"
+date +%s > "$d/started"
+setsid bash -c 'd=$1; trap '"'"'echo $? > "$d/status"'"'"' EXIT; bash "$d/cmd"' _ "$d" \
+    > "$d/log" 2>&1 < /dev/null &
+echo $! > "$d/pid"
+echo "$id"
+REMOTE
+        exit $? ;;
+    jobs)
+        [ -n "$QUEUE" ] || { echo "dibs: no DIBS_QUEUE" >&2; exit 2; }
+        queue_run <<'REMOTE' "$JOBS_DIR"
+set -u
+jobs=$(eval echo "$1")
+[ -d "$jobs" ] || { echo "nothing submitted yet"; exit 0; }
+fmt='%-24s %-14s %-9s %-16s %s\n'
+printf "$fmt" ID LABEL STATE WHO COMMAND
+for d in "$jobs"/*/; do
+    [ -d "$d" ] || continue
+    pid=$(cat "$d/pid" 2>/dev/null)
+    if [ -f "$d/status" ]; then st="exit $(cat "$d/status")"
+    elif [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then st=running
+    else st=gone; fi
+    printf "$fmt" "$(basename "$d")" \
+        "$(cut -c1-14 < "$d/label" 2>/dev/null)" "$st" \
+        "$(cut -c1-16 < "$d/agent" 2>/dev/null)" \
+        "$(head -c 50 "$d/cmd" 2>/dev/null | tr '\n' ' ')"
+done
+REMOTE
+        exit $? ;;
+    cancel)
+        [ -n "$QUEUE" ] || { echo "dibs: no DIBS_QUEUE" >&2; exit 2; }
+        queue_run <<'REMOTE' "$JOBS_DIR" "$LABEL" "$(agent_name | base64 | tr -d '\n')" "$ANYONE"
+set -u
+jobs=$(eval echo "$1"); id=$2; me=$(printf %s "${3:-}" | base64 -d 2>/dev/null); anyone=${4:-0}
+d=$jobs/$id
+[ -d "$d" ] || { echo "no such job: $id" >&2; exit 2; }
+# The same rule the machines got, for the same reason: everyone here shares one account, so
+# the account cannot say whose job this is and the record has to.
+owner=$(cat "$d/agent" 2>/dev/null)
+if [ -n "$owner" ] && [ -n "$me" ] && [ "$owner" != "$me" ] && [ "$anyone" != 1 ]; then
+    echo "dibs: job $id belongs to $owner, not to you." >&2
+    echo "  If you know it should stop, say so:  dibs --cancel $id --anyone" >&2
+    exit 2
+fi
+[ ! -f "$d/status" ] || { echo "job $id already finished, exit $(cat "$d/status")"; exit 0; }
+pid=$(cat "$d/pid" 2>/dev/null)
+[ -n "$pid" ] || { echo "job $id recorded no pid" >&2; exit 2; }
+kill -0 "$pid" 2>/dev/null || { echo "job $id is not running"; exit 0; }
+# The whole group, because the job was started with setsid and is its leader. Killing only
+# the leader would leave the ssh client alive and the far side still holding the lock; killing
+# the group takes that client down, and the far side learns of it the way it always does,
+# through the end of its liveness channel.
+kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+echo "stopped $id"
+REMOTE
+        exit $? ;;
+    job)
+        [ -n "$QUEUE" ] || { echo "dibs: no DIBS_QUEUE" >&2; exit 2; }
+        queue_run <<'REMOTE' "$JOBS_DIR" "$LABEL" "$OUT_N"
+set -u
+jobs=$(eval echo "$1"); id=$2; n=${3:-40}
+d=$jobs/$id
+[ -d "$d" ] || { echo "no such job: $id" >&2; exit 2; }
+echo "command: $(cat "$d/cmd")"
+if [ -f "$d/status" ]; then echo "state:   finished, exit $(cat "$d/status")"
+else echo "state:   running, pid $(cat "$d/pid" 2>/dev/null)"; fi
+echo "--- last $n lines ---"
+tail -n "$n" "$d/log" 2>/dev/null
+REMOTE
+        exit $? ;;
+esac
+
+
+remote_script() {
+cat <<'REMOTE'
+set -uo pipefail
+MODE=$1; LABEL=$2; WAIT=$3; MAXHOLD=$4; VERBOSE=$5; CMDB64=${6:-}; NO_WATCH=${7:-0}; TTY=${8:-0}
+JSON=${10:-0}
+AGENT=$(printf %s "${9:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
+AGENT_ID=$(printf %s "${11:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
+[ -n "$AGENT" ] || AGENT=?
+# The caller cannot clean this up: its command line is read by fish, which has no $?.
+# Unlinking a running script is safe; bash keeps the open inode.
+trap 'rm -f "$0"' EXIT
+
+# Where every user on this machine meets. A lock under /run/user or /tmp is keyed by uid, so
+# two people each took their own, each was told the machine was idle, and both benchmarked at
+# once: a wrong answer with nothing to notice it by. The shared directory has to be created
+# once by root, which is why this prefers it and does not require it. Absent, the old per-user
+# path is used unchanged, which is correct on a machine with one user and is what --check
+# reports on a machine that may not stay that way.
+#
+# Still tmpfs, so it empties on reboot. That is not cosmetic: a record left in a persistent
+# directory could name a pid that a later boot has reused, and prune, which asks /proc whether
+# the pid is alive, would believe it.
+# Overridable because /dev/shm is a Linux convention rather than a guarantee, and because a
+# machine may want it elsewhere. It is a location, not a switch: pointing it at a directory
+# that does not exist falls back exactly as if it were unset.
+SHARED_DIR=${DIBS_SHARED_LOCK_DIR:-/dev/shm/dibs-lock}
+if [ -n "${DIBS_LOCK_DIR:-}" ]; then
+    DIR=$DIBS_LOCK_DIR; LOCK_SCOPE=explicit
+elif [ -d "$SHARED_DIR" ] && [ -w "$SHARED_DIR" ]; then
+    DIR=$SHARED_DIR; LOCK_SCOPE=shared
+else
+    DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/dibs-lock; LOCK_SCOPE=peruser
+fi
+mkdir -p "$DIR" 2>/dev/null || { DIR=/tmp/dibs-lock-$(id -u); LOCK_SCOPE=peruser; mkdir -p "$DIR"; }
+# Records have to be removable by whoever prunes them, not only by whoever wrote them, or one
+# user's dead job wedges the queue for everyone else.
+[ "$LOCK_SCOPE" = shared ] && umask 002
+
+# Timings outlive the machine, so they live off the tmpfs. Shared alongside the lock when there
+# is a shared place to put them: an estimate built from everyone's runs of a label is a better
+# estimate, and a log that only shows your own jobs cannot answer who is holding the machine.
+SHARED_STATE=${DIBS_SHARED_STATE_DIR:-/var/lib/dibs}
+if [ -n "${DIBS_HISTORY:-}" ] || [ -n "${DIBS_LOG:-}" ]; then
+    HIST=${DIBS_HISTORY:-${XDG_STATE_HOME:-$HOME/.local/state}/dibs/history}
+    LOG=${DIBS_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/dibs/log}
+elif [ -d "$SHARED_STATE" ] && [ -w "$SHARED_STATE" ]; then
+    HIST=$SHARED_STATE/history; LOG=$SHARED_STATE/log
+else
+    HIST=${XDG_STATE_HOME:-$HOME/.local/state}/dibs/history
+    LOG=${XDG_STATE_HOME:-$HOME/.local/state}/dibs/log
+fi
+mkdir -p "$(dirname "$HIST")" "$(dirname "$LOG")" 2>/dev/null
+
+# Every arrival and every outcome, so a job that was killed, wedged or orphaned still
+# leaves a trace. The duration history next door only records what succeeded, which is
+# precisely why the jobs worth investigating are the ones missing from it.
+LOGGED_END=0
+log_event() {   # event queued run exit
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$(date -Is)" "$1" "$$" "$MODE" "$LABEL" \
+        "${2:--}" "${3:--}" "${4:--}" "${CMD_ONE:-${LABEL}}" "${AGENT:-?}" >> "$LOG" 2>/dev/null
+}
+
+# Assigning rather than printing is the difference: show() renders several of these per
+# line, and a command substitution forks the whole shell.
+# Colour is for a person reading a terminal, so it appears only when the far end is one.
+# Piped to a file, or read by the test suite, the output stays plain.
+if [ "${TTY:-0}" = 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_OFF=$'\033[0m'; C_DIM=$'\033[2m'; C_B=$'\033[1m'
+    C_BUSY=$'\033[1;31m'; C_FREE=$'\033[1;32m'; C_WARN=$'\033[33m'; C_Q=$'\033[36m'
+    C_BENCH=$'\033[1;31m'; C_SHARED=$'\033[1;33m'
+else
+    C_OFF= C_DIM= C_B= C_BUSY= C_FREE= C_WARN= C_Q= C_BENCH= C_SHARED=
+fi
+
+# The two modes are the thing being scanned for, so they take the colours the first line
+# already uses for them: a row reads the same way as the header that summarises it.
+mode_hue() { case "$1" in bench) MC=$C_BENCH ;; rsh) MC=$C_Q ;; *) MC=$C_SHARED ;; esac; }
+
+# One hue per agent, so the same session is the same colour everywhere it appears and two
+# agents never read as one. Reds, greens and yellows are left out: they mean state here.
+HUES=(33 39 63 99 105 135 170 176 205 38 44 111)
+declare -A ACOLOUR=()
+agent_hue() {   # name; sets AC
+    AC=""
+    [ -n "$C_OFF" ] || return
+    local s=$1
+    if [ -z "${ACOLOUR[$s]+set}" ]; then
+        local i n h=7
+        for (( i=0; i<${#s}; i++ )); do
+            printf -v n '%d' "'${s:i:1}"
+            h=$(( (h * 31 + n) & 0xffff ))
+        done
+        ACOLOUR[$s]=$'\033[38;5;'"${HUES[$(( h % ${#HUES[@]} ))]}"m
+    fi
+    AC=${ACOLOUR[$s]}
+}
+
+dur_() {   # var seconds
+    local s=${2:-0}
+    [ "$s" -lt 0 ] && s=0
+    if   [ "$s" -ge 3600 ]; then printf -v "$1" '%dh%02dm' $((s/3600)) $((s%3600/60))
+    elif [ "$s" -ge 60 ];   then printf -v "$1" '%dm%02ds' $((s/60)) $((s%60))
+    else                         printf -v "$1" '%ds' "$s"
+    fi
+}
+# Bash 5 keeps the wall clock in a variable, and show() reads it once per line.
+now() { NOW=${EPOCHSECONDS:-$(date +%s)}; }
+age_() { now; dur_ "$1" $(( NOW - $2 )); }
+# The printing forms, for the once-per-job messages where a fork does not matter.
+dur() { local d; dur_ d "$1"; printf '%s' "$d"; }
+age() { local d; age_ d "$1"; printf '%s' "$d"; }
+
+# CPU seconds burned by a holder and everything under it, including children it has
+# already reaped. That last part is the whole difficulty: a supervisor that spawns a
+# benchmark, waits for it, and spawns the next one owns almost no CPU itself at any given
+# instant, and ps TIME only reports the living. Reading utime+stime+cutime+cstime out of
+# /proc counts the work its finished children did, which is where a sweep's time lives.
+#
+# The kernel lists a process's children, so the walk descends the holder's own tree instead
+# of reading every process on the machine, and every step of it is a shell builtin. That is
+# the difference between a --watch tick costing a benchmark nothing and costing it a
+# machine-wide /proc scan and thirty forks, five times a minute.
+CLK=$(getconf CLK_TCK 2>/dev/null || echo 100)
+HAVE_CHILDREN=0
+[ "${DIBS_NO_CHILDREN:-0}" = 1 ] || { [ -r "/proc/$$/task/$$/children" ] && HAVE_CHILDREN=1; }
+cpu_used() {   # sets CPU_TICKS and CPU_USED
+    [ "$HAVE_CHILDREN" = 1 ] || {
+        CPU_TICKS=$(cpu_used_scan "$1"); CPU_USED=$(( CPU_TICKS / CLK )); return; }
+    local -a q=("$1") a
+    local i=0 pid line rest kids k f total=0
+    while [ "$i" -lt "${#q[@]}" ]; do
+        pid=${q[i]}; i=$((i+1))
+        line=""; read -r line 2>/dev/null < "/proc/$pid/stat"
+        [ -n "$line" ] || continue
+        rest=${line#*") "}                  # comm can hold spaces and parentheses
+        read -ra a <<< "$rest"
+        # utime stime cutime cstime, fields 14 to 17, counted from the end of comm
+        [ "${#a[@]}" -ge 15 ] && total=$(( total + a[11] + a[12] + a[13] + a[14] ))
+        for f in /proc/$pid/task/*/children; do
+            [ -r "$f" ] || continue
+            # The list has no trailing newline, so read reports failure having read it all.
+            kids=""; read -r kids 2>/dev/null < "$f"
+            for k in $kids; do q+=("$k"); done
+        done
+    done
+    CPU_TICKS=$total
+    CPU_USED=$(( total / CLK ))
+}
+
+# Kernels built without CONFIG_PROC_CHILDREN cannot be asked downward, so the tree has to be
+# rebuilt from every process's parent.
+cpu_used_scan() {
+    local pids
+    pids=$(ps -eo pid=,ppid= | awk -v root="$1" '
+        {pid[NR]=$1; par[NR]=$2}
+        END {
+            want[root]=1
+            do {
+                added=0
+                for (i=1; i<=NR; i++)
+                    if (want[par[i]] && !want[pid[i]]) { want[pid[i]]=1; added=1 }
+            } while (added)
+            for (i=1; i<=NR; i++) if (want[pid[i]]) print pid[i]
+        }')
+    { for p in $pids; do cat "/proc/$p/stat" 2>/dev/null; done; } | awk '
+        {
+            rest = substr($0, index($0, ") ") + 2)   # comm can hold spaces; skip past it
+            n = split(rest, a, " ")
+            if (n >= 15) sum += a[12] + a[13] + a[14] + a[15]
+        }
+        END {print sum + 0}'
+}
+
+# Where a job's own output is going, walking its tree the way cpu_used does. Deeper first
+# in the order they come back, because the redirect an agent wrote is always below the shells
+# the wrapper puts in the way. A file is reported once however many descendants hold it open.
+fd_targets() {   # root-pid channel; prints distinct regular files the tree writes to
+    local -a q=("$1")
+    local i=0 pid fd t f k seen=" " out=""
+    while [ "$i" -lt "${#q[@]}" ]; do
+        pid=${q[i]}; i=$((i+1))
+        for fd in 1 2; do
+            t=$(readlink "/proc/$pid/fd/$fd" 2>/dev/null) || continue
+            case "$t" in
+                /*) ;;                       # a pipe or socket reads as pipe:[n], not a path
+                 *) continue ;;
+            esac
+            [ "$t" = "$2" ] && continue      # the channel it was launched down, not its own doing
+            [ -f "$t" ] || continue          # /dev/null and the terminal are not output
+            case "$seen" in *" $t "*) continue ;; esac
+            seen="$seen$t "; out="$out$t"$'\n'
+        done
+        for f in /proc/$pid/task/*/children; do
+            [ -r "$f" ] || continue
+            k=""; read -r k 2>/dev/null < "$f"
+            for t in $k; do q+=("$t"); done
+        done
+    done
+    printf '%s' "$out"
+}
+
+# The first file a job's tree is writing to, which is what --out would show. Separate from
+# fd_targets' full list because the status wants one line, not an inventory.
+holder_output() {   # pid; sets OUTPUT_FILE
+    local root
+    OUTPUT_FILE=
+    root=$(readlink "/proc/$1/fd/1" 2>/dev/null)
+    OUTPUT_FILE=$(fd_targets "$1" "$root" | head -1)
+}
+
+# A median moves only when a run finishes, and a run appends to the history before its
+# holder file goes, so a redraw that finds the same entries in the lock directory is looking
+# at the same history it computed against last time.
+declare -A EST=()
+EST_SIG=""
+estimate() {   # mode label agent; sets EST_V EST_N EST_SCOPE, 1 when it has nothing to go on
+    local key="$1/$2/${3-}"
+    [ -n "${EST[$key]+set}" ] || EST[$key]=$(estimate_compute "$1" "$2" "${3-}")
+    [ -n "${EST[$key]}" ] || return 1
+    read -r EST_LO EST_V EST_HI EST_N EST_SCOPE <<< "${EST[$key]}"
+}
+
+# A median alone claims a confidence the history does not support. Half of these labels name
+# a repo rather than a kind of work, so the same name covers a `git status` and a full build:
+# `shared cubek` has 29 runs, nineteen of them instant and seven past two minutes. Its median
+# is honestly zero and predicts nothing. Carrying the ninetieth percentile too lets the
+# display say which numbers to trust, and gives a job past its median something better to be
+# measured against than silence.
+# Both tails, not just the high one. A sweep that has run in 20s and in 12m has a median
+# right in the middle of a gap it has never actually landed in, and checking only the top
+# would call that number trustworthy. The +1 is because durations are whole seconds, so a
+# tenth percentile of zero is common and would otherwise make every ratio infinite.
+est_wide() { [ "$EST_N" -ge 4 ] && [ "$EST_HI" -gt $(( (EST_LO + 1) * 3 )) ]; }
+
+# Median rather than mean: one benchmark that hit a rebuild should not drag every estimate.
+# Falls back from this exact label to the mode as a whole, and says nothing when it knows
+# nothing, since a made-up number is worse than no number.
+# Label, then agent, then mode. The label is the sharpest key and the one most often missing:
+# two thirds of the labels ever recorded here appear exactly once, because a label describing
+# one particular run files its duration where nothing will ever look it up again. What that
+# agent's jobs usually take is a poorer answer than what this job usually takes, and a far
+# better one than what every job on the machine usually takes.
+estimate_compute() {   # mode label agent
+    [ -s "$HIST" ] || return 1
+    local vals scope=this
+    vals=$(awk -F'\t' -v m="$1" -v l="$2" '$1==m && $2==l {print $3}' "$HIST")
+    if [ -z "$vals" ] && [ -n "${3-}" ]; then
+        vals=$(awk -F'\t' -v m="$1" -v a="$3" '$1==m && $4==a {print $3}' "$HIST")
+        scope=agent
+    fi
+    if [ -z "$vals" ]; then
+        vals=$(awk -F'\t' -v m="$1" '$1==m {print $3}' "$HIST")
+        scope=mode
+    fi
+    [ -z "$vals" ] && return 1
+    printf '%s\n' "$vals" | sort -n | awk -v s="$scope" '
+        {a[NR]=$1}
+        END {
+            if (NR%2) m=a[(NR+1)/2]; else m=int((a[NR/2]+a[NR/2+1])/2)
+            h=int(0.9*NR); if (h < 0.9*NR) h++   # nearest rank, so it never falls below the median
+            if (h < 1) h=1
+            l=int(0.1*NR); if (l < 1) l=1
+            print a[l], m, a[h], NR, s
+        }'
+}
+
+# A holder file outlives its process only if that process was killed outright, since the
+# lock itself is the open descriptor. Trust the pid, not the file.
+prune() {
+    local f pid
+    for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.*; do
+        [ -e "$f" ] || continue
+        pid=${f##*.}
+        # /proc rather than kill -0: signalling another user's process fails with EPERM,
+        # which would prune a live holder's record on a machine with more than one account.
+        [ -d "/proc/$pid" ] || rm -f "$f"
+    done
+}
+
+# A cumulative count can only answer whether a job has ever done anything, which catches one
+# that wedged before it started and nothing else: the sweep that runs for an hour and then
+# hangs has plenty of CPU behind it forever. Each look leaves behind what the tree had burned,
+# so the next one can tell whether it has moved, and --watch leaves one every few seconds.
+# Two observations are needed before there is anything to say, and it says nothing until then.
+idle_check() {   # pid start; sets IDLE_FOR, IDLE_KIND and CPU_RATE
+    local f=$DIR/cpu.$1 prev worked pts line=
+    IDLE_FOR= IDLE_KIND= CPU_RATE=-1
+    # 2>/dev/null ahead of the redirect, or the shell reports the first look at a holder,
+    # when there is no sample yet, as an error.
+    read -r line 2>/dev/null < "$f"
+    read -r prev worked pts <<< "$line"
+    case "${prev:-x}" in (*[!0-9]*) prev= ;; esac
+    case "${worked:-x}" in (-) ;; (*[!0-9]*) worked= ;; esac
+    case "${pts:-x}" in (*[!0-9]*) pts= ;; esac
+    # Cores' worth, in hundredths, across the gap since the last look. The total on its own
+    # says nothing about how hard a job is working: an hour of core-time means one thing over
+    # ten minutes and quite another over ten hours.
+    if [ -n "$prev" ] && [ -n "$pts" ] && [ "$NOW" -gt "$pts" ]; then
+        CPU_RATE=$(( (CPU_TICKS - prev) * 100 / (CLK * (NOW - pts)) ))
+    fi
+    if [ "$CPU_TICKS" -eq 0 ]; then
+        worked=-
+    elif [ -z "$prev" ] || [ "$CPU_TICKS" -gt "$prev" ] || [ "$worked" = - ] || [ -z "$worked" ]; then
+        worked=$NOW
+    fi
+    # Not rewritten within the same second, so two looks in quick succession still leave a
+    # baseline far enough back to measure a rate against.
+    [ "$NOW" -gt "${pts:-0}" ] && printf '%s %s %s\n' "$CPU_TICKS" "$worked" "$NOW" 2>/dev/null > "$f"
+    if [ "$worked" = - ]; then
+        IDLE_FOR=$(( NOW - $2 )); IDLE_KIND=never
+    elif [ -n "$prev" ] && [ "$CPU_TICKS" -le "$prev" ]; then
+        IDLE_FOR=$(( NOW - worked )); IDLE_KIND=stalled
+    fi
+    # A job still writing is a job still working, whatever its process tree says, and the tree
+    # stopped being the whole story the moment a compilation cache was involved: sccache runs
+    # rustc inside its own daemon, which is parented to init, so the compiling happens outside
+    # the tree entirely. Reporting that as stalled would have this tell you to kill healthy
+    # builds, which is worse than reporting no rate at all.
+    if [ -n "$IDLE_FOR" ] && [ -n "${OUTPUT_FILE:-}" ] && [ -f "$OUTPUT_FILE" ]; then
+        local wrote
+        wrote=$(stat -c %Y "$OUTPUT_FILE" 2>/dev/null) || wrote=
+        # Its own window, not the CPU one: they answer different questions, and sharing a
+        # knob would mean tightening one silently disables the other.
+        if [ -n "$wrote" ] && [ "$(( NOW - wrote ))" -lt "${DIBS_WROTE_WITHIN:-120}" ]; then
+            IDLE_FOR= IDLE_KIND=
+        fi
+    fi
+}
+
+# Arrival order. It is what the queue looks like, not a promise about wake order. Insertion
+# sort, since the queue is a handful of entries and sort(1) is a fork.
+QF=()
+queue_sorted() {
+    local f j start rest
+    local -a qs=()
+    QF=()
+    for f in "$DIR"/waiting.*; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r _ _ start rest < "$f"
+        j=${#qs[@]}
+        while [ "$j" -gt 0 ] && [ "${qs[j-1]}" -gt "$start" ]; do
+            qs[j]=${qs[j-1]}; QF[j]=${QF[j-1]}; j=$((j-1))
+        done
+        qs[j]=$start; QF[j]=$f
+    done
+}
+
+# One document per line, so a reader can take it a line at a time. Built with printf and
+# parameter expansion rather than a JSON tool, because this runs on every --watch tick and a
+# fork per field would undo the whole point of the redraw being free.
+jstr() {   # var value
+    local v=${2-}
+    v=${v//\\/\\\\}
+    v=${v//\"/\\\"}
+    printf -v "$1" '"%s"' "$v"
+}
+# Two renderers asking the same question in two places is exactly how they come to disagree:
+# --json called a job overrunning while --status said nothing, for every label whose recorded
+# runs were all under a second and whose median is therefore zero.
+# Judged against the slowest this label has ever honestly been, not against its middle: a
+# label whose runs range twenty seconds to twelve minutes has no business calling a two
+# minute run stuck.
+overrunning() {   # elapsed
+    [ "$EST_SCOPE" = this ] && [ "$EST_HI" -gt 0 ] && [ "$1" -gt $(( EST_HI * 2 )) ]
+}
+
+# Past the median the job is in the tail, and the tail still has a shape. Surrendering there
+# cost every waiter its ETA, because the labels that hold the machine longest are exactly the
+# ones whose median is zero. Zero remains a wrong answer, reading as "any moment now".
+remaining_of() {   # elapsed; sets REM, -1 when nothing can be said, and REM_KIND
+    REM_KIND=typical
+    if [ "$1" -lt "$EST_V" ]; then REM=$(( EST_V - $1 ))
+    elif [ "$1" -lt "$EST_HI" ]; then REM=$(( EST_HI - $1 )); REM_KIND=bound
+    else REM=-1; REM_KIND=
+    fi
+}
+
+# Queued shared jobs are not standing in line behind one another. The shared lock admits all
+# of them the moment it is free, so a run of them starts together and the queue only actually
+# advances at a benchmark, which has to wait for everything already admitted to drain.
+# Adding their durations up told the third shared job it was waiting out the first two.
+queue_eta_start() {   # free known
+    QE_AT=$1 QE_KNOWN=$2 QE_PENDING=0 QE_PENDING_KNOWN=1
+}
+queue_eta() {   # mode label agent; sets QE_ETA, -1 when it cannot be said
+    local have=1
+    estimate "$1" "$2" "$3" || have=0
+    if [ "$1" != bench ]; then
+        [ "$QE_KNOWN" = 1 ] && QE_ETA=$QE_AT || QE_ETA=-1
+        if [ "$have" = 1 ]; then
+            [ "$EST_V" -gt "$QE_PENDING" ] && QE_PENDING=$EST_V
+        else
+            QE_PENDING_KNOWN=0   # only matters to a benchmark queued behind it
+        fi
+        return
+    fi
+    if [ "$QE_KNOWN" = 1 ] && [ "$QE_PENDING_KNOWN" = 1 ]; then
+        QE_ETA=$(( QE_AT + QE_PENDING ))
+        [ "$have" = 1 ] && QE_AT=$(( QE_ETA + EST_V )) || QE_KNOWN=0
+    else
+        QE_ETA=-1 QE_KNOWN=0
+    fi
+    QE_PENDING=0 QE_PENDING_KNOWN=1
+}
+
+show_json() {
+    local f mode pid start label agent cmd elapsed sep="" st=idle jl ja jc jo i=0 free=0 eta_known=1
+    local c csep sc
+    prune
+    now
+    for f in "$DIR"/holder.*; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode _ _ _ _ _ < "$f"
+        [ "$mode" = bench ] && st=bench || st=shared
+        break
+    done
+    if [ "$st" = idle ]; then
+        exec 7>"$DIR/rw"
+        if flock -n -x 7 2>/dev/null; then flock -u 7; else st=orphan; fi
+        exec 7>&-
+    fi
+    # What a dispatcher needs to rank this machine. loadavg rather than the sum of what dibs
+    # holds, because on a machine someone is working at most of the competing load was never
+    # started through dibs and summing holders cannot see it. Scaled by 100, since this is
+    # bash and the reader wants an integer.
+    printf '{"t":%s,"state":"%s","cores":%s,"load":%s' \
+        "$NOW" "$st" "$(nproc 2>/dev/null || echo 1)" \
+        "$(awk '{printf "%d", $1 * 100}' /proc/loadavg 2>/dev/null || echo 0)"
+    # Which repos this machine has a build cache for. A dispatcher that does not know this
+    # picks by load on the first run of a repo and lands somewhere with nothing cached, which
+    # is minutes of cold compile chosen over seconds of queueing.
+    printf ',"caches":['
+    # Resolved here, not passed in: this half arrives over ssh, which forwards no environment.
+    csep="" sc=${DIBS_SCRATCH:-$HOME/.cache/dibs}
+    for c in "$sc/target"/*; do
+        # A marker cargo writes, not the directory itself: preparing a worktree creates the
+        # target directory whether or not anything is ever built in it, so without this every
+        # machine claims every repo it has ever fetched.
+        [ -f "$c/.rustc_info.json" ] || [ -d "$c/release" ] || [ -d "$c/debug" ] || continue
+        printf '%s"%s"' "$csep" "$(basename "$c")"
+        csep=","
+    done
+    printf ']'
+    printf ',"holders":['
+    for f in "$DIR"/holder.*; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+        elapsed=$(( NOW - start ))
+        cpu_used "$pid"
+        holder_output "$pid"
+        idle_check "$pid" "$start"
+        jstr jl "$label"; jstr ja "$agent"; jstr jc "$cmd"
+        printf '%s{"mode":"%s","pid":%s,"label":%s,"agent":%s,"cmd":%s,"started":%s,"elapsed":%s,"cpu":%s' \
+            "$sep" "$mode" "$pid" "$jl" "$ja" "$jc" "$start" "$elapsed" "$CPU_USED"
+        if estimate "$mode" "$label" "$agent"; then
+            remaining_of "$elapsed"
+            [ "$REM" -gt "$free" ] && free=$REM
+            [ "$REM" -lt 0 ] && eta_known=0
+            printf ',"est":%s,"est_lo":%s,"est_hi":%s,"est_n":%s,"est_scope":"%s"' \
+                "$EST_V" "$EST_LO" "$EST_HI" "$EST_N" "$EST_SCOPE"
+            est_wide && printf ',"est_wide":true'
+            [ "$REM" -ge 0 ] && printf ',"remaining":%s,"remaining_kind":"%s"' "$REM" "$REM_KIND"
+            overrunning "$elapsed" && printf ',"overrun":true'
+        else
+            eta_known=0
+        fi
+        holder_output "$pid"
+        [ -n "$OUTPUT_FILE" ] && { jstr jo "$OUTPUT_FILE"; printf ',"output":%s' "$jo"; }
+        [ "$CPU_RATE" -ge 0 ] && printf ',"cpu_rate":%s' "$CPU_RATE"
+        [ -n "$IDLE_FOR" ] && printf ',"idle_for":%s,"idle_kind":"%s"' "$IDLE_FOR" "$IDLE_KIND"
+        printf '}'
+        sep=","
+    done
+    printf '],"queue":['
+    queue_sorted
+    sep=""
+    queue_eta_start "$free" "$eta_known"
+    for f in "${QF[@]}"; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+        i=$((i+1))
+        jstr jl "$label"; jstr ja "$agent"; jstr jc "$cmd"
+        printf '%s{"position":%s,"mode":"%s","pid":%s,"label":%s,"agent":%s,"cmd":%s,"arrived":%s,"waiting":%s' \
+            "$sep" "$i" "$mode" "$pid" "$jl" "$ja" "$jc" "$start" "$(( NOW - start ))"
+        queue_eta "$mode" "$label" "$agent"
+        [ "$QE_ETA" -ge 0 ] && printf ',"eta":%s' "$QE_ETA"
+        printf '}'
+        sep=","
+    done
+    printf ']}\n'
+}
+
+show() {
+    local f held=0 mode pid start label cmd elapsed rem free=0 total=0 eta_known=1 sig=
+    local used el ue uh rr wa idl agent AC MC left usual depth=0 qnote=
+    if [ "$VERBOSE" = 1 ]; then
+        echo "  [$DIR]"
+        ls -la "$DIR" 2>&1 | sed 's/^/  /'
+        echo "  [$HIST: $( [ -s "$HIST" ] && wc -l < "$HIST" || echo 0 ) runs recorded]"
+    fi
+    prune
+    for f in "$DIR"/holder.* "$DIR"/waiting.*; do sig="$sig ${f##*/}"; done
+    [ "$sig" = "$EST_SIG" ] || { EST=(); EST_SIG=$sig; }
+    for f in "$DIR"/waiting.*; do [ -e "$f" ] && depth=$((depth+1)); done
+    [ "$depth" -gt 0 ] && qnote="$C_DIM ($depth queued)$C_OFF"
+
+    for f in "$DIR"/holder.*; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+        if [ "$held" -eq 0 ]; then
+            [ "$mode" = bench ] && echo "${C_BUSY}dibs: BUSY, benchmark in progress${C_OFF}$qnote" \
+                                || echo "${C_WARN}dibs: in use, shared${C_OFF}$qnote"
+        fi
+        held=$((held+1))
+        now; elapsed=$(( NOW - start ))
+        cpu_used "$pid"; used=$CPU_USED
+        dur_ el "$elapsed"
+        holder_output "$pid"
+        idle_check "$pid" "$start"
+        agent_hue "$agent"; mode_hue "$mode"
+        if [ -n "$IDLE_FOR" ] && [ "$IDLE_FOR" -gt "${DIBS_IDLE_AFTER:-60}" ]; then
+            dur_ idl "$IDLE_FOR"
+            if [ "$IDLE_KIND" = never ]; then
+                echo "  $MC$mode$C_OFF  $AC$label$C_OFF  $C_B$el$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_WARN}[IDLE: no CPU at all in $idl, it is waiting on something]$C_OFF"
+            else
+                echo "  $MC$mode$C_OFF  $AC$label$C_OFF  $C_B$el$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_WARN}[IDLE: ${used}s of CPU, none of it in the last $idl, it is waiting on something]$C_OFF"
+            fi
+            echo "    ${C_WARN}stop it with: dibs --kill $pid$C_OFF"
+            echo "    $C_DIM$cmd$C_OFF"
+            echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF"
+            held=$((held+1))
+            continue
+        fi
+        if estimate "$mode" "$label" "$agent"; then
+            remaining_of "$elapsed"
+            [ "$REM" -gt "$free" ] && free=$REM
+            if [ "$REM" -lt 0 ]; then
+                eta_known=0; left="longer than it has ever taken"
+            elif [ "$REM_KIND" = bound ]; then
+                dur_ rr "$REM"; left="under $rr left if it runs true to form"
+            else
+                dur_ rr "$REM"; left="~$rr left"
+            fi
+            if est_wide; then
+                dur_ ue "$EST_LO"; dur_ uh "$EST_HI"
+                [ "$EST_LO" -eq 0 ] && ue="under a second"
+                usual="anywhere from $ue to $uh over $EST_N runs"
+            elif [ "$EST_V" -eq 0 ]; then
+                usual="under a second over $EST_N runs"; left=
+            elif [ "$EST_N" = 1 ]; then
+                # One sample is a fact about one run, not a habit, and saying "usually" of it
+                # claims a regularity nothing has been observed to have.
+                dur_ ue "$EST_V"; usual="ran once, in $ue"
+            else
+                dur_ ue "$EST_V"; usual="usually $ue over $EST_N runs"
+            fi
+            # A colon rather than a verb: the phrase after it has to read the same whether it
+            # says "usually 5m00s" or "anywhere from 0s to 4m39s".
+            [ "$EST_SCOPE" = agent ] && usual="nothing on this one; this agent's other $mode jobs: $usual"
+            [ "$EST_SCOPE" = mode ] && usual="nothing on this one; every $mode job on the machine: $usual"
+            if overrunning "$elapsed"; then
+                dur_ uh "$EST_HI"
+                echo "  $MC$mode$C_OFF  $AC$label$C_OFF  $C_B$el$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_WARN}[STUCK? its slowest run was $uh, this is over twice that]$C_OFF"
+                echo "    ${C_WARN}stop it with: dibs --kill $pid$C_OFF"
+            else
+                echo "  $MC$mode$C_OFF  $AC$label$C_OFF  $C_B$el$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_DIM}[$usual${left:+, $left}]$C_OFF"
+            fi
+        else
+            # Without the holder's typical duration there is no honest ETA for the queue.
+            eta_known=0
+            echo "  $MC$mode$C_OFF  $AC$label$C_OFF  $C_B$el$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_DIM}[no history for this one yet]$C_OFF"
+        fi
+        echo "    $C_DIM$cmd$C_OFF"
+        echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF"
+        # Where its output is going, so --out is discovered by reading the status rather than
+        # by already knowing the feature exists. Silent when a job redirected nowhere, because
+        # there is then nothing to offer and a line saying so would be noise on every tick.
+        holder_output "$pid"
+        [ -n "$OUTPUT_FILE" ] && \
+            echo "    ${C_DIM}writing $OUTPUT_FILE$C_OFF   ${C_DIM}(dibs --out $pid)$C_OFF"
+    done
+    if [ "$held" -eq 0 ]; then
+        exec 7>"$DIR/rw"
+        if flock -n -x 7 2>/dev/null; then
+            flock -u 7
+            echo "${C_FREE}dibs: idle${C_OFF}"
+        else
+            echo "${C_BUSY}dibs: LOCKED BY AN ORPHAN.${C_OFF} No holder record, but the lock is taken, so"
+            echo "  something outlived its parent. Nothing can run until it goes."
+            # Named here rather than left as an instruction. This already runs on the machine,
+            # so telling someone to go and ask it themselves is asking them to do the one thing
+            # this could have done for them, at the moment they are least able to.
+            orph=$(fuser "$DIR/rw" 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$')
+            if [ -n "$orph" ]; then
+                echo "  holding it:"
+                for p in $orph; do
+                    ps -o pid=,etime=,user=,args= -p "$p" 2>/dev/null |
+                        sed 's/^ */    /' | cut -c1-100
+                done
+                echo "  Stop it with: dibs --kill <pid> --anyone"
+            else
+                echo "  Nothing here reports holding it. If fuser is missing, install psmisc."
+            fi
+        fi
+        exec 7>&-
+    fi
+
+    queue_sorted
+    total=${#QF[@]}
+    [ "$total" -eq 0 ] && return 0
+
+    local i=0
+    queue_eta_start "$free" "$eta_known"
+    for f in "${QF[@]}"; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+        i=$((i+1))
+        age_ wa "$start"
+        agent_hue "$agent"; mode_hue "$mode"
+        queue_eta "$mode" "$label" "$agent"
+        if [ "$QE_ETA" -gt 0 ]; then
+            dur_ rr "$QE_ETA"
+            echo "  ${C_Q}queued $i of $total$C_OFF: $MC$mode$C_OFF  $AC$label$C_OFF  waiting $C_B$wa$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_DIM}[~$rr until it starts]$C_OFF"
+        elif [ "$QE_ETA" = 0 ]; then
+            echo "  ${C_Q}queued $i of $total$C_OFF: $MC$mode$C_OFF  $AC$label$C_OFF  waiting $C_B$wa$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_DIM}[starts as soon as the lock frees]$C_OFF"
+        else
+            echo "  ${C_Q}queued $i of $total$C_OFF: $MC$mode$C_OFF  $AC$label$C_OFF  waiting $C_B$wa$C_OFF  ${C_DIM}pid $pid$C_OFF"
+        fi
+        echo "    $C_DIM$cmd$C_OFF"
+        echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF"
+    done
+    [ "$total" -gt 1 ] && echo "  $C_DIM(queued in arrival order; the kernel picks the actual wake order)$C_OFF"
+    return 0
+}
+
+case "$MODE" in
+    status)  [ "$JSON" = 1 ] && { show_json; exit 0; }
+             show; exit 0 ;;
+    watch)
+        # No lock, like --status, and no work between ticks: the read is both the interval
+        # and the liveness check, since EOF on the channel is how this side hears that the
+        # terminal watching it is gone.
+        exec 5<&0
+        while :; do
+            if [ "$JSON" = 1 ]; then
+                show_json
+            else
+            [ "$TTY" = 1 ] && printf '\033[H\033[2J\033[3J'
+            printf '%s   every %ss, ctrl-c to stop\n' "$(date '+%H:%M:%S')" "$LABEL"
+            show
+            fi
+            if [ "$NO_WATCH" = 1 ]; then
+                sleep "$LABEL"
+            else
+                read -r -t "$LABEL" -u 5 _
+                [ $? -gt 128 ] || exit 0
+            fi
+        done ;;
+    log)     n=$LABEL
+             [ -s "$LOG" ] || { echo "Nothing logged yet ($LOG)."; exit 0; }
+             printf '%-19s %-9s %-7s %-14s %6s %6s %5s  %-22s %s\n' \
+                 WHEN EVENT MODE LABEL QUEUED RAN EXIT AGENT COMMAND
+             tail -n "$n" "$LOG" | awk -F'\t' '{
+                 printf "%-19s %-9s %-7s %-14s %6s %6s %5s  %-22s %s\n",
+                        substr($1,1,19), $2, $4, substr($5,1,14), $6, $7, $8,
+                        substr(($10 == "" ? "?" : $10),1,22), substr($9,1,50)
+             }'
+             exit 0 ;;
+    # What decides whether a binary built here can run somewhere else. Reported as facts
+    # rather than as one hash: compatibility is directional, and a hash can only say that two
+    # machines differ, never which of them can accept the other's work.
+    abi)
+        printf 'kernel %s\n' "$(uname -s)"
+        printf 'arch %s\n' "$(uname -m)"
+        # The x86-64 microarchitecture levels, the coarse ordering a binary is built against.
+        # An approximation on purpose: -C target-cpu=native can reach past the level it lands
+        # in, so equal levels make reuse plausible rather than proven.
+        if [ -r /proc/cpuinfo ]; then
+            awk '/^flags/ {
+                for (i = 1; i <= NF; i++) f[$i] = 1
+                lvl = 1
+                if (f["cx16"] && f["lahf_lm"] && f["popcnt"] && f["sse4_1"] && f["sse4_2"] && f["ssse3"]) lvl = 2
+                if (lvl == 2 && f["avx"] && f["avx2"] && f["bmi1"] && f["bmi2"] && f["f16c"] &&
+                    f["fma"] && f["abm"] && f["movbe"] && f["xsave"]) lvl = 3
+                if (lvl == 3 && f["avx512f"] && f["avx512bw"] && f["avx512cd"] && f["avx512dq"] &&
+                    f["avx512vl"]) lvl = 4
+                printf "level %d\n", lvl
+                exit
+            }' /proc/cpuinfo
+        fi
+        # A binary needs the glibc it was built against or newer, so this is an ordering too,
+        # and its direction is most of the answer.
+        ldd --version 2>/dev/null | awk 'NR == 1 { print "glibc " $NF; exit }'
+        command -v rustc >/dev/null 2>&1 && printf 'rustc %s\n' "$(rustc -V 2>/dev/null | awk '{print $2}')"
+        nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null |
+            head -1 | awk 'NF { print "nvidia " $1 }'
+        printf 'os %s\n' "$(. /etc/os-release 2>/dev/null && echo "$ID $VERSION_ID" || echo unknown)"
+        exit 0 ;;
+
+    check)
+        # Getting here at all has already proved the parts that cannot be tested directly: ssh
+        # reached the machine, its login shell parsed the bootstrap line, and bash ran what
+        # arrived. What follows is everything that would otherwise fail later and further away.
+        FAIL=0 WARN=0
+        ok()   { printf '  ok    %s\n' "$1"; }
+        warn() { printf '  warn  %s\n' "$1"; WARN=$((WARN+1)); }
+        bad()  { printf '  FAIL  %s\n' "$1"; FAIL=$((FAIL+1)); }
+        note() { printf '        %s\n' "$1"; }
+
+        echo "dibs --check on $(hostname -s)"
+        echo
+
+        ok "bash ${BASH_VERSION%%(*}, and the login shell parsed the bootstrap"
+
+        missing=""
+        for t in flock timeout; do command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
+        [ -z "$missing" ] && ok "flock and timeout present" || bad "missing, and nothing works without them:$missing"
+        if command -v sccache >/dev/null 2>&1; then
+            ok "sccache present, so a cold target directory is cheap here"
+        else
+            warn "no sccache: every build with a cold target directory pays in full"
+            note "Measured here: 922s to fill one from nothing, 104s when sccache had seen"
+            note "the work before. Install it with:  cargo install sccache --locked"
+        fi
+        if command -v setpriv >/dev/null 2>&1; then ok "setpriv present, so a job dies with its caller"
+        else warn "no setpriv: a job whose caller is killed outright can outlive it"; fi
+
+        # The CPU walk reads these to find work done in children that were already reaped.
+        # Without them a busy job reads as idle and gets reported stuck.
+        if read -r _ 2>/dev/null < /proc/$$/task/$$/children || [ -e /proc/$$/task/$$/children ]; then
+            ok "/proc child lists readable, so idle detection can see reaped children"
+        else
+            warn "no /proc/<pid>/task/*/children: a working job may be misreported as idle"
+        fi
+
+        case "$LOCK_SCOPE" in
+            shared) ok "lock directory is shared: $DIR" ;;
+            explicit) warn "lock directory set explicitly: $DIR (only what set it will agree)" ;;
+            *)
+                warn "lock directory is keyed to this uid: $DIR"
+                note "Anyone logging in as a different user takes a different lock, and both"
+                note "are told the machine is idle. Fine if everyone shares this account, and"
+                note "a wrong answer with nothing to notice it by if they do not."
+                note ""
+                note "Either give everyone this one account, which also lets one build cache"
+                note "serve all of them, or make the lock directory shared. As root, idle:"
+                note "  groupadd -f dibs && gpasswd -a <each-user> dibs"
+                note "  install -d -m 2775 -g dibs $SHARED_DIR"
+                note "  printf 'd $SHARED_DIR 2775 root dibs -\\n' > /etc/tmpfiles.d/dibs.conf"
+                note "The last line recreates it on boot, since that tmpfs is emptied then." ;;
+        esac
+
+        scratch=${DIBS_SCRATCH:-$HOME/.cache/dibs}
+        fstype=$(df -PT "$scratch" 2>/dev/null | awk 'NR==2{print $2}')
+        avail=$(df -Ph "$scratch" 2>/dev/null | awk 'NR==2{print $4}')
+        if [ ! -w "$scratch" ]; then bad "scratch $scratch is not writable"
+        elif [ "$fstype" = tmpfs ]; then
+            bad "scratch $scratch is tmpfs, which is RAM and usually under a quota"
+            note "One build tree there fills it for every user, and a full tmpfs breaks"
+            note "every command including the ones for finding out why. Set DIBS_SCRATCH."
+        else ok "scratch $scratch on $fstype, $avail free"; fi
+
+        case "$HIST" in
+            /var/lib/dibs/*) ok "history and log shared: $(dirname "$HIST")" ;;
+            *) warn "history is per-user: $HIST"
+               note "Estimates are built only from your own runs, and the log shows only"
+               note "your own jobs. Shared, as root:  install -d -m 2775 -g dibs /var/lib/dibs" ;;
+        esac
+
+        echo
+        echo "  devices"
+        cores=$(nproc 2>/dev/null)
+        model=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
+        printf '    cpu   %s, %s threads\n' "${model:-unknown}" "${cores:-?}"
+        # Judged on output, never on the tool being installed or on its exit status. This
+        # laptop has rocm-smi and no AMD GPU: it prints "Driver not initialized" and exits 0,
+        # so asking either question gets a confident yes about hardware that is not there.
+        found=0
+        nv=$(nvidia-smi --query-gpu=name,pci.bus_id,memory.total,compute_cap \
+             --format=csv,noheader,nounits 2>/dev/null)
+        if [ -n "$nv" ]; then
+            found=1
+            printf '%s\n' "$nv" | while IFS=, read -r name busid mem cc; do
+                printf '    gpu   %s  %s  %s MiB  sm%s\n' "$(echo $name)" "$(echo $busid)" "$(echo $mem)" "$(echo $cc)"
+            done
+        fi
+        amd=$(rocm-smi --showproductname --csv 2>/dev/null | awk -F, 'NR>1 && NF>1 {print $2}')
+        if [ -n "$amd" ]; then
+            found=1
+            printf '%s\n' "$amd" | sed 's/^/    gpu   /;s/$/  (rocm)/'
+        fi
+        if [ "$found" = 0 ]; then
+            if command -v lspci >/dev/null 2>&1; then
+                lspci -nn 2>/dev/null | grep -Ei 'vga|3d controller' | sed 's/^/    gpu?  /' | head -8
+                note "seen by lspci only: no vendor tool here can talk to them, so nothing"
+                note "can be probed and no GPU work can be routed to this machine yet."
+            else
+                warn "no nvidia-smi, no rocm-smi, no lspci: cannot tell what is in this machine"
+            fi
+        fi
+
+        # Emitted from what was just detected, because a hand-written bus id is how an
+        # inventory goes quietly stale. @NAME@ and @SSH@ are the client's to fill: a machine
+        # cannot know the alias that reaches it.
+        if [ "$LABEL" = check-write ]; then
+            rt=""
+            [ -n "$nv" ] && rt='"cuda"'
+            [ -n "$amd" ] && rt="${rt:+$rt, }\"rocm\""
+            command -v vulkaninfo >/dev/null 2>&1 && rt="${rt:+$rt, }\"vulkan\""
+            echo
+            echo "--8<-- dibs inventory --8<--"
+            printf '[machine.@NAME@]\n'
+            printf 'ssh      = "@SSH@"\n'
+            printf 'hostname = "%s"\n' "$(hostname -s 2>/dev/null || hostname)"
+            printf 'probed   = "%s"\n' "$(date +%F)"
+            # A battery means a laptop, and a laptop throttles, shares one memory pool
+            # between CPU and iGPU, and moves. Absence of a GPU says nothing about this:
+            # a CPU benchmark box is a machine worth measuring on.
+            for b in /sys/class/power_supply/BAT*; do
+                [ -e "$b" ] || continue
+                printf 'measure  = false        # runs on a battery, so it throttles and moves\n'
+                printf 'workstation = true      # someone works here; drop this if it is headless\n'
+                break
+            done
+            printf '\n  [[machine.@NAME@.device]]\n'
+            printf '  kind  = "cpu"\n'
+            printf '  name  = "%s"\n' "${model:-unknown}"
+            printf '  cores = %s\n' "${cores:-0}"
+            lspci -nn 2>/dev/null | grep -Ei 'vga compatible controller|3d controller|display controller' |
+            while read -r line; do
+                bus=${line%% *}
+                case "$bus" in *:*:*) ;; *) bus="0000:$bus" ;; esac
+                ids=$(printf '%s\n' "$line" | grep -oE '\[[0-9a-f]{4}:[0-9a-f]{4}\]' | tail -1 | tr -d '[]')
+                [ -n "$ids" ] || continue
+                desc=$(printf '%s\n' "$line" | sed 's/^[^]]*]: //; s/ \[[0-9a-f]\{4\}:[0-9a-f]\{4\}\].*$//')
+                short=$(printf '%s\n' "$desc" | sed -n 's/.*\[\(.*\)\].*/\1/p')
+                [ -n "$short" ] || short=$desc
+                # nvidia-smi names the card better than lspci does, when it can see it.
+                if [ -n "$nv" ]; then
+                    m=$(printf '%s\n' "$nv" | awk -F, -v b="$bus" \
+                        'tolower($2) ~ tolower(b) {gsub(/^ +| +$/,"",$1); print $1; exit}')
+                    [ -n "$m" ] && short=$m
+                fi
+                slug=$(printf '%s\n' "$short" | tr 'A-Z' 'a-z' |
+                       sed 's/nvidia//g; s/geforce//g; s/corporation//g; s/advanced micro devices//g;
+                            s/radeon//g; s/intel//g; s/ arc / /g' | tr -cd 'a-z0-9')
+                printf '\n  [[machine.@NAME@.device]]\n'
+                printf '  kind     = "gpu"\n'
+                printf '  alias    = "gpu:%s"\n' "${slug:-$(printf '%s' "$bus" | tr -cd 'a-z0-9')}"
+                printf '  name     = "%s"\n' "$short"
+                printf '  pci      = "%s"\n' "$bus"
+                printf '  chip     = "%s"\n' "$ids"
+                printf '  runtimes = [%s]\n' "$rt"
+            done
+            echo "--8<-- end --8<--"
+        fi
+
+        echo
+        if [ "$FAIL" -gt 0 ]; then
+            echo "  $FAIL blocking, $WARN to look at. This machine is not ready."
+            exit 1
+        elif [ "$WARN" -gt 0 ]; then
+            echo "  usable, $WARN thing(s) to look at."
+        else
+            echo "  ready."
+        fi
+        exit 0 ;;
+
+    out)
+        # A job's stdout is the ssh channel back to whoever started it, and nothing keeps a
+        # copy. But agents overwhelmingly redirect into a file, and a redirect is an open
+        # descriptor: the kernel will say where it points. So the output is not lost, it is
+        # just somewhere nobody thought to look, and the tree walk that already exists for
+        # CPU finds it.
+        target=${LABEL%%.*} lines=${LABEL##*.}
+        found=0
+        for f in "$DIR"/holder.*; do
+            [ -e "$f" ] || continue
+            IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+            [ "$target" = all ] || [ "$target" = "$pid" ] || continue
+            found=1
+            echo "$mode  $label  pid $pid  ($(age "$start"))"
+            echo "  from $agent"
+            # The root's own stdout is the channel it was launched down, not something the
+            # job chose. Anything different from that is a redirect the job made itself.
+            root=$(readlink "/proc/$pid/fd/1" 2>/dev/null)
+            files=$(fd_targets "$pid" "$root")
+            if [ -z "$files" ]; then
+                echo "  writing straight back to the agent that started it, so there is no"
+                echo "  copy on disk to show. Only a job that redirects into a file, which is"
+                echo "  ${C_DIM}cmd > \$DIBS_SCRATCH/x.log 2>&1, can be read from here.$C_OFF"
+            else
+                for t in $files; do
+                    echo
+                    echo "  $t  ($(wc -c < "$t" 2>/dev/null || echo 0) bytes, last $lines lines)"
+                    tail -n "$lines" "$t" 2>/dev/null | sed 's/^/  | /'
+                done
+            fi
+        done
+        [ "$found" = 1 ] || {
+            if [ "$target" = all ]; then echo "Nothing is running."
+            else echo "Nothing holding the lock with pid $target." >&2; exit 1; fi
+        }
+        exit 0 ;;
+    kill|kill-force)
+        # Takes no lock. The whole point is to work when the lock is what is broken.
+        target=${LABEL%%.*} anyone=""
+        [ "${LABEL#*.}" = any ] && anyone=1
+        found=""
+        for f in "$DIR"/holder.* "$DIR"/waiting.*; do
+            [ -e "$f" ] || continue
+            [ "${f##*.}" = "$target" ] && found=$f
+        done
+        [ -n "$found" ] || { echo "Nothing holding or queued with pid $target." >&2; show >&2; exit 1; }
+        IFS=$'\t' read -r mode pid start label agent who cmd < "$found"
+        # Whose job this is, checked before anything is signalled rather than reported after.
+        # Several agents share this machine and read the same --status, so a pid copied out of
+        # it belongs to whoever happens to be there; stopping someone else's measurement has
+        # to be a thing you meant rather than a thing you did.
+        # Keyed on the session rather than on the title it displays under, so a title that goes
+        # stale or changes mid-run cannot make an agent a stranger to its own job. A record
+        # written before this field existed has no id, and an unknown owner is not grounds to
+        # refuse: it would strand exactly the jobs already running during an upgrade.
+        if [ -n "$who" ] && [ -n "$AGENT_ID" ] && [ "$who" != "$AGENT_ID" ] && [ -z "$anyone" ]; then
+            echo "dibs: $mode $label (pid $pid) belongs to $agent, not to you." >&2
+            echo "  It has been running $(age "$start"). If it is stuck and in your way, or you" >&2
+            echo "  know it should stop, say so:  dibs --kill $pid --anyone" >&2
+            exit 2
+        fi
+        # Its descendants, never its process group. The holder is not its group's leader,
+        # the pipeline that launched it is, so a group kill signals whatever else happens
+        # to share that group rather than the job that was asked for.
+        tree=$(ps -eo pid=,ppid= | awk -v root="$pid" '
+            {child[NR]=$1; parent[NR]=$2}
+            END {
+                n=1; want[root]=1; out=root
+                do {
+                    added=0
+                    for (i=1; i<=NR; i++)
+                        if (want[parent[i]] && !want[child[i]]) {
+                            want[child[i]]=1; out=out " " child[i]; added=1
+                        }
+                } while (added)
+                print out
+            }')
+        [ "$MODE" = kill-force ] && sig=KILL || sig=TERM
+        signalled=""
+        # Deepest first, so a parent cannot spawn more work while its children are dying.
+        for victim in $(printf '%s\n' $tree | tac); do
+            kill -"$sig" "$victim" 2>/dev/null && signalled="$signalled $victim"
+        done
+        if [ -n "$signalled" ]; then
+            CMD_ONE="killed $mode $label (pid $pid) after $(age "$start"): $cmd"
+            log_event killed
+            echo "Sent SIG$sig to$signalled ($mode $label, held $(age "$start"))."
+            echo "It belonged to $agent."
+        else
+            echo "Could not signal pid $pid; it may already be gone." >&2
+        fi
+        [ "$MODE" = kill ] && echo "If it survives that, run: dibs --kill $pid --force"
+        exit 0 ;;
+    release) prune; echo "Pruned dead entries."; show
+             echo "A live holder is a running command. Stop it with: kill <pid>"; exit 0 ;;
+esac
+
+CMD=$(printf %s "$CMDB64" | base64 -d)
+# Nothing here has a human behind it. A pager or a credential prompt is a hang.
+export GIT_PAGER=cat PAGER=cat GIT_TERMINAL_PROMPT=0 DEBIAN_FRONTEND=noninteractive
+
+# /tmp here is a tmpfs under a quota, and it is shared: one agent's build tree in it fills
+# the quota for everybody, and a full one takes out every command for finding out why. TMPDIR
+# comes along so that mktemp and the compilers follow without anyone having to remember.
+SCRATCH=${DIBS_SCRATCH:-$HOME/.cache/dibs}
+mkdir -p "$SCRATCH/tmp" 2>/dev/null
+export DIBS_SCRATCH="$SCRATCH" TMPDIR="$SCRATCH/tmp"
+
+# Compilation cache, when the machine has one. Measured here: a target directory with nothing
+# in it costs 922s to fill for the largest workspace here and 104s once sccache has seen
+# before, so this is what makes a machine holding no cache for a repo usable at all. Turned on
+# by the tool being installed rather than by a flag, because a machine without it must keep
+# working unchanged, and off entirely with DIBS_NO_SCCACHE=1.
+#
+# Incremental compilation is turned off with it, and only with it. sccache declines to cache
+# an incremental build, so leaving it on means every debug build, which is most test recipes,
+# gets nothing. The usual reason to keep it is fast local iteration on one tree, and that is
+# not what happens here: each job starts from a worktree at some commit and the incremental
+# state rarely matches. It also costs disk, since the incremental directory is a large part of
+# a target directory and nothing collects one before its repo goes quiet.
+if [ "${DIBS_NO_SCCACHE:-0}" != 1 ] && command -v sccache >/dev/null 2>&1; then
+    export RUSTC_WRAPPER=${RUSTC_WRAPPER:-sccache}
+    export SCCACHE_DIR=${SCCACHE_DIR:-$SCRATCH/sccache}
+    export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-50G}
+    export CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0}
+fi
+
+if [ "$MODE" = peek ]; then
+    PEEK_START=$(date +%s)
+    timeout --signal=TERM --kill-after=5 "$MAXHOLD" bash -c "$CMD" < /dev/null
+    STATUS=$?
+    PEEK_TOOK=$(( $(date +%s) - PEEK_START ))
+    # A peek is supposed to be free. One that is not has just been charged to whichever
+    # benchmark is running, so say so where it will be read, and leave it in the log.
+    if [ "$PEEK_TOOK" -ge "${DIBS_PEEK_WARN:-3}" ]; then
+        echo "dibs: that --peek took $(dur "$PEEK_TOOK") and ran with no lock, beside" >&2
+        echo "  whatever is being measured. Anything that costs time belongs in" >&2
+        echo "  'dibs <command>', which takes the shared lock." >&2
+        CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
+        log_event peek-slow - "$PEEK_TOOK" "$STATUS"
+    fi
+    exit $STATUS
+fi
+
+START=$(date +%s)
+# One record is one line. A multi-line command would otherwise be counted once per line
+# and write a file the size of the script it is running.
+CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
+[ "${#CMD}" -gt 200 ] && CMD_ONE="$CMD_ONE …"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "$CMD_ONE" > "$DIR/waiting.$$"
+log_event arrived
+# An end line even when the job is torn down, so the log never just stops mid-story.
+# Nothing can be written if it is SIGKILLed, which is itself worth knowing when reading it.
+# Every exit, not just the happy one: while the watch lives it holds the channel open and
+# the caller's ssh cannot return, so giving up on a busy lock would hang the caller.
+trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$0"
+      [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
+      [ "$LOGGED_END" = 1 ] || log_event aborted' EXIT
+
+# stdin is the ssh channel, and nothing else reads it, so its EOF is how this side learns
+# the caller is gone. tailscaled's ssh server does not turn a closed channel into a hangup,
+# so waiting for one is not an option.
+#
+# It starts before the queue, not after it: a caller can die while its job is waiting, and
+# a job whose caller is gone should leave the queue rather than hold a place for twenty
+# minutes and then die the instant it is let in.
+#
+# A background job in a non-interactive shell has its stdin redirected from /dev/null, so
+# the watch has to be handed the channel on another descriptor or it reads EOF at once and
+# kills the job it is supposed to be protecting.
+exec 5<&0
+WORKFILE=$DIR/work.$$
+MAIN=$$
+WATCHDOG=""
+if [ "$NO_WATCH" != 1 ]; then
+{ read -r -u 5 _ 2>/dev/null   # returns when the channel closes; no child to reap
+  work=$(cat "$WORKFILE" 2>/dev/null)
+  CMD_ONE="caller gone: $CMD_ONE"
+  log_event caller-gone
+  if [ -n "$work" ] && kill -0 "$work" 2>/dev/null; then
+      pkill -TERM -P "$work" 2>/dev/null
+      kill -TERM "$work" 2>/dev/null
+  else
+      kill -TERM "$MAIN" 2>/dev/null   # still queueing: stop waiting for a lock nobody wants
+  fi
+} &
+WATCHDOG=$!
+disown "$WATCHDOG" 2>/dev/null   # or bash announces "Terminated" when we tear it down
+fi
+
+# Three quarters of shared jobs here finish in under five seconds, and behind a queued
+# benchmark every one of them was waiting up to twenty minutes. A quick one may go around,
+# but only while the benchmark has been waiting less than DIBS_PATIENCE and only if its own
+# history says it will be gone within DIBS_QUICK, so the most this can cost a benchmark is
+# the two added together.
+#
+# Its own history, not its mode's: the median across all shared jobs is under a second, which
+# would wave through the four minute ones as readily as the instant ones.
+#
+# None of this can spoil a measurement. It decides who waits, nothing else: once a benchmark
+# holds the lock, flock refuses every shared caller whatever this returns.
+may_bypass() {
+    [ "$MODE" = shared ] && [ "${DIBS_BYPASS:-1}" = 1 ] || return 1
+    local f m p st queued=0
+    now
+    for f in "$DIR"/waiting.*; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r m p st _ < "$f"
+        [ "$m" = bench ] || continue
+        [ -d "/proc/$p" ] || continue
+        queued=1
+        [ $(( NOW - st )) -lt "${DIBS_PATIENCE:-60}" ] || return 1
+    done
+    [ "$queued" = 1 ] || return 1
+    estimate "$MODE" "$LABEL" "$AGENT" || return 1
+    [ "$EST_SCOPE" = this ] || return 1   # what its agent usually takes is not what it takes
+    [ "$EST_V" -le "${DIBS_QUICK:-10}" ]
+}
+
+exec 9>"$DIR/gate"
+exec 8>"$DIR/rw"
+
+# Everyone passes through the gate, and an exclusive waiter keeps holding it while it waits
+# for the real lock. Without that, a steady trickle of shared users starves benchmarks.
+if may_bypass; then
+    log_event bypassed
+elif [ -n "$WAIT" ]; then
+    flock -x -w "$WAIT" 9 || {
+        echo "dibs: busy, a benchmark is queued ahead of you. Gave up after ${WAIT}s." >&2
+        show >&2
+        exit 75
+    }
+else
+    flock -x 9
+fi
+if [ "$MODE" = bench ]; then FLAG=-x; else FLAG=-s; fi
+
+# Say so the moment it is going to wait, rather than going quiet for twenty minutes. A
+# caller that cannot afford the wait can act on this; one that goes quiet gets killed by
+# its own timeout and leaves the work undone with nothing to show why.
+if ! flock -n $FLAG 8 2>/dev/null; then
+    echo "dibs: busy, so this is queued and has not started." >&2
+    show >&2
+    echo "dibs: a queued job outlasts a foreground call. Run it with run_in_background," >&2
+    echo "  or pass --wait <seconds> to give up instead of queueing." >&2
+else
+    flock -u 8   # let the real acquisition below take it under the same rules
+fi
+
+if [ -n "$WAIT" ]; then
+    flock $FLAG -w "$WAIT" 8 || {
+        flock -u 9
+        echo "dibs: still busy after ${WAIT}s, gave up." >&2
+        show >&2
+        exit 75
+    }
+else
+    flock $FLAG 8
+fi
+flock -u 9
+
+WAITED=$(( $(date +%s) - START ))
+ACQUIRED=$(date +%s)
+# Restamped, not just renamed: a holder's clock starts when it acquires. Carrying the
+# arrival time over would have --status report a job as running for the time it spent
+# queued, and every number drawn from that elapsed, the ETA, the stuck check and the idle
+# check, would be measuring a stretch the job spent doing nothing because it was waiting.
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$ACQUIRED" "$LABEL" "$AGENT" "$AGENT_ID" "$CMD_ONE" > "$DIR/waiting.$$"
+mv "$DIR/waiting.$$" "$DIR/holder.$$"
+[ "$WAITED" -ge 5 ] && echo "dibs: acquired the $MODE lock after $(dur "$WAITED")" >&2
+
+# 8>&- 9>&- so the workload does not inherit the lock descriptors. A child that outlives
+# its parent would otherwise keep the lock held with no holder record to show for it, and
+# every later caller would queue behind something --status swears is not there.
+# A transport job's stdin is rsync's protocol stream and has to reach it. Backgrounding is
+# what makes that awkward: a background job in a non-interactive shell has its stdin
+# redirected from /dev/null, so it is handed the channel on the descriptor the watch would
+# otherwise have used.
+if [ "$MODE" = rsh ]; then
+    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 0<&5 5<&- &
+elif [ "$MAXHOLD" -gt 0 ]; then
+    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null &
+else
+    bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null &
+fi
+WORK=$!
+echo "$WORK" > "$WORKFILE"
+wait "$WORK"
+STATUS=$?
+# It holds the channel open, and while it does the caller's ssh cannot return.
+[ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
+rm -f "$WORKFILE"
+exec 5<&-
+RUNTIME=$(( $(date +%s) - ACQUIRED ))
+log_event finished "$WAITED" "$RUNTIME" "$STATUS"
+LOGGED_END=1
+if [ "$(wc -l < "$LOG" 2>/dev/null || echo 0)" -gt 20000 ]; then
+    tail -10000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+fi
+# Say what to do about it, not only what happened. A cold build of a large workspace can pass
+# half an hour on its own, and the answer is almost always to run the same thing again: the
+# target directory survives, so a compile picks up from the crates that finished rather than
+# starting over. Raising --max is for the job that genuinely needs longer in one go.
+if [ "$STATUS" -eq 124 ]; then
+    echo "dibs: stopped after holding the lock for ${MAXHOLD}s, which is --max for a $MODE job." >&2
+    echo "  Nothing is wrong with it; it was simply told to hold no longer than that." >&2
+    echo "  Run it again; a compile picks up from the crates that already finished, since the" >&2
+    echo "  build cache outlives the job. Anything else starts over." >&2
+    echo "  If it truly needs one long run, say so:  --max $(( MAXHOLD * 2 ))" >&2
+fi
+
+# What the next caller's estimate is built from, so only runs that did what they set out
+# to do belong in it. A benchmark that failed in a second, or was killed for overrunning,
+# is not a typical duration: recording it teaches every later caller the wrong number.
+if [ "$STATUS" -eq 0 ]; then
+    printf '%s\t%s\t%s\t%s\n' "$MODE" "$LABEL" "$(( $(date +%s) - ACQUIRED ))" "$AGENT" >> "$HIST"
+    if [ "$(wc -l < "$HIST")" -gt 1000 ]; then
+        tail -500 "$HIST" > "$HIST.tmp" && mv "$HIST.tmp" "$HIST"
+    fi
+fi
+exit "$STATUS"
+REMOTE
+}
+
+CMDB64=$(printf %s "$COMMAND" | base64 | tr -d '\n')
+
+# Who is asking, in terms that lead back to a window. Agents are Claude Code sessions, and
+# the desktop keeps each session's title in a file named after it, which is the only name
+# for an agent the user ever sees. Falling back to the id still tells two of them apart.
+# Only the modes that leave a record need it, and it reads a file to find out.
+AGENTB64=""
+AGENTIDB64=""
+case "$MODE" in
+    shared|bench|peek|rsh|kill|kill-force)
+        AGENTB64=$(agent_name | base64 | tr -d '\n')
+        AGENTIDB64=$(agent_id | base64 | tr -d '\n') ;;
+esac
+# Work belongs to dibs-run, which prepares a worktree, exports a cache, derives a stable
+# label, redirects the output and records what ran and why. A bare command here does none of
+# that, and while it stays available the instrumentation is voluntary: the gaps report can only
+# see what dibs-run was told, so a command run this way is a recipe nobody will know was needed.
+#
+# Printed here rather than on the far side, because ssh does not forward the environment and
+# the marker saying this came through the interface would never arrive.
+#
+# A note rather than a refusal. Refusing would break the onboarding script, --sync, and any
+# legitimate one-off, and the point is to be discovered rather than to be obeyed.
+case "$MODE" in
+    shared|bench)
+        [ "${DIBS_FROM_RUN:-0}" = 1 ] || [ "${DIBS_QUIET_DIRECT:-0}" = 1 ] || {
+            echo "dibs: running a command directly. Prefer a recipe:" >&2
+            echo "  dibs-run list <repo>                       what it already defines" >&2
+            echo "  dibs-run bench <repo>@<ref> <recipe>       run one" >&2
+            echo "  dibs-run raw --reason <why> -- <command>   when nothing fits, recorded" >&2
+        } ;;
+esac
+
+# Only a terminal wants a redraw. Piped to a file, --watch is a timestamped log instead.
+ISTTY=0; [ -t 1 ] && ISTTY=1
+
+# A target whose scratch directory is full takes out every way of looking at why, so this
+# says where to look and how to get working again in the same breath.
+no_room() {
+    local d=${DIBS_REMOTE_DIR:-'~/.cache/dibs/run'}
+    echo "dibs: could not write the job's script to $d on $TARGET." >&2
+    echo "  It is full, over quota, or read-only. Nothing can run there until it is not," >&2
+    echo "  and that includes every command for looking into it." >&2
+    echo "  Look:  DIBS_REMOTE_DIR=/dev/shm dibs --peek 'df -h $d; quota -s'" >&2
+    echo "  Work:  DIBS_REMOTE_DIR=/dev/shm dibs <command>" >&2
+    echo "  Tell the user. Do not delete anything on a shared machine to make room." >&2
+    exit 70
+}
+
+unreachable() {
+    echo "dibs: cannot reach '$HOST' over ssh." >&2
+    if command -v tailscale >/dev/null 2>&1; then
+        state=$(tailscale status 2>&1)
+        peer=$(grep -i "[[:space:]]$TARGET[[:space:]]" <<<"$state" | head -1)
+        case "$state" in
+            *"Logged out"*|*"logged out"*|*"NeedsLogin"*)
+                echo "  Tailscale is logged out, which it is after a reboot." >&2
+                echo "  Log in with: tailscale up" >&2 ;;
+            *"stopped"*|*"Stopped"*)
+                echo "  Tailscale is stopped. Start it with: tailscale up" >&2 ;;
+            *)  if [ -z "$peer" ]; then
+                    echo "  Tailscale is up but $TARGET is not on the tailnet: it is off or asleep." >&2
+                elif grep -qi 'offline' <<<"$peer"; then
+                    echo "  Tailscale reports $TARGET offline: $peer" >&2
+                else
+                    echo "  Tailscale reports $TARGET up ($peer), so this is an ssh problem." >&2
+                fi ;;
+        esac
+    else
+        echo "  The machine may be off, asleep, or off the network." >&2
+    fi
+    echo "  Do not retry in a loop. Tell the user, and do the work that does not need the machine." >&2
+    exit 69
+}
+
+if [ "$(lower "$SELF")" = "$(lower "$TARGET")" ] || [ "${DIBS_LOCAL:-0}" = 1 ]; then
+    # No channel to watch when this runs on the machine itself, and stdin here belongs to
+    # whoever called us: watching it would kill the job the moment they redirect from
+    # /dev/null. The caller and the job share a machine, so ordinary process death covers it.
+    # bash -s reads the script on its stdin here, so there is no stdin left for a protocol
+    # stream to travel on. Nothing is lost: on the machine itself, a copy is a copy.
+    case "$MODE" in
+        rsh|sync) echo "dibs: --sync reaches the machine from elsewhere. You are on it: use cp." >&2
+                  exit 2 ;;
+    esac
+    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$CMDB64" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64"
+else
+    if [ -z "$HOST" ]; then
+        echo "dibs: no machine. Set DIBS_HOST to the one you were given:" >&2
+        echo "  bash/zsh   export DIBS_HOST=dibs@<machine>" >&2
+        echo "  fish       set -Ux DIBS_HOST dibs@<machine>" >&2
+        exit 2
+    fi
+    PAYLOAD=$(remote_script | base64 | tr -d '\n')
+    # No TTY on purpose. With one, every tool downstream believes it is interactive: git
+    # opens its pager and the job blocks forever on a keystroke nobody will type.
+    # The login shell on the far side is whatever that machine has, fish on one of these and
+    # bash on another, and it is what runs this line. Keep it to syntax they all read the same
+    # way: a pipeline, single quotes, no redirection, no $.
+    # Killing the caller has to kill the job, and neither half of that is free. An ssh
+    # client whose parent dies keeps running as an orphan with the channel up, so
+    # --pdeathsig has the kernel signal it the moment this process dies, SIGKILL included.
+    # The remote learns of it through EOF on its stdin, which means the script has to
+    # arrive as a file rather than on stdin, and our end must never reach EOF on its own:
+    # a fifo held open read-write delivers neither data nor EOF while we live, and closes
+    # with us when we do not.
+    DIE_WITH_ME=""
+    [ "${DIBS_NO_PDEATHSIG:-0}" = 1 ] || command -v setpriv >/dev/null 2>&1 \
+        && DIE_WITH_ME="setpriv --pdeathsig=TERM"
+    [ "${DIBS_NO_PDEATHSIG:-0}" = 1 ] && DIE_WITH_ME=""
+    # Without a stdin that never reaches EOF on its own there is nothing to distinguish a
+    # dead caller from a live one, and the far side would kill every job the moment it
+    # acquired. So a fifo we cannot create disables the watch rather than falling back to
+    # whatever stdin we were handed: a job outliving its caller is a nuisance, a job killed
+    # while its caller waits for it is the failure this whole thing exists to avoid.
+    WATCH=1
+    # rsync speaks its protocol over this process's stdin and stdout, so there is nothing
+    # spare to hold a liveness channel on. Losing the caller closes the stream, which rsync's
+    # far side treats as the failure it is; it does not leave a half-written file behind.
+    if [ "$MODE" = rsh ]; then
+        exec 6<&0; WATCH=0
+    elif [ "${DIBS_NO_LIVE:-0}" = 1 ]; then
+        exec 6<&0; WATCH=0
+    else
+        LIVE=$(mktemp -u "${TMPDIR:-/tmp}/dibs-live.XXXXXX")
+        if mkfifo "$LIVE" 2>/dev/null && exec 6<>"$LIVE"; then
+            rm -f "$LIVE"
+        else
+            echo "dibs: could not open a liveness fifo; this job will outlive its caller." >&2
+            exec 6<&0; WATCH=0
+        fi
+    fi
+    [ "${DIBS_NO_WATCHDOG:-0}" = 1 ] && WATCH=0
+    # Not /tmp: that is a tmpfs under a quota there, and when it fills, a tool that needs to
+    # write to it to run cannot even be used to look at why. The default is left unexpanded
+    # here on purpose, for the remote shell to resolve against its own home.
+    REMOTE_DIR=${DIBS_REMOTE_DIR:-'$HOME/.cache/dibs/run'}
+    REMOTE_SCRIPT="$REMOTE_DIR/.dibs-run.$$.$(date +%s).sh"
+    # exec so that a script which could not be written never runs half of itself: the write
+    # is the only thing between the && and the shell being replaced, and if it fails the line
+    # after it is what runs. Both shells that might read this line treat exec and && alike.
+    $DIE_WITH_ME ssh -o BatchMode=yes -o LogLevel=ERROR \
+        -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
+        "mkdir -p $REMOTE_DIR 2>/dev/null; printf %s '$PAYLOAD' | base64 -d > $REMOTE_SCRIPT && \
+         exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' '$CMDB64' \
+         '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64'
+exit 70" <&6
+    STATUS=$?
+    # 255 is ssh's own failure code, not the command's.
+    [ "$STATUS" -eq 255 ] && unreachable
+    [ "$STATUS" -eq 70 ] && no_room
+    exit "$STATUS"
+fi

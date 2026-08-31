@@ -1,0 +1,96 @@
+# Bundled with dibs-run. Override any of it in ~/.config/dibs/recipes/cubek.toml
+#
+# Reproducibility does not depend on this file surviving: every run record carries the whole
+# procedure it ran, not a reference to it, so an old result stays readable after the recipe
+# that produced it has been edited or deleted.
+#
+# THE FOOTGUN THIS FILE EXISTS TO CLOSE. The benchmarks package declares no backend of its
+# own; the backend comes from a cubecl feature. cubecl's build script counts the enabled
+# runtimes among {cpu, cuda, hip, metal-native, wgpu} and, if the count is anything other than
+# exactly one, silently falls back to wgpu. So a recipe with two backend features, or none,
+# produces a number measured on hardware nobody chose. Every recipe here names exactly one.
+#
+# `needs` is deliberately absent. It is the right place to say "this wants tensor cores", but
+# the current backend knows one machine and cannot check it, so dibs-run refuses rather than
+# routing a CMMA benchmark to a card without them. Add it when routing exists.
+
+# --- builds: shared lock, because compiling tolerates neighbours ------------------------
+
+[build.cuda]
+  [[build.cuda.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --features cubecl/cuda"
+
+[build.cpu]
+  [[build.cpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --features cubecl/cpu"
+
+# --- benchmarks: build shared, measure exclusive ----------------------------------------
+#
+# The split is the whole point of two steps. Compiling under the exclusive lock held the
+# machine for 31.8 minutes across two runs on the machine, 17% of all exclusive time ever
+# recorded there, doing something that tolerates neighbours perfectly.
+#
+# A cubek bench target takes no filter: `--bench gemm` runs its whole strategy x problem
+# matrix. CUBEK_BENCH_SAMPLES sets samples per pair, default 10.
+
+[bench.gemm]
+isolation = "machine"
+  [[bench.gemm.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench gemm --features cubecl/cuda"
+  [[bench.gemm.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench gemm --features cubecl/cuda"
+
+[bench.gemv]
+isolation = "machine"
+  [[bench.gemv.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench gemv --features cubecl/cuda"
+  [[bench.gemv.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench gemv --features cubecl/cuda"
+
+[bench.quantized-matmul]
+isolation = "machine"
+  [[bench.quantized-matmul.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench quantized_matmul --features cubecl/cuda"
+  [[bench.quantized-matmul.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench quantized_matmul --features cubecl/cuda"
+
+# gemm_cpu and gemm_cpu_tiled are CPU-runtime studies and only mean anything with cubecl/cpu.
+# A CPU measurement wants the whole machine regardless, which is the default isolation.
+[bench.gemm-cpu]
+isolation = "machine"
+  [[bench.gemm-cpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench gemm_cpu --features cubecl/cpu"
+  [[bench.gemm-cpu.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench gemm_cpu --features cubecl/cpu"
+
+# --- tests: shared lock, because correctness runs are not measurements -------------------
+#
+# These exist because CI has no CUDA. `cargo xtask test --ci` runs the suite against wgpu on
+# a GitHub runner, so every CUDA-only path in the kernels reaches a device for the first time
+# here or not at all.
+#
+# --release is not a speed preference. The suite compares each GPU result against
+# `cpu_reference`, which is a single-threaded O(MNK) loop on the host; unoptimized it, not the
+# kernels, is what the wall clock measures.
+
+[test.cuda]
+  [[test.cuda.step]]
+  lock = "shared"
+  run  = "cargo test --release -p cubek-matmul --features cubecl/cuda"
+
+# The `extended` tier is never compiled by the test job in CI, only clippy-checked, so a
+# compile error in it survives a green CI run.
+[test.cuda-extended]
+  [[test.cuda-extended.step]]
+  lock = "shared"
+  run  = "cargo test --release -p cubek-matmul --features cubecl/cuda,extended"

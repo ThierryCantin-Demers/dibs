@@ -1,0 +1,906 @@
+<title>Remote Benchmark Lock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+
+<style>
+:root {
+  --paper:      #f4f6f6;
+  --surface:    #ffffff;
+  --sunk:       #eceff0;
+  --ink:        #141a1c;
+  --muted:      #5d6a6e;
+  --rule:       #dbe2e2;
+  --accent:     #0f6d63;
+  --accent-dim: #d7e7e4;
+  --signal:     #a8541c;
+  --signal-dim: #f3e3d6;
+  --shadow:     0 1px 2px rgba(20,26,28,.05), 0 8px 24px -16px rgba(20,26,28,.28);
+
+  --f-head: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:      #101416;
+    --surface:    #171d1f;
+    --sunk:       #1c2325;
+    --ink:        #dfe5e4;
+    --muted:      #90a0a3;
+    --rule:       #2a3335;
+    --accent:     #4fb3a5;
+    --accent-dim: #16302e;
+    --signal:     #d98a55;
+    --signal-dim: #33241a;
+    --shadow:     0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:      #101416;
+  --surface:    #171d1f;
+  --sunk:       #1c2325;
+  --ink:        #dfe5e4;
+  --muted:      #90a0a3;
+  --rule:       #2a3335;
+  --accent:     #4fb3a5;
+  --accent-dim: #16302e;
+  --signal:     #d98a55;
+  --signal-dim: #33241a;
+  --shadow:     0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 17px;
+  line-height: 1.62;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+.shell {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 24px 96px;
+}
+@media (min-width: 1040px) {
+  .shell { grid-template-columns: 210px minmax(0, 1fr); gap: 56px; padding-left: 32px; }
+}
+
+/* ---- masthead ---- */
+.masthead {
+  grid-column: 1 / -1;
+  border-bottom: 1px solid var(--rule);
+  padding: 64px 0 34px;
+  margin-bottom: 48px;
+}
+.eyebrow {
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 18px;
+}
+h1 {
+  font-family: var(--f-head);
+  font-weight: 700;
+  font-size: clamp(2.6rem, 6.5vw, 4.1rem);
+  line-height: 1.02;
+  letter-spacing: -.018em;
+  margin: 0 0 20px;
+  text-wrap: balance;
+}
+.standfirst {
+  font-size: 1.16rem;
+  color: var(--muted);
+  max-width: 62ch;
+  margin: 0 0 34px;
+}
+.standfirst strong { color: var(--ink); font-weight: 600; }
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border-top: 1px solid var(--rule);
+  padding-top: 20px;
+}
+.fact {
+  padding-right: 30px;
+  margin-right: 30px;
+  border-right: 1px solid var(--rule);
+}
+.fact:last-child { border-right: 0; margin-right: 0; padding-right: 0; }
+.fact dt {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 3px;
+}
+.fact dd {
+  font-family: var(--f-head);
+  font-weight: 600;
+  font-size: 1.28rem;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- index rail ---- */
+.rail { display: none; }
+@media (min-width: 1040px) {
+  .rail {
+    display: block;
+    position: sticky;
+    top: 32px;
+    align-self: start;
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
+    font-family: var(--f-mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+}
+.rail p {
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.rail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.rail a { color: var(--muted); text-decoration: none; display: block; border-left: 2px solid var(--rule); padding-left: 11px; }
+.rail a:hover, .rail a:focus-visible { color: var(--accent); border-left-color: var(--accent); }
+
+/* ---- sections ---- */
+main { min-width: 0; }
+section { margin-bottom: 68px; scroll-margin-top: 24px; }
+h2 {
+  font-family: var(--f-head);
+  font-weight: 700;
+  font-size: 1.92rem;
+  letter-spacing: -.012em;
+  line-height: 1.14;
+  margin: 0 0 8px;
+  text-wrap: balance;
+}
+h2 .num {
+  font-family: var(--f-mono);
+  font-size: .82rem;
+  font-weight: 500;
+  color: var(--accent);
+  letter-spacing: .06em;
+  display: block;
+  margin-bottom: 9px;
+}
+h3 {
+  font-family: var(--f-head);
+  font-weight: 600;
+  font-size: 1.24rem;
+  line-height: 1.24;
+  margin: 0 0 10px;
+  text-wrap: balance;
+}
+h4 {
+  font-family: var(--f-mono);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 30px 0 12px;
+}
+p { margin: 0 0 17px; max-width: 68ch; }
+.lede { font-size: 1.06rem; color: var(--muted); max-width: 64ch; margin-bottom: 28px; }
+ul, ol.body { max-width: 68ch; padding-left: 20px; margin: 0 0 18px; }
+li { margin-bottom: 9px; }
+strong { font-weight: 600; }
+em { font-style: italic; }
+a { color: var(--accent); }
+code {
+  font-family: var(--f-mono);
+  font-size: .855em;
+  background: var(--sunk);
+  padding: .12em .34em;
+  border-radius: 3px;
+}
+
+/* ---- code blocks ---- */
+.codewrap {
+  overflow-x: auto;
+  background: var(--sunk);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  margin: 0 0 20px;
+}
+pre { margin: 0; padding: 15px 17px; }
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 12.6px;
+  line-height: 1.62;
+  white-space: pre;
+  display: block;
+}
+
+/* ---- findings ---- */
+.finding {
+  border-top: 1px solid var(--rule);
+  padding-top: 26px;
+  margin-bottom: 34px;
+}
+.symptom {
+  display: block;
+  font-family: var(--f-mono);
+  font-size: 12.4px;
+  line-height: 1.5;
+  color: var(--signal);
+  background: var(--signal-dim);
+  border-left: 2px solid var(--signal);
+  padding: 9px 13px;
+  margin: 0 0 16px;
+  max-width: 68ch;
+}
+.symptom b { font-weight: 500; letter-spacing: .07em; text-transform: uppercase; font-size: 10.5px; display: block; margin-bottom: 2px; opacity: .8; }
+
+/* ---- tables ---- */
+.tablewrap { overflow-x: auto; margin: 0 0 22px; border: 1px solid var(--rule); border-radius: 5px; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; background: var(--surface); }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th {
+  font-family: var(--f-mono);
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--sunk);
+  white-space: nowrap;
+}
+tr:last-child td { border-bottom: 0; }
+td code { font-size: 12.4px; background: none; padding: 0; color: var(--accent); }
+td.what { font-family: var(--f-head); font-weight: 600; white-space: nowrap; }
+
+/* ---- callout ---- */
+.note {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: 5px;
+  padding: 18px 20px;
+  margin: 0 0 24px;
+  box-shadow: var(--shadow);
+}
+.note p:last-child { margin-bottom: 0; }
+.note h4 { margin-top: 0; color: var(--accent); }
+
+/* ---- appendix ---- */
+details {
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--surface);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+summary {
+  cursor: pointer;
+  padding: 14px 18px;
+  font-family: var(--f-head);
+  font-weight: 600;
+  font-size: 1.02rem;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: baseline;
+}
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "open"; font-family: var(--f-mono); font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+details[open] summary::after { content: "close"; }
+summary:hover, summary:focus-visible { color: var(--accent); }
+details .codewrap { margin: 0; border: 0; border-top: 1px solid var(--rule); border-radius: 0; max-height: 70vh; overflow: auto; }
+.filemeta { font-family: var(--f-mono); font-size: 11.5px; color: var(--muted); font-weight: 400; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+footer {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--rule);
+  padding-top: 22px;
+  margin-top: 20px;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+</style>
+
+<div class="shell">
+
+<header class="masthead">
+  <p class="eyebrow">Working system, written up for porting</p>
+  <h1>Remote Benchmark Lock</h1>
+  <p class="standfirst">Several coding agents share one fast machine. Benchmarks cannot overlap with
+  anything, including each other, so access has to be serialized. This is a
+  <strong>single bash script</strong> that wraps ssh in a shared/exclusive lock, plus the findings
+  that took it from working to trustworthy. Everything here is portable; the parts that are
+  not are listed explicitly.</p>
+  <dl class="facts">
+    <div class="fact"><dt>Wrapper</dt><dd>{{LINES_DIBS}} lines</dd></div>
+    <div class="fact"><dt>Daemon</dt><dd>none</dd></div>
+    <div class="fact"><dt>Install on target</dt><dd>nothing</dd></div>
+    <div class="fact"><dt>Tests</dt><dd>98 assertions</dd></div>
+    <div class="fact"><dt>Status redraw</dt><dd>2.2 ms</dd></div>
+  </dl>
+</header>
+
+<nav class="rail" aria-label="Sections">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#problem">The problem</a></li>
+    <li><a href="#surface">Command surface</a></li>
+    <li><a href="#shape">Shape of the thing</a></li>
+    <li><a href="#protocol">Lock protocol</a></li>
+    <li><a href="#findings">Findings</a></li>
+    <li><a href="#attribution">Attribution</a></li>
+    <li><a href="#porting">Porting checklist</a></li>
+    <li><a href="#adoption">Making agents use it</a></li>
+    <li><a href="#testing">Testing</a></li>
+    <li><a href="#open">Still open</a></li>
+    <li><a href="#source">Source</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="problem">
+  <h2><span class="num">01</span>The problem it solves</h2>
+  <p class="lede">One person, several agents, one machine worth measuring on.</p>
+  <p>The laptop is an Intel CPU and integrated GPU sharing one pool of memory, so its
+  benchmark numbers and kernel timings are noise. The real machine sits on the network. Several
+  agents work at once across different repositories, and more than one of them needs that
+  machine at any given moment.</p>
+  <p>Benchmarks cannot run in parallel without defeating the point. Worse, a compile running
+  beside a benchmark contaminates it as surely as a second benchmark would, so an exclusive
+  job has to exclude ordinary work too, not just other exclusive jobs.</p>
+  <p>Before this existed, coordination was manual: telling each agent, by hand, that another one
+  was using the machine right now. That does not scale past about two agents and it fails
+  silently, because an agent that was not told simply runs its benchmark on top of someone
+  else's and reports a number that looks fine.</p>
+  <div class="note">
+    <h4>Copies are work too</h4>
+    <p>An rsync of a large tree is seconds of writeback and memory bandwidth landing on top of
+    whatever is being measured, so it belongs under the lock as much as a build does. The
+    difficulty is that rsync runs on the client, so there is no remote command to put the lock
+    around. The way through is rsync's own <code>-e</code>: point it at the wrapper, which then
+    holds the lock while passing rsync's protocol stream through as its workload. One transfer,
+    one holder, visible in the queue like anything else, and it costs a single mode rather than
+    a reimplementation of file copying.</p>
+  </div>
+
+  <div class="note">
+    <h4>The shape of the fix</h4>
+    <p>Replace <code>ssh box &lt;command&gt;</code> with <code>box &lt;command&gt;</code>. Same
+    ergonomics, but the command runs under a lock held on the target machine. Agents need to
+    learn exactly one thing: which of two modes their command is.</p>
+  </div>
+</section>
+
+<section id="surface">
+  <h2><span class="num">02</span>The command surface</h2>
+  <p>Names here use <code>dibs</code> as the command and the machine's alias. Rename freely; that
+  is the first item on the porting checklist.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Invocation</th><th>Lock</th><th>For</th></tr></thead>
+    <tbody>
+      <tr><td><code>dibs &lt;cmd&gt;</code></td><td>shared</td><td>Builds, tests, inspection. Several run at once.</td></tr>
+      <tr><td><code>dibs --bench &lt;cmd&gt;</code></td><td>exclusive</td><td>Anything timed. Nothing else runs alongside, shared jobs included.</td></tr>
+      <tr><td><code>dibs --status</code></td><td>none</td><td>Who holds it, how much longer, who is queued, and whose job each one is.</td></tr>
+      <tr><td><code>dibs --watch [s]</code></td><td>none</td><td><code>--status</code> on a loop over a single connection. Default 5s, 2s floor.</td></tr>
+      <tr><td><code>dibs --peek &lt;cmd&gt;</code></td><td>none</td><td>Looking only: <code>ps</code>, <code>nvidia-smi</code>, <code>tail</code>. Runs beside a benchmark, so its cost is charged to that benchmark.</td></tr>
+      <tr><td><code>dibs --kill &lt;pid&gt;</code></td><td>none</td><td>Stop a wedged holder. Takes no lock on purpose.</td></tr>
+      <tr><td><code>dibs --sync [opts] a b</code></td><td>shared</td><td>rsync in either direction, under the lock. The machine's side carries a leading colon.</td></tr>
+      <tr><td><code>dibs --status --json</code></td><td>none</td><td>The same state as a document per line. <code>--watch --json</code> makes it a feed over the one connection.</td></tr>
+      <tr><td><code>dibs --log [n]</code></td><td>none</td><td>Arrivals and outcomes, killings included.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>The display is coloured when the far end is a terminal: red or amber for the machine's
+  state, green for idle, and a hue derived from each agent's own name so one session reads as
+  one thing wherever it appears. Piped output and the test suite see plain text, and
+  <code>NO_COLOR</code> is honoured.</p>
+  <p>Modifiers: <code>--wait &lt;s&gt;</code> to give up rather than queue past a bound,
+  <code>--max &lt;s&gt;</code> to bound how long the job may hold the lock, <code>--label
+  &lt;name&gt;</code> for what shows up in the queue.</p>
+  <h4>Exit codes that mean something</h4>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Code</th><th>Meaning</th><th>What the caller should do</th></tr></thead>
+    <tbody>
+      <tr><td><code>69</code></td><td>Target unreachable</td><td>Read the diagnosis, do the work that does not need the machine, do not retry in a loop.</td></tr>
+      <tr><td><code>75</code></td><td>Busy, and the wait was bounded</td><td>Come back later, or queue properly without <code>--wait</code>.</td></tr>
+      <tr><td><code>124</code></td><td>Overran <code>--max</code>, killed</td><td>The job was holding the lock too long. Raise the bound or fix the job.</td></tr>
+      <tr><td>anything else</td><td colspan="2">The command's own status, passed through untouched.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Two of these matter more than they look. An agent that cannot tell "the machine is down"
+  from "my command failed" will retry a broken thing forever, and an agent that cannot tell
+  "queued" from "hung" will kill its own work.</p>
+</section>
+
+<section id="shape">
+  <h2><span class="num">03</span>Shape of the thing</h2>
+  <p class="lede">One file, two halves, no daemon, nothing installed on the target.</p>
+  <p>The script contains a second script as a here-document. The local half parses arguments,
+  decides who the caller is, and opens the connection. The remote half does the locking, runs
+  the workload, and reports. It is shipped on every call: base64 on the command line, decoded
+  into a temporary file on the target, executed, and unlinked by its own exit trap.</p>
+  {{SNIP_SHIP}}
+  <p>Shipping the remote half per call is worth a moment. The alternative is installing something
+  on the target and keeping it upgraded, which introduces a version skew between the two ends
+  that nobody will notice until it produces a wrong answer. This way the two halves cannot
+  disagree, and a machine with an ssh daemon and bash is already fully provisioned.</p>
+  <h4>The lock is the job's own process</h4>
+  <p>There is no lock file to clean up and no stale-lock timeout to tune. The lock is an open
+  file descriptor held by the process running the workload, so it is released by the kernel when
+  that process dies, however it dies, including SIGKILL and a power loss on the client. The
+  records in the lock directory are decoration for the status display; the kernel holds the
+  truth. Everything in the status display is written to be reconciled against a live pid, and a
+  record whose pid is dead is pruned on sight.</p>
+</section>
+
+<section id="protocol">
+  <h2><span class="num">04</span>The lock protocol</h2>
+  <p>Two files, both in a per-user directory on tmpfs, and two descriptors.</p>
+  {{SNIP_GATE}}
+  <p>Everyone passes through the gate exclusively, then takes the real lock shared or exclusive,
+  then releases the gate. The consequence is the whole point: an exclusive waiter
+  <em>keeps holding the gate</em> while it waits for the real lock, so every later arrival blocks
+  at the gate behind it. Without that, a steady trickle of one-minute builds means an exclusive
+  waiter never sees a free moment and starves indefinitely.</p>
+  <p>The non-blocking probe before the real acquisition exists only so the caller learns it is
+  about to wait. A job that goes quiet for twenty minutes gets killed by its own caller's timeout
+  and leaves the work undone with nothing to explain why; a job that says "queued, and here is
+  what is ahead of you" can be dealt with. The probe is safe because the gate is still held while
+  it runs, so nothing can take the lock between the probe and the real acquisition.</p>
+  <h4>One bounded exception, measured before it was written</h4>
+  <p>Strict priority makes every shared job wait out the whole benchmark ahead of it, and on
+  this machine three quarters of shared jobs finish in under five seconds while a benchmark
+  runs for up to twenty minutes. That is a 250x amplification applied to the overwhelming
+  majority of the traffic.</p>
+  <p>So a shared job may skip the gate, on two conditions that must both hold: the benchmark
+  has been waiting less than <code>DIBS_PATIENCE</code> (60s), and this job's own recorded
+  median is under <code>DIBS_QUICK</code> (10s). Its own, not its mode's, because the median
+  across all shared jobs here is under a second and would wave the four minute ones through
+  as readily as the instant ones. No history of its own means no exception. A benchmark can
+  therefore be delayed by the sum of the two, about seventy seconds, and no more.</p>
+  <p>One thing this depends on that is easy to get wrong: the median is filed under the job's
+  label, so it only exists if that label has been timed before. Labels naming the particular
+  run rather than the kind of work file a duration nothing will ever look up, and two thirds of
+  the labels on this machine ended up that way. The estimate falls back from the label to that
+  agent's other jobs and then to the mode, but the exception above deliberately requires the
+  label's own history, since what an agent usually takes is not what this job takes.</p>
+  <p>Note what cannot go wrong. This decides who waits and nothing else: once a benchmark
+  holds the lock, <code>flock</code> refuses every shared caller regardless of what the policy
+  returns. A bug in it can starve a benchmark. It cannot contaminate one.</p>
+  <p>Two knobs worth knowing are the wrong ones. Time since the current shared work started is
+  not it, since that measures the wrong clock: the harm belongs to the benchmark, so it should
+  be counted from when the benchmark began waiting. A count of admitted jobs is not it either,
+  because they run concurrently with the work already in progress, so the delay is set by the
+  single longest one let through, not by how many.</p>
+  <div class="note">
+    <h4>Arrival order is reported, not promised</h4>
+    <p>The queue display sorts by arrival because that is what a queue looks like to a person.
+    The kernel picks the actual wake order among waiters on the same lock, and the display says
+    so rather than implying a guarantee it cannot keep.</p>
+  </div>
+</section>
+
+<section id="findings">
+  <h2><span class="num">05</span>Findings</h2>
+  <p class="lede">Each of these was a bug that reached production, most of them found by the
+  machine misbehaving rather than by reasoning. They are the reason the script is 776 lines
+  instead of 80.</p>
+
+  <article class="finding">
+    <h3>A job has to die with the caller that started it</h3>
+    <p class="symptom"><b>Symptom when missing</b>You kill the agent, and the benchmark keeps
+    running on the target holding the lock until it finishes on its own.</p>
+    <p>Three mechanisms, because each covers a different failure:</p>
+    <ul>
+      <li><strong>The local ssh client must die with its parent.</strong> An ssh client whose
+      parent dies otherwise keeps running as an orphan with the channel up.
+      <code>setpriv --pdeathsig=TERM</code> has the kernel signal it the moment the parent dies,
+      SIGKILL included, which no userspace cleanup can cover.</li>
+      <li><strong>The remote half learns through EOF on its stdin.</strong> A closed channel does
+      not become a SIGHUP under every ssh server, so waiting for a hangup is not portable.</li>
+      <li><strong>Our end must never reach EOF on its own.</strong> Stdin for the ssh client is a
+      fifo held open read-write, which delivers neither data nor EOF while we live and closes
+      with us when we do not. If the fifo cannot be created, the watch is disabled with a warning
+      rather than falling back to whatever stdin we were handed. A job outliving its caller is a
+      nuisance; a job killed while its caller waits for it is the failure this exists to prevent.</li>
+    </ul>
+    <p>The trap that cost the most time: <strong>bash redirects a background job's stdin from
+    <code>/dev/null</code> in a non-interactive shell.</strong> The watcher is a background job,
+    so it read EOF instantly and killed the very job it was protecting, on every single run. The
+    channel has to be handed to it on another descriptor.</p>
+    {{SNIP_WATCH}}
+    <p>The watcher also starts <em>before</em> queueing, not after acquiring. A caller can die
+    while its job is still in the queue, and that job should leave the queue rather than hold a
+    place for twenty minutes and then die the instant it is let in.</p>
+  </article>
+
+  <article class="finding">
+    <h3>Never allocate a TTY</h3>
+    <p class="symptom"><b>Symptom when missing</b>Jobs wedge forever holding the lock. The
+    machine looks busy with something that is doing nothing at all.</p>
+    <p><code>ssh -tt</code> gives the remote a TTY, and with one, every tool downstream believes
+    it is interactive. A <code>git diff --stat</code> in a build script opened its pager and
+    blocked on a keystroke nobody would ever type. Two jobs wedged the machine this way before
+    the cause was found, and from the outside it looked like a lock bug.</p>
+    <p>No <code>-tt</code>. Redirect the workload's stdin from <code>/dev/null</code>, and set the
+    environment that tells tools nobody is watching:</p>
+    {{SNIP_TTY}}
+  </article>
+
+  <article class="finding">
+    <h3>The workload must not inherit the lock descriptors</h3>
+    <p class="symptom"><b>Symptom when missing</b><code>--status</code> reports the machine idle
+    while every new job queues forever behind nothing.</p>
+    <p>The lock is an open file descriptor, so anything that inherits it holds the lock. If the
+    workload spawns a child that outlives its parent, that child keeps the lock with no holder
+    record to show for it, and the status display swears the machine is free. Close the
+    descriptors when launching the workload:</p>
+    {{SNIP_FDS}}
+    <p>Belt and braces on the display side too: when there are no holder records, try the lock
+    non-blockingly. If that fails, the lock is held by an orphan, and the display says so along
+    with how to find it (<code>fuser -v</code> on the lock file).</p>
+  </article>
+
+  <article class="finding">
+    <h3>A holder's clock starts when it acquires, not when it arrived</h3>
+    <p class="symptom"><b>Symptom when missing</b>A job that queued for 13 minutes and has been
+    running for 3 reports <code>16m23s</code>, and every number computed from that elapsed is
+    wrong in the same direction.</p>
+    <p>The queue record was promoted to a holder record with <code>mv</code>, which is atomic and
+    convenient and keeps the arrival timestamp. Three separate things then measured a stretch the
+    job had spent waiting: the remaining-time estimate subtracted a queue wait from a run-length
+    median, the overrun check compared against mostly-queue time, and the idle check asked
+    whether the job had burned CPU during minutes it had spent queued. Rewrite the record on
+    acquisition instead of renaming it.</p>
+    <p>The general lesson is worth keeping: when one field feeds several derived numbers, an
+    error in it does not look like one bug, it looks like the feature being unreliable.</p>
+  </article>
+
+  <article class="finding">
+    <h3>CPU accounting has to count children that were already reaped</h3>
+    <p class="symptom"><b>Symptom when missing</b>A healthy twelve-minute sweep is reported as
+    idle and the user is told to kill it.</p>
+    <p>A supervisor that spawns a benchmark, waits for it, and spawns the next owns almost no CPU
+    itself at any instant, and <code>ps</code> TIME reports only living processes. The work lives
+    in <code>cutime</code> and <code>cstime</code>, which the kernel credits to a parent when it
+    reaps a child. Sum all four fields across the holder and every descendant:</p>
+    {{SNIP_CPU}}
+    <p>Descend through <code>/proc/&lt;pid&gt;/task/&lt;tid&gt;/children</code> rather than
+    rebuilding the tree from every process's parent. It touches the holder's own subtree instead
+    of all 598 processes on the machine, and every step is a shell builtin. Keep the
+    parent-scan version as a fallback for kernels without <code>CONFIG_PROC_CHILDREN</code>, and
+    test the two against each other, or the fallback will rot unnoticed.</p>
+  </article>
+
+  <article class="finding">
+    <h3>Idle is a rate, not a total</h3>
+    <p class="symptom"><b>Symptom when missing</b>The signal can only ever catch a job that
+    wedged before it started, which is not the case that blocks the machine.</p>
+    <p>A cumulative count answers whether a job has <em>ever</em> done anything. The sweep that
+    runs fine for an hour and then hangs carries plenty of CPU behind it forever, so it is never
+    flagged. Each look writes what the holder's tree had burned into a small file next to the
+    holder record, and the next look flags the job if that number has not moved.</p>
+    <p>It says nothing at all from a single sample, because one reading genuinely cannot
+    distinguish a job that is working from one that stopped before anyone looked. That makes a
+    <code>--watch</code> left running useful for more than watching: it supplies the samples.</p>
+  </article>
+
+  <article class="finding">
+    <h3>A successful <code>read</code> can return non-zero</h3>
+    <p class="symptom"><b>Symptom when missing</b>The CPU walk silently reports zero for every
+    job, and the idle detector calls a busy machine idle.</p>
+    <p><code>/proc/&lt;pid&gt;/task/&lt;tid&gt;/children</code> has no trailing newline, so
+    <code>read</code> fills the variable and <em>then</em> reports failure at EOF. This idiom
+    therefore throws away data it has just read:</p>
+    {{SNIP_READ}}
+    <p>Worth stating generally, because it is not specific to <code>/proc</code>: the exit status
+    of <code>read</code> answers "was there a delimiter", not "was there data". Any file without
+    a trailing newline hits this, and the failure is silent.</p>
+  </article>
+
+  <article class="finding">
+    <h3><code>2&gt;/dev/null</code> after a redirect does not suppress that redirect</h3>
+    <p class="symptom"><b>Symptom when missing</b>An error line printed on the first look at
+    every holder, in the middle of otherwise clean status output.</p>
+    <p>Redirections are applied left to right, so the shell reports a failed open before the
+    suppression is in effect. Put the suppression first:</p>
+    {{SNIP_ORDER}}
+  </article>
+
+  <article class="finding">
+    <h3>If the status display is polled, it has to be fork-free</h3>
+    <p class="symptom"><b>Symptom when missing</b>Watching the queue costs the benchmark more
+    than it tells you, which makes the tool self-defeating.</p>
+    <p>The original redraw forked about thirty times and scanned every process on the machine to
+    find the holder's descendants: 31ms of CPU per look. Four changes took it to 2.2ms and zero
+    forks.</p>
+    <ul>
+      <li>Walk the holder's subtree through the kernel's child lists instead of scanning all of
+      <code>/proc</code>. Cost now scales with the job's process tree, not the machine.</li>
+      <li>Format with <code>printf -v var</code> rather than <code>$(func)</code>. Command
+      substitution forks a copy of the shell, and a status line contains several.</li>
+      <li>Insertion-sort the queue in the shell rather than calling <code>sort</code>. The queue
+      is a handful of entries; the fork costs more than the sort.</li>
+      <li>Cache the per-label medians between redraws. They can only change when a job finishes,
+      and a job cannot finish without leaving the lock directory, so the set of records in that
+      directory is a free and exact invalidation signal.</li>
+    </ul>
+    <p>The last one generalizes: if you need to know whether a derived value is stale, look for
+    something you are already reading that changes exactly when it does.</p>
+  </article>
+
+  <article class="finding">
+    <h3>Fail fast, and diagnose</h3>
+    <p class="symptom"><b>Symptom when missing</b>An agent hangs on a connection attempt, then
+    reports a failure whose cause is invisible, then tries again.</p>
+    <p>A short <code>ConnectTimeout</code>, <code>BatchMode=yes</code> so it can never sit at a
+    password prompt, and on failure an actual diagnosis rather than ssh's exit code. In this
+    setup the machine is reached over a VPN that needs a login after a reboot, so the failure
+    path distinguishes "VPN logged out", "VPN up but the machine is not on the network", and
+    "machine is up, so this is an ssh problem", then tells the caller in as many words not to
+    retry in a loop.</p>
+    <p>This part is the most environment-specific thing in the script and the easiest to
+    replace. What matters is the shape: one exit code that means "not my command's fault",
+    and a message that names the next action.</p>
+  </article>
+
+  <article class="finding">
+    <h3>A signal has to compare a job against itself</h3>
+    <p class="symptom"><b>Symptom when missing</b>A perfectly healthy five minute sweep is
+    accused of running three times longer than it should.</p>
+    <p>Remaining-time estimates come from a median of that label's own past runs, and fall back
+    to the median across the whole mode when a label is new. The fallback is a reasonable thing
+    to <em>show</em>, as a rough idea of what benchmarks on this machine cost. It is not a
+    statement about the job in front of you, and the overrun check was treating it as one: a
+    long sweep with no history of its own was measured against a median dominated by unrelated
+    one minute benchmarks, and duly declared stuck.</p>
+    <p>Guard the accusation on where the number came from. A signal that is confidently wrong
+    is worse than no signal, because it teaches people to stop reading the display, and it
+    takes the true warnings down with it.</p>
+  </article>
+
+  <article class="finding">
+    <h3><code>kill -0</code> answers a different question than the one being asked</h3>
+    <p class="symptom"><b>Symptom when missing</b>On a machine with more than one account, live
+    jobs vanish from the queue display and the machine looks emptier than it is.</p>
+    <p>Records are reconciled against a live pid, and the obvious test for "is this process
+    alive" is <code>kill -0</code>. It returns EPERM for a process owned by another user, which
+    bash reports as failure, so the record for a colleague's running benchmark is pruned as
+    though the job had died. On Linux the direct question has a direct answer:</p>
+    {{SNIP_PRUNE}}
+    <p>This one never fires with a single account, which is what makes it worth knowing before
+    porting rather than after.</p>
+  </article>
+
+  <article class="finding">
+    <h3>Recognize yourself</h3>
+    <p class="symptom"><b>Symptom when missing</b>An agent working directly on the fast machine
+    bypasses the lock entirely, which is exactly when it matters most.</p>
+    <p>The same script is installed on the client and on the target. It compares
+    <code>hostname -s</code> against the target's name and, when they match, runs the remote half
+    locally through a pipe instead of trying to ssh to itself. One binary, one set of rules, and
+    the lock covers work started on the machine itself.</p>
+    <p>Note the one asymmetry: in local mode there is no channel, and stdin belongs to whoever
+    called. The caller-death watch has to be switched off there, or redirecting from
+    <code>/dev/null</code> kills the job immediately. Ordinary process death covers that case
+    anyway, since the caller and the job share a machine.</p>
+  </article>
+</section>
+
+<section id="attribution">
+  <h2><span class="num">06</span>Knowing whose job it is</h2>
+  <p class="lede">The queue is only half useful if you cannot tell which agent put something in
+  it.</p>
+  <p>With several agents running, a command in the queue gives no way back to the session that
+  started it, so the only way to ask about a job is to guess which window it came from. Each
+  caller stamps its own record with a name resolved <em>on the calling machine</em>, which is the
+  only machine that knows it. The target just stores the string.</p>
+  {{SNIP_STATUS}}
+  <p>In this setup the name is the title of the Claude Code session, read from the desktop app's
+  own metadata using the session id in the environment. That is the least portable piece of the
+  whole script and the fallbacks matter more than the happy path.</p>
+  {{SNIP_AGENT}}
+  <p>Adapt in order of preference: a session or window identifier from the environment; a
+  tmux or terminal window name; the working directory; or an explicit <code>--agent</code> flag
+  that the agent rules tell agents to pass. Any of them beats an opaque pid. Whatever is chosen,
+  the same string should also go into the log, so the question "what has that agent been running
+  all afternoon" has an answer.</p>
+</section>
+
+<section id="porting">
+  <h2><span class="num">07</span>What to change</h2>
+  <p class="lede">Everything below is specific to the machine it grew up on. Nothing else in the
+  script is.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>What</th><th>Where</th><th>Currently</th><th>Change to</th></tr></thead>
+    <tbody>
+      <tr><td class="what">Command name</td><td>filename, <code>DIBS_*</code> env names, lock dir name</td><td><code>dibs</code></td><td>Whatever the machine is called. It appears in the rules agents read, so pick something they will type.</td></tr>
+      <tr><td class="what">ssh destination</td><td><code>HOST=${DIBS_HOST:-}</code></td><td>an ssh alias</td><td>Their alias or <code>user@host</code>. Keep it an alias so <code>~/.ssh/config</code> owns the key and port.</td></tr>
+      <tr><td class="what">Self-detection</td><td><code>TARGET=${DIBS_HOSTNAME:-...}</code></td><td>compares <code>hostname -s</code></td><td>The target's short hostname. Get this wrong and the target tries to ssh to itself.</td></tr>
+      <tr><td class="what">Unreachable diagnosis</td><td><code>unreachable()</code></td><td>Tailscale-specific branches</td><td>Plain LAN or ssh: drop the branches and keep the exit code plus a one-line message. Another VPN: swap in its status command.</td></tr>
+      <tr><td class="what">Agent identity</td><td><code>agent_name()</code></td><td>Claude Desktop session titles</td><td>See the previous section. Must not be assumed present; the fallbacks are the real interface.</td></tr>
+      <tr><td class="what">Lock directory</td><td><code>${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/...</code></td><td>per-user tmpfs</td><td><strong>Read the note below if more than one account uses the machine.</strong></td></tr>
+      <tr><td class="what">Log and history</td><td><code>${XDG_STATE_HOME:-$HOME/.local/state}/...</code></td><td>per-user, on the target</td><td>Fine as is, but note both live on the target, not the client.</td></tr>
+      <tr><td class="what">Hold limits</td><td><code>--max</code> defaults</td><td>7200s bench, 1800s shared, 30s peek</td><td>Tune to the longest legitimate job. A shared build that exceeds the limit is killed with exit 124.</td></tr>
+      <tr><td class="what">Distribution</td><td>n/a</td><td>chezmoi</td><td>No dotfiles manager needed. Copy to <code>~/.local/bin/&lt;name&gt;</code> on every machine including the target, <code>chmod +x</code>. Same file everywhere; it works out which side it is on.</td></tr>
+      <tr><td class="what">Remote shell quoting</td><td>the ssh command line</td><td>written to be safe under fish</td><td>Nothing to do. The login shell on the target runs that one line, and it is kept to syntax bash and fish read identically. A bash login shell simply relaxes a constraint that is already satisfied.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <h4>The one that will bite: several user accounts on the target</h4>
+    <p>The lock directory is per-user, under <code>/run/user/$(id -u)</code>. If everyone logs
+    into the target as the same account, that is correct and nothing needs doing. If two people
+    log in as <em>different</em> accounts, they will each get their own lock and will not see each
+    other at all, which is worse than having no lock, because the status display will confidently
+    report an idle machine.</p>
+    <p>For a shared box, move the lock directory somewhere both accounts can reach, for example a
+    setgid group-writable <code>/run/lock/&lt;name&gt;</code> created by a tmpfiles.d rule, and
+    make sure the records are group-readable. The kill path needs a thought too: signalling
+    another user's process requires either the same group and a cooperating job, or sudo.</p>
+  </div>
+
+  <h4>Platform requirements</h4>
+  <ul>
+    <li><strong>Linux on both ends.</strong> The CPU accounting reads <code>/proc</code>. Fedora
+    client and Ubuntu target are both fine.</li>
+    <li><strong>util-linux</strong> for <code>flock</code> and <code>setpriv</code>. Present by
+    default on both. Without <code>setpriv</code> the script drops to a softer caller-death
+    guarantee rather than failing.</li>
+    <li><strong>GNU coreutils</strong> for <code>timeout --kill-after</code>.</li>
+    <li><strong>bash 4.2 or newer</strong> for <code>printf -v</code>. Bash 5 is used for
+    <code>EPOCHSECONDS</code> where available, with a fallback to <code>date</code>.</li>
+    <li><strong>An ssh daemon and bash on the target.</strong> That is the entire install
+    requirement.</li>
+    <li>macOS as a target would be real work: no <code>/proc</code>, no <code>flock</code> or
+    <code>setpriv</code> in the base system. The lock protocol would survive; the process
+    accounting would need rewriting against <code>libproc</code>.</li>
+  </ul>
+</section>
+
+<section id="adoption">
+  <h2><span class="num">08</span>Making agents actually use it</h2>
+  <p class="lede">A wrapper nobody calls is worse than no wrapper, because the status display
+  becomes a lie.</p>
+  <p>Two pieces. First, the rules file the agents read, which has to explain the shared/exclusive
+  distinction in terms of what agents actually do, and has to tell them how to call it. The most
+  important line turned out to be about backgrounding: a queued job can wait twenty minutes,
+  which is longer than a foreground tool call survives, so an agent that runs it in the
+  foreground loses the work and reports a failure whose cause is invisible.</p>
+  {{SNIP_RULES}}
+  <p>A front end is optional and comes free of the wrapper: <code>--watch --json</code> is a
+  line-delimited feed over the same single connection, so a dashboard reads structured state
+  instead of parsing a display meant for a person. The one built here is a ratatui terminal
+  view that renders the feed and shells back out to the wrapper for actions, which means it
+  cannot drift from what the wrapper would have said and needs no privileges of its own.</p>
+  <p>Second, a hook that blocks direct ssh to the machine and explains what to use instead. This
+  matters more than it sounds: agents that already know <code>ssh box ...</code> will keep using
+  it, and one unlocked command ruins whoever is benchmarking. The hook is Claude Code specific
+  (<code>PreToolUse</code> on <code>Bash</code>, exit 2 to block and feed stderr back to the
+  agent), and it strips here-document bodies before matching so that writing about ssh in a file
+  does not trip it.</p>
+  <p>Note that hooks apply to sessions that are <em>already running</em>, while a rules file is
+  read at session start. Adding the hook fixed behaviour immediately across every open agent,
+  which is a useful property when rolling this out to a team mid-week.</p>
+</section>
+
+<section id="testing">
+  <h2><span class="num">09</span>Testing, and two traps in it</h2>
+  <p>Two suites, split by whether they need the real machine.</p>
+  <ul>
+    <li><strong>Local suite, {{LINES_TEST}} lines, 58 assertions, about 15 seconds.</strong> Never
+    leaves the client. Every case runs against a scratch lock directory with the script forced
+    into local mode, so it is safe to run while other people's jobs are on the real machine.</li>
+    <li><strong>Live suite, {{LINES_LIVE}} lines, 14 assertions, about 6 seconds.</strong> Needs a
+    real channel, because "the job dies with its caller" cannot be shown without one. It refuses
+    to run unless the machine is idle <em>and</em> the operator passed
+    <code>--machine-is-mine</code>, since it takes the exclusive lock and kills things.</li>
+  </ul>
+
+  <h4>Trap one: a fixture sized in iterations is only a fixture on the machine it was written on</h4>
+  <p>The idle detector's test spawned children that ran <code>sum(range(9000000))</code> and
+  expected them to clear a two-second CPU threshold. On the machine where it was written that
+  took 77 milliseconds. The test passed anyway for weeks, on an unrelated age guard, so it was
+  pinning nothing at all. Size fixtures in wall time:</p>
+  {{SNIP_FIXTURE}}
+
+  <h4>Trap two: a poll loop's time budget is the cost of the thing it polls</h4>
+  <p>A test waited for a condition by calling <code>--status</code> up to sixty times, which took
+  about three seconds because <code>--status</code> was slow. Making <code>--status</code> fifteen
+  times faster made that loop finish in under a second, and the test started failing for a reason
+  that had nothing to do with what it was testing. Wait on an event, not on a spin. A fifo costs
+  no CPU and releases exactly when told:</p>
+  {{SNIP_SYNC}}
+  <p>The same applies to fixtures that need to hold the lock: block them on a fifo rather than
+  a sleep or a spin. The suite went from over 300 seconds of busy-waiting to 15 seconds by
+  changing nothing but how it waits.</p>
+
+  <div class="note">
+    <h4>What is worth pinning</h4>
+    <p>Every finding in section 05 is a test. That is not a coincidence: each of them was a
+    silent failure, and the only defence against a silent failure coming back is an assertion
+    that fails loudly. The two walks of the process tree are checked against each other, the
+    idle detector is checked in both directions, and the caller-death behaviour is checked over
+    a real connection.</p>
+  </div>
+</section>
+
+<section id="open">
+  <h2><span class="num">10</span>Still open</h2>
+  <ul>
+    <li><strong>Environment knobs do not cross ssh.</strong> The tuning variables only take effect
+    in local mode, since ssh does not forward the environment. On the target the defaults apply
+    and changing them means editing the script. Sending them explicitly through the command line
+    would be a small change if it matters.</li>
+    <li><strong>Hard-killed jobs leave a few KB behind.</strong> The temporary remote script
+    deletes itself from an exit trap, which cannot run under SIGKILL. Not worth cleanup code
+    unless it accumulates.</li>
+    <li><strong>One resource, one lock.</strong> A machine with several GPUs where independent
+    benchmarks could run per device would want a lock per device. The protocol generalizes
+    directly, the display does not.</li>
+    <li><strong>No fairness beyond writer priority.</strong> Among waiters of the same kind, the
+    kernel decides. In practice this has never mattered; with many agents it might.</li>
+  </ul>
+</section>
+
+<section id="source">
+  <h2><span class="num">11</span>Source</h2>
+  <p class="lede">Read the comments. Every non-obvious mechanism explains itself at the point it
+  happens, which is the only documentation that stays true.</p>
+
+  <details>
+    <summary><span>The wrapper <span class="filemeta">bash, {{LINES_DIBS}} lines</span></span></summary>
+    <div class="codewrap"><pre><code>{{SRC_DIBS}}</code></pre></div>
+  </details>
+
+  <details>
+    <summary><span>Local test suite <span class="filemeta">bash, {{LINES_TEST}} lines, 58 assertions</span></span></summary>
+    <div class="codewrap"><pre><code>{{SRC_TEST}}</code></pre></div>
+  </details>
+
+  <details>
+    <summary><span>Live test suite <span class="filemeta">bash, {{LINES_LIVE}} lines, 14 assertions</span></span></summary>
+    <div class="codewrap"><pre><code>{{SRC_LIVE}}</code></pre></div>
+  </details>
+
+  <details>
+    <summary><span>The ssh-blocking hook <span class="filemeta">bash, {{LINES_HOOK}} lines</span></span></summary>
+    <div class="codewrap"><pre><code>{{SRC_HOOK}}</code></pre></div>
+  </details>
+</section>
+
+</main>
+
+<footer>
+  Written up from a working installation. The wrapper, both suites and the hook are reproduced
+  above in full; the porting checklist in section 07 lists every assumption that is local to the
+  machine it grew up on.
+</footer>
+
+</div>

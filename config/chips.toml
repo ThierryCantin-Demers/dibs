@@ -1,0 +1,46 @@
+# What to assume about a chip when nothing can probe it.
+#
+# Keyed by the PCI `vendor:device` the hardware itself reports, which is what `lspci -nn`
+# prints in the last bracket of a line. An entry is identity and a fallback, never a claim:
+# where a runtime probe can reach the device, the probe's answer wins and this is only used
+# to name the thing and to know it is physically there.
+#
+# `matrix` is the one field worth reading twice. Compute capability does not imply it: TU106
+# and TU116 both report 7.5 and only one has tensor cores.
+
+[chip."8086:b080"]
+name   = "Arc B390"
+vendor = "intel"
+arch   = "panther-lake"
+matrix = "xmx"
+igpu   = true                       # shares the CPU's memory, so it measures the memory bus too
+
+[chip."10de:2705"]
+name   = "RTX 4070 Ti SUPER"
+vendor = "nvidia"
+arch   = "ada"
+sm     = "8.9"
+matrix = "tensor"
+vram   = 16376
+
+[chip."10de:1f06"]
+name   = "RTX 2060 SUPER"
+vendor = "nvidia"
+arch   = "turing"
+sm     = "7.5"
+matrix = "tensor"
+
+[chip."10de:21c4"]
+name   = "GTX 1660 SUPER"
+vendor = "nvidia"
+arch   = "turing"
+sm     = "7.5"                      # the same number as the 2060 SUPER above
+matrix = false                      # and no tensor cores: TU116 replaced them with FP16 units
+fp16   = "2x"
+
+[chip."1002:731f"]
+name   = "RX 5700 XT"
+vendor = "amd"
+arch   = "rdna1"
+gfx    = "gfx1010"
+matrix = false                      # WMMA arrives with RDNA3
