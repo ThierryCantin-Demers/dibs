@@ -224,6 +224,21 @@ caches, so it is what every machine pays no matter how warm the cache is.
 
 ## Open
 
+**The most common gap is not a missing recipe, it is a missing parameter.** `dibs-run gaps`
+names "verify a cubecl PR against the cubek tile engine" six times, more than everything else
+put together, and cubecl's own pull request template mandates exactly that: build cubek and
+burn against the PR's hash before it can merge. It cannot be written as a recipe, because the
+thing that changes every time is which cubecl revision to test against, and a recipe has no
+parameters. Nor can the caller pass one: recipe steps are strings run on the machine, ssh
+forwards no environment, and nothing substitutes into them.
+
+So the recurring workflow that the upstream process requires is the one thing the interface
+cannot express, and it has been done through `shell --reason` six times instead. That is the
+specification for parameters, and it is worth more than any individual recipe. It would also
+fix `shell` collapsing into one label: `cubek/shell` has run eleven different procedures under
+that name, so its history means nothing, which is the same defect as two devices under one
+label one level up.
+
 **One assertion in the suite is load-sensitive and has not been identified.** Under six
 spinners the suite went 219, 219, 218. The one that used to fail there was the reaped-children
 CPU count, which measured wall time and now burns CPU time instead; something else is still

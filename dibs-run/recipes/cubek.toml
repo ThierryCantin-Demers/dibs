@@ -62,6 +62,27 @@ isolation = "machine"
   lock = "exclusive"
   run  = "cargo bench -p benchmarks --bench quantized_matmul --features cubecl/cuda"
 
+# Named by `dibs-run gaps`: "conv2d and random benches have no recipe; re-measuring rows after
+# the curve migration". Both are plain bench targets in the same package, so they take the same
+# shape as the ones above and needed nothing but writing down.
+[bench.conv2d]
+isolation = "machine"
+  [[bench.conv2d.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench conv2d --features cubecl/cuda"
+  [[bench.conv2d.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench conv2d --features cubecl/cuda"
+
+[bench.random]
+isolation = "machine"
+  [[bench.random.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench random --features cubecl/cuda"
+  [[bench.random.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench random --features cubecl/cuda"
+
 # gemm_cpu and gemm_cpu_tiled are CPU-runtime studies and only mean anything with cubecl/cpu.
 # A CPU measurement wants the whole machine regardless, which is the default isolation.
 [bench.gemm-cpu]

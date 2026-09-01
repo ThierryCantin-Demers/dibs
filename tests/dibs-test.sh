@@ -502,6 +502,13 @@ out=$(DIBS_LOCAL=0 DIBS_HOSTNAME=nowhere DIBS_HOST=nowhere.invalid \
       DIBS_CONNECT_TIMEOUT=2 $T --status 2>&1); rc=$?
 check "fails fast with exit 69" "$rc" "69"
 check "and tells the agent not to loop" "$(grep -c 'Do not retry in a loop' <<<"$out")" "1"
+# ssh's own answer, not a guess. A machine reached over the LAN is not a tailnet peer, and
+# reporting one as "off or asleep" because tailscale has not heard of it is a true statement
+# about tailscale and a false diagnosis: it sends someone to look at a machine that is fine.
+check "it says what ssh actually complained about" \
+  "$(grep -c 'does not resolve from here' <<<"$out")" "1"
+check "and does not blame the tailnet for a machine that is not on it" \
+  "$(grep -ci 'not on the tailnet' <<<"$out")" "0"
 
 echo "scratch"
 # --check tells whoever is fixing a broken machine to set DIBS_SCRATCH. It has to be the
@@ -560,6 +567,17 @@ ssh      = "dibs@desk"
 hostname = "desk"
 TOML
 $T --check laptop --write >/dev/null 2>&1
+# --check was the one command that dialled its argument literally instead of resolving it,
+# so `--check <name>` reached a different host string than every other command uses: one that
+# may not resolve and that nothing has a host key for. The command whose job is to say whether
+# a machine is usable was the one that could not reach it.
+# DIBS_LOCAL=0 because the whole point is which host string reaches the far side, and the rest
+# of this suite never leaves the machine. Neither name resolves, so both fail: what is asserted
+# is which one it tried.
+check "a known name is resolved, not dialled literally" \
+  "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --check desk 2>&1 | grep -c "cannot reach 'dibs@desk'")" "1"
+check "and a name nobody has recorded is still taken literally, so it can onboard one" \
+  "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --check brand-new-host 2>&1 | grep -c "cannot reach 'brand-new-host'")" "1"
 check "recording a machine does not steal the default" \
   "$(awk -F'"' '/^default/ {print $2; exit}' "$DIBS_MACHINES")" "desk"
 check "and the new machine is there too" "$($T --machines | wc -l)" "2"

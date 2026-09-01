@@ -524,10 +524,22 @@ while [ $# -gt 0 ]; do
         --machines)   MODE=machines; shift ;;
         --write)      WRITE=1; shift ;;
         --check)      MODE=check; shift
-                      # A machine that has never been used has to be nameable, or --check
-                      # cannot be what onboards it.
                       if [ $# -gt 0 ] && [ -n "$1" ] && [ "${1#-}" = "$1" ]; then
-                          HOST=$1; TARGET=$1; PINNED=1; shift
+                          # A name the inventory knows is that machine, reached the way every
+                          # other command reaches it. Taken literally instead, it is a
+                          # different host string: one that resolves elsewhere or not at all,
+                          # and that nothing has ever recorded a host key for. The command
+                          # whose job is to say whether a machine is usable was the one
+                          # command that could not reach it.
+                          #
+                          # A name nobody has recorded is still taken literally, because that
+                          # is what makes --check the thing that onboards a new machine.
+                          if [ -n "$(inv "$1" ssh)" ]; then
+                              use_machine "$1"
+                          else
+                              HOST=$1; TARGET=$1
+                          fi
+                          PINNED=1; shift
                       fi ;;
         --out)        MODE=out; shift
                       if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9]/}" ]; then
@@ -2539,26 +2551,67 @@ no_room() {
 }
 
 unreachable() {
+    local why diagnosed=0
+    # Ask ssh why before guessing. The failure that brought us here printed its own reason to
+    # the caller's terminal and we did not keep it, so it is asked again: one bounded probe on
+    # a path that has already failed. Most of what lands here is not the machine being down,
+    # and saying it is sends someone to look at a machine that is running fine.
+    why=$(bounded "${DIBS_CONNECT_TIMEOUT:-10}" ssh -o BatchMode=yes -o LogLevel=ERROR \
+              -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" true 2>&1)
     echo "dibs: cannot reach '$HOST' over ssh." >&2
-    if command -v tailscale >/dev/null 2>&1; then
-        state=$(tailscale status 2>&1)
-        peer=$(grep -i "[[:space:]]$TARGET[[:space:]]" <<<"$state" | head -1)
-        case "$state" in
-            *"Logged out"*|*"logged out"*|*"NeedsLogin"*)
-                echo "  Tailscale is logged out, which it is after a reboot." >&2
-                echo "  Log in with: tailscale up" >&2 ;;
-            *"stopped"*|*"Stopped"*)
-                echo "  Tailscale is stopped. Start it with: tailscale up" >&2 ;;
-            *)  if [ -z "$peer" ]; then
-                    echo "  Tailscale is up but $TARGET is not on the tailnet: it is off or asleep." >&2
-                elif grep -qi 'offline' <<<"$peer"; then
-                    echo "  Tailscale reports $TARGET offline: $peer" >&2
-                else
-                    echo "  Tailscale reports $TARGET up ($peer), so this is an ssh problem." >&2
-                fi ;;
-        esac
-    else
-        echo "  The machine may be off, asleep, or off the network." >&2
+    case "$why" in
+        *"REMOTE HOST IDENTIFICATION HAS CHANGED"*)
+            diagnosed=1
+            echo "  Its host key is not the one recorded. The machine answered, so it is up;" >&2
+            echo "  ssh will not talk to it until you say which key is right." >&2
+            echo "  If it was reinstalled or its key regenerated, that is expected:" >&2
+            echo "    ssh-keygen -R ${HOST##*@}" >&2
+            echo "  then connect once by hand. If it was not, find out why the key changed" >&2
+            echo "  before trusting it." >&2 ;;
+        *"Host key verification failed"*)
+            diagnosed=1
+            echo "  Its host key is not in your known_hosts, and dibs connects with BatchMode," >&2
+            echo "  which cannot answer the question ssh is asking. The machine is almost" >&2
+            echo "  certainly up: this is about trust, not reachability." >&2
+            echo "  Record the key by connecting once by hand:  ssh $HOST" >&2 ;;
+        *"Permission denied"*)
+            diagnosed=1
+            echo "  It answered and refused the login, so it is up and this is about keys." >&2
+            echo "  Check your key is in that account's authorized_keys." >&2 ;;
+        *"Connection refused"*)
+            diagnosed=1
+            echo "  It answered and nothing is listening on the ssh port, so the machine is up" >&2
+            echo "  and sshd is not." >&2 ;;
+        *"Could not resolve hostname"*|*"Name or service not known"*|*"nodename nor servname"*)
+            diagnosed=1
+            echo "  The name '${HOST##*@}' does not resolve from here. A .local name needs mDNS" >&2
+            echo "  and the same network; anything else needs DNS." >&2 ;;
+    esac
+    # Only when ssh's own answer explained nothing, and only for a machine tailscale actually
+    # carries: what it says about a machine reached over the LAN is not evidence either way.
+    if [ "$diagnosed" = 0 ]; then
+        if command -v tailscale >/dev/null 2>&1; then
+            state=$(tailscale status 2>&1)
+            peer=$(grep -i "[[:space:]]$TARGET[[:space:]]" <<<"$state" | head -1)
+            case "$state" in
+                *"Logged out"*|*"logged out"*|*"NeedsLogin"*)
+                    echo "  Tailscale is logged out, which it is after a reboot." >&2
+                    echo "  Log in with: tailscale up" >&2 ;;
+                *"stopped"*|*"Stopped"*)
+                    echo "  Tailscale is stopped. Start it with: tailscale up" >&2 ;;
+                *)  if [ -n "$peer" ] && grep -qi 'offline' <<<"$peer"; then
+                        echo "  Tailscale reports $TARGET offline: $peer" >&2
+                    elif [ -n "$peer" ]; then
+                        echo "  Tailscale reports $TARGET up ($peer), so this is an ssh problem." >&2
+                    else
+                        echo "  It did not answer: off, asleep, or not on this network. It is not" >&2
+                        echo "  a tailnet peer either, so tailscale has nothing to say about it." >&2
+                    fi ;;
+            esac
+        else
+            echo "  It did not answer: off, asleep, or not on this network." >&2
+        fi
+        [ -n "$why" ] && printf '  ssh said: %s\n' "$(printf '%s' "$why" | head -1)" >&2
     fi
     echo "  Do not retry in a loop. Tell the user, and do the work that does not need the machine." >&2
     exit 69

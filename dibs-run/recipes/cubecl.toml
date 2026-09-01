@@ -34,6 +34,20 @@ isolation = "machine"
   lock = "exclusive"
   run  = "CUBECL_THROUGHPUT_CACHE=off cargo run --release -p throughput --features cuda --example memory"
 
+# Named by `dibs-run gaps`: "curve on the merge candidate; no recipe covers memory_curve".
+#
+# memory_curve is the one that answers what a kernel moving a given amount can actually hit;
+# the single-size probes above report only the last row of its table. Same cache note as the
+# others: a percentage of peak means nothing against a ceiling measured at some other time.
+[bench.memory-curve]
+isolation = "machine"
+  [[bench.memory-curve.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features cuda --example memory_curve"
+  [[bench.memory-curve.step]]
+  lock = "exclusive"
+  run  = "CUBECL_THROUGHPUT_CACHE=off cargo run --release -p throughput --features cuda --example memory_curve"
+
 # compute_cmma reports `unsupported` rather than failing on a device without tensor cores: the
 # gate is `client.properties().features.matmul.cmma` being empty. That is the field a `needs`
 # expression should eventually be written against.
