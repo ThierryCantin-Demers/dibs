@@ -1006,6 +1006,31 @@ check "a benchmark that failed claims nothing" \
 check "shared work is not checked at all" \
   "$($T --on beta --label series-a 'echo fine' >/dev/null 2>&1; echo $?)" "0"
 
+echo "a transfer goes where it was told"
+cat > "$DIBS_MACHINES" <<TOML
+default = "wrongbox"
+
+[machine.wrongbox]
+ssh      = "dibs@wrongbox"
+hostname = "wrongbox"
+
+[machine.rightbox]
+ssh      = "dibs@rightbox"
+hostname = "rightbox"
+TOML
+# rsync reaches the machine through a second dibs, and that one parses its own arguments: it
+# never saw --on, resolved the default, and the transfer went to the wrong machine silently
+# and with exit 0. The resolved host rides in the environment, which the child inherits.
+check "--sync carries --on to the transport it spawns" \
+  "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --on rightbox --sync ./x :~/y 2>&1 |
+     grep -q 'dibs@rightbox' && echo reached || echo elsewhere)" "reached"
+check "and does not fall back to the default machine" \
+  "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --on rightbox --sync ./x :~/y 2>&1 | grep -c 'wrongbox')" "0"
+# Said before the bytes move. A transfer to the wrong machine succeeds, so the only moment it
+# can be caught is before it happens.
+check "and says where it is about to write" \
+  "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --on rightbox --sync ./x :~/y 2>&1 | grep -c 'syncing with dibs@rightbox')" "1"
+
 echo "nothing left behind"
 check "no holders" "$(holders)" "0"
 check "no waiters" "$(waiters)" "0"

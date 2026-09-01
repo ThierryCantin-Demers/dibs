@@ -876,6 +876,18 @@ case "$MODE" in
         SELF=$(readlink -f "$0" 2>/dev/null || echo "$0")
         # Through bash rather than exec'ing the file: rsync runs the transport itself, and
         # whether this copy happens to carry an exec bit is not something to depend on.
+        #
+        # The transport is a second dibs that parses its own arguments and has never heard of
+        # the --on this one was given, so it resolved the default machine and the transfer
+        # went there: the wrong machine, silently, and exit 0. The resolved host is handed to
+        # it through the environment, which a forked child inherits and an argument would not
+        # survive, since --rsh takes rsync's own host and command after it.
+        export DIBS_HOST="$HOST" DIBS_HOSTNAME="$TARGET"
+        # Said before the bytes move, because a transfer to the wrong machine is not something
+        # you find out about afterwards: it succeeds, exit 0, and the files are somewhere
+        # nobody will look. One line on stderr, so it cannot get into rsync's own output.
+        printf 'dibs: syncing with %s%s\n' "$HOST" \
+            "$([ -n "$MACHINE" ] && [ "$MACHINE" != "$HOST" ] && printf ' (%s)' "$MACHINE")" >&2
         exec rsync -e "bash $SELF --rsh" "${SYNC[@]}"
         ;;
     rsh)
