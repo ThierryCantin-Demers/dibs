@@ -26,7 +26,10 @@
 #   dibs --forget <machine>     drop a machine from your own inventory, repointing the default
 #   dibs --registry-sync        fetch the shared machine list named by DIBS_REGISTRY
 #   dibs --detach <command>     run it on the machine named by DIBS_QUEUE, which stays up, so
-#                                the job outlives this session closing. Prints a job id.
+#                                the job outlives this session closing. Prints a job id. It
+#                                moves the caller and takes no lock of its own: to hold one,
+#                                detach a dibs call, as in --detach 'dibs --bench <cmd>'.
+#                                --on sends the job to a named machine instead of DIBS_QUEUE.
 #   dibs --jobs                 what has been submitted there, and how each went
 #   dibs --job <id>             one job: its command, its state and its output
 #   dibs --cancel <id>          stop one of yours, or someone else's with --anyone. Reaches a
@@ -481,6 +484,7 @@ DEV_RT=""
 DEV_CHIP=""
 DEV_TWINS=1
 NEW_SERIES=0
+DETACH=0
 COMMAND=""
 SYNC=()
 
@@ -515,7 +519,7 @@ while [ $# -gt 0 ]; do
         --repo)       REPO=${2:-}; shift 2 ;;
         --pick)       MODE=pick; shift ;;
         --registry-sync) MODE=registry; shift ;;
-        --detach)     MODE=detach; shift ;;
+        --detach)     DETACH=1; shift ;;
         --jobs)       MODE=jobs; shift ;;
         --job)        MODE=job; JOBID=${2:-}; shift 2 ;;
         --cancel)     MODE=cancel; JOBID=${2:-}; shift 2 ;;
@@ -745,10 +749,39 @@ case "$MODE" in
         exit 0 ;;
 esac
 
+# --detach moves the caller and nothing else. It used to be a mode, so it and --bench each
+# overwrote the other and whichever came last won without a word: --bench --detach measured
+# with no lock at all, and --detach --bench held the lock in the foreground of a session that
+# was about to close. Detaching is a property of the caller, so it is tracked apart from what
+# kind of run it is, and the flags that describe the run are refused here rather than dropped.
+# They are not lost: they belong on the dibs call inside, which is where the lock is taken.
+if [ "$DETACH" = 1 ]; then
+    if [ "$MODE" != shared ]; then
+        echo "dibs: --detach starts a caller elsewhere. It does not take the lock itself." >&2
+        [ "$MODE" = bench ] &&
+            echo "  Alone with it, the measurement would run beside everything else there." >&2
+        echo "  Put the run inside it, where the lock and the series both still apply:" >&2
+        echo "    dibs --detach 'dibs --bench <command>'" >&2
+        exit 2
+    fi
+    unhonoured=""
+    [ -n "$DEVICE" ]      && unhonoured="--device"
+    [ "$NEW_SERIES" = 1 ] && unhonoured="--new-series"
+    [ -n "$WAIT" ]        && unhonoured="--wait"
+    [ -n "$MAXHOLD" ]     && unhonoured="--max"
+    if [ -n "$unhonoured" ]; then
+        echo "dibs: $unhonoured describes a run, and --detach starts a caller." >&2
+        echo "  Give it to the dibs call inside:  dibs --detach 'dibs $unhonoured ... <command>'" >&2
+        exit 2
+    fi
+fi
+
 # Routing is opted into, because turning it on moves work that was going somewhere else and
 # that should be a decision rather than a side effect of writing an inventory.
+# A detached job is not ranked: it goes to one machine that stays up, and --jobs reads that
+# machine, so scattering the jobs would be scattering the record of them too.
 if [ "$MODE" = pick ] || { [ "$MODE" = shared ] && [ "$PINNED" = 0 ] && [ "$ROUTE" = 1 ] &&
-                           [ "${DIBS_FROM_RUN:-0}" != 1 ]; }; then
+                           [ "$DETACH" = 0 ] && [ "${DIBS_FROM_RUN:-0}" != 1 ]; }; then
     picked=$(pick_machine); ranked=$?
     if [ "$ranked" = 0 ]; then
         [ "$MODE" = pick ] && { printf '%s\n' "$picked"; exit 0; }
@@ -1018,8 +1051,10 @@ fi
 # A job is killed when its caller dies, on purpose. Agents run on laptops, so the caller is
 # always something that closes. The fix is not to weaken that rule but to move the caller: the
 # command runs on a machine that stays up, holding the job for its whole life, and this session
-# only starts it. Everything below the caller is unchanged, and the lock is still an flock on
-# the benchmarking machine.
+# only starts it. Everything below the caller is unchanged, which is the whole of the design
+# and also its one sharp edge: this takes no lock, so a job that needs one is a dibs call
+# written inside it, and the flock is taken from there by a caller that will still be alive
+# when it is granted.
 #
 # There is no scheduler here and there does not need to be one. Contention is already settled
 # by the lock on the machine being used; the only thing missing was somewhere for the caller to
@@ -1038,16 +1073,18 @@ queue_run() {  # script-on-stdin, args...
     fi
 }
 
-case "$MODE" in
-    detach)
-        [ -n "$QUEUE" ] || {
-            echo "dibs: no DIBS_QUEUE, so there is nowhere for the job to outlive this session." >&2
-            echo "  Set it to the machine that stays up:  DIBS_QUEUE=dibs@<box>" >&2
-            exit 2; }
-        # setsid so it survives this ssh channel closing, and its own log from the first
-        # instant so that a job which dies immediately still says why.
-        queue_run <<'REMOTE' "$(printf %s "$COMMAND" | base64 | tr -d '\n')" "$JOBS_DIR" "$LABEL" \
-                              "$(agent_name | base64 | tr -d '\n')"
+if [ "$DETACH" = 1 ]; then
+    # --on names where the work goes, and for a detached job the work is the caller.
+    [ "$PINNED" = 1 ] && [ -n "$HOST" ] && QUEUE=$HOST
+    [ -n "$QUEUE" ] || {
+        echo "dibs: no DIBS_QUEUE, so there is nowhere for the job to outlive this session." >&2
+        echo "  Set it to the machine that stays up:  DIBS_QUEUE=dibs@<box>" >&2
+        echo "  Or name one for this job:  dibs --detach --on <machine> <command>" >&2
+        exit 2; }
+    # setsid so it survives this ssh channel closing, and its own log from the first
+    # instant so that a job which dies immediately still says why.
+    queue_run <<'REMOTE' "$(printf %s "$COMMAND" | base64 | tr -d '\n')" "$JOBS_DIR" "$LABEL" \
+                          "$(agent_name | base64 | tr -d '\n')"
 set -eu
 b64=$1; jobs=$(eval echo "$2"); label=${3:-job}; who=${4:-}
 id="$(date +%Y%m%d-%H%M%S)-$$"
@@ -1063,7 +1100,10 @@ setsid bash -c 'd=$1; trap '"'"'echo $? > "$d/status"'"'"' EXIT; bash "$d/cmd"' 
 echo $! > "$d/pid"
 echo "$id"
 REMOTE
-        exit $? ;;
+    exit $?
+fi
+
+case "$MODE" in
     jobs)
         [ -n "$QUEUE" ] || { echo "dibs: no DIBS_QUEUE" >&2; exit 2; }
         queue_run <<'REMOTE' "$JOBS_DIR"

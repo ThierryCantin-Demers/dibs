@@ -812,6 +812,35 @@ check "--anyone cancels it" \
 # running it here and having it die with the session anyway.
 check "with no queue it refuses rather than pretending" \
   "$(DIBS_QUEUE= $T --detach true >/dev/null 2>&1; echo $?)" "2"
+
+# Both used to set the mode, so one silently erased the other and the order on the line
+# decided which. Measured with no lock one way round, detached-in-name-only the other.
+for order in "--bench --detach" "--detach --bench"; do
+    out=$($T $order --label bd true 2>&1); rc=$?
+    check "$order is refused rather than half-honoured" "$rc" "2"
+    check "  and it says the lock is not taken" "$(grep -c 'does not take the lock' <<<"$out")" "1"
+    check "  and it names the form that does" "$(grep -c "detach 'dibs --bench" <<<"$out")" "1"
+done
+check "no job was submitted by either" "$($T --jobs | grep -c ' bd ')" "0"
+# The refusal names a form, and a named form nobody exercised is how a helpful message turns
+# into a wrong one. The detached caller has to reach dibs and take the lock it was sent for.
+fifo db
+$T --detach --label inner "$T --bench --label inner-bench '$(hold db)'" >/dev/null
+held
+check "the form the refusal names does take the lock" \
+  "$($T --status | awk '/BUSY, benchmark/{b=1} b && /inner-bench/{n++} END{print n+0}')" "1"
+free db
+gone
+# The same silence for everything else that describes a run rather than the caller: it went
+# to a queue that had no idea what to do with it, and the job ran as if it were never given.
+for flag in "--device gpu:none" --new-series "--wait 5" "--max 60"; do
+    check "$flag with --detach is refused" \
+      "$($T --detach $flag true >/dev/null 2>&1; echo $?)" "2"
+done
+# Its counterpart: a detached job is not ranked across the pool, because --jobs reads one
+# machine and a scattered job is one nobody can find again.
+check "a detached job is not routed away from its queue" \
+  "$(DIBS_ROUTE=1 DIBS_HOST= $T --detach --label routed true | grep -cE '^[0-9]{8}-')" "1"
 unset DIBS_QUEUE DIBS_QUEUE_LOCAL DIBS_JOBS_DIR
 
 # A compilation cache runs the compiler inside its own daemon, which is parented to init, so
