@@ -92,14 +92,63 @@ follow it to. So a second machine that cannot measure earns its keep on repos th
 benchmarked, and on whatever you send it deliberately with `--on`. That is a smaller claim than
 "it splits the load", and it is the true one until artifacts can move.
 
-**Benchmarks are never routed.** A measurement's duration history and its label binding key on
-the machine it ran on, so moving one files two distributions under a single label. Until
-bindings exist, `--bench` goes where it is told.
+**Benchmarks are never routed.** A measurement's duration history keys on the machine it ran
+on, so moving one files two distributions under a single label. `--bench` goes where it is
+told.
+
+Routing also drops a machine that has no clone of the repo under `~/prog`, because a worktree
+is prepared from one and a job sent to a machine without it queues and then fails. Dropped
+rather than ranked last: last still wins when it is the only machine that answered. `dibs
+--check <machine>` names the repos a machine can build, so a missing clone is something you can
+see rather than a machine that quietly never gets that work.
 
 An entry can say `measure = false`, and `--bench` then refuses it. That is for a machine whose
 numbers would not mean anything, a laptop most of all: it throttles, it moves, and its iGPU
 shares one memory pool with the CPU. `--check --write` sets it when it finds a battery. Such a
 machine is still useful for everything that is not a measurement, which is most of what runs.
+
+## Naming the card
+
+A machine with several GPUs has the same problem the lock solves, one level down: two runs of a
+benchmark are only comparable if they ran on the same silicon, and which card the runtime picks
+is neither the caller's to decide nor recorded anywhere.
+
+`dibs --machines -v` lists each machine's cards, and `--device <alias>` runs a job on one of
+them. It works with `dibs` and with `dibs-run`, and `dibs-run --dry-run` prints which card it
+would use before anything runs.
+
+What that turns into differs per runtime, and none of it is guessable:
+
+`CUDA_VISIBLE_DEVICES` takes an index or a `GPU-<uuid>`, never a bus id. Handed one it does not
+fail, it ignores the value and leaves every card visible, so a job looks pinned and is not. The
+inventory's bus id is resolved to a UUID on the machine at launch, which also means a card that
+has moved slots is followed rather than mistaken for its neighbour. A machine that cannot
+answer for the card refuses the job instead of running it unpinned.
+
+Vulkan needs two variables that fight each other. `DRI_PRIME` takes a PCI address and is the
+only thing that tells two cards of one model apart, but it is Mesa's and does nothing for the
+NVIDIA ICD. `MESA_VK_DEVICE_SELECT` is a layer above every ICD so it does reach NVIDIA, but it
+keys on vendor and model, which names both halves of a matched pair. Set together the layer
+reorders last and wins, which sends both aliases of a pair to one card while each looks pinned.
+So `DRI_PRIME` always, and the model selector only where the model names one card.
+
+Both Vulkan variables reorder rather than filter, unlike the CUDA one. The default device is
+the one that was named, which is what almost all code asks for, but a job that enumerates and
+picks an index itself can still reach another card.
+
+**One label, one series.** A label is the key a measurement's history is filed under, so two
+runs of it are meant to be two samples of one thing. They are not if they ran on different
+cards or different machines, and nothing about the two numbers says so. The first benchmark
+under a label records where it ran, and a later one elsewhere is refused, naming what it was
+measured on before. `--new-series` moves a label deliberately and starts its history again,
+rather than mixing the new numbers into the old, which would rebuild the thing the check exists
+to prevent. Checked before the run and recorded after it, so a benchmark that failed claims
+nothing.
+
+`--check` also reports what each card is plugged into, walked to the root complex rather than
+read off the endpoint: a card with its own bridge reports the width between its die and its own
+upstream port, which says nothing about the riser above it. A card reaching the host over fewer
+lanes than it can drive is worth knowing about before believing a number that moved data.
 
 ## What is here
 
