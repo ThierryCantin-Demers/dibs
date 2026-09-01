@@ -45,6 +45,29 @@ shared benchmarking machine, and most of it exists because someone already got i
   Do not try to force a build onto an idle machine to make it finish sooner: the benchmark that
   needs what it built cannot follow it there, and would compile inside its own exclusive lock.
 
+### Naming the card, on a machine with more than one
+
+- `dibs --machines -v` lists every machine's cards: the alias to name it by, its bus id, what
+  can reach it, and what it is plugged into.
+- `--device <alias>` runs the job on that card and nothing else. It works with `dibs` and with
+  `dibs-run`. **A benchmark on a multi-GPU machine that names no card is not reproducible**,
+  because which card the runtime picks is not yours to decide and is not recorded anywhere.
+  dibs says so when you do it; it does not stop you, because a build does not care.
+- Two runs under one label have to name the same card, or their numbers are not comparable and
+  nothing about the two numbers says so. dibs refuses the second one and tells you what the
+  first ran on. If you mean to move a label to another card or machine, say
+  `--new-series`: its history starts again rather than mixing the new numbers into the old.
+- Two cards of the same model are told apart by their slot, so a machine with a matched pair
+  can still name either one. A card the machine cannot answer for is refused rather than run
+  unpinned, because a job that measured whichever card came first and reported it under the
+  name you asked for is worse than one that did not run.
+- `dibs-run ... --dry-run` prints which card it would use before anything runs. On a
+  measurement worth keeping, look at that line first.
+- Do not pass `CUDA_VISIBLE_DEVICES` yourself. dibs sets it, from the alias, resolved on the
+  machine at the moment the job starts. Setting it by hand with a bus id looks like it works
+  and does nothing: that variable takes an index or a `GPU-<uuid>`, and it ignores anything
+  else rather than failing.
+
 ### Recipes: prefer `dibs-run` where a repo has one
 
 - `dibs-run list <repo>` says what a repo defines. `dibs-run <verb> <repo>@<ref> <recipe>` runs

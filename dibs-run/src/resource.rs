@@ -14,6 +14,9 @@ pub struct Request<'a> {
     pub lock: Lock,
     pub isolation: Isolation,
     pub needs: Option<&'a str>,
+    /// The card to run on, named from the machine's inventory. Absent means the runtime
+    /// picks, which is fine for a build and is what makes two benchmarks incomparable.
+    pub device: Option<&'a str>,
 }
 
 pub struct Outcome {
@@ -143,6 +146,9 @@ impl Dibs {
             cmd.arg("--bench");
         }
         cmd.arg("--label").arg(req.label);
+        if let Some(d) = req.device {
+            cmd.arg("--device").arg(d);
+        }
         // Tells the wrapper this came through the interface, so it does not print the note
         // that points at the interface.
         cmd.env("DIBS_FROM_RUN", "1");

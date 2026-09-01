@@ -36,6 +36,10 @@ pub struct Run {
     /// could say two runs differed without anyone being able to see how.
     pub procedure: Vec<(String, String)>,
     pub backend: &'static str,
+    /// Which card it ran on. Two devices under one label are two histories, exactly as two
+    /// procedures under one label are: a number from one card cannot be compared with a
+    /// number from another, and without this the record cannot say they differed.
+    pub device: Option<String>,
     /// Which machine it ran on, when a pool was ranked rather than one machine named. Two
     /// machines' timings under one label are two distributions, and the record exists to say
     /// so rather than to let them be averaged.

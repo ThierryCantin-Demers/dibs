@@ -8,8 +8,15 @@
 
 export DIBS_LOCAL=1
 S=$(mktemp -d "${TMPDIR:-/tmp}/dibs-test.XXXXXX")
-trap 'rm -rf "$S"' EXIT
+# Holders block on a fifo under $S, and removing the directory does not release them: they
+# stay parked on a read that can never complete until their own --max expires, hours later.
+# Matched on $S, which is unique to this run, so a suite running beside this one is untouched.
+trap 'pkill -f "$S" 2>/dev/null; rm -rf "$S"' EXIT
 export DIBS_LOCK_DIR=$S/lockdir DIBS_HISTORY=$S/history DIBS_LOG=$S/log
+# Every piece of state the wrapper writes has to be redirected here, not only the ones a test
+# reads back: a benchmark in this suite wrote its series into the real one, under the labels
+# of whoever was using the machine.
+export DIBS_SERIES=$S/series
 mkdir -p "$DIBS_LOCK_DIR"
 T=${DIBS:-${DIBS_BIN:-$HOME/.local/bin/dibs}}
 DIBS_LOCK_DIR_SAVED=$DIBS_LOCK_DIR
@@ -209,7 +216,12 @@ free W; wait $WD
 
 # Burns a known amount of CPU in children it then reaps, and the same amount on any machine:
 # a fixture sized in loop iterations is only a fixture on the laptop it was written on.
-burner() { echo "for i in 1 2 3; do timeout 1.2 python3 -c 'while True: pass'; done
+# Burns CPU time rather than wall time. `timeout 1.2` bounds the clock, and on a loaded
+# machine 1.2s of clock buys a fraction of that in CPU, so the assertion below measured how
+# busy the laptop was instead of whether reaped children are counted.
+burner() { echo "for i in 1 2 3; do python3 -c 'import time
+s = time.process_time()
+while time.process_time() - s < 1.2: pass'; done
            printf 'x\n' > $S/f-$1
            $(hold "$2")"; }
 fifo B; fifo BD; fifo BH
@@ -551,6 +563,11 @@ $T --check laptop --write >/dev/null 2>&1
 check "recording a machine does not steal the default" \
   "$(awk -F'"' '/^default/ {print $2; exit}' "$DIBS_MACHINES")" "desk"
 check "and the new machine is there too" "$($T --machines | wc -l)" "2"
+# An integrated GPU is on the root complex with no link of its own, and reports width 0
+# against a max of 255. Answering for it divided by zero and took the whole entry with it,
+# so a laptop could not be recorded at all.
+check "a device with no pcie link of its own does not break the write" \
+  "$($T --check laptop --write 2>&1 | grep -c 'reported nothing to record')" "0"
 
 # Renaming a machine leaves an entry that can never answer, and until there was a command for
 # it the only fix was editing the file by hand.
@@ -667,10 +684,33 @@ check "a machine reports the repos it has actually built" \
   "$(DIBS_SCRATCH=$S/scr $T --status --json | grep -c '"caches":\["faux"\]')" "1"
 check "a target directory nothing was built in is not a cache" \
   "$(DIBS_SCRATCH=$S/scr $T --status --json | grep -c 'prepared-only')" "0"
+
+# A worktree is prepared from a clone under ~/prog, so a machine without one cannot run the
+# job at all. Ranking it last is not enough: last still wins when it is the only machine that
+# answered, and the job then queues for a machine that fails the moment it starts.
+mkdir -p "$S/fakehome/prog/faux/.git"
+check "a machine reports the repos it can prepare from" \
+  "$(HOME=$S/fakehome $T --status --json | grep -c '"clones":\["faux"\]')" "1"
+check "a machine with no clone of the repo is not chosen" \
+  "$(HOME=$S/fakehome DIBS_SELF_PENALTY=0 $T --pick --repo absent 2>/dev/null; echo "exit=$?")" "exit=69"
+check "-v says why it was dropped" \
+  "$(HOME=$S/fakehome $T --pick --repo absent -v 2>&1 >/dev/null | grep -c 'no clone of absent')" "2"
+check "a machine that does have the clone is still chosen" \
+  "$(HOME=$S/fakehome DIBS_SELF_PENALTY=10000 $T --pick --repo faux 2>/dev/null)" "two"
+# Affinity is a memo about where a cache is, and a cache is no use on a machine that cannot
+# prepare the tree in the first place.
+check "and affinity does not override a missing clone" \
+  "$(HOME=$S/fakehome $T --pick --repo absent --prefer one 2>/dev/null; echo "exit=$?")" "exit=69"
+# Two failures that need different fixes: nothing is up, versus everything is up and none of
+# it can prepare this repo. Reporting the second as the first sends you to look at the network.
+check "and says which of the two failures it was" \
+  "$(HOME=$S/fakehome $T --pick --repo absent 2>&1 >/dev/null | grep -c 'none has a clone')" "1"
 check "--repo picks a machine that reports it" \
-  "$(DIBS_SCRATCH=$S/scr $T --pick --repo faux 2>/dev/null | grep -cE '^(one|two)$')" "1"
+  "$(HOME=$S/fakehome DIBS_SCRATCH=$S/scr $T --pick --repo faux 2>/dev/null | grep -cE '^(one|two)$')" "1"
 # A first build decides where a repo's cache lives, and a machine that refuses benchmarks is
-# one no benchmark can follow it to.
+# one no benchmark can follow it to. Uncached, but cloned: a machine with no clone is out of
+# the ranking entirely and would not be there to lose it.
+mkdir -p "$S/fakehome/prog/never-built/.git"
 cat > "$DIBS_MACHINES" <<TOML
 default = "measures"
 
@@ -684,7 +724,7 @@ hostname = "refuses"
 measure  = false
 TOML
 check "an uncached repo goes to a machine that can measure it" \
-  "$(DIBS_SELF_PENALTY=100 $T --pick --repo never-built 2>/dev/null)" "measures"
+  "$(HOME=$S/fakehome DIBS_SELF_PENALTY=100 $T --pick --repo never-built 2>/dev/null)" "measures"
 # An inventory whose default cannot be reached, next to one that can. Without routing the job
 # goes where it was told and fails; with it, the machine that answered is chosen. This is also
 # the only assertion that a machine which did not answer is never picked.
@@ -805,6 +845,148 @@ exec 8>&-
 check "it is reported as an orphan" "$(grep -c 'LOCKED BY AN ORPHAN' <<<"$out")" "1"
 check "and it says what is holding it" "$(grep -cE 'holding it:|reports holding it' <<<"$out")" "1"
 check "back to idle once released" "$($T --status | grep -c 'dibs: idle')" "1"
+
+echo "a job can see a toolchain the login shell would have set up"
+if [ -d "$HOME/.cargo/bin" ]; then
+    out=$($T --label path-cargo 'case ":$PATH:" in *":$HOME/.cargo/bin:"*) echo yes ;; *) echo no ;; esac' 2>/dev/null)
+    check "cargo installed by rustup is on the path" "$out" "yes"
+fi
+out=$($T --label path-twice 'printf "%s\n" "$PATH" | tr ":" "\n" | sort | uniq -d | grep -c cargo' 2>/dev/null)
+check "and is not added twice" "$out" "0"
+
+echo "naming a device"
+cat > "$DIBS_MACHINES" <<TOML
+default = "rig"
+
+[machine.rig]
+ssh      = "rig"
+hostname = "$(hostname -s)"
+
+  [[machine.rig.device]]
+  kind     = "gpu"
+  alias    = "gpu:one"
+  pci      = "0000:07:00.0"
+  chip     = "10de:1f08"
+  runtimes = ["cuda", "vulkan"]
+
+  [[machine.rig.device]]
+  kind     = "gpu"
+  alias    = "gpu:twin.03"
+  pci      = "0000:03:00.0"
+  chip     = "1002:731f"
+  runtimes = ["vulkan"]
+
+  [[machine.rig.device]]
+  kind     = "gpu"
+  alias    = "gpu:twin.06"
+  pci      = "0000:06:00.0"
+  chip     = "1002:731f"
+  runtimes = ["vulkan"]
+
+  [[machine.rig.device]]
+  kind     = "gpu"
+  alias    = "gpu:lone"
+  pci      = "0000:09:00.0"
+  chip     = "8086:b080"
+  runtimes = ["vulkan"]
+TOML
+# Repeatability is the whole point: two calls naming one alias have to reach one card, and a
+# bus id is the only name for it that survives a reboot or another card being added.
+# CUDA_VISIBLE_DEVICES takes an index or a GPU-<uuid>, never a bus id: handed one it does not
+# error, it ignores the value and leaves every card visible. So the bus id is translated on the
+# machine, and a machine that cannot answer for the card refuses the job rather than running it
+# on whichever card is first and reporting it under the name that was asked for.
+check "a card this machine cannot answer for is refused, not run unpinned" \
+  "$($T --on rig --device gpu:one --label dev 'echo ran' 2>&1 >/dev/null | grep -c 'nothing here answers to it')" "1"
+check "and nothing ran" \
+  "$($T --on rig --device gpu:one --label dev 'echo ran' 2>/dev/null | grep -c ran)" "0"
+# awk's exit jumps to END, so a flush() that printed and exited printed again on the way out.
+# Two lines in a device selector is not a cosmetic fault, it is an unusable value.
+check "a lookup answers once, not twice" \
+  "$($T --on rig --device gpu:lone --label dev 'printf %s "$MESA_VK_DEVICE_SELECT"' 2>/dev/null | tail -1 | wc -l)" "0"
+check "the job can see which device it was given" \
+  "$($T --on rig --device gpu:lone --label dev 'printf %s "$DIBS_DEVICE"' 2>/dev/null | tail -1)" "gpu:lone"
+# --device is unusable if there is no way to read the aliases out of the inventory.
+check "-v lists the aliases the flag takes" \
+  "$($T --machines -v | grep -c 'gpu:one')" "1"
+check "with the bus id and what can reach it" \
+  "$($T --machines -v | grep 'gpu:one' | grep -c '0000:07:00.0.*cuda')" "1"
+check "and without -v it stays a machine list" \
+  "$($T --machines | grep -c 'gpu:')" "0"
+check "an unknown alias is refused" \
+  "$($T --on rig --device gpu:nope --label dev 'echo no' 2>&1 >/dev/null | grep -c "no device called")" "1"
+check "and says what the machine does have" \
+  "$($T --on rig --device gpu:nope --label dev 'echo no' 2>&1 >/dev/null | grep -c 'gpu:one')" "1"
+# Two cards of one model have one vendor:model between them, so the selector that keys on it
+# names both. DRI_PRIME takes a PCI address instead, which is what tells them apart.
+check "each of two identical cards gets its own address" \
+  "$($T --on rig --device gpu:twin.03 --label dev 'printf %s "$DRI_PRIME"' 2>/dev/null | tail -1)" \
+  "pci-0000_03_00_0"
+check "and the other one gets the other" \
+  "$($T --on rig --device gpu:twin.06 --label dev 'printf %s "$DRI_PRIME"' 2>/dev/null | tail -1)" \
+  "pci-0000_06_00_0"
+# The model selector is a layer above every ICD, so it reorders after DRI_PRIME has and wins.
+# Where the model names two cards it picks whichever it likes, and setting the two together
+# sent both halves of a pair to one card while each looked pinned. So: not for a twin.
+check "the model selector stays out of the way of a twin" \
+  "$($T --on rig --device gpu:twin.03 --label dev 'printf %s "${MESA_VK_DEVICE_SELECT:-unset}"' 2>/dev/null | tail -1)" \
+  "unset"
+# It is still needed where the model is unique, because DRI_PRIME is Mesa's and does nothing
+# for the NVIDIA ICD.
+check "and is used where the model names one card" \
+  "$($T --on rig --device gpu:lone --label dev 'printf %s "$MESA_VK_DEVICE_SELECT"' 2>/dev/null | tail -1)" \
+  "8086:b080"
+
+echo "one label, one series"
+rm -f "$DIBS_SERIES"
+# A label is the key a measurement's history is filed under, so two runs of it are meant to be
+# two samples of one thing. Two cards make them two things, and nothing about the numbers says so.
+# Two names for this machine, so a label can move between them without a second machine: what
+# the check compares is the name the run was dispatched under, which is what a real move changes.
+cat > "$DIBS_MACHINES" <<TOML
+default = "alpha"
+
+[machine.alpha]
+ssh      = "dibs@alpha"
+hostname = "$(hostname -s)"
+
+[machine.beta]
+ssh      = "dibs@beta"
+hostname = "$(hostname -s)"
+TOML
+$T --on alpha --bench --label series-a 'echo one' >/dev/null 2>&1
+check "the first benchmark under a label claims it" \
+  "$(awk -F'\t' '$1=="series-a" {print "yes"}' "$DIBS_SERIES")" "yes"
+check "running it again the same way is fine" \
+  "$($T --on alpha --bench --label series-a 'echo two' >/dev/null 2>&1; echo $?)" "0"
+check "a second machine under one label is refused" \
+  "$($T --on beta --bench --label series-a 'echo no' 2>&1 >/dev/null | grep -c 'two histories')" "1"
+check "and it names what the label was measured on before" \
+  "$($T --on beta --bench --label series-a 'echo no' 2>&1 >/dev/null | grep -c 'before:  dibs@alpha')" "1"
+# One machine reached under two names is one machine. Keying on the name it was called rather
+# than on where it goes would record it twice and refuse a run that was never a move.
+check "the same machine under another name is not a move" \
+  "$(printf '#dibs-series 1\nsame\tdibs@alpha\tnone\tx\t1\n' > "$DIBS_SERIES"
+     DIBS_HOST=dibs@alpha $T --bench --label same 'echo fine' >/dev/null 2>&1; echo $?)" "0"
+$T --on alpha --bench --label series-a 'echo again' >/dev/null 2>&1
+check "and refusing is an error, not a note" \
+  "$($T --on beta --bench --label series-a 'echo no' >/dev/null 2>&1; echo $?)" "2"
+# Suppressing the message and filing the new numbers beside the old ones would rebuild the
+# mixed history the check exists to prevent, so a deliberate move starts the series over.
+check "--new-series moves it rather than merging" \
+  "$($T --on beta --bench --label series-a --new-series 'echo moved' >/dev/null 2>&1; echo $?)" "0"
+check "so the old machine is now the odd one out" \
+  "$($T --on alpha --bench --label series-a 'echo no' 2>&1 >/dev/null | grep -c 'two histories')" "1"
+# A job that measured nothing must not claim the label: a first attempt that failed would
+# otherwise pin every later run to wherever it happened to fail.
+rm -f "$DIBS_SERIES"
+$T --bench --label series-b 'exit 3' >/dev/null 2>&1
+check "a benchmark that failed claims nothing" \
+  "$(grep -c series-b "$DIBS_SERIES" 2>/dev/null || echo 0)" "0"
+# Builds and tests do not care which card they did not use, and blocking one would make this
+# an obstacle rather than a guard.
+check "shared work is not checked at all" \
+  "$($T --on beta --label series-a 'echo fine' >/dev/null 2>&1; echo $?)" "0"
 
 echo "nothing left behind"
 check "no holders" "$(holders)" "0"

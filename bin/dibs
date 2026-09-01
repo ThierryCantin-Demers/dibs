@@ -4,6 +4,12 @@
 #
 #   dibs <command>              shared: builds, tests, inspection. Many at once.
 #   dibs --bench <command>      exclusive: benchmarks. One at a time, nothing else running.
+#   --device <alias>             run on one named card. Two runs naming one alias are two
+#                                runs on the same silicon, which is what makes their numbers
+#                                comparable. `dibs --machines -v` lists the aliases.
+#   --new-series                 with --bench: this label is moving to another card or
+#                                machine on purpose. Its history starts again rather than
+#                                mixing the new numbers in with the old ones.
 #   dibs --sync [opts] a b      rsync between here and the machine, under the shared lock.
 #                                Prefix the machine's side with a colon: --sync ./tree :~/x
 #   dibs --status               who holds it, how much longer, and the queue with ETAs
@@ -179,6 +185,50 @@ inv_from() {  # file machine key
         }' "$1"
 }
 
+# The device tables. inv_from cannot read these: it walks a machine's own keys and stops at
+# every [[, because a device is a table of its own underneath the machine.
+inv_device() {  # machine alias key
+    local f; f=$(inv_file "$1"); [ -n "$f" ] || return 1
+    awk -v m="machine.$1.device" -v want="$2" -v k="$3" '
+        # done guards the double print: exit jumps to END, and END calls this again.
+        function flush() { if (!done && in_d && a == want && (k in v)) { print v[k]; done = 1; exit }
+                           delete v; a = "" }
+        /^[[:space:]]*#/    { next }
+        /^[[:space:]]*\[\[/ { flush(); t = $0; sub(/^[[:space:]]*\[\[/, "", t)
+                              sub(/\]\].*$/, "", t); in_d = (t == m); next }
+        /^[[:space:]]*\[/   { flush(); in_d = 0; next }
+        in_d && /=/ {
+            key = $0; sub(/[[:space:]]*=.*$/, "", key); gsub(/[[:space:]]/, "", key)
+            val = $0; sub(/^[^=]*=[[:space:]]*/, "", val)
+            if (val ~ /^"/) { sub(/^"/, "", val); sub(/".*$/, "", val) }
+            else            { sub(/[[:space:]]*#.*$/, "", val); sub(/[[:space:]]+$/, "", val) }
+            v[key] = val; if (key == "alias") a = val
+        }
+        END { flush() }' "$f"
+}
+
+inv_device_names() {  # machine; every alias it has
+    local f; f=$(inv_file "$1"); [ -n "$f" ] || return 0
+    awk -v m="machine.$1.device" '
+        /^[[:space:]]*\[\[/ { t = $0; sub(/^[[:space:]]*\[\[/, "", t)
+                              sub(/\]\].*$/, "", t); in_d = (t == m); next }
+        /^[[:space:]]*\[/   { in_d = 0; next }
+        in_d && /^[[:space:]]*alias[[:space:]]*=/ {
+            v = $0; sub(/^[^=]*=[[:space:]]*"/, "", v); sub(/".*$/, "", v); print v }' "$f"
+}
+
+# How many of a machine's devices carry a given chip id. Two cards of one model cannot be
+# told apart by a selector that keys on the model, which is all Vulkan offers.
+inv_chip_count() {  # machine chip
+    local f n=0 a c; f=$(inv_file "$1"); [ -n "$f" ] || { echo 0; return; }
+    while read -r a; do
+        [ -n "$a" ] || continue
+        c=$(inv_device "$1" "$a" chip)
+        [ "$c" = "$2" ] && n=$(( n + 1 ))
+    done < <(inv_device_names "$1")
+    echo "$n"
+}
+
 names_in() {  # file
     [ -f "$1" ] || return 0
     awk '/^[[:space:]]*\[machine\./ {
@@ -301,7 +351,7 @@ ROUTE=${DIBS_ROUTE:-0}
 # costs a worse queue and never a double booking.
 pick_machine() {
     local m f tmp best="" best_score="" score state cores load prefer_state=""
-    local cached="" cached_score=0 seat=""
+    local cached="" cached_score=0 seat="" answered=0
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/dibs-route.XXXXXX") || return 1
     while read -r m; do
         [ -n "$m" ] || continue
@@ -323,6 +373,17 @@ pick_machine() {
         cores=$(sed -n 's/.*"cores":\([0-9]*\).*/\1/p' "$f" | head -1)
         load=$(sed -n 's/.*"load":\([0-9]*\).*/\1/p' "$f" | head -1)
         [ -n "$state" ] || continue
+        # A machine with no clone of the repo cannot prepare a worktree from it, so it is
+        # dropped rather than ranked last: last still wins when it is the only one that
+        # answered, and the job would then fail at prepare having queued for it first. A
+        # machine that reports no clones at all is one running a dibs too old to say, and is
+        # left in the ranking rather than being read as empty.
+        answered=$(( answered + 1 ))
+        if [ -n "$REPO" ] && grep -q '"clones":\[' "$f" &&
+           ! grep -q "\"clones\":\[[^]]*\"$REPO\"" "$f"; then
+            [ "$VERBOSE" = 1 ] && printf '  %-18s no clone of %s\n' "$m" "$REPO" >&2
+            continue
+        fi
         [ -n "${cores:-}" ] && [ "$cores" -gt 0 ] 2>/dev/null || cores=1
         score=$(( ${load:-0} / cores ))
         # A machine held exclusively cannot start a shared job at all, so it is ranked behind
@@ -369,7 +430,12 @@ pick_machine() {
         printf '%s\n' "$cached"
         return 0
     fi
-    [ -n "$best" ] || return 1
+    # Two different failures, and telling a caller the machines are down when they all
+    # answered sends them to look at the network for a missing clone.
+    if [ -z "$best" ]; then
+        [ "$answered" -gt 0 ] && return 2
+        return 1
+    fi
     printf '%s\n' "$best"
 }
 use_machine() {
@@ -409,6 +475,12 @@ FORGET=""
 JOBID=""
 PREFER=""
 REPO=""
+DEVICE=""
+DEV_PCI=""
+DEV_RT=""
+DEV_CHIP=""
+DEV_TWINS=1
+NEW_SERIES=0
 COMMAND=""
 SYNC=()
 
@@ -466,6 +538,8 @@ while [ $# -gt 0 ]; do
         --anyone)     ANYONE=1; shift ;;
         --wait)       WAIT=$2; shift 2 ;;
         --max)        MAXHOLD=$2; shift 2 ;;
+        --device)     DEVICE=${2:-}; shift 2 ;;
+        --new-series) NEW_SERIES=1; shift ;;
         --label)      LABEL=$2; shift 2 ;;
         -h|--help)    usage ;;
         --)           shift; break ;;
@@ -521,6 +595,15 @@ case "$MODE" in
                 if [ "$(inv_file "$m")" = "$MACHINES" ]; then layer="  [yours]"; else layer="  [shared]"; fi
             fi
             printf ' %s %-*s %s%s%s\n' "$mark" "$w" "$m" "$(inv "$m" ssh)" "$note" "$layer"
+            # The aliases --device takes. Without a way to read them the flag cannot be used
+            # without opening the inventory by hand, so -v is where they live.
+            [ "$VERBOSE" = 1 ] || continue
+            while read -r a; do
+                [ -n "$a" ] || continue
+                printf '     %-28s %-14s %s%s\n' "$a" "$(inv_device "$m" "$a" pci)" \
+                    "$(inv_device "$m" "$a" runtimes | tr -d '"[]')" \
+                    "$(l=$(inv_device "$m" "$a" link); [ -n "$l" ] && printf '  %s' "$l")"
+            done < <(inv_device_names "$m")
         done < <(inv_names)
         exit 0 ;;
     # Every machine at once. With routing on, a job is somewhere rather than on the machine,
@@ -654,11 +737,56 @@ esac
 # that should be a decision rather than a side effect of writing an inventory.
 if [ "$MODE" = pick ] || { [ "$MODE" = shared ] && [ "$PINNED" = 0 ] && [ "$ROUTE" = 1 ] &&
                            [ "${DIBS_FROM_RUN:-0}" != 1 ]; }; then
-    if picked=$(pick_machine); then
+    picked=$(pick_machine); ranked=$?
+    if [ "$ranked" = 0 ]; then
         [ "$MODE" = pick ] && { printf '%s\n' "$picked"; exit 0; }
         use_machine "$picked"
+    elif [ "$MODE" = pick ] && [ "$ranked" = 2 ]; then
+        echo "dibs: every machine answered, but none has a clone of '$REPO'." >&2
+        echo "  A worktree is prepared from \$HOME/prog/$REPO on the machine itself, so one" >&2
+        echo "  has to be cloned there before any work on $REPO can be sent to it." >&2
+        exit 69
     elif [ "$MODE" = pick ]; then
         echo "dibs: no machine in $MACHINES answered" >&2; exit 69
+    fi
+fi
+
+# A device is named from the inventory rather than given as an index, because what makes two
+# runs comparable is that they name the same physical card, and an index does not: it
+# renumbers when a card is added, when the driver reorders, and between boots.
+if [ -n "$DEVICE" ]; then
+    dev_m=${MACHINE:-$(inv_default)}
+    [ -n "$dev_m" ] || { echo "dibs: --device needs an inventory." >&2
+                         echo "  Write one with:  dibs --check <host> --write" >&2; exit 2; }
+    DEV_PCI=$(inv_device "$dev_m" "$DEVICE" pci)
+    DEV_CHIP=$(inv_device "$dev_m" "$DEVICE" chip)
+    DEV_RT=$(inv_device "$dev_m" "$DEVICE" runtimes | tr -d '"[] ')
+    DEV_TWINS=$(inv_chip_count "$dev_m" "$DEV_CHIP")
+    if [ -z "$DEV_PCI" ]; then
+        echo "dibs: $dev_m has no device called '$DEVICE'." >&2
+        if [ -n "$(inv_device_names "$dev_m")" ]; then
+            echo "  it has:" >&2; inv_device_names "$dev_m" | sed 's/^/    /' >&2
+        else
+            echo "  Its entry lists no devices. Re-probe it:  dibs --check $dev_m --write" >&2
+        fi
+        exit 2
+    fi
+fi
+
+# A benchmark that named no card on a machine that has several is not reproducible, and
+# nothing downstream can tell its number from one that was pinned. dibs cannot record which
+# card the process chose, because that choice happens inside the runtime where it cannot see,
+# so the only honest thing it can do is say the number is unpinned before it is believed.
+if [ "$MODE" = bench ] && [ -z "$DEVICE" ] && [ "${DIBS_UNPINNED_QUIET:-0}" != 1 ]; then
+    bench_m=${MACHINE:-$(inv_default)}
+    if [ -n "$bench_m" ]; then
+        gpus=$(inv_device_names "$bench_m" | grep -c '^gpu:') || gpus=0
+        if [ "${gpus:-0}" -gt 1 ]; then
+            echo "dibs: $bench_m has $gpus GPUs and this benchmark named none of them." >&2
+            echo "  It will run on whichever the runtime picks, which is not something you" >&2
+            echo "  can repeat on purpose, and the number will look like any other." >&2
+            echo "  Name one with --device. The aliases are in:  dibs --machines -v" >&2
+        fi
     fi
 fi
 
@@ -666,12 +794,21 @@ fi
 # runs the check itself and reads its output, which also keeps every bit of host resolution
 # in one place. The recursion terminates because the inner call has DIBS_EMIT_ENTRY set.
 if [ "$MODE" = check ] && [ "$WRITE" = 1 ] && [ "${DIBS_EMIT_ENTRY:-0}" != 1 ]; then
-    name=${MACHINE:-$TARGET}
-    [ -n "$name" ] || { echo "dibs --check --write: name the machine, with --on or a host" >&2; exit 2; }
+    [ -n "${MACHINE:-$TARGET}" ] ||
+        { echo "dibs --check --write: name the machine, with --on or a host" >&2; exit 2; }
     out=$(DIBS_EMIT_ENTRY=1 "$0" "${ORIG_ARGS[@]}"); status=$?
     printf '%s\n' "$out" | sed '/^--8<-- dibs inventory/,/^--8<-- end/d'
     entry=$(printf '%s\n' "$out" | sed -n '/^--8<-- dibs inventory/,/^--8<-- end/p' | sed '1d;$d')
     [ -n "$entry" ] || { echo "dibs: the machine reported nothing to record." >&2; exit "$status"; }
+    # A machine nobody has used is named by an ssh string, and `user@host.local` is a poor
+    # key for something you then reach with --on. The probe reports the machine's own short
+    # hostname, so that names it and the ssh string is left to do the reaching.
+    name=$MACHINE
+    if [ -z "$name" ]; then
+        name=$(printf '%s\n' "$entry" | sed -n 's/^hostname *= *"\(.*\)"/\1/p' | head -1)
+        name=$(printf '%s' "${name:-$TARGET}" | tr -cd 'A-Za-z0-9._-')
+        [ -n "$name" ] || { echo "dibs: the machine reported no usable name; give it one with --on" >&2; exit 1; }
+    fi
     entry=${entry//@NAME@/$name}
     entry=${entry//@SSH@/$HOST}
     inv_write "$name" "$entry" || { echo "dibs: could not write $MACHINES" >&2; exit 1; }
@@ -794,6 +931,63 @@ agent_name() {
     [ -n "$t" ] || t="session ${id#local_}"
     printf '%s' "${t:0:48}"
 }
+
+# A label is the key a measurement's history is filed under, so two runs of one label are
+# meant to be two samples of one thing. They are not, if they ran on different silicon: a
+# number from one card cannot be compared with a number from another, and nothing about the
+# two numbers says so. The first benchmark under a label records where it ran, and a later
+# one somewhere else is refused rather than quietly filed beside it.
+#
+# Only benchmarks. A build does not care which card it did not use, and blocking one would
+# make this an obstacle rather than a guard.
+SERIES=${DIBS_SERIES:-${XDG_STATE_HOME:-$HOME/.local/state}/dibs/series}
+# Stamped, and ignored wholesale when the stamp is not this one. What a machine is keyed by
+# has changed once already, and a key change turns every existing record into an apparent
+# move: without this, one edit here refuses every benchmark anyone has ever run, which is a
+# far worse failure than forgetting where a label last ran.
+SERIES_V='#dibs-series 1'
+series_usable() { [ -f "$SERIES" ] && [ "$(head -1 "$SERIES" 2>/dev/null)" = "$SERIES_V" ]; }
+series_check() {
+    local prev_m prev_d prev_a prev_t line here_m here_d
+    # Keyed on where the job actually goes, not on what it was called. One machine reached
+    # once through an inventory name and once through the default host is one machine, and
+    # keying on the name would record it twice and refuse a run that was never a move.
+    here_m=${HOST:-${MACHINE:-${TARGET:-?}}}
+    here_d=${DEVICE:-none}
+    series_usable || return 0
+    line=$(awk -F'\t' -v l="$LABEL" '$1 == l {print; exit}' "$SERIES") || return 0
+    [ -n "$line" ] || return 0
+    IFS=$'\t' read -r _ prev_m prev_d prev_a prev_t <<EOF
+$line
+EOF
+    [ "$prev_m" = "$here_m" ] && [ "$prev_d" = "$here_d" ] && return 0
+    echo "dibs: '$LABEL' has been measured on something else." >&2
+    printf '  before:  %s on %s%s\n' "$prev_m" "$prev_d" \
+        "$([ -n "$prev_a" ] && printf ', by %s' "$prev_a")" >&2
+    printf '  now:     %s on %s\n' "$here_m" "$here_d" >&2
+    echo "  Those are two histories, not one series, and a number from one cannot be" >&2
+    echo "  compared against a number from the other. Use what it was measured on, or" >&2
+    echo "  start a new series deliberately:  --new-series" >&2
+    return 1
+}
+series_record() {
+    local tmp d; d=$(dirname "$SERIES")
+    mkdir -p "$d" 2>/dev/null || return 0
+    tmp=$(mktemp "$SERIES.XXXXXX" 2>/dev/null) || return 0
+    printf '%s\n' "$SERIES_V" > "$tmp"
+    series_usable && awk -F'\t' -v l="$LABEL" 'NR > 1 && $1 != l' "$SERIES" >> "$tmp"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$LABEL" "${HOST:-${MACHINE:-${TARGET:-?}}}" "${DEVICE:-none}" \
+        "$(agent_name)" "$(date +%s)" >> "$tmp"
+    mv "$tmp" "$SERIES" 2>/dev/null || rm -f "$tmp"
+}
+# Checked before the run and recorded after it: a job that never measured anything must not
+# claim the label. A deliberate move starts the series again rather than appending to it,
+# since filing the new numbers beside the old ones rebuilds the mixed history this exists to
+# refuse.
+if [ "$MODE" = bench ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && [ "$NEW_SERIES" != 1 ]; then
+    series_check || exit 2
+fi
+
 
 # --- running somewhere that does not sleep ---------------------------------------------
 #
@@ -918,6 +1112,7 @@ MODE=$1; LABEL=$2; WAIT=$3; MAXHOLD=$4; VERBOSE=$5; CMDB64=${6:-}; NO_WATCH=${7:
 JSON=${10:-0}
 AGENT=$(printf %s "${9:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
 AGENT_ID=$(printf %s "${11:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
+DEV_PCI=${12:-}; DEV_RT=${13:-}; DEV_NAME=${14:-}; DEV_CHIP=${15:-}; DEV_TWINS=${16:-1}
 [ -n "$AGENT" ] || AGENT=?
 # The caller cannot clean this up: its command line is read by fish, which has no $?.
 # Unlinking a running script is safe; bash keeps the open inode.
@@ -971,7 +1166,8 @@ LOGGED_END=0
 log_event() {   # event queued run exit
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$(date -Is)" "$1" "$$" "$MODE" "$LABEL" \
-        "${2:--}" "${3:--}" "${4:--}" "${CMD_ONE:-${LABEL}}" "${AGENT:-?}" >> "$LOG" 2>/dev/null
+        "${2:--}" "${3:--}" "${4:--}" "${CMD_ONE:-${LABEL}}" \
+        "${AGENT:-?}${DEV_NAME:+ on $DEV_NAME}" >> "$LOG" 2>/dev/null
 }
 
 # Assigning rather than printing is the difference: show() renders several of these per
@@ -1355,17 +1551,29 @@ show_json() {
         csep=","
     done
     printf ']'
+    # Which repos a worktree can be prepared from at all. Separate from the cache above: a
+    # cache makes a machine faster for a repo, a clone is what makes it possible, and a
+    # dispatcher that cannot tell them apart sends work to a machine that fails at prepare.
+    printf ',"clones":['
+    lsep=""
+    for c in "$HOME/prog"/*; do
+        [ -d "$c/.git" ] || [ -f "$c/.git" ] || continue
+        printf '%s"%s"' "$lsep" "$(basename "$c")"
+        lsep=","
+    done
+    printf ']'
     printf ',"holders":['
     for f in "$DIR"/holder.*; do
         [ -e "$f" ] || continue
-        IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
         elapsed=$(( NOW - start ))
         cpu_used "$pid"
         holder_output "$pid"
         idle_check "$pid" "$start"
         jstr jl "$label"; jstr ja "$agent"; jstr jc "$cmd"
-        printf '%s{"mode":"%s","pid":%s,"label":%s,"agent":%s,"cmd":%s,"started":%s,"elapsed":%s,"cpu":%s' \
-            "$sep" "$mode" "$pid" "$jl" "$ja" "$jc" "$start" "$elapsed" "$CPU_USED"
+        jstr jd "$dev"
+        printf '%s{"mode":"%s","pid":%s,"label":%s,"agent":%s,"device":%s,"cmd":%s,"started":%s,"elapsed":%s,"cpu":%s' \
+            "$sep" "$mode" "$pid" "$jl" "$ja" "$jd" "$jc" "$start" "$elapsed" "$CPU_USED"
         if estimate "$mode" "$label" "$agent"; then
             remaining_of "$elapsed"
             [ "$REM" -gt "$free" ] && free=$REM
@@ -1391,11 +1599,11 @@ show_json() {
     queue_eta_start "$free" "$eta_known"
     for f in "${QF[@]}"; do
         [ -e "$f" ] || continue
-        IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
         i=$((i+1))
-        jstr jl "$label"; jstr ja "$agent"; jstr jc "$cmd"
-        printf '%s{"position":%s,"mode":"%s","pid":%s,"label":%s,"agent":%s,"cmd":%s,"arrived":%s,"waiting":%s' \
-            "$sep" "$i" "$mode" "$pid" "$jl" "$ja" "$jc" "$start" "$(( NOW - start ))"
+        jstr jl "$label"; jstr ja "$agent"; jstr jc "$cmd"; jstr jd "$dev"
+        printf '%s{"position":%s,"mode":"%s","pid":%s,"label":%s,"agent":%s,"device":%s,"cmd":%s,"arrived":%s,"waiting":%s' \
+            "$sep" "$i" "$mode" "$pid" "$jl" "$ja" "$jd" "$jc" "$start" "$(( NOW - start ))"
         queue_eta "$mode" "$label" "$agent"
         [ "$QE_ETA" -ge 0 ] && printf ',"eta":%s' "$QE_ETA"
         printf '}'
@@ -1420,7 +1628,7 @@ show() {
 
     for f in "$DIR"/holder.*; do
         [ -e "$f" ] || continue
-        IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
         if [ "$held" -eq 0 ]; then
             [ "$mode" = bench ] && echo "${C_BUSY}dibs: BUSY, benchmark in progress${C_OFF}$qnote" \
                                 || echo "${C_WARN}dibs: in use, shared${C_OFF}$qnote"
@@ -1441,7 +1649,7 @@ show() {
             fi
             echo "    ${C_WARN}stop it with: dibs --kill $pid$C_OFF"
             echo "    $C_DIM$cmd$C_OFF"
-            echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF"
+            echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF${dev:+${C_DIM} on $C_OFF$dev}"
             held=$((held+1))
             continue
         fi
@@ -1485,7 +1693,7 @@ show() {
             echo "  $MC$mode$C_OFF  $AC$label$C_OFF  $C_B$el$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_DIM}[no history for this one yet]$C_OFF"
         fi
         echo "    $C_DIM$cmd$C_OFF"
-        echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF"
+        echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF${dev:+${C_DIM} on $C_OFF$dev}"
         # Where its output is going, so --out is discovered by reading the status rather than
         # by already knowing the feature exists. Silent when a job redirected nowhere, because
         # there is then nothing to offer and a line saying so would be noise on every tick.
@@ -1527,7 +1735,7 @@ show() {
     queue_eta_start "$free" "$eta_known"
     for f in "${QF[@]}"; do
         [ -e "$f" ] || continue
-        IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
         i=$((i+1))
         age_ wa "$start"
         agent_hue "$agent"; mode_hue "$mode"
@@ -1541,7 +1749,7 @@ show() {
             echo "  ${C_Q}queued $i of $total$C_OFF: $MC$mode$C_OFF  $AC$label$C_OFF  waiting $C_B$wa$C_OFF  ${C_DIM}pid $pid$C_OFF"
         fi
         echo "    $C_DIM$cmd$C_OFF"
-        echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF"
+        echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF${dev:+${C_DIM} on $C_OFF$dev}"
     done
     [ "$total" -gt 1 ] && echo "  $C_DIM(queued in arrival order; the kernel picks the actual wake order)$C_OFF"
     return 0
@@ -1682,6 +1890,21 @@ case "$MODE" in
         esac
 
         echo
+        # Which repos this machine can prepare a worktree from. A machine with no clone of a
+        # repo is dropped from that repo's routing entirely, so without this the loss is
+        # invisible: the machine looks healthy, and simply never gets that work.
+        repos=$(for d in "$HOME/prog"/*; do
+                    [ -d "$d/.git" ] || [ -f "$d/.git" ] || continue
+                    printf '%s ' "$(basename "$d")"
+                done)
+        if [ -n "$repos" ]; then
+            echo "  repos it can build:  $repos"
+        else
+            warn "no clones under ~/prog, so no dibs-run work can be sent here at all"
+            note "It is dropped from routing for every repo until one is cloned. Anything"
+            note "this machine should build needs a clone at ~/prog/<repo> first."
+        fi
+        echo
         echo "  devices"
         cores=$(nproc 2>/dev/null)
         model=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
@@ -1689,6 +1912,46 @@ case "$MODE" in
         # Judged on output, never on the tool being installed or on its exit status. This
         # laptop has rocm-smi and no AMD GPU: it prints "Driver not initialized" and exits 0,
         # so asking either question gets a confident yes about hardware that is not there.
+        # What a card actually gets to the host, which is not what its own endpoint
+        # reports. A GPU with an internal bridge chain, as every Navi does, reports the
+        # x16 between its die and its own upstream port; the x1 riser above that is a
+        # hop further up and is the one that decides every transfer. So: the narrowest
+        # link on the path to the root, against what the card itself can do.
+        #
+        # Judged on width rather than speed, and the speed recorded is the link's
+        # ceiling rather than what it is doing now. An NVIDIA card idles its link a
+        # generation or two down and trains up under load, so "current" is a reading
+        # of how busy the machine was when probed, and recording it would make two
+        # probes of one unchanged machine disagree.
+        pcie_path() {  # bus; prints "width_to_host width_of_card speed_at_narrowest"
+            local d=$1 w sp spn mw="" msp="" msn="" cap
+            cap=$(cat "/sys/bus/pci/devices/$d/max_link_width" 2>/dev/null)
+            while [ -n "$d" ] && [ -e "/sys/bus/pci/devices/$d" ]; do
+                w=$(cat "/sys/bus/pci/devices/$d/current_link_width" 2>/dev/null)
+                sp=$(cat "/sys/bus/pci/devices/$d/max_link_speed" 2>/dev/null)
+                [ -n "$w" ] && { [ -z "$mw" ] || [ "$w" -lt "$mw" ] 2>/dev/null; } && mw=$w
+                # Tracked separately from the width, and over the whole path: the hop that
+                # narrows the link is not always the hop that slows it. A Navi card's own
+                # bridge is gen4 while the root port it hangs off is gen3, so taking the
+                # speed from wherever the width happened to drop reports the card's
+                # internal ceiling as if it were the one to the host.
+                spn=${sp%%.*}
+                if [ -n "$spn" ] && { [ -z "$msn" ] || [ "$spn" -lt "$msn" ] 2>/dev/null; }; then
+                    # Space squeezed out: the caller word-splits this, and "8.0 GT/s"
+                    # would arrive as two fields and be dropped as a malformed answer.
+                    msn=$spn; msp=${sp% PCIe}; msp=${msp// /}
+                fi
+                d=$(basename "$(readlink -f "/sys/bus/pci/devices/$d/.." 2>/dev/null)")
+                case $d in 0000:*) ;; *) break ;; esac
+            done
+            # An integrated GPU sits on the root complex with no link of its own and
+            # says so as width 0 and a max of 255, the "not implemented" value. Nothing
+            # here applies to it, and answering anyway divides by zero in the caller.
+            [ "${mw:-0}" -ge 1 ] 2>/dev/null || return 0
+            [ "${cap:-0}" -ge 1 ] 2>/dev/null && [ "$cap" -le 32 ] 2>/dev/null || return 0
+            printf '%s %s %s\n' "$mw" "$cap" "${msp:-unknown}"
+        }
+
         found=0
         nv=$(nvidia-smi --query-gpu=name,pci.bus_id,memory.total,compute_cap \
              --format=csv,noheader,nounits 2>/dev/null)
@@ -1699,10 +1962,37 @@ case "$MODE" in
             done
         fi
         amd=$(rocm-smi --showproductname --csv 2>/dev/null | awk -F, 'NR>1 && NF>1 {print $2}')
+        # rocm-smi is packaged on its own and reads the kernel driver, so it lists cards on a
+        # machine with no HIP at all. What decides whether ROCm is a runtime here is the
+        # runtime library, not the management tool.
+        hip=0
+        { command -v rocminfo >/dev/null 2>&1 ||
+          ldconfig -p 2>/dev/null | grep -q libamdhip64; } && hip=1
         if [ -n "$amd" ]; then
             found=1
-            printf '%s\n' "$amd" | sed 's/^/    gpu   /;s/$/  (rocm)/'
+            if [ "$hip" = 1 ]; then
+                printf '%s\n' "$amd" | sed 's/^/    gpu   /;s/$/  (rocm)/'
+            else
+                printf '%s\n' "$amd" | sed 's/^/    gpu   /;s/$/  (no rocm runtime)/'
+                warn "rocm-smi sees these cards but nothing here can run HIP on them:"
+                note "no rocminfo and no libamdhip64. They are Vulkan-only until the ROCm"
+                note "runtime is installed, so a rocm label would have nowhere to go."
+            fi
         fi
+        # Reported for every card whatever vendor tool found it, because a narrowed link
+        # is invisible to all of them: the card enumerates, works, and is simply slow.
+        for lw in /sys/bus/pci/devices/*/current_link_width; do
+            [ -e "$lw" ] || continue
+            d=${lw%/current_link_width}
+            case $(cat "$d/class" 2>/dev/null) in 0x030*) ;; *) continue ;; esac
+            set -- $(pcie_path "${d##*/}")
+            [ $# -eq 3 ] || continue
+            [ "$1" -lt "$2" ] 2>/dev/null || continue
+            warn "${d##*/} reaches the host over x$1, and the card can do x$2"
+            note "Host transfers cost $(( $2 / $1 ))x what the card allows, so a benchmark"
+            note "that moves data is measuring the riser or the slot it is in."
+        done
+
         if [ "$found" = 0 ]; then
             if command -v lspci >/dev/null 2>&1; then
                 lspci -nn 2>/dev/null | grep -Ei 'vga|3d controller' | sed 's/^/    gpu?  /' | head -8
@@ -1717,10 +2007,12 @@ case "$MODE" in
         # inventory goes quietly stale. @NAME@ and @SSH@ are the client's to fill: a machine
         # cannot know the alias that reaches it.
         if [ "$LABEL" = check-write ]; then
-            rt=""
-            [ -n "$nv" ] && rt='"cuda"'
-            [ -n "$amd" ] && rt="${rt:+$rt, }\"rocm\""
-            command -v vulkaninfo >/dev/null 2>&1 && rt="${rt:+$rt, }\"vulkan\""
+            have_vk=0; command -v vulkaninfo >/dev/null 2>&1 && have_vk=1
+            # A chip id that appears twice is two cards of one model, and the slug it makes
+            # then names neither of them.
+            dup=$(lspci -nn 2>/dev/null |
+                  grep -Ei 'vga compatible controller|3d controller|display controller' |
+                  grep -oE '\[[0-9a-f]{4}:[0-9a-f]{4}\]' | sort | uniq -d | tr -d '[]')
             echo
             echo "--8<-- dibs inventory --8<--"
             printf '[machine.@NAME@]\n'
@@ -1749,21 +2041,44 @@ case "$MODE" in
                 desc=$(printf '%s\n' "$line" | sed 's/^[^]]*]: //; s/ \[[0-9a-f]\{4\}:[0-9a-f]\{4\}\].*$//')
                 short=$(printf '%s\n' "$desc" | sed -n 's/.*\[\(.*\)\].*/\1/p')
                 [ -n "$short" ] || short=$desc
-                # nvidia-smi names the card better than lspci does, when it can see it.
+                # nvidia-smi names the card better than lspci does, when it can see it,
+                # and whether it can see it is also what decides CUDA below.
+                seen=""
                 if [ -n "$nv" ]; then
-                    m=$(printf '%s\n' "$nv" | awk -F, -v b="$bus" \
+                    seen=$(printf '%s\n' "$nv" | awk -F, -v b="$bus" \
                         'tolower($2) ~ tolower(b) {gsub(/^ +| +$/,"",$1); print $1; exit}')
-                    [ -n "$m" ] && short=$m
+                    [ -n "$seen" ] && short=$seen
                 fi
+                # What can reach this card, not what the machine has installed somewhere: an
+                # AMD card in a machine with CUDA does not gain CUDA from it, and no runtime
+                # reaches a card the kernel has no driver bound to.
+                drv=""
+                [ -L "/sys/bus/pci/devices/$bus/driver" ] &&
+                    drv=$(basename "$(readlink "/sys/bus/pci/devices/$bus/driver")")
+                rt=""
+                case "${ids%%:*}" in
+                    10de) [ -n "$seen" ] && rt='"cuda"' ;;
+                    1002) [ "$hip" = 1 ] && [ -n "$amd" ] && rt='"rocm"' ;;
+                esac
+                [ "$have_vk" = 1 ] && [ -n "$drv" ] && rt="${rt:+$rt, }\"vulkan\""
                 slug=$(printf '%s\n' "$short" | tr 'A-Z' 'a-z' |
                        sed 's/nvidia//g; s/geforce//g; s/corporation//g; s/advanced micro devices//g;
                             s/radeon//g; s/intel//g; s/ arc / /g' | tr -cd 'a-z0-9')
                 printf '\n  [[machine.@NAME@.device]]\n'
                 printf '  kind     = "gpu"\n'
-                printf '  alias    = "gpu:%s"\n' "${slug:-$(printf '%s' "$bus" | tr -cd 'a-z0-9')}"
+                slug=${slug:-$(printf '%s' "$bus" | tr -cd 'a-z0-9')}
+                case " $dup " in *" $ids "*) slug="$slug.$(printf '%s' "${bus#*:}" | cut -d: -f1)" ;; esac
+                printf '  alias    = "gpu:%s"\n' "$slug"
                 printf '  name     = "%s"\n' "$short"
                 printf '  pci      = "%s"\n' "$bus"
                 printf '  chip     = "%s"\n' "$ids"
+                # What the card is actually plugged into. A mining rig puts cards on x1
+                # risers, and a card on one is a card whose every host transfer runs at a
+                # sixteenth of what its neighbour gets: a benchmark there measures the
+                # riser. Width, not speed, is what is judged on below, because a link
+                # downshifts its speed when idle and a single reading catches that.
+                set -- $(pcie_path "$bus")
+                [ $# -eq 3 ] && printf '  link     = "x%s of x%s at %s"\n' "$1" "$2" "$3"
                 printf '  runtimes = [%s]\n' "$rt"
             done
             echo "--8<-- end --8<--"
@@ -1790,7 +2105,7 @@ case "$MODE" in
         found=0
         for f in "$DIR"/holder.*; do
             [ -e "$f" ] || continue
-            IFS=$'\t' read -r mode pid start label agent who cmd < "$f"
+            IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
             [ "$target" = all ] || [ "$target" = "$pid" ] || continue
             found=1
             echo "$mode  $label  pid $pid  ($(age "$start"))"
@@ -1826,7 +2141,7 @@ case "$MODE" in
             [ "${f##*.}" = "$target" ] && found=$f
         done
         [ -n "$found" ] || { echo "Nothing holding or queued with pid $target." >&2; show >&2; exit 1; }
-        IFS=$'\t' read -r mode pid start label agent who cmd < "$found"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$found"
         # Whose job this is, checked before anything is signalled rather than reported after.
         # Several agents share this machine and read the same --status, so a pid copied out of
         # it belongs to whoever happens to be there; stopping someone else's measurement has
@@ -1888,6 +2203,76 @@ SCRATCH=${DIBS_SCRATCH:-$HOME/.cache/dibs}
 mkdir -p "$SCRATCH/tmp" 2>/dev/null
 export DIBS_SCRATCH="$SCRATCH" TMPDIR="$SCRATCH/tmp"
 
+# Pinning the job to one card, so that two runs of one benchmark are two runs on the same
+# silicon. By bus id, which is a property of the slot, rather than by index, which is a
+# property of the order the driver happened to enumerate in this boot.
+#
+# CUDA_VISIBLE_DEVICES also narrows the process to that single card, so the runtime's own
+# default device is the reserved one and code that never asks for a device still lands on it.
+# That matters more than the selection: a benchmark that silently used the default while
+# believing it was pinned is the failure this is here to prevent.
+if [ -n "$DEV_PCI" ]; then
+    export DIBS_DEVICE="$DEV_NAME" DIBS_DEVICE_PCI="$DEV_PCI"
+    export CUDA_DEVICE_ORDER=PCI_BUS_ID
+    # CUDA_VISIBLE_DEVICES takes an index or a GPU-<uuid>, and never a bus id. Handed one it
+    # does not error: it ignores the value and leaves every device visible, so the job runs
+    # on whatever is first and looks pinned. The UUID is what the bus id is translated into
+    # here, and it is resolved on the machine at run time rather than recorded, so that a
+    # card swapped between two slots is followed rather than silently mistaken for its
+    # neighbour. Order-independent too, unlike an index.
+    case ",$DEV_RT," in
+        *,cuda,*)
+            _want=${DEV_PCI#*:}      # nvidia-smi pads the domain to eight digits, sysfs to four
+            _uuid=$(nvidia-smi --query-gpu=uuid,pci.bus_id --format=csv,noheader 2>/dev/null |
+                    awk -F', *' -v b="$_want" 'tolower($2) ~ tolower(b"$") {print $1; exit}')
+            # Refused rather than run unpinned. A job that asked for one card and silently got
+            # whichever was first produces a number about hardware nobody chose, and nothing
+            # downstream can tell that from the number it wanted.
+            if [ -z "$_uuid" ]; then
+                echo "dibs: asked for $DEV_NAME ($DEV_PCI) and nothing here answers to it." >&2
+                echo "  Not running it unpinned: that would measure whichever card is first" >&2
+                echo "  and report it under the name of the one you asked for." >&2
+                echo "  Check the machine still has that card:  dibs --check $(hostname -s) --write" >&2
+                exit 2
+            fi
+            export CUDA_VISIBLE_DEVICES="$_uuid" ;;
+    esac
+    # Mesa takes vendor:device, never a bus id. The client refuses to get here when the
+    # machine has two cards of one model, so this one is unambiguous.
+    case ",$DEV_RT," in
+        *,vulkan,*)
+            # Two mechanisms because neither covers the whole job on its own.
+            #
+            # DRI_PRIME takes a PCI address, so it is the one that can tell two cards of one
+            # model apart, and it is Mesa's: it moves a RADV device to the front and does
+            # nothing for NVIDIA's ICD. MESA_VK_DEVICE_SELECT is a layer above every ICD and
+            # so reaches the NVIDIA cards, but it keys on vendor and model, which names both
+            # halves of an identical pair. Set together, each covers what the other cannot.
+            #
+            # Both reorder rather than filter, unlike CUDA_VISIBLE_DEVICES. The default
+            # device is the one that was named, which is what almost all code asks for, but a
+            # job that enumerates and picks an index itself can still reach another card.
+            #
+            # Never both at once where the model names two cards. The layer sits above every
+            # ICD and reorders after DRI_PRIME has, so it wins, and it picks whichever of the
+            # pair it likes: setting the two together sent both halves of an identical pair to
+            # the same card while each looked pinned.
+            export DRI_PRIME="pci-$(printf '%s' "$DEV_PCI" | tr ':.' '__')"
+            [ -n "$DEV_CHIP" ] && [ "${DEV_TWINS:-1}" = 1 ] &&
+                export MESA_VK_DEVICE_SELECT="$DEV_CHIP" ;;
+    esac
+fi
+
+# A command sent over ssh runs in a non-login, non-interactive shell, which reads neither
+# /etc/profile.d nor the part of ~/.bashrc above the interactive guard. A toolchain installed
+# the ordinary way is therefore invisible to every job, and the failure is `cargo: not found`
+# on a machine where cargo plainly works the moment you log in and try it by hand.
+for d in "$HOME/.cargo/bin" /usr/local/cuda/bin; do
+    [ -d "$d" ] || continue
+    case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
+done
+export PATH
+
 # Compilation cache, when the machine has one. Measured here: a target directory with nothing
 # in it costs 922s to fill for the largest workspace here and 104s once sccache has seen
 # before, so this is what makes a machine holding no cache for a repo usable at all. Turned on
@@ -1929,7 +2314,7 @@ START=$(date +%s)
 # and write a file the size of the script it is running.
 CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
 [ "${#CMD}" -gt 200 ] && CMD_ONE="$CMD_ONE …"
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "$CMD_ONE" > "$DIR/waiting.$$"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
 log_event arrived
 # An end line even when the job is torn down, so the log never just stops mid-story.
 # Nothing can be written if it is SIGKILLed, which is itself worth knowing when reading it.
@@ -2047,7 +2432,7 @@ ACQUIRED=$(date +%s)
 # arrival time over would have --status report a job as running for the time it spent
 # queued, and every number drawn from that elapsed, the ETA, the stuck check and the idle
 # check, would be measuring a stretch the job spent doing nothing because it was waiting.
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$ACQUIRED" "$LABEL" "$AGENT" "$AGENT_ID" "$CMD_ONE" > "$DIR/waiting.$$"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$ACQUIRED" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
 mv "$DIR/waiting.$$" "$DIR/holder.$$"
 [ "$WAITED" -ge 5 ] && echo "dibs: acquired the $MODE lock after $(dur "$WAITED")" >&2
 
@@ -2189,7 +2574,10 @@ if [ "$(lower "$SELF")" = "$(lower "$TARGET")" ] || [ "${DIBS_LOCAL:-0}" = 1 ]; 
         rsh|sync) echo "dibs: --sync reaches the machine from elsewhere. You are on it: use cp." >&2
                   exit 2 ;;
     esac
-    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$CMDB64" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64"
+    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$CMDB64" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS"
+    STATUS=$?
+    [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
+    exit "$STATUS"
 else
     if [ -z "$HOST" ]; then
         echo "dibs: no machine. Set DIBS_HOST to the one you were given:" >&2
@@ -2249,9 +2637,10 @@ else
         -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
         "mkdir -p $REMOTE_DIR 2>/dev/null; printf %s '$PAYLOAD' | base64 -d > $REMOTE_SCRIPT && \
          exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' '$CMDB64' \
-         '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64'
+         '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS'
 exit 70" <&6
     STATUS=$?
+    [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
     # 255 is ssh's own failure code, not the command's.
     [ "$STATUS" -eq 255 ] && unreachable
     [ "$STATUS" -eq 70 ] && no_room

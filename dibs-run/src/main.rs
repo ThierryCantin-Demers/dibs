@@ -35,6 +35,9 @@ dibs-run gaps                             what did not fit a recipe, and what re
   --root    where named repos live (default $DIBS_ROOT, else the current directory)
   --reason  why this does not fit a recipe. Required for shell and raw, and recorded:
             a reason that keeps recurring is the specification for the next recipe.
+  --device  the card to run on, named from the machine's inventory. Two runs of one label
+            have to name the same one or their numbers are not comparable, and dibs refuses
+            the second when they do not. `dibs --machines -v` lists the aliases.
   --dry-run print what would run, take no lock, record nothing
 
 A recipe declares the procedure and names no revisions: the invocation supplies the code and
@@ -64,6 +67,8 @@ struct Args {
     /// Everything after `--`, unsplit. A command is one string here because it is one string
     /// on the far side, and taking it apart only to put it back would change it.
     command: Option<String>,
+    /// The card to run on, named from the machine's inventory.
+    device: Option<String>,
 }
 
 fn parse() -> Result<Args, String> {
@@ -72,6 +77,7 @@ fn parse() -> Result<Args, String> {
     let mut dry_run = false;
     let mut reason = None;
     let mut command = None;
+    let mut device: Option<String> = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -84,6 +90,7 @@ fn parse() -> Result<Args, String> {
                 break;
             }
             "--reason" => reason = Some(it.next().ok_or("--reason needs a sentence")?),
+            "--device" => device = Some(it.next().ok_or("--device needs an alias")?),
             "-h" | "--help" => {
                 print!("{USAGE}");
                 std::process::exit(0);
@@ -116,6 +123,7 @@ fn parse() -> Result<Args, String> {
         dry_run,
         reason,
         command,
+        device,
     })
 }
 
@@ -155,6 +163,7 @@ fn run() -> Result<ExitCode, String> {
                 lock: Lock::Shared,
                 isolation: recipe::Isolation::Machine,
                 needs: None,
+                device: args.device.as_deref(),
             },
             command,
         )?;
@@ -168,6 +177,7 @@ fn run() -> Result<ExitCode, String> {
             reason: Some(reason.to_string()),
             procedure: vec![("shared".into(), command.to_string())],
             backend: backend.name(),
+            device: args.device.clone(),
             machine: backend.machine.clone(),
             revisions: Vec::new(),
             steps: vec![provenance::StepRecord {
@@ -293,6 +303,13 @@ fn run() -> Result<ExitCode, String> {
             println!("needs       {n}");
         }
         println!("ref         {}", args.reference.as_deref().unwrap_or("HEAD"));
+        // Which card, printed whether or not one was named: a dry run is where someone checks
+        // they are about to measure the thing they mean to, and "no card named" is the answer
+        // that most needs saying, because that run is the one nobody can repeat.
+        match &args.device {
+            Some(d) => println!("device      {d}"),
+            None => println!("device      none named, so the runtime picks and a repeat is luck"),
+        }
         for (i, s) in rec.steps.iter().enumerate() {
             println!("step {}      [{:?}] {}", i + 1, s.lock, s.run);
             println!("            label {}", step_labels[i]);
@@ -330,6 +347,9 @@ fn run() -> Result<ExitCode, String> {
         lock: Lock::Shared,
         isolation: rec.isolation,
         needs: None,
+        // Preparing a worktree touches no GPU, so pinning it would only make the setup fail
+        // on a machine whose card has been pulled.
+        device: None,
         };
     let (out, text) = backend.run_capture(&setup, &worktree::setup_script(&repo_name, reference))?;
     if out.status != 0 {
@@ -349,6 +369,7 @@ fn run() -> Result<ExitCode, String> {
             lock: step.lock,
             isolation: rec.isolation,
             needs: rec.needs.as_deref(),
+            device: args.device.as_deref(),
         };
         // One cache per repo, exported rather than left to each recipe to remember, and the
         // output always lands in a file. That second part is not tidiness: `dibs --out` reads
@@ -399,6 +420,7 @@ fn run() -> Result<ExitCode, String> {
             .map(|st| (format!("{:?}", st.lock).to_lowercase(), st.run.clone()))
             .collect(),
         backend: backend.name(),
+        device: args.device.clone(),
         machine: backend.machine.clone(),
         // Read on the machine, from the tree that was actually built, rather than from a
         // checkout here that may be at a different commit entirely.
@@ -604,6 +626,7 @@ mod tests {
             reason: None,
             procedure: vec![],
             backend: "dibs",
+            device: None,
             machine: None,
             revisions: vec![],
             steps: vec![],
@@ -626,6 +649,7 @@ mod tests {
             reason: None,
             procedure: vec![("shared".into(), "cargo build".into())],
             backend: "dibs",
+            device: None,
             machine: None,
             revisions: vec![("cubek".into(), "abc123".into())],
             steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3 }],

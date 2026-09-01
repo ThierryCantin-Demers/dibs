@@ -224,6 +224,11 @@ caches, so it is what every machine pays no matter how warm the cache is.
 
 ## Open
 
+**One assertion in the suite is load-sensitive and has not been identified.** Under six
+spinners the suite went 219, 219, 218. The one that used to fail there was the reaped-children
+CPU count, which measured wall time and now burns CPU time instead; something else is still
+sensitive and calling the suite flaky is not a diagnosis.
+
 **Environment knobs do not reach the machine.** ssh does not forward the environment, so
 `DIBS_IDLE_AFTER` and its neighbours only take effect in local mode, which is how the test
 suite runs. Two bugs have already come from code placed on the wrong side of that boundary.

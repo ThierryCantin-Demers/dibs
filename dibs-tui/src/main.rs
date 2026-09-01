@@ -37,6 +37,8 @@ struct Holder {
     pid: i64,
     label: String,
     agent: String,
+    #[serde(default)]
+    device: Option<String>,
     cmd: String,
     elapsed: i64,
     cpu: i64,
@@ -62,6 +64,8 @@ struct Queued {
     pid: i64,
     label: String,
     agent: String,
+    #[serde(default)]
+    device: Option<String>,
     cmd: String,
     waiting: i64,
     #[serde(default)]
@@ -150,6 +154,9 @@ fn dur(s: i64) -> String {
 #[derive(Clone)]
 struct Item {
     machine: String,
+    /// Which card the job was pinned to, where one was named. Absent is the common case and
+    /// is not a fault: a build does not want a card.
+    device: Option<String>,
     holding: bool,
     slot: String,
     mode: String,
@@ -236,6 +243,7 @@ fn items(machine: &str, s: &Status) -> Vec<Item> {
         }
         v.push(Item {
             machine: machine.to_string(),
+            device: h.device.clone().filter(|d| d != "-" && !d.is_empty()),
             holding: true,
             slot: "HOLDING".into(),
             mode: h.mode.clone(),
@@ -256,6 +264,7 @@ fn items(machine: &str, s: &Status) -> Vec<Item> {
     for q in &s.queue {
         v.push(Item {
             machine: machine.to_string(),
+            device: q.device.clone().filter(|d| d != "-" && !d.is_empty()),
             holding: false,
             slot: format!("queued {}", q.position),
             mode: q.mode.clone(),
@@ -877,6 +886,7 @@ fn draw(f: &mut Frame, app: &mut App) {
 
     app.table_top = chunks[1].y + 2; // border, then the header row
     app.table_rows = body_h as u16;
+    let any_device = rows.iter().any(|it| it.device.is_some());
     let mut trows: Vec<Row> = Vec::new();
     for (i, it) in rows.iter().enumerate().skip(app.top).take(body_h.max(1)) {
         let hue = agent_hue(&it.agent);
@@ -902,6 +912,16 @@ fn draw(f: &mut Frame, app: &mut App) {
                 Span::styled(it.slot.clone(), slot_style),
                 Span::styled(it.mode.clone(), mode_style(&it.mode, base)),
                 Span::styled(fit(&it.label, 18), base.fg(hue)),
+        ]);
+        if any_device {
+            // An unpinned job among pinned ones is the thing worth seeing, so it reads as a
+            // dash rather than as blank space.
+            cells.push(match &it.device {
+                Some(d) => Span::styled(fit(d, 16), base.fg(Color::Magenta)),
+                None => Span::styled(fit("-", 16), base.patch(dim)),
+            });
+        }
+        cells.extend([
                 Span::styled(fit(&it.agent, 20), base.fg(hue)),
                 Span::styled(dur(it.time), base.add_modifier(Modifier::BOLD)),
                 Span::styled(
@@ -935,12 +955,19 @@ fn draw(f: &mut Frame, app: &mut App) {
         Constraint::Length(9),
         Constraint::Length(6),
         Constraint::Length(18),
+    ]);
+    heads.extend(["WHAT", "MODE", "LABEL"]);
+    if any_device {
+        widths.push(Constraint::Length(17));
+        heads.push("DEVICE");
+    }
+    widths.extend([
         Constraint::Length(20),
         Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Min(24),
     ]);
-    heads.extend(["WHAT", "MODE", "LABEL", "AGENT", "TIME", "CORES", "NOTE"]);
+    heads.extend(["AGENT", "TIME", "CORES", "NOTE"]);
     let table = Table::new(trows, widths)
     .header(
         Row::new(heads)
