@@ -7,12 +7,45 @@ machine with a GPU in it. A benchmark is only worth reading if nothing else ran 
 nothing in ssh says so. `dibs` makes that a lock, and `dibs-run` makes it an interface that
 records what was actually measured.
 
+## Setting it up
+
+**What you need first.** An account on the machine you can already `ssh` into with a key, and
+that is all: dibs installs nothing on the far side, ships itself over the connection, and needs
+no root anywhere. One account shared by everyone is the intended shape rather than a compromise,
+because it is what lets one build cache serve the whole team, and because a lock keyed to a uid
+tells two people the machine is idle at the same time.
+
     git clone https://github.com/ThierryCantin-Demers/dibs
     cd dibs && ./install.sh
-    export DIBS_HOST=dibs@<machine>           # fish: set -Ux DIBS_HOST dibs@<machine>
 
-Then `dibs-run list cubek`, or `bash dibs-onboard.sh` if you have never used the machine and want it
-to prove itself first.
+`install.sh` symlinks `bin/dibs` into `~/.local/bin` so a pull updates it, and builds `dibs-run`
+and `dibstop` if cargo is present. Pass `--copy` if you would rather have files that do not move
+under you. Without cargo you still have a working lock, just not the interface above it.
+
+Then point it at your machine and record what is in it:
+
+    export DIBS_HOST=you@machine               # fish: set -Ux DIBS_HOST you@machine
+    export DIBS_ROOT=$HOME/prog                # where your checkouts live, for bare repo names
+    dibs --check you@machine --write           # probes it, writes ~/.config/dibs/machines.toml
+
+The entry is named by the machine's own short hostname rather than by the string you dialled,
+so `--on` takes a name and not an ssh address. Run it once per machine, and read what it says
+rather than only its exit code: it reports what the machine can do, and warns about the things
+that are wrong in ways nothing else would tell you. There is no default host, on purpose, so
+nothing goes somewhere you did not choose.
+
+**The one thing the machine does need.** `dibs-run` prepares a git worktree from a clone at
+`~/prog/<repo>` on the machine itself, so each repo you want to build has to be cloned there
+once. A machine without it is dropped from that repo's routing rather than sent work it cannot
+do, and `dibs --check` lists what it has.
+
+**Check it works, and see the lock actually block:**
+
+    dibs --status                              # who holds it, who is queued
+    bash dibs-onboard.sh                       # takes the lock, queues behind itself, explains
+
+`dibs --help` is the full surface. `dibs-agent-rules.md` is meant to be pasted into an agent's
+instructions, and is the shortest useful description of how to use this well.
 
 ## Build caching
 

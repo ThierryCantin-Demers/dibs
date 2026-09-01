@@ -468,23 +468,40 @@ Each phase is useful on its own and none requires the next.
    is the half still missing, and it is worth doing when there is hardware it can tell apart:
    today one NVIDIA card is the whole of the GPU inventory, and `chips.toml` already covers
    naming it.
-4. **Device locks and isolation levels.** The gate change, the per-device locks,
-   `CUDA_VISIBLE_DEVICES` pinning so a job physically cannot touch a GPU it does not hold, and
+4. **Device locks and isolation levels.** The gate change, the per-device locks, pinning, and
    isolation recorded in history. This is the phase that makes the four-GPU box worth having.
+   **Selection is done and locking is not**, and the two turned out to be worth separating.
+   `--device <alias>` names a card from the inventory and every job gets the environment that
+   reaches it; what does not exist is a lock, so two shared jobs can still be handed the same
+   card. Benchmarks do not need one, since the machine is already exclusive.
+
+   The phase as written above claimed pinning makes a job "physically unable to touch a GPU it
+   does not hold". That is true of `CUDA_VISIBLE_DEVICES`, which filters, and **false of every
+   Vulkan mechanism**, which only reorder: the named card becomes the default, and a job that
+   enumerates and picks an index itself can still reach another. Isolation that deserves the
+   word needs a cgroup or a hidden render node, which is the cgroup argument for Slurm below
+   and is the same conclusion reached from the other direction.
 5. **Routing.** `--needs`, filter, propose, confirm. **Shared-job routing is done**, opted
    into with `--any` or `DIBS_ROUTE=1`: candidates are polled in parallel, ranked on
    `/proc/loadavg` over core count with the dispatching machine discounted, ties broken at
    random, and a machine that does not answer is named rather than dropped. `dibs --pick`
    exposes the choice, which is how `dibs-run` pins every step of a run to one machine.
    `--needs` filtering is the half still missing.
-6. **Bindings.** Label pinned to device, `--rebind`, history keyed per device.
+6. **Bindings.** Label pinned to device, history keyed per device. **Done.** A label records
+   the machine and card its first benchmark ran on, and a later one elsewhere is refused rather
+   than filed beside it. `--new-series` is what `--rebind` was going to be, and it starts the
+   history again rather than moving the label into the old one: suppressing the refusal and
+   appending rebuilds exactly the mixed history the check exists to prevent. The record is
+   stamped, because what a machine is keyed by has changed once already and a key change turns
+   every existing record into an apparent move.
 7. **The viewer.** `dibs-tui` grows a machine column and a device column. **The machine half
    is done**: one feed per machine, per-machine state in the header so that "the feed is down"
    and "it is idle" stay different answers, and `--kill`, `--out` and `--peek` routed back to
    the machine the selected row is on. The column hides itself when there is one machine, so
    nothing changes for someone without an inventory. It was left last on purpose and then done
    early, because routing made a single-machine view actively misleading rather than merely
-   incomplete. The device column waits on phase 4.
+   incomplete. **The device column is done too**, appearing only when something is pinned, for
+   the same reason the machine column hides itself with one machine.
 
 Phases 1 and 2 are worth doing before the machine is finished being built.
 
@@ -514,12 +531,22 @@ arrives with a laptop in the pool rather than with the four-GPU box. It stops sh
 and deliberately refuses to route benchmarks at all: a measurement's history and its label
 binding key on the machine it ran on, and phase 6 is what would make moving one safe.
 
-Phases 4 through 7 remain blocked on real hardware, but less completely than before. Phase 4's
-protocol is `flock` logic and can be developed against a synthetic inventory in the test suite;
-what needs the four-GPU box is proving its value, which is disjoint devices on one machine
-overtaking each other, and a laptop with one iGPU cannot show that. The load-bearing open
-question is still the one below: whether whole-machine or per-device isolation is the right
-default.
+The four-GPU box is in the pool now, and it changed what was left. Phase 6 is done and phase
+7 with it, and phase 4 split in half: naming a card landed, locking one did not.
+
+What the hardware taught, which no amount of synthetic inventory would have: **setting the
+variable is not the same as pinning the job**, twice over. `CUDA_VISIBLE_DEVICES` ignores a PCI
+bus id rather than rejecting it, so the first version left every card visible while looking
+pinned, and both aliases of a pair measured the same GPU at numbers 0.2% apart. Then the two
+Vulkan selectors turned out to fight: the layer that reaches every ICD reorders after the one
+that takes a bus address, so setting both sent an identical pair to one card. Both bugs passed
+every check that read the variable back. What caught them was asking the runtime which silicon
+it had, which Vulkan will answer with `pciBus` and CUDA will not.
+
+The load-bearing open question is still the one below, and the phase 4 split sharpens it:
+whole-machine isolation is what exists, per-device isolation needs a cgroup or a hidden render
+node rather than an environment variable, and environment pinning is advisory for every runtime
+except CUDA.
 
 **Slurm is not a phase, it is a fork at phase 4.** Phases 1 to 3 happen either way, and the
 capability probe would generate Slurm's node features rather than feed a dispatcher of our own.
