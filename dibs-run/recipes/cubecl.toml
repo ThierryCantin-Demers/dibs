@@ -10,20 +10,56 @@
 # CUBECL_THROUGHPUT_CACHE=off forces a fresh peak-throughput measurement instead of reusing
 # the cached ceiling for the device. Anything reporting a percentage of peak should set it, or
 # the percentage is against a number measured at some other time under some other conditions.
+#
+# One backend per recipe, named in the recipe. The families below used to be bare and mean
+# cuda, which reads as "the general one" and is why every non-CUDA curve was measured through
+# the escape hatch instead: `dibs-run gaps` named that twice before it was noticed. A name
+# that does not say its backend is a trap on a machine whose cards do not all share one.
+#
+# The measured step repeats, so one exclusive hold reports run-to-run spread rather than a
+# single number that nothing can be compared against. It is inside the hold on purpose: three
+# runs separated by someone else's build are three different machines.
 
 [build.cuda]
   [[build.cuda.step]]
   lock = "shared"
   run  = "cargo build --release -p throughput --features cuda --examples"
 
-[bench.throughput-all]
+[bench.throughput-all-cuda]
 isolation = "machine"
-  [[bench.throughput-all.step]]
+  [[bench.throughput-all-cuda.step]]
   lock = "shared"
   run  = "cargo build --release -p throughput --features cuda --example all"
-  [[bench.throughput-all.step]]
+  [[bench.throughput-all-cuda.step]]
   lock = "exclusive"
-  run  = "CUBECL_THROUGHPUT_CACHE=off cargo run --release -p throughput --features cuda --example all"
+  run  = "for i in 1 2 3; do echo \"== run $i\"; CUBECL_THROUGHPUT_CACHE=off cargo run -q --release -p throughput --features cuda --example all; done"
+
+[bench.throughput-all-vulkan]
+isolation = "machine"
+  [[bench.throughput-all-vulkan.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features vulkan --example all"
+  [[bench.throughput-all-vulkan.step]]
+  lock = "exclusive"
+  run  = "for i in 1 2 3; do echo \"== run $i\"; CUBECL_THROUGHPUT_CACHE=off cargo run -q --release -p throughput --features vulkan --example all; done"
+
+[bench.throughput-all-wgpu]
+isolation = "machine"
+  [[bench.throughput-all-wgpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features wgpu --example all"
+  [[bench.throughput-all-wgpu.step]]
+  lock = "exclusive"
+  run  = "for i in 1 2 3; do echo \"== run $i\"; CUBECL_THROUGHPUT_CACHE=off cargo run -q --release -p throughput --features wgpu --example all; done"
+
+[bench.throughput-all-cpu]
+isolation = "machine"
+  [[bench.throughput-all-cpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features cpu --example all"
+  [[bench.throughput-all-cpu.step]]
+  lock = "exclusive"
+  run  = "for i in 1 2 3; do echo \"== run $i\"; CUBECL_THROUGHPUT_CACHE=off cargo run -q --release -p throughput --features cpu --example all; done"
 
 [bench.memory]
 isolation = "machine"
@@ -34,19 +70,43 @@ isolation = "machine"
   lock = "exclusive"
   run  = "CUBECL_THROUGHPUT_CACHE=off cargo run --release -p throughput --features cuda --example memory"
 
-# Named by `dibs-run gaps`: "curve on the merge candidate; no recipe covers memory_curve".
-#
 # memory_curve is the one that answers what a kernel moving a given amount can actually hit;
-# the single-size probes above report only the last row of its table. Same cache note as the
-# others: a percentage of peak means nothing against a ceiling measured at some other time.
-[bench.memory-curve]
+# the single-size probes above report only the last row of its table.
+[bench.memory-curve-cuda]
 isolation = "machine"
-  [[bench.memory-curve.step]]
+  [[bench.memory-curve-cuda.step]]
   lock = "shared"
   run  = "cargo build --release -p throughput --features cuda --example memory_curve"
-  [[bench.memory-curve.step]]
+  [[bench.memory-curve-cuda.step]]
   lock = "exclusive"
-  run  = "CUBECL_THROUGHPUT_CACHE=off cargo run --release -p throughput --features cuda --example memory_curve"
+  run  = "for i in 1 2; do echo \"== run $i\"; CUBECL_THROUGHPUT_CACHE=off cargo run -q --release -p throughput --features cuda --example memory_curve; done"
+
+[bench.memory-curve-vulkan]
+isolation = "machine"
+  [[bench.memory-curve-vulkan.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features vulkan --example memory_curve"
+  [[bench.memory-curve-vulkan.step]]
+  lock = "exclusive"
+  run  = "for i in 1 2; do echo \"== run $i\"; CUBECL_THROUGHPUT_CACHE=off cargo run -q --release -p throughput --features vulkan --example memory_curve; done"
+
+[bench.memory-curve-wgpu]
+isolation = "machine"
+  [[bench.memory-curve-wgpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features wgpu --example memory_curve"
+  [[bench.memory-curve-wgpu.step]]
+  lock = "exclusive"
+  run  = "for i in 1 2; do echo \"== run $i\"; CUBECL_THROUGHPUT_CACHE=off cargo run -q --release -p throughput --features wgpu --example memory_curve; done"
+
+[bench.memory-curve-cpu]
+isolation = "machine"
+  [[bench.memory-curve-cpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p throughput --features cpu --example memory_curve"
+  [[bench.memory-curve-cpu.step]]
+  lock = "exclusive"
+  run  = "for i in 1 2; do echo \"== run $i\"; CUBECL_THROUGHPUT_CACHE=off cargo run -q --release -p throughput --features cpu --example memory_curve; done"
 
 # compute_cmma reports `unsupported` rather than failing on a device without tensor cores: the
 # gate is `client.properties().features.matmul.cmma` being empty. That is the field a `needs`

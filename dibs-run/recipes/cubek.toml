@@ -83,8 +83,11 @@ isolation = "machine"
   lock = "exclusive"
   run  = "cargo bench -p benchmarks --bench random --features cubecl/cuda"
 
-# gemm_cpu and gemm_cpu_tiled are CPU-runtime studies and only mean anything with cubecl/cpu.
-# A CPU measurement wants the whole machine regardless, which is the default isolation.
+# The CPU runtime, one recipe per kernel family a decode step launches. A CPU measurement
+# wants the whole machine regardless, which is the default isolation.
+#
+# Suffixed rather than bare because the same families exist on cuda above, and a name that
+# does not say its backend is a trap on a machine whose cards do not all share one.
 [bench.gemm-cpu]
 isolation = "machine"
   [[bench.gemm-cpu.step]]
@@ -93,6 +96,51 @@ isolation = "machine"
   [[bench.gemm-cpu.step]]
   lock = "exclusive"
   run  = "cargo bench -p benchmarks --bench gemm_cpu --features cubecl/cpu"
+
+[bench.gemm-cpu-tiled]
+isolation = "machine"
+  [[bench.gemm-cpu-tiled.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench gemm_cpu_tiled --features cubecl/cpu"
+  [[bench.gemm-cpu-tiled.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench gemm_cpu_tiled --features cubecl/cpu"
+
+[bench.gemv-cpu]
+isolation = "machine"
+  [[bench.gemv-cpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench gemv --features cubecl/cpu"
+  [[bench.gemv-cpu.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench gemv --features cubecl/cpu"
+
+[bench.reduce-cpu]
+isolation = "machine"
+  [[bench.reduce-cpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench reduce --features cubecl/cpu"
+  [[bench.reduce-cpu.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench reduce --features cubecl/cpu"
+
+[bench.unary-cpu]
+isolation = "machine"
+  [[bench.unary-cpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench unary --features cubecl/cpu"
+  [[bench.unary-cpu.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench unary --features cubecl/cpu"
+
+[bench.contiguous-cpu]
+isolation = "machine"
+  [[bench.contiguous-cpu.step]]
+  lock = "shared"
+  run  = "cargo build --release -p benchmarks --bench contiguous --features cubecl/cpu"
+  [[bench.contiguous-cpu.step]]
+  lock = "exclusive"
+  run  = "cargo bench -p benchmarks --bench contiguous --features cubecl/cpu"
 
 # --- tests: shared lock, because correctness runs are not measurements -------------------
 #

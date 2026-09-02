@@ -244,6 +244,42 @@ mod tests {
         std::fs::write(dir.join(name), body).unwrap();
     }
 
+    // The bundled files ship inside the binary, so a typo in one is not a config file the user
+    // can fix: it is a build that parses nothing for that repo.
+    //
+    // And the footgun the cubek header describes is checkable. cubecl's build script counts the
+    // enabled runtimes and silently falls back to wgpu when the count is not exactly one, so a
+    // recipe against those packages that names two backends, or none, measures hardware nobody
+    // chose. Packages that carry their own backend, like cubecl-cuda, select it by package and
+    // are left alone.
+    #[test]
+    fn every_bundled_recipe_parses_and_names_one_backend() {
+        const BACKENDS: [&str; 6] = ["cpu", "cuda", "hip", "metal-native", "wgpu", "vulkan"];
+        for repo in ["cubek", "cubecl"] {
+            let text = super::builtin(repo).expect("a bundled file for this repo");
+            let m: super::Manifest =
+                toml::from_str(text).unwrap_or_else(|e| panic!("{repo}: {e}"));
+            for (verb, named) in [("bench", &m.bench), ("build", &m.build), ("test", &m.test)] {
+                for (name, rec) in named {
+                    for step in &rec.steps {
+                        if !step.run.contains("-p benchmarks") && !step.run.contains("-p throughput")
+                        {
+                            continue;
+                        }
+                        let n = BACKENDS
+                            .iter()
+                            .filter(|b| {
+                                step.run.contains(&format!("--features {b}"))
+                                    || step.run.contains(&format!("--features cubecl/{b}"))
+                            })
+                            .count();
+                        assert_eq!(n, 1, "{repo} {verb}.{name} names {n} backends: {}", step.run);
+                    }
+                }
+            }
+        }
+    }
+
     /// Local wins, because it is the override, and because these are shared upstream repos:
     /// a recipe still moving cannot live in one without costing a pull request.
     #[test]
