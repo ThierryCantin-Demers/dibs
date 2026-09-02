@@ -592,6 +592,13 @@ registry_fresh
 if [ "$PINNED" = 0 ]; then
     if [ -n "${DIBS_ON:-}" ]; then
         use_machine "$DIBS_ON"; PINNED=1
+    elif [ -n "$HOST" ] && [ -n "$(inv "$HOST" ssh)" ]; then
+        # A name the inventory knows is that machine, reached the way every other command
+        # reaches it, which is the rule --check already follows. Taken literally it is a
+        # different string for the same box: it may not resolve at all, and where it does it
+        # keys a series apart from the same machine reached through --on, so one machine
+        # reads as two and the guard refuses a move nobody made.
+        use_machine "$HOST"
     elif [ -z "$HOST" ]; then
         d=$(inv_default)
         [ -n "$d" ] && use_machine "$d"
@@ -1121,8 +1128,15 @@ REMOTE
 fi
 
 case "$MODE" in
+    jobs|job|cancel)
+        # Submitting took --on and reading the result did not, so a job could be sent to a
+        # machine that --jobs then refused to look at.
+        [ "$PINNED" = 1 ] && [ -n "$HOST" ] && QUEUE=$HOST
+        [ -n "$QUEUE" ] || {
+            echo "dibs: no DIBS_QUEUE, and no --on naming the machine the job is on." >&2
+            exit 2; }
+        ;;&
     jobs)
-        [ -n "$QUEUE" ] || { echo "dibs: no DIBS_QUEUE" >&2; exit 2; }
         queue_run <<'REMOTE' "$JOBS_DIR"
 set -u
 jobs=$(eval echo "$1")
@@ -1143,7 +1157,6 @@ done
 REMOTE
         exit $? ;;
     cancel)
-        [ -n "$QUEUE" ] || { echo "dibs: no DIBS_QUEUE" >&2; exit 2; }
         queue_run <<'REMOTE' "$JOBS_DIR" "$LABEL" "$(agent_name | base64 | tr -d '\n')" "$ANYONE"
 set -u
 jobs=$(eval echo "$1"); id=$2; me=$(printf %s "${3:-}" | base64 -d 2>/dev/null); anyone=${4:-0}
@@ -1170,7 +1183,6 @@ echo "stopped $id"
 REMOTE
         exit $? ;;
     job)
-        [ -n "$QUEUE" ] || { echo "dibs: no DIBS_QUEUE" >&2; exit 2; }
         queue_run <<'REMOTE' "$JOBS_DIR" "$LABEL" "$OUT_N"
 set -u
 jobs=$(eval echo "$1"); id=$2; n=${3:-40}

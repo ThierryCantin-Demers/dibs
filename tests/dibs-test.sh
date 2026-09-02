@@ -812,6 +812,12 @@ check "--anyone cancels it" \
 # running it here and having it die with the session anyway.
 check "with no queue it refuses rather than pretending" \
   "$(DIBS_QUEUE= $T --detach true >/dev/null 2>&1; echo $?)" "2"
+# Submitting took --on and reading the result did not, so a job could be sent somewhere --jobs
+# then refused to look at.
+check "reading a job takes --on, the same as submitting one" \
+  "$(DIBS_QUEUE= $T --jobs --on here 2>/dev/null | grep -c '^ID ')" "1"
+check "and with neither it says both ways of naming one" \
+  "$(DIBS_QUEUE= $T --jobs 2>&1 >/dev/null | grep -c 'no --on')" "1"
 
 # Both used to set the mode, so one silently erased the other and the order on the line
 # decided which. Measured with no lock one way round, detached-in-name-only the other.
@@ -941,6 +947,12 @@ hostname = "$(hostname -s)"
 ssh      = "other"
 hostname = "other"
 
+# ssh deliberately unlike the name: that is what a real entry looks like, and with the two
+# spelled the same nothing here could tell them apart.
+[machine.acct]
+ssh      = "dibs@acct-box"
+hostname = "$(hostname -s)"
+
   [[machine.other.device]]
   kind     = "gpu"
   alias    = "gpu:elsewhere"
@@ -991,6 +1003,21 @@ check "the model selector stays out of the way of a twin" \
   "unset"
 # It is still needed where the model is unique, because DRI_PRIME is Mesa's and does nothing
 # for the NVIDIA ICD.
+# --on resolves a name through the inventory and DIBS_HOST was dialled and recorded literally,
+# so one machine had two identities: a string that need not resolve at all, and one that keys a
+# series apart from the same machine reached the other way.
+check "DIBS_HOST naming an inventory machine resolves to it" \
+  "$(DIBS_HOST=acct $T --which)" "acct"
+check "and it is reached by the entry's ssh, not by the name" \
+  "$(DIBS_SERIES=$S/ser-w $T --bench --on acct --label w true >/dev/null 2>&1
+     awk -F'\t' 'NR>1 {print $2}' "$S/ser-w")" "dibs@acct-box"
+check "and a name the inventory does not know stays literal" \
+  "$(DIBS_HOST=dibs@nowhere.invalid $T --which >/dev/null 2>&1; echo $?)" "1"
+check "so both spellings key one series, not two" \
+  "$(DIBS_SERIES=$S/ser-h $T --bench --on acct --label sp true >/dev/null 2>&1
+     DIBS_SERIES=$S/ser-h DIBS_HOST=acct $T --bench --label sp true 2>&1 >/dev/null |
+     grep -c 'measured on something else')" "0"
+
 check "and is used where the model names one card" \
   "$($T --on rig --device gpu:lone --label dev 'printf %s "$MESA_VK_DEVICE_SELECT"' 2>/dev/null | tail -1)" \
   "8086:b080"
