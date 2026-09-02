@@ -62,6 +62,9 @@ impl Run {
         if let Some(m) = &self.machine {
             let _ = write!(s, ",\"machine\":{}", q(m));
         }
+        if let Some(d) = &self.device {
+            let _ = write!(s, ",\"device\":{}", q(d));
+        }
         if let Some(n) = &self.needs {
             let _ = write!(s, ",\"needs\":{}", q(n));
         }

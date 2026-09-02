@@ -35,9 +35,10 @@ dibs-run gaps                             what did not fit a recipe, and what re
   --root    where named repos live (default $DIBS_ROOT, else the current directory)
   --reason  why this does not fit a recipe. Required for shell and raw, and recorded:
             a reason that keeps recurring is the specification for the next recipe.
-  --device  the card to run on, named from the machine's inventory. Two runs of one label
-            have to name the same one or their numbers are not comparable, and dibs refuses
-            the second when they do not. `dibs --machines -v` lists the aliases.
+  --device  the card to run on, named from the machine's inventory. It is part of the
+            derived label, so each card keeps its own history and running a recipe on a
+            second one neither mixes with the first nor replaces it. `dibs --machines -v`
+            lists the aliases.
   --dry-run print what would run, take no lock, record nothing
 
 A recipe declares the procedure and names no revisions: the invocation supplies the code and
@@ -285,8 +286,8 @@ fn run() -> Result<ExitCode, String> {
     // and `test cubek cuda` are different work, and one history for both predicts each from
     // the other. Shell has no recipe name to carry.
     let label = match &shell_recipe {
-        Some(_) => run_label(&repo_name, "shell", None),
-        None => run_label(&repo_name, verb.as_str(), Some(name)),
+        Some(_) => run_label(&repo_name, "shell", None, args.device.as_deref()),
+        None => run_label(&repo_name, verb.as_str(), Some(name), args.device.as_deref()),
     };
     let fingerprint = rec.fingerprint();
     // The duration history keys on lock and label together, so a recipe's build and its
@@ -435,10 +436,18 @@ fn run() -> Result<ExitCode, String> {
     })
 }
 
-fn run_label(repo: &str, verb: &str, name: Option<&str>) -> String {
-    match name {
+fn run_label(repo: &str, verb: &str, name: Option<&str>, device: Option<&str>) -> String {
+    let base = match name {
         Some(n) => format!("{repo}/{verb}/{n}"),
         None => format!("{repo}/{verb}"),
+    };
+    // On a machine with one card the device adds nothing, and on a machine with four it is
+    // the difference between four histories and one. Without it a recipe named one series
+    // per card, so the second card was refused and --new-series answered by discarding the
+    // first: two cards could be measured, never both kept.
+    match device {
+        Some(d) => format!("{base}@{d}"),
+        None => base,
     }
 }
 
@@ -560,8 +569,8 @@ mod tests {
     #[test]
     fn a_recipe_name_is_only_unique_within_its_verb() {
         assert_ne!(
-            run_label("cubek", "build", Some("cuda")),
-            run_label("cubek", "test", Some("cuda"))
+            run_label("cubek", "build", Some("cuda"), None),
+            run_label("cubek", "test", Some("cuda"), None)
         );
     }
 
@@ -612,6 +621,41 @@ mod tests {
     fn isolation_defaults_to_the_whole_machine() {
         let r: Recipe = toml::from_str("[[step]]\nlock = \"shared\"\nrun = \"x\"").unwrap();
         assert_eq!(r.isolation, Isolation::Machine);
+    }
+
+    // It was set on every run and serialized by nothing, so every record said the machine and
+    // none said the card. The compiler called the field dead and was right.
+    #[test]
+    fn the_card_a_run_used_reaches_the_record() {
+        let run = provenance::Run {
+            label: "cubecl/bench/throughput-all@gpu:rtx2060".into(),
+            verb: "bench",
+            recipe: "throughput-all".into(),
+            fingerprint: "abc".into(),
+            isolation: "machine".into(),
+            needs: None,
+            reason: None,
+            procedure: vec![],
+            backend: "dibs",
+            device: Some("gpu:rtx2060".into()),
+            machine: Some("multigpu".into()),
+            revisions: vec![],
+            steps: vec![],
+        };
+        let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).expect("valid json");
+        assert_eq!(v["device"], "gpu:rtx2060");
+        assert_eq!(v["machine"], "multigpu");
+    }
+
+    #[test]
+    fn a_card_gets_its_own_label_and_an_unpinned_run_is_left_alone() {
+        let pinned = run_label("cubecl", "bench", Some("throughput-all"), Some("gpu:a"));
+        let other = run_label("cubecl", "bench", Some("throughput-all"), Some("gpu:b"));
+        assert_ne!(pinned, other);
+        assert_eq!(
+            run_label("cubecl", "bench", Some("throughput-all"), None),
+            "cubecl/bench/throughput-all"
+        );
     }
 
     #[test]
