@@ -261,6 +261,22 @@ inv_default() {
     printf '%s\n' "$d"
 }
 
+# The entry for the machine this call is actually going to. --on records its name in MACHINE,
+# but DIBS_HOST names a machine by its ssh string and deliberately leaves MACHINE empty, since
+# a host string is not an inventory name. Anything that has to read the entry needs the name
+# back, and the default machine's entry is not it: that answered every device alias for a card
+# in a different box.
+inv_name_for_host() {
+    local n
+    while read -r n; do
+        [ -n "$n" ] || continue
+        [ "$(inv "$n" ssh)" = "$HOST" ] && { printf '%s\n' "$n"; return 0; }
+        [ -n "$TARGET" ] && [ "$(inv "$n" hostname)" = "$TARGET" ] &&
+            { printf '%s\n' "$n"; return 0; }
+    done < <(inv_names)
+    return 1
+}
+
 # Everything belonging to one machine, its device tables included, written to stdout minus
 # that machine. Both writing and forgetting go through it, because a partial removal leaves a
 # device table parented to an entry that is gone.
@@ -800,9 +816,10 @@ fi
 # runs comparable is that they name the same physical card, and an index does not: it
 # renumbers when a card is added, when the driver reorders, and between boots.
 if [ -n "$DEVICE" ]; then
-    dev_m=${MACHINE:-$(inv_default)}
-    [ -n "$dev_m" ] || { echo "dibs: --device needs an inventory." >&2
-                         echo "  Write one with:  dibs --check <host> --write" >&2; exit 2; }
+    dev_m=${MACHINE:-$(inv_name_for_host)}
+    [ -n "$dev_m" ] || {
+        echo "dibs: --device names a card from a machine's entry, and ${HOST:-this call} has none." >&2
+        echo "  Record one with:  dibs --check ${HOST:-<host>} --write" >&2; exit 2; }
     DEV_PCI=$(inv_device "$dev_m" "$DEVICE" pci)
     DEV_CHIP=$(inv_device "$dev_m" "$DEVICE" chip)
     DEV_RT=$(inv_device "$dev_m" "$DEVICE" runtimes | tr -d '"[] ')
@@ -823,7 +840,7 @@ fi
 # card the process chose, because that choice happens inside the runtime where it cannot see,
 # so the only honest thing it can do is say the number is unpinned before it is believed.
 if [ "$MODE" = bench ] && [ -z "$DEVICE" ] && [ "${DIBS_UNPINNED_QUIET:-0}" != 1 ]; then
-    bench_m=${MACHINE:-$(inv_default)}
+    bench_m=${MACHINE:-$(inv_name_for_host)}
     if [ -n "$bench_m" ]; then
         gpus=$(inv_device_names "$bench_m" | grep -c '^gpu:') || gpus=0
         if [ "${gpus:-0}" -gt 1 ]; then

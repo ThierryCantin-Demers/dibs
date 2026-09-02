@@ -936,6 +936,17 @@ hostname = "$(hostname -s)"
   pci      = "0000:09:00.0"
   chip     = "8086:b080"
   runtimes = ["vulkan"]
+
+[machine.other]
+ssh      = "other"
+hostname = "other"
+
+  [[machine.other.device]]
+  kind     = "gpu"
+  alias    = "gpu:elsewhere"
+  pci      = "0000:0a:00.0"
+  chip     = "8086:c0de"
+  runtimes = ["vulkan"]
 TOML
 # Repeatability is the whole point: two calls naming one alias have to reach one card, and a
 # bus id is the only name for it that survives a reboot or another card being added.
@@ -983,6 +994,26 @@ check "the model selector stays out of the way of a twin" \
 check "and is used where the model names one card" \
   "$($T --on rig --device gpu:lone --label dev 'printf %s "$MESA_VK_DEVICE_SELECT"' 2>/dev/null | tail -1)" \
   "8086:b080"
+
+# --on records the machine's name; DIBS_HOST names it by its ssh string and leaves that name
+# empty, because a host string is not an inventory name. The alias was then looked up in the
+# default machine's entry: refused when that machine had no such card, and worse when it did,
+# since the address of a card in the wrong box resolves and pins nothing.
+check "a device is read from the machine the call is going to" \
+  "$(DIBS_HOST=other $T --device gpu:elsewhere --label dev 'printf %s "$DRI_PRIME"' 2>/dev/null | tail -1)" \
+  "pci-0000_0a_00_0"
+check "and a card the target does not have is refused" \
+  "$(DIBS_HOST=other $T --device gpu:one --label dev 'echo ran' 2>&1 >/dev/null | grep -c 'no device called')" "1"
+check "  naming the target rather than the default" \
+  "$(DIBS_HOST=other $T --device gpu:one --label dev 'echo ran' 2>&1 >/dev/null | grep -c '^dibs: other has')" "1"
+check "  and nothing ran on the wrong card" \
+  "$(DIBS_HOST=other $T --device gpu:one --label dev 'echo ran' 2>/dev/null | grep -c ran)" "0"
+# The unpinned-benchmark warning counted the default machine's cards too, so it stayed silent
+# about a four-card machine whenever the default had one.
+check "the unpinned warning counts the target's cards" \
+  "$(DIBS_HOST=other $T --bench --label unp true 2>&1 >/dev/null | grep -c 'GPUs and this benchmark')" "0"
+check "and still fires on a machine that has several" \
+  "$(DIBS_HOST=rig $T --bench --label unp true 2>&1 >/dev/null | grep -c 'rig has 4 GPUs')" "1"
 
 echo "one label, one series"
 rm -f "$DIBS_SERIES"
