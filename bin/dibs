@@ -1560,6 +1560,32 @@ queue_sorted() {
     done
 }
 
+# Openers are not holders. A lock descriptor is inherited, and this can run inside a client
+# that holds one, so the whole invocation asking the question shows up as openers: the client,
+# the script it ships, and the children of the pipeline that calls fuser. None of them is an
+# orphan, and a process group tells them apart, because an orphan is by definition the remains
+# of a session that has gone. Beyond that, a queued client has a record, and a pid that has
+# already exited holds nothing, which is the rule prune follows for the same reason.
+pgid_of() {   # pid; prints its process group, empty if it has gone
+    local st
+    st=$(< "/proc/$1/stat") 2>/dev/null || return 1
+    st=${st#*) }             # the command is parenthesised and may contain spaces
+    set -- $st
+    printf '%s\n' "$3"
+}
+lock_unaccounted() {   # sets ORPH to the pids, OPENERS to whether there were any at all
+    local p mine
+    ORPH="" OPENERS=0
+    mine=$(pgid_of $$)
+    for p in $( { fuser "$DIR/rw" 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$'; } 8>&- 9>&- ); do
+        [ -d "/proc/$p" ] || continue
+        OPENERS=1
+        [ -n "$mine" ] && [ "$(pgid_of "$p")" = "$mine" ] && continue
+        [ -e "$DIR/holder.$p" ] || [ -e "$DIR/waiting.$p" ] && continue
+        ORPH="$ORPH $p"
+    done
+}
+
 # One document per line, so a reader can take it a line at a time. Built with printf and
 # parameter expansion rather than a JSON tool, because this runs on every --watch tick and a
 # fork per field would undo the whole point of the redraw being free.
@@ -1631,7 +1657,14 @@ show_json() {
     done
     if [ "$st" = idle ]; then
         exec 7>"$DIR/rw"
-        if flock -n -x 7 2>/dev/null; then flock -u 7; else st=orphan; fi
+        if flock -n -x 7 2>/dev/null; then
+            flock -u 7
+        else
+            # A handover is not an orphan, and calling it one here took the machine out of
+            # routing for as long as anyone kept asking.
+            lock_unaccounted
+            [ -n "$ORPH" ] && st=orphan || st=busy
+        fi
         exec 7>&-
     fi
     # What a dispatcher needs to rank this machine. loadavg rather than the sum of what dibs
@@ -1812,21 +1845,25 @@ show() {
             flock -u 7
             echo "${C_FREE}dibs: idle${C_OFF}"
         else
-            echo "${C_BUSY}dibs: LOCKED BY AN ORPHAN.${C_OFF} No holder record, but the lock is taken, so"
-            echo "  something outlived its parent. Nothing can run until it goes."
-            # Named here rather than left as an instruction. This already runs on the machine,
-            # so telling someone to go and ask it themselves is asking them to do the one thing
-            # this could have done for them, at the moment they are least able to.
-            orph=$(fuser "$DIR/rw" 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$')
-            if [ -n "$orph" ]; then
+            lock_unaccounted
+            if [ -n "$ORPH" ]; then
+                echo "${C_BUSY}dibs: LOCKED BY AN ORPHAN.${C_OFF} No holder record, but the lock is taken, so"
+                echo "  something outlived its parent. Nothing can run until it goes."
+                # Named here rather than left as an instruction. This already runs on the
+                # machine, so telling someone to go and ask it themselves is asking them to do
+                # the one thing this could have done for them, at the moment they are least
+                # able to.
                 echo "  holding it:"
-                for p in $orph; do
+                for p in $ORPH; do
                     ps -o pid=,etime=,user=,args= -p "$p" 2>/dev/null |
                         sed 's/^ */    /' | cut -c1-100
                 done
                 echo "  Stop it with: dibs --kill <pid> --anyone"
+            elif [ "$OPENERS" = 1 ]; then
+                echo "${C_BUSY}dibs: busy${C_OFF}, a client has just taken the lock and is recording it."
             else
-                echo "  Nothing here reports holding it. If fuser is missing, install psmisc."
+                echo "${C_BUSY}dibs: the lock is taken and nothing here reports holding it.${C_OFF}"
+                echo "  If fuser is missing, install psmisc; without it an orphan cannot be named."
             fi
         fi
         exec 7>&-
@@ -2513,8 +2550,12 @@ if [ "$MODE" = bench ]; then FLAG=-x; else FLAG=-s; fi
 if ! flock -n $FLAG 8 2>/dev/null; then
     echo "dibs: busy, so this is queued and has not started." >&2
     show >&2
-    echo "dibs: a queued job outlasts a foreground call. Run it with run_in_background," >&2
-    echo "  or pass --wait <seconds> to give up instead of queueing." >&2
+    # Phrased for both callers, because nothing here can tell them apart: a backgrounded
+    # call and a foreground one are identical from inside, so an instruction to background it
+    # reached the callers who already had.
+    echo "dibs: backgrounded, leave it and it starts when the queue clears. A foreground call" >&2
+    echo "  hits its own timeout first and the work goes undone. --wait <seconds> gives up" >&2
+    echo "  instead of queueing." >&2
 else
     flock -u 8   # let the real acquisition below take it under the same rules
 fi

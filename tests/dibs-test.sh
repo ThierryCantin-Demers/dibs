@@ -84,7 +84,8 @@ fifo QN; $T --bench --label qn-holder "$(hold QN)" >/dev/null 2>&1 & QN=$!; held
 out=$($T --wait 1 --label queued-notice 'echo nope' 2>&1)
 check "a queued caller is told at once, not after the wait" \
   "$(grep -c 'queued and has not started' <<<"$out")" "1"
-check "and told to background it" "$(grep -c 'run_in_background' <<<"$out")" "1"
+check "and what each kind of caller should do about it" \
+  "$(grep -c 'backgrounded, leave it' <<<"$out")" "1"
 free QN; wait $QN
 
 echo "surviving abuse"
@@ -898,14 +899,43 @@ check "it says it was stopped, not that it failed" "$(grep -c 'stopped after hol
 check "and what running it again would do" "$(grep -c 'picks up from the crates' <<<"$out")" "1"
 gone
 
+# setsid, because an orphan is the remains of a session that has gone: held from this shell
+# it would share a process group with everything this shell starts, --status included, which
+# is the one configuration where nothing can tell a holder from the caller asking about it.
 echo "an orphaned lock names what holds it"
-exec 8>"$DIBS_LOCK_DIR/rw"
-flock -s 8
+fifo orp
+setsid bash -c 'exec 8>"$1/rw"; flock -s 8; printf "up\n" > "$2"; read -r _ < "$3"' \
+    _ "$DIBS_LOCK_DIR" "$S/f-orp" "$S/f-orq" &
+fifo orq
+sync_ orp
 out=$($T --status 2>&1)
-exec 8>&-
+free orq
 check "it is reported as an orphan" "$(grep -c 'LOCKED BY AN ORPHAN' <<<"$out")" "1"
 check "and it says what is holding it" "$(grep -cE 'holding it:|reports holding it' <<<"$out")" "1"
+# It named its own shipped script alongside the orphan, so the advice underneath was partly
+# to kill the dibs that was answering.
+check "and names only it, not the dibs answering" \
+  "$(awk '/holding it:/{f=1;next} /Stop it with/{f=0} f' <<<"$out" | grep -c .)" "1"
 check "back to idle once released" "$($T --status | grep -c 'dibs: idle')" "1"
+# A queued client prints the status itself, and it is holding the lock descriptor while it
+# does, so every child of the pipeline that asks inherits it and fuser reports them all.
+# None of them holds anything: two are already dead by the time they are looked up, and the
+# client itself is queueing. Thirteen clients arriving at once were each read as an orphan
+# of the other twelve, and the build then ran normally, because there was never an orphan.
+echo "a client asking about the lock it is queueing for is not an orphan of itself"
+bash -c 'exec 8>"$1/rw"; flock -s 8
+         printf "shared\t%s\t%s\tinq\tsomeone\tid\t-\ttrue\n" "$$" "$(date +%s)" \
+             > "$1/waiting.$$"
+         "$2" --status > "$3" 2>&1; "$2" --status --json > "$4" 2>&1
+         rm -f "$1/waiting.$$"' _ "$DIBS_LOCK_DIR" "$T" "$S/inq.out" "$S/inq.json"
+check "--status does not call it an orphan" "$(grep -c 'ORPHAN' "$S/inq.out")" "0"
+check "it says the lock has just been taken" \
+  "$(grep -c 'just taken the lock' "$S/inq.out")" "1"
+# --json said orphan where --status said the same, and routing reads --json: two renderers
+# asking one question in two places is how they come to disagree.
+check "and --json agrees with it" \
+  "$(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$S/inq.json" | head -1)" "busy"
+check "still idle afterwards" "$($T --status | grep -c 'dibs: idle')" "1"
 
 echo "a job can see a toolchain the login shell would have set up"
 if [ -d "$HOME/.cargo/bin" ]; then

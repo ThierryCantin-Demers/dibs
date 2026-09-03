@@ -796,6 +796,10 @@ fn state_style(state: &str) -> (String, Style) {
             "idle".into(),
             Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
         ),
+        "busy" => (
+            "in use".into(),
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
         "orphan" => (
             "LOCKED BY AN ORPHAN".into(),
             Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
