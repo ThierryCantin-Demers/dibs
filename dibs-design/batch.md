@@ -206,6 +206,19 @@ will not notice on its own that step 2 made steps 3 through 40 pointless.** Corr
 something the person initiates rather than something that happens by itself, and a `cont` step
 can keep spending machine time on work that an earlier result had already invalidated.
 
+When the criterion is known in advance, the guard already exists and needs nothing new. A step
+runs an arbitrary command, and a command that exits non-zero stops the batch by the rule that
+is already there, so a step can check its own result and refuse to let the rest proceed:
+
+```
+[m4070 after=build] dibs --bench --on bench1 --device gpu:rtx4070tisuper --label reduce-4070 \
+    'cargo bench --bench reduce | tee r.txt; grep -q "PASS" r.txt || exit 1'
+```
+
+That covers the case where the agent could have written down what it was looking for. It does
+not cover the case where it would have looked and judged, and pretending otherwise is how a
+list of commands becomes a runner with a predicate language. That case wants two batches.
+
 That gives the sizing rule directly. A batch is right when its steps do not need judging as
 they go: the same measurement across cards, a build and the run that depends on it, a sweep
 whose points are all wanted. A batch is wrong when a later step should only happen if an
