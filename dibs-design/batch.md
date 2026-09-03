@@ -185,13 +185,32 @@ write a file for.
 - **No same-machine parallelism.** Deferred, not refused: it needs a reason beyond "it would
   be faster", and the lock already provides it for shared work.
 
-## The cost it moves rather than removes
+## What a long batch does and does not cost
 
-A batch that runs for an hour is an hour in which the agent is asleep and cannot be steered,
-where a hundred separate jobs gave a hundred chances to change course. That is a real loss and
-the summary does not recover it. `--status` showing batch progress is what makes it
-observable, and it is worth saying that the right batch size is the largest one the agent would
-not have interrupted anyway.
+A running batch is neither opaque nor unstoppable, and both of those follow from the driver
+being the owner rather than being features added on top.
+
+**It can be stopped at any point, cleanly.** Interrupting the session kills the driver, its
+children die, every lock releases, and no step state is left anywhere to reap. Steps that have
+already finished have already written their logs, so stopping early loses only the steps that
+had not run.
+
+**Its state is legible while it runs.** `--status` says which step is running and how many are
+behind it; each finished step's log is already on the machine that ran it, and the running
+step's is being written. Checking on a batch is a `--peek` of a tail, which costs nothing and
+does not disturb a measurement.
+
+So the residue is narrower than "cannot steer", and it is worth naming exactly, because it is
+the thing that decides how big a batch should be. **The agent does not wake mid-batch, so it
+will not notice on its own that step 2 made steps 3 through 40 pointless.** Correction becomes
+something the person initiates rather than something that happens by itself, and a `cont` step
+can keep spending machine time on work that an earlier result had already invalidated.
+
+That gives the sizing rule directly. A batch is right when its steps do not need judging as
+they go: the same measurement across cards, a build and the run that depends on it, a sweep
+whose points are all wanted. A batch is wrong when a later step should only happen if an
+earlier one said something in particular, and that case wants two batches with a look in
+between, which is three turns and then three more rather than one hundred and twenty.
 
 ## Open
 
