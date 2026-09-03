@@ -65,11 +65,17 @@ only around measured regions; preempt long *builds* for benchmarks rather than t
 since a compile is indifferent to SIGSTOP and a benchmark is not. Pinning GPU and CPU clocks is
 the prerequisite that would make any of it safe, and is worth doing on its own.
 
-**A JSON step-spec submitted per call.** It compiles down to two invocations that already work.
-The only thing a per-call spec adds over commands is a *reservation*, so the exclusive phase
-does not go to the back of the queue after the shared build. If that is ever built it is a flag,
-not a file format, and the transition must be release-and-requeue-with-priority, never a lock
-upgrade.
+**A JSON step-spec submitted per call.** Superseded in part, see `batch.md`. The reasoning
+below held that a spec adds nothing over commands except a reservation, and it is still right
+about the machine. It was wrong about the caller: it costed a background completion as one
+round trip, when a completion wakes an agent for a full context re-read, so one job is three
+turns. A session that launched about a hundred jobs one at a time spent most of an 870M-token
+day doing it. What survives unchanged is the rest of the entry.
+
+  It compiles down to two invocations that already work. The only thing a per-call spec adds
+  over commands is a *reservation*, so the exclusive phase does not go to the back of the queue
+  after the shared build. If that is ever built it is a flag, not a file format, and the
+  transition must be release-and-requeue-with-priority, never a lock upgrade.
 
 ## A shared sccache is the next real lever, and it is cheaper than artifacts
 

@@ -253,7 +253,9 @@ timeout, and a reaper: a scheduler, in other words, arriving through the side do
 
 **Batching to save agent turns is worth less than it looks**, because a call launched in the
 background already reports back on its own. The saving is one round trip, against a format to
-learn, write and debug.
+learn, write and debug. *Wrong, and measured wrong: a completion is not a round trip, it wakes
+the agent for a full context re-read, so one job is three turns and a hundred jobs are three
+hundred. See `batch.md`.*
 
 ### What the log can and cannot say about this
 
