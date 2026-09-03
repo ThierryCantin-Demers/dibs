@@ -101,6 +101,37 @@ starts, and a foreground call dies of its own timeout first. When that happens t
 never runs, and you report a failure whose cause is invisible. Queueing costs nothing in the
 background: do other work and read the result when the notification arrives.
 
+**One background call per piece of work, not per `dibs` command.** A completion does not
+merely hand back a result: it wakes the agent, which re-reads its entire context before it can
+look at that result and answer. One job therefore costs three turns whatever it returns, so
+launching a hundred jobs one at a time costs three hundred turns at full context. That pattern
+alone has been most of a day's token budget, for no benefit at all: the machine did the same
+work either way.
+
+Put the whole sequence in one script, launch that script once, and be woken once:
+
+```bash
+run() { dibs "$@" > "$DIBS_SCRATCH/$1.log" 2>&1; }   # or any per-step log path you like
+dibs 'cargo build --release --bench reduce'  || exit 1
+dibs --bench 'cargo bench --bench reduce'    || exit 1
+echo "both done"        # the one thing you will read when it wakes you
+```
+
+**Each step stays its own `dibs` call inside that script.** Do not collapse the sequence into
+`dibs 'build && bench'` to save a call: that holds one lock for both, which is the compile
+inside the exclusive lock that the split above exists to prevent. The saving is in how many
+times *you* are woken, never in how many locks are taken.
+
+**Steps on different machines may overlap** with `&` and a `wait` inside the script. That is
+not detaching, because the harness still owns the script and killing it kills everything under
+it. Steps on the same machine stay in order.
+
+**Do not batch across a decision.** If a later step should only run depending on what an
+earlier one *said*, you will not see the earlier answer until the whole script is done, and
+the rest will have run for nothing. Two scripts with a look in between is six turns and still
+far cheaper than one per job. When you can state the criterion up front, put it in the step
+itself and let a non-zero exit stop the rest.
+
 **Never `sleep`, anywhere, including inside a command sent to the machine.** Locally it blocks
 your turn so nothing can steer you. Remotely it is worse: a sleep inside a job holding the
 exclusive lock stalls every other person for its whole duration. To wait for something to be
