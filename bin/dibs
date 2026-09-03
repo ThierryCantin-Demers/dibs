@@ -32,10 +32,10 @@
 #                                --on sends the job to a named machine instead of DIBS_QUEUE.
 #   dibs --jobs                 what has been submitted there, and how each went
 #   dibs --job <id>             one job: its command, its state and its output
-#   dibs --cancel <id>          stop one of yours, or someone else's with --anyone. Reaches a
-#                                job that has not got to a machine yet. Takes
-#                                its whole process group, so the lock it was waiting for or
-#                                holding is released with it.
+#   dibs --cancel <id>          stop a detached job of yours, or someone else's with --anyone.
+#                                Takes its whole process group, so the lock it was waiting
+#                                for or holding is released with it. A holder that is not a
+#                                detached job takes a pid, and --kill, not this.
 #   --all                        with --status: every machine in the inventory, at once
 #   dibs --any <command>        pick the least busy machine for this shared job. DIBS_ROUTE=1
 #                                makes it the default. Never a benchmark: a measurement's
@@ -961,6 +961,18 @@ case "$MODE" in
     job|cancel)
         [ -n "$JOBID" ] || { echo "--$MODE needs an id from --jobs" >&2; exit 2; }
         [ $# -eq 0 ] || { echo "--$MODE takes only an id" >&2; exit 2; }
+        # A job id carries its date, so a bare number is a pid, and a pid means a holder on
+        # the machine rather than a job on the queue. Two namespaces, and the refusal that
+        # reached this first was about the queue, which sent people looking at the wrong one.
+        case "$JOBID" in
+            *[!0-9]*) ;;
+            *) echo "dibs: $JOBID is a pid, not a job id from --jobs." >&2
+               [ "$MODE" = cancel ] &&
+                   echo "  A holder is not a detached job. Stop it with:  dibs --kill $JOBID" >&2
+               [ "$MODE" = job ] &&
+                   echo "  A holder is not a detached job. dibs --status shows it." >&2
+               exit 2 ;;
+        esac
         LABEL=$JOBID ;;
     *)              [ $# -gt 0 ] || { echo "no command given" >&2; usage 2; } ;;
 esac
@@ -1161,7 +1173,7 @@ REMOTE
 set -u
 jobs=$(eval echo "$1"); id=$2; me=$(printf %s "${3:-}" | base64 -d 2>/dev/null); anyone=${4:-0}
 d=$jobs/$id
-[ -d "$d" ] || { echo "no such job: $id" >&2; exit 2; }
+[ -d "$d" ] || { echo "no such job: $id. dibs --jobs lists what is here." >&2; exit 2; }
 # The same rule the machines got, for the same reason: everyone here shares one account, so
 # the account cannot say whose job this is and the record has to.
 owner=$(cat "$d/agent" 2>/dev/null)

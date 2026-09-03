@@ -798,6 +798,14 @@ check "and it really is gone" \
 check "cancelling one that already finished says so" \
   "$($T --cancel "$id" | grep -c 'already finished')" "1"
 check "cancelling an unknown job is refused" "$($T --cancel nope >/dev/null 2>&1; echo $?)" "2"
+check "and it says where the ids come from" \
+  "$($T --cancel nope 2>&1 >/dev/null | grep -c -- '--jobs')" "1"
+# A holder and a detached job are two namespaces, and --cancel taking a pid found neither: the
+# queue refusal fired first, so a pid on the default machine read as a missing DIBS_QUEUE.
+check "a pid given to --cancel names the command that takes one" \
+  "$(DIBS_QUEUE= $T --cancel 12345 2>&1 >/dev/null | grep -c -- '--kill 12345')" "1"
+check "and --job says where a holder shows up instead" \
+  "$(DIBS_QUEUE= $T --job 12345 2>&1 >/dev/null | grep -c -- '--status')" "1"
 # One account runs everyone's jobs on that machine, so the account cannot say whose a job is
 # and stopping someone else's has to be as deliberate as it is on a benchmarking machine.
 fifo dm
