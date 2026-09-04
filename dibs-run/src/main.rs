@@ -24,6 +24,8 @@ use std::process::ExitCode;
 
 const USAGE: &str = "\
 dibs-run <verb> <repo>[@<ref>] <recipe>   run a recipe from the repo's .dibs.toml
+                                          @local sends your working tree, unpushed and
+                                          uncommitted changes included
 dibs-run list <repo>                      what that repo defines
 dibs-run runs [label]                     what has run here, and what is comparable
 dibs-run shell <repo>[@<ref>] --reason <why> -- <cmd>   a command in a prepared worktree
@@ -303,7 +305,16 @@ fn run() -> Result<ExitCode, String> {
         if let Some(n) = &rec.needs {
             println!("needs       {n}");
         }
-        println!("ref         {}", args.reference.as_deref().unwrap_or("HEAD"));
+        match args.reference.as_deref() {
+            Some("local") => {
+                let l = worktree::local(&dir)?;
+                println!("ref         local {} from {}", l.content, dir.display());
+                println!("            {}", if l.dirty {
+                    "uncommitted changes are included and are in that hash"
+                } else { "clean, so this is the commit as it stands" });
+            }
+            r => println!("ref         {}", r.unwrap_or("HEAD")),
+        }
         // Which card, printed whether or not one was named: a dry run is where someone checks
         // they are about to measure the thing they mean to, and "no card named" is the answer
         // that most needs saying, because that run is the one nobody can repeat.
@@ -342,7 +353,19 @@ fn run() -> Result<ExitCode, String> {
     // work that tolerates neighbours. Doing it inside a measured step would put a git fetch
     // inside the exclusive hold.
     let reference = args.reference.as_deref().unwrap_or("HEAD");
-    eprintln!("dibs-run: preparing {repo_name}@{reference}");
+    // A branch that was never pushed has no fetchable ref, and refusing to push a perf branch
+    // just to measure it is not misuse. Without this the answer was to hand-roll sync and
+    // build, which loses the cache isolation, the recorded revision and the lock split all at
+    // once, and the two wrong numbers that produced were both in the part that got rewritten.
+    let local = if reference == "local" { Some(worktree::local(&dir)?) } else { None };
+    match &local {
+        Some(l) => eprintln!(
+            "dibs-run: preparing {repo_name} from {} ({})",
+            dir.display(),
+            if l.dirty { "uncommitted changes included" } else { "clean" }
+        ),
+        None => eprintln!("dibs-run: preparing {repo_name}@{reference}"),
+    }
     let setup = Request {
         label: &format!("{label}:setup"),
         lock: Lock::Shared,
@@ -352,12 +375,19 @@ fn run() -> Result<ExitCode, String> {
         // on a machine whose card has been pulled.
         device: None,
         };
-    let (out, text) = backend.run_capture(&setup, &worktree::setup_script(&repo_name, reference))?;
+    let script = match &local {
+        Some(l) => worktree::setup_local_script(&repo_name, &l.key, &l.content),
+        None => worktree::setup_script(&repo_name, reference),
+    };
+    let (out, text) = backend.run_capture(&setup, &script)?;
     if out.status != 0 {
         return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
     }
     let prepared = worktree::parse(&text)?;
     eprintln!("dibs-run: {}", prepared.worktree);
+    if local.is_some() {
+        sync_local(&backend, &dir, &prepared.worktree)?;
+    }
 
     let mut steps = Vec::new();
     let mut failed = None;
@@ -464,6 +494,42 @@ fn label_steps(base: &str, steps: &[recipe::Step]) -> Vec<String> {
         }
     }
     out
+}
+
+/// Sends the local tree to the worktree the setup just made.
+///
+/// `--no-times` is the load-bearing option and it is not tidiness. rsync's `-a` implies `-t`,
+/// which is right for a transfer and wrong for sources about to be compiled: files that arrive
+/// carrying an older mtime than the artifacts already beside them leave cargo with nothing to
+/// do, so the build finishes in a fraction of a second and the previous binary is what gets
+/// measured. It reads exactly like a fast incremental build. `--checksum` is what makes
+/// dropping `-t` affordable, because without it every destination mtime differs on the next
+/// pass and the whole tree goes again each time.
+///
+/// The filter follows the repo's own ignore rules, so a target directory or an editor's
+/// droppings never make the trip, and `--delete` means a file deleted locally stops existing
+/// there too rather than going on compiling.
+fn sync_local(backend: &Dibs, from: &Path, to: &str) -> Result<(), String> {
+    let mut cmd = std::process::Command::new(&backend.program);
+    if let Some(m) = &backend.machine {
+        cmd.arg("--on").arg(m);
+    }
+    cmd.arg("--sync")
+        .arg("-rlpgo")
+        .arg("--checksum")
+        .arg("--no-times")
+        .arg("--delete")
+        .arg("--exclude=.git")
+        .arg("--filter=:- .gitignore")
+        .arg(format!("{}/", from.display()))
+        .arg(format!(":{to}/"))
+        .env("DIBS_FROM_RUN", "1")
+        .stdin(std::process::Stdio::null());
+    let st = cmd.status().map_err(|e| format!("dibs --sync: {e}"))?;
+    if !st.success() {
+        return Err(format!("sending {} to {to} failed", from.display()));
+    }
+    Ok(())
 }
 
 fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {

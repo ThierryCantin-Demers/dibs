@@ -138,6 +138,15 @@ impl Manifest {
     /// is what lets a recipe be iterated on without a pull request against a shared upstream
     /// repo. The format is identical at every layer, so a recipe moves down as it settles.
     pub fn load(dir: &Path, repo: &str) -> Result<Manifest, String> {
+        Manifest::load_from(dir, repo, &local_dir())
+    }
+
+    /// The layer that is normally `local_dir()`, passed in rather than read from the
+    /// environment. Tests used to point `DIBS_RECIPES` at a fixture, and cargo runs tests as
+    /// threads of one process, so that set a variable other tests were reading at the same
+    /// time and this one failed about one run in five. A comment claiming the test was single
+    /// threaded is what kept it that way.
+    pub fn load_from(dir: &Path, repo: &str, local_dir: &Path) -> Result<Manifest, String> {
         let mut m = Manifest::default();
         let mut found = Vec::new();
 
@@ -158,7 +167,7 @@ impl Manifest {
             found.push(in_repo.display().to_string());
         }
 
-        let local = local_dir().join(format!("{repo}.toml"));
+        let local = local_dir.join(format!("{repo}.toml"));
         if local.exists() {
             let text = std::fs::read_to_string(&local)
                 .map_err(|e| format!("{}: {e}", local.display()))?;
@@ -289,9 +298,7 @@ mod tests {
         let cfg = tmp.join("cfg");
         write(&repo, ".dibs.toml", "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"from repo\"\n");
         write(&cfg, "cubek.toml", "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"from local\"\n");
-        // SAFETY: single-threaded test, and the variable is read once during load.
-        unsafe { std::env::set_var("DIBS_RECIPES", &cfg) };
-        let m = Manifest::load(&repo, "cubek").unwrap();
+        let m = Manifest::load_from(&repo, "cubek", &cfg).unwrap();
         let r = m.recipe(Verb::Build, "x").unwrap();
         assert_eq!(r.steps[0].run, "from local");
         assert_eq!(r.source, Source::Local, "an override has to be visible as one");
@@ -302,8 +309,7 @@ mod tests {
     fn a_repo_with_no_recipes_anywhere_says_where_it_looked() {
         let tmp = std::env::temp_dir().join(format!("dibs-none-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        unsafe { std::env::set_var("DIBS_RECIPES", tmp.join("empty")) };
-        let e = Manifest::load(&tmp, "nothing").unwrap_err();
+        let e = Manifest::load_from(&tmp, "nothing", &tmp.join("empty")).unwrap_err();
         assert!(e.contains("nothing in"), "an error has to say where it looked: {e}");
         let _ = std::fs::remove_dir_all(&tmp);
     }

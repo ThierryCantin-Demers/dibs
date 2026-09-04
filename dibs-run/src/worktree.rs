@@ -345,3 +345,165 @@ mod tests {
         assert!(s.contains("--detach"), "a tracking worktree would move under a running job");
     }
 }
+
+/// What a local tree is, for a run that was never pushed.
+///
+/// The cache key is the tree's own path and nothing else, deliberately. Keying it on content
+/// would give every edit a cold build, which is the whole reason someone hand-rolls this; keying
+/// it on the repo, as a fetched ref does, would put both arms of an A/B in one target directory,
+/// and cargo does not isolate same-name packages by source path, so one arm ends up running the
+/// other's binary. One directory per local tree is the only key that is both warm and separate.
+///
+/// `content` is separate and is for the record rather than for the cache: two runs of one label
+/// are the same measurement only if it matches.
+pub struct Local {
+    pub key: String,
+    pub content: String,
+    pub dirty: bool,
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git {} in {}: {}",
+            args.join(" "),
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+pub fn local(dir: &std::path::Path) -> Result<Local, String> {
+    use sha2::{Digest, Sha256};
+    let head = git(dir, &["rev-parse", "--short", "HEAD"])?.trim().to_string();
+    // Tracked and untracked-but-not-ignored, which is the same set the sync carries, so the
+    // hash describes what was actually built rather than what was committed.
+    let list = git(dir, &["ls-files", "-co", "--exclude-standard", "-z"])?;
+    let mut h = Sha256::new();
+    let mut dirty = false;
+    for rel in list.split('\0').filter(|s| !s.is_empty()) {
+        h.update(rel.as_bytes());
+        h.update([0]);
+        if let Ok(b) = std::fs::read(dir.join(rel)) {
+            h.update(b.len().to_le_bytes());
+            h.update(&b);
+        }
+    }
+    if !git(dir, &["status", "--porcelain"])?.trim().is_empty() {
+        dirty = true;
+    }
+    let content = format!("{head}{}-{:.12}", if dirty { "+dirty" } else { "" }, hex(&h.finalize()));
+    let mut k = Sha256::new();
+    k.update(dir.as_os_str().as_encoded_bytes());
+    Ok(Local { key: format!("{:.10}", hex(&k.finalize())), content, dirty })
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// The same layout a fetched ref gets, without the fetch: the tree arrives by rsync instead.
+/// Everything downstream, the lock split, the recorded revision and the log path, is unchanged,
+/// which is the point. Re-implementing that by hand is what produced two wrong numbers.
+pub fn setup_local_script(repo: &str, key: &str, content: &str) -> String {
+    let mut s = String::new();
+    let _ = write!(
+        s,
+        r#"set -eu
+SCRATCH=${{DIBS_SCRATCH:-$HOME/.cache/dibs}}
+WT=$SCRATCH/ws/{repo}/local-{key}
+# Its own target directory, so two local trees of one repo cannot hand each other a binary.
+TARGET=$SCRATCH/target/{repo}-local-{key}
+mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
+touch "$WT/.dibs-used" "$TARGET/.dibs-used"
+echo "DIBS-WT $WT"
+echo "DIBS-TARGET $TARGET"
+echo "DIBS-SCRATCH $SCRATCH"
+echo "DIBS-REV {repo} local:{content}"
+"#
+    );
+    s
+}
+
+#[cfg(test)]
+mod local_tests {
+    use super::*;
+    use std::process::Command;
+
+    fn repo(dir: &std::path::Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        for a in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@example.invalid"],
+            vec!["config", "user.name", "t"],
+        ] {
+            Command::new("git").arg("-C").arg(dir).args(a).status().unwrap();
+        }
+        std::fs::write(dir.join("a.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(dir.join(".gitignore"), "target\n").unwrap();
+        Command::new("git").arg("-C").arg(dir).args(["add", "-A"]).status().unwrap();
+        Command::new("git").arg("-C").arg(dir).args(["commit", "-qm", "one"]).status().unwrap();
+    }
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("dibs-local-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    // Both arms of an A/B shared one target directory, and cargo does not isolate same-name
+    // packages by source path, so one arm ran the other's binary.
+    #[test]
+    fn two_local_trees_never_share_a_cache() {
+        let (a, b) = (tmp("a"), tmp("b"));
+        repo(&a);
+        repo(&b);
+        assert_ne!(local(&a).unwrap().key, local(&b).unwrap().key);
+        assert!(setup_local_script("r", &local(&a).unwrap().key, "x")
+            .contains("target/r-local-"));
+    }
+
+    // Keyed on content instead, every edit would be a cold build, which is the reason the
+    // hand-rolled version pointed both arms at one directory in the first place.
+    #[test]
+    fn editing_a_tree_keeps_its_cache_and_changes_what_the_record_says() {
+        let a = tmp("edit");
+        repo(&a);
+        let before = local(&a).unwrap();
+        assert!(!before.dirty);
+        std::fs::write(a.join("a.rs"), "fn main() { let _ = 1; }\n").unwrap();
+        let after = local(&a).unwrap();
+        assert_eq!(before.key, after.key);
+        assert_ne!(before.content, after.content);
+        assert!(after.dirty);
+    }
+
+    // The hash has to cover a file git has never seen, or a new source file is invisible to
+    // the record while being compiled by the build.
+    #[test]
+    fn an_untracked_source_file_changes_the_content_hash() {
+        let a = tmp("untracked");
+        repo(&a);
+        let before = local(&a).unwrap().content;
+        std::fs::write(a.join("b.rs"), "fn other() {}\n").unwrap();
+        assert_ne!(before, local(&a).unwrap().content);
+    }
+
+    // And an ignored one must not, because it does not make the trip either.
+    #[test]
+    fn an_ignored_file_does_not() {
+        let a = tmp("ignored");
+        repo(&a);
+        let before = local(&a).unwrap().content;
+        std::fs::create_dir_all(a.join("target")).unwrap();
+        std::fs::write(a.join("target/big.rlib"), "artifact\n").unwrap();
+        assert_eq!(before, local(&a).unwrap().content);
+    }
+}

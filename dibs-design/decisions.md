@@ -230,8 +230,12 @@ caches, so it is what every machine pays no matter how warm the cache is.
 
 ## Open
 
-**dibs-run cannot run an unpushed local branch, and the workaround silently produced wrong
-numbers twice in one session.** It needs a fetchable ref, so a perf branch that nobody wants to
+**dibs-run could not run an unpushed local branch, and the workaround silently produced wrong
+numbers twice in one session.** Built, as `<repo>@local`. The cache is keyed on the local tree's
+path, which is the only key that is both warm across edits and separate between two arms; the
+sync follows the repo's ignore rules and drops `-t`, so nothing arrives older than the artifacts
+beside it; and the record names the tree by the content that was actually sent. The rest of the
+entry is why. It needs a fetchable ref, so a perf branch that nobody wants to
 push has no way in. An agent measuring one dropped to raw `dibs` calls and rebuilt by hand
 every guarantee dibs-run already gives: a build cache isolated per ref, the commit recorded,
 and the build and the measurement in separate locks. Both of that session's real failures were

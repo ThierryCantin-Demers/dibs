@@ -510,8 +510,10 @@ echo "transfers are jobs too"
 check "--sync wants the machine's side marked" "$($T --sync ./a ./b >/dev/null 2>&1; echo $?)" "2"
 check "and it wants two paths" "$($T --sync :~/x >/dev/null 2>&1; echo $?)" "2"
 check "--rsh is not for hands" "$($T --rsh >/dev/null 2>&1; echo $?)" "2"
+# It used to refuse here and say to use cp. The caller that cannot take that advice is a
+# program, and the fuller version of this is asserted further down where a file really moves.
 check "and on the machine itself a copy is just a copy" \
-  "$($T --sync ./a :~/b 2>&1 | grep -c 'You are on it')" "1"
+  "$($T --sync ./a :~/b 2>&1 | grep -c 'You are on it')" "0"
 
 echo "unreachable machine"
 out=$(DIBS_LOCAL=0 DIBS_HOSTNAME=nowhere DIBS_HOST=nowhere.invalid \
@@ -920,6 +922,18 @@ gone
 # mkdir -p succeeds on a directory that is already there and cannot be written, which is what
 # a sandboxed shell sees. Every write inside then failed, flock reported a bad file descriptor,
 # and the command ran anyway with no lock at all while reporting success.
+# Every other mode recognises the machine it is already on and runs there. --sync went through
+# a transport anyway, and the second dibs in the middle refused to be a transport to where it
+# already was, so the transfer failed after announcing itself. The caller that cannot take the
+# advice to use cp is a program: dibs-run sending a local worktree to a machine that is this one.
+echo "a sync to the machine you are on copies rather than refusing"
+rm -rf "$S/syncsrc" "$S/syncdst"; mkdir -p "$S/syncsrc"
+echo carried > "$S/syncsrc/f.txt"
+out=$($T --sync -rlpgo "$S/syncsrc/" ":$S/syncdst/" 2>&1); rc=$?
+check "it succeeds" "$rc" "0"
+check "and the file is there" "$(cat "$S/syncdst/f.txt" 2>/dev/null)" "carried"
+check "and it did not tell a program to use cp" "$(grep -c 'use cp' <<<"$out")" "0"
+
 echo "a lock directory it cannot write is refused rather than run around"
 RO=$S/ro-lock; rm -rf "$RO"; mkdir -p "$RO"; chmod a-w "$RO"
 out=$(DIBS_LOCK_DIR=$RO $T --label rocheck 'echo ran-anyway' 2>&1); rc=$?

@@ -928,9 +928,26 @@ case "$MODE" in
             exit 2
         }
         command -v rsync >/dev/null 2>&1 || { echo "--sync needs rsync on both machines" >&2; exit 2; }
+        # On the machine itself there is no transport, because both sides are ordinary paths.
+        # Going through one anyway put a second dibs in the middle, and that one refuses to be
+        # a transport to where it already is, so the transfer failed after announcing itself.
+        # It reads as a refusal to copy, which it is not: a local copy is the same work, and it
+        # goes through the same lock below because a copy competes for bandwidth like anything
+        # else. The caller that cannot route around this is a program, which cannot take the
+        # advice to use cp.
+        if [ "$(lower "$SELF")" = "$(lower "$TARGET")" ] || [ "${DIBS_LOCAL:-0}" = 1 ]; then
+            HERE=()
+            for a in "${SYNC[@]}"; do HERE+=("${a#"$HOST":}"); done
+            # An ordinary shared job from here on, which is what a local copy is.
+            # Handed on as the positional command, because the general path below rebuilds
+            # COMMAND from the arguments and would otherwise overwrite this with rsync's flags.
+            set -- "rsync$(printf ' %q' "${HERE[@]}")"
+            MODE=shared
+            LABEL=${LABEL:-sync}
+        else
         # rsync runs here and reaches the machine through this same script, which is what takes
         # the lock. One transfer, one holder, whichever direction it goes in.
-        SELF=$(readlink -f "$0" 2>/dev/null || echo "$0")
+        SELFPATH=$(readlink -f "$0" 2>/dev/null || echo "$0")
         # Through bash rather than exec'ing the file: rsync runs the transport itself, and
         # whether this copy happens to carry an exec bit is not something to depend on.
         #
@@ -945,7 +962,8 @@ case "$MODE" in
         # nobody will look. One line on stderr, so it cannot get into rsync's own output.
         printf 'dibs: syncing with %s%s\n' "$HOST" \
             "$([ -n "$MACHINE" ] && [ "$MACHINE" != "$HOST" ] && printf ' (%s)' "$MACHINE")" >&2
-        exec rsync -e "bash $SELF --rsh" "${SYNC[@]}"
+        exec rsync -e "bash $SELFPATH --rsh" "${SYNC[@]}"
+        fi
         ;;
     rsh)
         # What rsync invokes as its transport: a host it chose and the command to run there.

@@ -79,6 +79,12 @@ shared benchmarking machine, and most of it exists because someone already got i
 - **The step says which lock it takes**, so a recipe's build runs shared and only its
   measurement runs exclusive. That is the build/measure split made structural instead of being
   a rule you have to remember.
+- **`<repo>@local` sends your working tree**, uncommitted changes and all, instead of fetching a
+  ref. Use it rather than hand-rolling a sync and a build for a branch you have not pushed:
+  refusing to push a perf branch to measure it is reasonable, and the hand-rolled version loses
+  the per-tree build cache, the recorded revision and the lock split at once. It follows the
+  repo's ignore rules, so no `target` and no `.git` make the trip, and the record names the
+  exact tree by content so two runs are comparable only if it matches.
 - `dibs-run runs [label]` is what was actually measured: the commit of every repo, the
   isolation, the time. It also says when a label's recipe has changed, because two procedures
   under one name are two histories, and comparing across them is the mistake the record exists
