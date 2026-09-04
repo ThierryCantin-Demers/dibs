@@ -917,6 +917,17 @@ gone
 # setsid, because an orphan is the remains of a session that has gone: held from this shell
 # it would share a process group with everything this shell starts, --status included, which
 # is the one configuration where nothing can tell a holder from the caller asking about it.
+# mkdir -p succeeds on a directory that is already there and cannot be written, which is what
+# a sandboxed shell sees. Every write inside then failed, flock reported a bad file descriptor,
+# and the command ran anyway with no lock at all while reporting success.
+echo "a lock directory it cannot write is refused rather than run around"
+RO=$S/ro-lock; rm -rf "$RO"; mkdir -p "$RO"; chmod a-w "$RO"
+out=$(DIBS_LOCK_DIR=$RO $T --label rocheck 'echo ran-anyway' 2>&1); rc=$?
+chmod u+w "$RO"
+check "it exits 71" "$rc" "71"
+check "and the command did not run" "$(grep -c 'ran-anyway' <<<"$out")" "0"
+check "and it says nothing ran" "$(grep -c 'Nothing was run' <<<"$out")" "1"
+
 echo "an orphaned lock names what holds it"
 fifo orp
 setsid bash -c 'exec 8>"$1/rw"; flock -s 8; printf "up\n" > "$2"; read -r _ < "$3"' \

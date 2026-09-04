@@ -170,6 +170,10 @@ can read it with `dibs --out`.
   retry in a loop.
 - **70** its scratch filesystem is full. Tell the user. Never delete anything on a shared
   machine to make room.
+- **71** the lock directory cannot be written, so no lock could be taken and **nothing ran**.
+  A sandboxed shell is the usual cause. Do not work around it by pointing `DIBS_LOCK_DIR`
+  somewhere writable: a lock in a directory nobody else uses excludes nobody, which is worse
+  than not running. Tell the user.
 - **75** it was busy and you had passed `--wait`.
 - **124** the command overran `--max` and was killed while holding the lock.
 

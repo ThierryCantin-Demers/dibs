@@ -1257,6 +1257,20 @@ else
     DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/dibs-lock; LOCK_SCOPE=peruser
 fi
 mkdir -p "$DIR" 2>/dev/null || { DIR=/tmp/dibs-lock-$(id -u); LOCK_SCOPE=peruser; mkdir -p "$DIR"; }
+# A lock nobody can write to is not a lock. mkdir -p succeeds on a directory that is already
+# there whether or not it can be written, which is what a sandboxed shell sees: the real
+# directory, read-only. Every write inside then fails, flock reports a bad file descriptor,
+# the guards fall through one by one and the work runs unlocked beside whatever is being
+# measured, reporting success. Falling back to another directory would be no better here,
+# because the sessions that can write to this one would go on excluding each other and not us.
+if ! : > "$DIR/.writable.$$" 2>/dev/null; then
+    echo "dibs: $DIR cannot be written, so no lock can be taken. Nothing was run." >&2
+    echo "  A sandboxed shell is the usual cause: it sees the lock directory and cannot" >&2
+    echo "  write in it. Unlocked work beside a measurement is the one outcome this exists" >&2
+    echo "  to prevent, and another directory would not exclude the sessions using this one." >&2
+    exit 71
+fi
+rm -f "$DIR/.writable.$$" 2>/dev/null
 # Records have to be removable by whoever prunes them, not only by whoever wrote them, or one
 # user's dead job wedges the queue for everyone else.
 [ "$LOCK_SCOPE" = shared ] && umask 002
