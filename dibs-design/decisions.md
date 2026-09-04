@@ -230,6 +230,35 @@ caches, so it is what every machine pays no matter how warm the cache is.
 
 ## Open
 
+**dibs-run cannot run an unpushed local branch, and the workaround silently produced wrong
+numbers twice in one session.** It needs a fetchable ref, so a perf branch that nobody wants to
+push has no way in. An agent measuring one dropped to raw `dibs` calls and rebuilt by hand
+every guarantee dibs-run already gives: a build cache isolated per ref, the commit recorded,
+and the build and the measurement in separate locks. Both of that session's real failures were
+in the half that got re-implemented.
+
+- It pointed both arms of an A/B at one `CARGO_TARGET_DIR` to avoid a cold rebuild. Cargo does
+  not isolate same-name packages by source path, so one arm ran the other's binary.
+- `--sync -a` preserves modification times, so the synced sources landed older than the
+  artifacts already beside them. Cargo rebuilt nothing in 0.14 seconds and the previous binary
+  was measured.
+
+Neither is possible through dibs-run, which is the argument for a mode that takes a local
+worktree, syncs it, and still does the rest. Pushing a branch to measure it is a real cost and
+refusing to is not misuse.
+
+**A sync that preserves times into a tree with a build cache beside it is a silent wrong-answer
+machine.** rsync's `-a` implies `-t`, which is right for a transfer and wrong for sources about
+to be compiled: cargo compares mtimes, and files that arrive older than the artifacts mean a
+build that compiles nothing and a measurement of whatever was there before. It reads as a fast
+incremental build, which is exactly what someone syncing sources hopes to see.
+
+The fix is not obviously "drop `-t`": without it rsync's quick check sees every destination
+mtime differ and retransfers the whole tree every time. `--checksum` with `--no-times` transfers
+only what really changed and stamps it now, at the cost of hashing the tree per sync. Warning
+when the destination has a target directory beside it is the cheap version and probably the
+right first move.
+
 **The most common gap is not a missing recipe, it is a missing parameter.** `dibs-run gaps`
 names "verify a cubecl PR against the cubek tile engine" six times, more than everything else
 put together, and cubecl's own pull request template mandates exactly that: build cubek and
