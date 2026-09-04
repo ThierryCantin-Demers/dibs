@@ -143,6 +143,14 @@ up queued behind a compile rather than behind a benchmark. Two calls: `dibs 'car
 under the shared lock, then `dibs --bench 'cargo bench ...'` for the measured run. This
 includes `cargo bench --no-run`, which is a build.
 
+**Say who you are with `DIBS_AGENT`, unless you are Claude Code.** Every job records the agent
+that started it, so `dibs --status` can say who to go and ask about a job that is holding the
+machine, and so stopping someone else's has to be deliberate. Claude Code is read from its
+session. Codex publishes no session id and runs all of its sessions through one shell process,
+so it can only be identified as Codex, and any other runtime arrives as the unix account, which
+on a shared machine is everyone. Export `DIBS_AGENT` once per session, naming the work rather
+than the tool: `DIBS_AGENT='cubek reduce sweep'`.
+
 **Label the kind of work, not the run.** `--label cubek-gemm`, never `--label run3`. The label
 is the key the duration history is filed under, so it must be the same every time you run that
 kind of work. A label used once files its timing where nothing will ever look it up, which is

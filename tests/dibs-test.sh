@@ -292,6 +292,21 @@ free A2; wait $A2D
 check "the log says who ran what" "$($T --log 20 | grep -c 'session deadbeef')" "2"
 env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID $T --label byhand 'echo hi' >/dev/null 2>&1
 check "a shell that is no agent says so instead" "$($T --log 4 | grep -c 'at a shell')" "2"
+# Codex publishes no session id and runs every one of its sessions through one shell process,
+# so it arrived as the unix user and looked like a person at a terminal.
+env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID CODEX_SHELL=1 \
+    $T --label bycodex 'echo hi' >/dev/null 2>&1
+check "a runtime with no session id still says which runtime" \
+  "$($T --log 2 | grep -c 'a Codex session')" "2"
+# The one thing that works for a runtime dibs has never heard of, and the only exact answer
+# for one whose sessions it cannot tell apart.
+env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID DIBS_AGENT='sweeping reduce' \
+    $T --label byname 'echo hi' >/dev/null 2>&1
+check "and a session that names itself is taken at its word" \
+  "$($T --log 2 | grep -c 'sweeping reduce')" "2"
+check "which outranks a runtime that guessed" \
+  "$(CLAUDE_CODE_HOST_SESSION_ID=local_guess DIBS_AGENT='said so' $T --label byboth 'echo hi' \
+     >/dev/null 2>&1; $T --log 2 | grep -c 'said so')" "2"
 
 echo "queued shared jobs are not standing in line behind each other"
 # The shared lock admits all of them at once, so the queue only advances at a benchmark.

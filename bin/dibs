@@ -1010,8 +1010,20 @@ agent_id() {
 }
 
 agent_name() {
+    # Said outright, which is the only thing that works for a runtime this does not know how
+    # to ask. Every other branch below is a way of guessing what this states.
+    [ -n "${DIBS_AGENT:-}" ] && { printf '%s' "${DIBS_AGENT:0:48}"; return; }
     local id=${CLAUDE_CODE_HOST_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}} f t=""
-    [ -n "$id" ] || { printf '%s' "${USER:-someone} at a shell"; return; }
+    if [ -z "$id" ]; then
+        # Codex publishes no session id, and its single shell process serves every one of its
+        # sessions at once, so nothing in the environment separates them. Its own index does
+        # carry thread names, and picking the most recently written one was measured against
+        # three live sessions whose last writes were fifty-five seconds apart: it would name
+        # the wrong one exactly when several agents are working, which is when a name is worth
+        # having. So the runtime is all this claims, and DIBS_AGENT is how a session says more.
+        [ "${CODEX_SHELL:-}" = 1 ] && { printf '%s' "a Codex session"; return; }
+        printf '%s' "${USER:-someone} at a shell"; return
+    fi
     for f in "$HOME/.config/Claude/claude-code-sessions"/*/*/"$id.json"; do
         [ -r "$f" ] || continue
         if command -v jq >/dev/null 2>&1; then
