@@ -562,6 +562,17 @@ check "says which one refuses measurements" "$($T --machines | grep -c 'no measu
 check "a device key does not answer for the machine" \
   "$(DIBS_LOCAL=0 DIBS_HOST= DIBS_CONNECT_TIMEOUT=2 $T --on desk --status 2>&1 |
      grep -c "cannot reach 'dibs@desk'")" "1"
+# Naming the machine is not the same as saying why it was chosen. A step in a script that
+# forgot --on reaches the default and reports it down, and the report is true about a machine
+# nobody meant to use, which is the reading that sends someone to the wrong box.
+check "a caller who named the machine is not lectured about routing" \
+  "$(DIBS_LOCAL=0 DIBS_HOST= DIBS_CONNECT_TIMEOUT=2 $T --on desk --status 2>&1 |
+     grep -c 'Nothing on this call named a machine')" "0"
+out=$(DIBS_LOCAL=0 DIBS_HOST= DIBS_CONNECT_TIMEOUT=2 $T --status 2>&1)
+check "an unnamed one is told it went to the default" \
+  "$(grep -c 'went to the inventory default' <<<"$out")" "1"
+check "and told how to cover a whole script at once" \
+  "$(grep -c 'export DIBS_ON' <<<"$out")" "1"
 out=$(DIBS_HOST= $T --on nope --status 2>&1); rc=$?
 check "an unknown machine is refused" "$rc" "2"
 check "and the known ones are named" "$(grep -c 'desk' <<<"$out")" "1"
