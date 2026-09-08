@@ -549,6 +549,10 @@ hostname = "desk"
   kind = "gpu"
   name = "a device, not the machine"
 
+  [[machine.desk.device]]
+  kind = "cpu"
+  name = "a processor"
+
 [machine.lap]
 ssh      = "lap"
 hostname = "somewhere-else"
@@ -573,6 +577,17 @@ check "an unnamed one is told it went to the default" \
   "$(grep -c 'went to the inventory default' <<<"$out")" "1"
 check "and told how to cover a whole script at once" \
   "$(grep -c 'export DIBS_ON' <<<"$out")" "1"
+# A CPU has no PCI address to be found by, and being refused for that left a CPU benchmark
+# unable to name what it ran on while being told it had named none of the GPUs, which is advice
+# about a run that was never going to use one.
+check "a cpu can be named as a device" \
+  "$(DIBS_LOCAL=0 DIBS_HOST= DIBS_CONNECT_TIMEOUT=2 $T --on desk --device cpu --bench true 2>&1 |
+     grep -c 'no device called')" "0"
+check "and naming it silences the unpinned-GPU notice" \
+  "$(DIBS_LOCAL=0 DIBS_HOST= DIBS_CONNECT_TIMEOUT=2 $T --on desk --device cpu --bench true 2>&1 |
+     grep -c 'named none of them')" "0"
+check "a name that is neither is still refused, and offered the cpu" \
+  "$(DIBS_HOST= $T --on desk --device nope --bench true 2>&1 | grep -cx '    cpu')" "1"
 out=$(DIBS_HOST= $T --on nope --status 2>&1); rc=$?
 check "an unknown machine is refused" "$rc" "2"
 check "and the known ones are named" "$(grep -c 'desk' <<<"$out")" "1"

@@ -6,7 +6,9 @@
 #   dibs --bench <command>      exclusive: benchmarks. One at a time, nothing else running.
 #   --device <alias>             run on one named card. Two runs naming one alias are two
 #                                runs on the same silicon, which is what makes their numbers
-#                                comparable. `dibs --machines -v` lists the aliases.
+#                                comparable. `dibs --machines -v` lists the aliases. `cpu`
+#                                names the processor, which pins nothing and has nothing to
+#                                choose between, but records what a CPU run ran on.
 #   --new-series                 with --bench: this label is moving to another card or
 #                                machine on purpose. Its history starts again rather than
 #                                mixing the new numbers in with the old ones.
@@ -208,6 +210,26 @@ inv_device() {  # machine alias key
             if (val ~ /^"/) { sub(/^"/, "", val); sub(/".*$/, "", val) }
             else            { sub(/[[:space:]]*#.*$/, "", val); sub(/[[:space:]]+$/, "", val) }
             v[key] = val; if (key == "alias") a = val
+        }
+        END { flush() }' "$f"
+}
+
+inv_cpu_name() {  # machine; the name of its cpu device, empty if it lists none
+    local f; f=$(inv_file "$1"); [ -n "$f" ] || return 0
+    awk -v m="machine.$1.device" '
+        function flush() { if (!done && in_d && v["kind"] == "cpu" && ("name" in v)) {
+                               print v["name"]; done = 1; exit }
+                           delete v }
+        /^[[:space:]]*#/    { next }
+        /^[[:space:]]*\[\[/ { flush(); t = $0; sub(/^[[:space:]]*\[\[/, "", t)
+                              sub(/\]\].*$/, "", t); in_d = (t == m); next }
+        /^[[:space:]]*\[/   { flush(); in_d = 0; next }
+        in_d && /=/ {
+            key = $0; sub(/[[:space:]]*=.*$/, "", key); gsub(/[[:space:]]/, "", key)
+            val = $0; sub(/^[^=]*=[[:space:]]*/, "", val)
+            if (val ~ /^"/) { sub(/^"/, "", val); sub(/".*$/, "", val) }
+            else            { sub(/[[:space:]]*#.*$/, "", val); sub(/[[:space:]]+$/, "", val) }
+            v[key] = val
         }
         END { flush() }' "$f"
 }
@@ -834,10 +856,19 @@ if [ -n "$DEVICE" ]; then
     DEV_CHIP=$(inv_device "$dev_m" "$DEVICE" chip)
     DEV_RT=$(inv_device "$dev_m" "$DEVICE" runtimes | tr -d '"[] ')
     DEV_TWINS=$(inv_chip_count "$dev_m" "$DEV_CHIP")
-    if [ -z "$DEV_PCI" ]; then
+    # A CPU is a device a run can name and not one it can choose between: there is one, it
+    # needs no pinning, and it has no PCI address to be found by. Refusing it for that left a
+    # CPU benchmark unable to say what it ran on, and told besides that it had named none of
+    # the GPUs, which is true and is advice about a run that was never going to use one.
+    CPU_NAME=""
+    [ -z "$DEV_PCI" ] && [ "$DEVICE" = cpu ] && CPU_NAME=$(inv_cpu_name "$dev_m")
+    if [ -z "$DEV_PCI" ] && [ -z "$CPU_NAME" ]; then
         echo "dibs: $dev_m has no device called '$DEVICE'." >&2
         if [ -n "$(inv_device_names "$dev_m")" ]; then
             echo "  it has:" >&2; inv_device_names "$dev_m" | sed 's/^/    /' >&2
+            [ -n "$(inv_cpu_name "$dev_m")" ] && echo "    cpu" >&2
+        elif [ -n "$(inv_cpu_name "$dev_m")" ]; then
+            echo "  it has:" >&2; echo "    cpu" >&2
         else
             echo "  Its entry lists no devices. Re-probe it:  dibs --check $dev_m --write" >&2
         fi
