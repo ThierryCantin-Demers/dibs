@@ -25,7 +25,9 @@ use std::process::ExitCode;
 const USAGE: &str = "\
 dibs-run <verb> <repo>[@<ref>] <recipe>   run a recipe from the repo's .dibs.toml
                                           @local sends your working tree, unpushed and
-                                          uncommitted changes included
+                                          uncommitted changes included, and is the only
+                                          path for a private repo: the machines carry no
+                                          GitHub credentials
 dibs-run list <repo>                      what that repo defines
 dibs-run runs [label]                     what has run here, and what is comparable
 dibs-run shell <repo>[@<ref>] --reason <why> -- <cmd>   a command in a prepared worktree
@@ -113,9 +115,11 @@ fn parse() -> Result<Args, String> {
     if target.is_empty() && !matches!(verb.as_str(), "runs" | "gaps" | "raw") {
         return Err("needs a repo".into());
     }
+    // runs takes a recorded label, not repo@ref, and a label carries its device after an @.
+    // Splitting there drops the half that tells two runs of one recipe on different cards apart.
     let (repo, reference) = match target.split_once('@') {
-        Some((r, rev)) => (r.to_string(), Some(rev.to_string())),
-        None => (target, None),
+        Some((r, rev)) if verb != "runs" => (r.to_string(), Some(rev.to_string())),
+        _ => (target, None),
     };
     Ok(Args {
         verb,

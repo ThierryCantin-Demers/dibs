@@ -37,17 +37,31 @@ SRC=$HOME/prog/{repo}
 # the shared lock precisely so several can happen at once, which makes that race the normal
 # case rather than a rare one.
 MINE=refs/dibs/prepare-$$
-if git -C "$SRC" fetch -q origin "+{reference}:$MINE" 2>/dev/null; then
+if FETCHERR=$(git -C "$SRC" fetch -q origin "+{reference}:$MINE" 2>&1); then
     SHA=$(git -C "$SRC" rev-parse --verify -q "$MINE^{{commit}}" || true)
     git -C "$SRC" update-ref -d "$MINE" 2>/dev/null || true
 else
     # A bare commit cannot be fetched by name from most servers, and a branch that exists only
     # on this machine cannot be fetched at all. Both resolve locally, by their own name, which
     # is not a shared slot and cannot be overwritten by anyone else.
-    git -C "$SRC" fetch -q --all 2>/dev/null || true
+    FETCHERR="$FETCHERR
+$(git -C "$SRC" fetch -q --all 2>&1 || true)"
     SHA=$(git -C "$SRC" rev-parse --verify -q '{reference}^{{commit}}' || true)
 fi
-[ -n "$SHA" ] || {{ echo "dibs: no such ref in {repo}: {reference}" >&2; exit 3; }}
+# A fetch that failed on credentials means this machine cannot see the remote at all, and the
+# ref it was asked for is very likely fine. Reported as "no such ref" it reads as a mistake in
+# the ref, and the way out of that reading is to carry the code over by hand, which is a whole
+# afternoon of bundle or tarball for something @local already does.
+[ -n "$SHA" ] || {{
+    echo "dibs: no such ref in {repo}: {reference}" >&2
+    case "$FETCHERR" in
+      *"could not read Username"*|*"Authentication failed"*|*"terminal prompts disabled"*|\
+      *"Permission denied (publickey)"*|*"Repository not found"*)
+        echo "  The fetch failed on credentials, so nothing here can see that remote: a private" >&2
+        echo "  repo is the usual reason, and the ref itself is probably fine." >&2
+        echo "  Send your working tree instead, which fetches nothing:  {repo}@local" >&2 ;;
+    esac
+    exit 3; }}
 SHORT=$(printf %s "$SHA" | cut -c1-12)
 
 WT=$SCRATCH/ws/{repo}/$SHORT
@@ -153,6 +167,34 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
 
 #[cfg(test)]
 mod tests {
+
+    // The setup script is shell living inside a Rust format string, where an unbalanced quote
+    // or a brace that needed doubling compiles cleanly and fails on the machine, mid-run,
+    // holding a lock.
+    #[test]
+    fn the_generated_scripts_are_valid_shell() {
+        use std::io::Write;
+        for script in [setup_script("cubek", "main"), setup_local_script("cubek", "k1", "c1")] {
+            let mut c = std::process::Command::new("bash")
+                .arg("-n")
+                .stdin(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("bash on PATH");
+            c.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+            let out = c.wait_with_output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        }
+    }
+
+    // A machine with no credentials for a private remote reported "no such ref", which reads as
+    // the ref being wrong and sends people to carry the code over by hand.
+    #[test]
+    fn a_credentials_failure_names_local_rather_than_the_ref() {
+        let s = setup_script("cubek", "main");
+        assert!(s.contains("could not read Username"), "the fetch error has to be inspected");
+        assert!(s.contains("cubek@local"), "and the way out has to be named");
+    }
     use super::*;
 
     #[test]

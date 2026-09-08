@@ -88,18 +88,38 @@ pub fn load(path: &Path) -> Result<Vec<Record>, String> {
     Ok(text.lines().filter(|l| !l.trim().is_empty()).filter_map(parse_line).collect())
 }
 
+// A record's label is repo/verb/recipe@device, and the name anyone has in hand is the recipe
+// alone, which is what --label and the recipe file both call it. Matching whole path prefixes
+// only answers "nothing recorded" to the one query a person types, and that reads as the
+// provenance never having been written rather than as a query that missed.
+fn matches(label: &str, query: &str) -> bool {
+    if label == query {
+        return true;
+    }
+    let path = label.split_once('@').map_or(label, |(p, _)| p);
+    path == query
+        || path.starts_with(&format!("{query}/"))
+        || path.rsplit('/').next() == Some(query)
+}
+
 pub fn report(records: &[Record], only: Option<&str>, limit: usize) -> String {
     let mut out = String::new();
     let shown: Vec<&Record> = records
         .iter()
         .rev()
-        .filter(|r| only.is_none_or(|l| r.label == l || r.label.starts_with(&format!("{l}/"))))
+        .filter(|r| only.is_none_or(|l| matches(&r.label, l)))
         .take(limit)
         .collect();
 
     if shown.is_empty() {
         return match only {
-            Some(l) => format!("nothing recorded for {l}\n"),
+            // Saying what is there separates a query that missed from a record that was never
+            // written, which are the same sentence otherwise and lead opposite ways.
+            Some(l) if !records.is_empty() => format!(
+                "nothing recorded for {l}, out of {} runs recorded.\n  dibs-run runs   lists them; a label is repo/verb/recipe.\n",
+                records.len()
+            ),
+            Some(l) => format!("nothing recorded for {l}, and nothing recorded at all yet.\n"),
             None => "nothing recorded yet\n".to_string(),
         };
     }
@@ -191,6 +211,28 @@ pub fn gaps(records: &[Record]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The label people have is the recipe name; the label recorded is repo/verb/recipe@device.
+    // When those did not meet, the answer was "nothing recorded", which reads as the record
+    // never being written and sends someone to look for a provenance bug that is not there.
+    #[test]
+    fn a_label_is_matched_by_every_name_it_is_known_by() {
+        let full = "cubek/bench/reduce-topk5@gpu:rtx4070tisuper";
+        for q in ["cubek", "cubek/bench", "cubek/bench/reduce-topk5", "reduce-topk5", full] {
+            assert!(matches(full, q), "{q} should reach {full}");
+        }
+        for q in ["topk5", "cubek/test", "reduce-topk5@gpu:other", "gpu:rtx4070tisuper"] {
+            assert!(!matches(full, q), "{q} should not reach {full}");
+        }
+    }
+
+    #[test]
+    fn a_query_that_missed_does_not_read_as_an_empty_record() {
+        let recs = vec![parse_line(A).unwrap()];
+        let out = report(&recs, Some("no-such-label"), 30);
+        assert!(out.contains("out of 1 runs recorded"), "{out}");
+        assert!(report(&[], Some("x"), 30).contains("nothing recorded at all"));
+    }
 
     const A: &str = r#"{"t":100,"verb":"bench","label":"cubek/gemm","fingerprint":"aaa","isolation":"machine","backend":"dibs","revisions":{"cubek":"abc123"},"steps":[{"lock":"shared","status":0,"seconds":30},{"lock":"exclusive","status":0,"seconds":120}]}"#;
     const B: &str = r#"{"t":200,"verb":"bench","label":"cubek/gemm","fingerprint":"bbb","isolation":"machine","backend":"dibs","revisions":{"cubek":"def456"},"steps":[{"lock":"exclusive","status":1,"seconds":5}]}"#;
