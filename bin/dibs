@@ -1137,6 +1137,18 @@ series_record() {
         "$(agent_name)" "$(date +%s)" >> "$tmp"
     mv "$tmp" "$SERIES" 2>/dev/null || rm -f "$tmp"
 }
+# --new-series rides on the run it was passed with, and a run that measured nothing must not
+# claim the label any more than a first attempt may. Silently, that is indistinguishable from
+# the flag being ignored: the next run is refused with the same "before" as before, and the
+# reading that follows is that it has to be passed on every run forever, which turns the guard
+# off for that label permanently.
+series_stayed_put() {
+    [ "$MODE" = bench ] && [ "$NEW_SERIES" = 1 ] && [ "$STATUS" -ne 0 ] || return 0
+    echo "dibs: the command failed, so '$LABEL' did not move and is still filed where it was." >&2
+    echo "  --new-series takes effect only when the run it is passed with succeeds. Pass it" >&2
+    echo "  again with a run that works, once, rather than on every run from here on." >&2
+}
+
 # Checked before the run and recorded after it: a job that never measured anything must not
 # claim the label. A deliberate move starts the series again rather than appending to it,
 # since filing the new numbers beside the old ones rebuilds the mixed history this exists to
@@ -2852,6 +2864,7 @@ if [ "$(lower "$SELF")" = "$(lower "$TARGET")" ] || [ "${DIBS_LOCAL:-0}" = 1 ]; 
     remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$CMDB64" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS"
     STATUS=$?
     [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
+    series_stayed_put
     exit "$STATUS"
 else
     if [ -z "$HOST" ]; then
@@ -2916,6 +2929,7 @@ else
 exit 70" <&6
     STATUS=$?
     [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
+    series_stayed_put
     # 255 is ssh's own failure code, not the command's.
     [ "$STATUS" -eq 255 ] && unreachable
     [ "$STATUS" -eq 70 ] && no_room

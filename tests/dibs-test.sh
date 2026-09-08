@@ -1186,6 +1186,19 @@ check "--new-series moves it rather than merging" \
   "$($T --on beta --bench --label series-a --new-series 'echo moved' >/dev/null 2>&1; echo $?)" "0"
 check "so the old machine is now the odd one out" \
   "$($T --on alpha --bench --label series-a 'echo no' 2>&1 >/dev/null | grep -c 'two histories')" "1"
+check "and the new machine does not need the flag again" \
+  "$($T --on beta --bench --label series-a 'echo settled' >/dev/null 2>&1; echo $?)" "0"
+# The flag rides on the run it is passed with and takes effect only if that run succeeds, which
+# is right: a migration that measured nothing must not claim the label any more than a first
+# attempt may. What it looks like from outside is the flag being ignored, because the next run
+# is refused again with the same "before", and the reading that follows is that it has to be
+# passed forever, which turns the guard off for that label permanently.
+$T --on alpha --bench --label series-a --new-series 'exit 3' >/dev/null 2>&1
+check "a --new-series run that failed moves nothing" \
+  "$($T --on beta --bench --label series-a 'echo still beta' >/dev/null 2>&1; echo $?)" "0"
+check "and says so, rather than leaving it looking ignored" \
+  "$($T --on alpha --bench --label series-a --new-series 'exit 3' 2>&1 >/dev/null |
+     grep -c 'did not move')" "1"
 # A job that measured nothing must not claim the label: a first attempt that failed would
 # otherwise pin every later run to wherever it happened to fail.
 rm -f "$DIBS_SERIES"
