@@ -9,6 +9,10 @@
 #                                comparable. `dibs --machines -v` lists the aliases. `cpu`
 #                                names the processor, which pins nothing and has nothing to
 #                                choose between, but records what a CPU run ran on.
+#   --stream                     the job's whole output, as it happens. Without it a job's
+#                                stdout is a digest: its first and last lines, a count of
+#                                what was left out, and where the whole log is. Nothing
+#                                is lost either way, since the log is kept on the machine.
 #   --new-series                 with --bench: this label is moving to another card or
 #                                machine on purpose. Its history starts again rather than
 #                                mixing the new numbers in with the old ones.
@@ -553,6 +557,10 @@ DEV_RT=""
 DEV_CHIP=""
 DEV_TWINS=1
 NEW_SERIES=0
+# The whole stream is what a person at a terminal wants and what dibs-run parses; an agent
+# wants the bounded digest, since it cannot know whether a call prints 3 lines or 30000
+# and would cut it at the pipe, taking the exit status with it.
+STREAM=${DIBS_STREAM:-${DIBS_FROM_RUN:-0}}
 DETACH=0
 COMMAND=""
 SYNC=()
@@ -625,6 +633,7 @@ while [ $# -gt 0 ]; do
         --max)        MAXHOLD=$2; shift 2 ;;
         --device)     DEVICE=${2:-}; shift 2 ;;
         --new-series) NEW_SERIES=1; shift ;;
+        --stream)     STREAM=1; shift ;;
         --label)      LABEL=$2; shift 2 ;;
         -h|--help)    usage ;;
         --)           shift; break ;;
@@ -1354,6 +1363,7 @@ JSON=${10:-0}
 AGENT=$(printf %s "${9:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
 AGENT_ID=$(printf %s "${11:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
 DEV_PCI=${12:-}; DEV_RT=${13:-}; DEV_NAME=${14:-}; DEV_CHIP=${15:-}; DEV_TWINS=${16:-1}
+STREAM=${17:-0}
 [ -n "$AGENT" ] || AGENT=?
 # The caller cannot clean this up: its command line is read by fish, which has no $?.
 # Unlinking a running script is safe; bash keeps the open inode.
@@ -1551,6 +1561,7 @@ fd_targets() {   # root-pid channel; prints distinct regular files the tree writ
                  *) continue ;;
             esac
             [ "$t" = "$2" ] && continue      # the channel it was launched down, not its own doing
+            case "$t" in */jobs/*-*/log) continue ;; esac   # the job's own sink: dibs's doing, not the job's
             [ -f "$t" ] || continue          # /dev/null and the terminal are not output
             case "$seen" in *" $t "*) continue ;; esac
             seen="$seen$t "; out="$out$t"$'\n'
@@ -2422,6 +2433,10 @@ case "$MODE" in
             # job chose. Anything different from that is a redirect the job made itself.
             root=$(readlink "/proc/$pid/fd/1" 2>/dev/null)
             files=$(fd_targets "$pid" "$root")
+            sink=$(ls -d "${DIBS_SCRATCH:-$HOME/.cache/dibs}"/jobs/*-"$pid"/log 2>/dev/null | head -1)
+            if [ -z "$files" ] && [ -n "$sink" ]; then
+                files=$sink
+            fi
             if [ -z "$files" ]; then
                 echo "  writing straight back to the agent that started it, so there is no"
                 echo "  copy on disk to show. Only a job that redirects into a file, which is"
@@ -2767,17 +2782,22 @@ if [ "$MODE" != rsh ] && mkdir -p "$JOBDIR" 2>/dev/null; then
     printf '%s\n' "$CMD" > "$JOBDIR/cmd"
     export DIBS_JOB="$JOB"
     JOBLOG=$JOBDIR/log
-    # Without the lock descriptors, or a tee outliving a killed job would hold the lock
-    # with no holder record to show for it.
-    mkfifo "$JOBDIR/pipe" 2>/dev/null && { tee "$JOBLOG" < "$JOBDIR/pipe" 8>&- 9>&- 5<&- & TEE=$!; } || JOBLOG=""
+    TEE=""
+    if [ "$STREAM" = 1 ]; then
+        # Without the lock descriptors, or a tee outliving a killed job would hold the lock
+        # with no holder record to show for it.
+        mkfifo "$JOBDIR/pipe" 2>/dev/null && { tee "$JOBLOG" < "$JOBDIR/pipe" 8>&- 9>&- 5<&- & TEE=$!; } || JOBLOG=""
+    else
+        SINK=$JOBLOG
+    fi
     find "$SCRATCH/jobs" -mindepth 1 -maxdepth 1 -mtime +"${DIBS_KEEP_DAYS:-14}" -exec rm -rf {} + 2>/dev/null 8>&- 9>&- 5<&- &
 fi
 if [ "$MODE" = rsh ]; then
     timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 0<&5 5<&- &
 elif [ -n "$JOBLOG" ] && [ "$MAXHOLD" -gt 0 ]; then
-    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null > "$JOBDIR/pipe" 2>&1 &
+    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
 elif [ -n "$JOBLOG" ]; then
-    bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null > "$JOBDIR/pipe" 2>&1 &
+    bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
 elif [ "$MAXHOLD" -gt 0 ]; then
     timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null &
 else
@@ -2787,7 +2807,7 @@ WORK=$!
 echo "$WORK" > "$WORKFILE"
 wait "$WORK"
 STATUS=$?
-if [ -n "$JOBLOG" ]; then
+if [ -n "$TEE" ]; then
     wait "$TEE" 2>/dev/null
     rm -f "$JOBDIR/pipe"
 fi
@@ -2806,8 +2826,31 @@ if [ -n "$JOBLOG" ]; then
     by=command
     [ "$STATUS" -eq 124 ] && [ "$MAXHOLD" -gt 0 ] && by=dibs
     lines=$(wc -l < "$JOBLOG" 2>/dev/null || echo 0)
-    printf 'job %s  %s  %s  queued %ss  ran %ss  exit %s  by=%s\n  log %s:%s  (%s lines)  dibs --out %s\n' \
-        "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$(hostname -s)" "$JOBLOG" "$lines" "$JOB" >&2
+    # The digest: enough to see how it went, never so much that a caller has to cut it.
+    if [ "$STREAM" != 1 ]; then
+        head=${DIBS_DIGEST_HEAD:-20} tail_=${DIBS_DIGEST_TAIL:-20}
+        if [ "$lines" -le $(( head + tail_ + 5 )) ]; then
+            cat "$JOBLOG"
+        else
+            head -n "$head" "$JOBLOG"
+            printf '\n... %s lines omitted. The whole log:  dibs --out %s  (%s)\n\n' \
+                "$(( lines - head - tail_ ))" "$JOB" "$JOBLOG"
+            tail -n "$tail_" "$JOBLOG"
+        fi
+    fi
+    # What cargo compiled, when it ran, because "Finished" above a benchmark with nothing
+    # compiled is the sentence that says the numbers are for the previous binary.
+    built=""
+    case "$CMD" in *cargo*)
+        if grep -q '^ *Finished ' "$JOBLOG" 2>/dev/null; then
+            n=$(grep -c '^ *Compiling ' "$JOBLOG" 2>/dev/null || echo 0)
+            [ "$n" -gt 0 ] && built="  built=$n" || built="  built=nothing"
+        fi ;;
+    esac
+    printf 'job %s  %s  %s  queued %ss  ran %ss  exit %s  by=%s%s\n  log %s:%s  (%s lines)  dibs --out %s\n' \
+        "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$built" "$(hostname -s)" "$JOBLOG" "$lines" "$JOB" >&2
+    [ "$built" = "  built=nothing" ] &&
+        echo "  built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary." >&2
     printf 'mode\t%s\nlabel\t%s\nqueued\t%s\nran\t%s\nexit\t%s\nby\t%s\nagent\t%s\nlines\t%s\n' \
         "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$AGENT" "$lines" > "$JOBDIR/meta"
 fi
@@ -2959,7 +3002,7 @@ if [ "$(lower "$SELF")" = "$(lower "$TARGET")" ] || [ "${DIBS_LOCAL:-0}" = 1 ]; 
         rsh|sync) echo "dibs: --sync reaches the machine from elsewhere. You are on it: use cp." >&2
                   exit 2 ;;
     esac
-    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$CMDB64" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS"
+    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$CMDB64" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM"
     STATUS=$?
     [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
     series_stayed_put
@@ -3023,7 +3066,7 @@ else
         -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
         "mkdir -p $REMOTE_DIR 2>/dev/null; printf %s '$PAYLOAD' | base64 -d > $REMOTE_SCRIPT && \
          exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' '$CMDB64' \
-         '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS'
+         '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM'
 exit 70" <&6
     STATUS=$?
     [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record

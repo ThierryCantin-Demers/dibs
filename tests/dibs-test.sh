@@ -441,7 +441,8 @@ free O; wait 2>/dev/null
 fifo P
 $T --label no-log "printf x > $S/f-Pready; $(hold P)" > "$S/caller.txt" 2>&1 &
 until [ -s "$S/f-Pready" ] 2>/dev/null; do :; done
-check "a job that does not redirect says so" "$($T --out | grep -c 'copy on disk to show')" "1"
+# Every job has a sink now, so a job that redirected nowhere still has its own log to show.
+check "a job that does not redirect is read from its own sink" "$($T --out | grep -c 'jobs/.*/log')" "1"
 check "and does not offer the caller's own stdout as output" "$($T --out | grep -c 'caller.txt')" "0"
 free P; wait 2>/dev/null
 check "with nothing running it says so" "$($T --out | grep -c 'Nothing is running')" "1"
@@ -1272,6 +1273,21 @@ check "--out reads a finished job by its id" "$(DIBS_SCRATCH=$S/scr $T --out "$J
 check "and says how it ended" "$(DIBS_SCRATCH=$S/scr $T --out "$J" 2>&1 | grep -c 'ran [0-9]*s  exit 4')" "1"
 check "an unknown job is refused" "$(DIBS_SCRATCH=$S/scr $T --out 19700101-1 >/dev/null 2>&1; echo $?)" "1"
 check "the recipe nag is gone" "$(grep -c 'Prefer a recipe' "$S/j1.err")" "0"
+# A caller cannot know whether a job prints 3 lines or 30000, so the tool bounds it and
+# says what it left out and where the rest is. --stream is the whole thing.
+DIBS_SCRATCH=$S/scr $T --label j2 'seq 1 300' > "$S/j2.out" 2> "$S/j2.err"
+check "a long output is a digest" "$(wc -l < "$S/j2.out")" "43"
+check "that says what it left out" "$(grep -c '260 lines omitted' "$S/j2.out")" "1"
+check "and ends with the end" "$(tail -1 "$S/j2.out")" "300"
+check "--stream is the whole output" "$(DIBS_SCRATCH=$S/scr $T --stream --label j3 'seq 1 300' 2>/dev/null | wc -l)" "300"
+check "and the log is whole either way" "$(wc -l < "$S/scr/jobs/$(sed -n 's/^job \([0-9-]*\)  .*/\1/p' "$S/j2.err")/log")" "300"
+# "Finished" with nothing compiled is the sentence that invalidates the numbers after it.
+DIBS_SCRATCH=$S/scr $T --label j4 'echo cargo; echo "   Compiling a v1"; echo "   Compiling b v1"; echo "    Finished release"' >/dev/null 2> "$S/j4.err"
+check "the trailer counts what cargo compiled" "$(grep -c 'built=2' "$S/j4.err")" "1"
+DIBS_SCRATCH=$S/scr $T --label j5 'echo cargo; echo "    Finished release"' >/dev/null 2> "$S/j5.err"
+check "and says when it compiled nothing" "$(grep -c 'built=nothing' "$S/j5.err")" "1"
+check "in words" "$(grep -c 'measures the previous binary' "$S/j5.err")" "1"
+check "a job that is not cargo says nothing about it" "$(grep -c 'built=' "$S/j1.err")" "0"
 
 echo "measure = false on every path"
 printf '[machine.lap]\nssh = "me@lap"\nhostname = "lap"\nmeasure = false\n' > "$DIBS_MACHINES"
