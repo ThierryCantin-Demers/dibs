@@ -23,8 +23,11 @@ echo "installed dibs in $BIN"
 # dibs-run is the interface; dibs underneath it is only the lock. Without cargo you still have
 # a working machine, so this is a warning rather than a failure.
 if command -v cargo >/dev/null 2>&1; then
-    cargo install --quiet --path "$HERE/dibs-run" --root "${PREFIX:-$HOME/.local}" --force
-    echo "installed dibs-run in $BIN"
+    # The commit is stamped into the binary, so `dibs-run --version` says whether what is
+    # installed is what is checked out.
+    DIBS_RUN_COMMIT=$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown) \
+        cargo install --quiet --path "$HERE/dibs-run" --root "${PREFIX:-$HOME/.local}" --force
+    echo "installed dibs-run $(git -C "$HERE" rev-parse --short HEAD 2>/dev/null) in $BIN"
     cargo install --quiet --path "$HERE/dibs-tui" --root "${PREFIX:-$HOME/.local}" --force
     echo "installed dibstop in $BIN"
 else

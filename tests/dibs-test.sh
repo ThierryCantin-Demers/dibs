@@ -514,6 +514,17 @@ check "--rsh is not for hands" "$($T --rsh >/dev/null 2>&1; echo $?)" "2"
 # program, and the fuller version of this is asserted further down where a file really moves.
 check "and on the machine itself a copy is just a copy" \
   "$($T --sync ./a :~/b 2>&1 | grep -c 'You are on it')" "0"
+# Everything after --sync is rsync's, so a dibs flag there would reach rsync as a path.
+check "a dibs flag after --sync is refused" "$($T --sync --on x ./a :~/b >/dev/null 2>&1; echo $?)" "2"
+check "and told where it goes" "$($T --sync --label y ./a :~/b 2>&1 | grep -c 'Put it before')" "1"
+# -a carries mtimes, and a build after a sync that kept them compiles nothing.
+check "preserving mtimes into the machine is warned about" \
+  "$($T --sync -a ./a :~/b 2>&1 | grep -c 'preserving mtimes')" "1"
+check "but not when fetching" "$($T --sync -a :~/b ./a 2>&1 | grep -c 'preserving mtimes')" "0"
+# The transport taking the caller's label needs a real channel and is in the live suite.
+check "--which says why it has nothing" \
+  "$(DIBS_MACHINES=$S/no-such-inventory DIBS_HOST= $T --which 2>&1; echo "exit=$?")" "dibs: no machine: no --on, no DIBS_ON, no DIBS_HOST, and no default in $S/no-such-inventory.
+exit=1"
 
 echo "unreachable machine"
 out=$(DIBS_LOCAL=0 DIBS_HOSTNAME=nowhere DIBS_HOST=nowhere.invalid \
@@ -716,6 +727,17 @@ hostname = "two"
 TOML
 check "picks a machine from the inventory" \
   "$($T --pick 2>/dev/null | grep -cE '^(one|two)$')" "1"
+# A machine that did not answer costs the whole probe timeout on every dispatch until it is
+# back, so it is left out of the ranking for a while, and said so.
+mkdir -p "$S/down"; date +%s > "$S/down/two"
+check "a machine that did not answer is not asked again yet" \
+  "$(DIBS_ROUTE_DOWN=$S/down $T --pick -v 2>&1 >/dev/null | grep -c 'not asked again yet')" "1"
+check "and the ranking goes on without it" "$(DIBS_ROUTE_DOWN=$S/down $T --pick 2>/dev/null)" "one"
+echo 0 > "$S/down/two"
+check "until the backoff has passed" \
+  "$(DIBS_ROUTE_DOWN=$S/down $T --pick -v 2>&1 >/dev/null | grep -c 'not asked again yet')" "0"
+# DIBS_HOST given as the ssh string of a machine the inventory knows is that machine.
+check "an ssh string resolves to its inventory entry" "$(DIBS_HOST=dibs@two $T --which 2>/dev/null)" "two"
 # Ranking has to be able to prefer another machine over the one doing the dispatching, or a
 # build takes every thread on the machine its owner is trying to work on.
 check "a machine someone works at is ranked behind an equal one" \
@@ -1234,6 +1256,12 @@ check "and does not fall back to the default machine" \
 # can be caught is before it happens.
 check "and says where it is about to write" \
   "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --on rightbox --sync ./x :~/y 2>&1 | grep -c 'syncing with dibs@rightbox')" "1"
+
+echo "measure = false on every path"
+printf '[machine.lap]\nssh = "me@lap"\nhostname = "lap"\nmeasure = false\n' > "$DIBS_MACHINES"
+out=$(DIBS_LOCAL=0 DIBS_HOST=me@lap $T --bench true 2>&1); rc=$?
+check "a benchmark sent by ssh string to a machine that does not measure is refused" "$rc" "2"
+check "and says so" "$(grep -c 'measure = false' <<<"$out")" "1"
 
 echo "nothing left behind"
 check "no holders" "$(holders)" "0"

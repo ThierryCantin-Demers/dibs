@@ -36,7 +36,8 @@ dibs-run gaps                             what did not fit a recipe, and what re
 
   <verb>    bench, build or test
   <repo>    a path to a checkout, or a name resolved under --root
-  --root    where named repos live (default $DIBS_ROOT, else the current directory)
+  --root    where named repos live (default $DIBS_ROOT, then `root` in machines.toml,
+            else the current directory)
   --reason  why this does not fit a recipe. Required for shell and raw, and recorded:
             a reason that keeps recurring is the specification for the next recipe.
   --device  the card to run on, named from the machine's inventory. It is part of the
@@ -100,6 +101,16 @@ fn parse() -> Result<Args, String> {
                 print!("{USAGE}");
                 std::process::exit(0);
             }
+            "--version" => {
+                // Stamped by install.sh, so a binary that has drifted from the source can be
+                // told apart from one that is current.
+                println!(
+                    "dibs-run {} ({})",
+                    env!("CARGO_PKG_VERSION"),
+                    option_env!("DIBS_RUN_COMMIT").unwrap_or("commit unknown")
+                );
+                std::process::exit(0);
+            }
             "--root" => root = PathBuf::from(it.next().ok_or("--root needs a path")?),
             "--dry-run" => dry_run = true,
             s if s.starts_with('-') => return Err(format!("unknown option: {s}")),
@@ -137,10 +148,34 @@ fn parse() -> Result<Args, String> {
 /// Where a bare repo name is looked up. Everyone lays their checkouts out differently, so
 /// this is only a starting guess: DIBS_ROOT, then --root, then the directory you are in.
 fn repo_root() -> PathBuf {
-    match std::env::var_os("DIBS_ROOT") {
-        Some(r) => PathBuf::from(r),
-        None => PathBuf::from("."),
+    if let Some(r) = std::env::var_os("DIBS_ROOT").filter(|r| !r.is_empty()) {
+        return PathBuf::from(r);
     }
+    // A fresh non-interactive shell has no DIBS_ROOT, since it lives in the user's fish
+    // config, so the inventory file may carry it: `root = "/home/me/prog"` at the top level.
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let inv = std::env::var_os("DIBS_MACHINES").map(PathBuf::from).or_else(|| {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home.as_ref().map(|h| h.join(".config")))
+            .map(|c| c.join("dibs/machines.toml"))
+    });
+    if let Some(text) = inv.and_then(|p| std::fs::read_to_string(p).ok()) {
+        for line in text.lines().take_while(|l| !l.trim_start().starts_with('[')) {
+            if let Some(v) = line.trim().strip_prefix("root") {
+                let v = v.trim_start();
+                if let Some(v) = v.strip_prefix('=') {
+                    let v = v.trim().trim_matches('"');
+                    let v = match (v.strip_prefix("~/"), &home) {
+                        (Some(rest), Some(h)) => h.join(rest),
+                        _ => PathBuf::from(v),
+                    };
+                    return v;
+                }
+            }
+        }
+    }
+    PathBuf::from(".")
 }
 
 fn run() -> Result<ExitCode, String> {
@@ -546,7 +581,7 @@ fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
         return canon(under);
     }
     Err(format!(
-        "no repo at '{repo}' and none under {}; give a path or set --root",
+        "no repo at '{repo}' and none at {}/{repo}.\n  A bare name is looked up under DIBS_ROOT, then --root, then the `root` key of\n  ~/.config/dibs/machines.toml, then the current directory. Give a path, or set one of those.",
         root.display()
     ))
 }

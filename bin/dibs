@@ -397,22 +397,35 @@ pick_machine() {
     local m f tmp best="" best_score="" score state cores load prefer_state=""
     local cached="" cached_score=0 seat="" answered=0
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/dibs-route.XXXXXX") || return 1
+    local down=${DIBS_ROUTE_DOWN:-${XDG_STATE_HOME:-$HOME/.local/state}/dibs/route-down}
+    local backoff=${DIBS_ROUTE_BACKOFF:-300} now; now=$(date +%s)
+    mkdir -p "$down" 2>/dev/null
     while read -r m; do
         [ -n "$m" ] || continue
+        # A machine that gave no answer costs the whole probe timeout on every dispatch until
+        # it comes back, and every bare shared call is a dispatch. It is skipped for a while
+        # instead, and said so, because a machine dropping out silently degrades this to
+        # "whichever one answered", which looks exactly like a working ranking.
+        if [ -f "$down/$m" ] && [ $(( now - $(cat "$down/$m" 2>/dev/null || echo 0) )) -lt "$backoff" ]; then
+            [ "$VERBOSE" = 1 ] && printf '  %-18s no answer %ss ago, not asked again yet\n' "$m" \
+                "$(( now - $(cat "$down/$m") ))" >&2
+            continue
+        fi
         # Bounded, because ssh can hang past its connect timeout on a machine that answered
         # the handshake and then stopped, and one of those must not stall every dispatch.
-        ( bounded "${DIBS_POLL_TIMEOUT:-8}" "$0" --on "$m" --status --json 2>/dev/null \
+        ( bounded "${DIBS_POLL_TIMEOUT:-5}" "$0" --on "$m" --status --json 2>/dev/null \
             > "$tmp/$m" ) &
     done < <(inv_names)
     wait
     for f in "$tmp"/*; do
+        [ -e "$f" ] || continue
         m=${f##*/}
-        # Never silent. A machine dropping out of the ranking without saying so degrades this
-        # to "whichever one answered", which looks exactly like a working ranking.
         if [ ! -s "$f" ]; then
             [ "$VERBOSE" = 1 ] && printf '  %-18s no answer\n' "$m" >&2
+            printf '%s\n' "$now" > "$down/$m" 2>/dev/null
             continue
         fi
+        rm -f "$down/$m"
         state=$(sed -n 's/.*"state":"\([^"]*\)".*/\1/p' "$f" | head -1)
         cores=$(sed -n 's/.*"cores":\([0-9]*\).*/\1/p' "$f" | head -1)
         load=$(sed -n 's/.*"load":\([0-9]*\).*/\1/p' "$f" | head -1)
@@ -482,6 +495,18 @@ pick_machine() {
     fi
     printf '%s\n' "$best"
 }
+# The inventory name behind an ssh string or a hostname, or nothing.
+inv_by_host() {
+    local m h=${1##*@}
+    while read -r m; do
+        [ -n "$m" ] || continue
+        if [ "$(inv "$m" ssh)" = "$1" ] || [ "$(inv "$m" hostname)" = "$h" ]; then
+            printf '%s\n' "$m"; return 0
+        fi
+    done < <(inv_names)
+    return 1
+}
+
 use_machine() {
     local n=$1 ssh_to host_of
     ssh_to=$(inv "$n" ssh)
@@ -624,6 +649,11 @@ if [ "$PINNED" = 0 ]; then
         # keys a series apart from the same machine reached through --on, so one machine
         # reads as two and the guard refuses a move nobody made.
         use_machine "$HOST"; HOSTFROM=DIBS_HOST
+    elif [ -n "$HOST" ] && [ -n "$(inv_by_host "$HOST")" ]; then
+        # The ssh string or hostname of a machine the inventory knows. Left unresolved, the
+        # machine stays nameless and measure = false is never read, so a benchmark sent this
+        # way ran on a machine that had said not to.
+        use_machine "$(inv_by_host "$HOST")"; HOSTFROM=DIBS_HOST
     elif [ -z "$HOST" ]; then
         d=$(inv_default)
         [ -n "$d" ] && { use_machine "$d"; HOSTFROM=default; }
@@ -698,7 +728,15 @@ case "$MODE" in
     # The machine this call would use, named. Empty when the target came from DIBS_HOST rather
     # than the inventory, because a name that is not an entry cannot be handed back to --on.
     which)
-        [ -n "$MACHINE" ] || exit 1
+        if [ -z "$MACHINE" ]; then
+            if [ -n "$HOST" ]; then
+                echo "dibs: this call goes to '$HOST' from DIBS_HOST, which is not in the inventory at $MACHINES." >&2
+                echo "  It has no name to give --on. Record it with:  dibs --check $HOST --write" >&2
+            else
+                echo "dibs: no machine: no --on, no DIBS_ON, no DIBS_HOST, and no default in $MACHINES." >&2
+            fi
+            exit 1
+        fi
         printf '%s\n' "$MACHINE"
         exit 0 ;;
     # Whether a binary built on one machine can run on another. Asked of every machine at
@@ -953,10 +991,26 @@ case "$MODE" in
         SYNC=()
         for a in "$@"; do
             case "$a" in
+                --on|--label|--bench|--device|--wait|--max|--new-series)
+                    # Everything after --sync belongs to rsync, which would hand a dibs flag
+                    # to the far side as a path or reject it as an option of its own.
+                    echo "dibs: $a is a dibs flag, and after --sync everything is rsync's." >&2
+                    echo "  Put it before:  dibs $a ... --sync <opts> <src> <dst>" >&2
+                    exit 2 ;;
                 :*) SYNC+=("$HOST:${a#:}") ;;
                 *)  SYNC+=("$a") ;;
             esac
         done
+        # -a and -t carry mtimes across, so a source tree synced over an older copy of itself
+        # looks unchanged to cargo, and the build after it compiles nothing. One line, before
+        # the bytes move; the copy itself is still what was asked for.
+        case " ${SYNC[*]} " in
+            *" -a "*|*" -t "*|*" -"[a-zA-Z]*"a"*" "*|*" --archive "*|*" --times "*)
+                case "${SYNC[-1]}" in
+                    "$HOST:"*) echo "dibs: --sync is preserving mtimes into the machine. A build there may then compile nothing:" >&2
+                               echo "  for a source tree use --checksum --no-times instead of -a." >&2 ;;
+                esac ;;
+        esac
         printf '%s\n' "${SYNC[@]}" | grep -q "^$HOST:" || {
             echo "--sync: mark the machine's side with a leading colon, as in :~/.cache/dibs/x" >&2
             exit 2
@@ -990,7 +1044,7 @@ case "$MODE" in
         # went there: the wrong machine, silently, and exit 0. The resolved host is handed to
         # it through the environment, which a forked child inherits and an argument would not
         # survive, since --rsh takes rsync's own host and command after it.
-        export DIBS_HOST="$HOST" DIBS_HOSTNAME="$TARGET"
+        export DIBS_HOST="$HOST" DIBS_HOSTNAME="$TARGET" DIBS_SYNC_LABEL="$LABEL"
         # Said before the bytes move, because a transfer to the wrong machine is not something
         # you find out about afterwards: it succeeds, exit 0, and the files are somewhere
         # nobody will look. One line on stderr, so it cannot get into rsync's own output.
@@ -1007,7 +1061,10 @@ case "$MODE" in
         [ "$1" = "-l" ] && shift 2 # a user, when rsync was given one; the ssh config owns that
         shift                      # the host, which we already know
         COMMAND=$*
-        [ -n "$LABEL" ] || LABEL=sync
+        # The label was given to the dibs that started rsync, not to this one, and it
+        # arrives the same way the host does. Without it every transfer ever made is filed
+        # under one name, which is why nothing about copying could be estimated.
+        [ -n "$LABEL" ] || LABEL=${DIBS_SYNC_LABEL:-sync}
         ;;
     status|release|abi|jobs) [ $# -eq 0 ] || { echo "$MODE takes no command" >&2; exit 2; } ;;
     job|cancel)
@@ -2820,6 +2877,10 @@ unreachable() {
             diagnosed=1
             echo "  The name '${HOST##*@}' does not resolve from here. A .local name needs mDNS" >&2
             echo "  and the same network; anything else needs DNS." >&2 ;;
+        *"Network is unreachable"*|*"No route to host"*)
+            diagnosed=1
+            echo "  This side has no route to it: the problem is your own network or VPN, not the" >&2
+            echo "  machine. Nothing about it can be known from here until that is back." >&2 ;;
     esac
     # Only when ssh's own answer explained nothing, and only for a machine tailscale actually
     # carries: what it says about a machine reached over the LAN is not evidence either way.
