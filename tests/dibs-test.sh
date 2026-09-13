@@ -1257,6 +1257,22 @@ check "and does not fall back to the default machine" \
 check "and says where it is about to write" \
   "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --on rightbox --sync ./x :~/y 2>&1 | grep -c 'syncing with dibs@rightbox')" "1"
 
+echo "the job result"
+# Everything a job prints is kept whole on the machine, and the caller ends with a trailer
+# that no pipe on its side can cut off: the exit, who produced it, and where the log is.
+rm -rf "$S/scr/jobs"
+DIBS_SCRATCH=$S/scr $T --label j1 'echo hello; echo err >&2; exit 4' > "$S/j1.out" 2> "$S/j1.err"; rc=$?
+check "the exit status is the command's" "$rc" "4"
+check "both streams reach the caller, in order" "$(tr '\n' ' ' < "$S/j1.out")" "hello err "
+check "the trailer names the job and the exit" "$(grep -c '^job [0-9]*-[0-9]*  shared  j1  queued [0-9]*s  ran [0-9]*s  exit 4  by=command$' "$S/j1.err")" "1"
+J=$(sed -n 's/^job \([0-9-]*\)  .*/\1/p' "$S/j1.err")
+check "the log holds everything the job printed" "$(tr '\n' ' ' < "$S/scr/jobs/$J/log")" "hello err "
+check "and the command, whole" "$(cat "$S/scr/jobs/$J/cmd")" "echo hello; echo err >&2; exit 4"
+check "--out reads a finished job by its id" "$(DIBS_SCRATCH=$S/scr $T --out "$J" 2>&1 | grep -c '| err')" "1"
+check "and says how it ended" "$(DIBS_SCRATCH=$S/scr $T --out "$J" 2>&1 | grep -c 'ran [0-9]*s  exit 4')" "1"
+check "an unknown job is refused" "$(DIBS_SCRATCH=$S/scr $T --out 19700101-1 >/dev/null 2>&1; echo $?)" "1"
+check "the recipe nag is gone" "$(grep -c 'Prefer a recipe' "$S/j1.err")" "0"
+
 echo "measure = false on every path"
 printf '[machine.lap]\nssh = "me@lap"\nhostname = "lap"\nmeasure = false\n' > "$DIBS_MACHINES"
 out=$(DIBS_LOCAL=0 DIBS_HOST=me@lap $T --bench true 2>&1); rc=$?

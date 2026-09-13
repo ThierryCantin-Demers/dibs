@@ -48,8 +48,11 @@
 #                                another; --all compares every pair and says which way works
 #   --prefer <machine>           with --pick: this machine holds the build cache, so choose it
 #                                unless it cannot run the job at all
-#   dibs --out [pid]            what a running job is writing, when it redirected to a file.
-#                                Names the file and tails it; --out <pid> for one job.
+#   dibs --out [pid|job]        what a job wrote. Every job's output is kept whole on the
+#                                machine under $DIBS_SCRATCH/jobs/<job>/log, and the trailer
+#                                every job ends with names the job. --out <job> tails it,
+#                                during the run or after; --out <pid> reads a redirect a
+#                                running job made itself.
 #   dibs --kill <pid>           stop a holder that is wedged (also takes no lock). Refuses a
 #                                job that is someone else's until you add --anyone.
 #   dibs --release              drop metadata left by processes that are already dead
@@ -612,7 +615,7 @@ while [ $# -gt 0 ]; do
                           PINNED=1; HOSTFROM=--check; shift
                       fi ;;
         --out)        MODE=out; shift
-                      if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9]/}" ]; then
+                      if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9-]/}" ]; then
                           OUTPID=$1; shift
                       fi ;;
         --kill)       MODE=kill; KILLPID=${2:-}; shift 2 ;;
@@ -972,7 +975,7 @@ case "$MODE" in
         LABEL=check
         [ "${DIBS_EMIT_ENTRY:-0}" = 1 ] && LABEL=check-write ;;
     out)
-        [ $# -eq 0 ] || { echo "--out takes only a pid" >&2; exit 2; }
+        [ $# -eq 0 ] || { echo "--out takes only a pid or a job id" >&2; exit 2; }
         # A dot because the label is sanitized down to [A-Za-z0-9._-] before it ships.
         LABEL="${OUTPID:-all}.$OUT_N" ;;
     watch)
@@ -2391,6 +2394,22 @@ case "$MODE" in
         # just somewhere nobody thought to look, and the tree walk that already exists for
         # CPU finds it.
         target=${LABEL%%.*} lines=${LABEL##*.}
+        # A job id names a directory, running or finished, so this works after the fact, which
+        # is the case the process walk below cannot serve: a job that is gone has no fds.
+        case "$target" in
+            *-*)
+                d=${DIBS_SCRATCH:-$HOME/.cache/dibs}/jobs/$target
+                [ -f "$d/log" ] || { echo "no job $target under ${DIBS_SCRATCH:-$HOME/.cache/dibs}/jobs" >&2; exit 1; }
+                if [ -f "$d/meta" ]; then
+                    echo "job $target  $(awk -F'\t' '$1=="mode"{m=$2} $1=="label"{l=$2} $1=="exit"{e=$2} $1=="ran"{r=$2} END{print m"  "l"  ran "r"s  exit "e}' "$d/meta")"
+                else
+                    echo "job $target  still running"
+                fi
+                echo "  $(head -c 200 "$d/cmd" 2>/dev/null | tr '\n' ' ')"
+                echo "  $d/log  ($(wc -c < "$d/log") bytes, last $lines lines)"
+                tail -n "$lines" "$d/log" | sed 's/^/  | /'
+                exit 0 ;;
+        esac
         found=0
         for f in "$DIR"/holder.*; do
             [ -e "$f" ] || continue
@@ -2736,8 +2755,29 @@ mv "$DIR/waiting.$$" "$DIR/holder.$$"
 # what makes that awkward: a background job in a non-interactive shell has its stdin
 # redirected from /dev/null, so it is handed the channel on the descriptor the watch would
 # otherwise have used.
+# Every job owns a directory under scratch holding what ran and everything it printed. The
+# output used to go down the ssh channel and nowhere else, so the moment a caller cut it
+# with tail it was gone; now the whole of it is on the machine, readable with --out after
+# the job has finished, and the caller is told where. Both streams land in one file, in
+# order, the way a build log is read. Old directories go with the worktrees' own age limit.
+JOB=$(date +%Y%m%d)-$$
+JOBDIR=$SCRATCH/jobs/$JOB
+JOBLOG=""
+if [ "$MODE" != rsh ] && mkdir -p "$JOBDIR" 2>/dev/null; then
+    printf '%s\n' "$CMD" > "$JOBDIR/cmd"
+    export DIBS_JOB="$JOB"
+    JOBLOG=$JOBDIR/log
+    # Without the lock descriptors, or a tee outliving a killed job would hold the lock
+    # with no holder record to show for it.
+    mkfifo "$JOBDIR/pipe" 2>/dev/null && { tee "$JOBLOG" < "$JOBDIR/pipe" 8>&- 9>&- 5<&- & TEE=$!; } || JOBLOG=""
+    find "$SCRATCH/jobs" -mindepth 1 -maxdepth 1 -mtime +"${DIBS_KEEP_DAYS:-14}" -exec rm -rf {} + 2>/dev/null 8>&- 9>&- 5<&- &
+fi
 if [ "$MODE" = rsh ]; then
     timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 0<&5 5<&- &
+elif [ -n "$JOBLOG" ] && [ "$MAXHOLD" -gt 0 ]; then
+    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null > "$JOBDIR/pipe" 2>&1 &
+elif [ -n "$JOBLOG" ]; then
+    bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null > "$JOBDIR/pipe" 2>&1 &
 elif [ "$MAXHOLD" -gt 0 ]; then
     timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null &
 else
@@ -2747,6 +2787,10 @@ WORK=$!
 echo "$WORK" > "$WORKFILE"
 wait "$WORK"
 STATUS=$?
+if [ -n "$JOBLOG" ]; then
+    wait "$TEE" 2>/dev/null
+    rm -f "$JOBDIR/pipe"
+fi
 # It holds the channel open, and while it does the caller's ssh cannot return.
 [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
 rm -f "$WORKFILE"
@@ -2754,6 +2798,19 @@ exec 5<&-
 RUNTIME=$(( $(date +%s) - ACQUIRED ))
 log_event finished "$WAITED" "$RUNTIME" "$STATUS"
 LOGGED_END=1
+# The one thing a caller gets that is the same shape every time: what ran, how long it
+# waited and ran, how it ended and who ended it, and where the whole of its output is. A
+# pipe on the caller's side cannot cut this off, since it is on stderr, and an exit code a
+# filter replaced is still here.
+if [ -n "$JOBLOG" ]; then
+    by=command
+    [ "$STATUS" -eq 124 ] && [ "$MAXHOLD" -gt 0 ] && by=dibs
+    lines=$(wc -l < "$JOBLOG" 2>/dev/null || echo 0)
+    printf 'job %s  %s  %s  queued %ss  ran %ss  exit %s  by=%s\n  log %s:%s  (%s lines)  dibs --out %s\n' \
+        "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$(hostname -s)" "$JOBLOG" "$lines" "$JOB" >&2
+    printf 'mode\t%s\nlabel\t%s\nqueued\t%s\nran\t%s\nexit\t%s\nby\t%s\nagent\t%s\nlines\t%s\n' \
+        "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$AGENT" "$lines" > "$JOBDIR/meta"
+fi
 if [ "$(wc -l < "$LOG" 2>/dev/null || echo 0)" -gt 20000 ]; then
     tail -10000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
 fi
@@ -2795,26 +2852,6 @@ case "$MODE" in
         AGENTB64=$(agent_name | base64 | tr -d '\n')
         AGENTIDB64=$(agent_id | base64 | tr -d '\n') ;;
 esac
-# Work belongs to dibs-run, which prepares a worktree, exports a cache, derives a stable
-# label, redirects the output and records what ran and why. A bare command here does none of
-# that, and while it stays available the instrumentation is voluntary: the gaps report can only
-# see what dibs-run was told, so a command run this way is a recipe nobody will know was needed.
-#
-# Printed here rather than on the far side, because ssh does not forward the environment and
-# the marker saying this came through the interface would never arrive.
-#
-# A note rather than a refusal. Refusing would break the onboarding script, --sync, and any
-# legitimate one-off, and the point is to be discovered rather than to be obeyed.
-case "$MODE" in
-    shared|bench)
-        [ "${DIBS_FROM_RUN:-0}" = 1 ] || [ "${DIBS_QUIET_DIRECT:-0}" = 1 ] || {
-            echo "dibs: running a command directly. Prefer a recipe:" >&2
-            echo "  dibs-run list <repo>                       what it already defines" >&2
-            echo "  dibs-run bench <repo>@<ref> <recipe>       run one" >&2
-            echo "  dibs-run raw --reason <why> -- <command>   when nothing fits, recorded" >&2
-        } ;;
-esac
-
 # Only a terminal wants a redraw. Piped to a file, --watch is a timestamped log instead.
 ISTTY=0; [ -t 1 ] && ISTTY=1
 
