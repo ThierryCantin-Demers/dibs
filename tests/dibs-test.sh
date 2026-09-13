@@ -1288,6 +1288,14 @@ DIBS_SCRATCH=$S/scr $T --label j5 'echo cargo; echo "    Finished release"' >/de
 check "and says when it compiled nothing" "$(grep -c 'built=nothing' "$S/j5.err")" "1"
 check "in words" "$(grep -c 'measures the previous binary' "$S/j5.err")" "1"
 check "a job that is not cargo says nothing about it" "$(grep -c 'built=' "$S/j1.err")" "0"
+# A failing command re-run unchanged is the most repeated line in the log; the second run says so.
+DIBS_SCRATCH=$S/scr $T --label j6 'echo same; exit 9' >/dev/null 2> "$S/j6a.err"
+DIBS_SCRATCH=$S/scr $T --label j6 'echo same; exit 9' >/dev/null 2> "$S/j6b.err"
+check "the first failure says nothing about repeats" "$(grep -c 'already failed' "$S/j6a.err")" "0"
+check "the second says it is the same failure" "$(grep -c 'already failed here: job [0-9-]* exit 9' "$S/j6b.err")" "1"
+# The one mechanism that runs beside a measurement leaves a row saying so.
+$T --peek true >/dev/null 2>&1
+check "a peek is an event" "$(grep -c '	peek	' "$DIBS_LOG")" "1"
 
 echo "measure = false on every path"
 printf '[machine.lap]\nssh = "me@lap"\nhostname = "lap"\nmeasure = false\n' > "$DIBS_MACHINES"

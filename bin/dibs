@@ -2620,13 +2620,16 @@ if [ "$MODE" = peek ]; then
     timeout --signal=TERM --kill-after=5 "$MAXHOLD" bash -c "$CMD" < /dev/null
     STATUS=$?
     PEEK_TOOK=$(( $(date +%s) - PEEK_START ))
+    CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
+    # Every peek is an event. It is the one thing that deliberately runs beside a
+    # measurement, so the log has to be able to say what ran beside which run.
+    log_event peek - "$PEEK_TOOK" "$STATUS"
     # A peek is supposed to be free. One that is not has just been charged to whichever
     # benchmark is running, so say so where it will be read, and leave it in the log.
     if [ "$PEEK_TOOK" -ge "${DIBS_PEEK_WARN:-3}" ]; then
         echo "dibs: that --peek took $(dur "$PEEK_TOOK") and ran with no lock, beside" >&2
         echo "  whatever is being measured. Anything that costs time belongs in" >&2
         echo "  'dibs <command>', which takes the shared lock." >&2
-        CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
         log_event peek-slow - "$PEEK_TOOK" "$STATUS"
     fi
     exit $STATUS
@@ -2851,6 +2854,20 @@ if [ -n "$JOBLOG" ]; then
         "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$built" "$(hostname -s)" "$JOBLOG" "$lines" "$JOB" >&2
     [ "$built" = "  built=nothing" ] &&
         echo "  built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary." >&2
+    # The same failing command re-run unchanged fails the same way, and the log shows it done
+    # several times over. Said once, in the trailer, when the previous attempt is minutes old.
+    if [ "$STATUS" -ne 0 ]; then
+        prev=""
+        for d in "$SCRATCH"/jobs/*/; do
+            d=${d%/}
+            [ "$d" != "$JOBDIR" ] && [ -f "$d/meta" ] && cmp -s "$d/cmd" "$JOBDIR/cmd" || continue
+            age=$(( $(date +%s) - $(stat -c %Y "$d/meta" 2>/dev/null || echo 0) ))
+            [ "$age" -le "${DIBS_REPEAT_WINDOW:-900}" ] || continue
+            e=$(awk -F'\t' '$1=="exit"{print $2}' "$d/meta")
+            [ "$e" != 0 ] && prev="${d##*/} exit $e, $(dur "$age") ago"
+        done
+        [ -n "$prev" ] && echo "  this exact command already failed here: job $prev. Unchanged, it failed the same way." >&2
+    fi
     printf 'mode\t%s\nlabel\t%s\nqueued\t%s\nran\t%s\nexit\t%s\nby\t%s\nagent\t%s\nlines\t%s\n' \
         "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$AGENT" "$lines" > "$JOBDIR/meta"
 fi
