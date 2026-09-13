@@ -1295,7 +1295,7 @@ check "the first failure says nothing about repeats" "$(grep -c 'already failed'
 check "the second says it is the same failure" "$(grep -c 'already failed here: job [0-9-]* exit 9' "$S/j6b.err")" "1"
 # The one mechanism that runs beside a measurement leaves a row saying so.
 $T --peek true >/dev/null 2>&1
-check "a peek is an event" "$(grep -c '	peek	' "$DIBS_LOG")" "1"
+check "a peek is an event" "$(tail -1 "$DIBS_LOG" | grep -c '	peek	')" "1"
 
 echo "measure = false on every path"
 printf '[machine.lap]\nssh = "me@lap"\nhostname = "lap"\nmeasure = false\n' > "$DIBS_MACHINES"
