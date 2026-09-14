@@ -240,11 +240,7 @@ fn run() -> Result<ExitCode, String> {
     }
 
     let dir = resolve_repo(&args.repo, &args.root)?;
-    let repo_name = dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("repo")
-        .to_string();
+    let repo_name = worktree::identity(&dir);
     let manifest = if args.verb == "shell" {
         Manifest::default()
     } else {

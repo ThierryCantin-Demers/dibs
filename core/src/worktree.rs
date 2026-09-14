@@ -222,6 +222,26 @@ mod tests {
 
     /// A repo with an origin, a branch that was never pushed, and a second remote branch whose
     /// tip is what a wrong resolution used to land on. Returns (home, wanted sha, decoy sha).
+    #[test]
+    fn a_worktree_is_the_repo_it_belongs_to() {
+        let home = std::env::temp_dir().join(format!("dibs-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let main = home.join("cubek");
+        std::fs::create_dir_all(main.join("inner")).unwrap();
+        std::fs::create_dir_all(home.join("loose")).unwrap();
+        let sh = |cmd: &str| {
+            let o = std::process::Command::new("bash").arg("-c").arg(cmd).current_dir(&home).output().unwrap();
+            assert!(o.status.success(), "{cmd}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        sh("git -C cubek init -q && git -C cubek -c user.email=a@b -c user.name=t commit -q --allow-empty -m one");
+        sh("git -C cubek worktree add -q ../topk-branch");
+        assert_eq!(identity(&home.join("topk-branch")), "cubek");
+        assert_eq!(identity(&main), "cubek");
+        assert_eq!(identity(&main.join("inner")), "inner");
+        assert_eq!(identity(&home.join("loose")), "loose");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     fn sandbox(name: &str) -> (std::path::PathBuf, String, String) {
         let home = std::env::temp_dir().join(format!("dibs-wt-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
@@ -402,6 +422,29 @@ pub struct Local {
     pub key: String,
     pub content: String,
     pub dirty: bool,
+}
+
+/// The repo a checkout belongs to rather than the folder it sits in. A worktree is named after
+/// its branch, and that name finds no recipes, no clone on the machine and no build cache.
+pub fn identity(dir: &std::path::Path) -> String {
+    let folder = |p: &std::path::Path| p.file_name().and_then(|s| s.to_str()).map(str::to_string);
+    let fallback = folder(dir).unwrap_or_else(|| "repo".into());
+    // A directory inside some other repo is not that repo, so only a checkout's own top level
+    // is asked.
+    let top = git(dir, &["rev-parse", "--show-toplevel"]).map(|t| std::path::PathBuf::from(t.trim()));
+    if top.ok().and_then(|t| t.canonicalize().ok()) != dir.canonicalize().ok() {
+        return fallback;
+    }
+    let Ok(common) = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"]) else {
+        return fallback;
+    };
+    let common = std::path::PathBuf::from(common.trim());
+    let named = if common.file_name().and_then(|s| s.to_str()) == Some(".git") {
+        common.parent().and_then(folder)
+    } else {
+        folder(&common).map(|n| n.trim_end_matches(".git").to_string())
+    };
+    named.filter(|n| !n.is_empty()).unwrap_or(fallback)
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
