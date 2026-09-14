@@ -628,18 +628,8 @@ version_notice() {   # [quiet]
     } >&2
 }
 
-case "${1:-}" in
-    build|test|bench|list|runs|gaps|shell|raw)
-        version_notice
-        core=$(dibs_core) ||
-            { echo "dibs: $1 needs the recipe layer, which is not installed. Run install.sh from the clone." >&2; exit 2; }
-        exec "$core" "$@" ;;
-    run)    shift ;;
-    status) shift; set -- --status "$@" ;;
-    out)    shift; set -- --out "$@" ;;
-esac
-
 ORIG_ARGS=("$@")
+SUBCOMMAND=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -711,7 +701,32 @@ while [ $# -gt 0 ]; do
         -h|--help)    usage ;;
         --)           shift; break ;;
         -*)           echo "unknown option: $1" >&2; usage 2 ;;
-        *)            break ;;
+        *)
+            # A subcommand is the first word that is not a flag, so flags may come before it.
+            [ "$SUBCOMMAND" = 0 ] || break
+            SUBCOMMAND=1
+            case "$1" in
+                run)    [ "$MODE" = shared ] || [ "$MODE" = bench ] || break; shift ;;
+                status) [ "$MODE" = shared ] || break; MODE=status; shift ;;
+                out)    [ "$MODE" = shared ] || break; MODE=out; shift
+                        if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9-]/}" ]; then
+                            OUTPID=$1; shift
+                        fi ;;
+                build|test|bench|list|runs|gaps|shell|raw)
+                    # The recipe layer takes its own flags, after the verb. --on is the one that
+                    # can come first, and it travels as DIBS_ON.
+                    consumed=$(( ${#ORIG_ARGS[@]} - $# ))
+                    if [ "$consumed" -gt 0 ] && ! { [ "$HOSTFROM" = --on ] && [ "$consumed" -eq 2 ]; }; then
+                        echo "dibs: only --on can come before $1. Put the rest after it:  dibs $1 ... <flags>" >&2
+                        exit 2
+                    fi
+                    [ "$HOSTFROM" = --on ] && export DIBS_ON=$MACHINE
+                    version_notice
+                    core=$(dibs_core) ||
+                        { echo "dibs: $1 needs the recipe layer, which is not installed. Run install.sh from the clone." >&2; exit 2; }
+                    exec "$core" "$@" ;;
+                *)      break ;;
+            esac ;;
     esac
 done
 
