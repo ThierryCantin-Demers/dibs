@@ -523,6 +523,7 @@ check "and told where it goes" "$($T --sync --label y ./a :~/b 2>&1 | grep -c 'P
 check "preserving mtimes into the machine is warned about" \
   "$($T --sync -a ./a :~/b 2>&1 | grep -c 'preserving mtimes')" "1"
 check "but not when fetching" "$($T --sync -a :~/b ./a 2>&1 | grep -c 'preserving mtimes')" "0"
+check "nor when times are turned off" "$($T --sync -a --no-times --checksum ./a :~/b 2>&1 | grep -c 'preserving mtimes')" "0"
 # The transport taking the caller's label needs a real channel and is in the live suite.
 check "--which says why it has nothing" \
   "$(DIBS_MACHINES=$S/no-such-inventory DIBS_HOST= $T --which 2>&1; echo "exit=$?")" "dibs: no machine: no --on, no DIBS_ON, no DIBS_HOST, and no default in $S/no-such-inventory.
@@ -1022,6 +1023,9 @@ out=$($T --sync -rlpgo "$S/syncsrc/" ":$S/syncdst/" 2>&1); rc=$?
 check "it succeeds" "$rc" "0"
 check "and the file is there" "$(cat "$S/syncdst/f.txt" 2>/dev/null)" "carried"
 check "and it did not tell a program to use cp" "$(grep -c 'use cp' <<<"$out")" "0"
+rm -rf "$S/syncnest"
+check "a destination whose parents do not exist yet is created" \
+  "$($T --sync -rlpgo "$S/syncsrc/" ":$S/syncnest/a/b/" >/dev/null 2>&1; cat "$S/syncnest/a/b/f.txt" 2>/dev/null)" "carried"
 
 echo "a lock directory it cannot write is refused rather than run around"
 RO=$S/ro-lock; rm -rf "$RO"; mkdir -p "$RO"; chmod a-w "$RO"

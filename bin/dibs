@@ -1148,6 +1148,7 @@ case "$MODE" in
         # looks unchanged to cargo, and the build after it compiles nothing. One line, before
         # the bytes move; the copy itself is still what was asked for.
         case " ${SYNC[*]} " in
+            *" --no-times "*|*" --no-t "*) ;;
             *" -a "*|*" -t "*|*" -"[a-zA-Z]*"a"*" "*|*" --archive "*|*" --times "*)
                 case "${SYNC[-1]}" in
                     "$HOST:"*) echo "dibs: --sync is preserving mtimes into the machine. A build there may then compile nothing:" >&2
@@ -1159,6 +1160,12 @@ case "$MODE" in
             exit 2
         }
         command -v rsync >/dev/null 2>&1 || { echo "--sync needs rsync on both machines" >&2; exit 2; }
+        # Without it a destination whose parent does not exist yet fails. Only offered where this
+        # rsync knows the flag, since an older one rejects the whole transfer over it.
+        case " ${SYNC[*]} " in
+            *" --mkpath "*|*" --no-mkpath "*) ;;
+            *) case "$(rsync --help 2>/dev/null)" in *--mkpath*) SYNC=(--mkpath "${SYNC[@]}") ;; esac ;;
+        esac
         # On the machine itself there is no transport, because both sides are ordinary paths.
         # Going through one anyway put a second dibs in the middle, and that one refuses to be
         # a transport to where it already is, so the transfer failed after announcing itself.
