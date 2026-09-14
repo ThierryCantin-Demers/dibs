@@ -65,8 +65,12 @@ fi
 SHORT=$(printf %s "$SHA" | cut -c1-12)
 
 WT=$SCRATCH/ws/{repo}/$SHORT
+mkdir -p "$SCRATCH/ws/{repo}"
+# Two prepares of one commit both see no tree and both add it, and the loser dies on "already
+# exists". Per repo rather than per commit, because the prune below touches every worktree.
+exec 7>"$SCRATCH/ws/{repo}/.prepare.lock"
+flock 7
 if [ ! -d "$WT/.git" ] && [ ! -f "$WT/.git" ]; then
-    mkdir -p "$SCRATCH/ws/{repo}"
     # Detached on purpose: a worktree that tracks a branch would move under a job that is
     # still measuring from it.
     git -C "$SRC" worktree add --detach -q "$WT" "$SHA" 2>/dev/null || {{
@@ -74,6 +78,7 @@ if [ ! -d "$WT/.git" ] && [ ! -f "$WT/.git" ]; then
         git -C "$SRC" worktree prune
         git -C "$SRC" worktree add --detach -q "$WT" "$SHA"; }}
 fi
+exec 7>&-
 touch "$WT/.dibs-used"
 
 # One cache per repo rather than per tree. Cargo fingerprints per crate, so switching commits
@@ -122,7 +127,6 @@ done
 
 echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
-echo "DIBS-SCRATCH $SCRATCH"
 echo "DIBS-REV {repo} $SHORT"
 "#
     );
@@ -132,7 +136,6 @@ echo "DIBS-REV {repo} $SHORT"
 pub struct Prepared {
     pub worktree: String,
     pub target: String,
-    pub scratch: String,
     pub revisions: Vec<(String, String)>,
 }
 
@@ -141,15 +144,12 @@ pub struct Prepared {
 pub fn parse(out: &str) -> Result<Prepared, String> {
     let mut worktree = None;
     let mut target = None;
-    let mut scratch = None;
     let mut revisions = Vec::new();
     for line in out.lines() {
         if let Some(v) = line.strip_prefix("DIBS-WT ") {
             worktree = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("DIBS-TARGET ") {
             target = Some(v.trim().to_string());
-        } else if let Some(v) = line.strip_prefix("DIBS-SCRATCH ") {
-            scratch = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("DIBS-REV ") {
             let mut it = v.split_whitespace();
             if let (Some(r), Some(sha)) = (it.next(), it.next()) {
@@ -157,10 +157,8 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
             }
         }
     }
-    match (worktree, target, scratch) {
-        (Some(worktree), Some(target), Some(scratch)) => {
-            Ok(Prepared { worktree, target, scratch, revisions })
-        }
+    match (worktree, target) {
+        (Some(worktree), Some(target)) => Ok(Prepared { worktree, target, revisions }),
         _ => Err("the worktree setup did not report a path; see its output above".into()),
     }
 }
@@ -286,6 +284,27 @@ mod tests {
         assert!(ok, "preparing a local-only branch should succeed");
         assert_eq!(sha, wanted[..12], "resolved to something other than the ref asked for");
         assert_ne!(sha, decoy[..12]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn concurrent_prepares_of_one_commit_all_succeed() {
+        let (home, wanted, _) = sandbox("concurrent");
+        let kids: Vec<_> = (0..8)
+            .map(|_| {
+                std::process::Command::new("bash")
+                    .arg("-c").arg(setup_script("demo", &wanted))
+                    .env("HOME", &home)
+                    .env("DIBS_SCRATCH", home.join("scratch"))
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn().unwrap()
+            })
+            .collect();
+        for k in kids {
+            let out = k.wait_with_output().unwrap();
+            assert!(out.status.success(), "a prepare failed: {}", String::from_utf8_lossy(&out.stderr));
+        }
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -510,7 +529,6 @@ mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
 touch "$WT/.dibs-used" "$TARGET/.dibs-used"
 echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
-echo "DIBS-SCRATCH $SCRATCH"
 echo "DIBS-REV {repo} local:{content}"
 "#
     );

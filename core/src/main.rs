@@ -437,22 +437,14 @@ fn run() -> Result<ExitCode, String> {
             needs: rec.needs.as_deref(),
             device: args.device.as_deref(),
         };
-        // One cache per repo, exported rather than left to each recipe to remember, and the
-        // output always lands in a file. That second part is not tidiness: `dibs --out` reads
-        // a running job by finding the file it redirected into, and in the log this replaces,
-        // two jobs out of 179 redirected. A feature that worked one per cent of the time now
-        // works every time, because nothing is being asked to remember.
-        //
-        // stderr is merged rather than teed separately. Keeping them apart needs a process
-        // substitution per stream, and for a build log the merge is what everyone wants
-        // anyway. pipefail so the step's exit status survives the pipe into tee.
-        let log = format!("{}/out/{}.log", prepared.scratch, step_labels[i].replace('/', "-"));
+        // One cache per repo, exported rather than left to each recipe to remember. The output
+        // needs no file of its own: dibs keeps every job's log under its job id, and a path
+        // named after the label would be shared by two runs of one recipe.
         let cd = format!(
-            "cd {} && export CARGO_TARGET_DIR={} && set -o pipefail && {{ {}; }} 2>&1 | tee {}",
+            "cd {} && export CARGO_TARGET_DIR={} && {{ {}; }}",
             sh(&prepared.worktree),
             sh(&prepared.target),
-            step.run,
-            sh(&log)
+            step.run
         );
         eprintln!("dibs: step {}/{} [{:?}]", i + 1, rec.steps.len(), step.lock);
         let out = backend.run(&req, &cd)?;
