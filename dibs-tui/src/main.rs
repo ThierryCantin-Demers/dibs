@@ -1171,11 +1171,11 @@ fn run(
 fn main() -> std::io::Result<()> {
     let arg = std::env::args().nth(1);
     if matches!(arg.as_deref(), Some("-h") | Some("--help")) {
-        println!("dibstop [seconds]   live view of the machine's lock, redrawing every 2s");
+        println!("dibstop [seconds]   live view of the machine's lock, redrawing every 10s by default");
         println!("{HELP}");
         return Ok(());
     }
-    let interval: u64 = arg.and_then(|s| s.parse().ok()).unwrap_or(2).clamp(1, 60);
+    let interval: u64 = arg.and_then(|s| s.parse().ok()).unwrap_or(10).clamp(1, 60);
 
     let (tx, rx) = mpsc::channel();
     // No inventory means one unnamed feed, going wherever a bare `dibs` would, so a single
