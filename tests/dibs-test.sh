@@ -1273,6 +1273,12 @@ check "and the command, whole" "$(cat "$S/scr/jobs/$J/cmd")" "echo hello; echo e
 check "--out reads a finished job by its id" "$(DIBS_SCRATCH=$S/scr $T --out "$J" 2>&1 | grep -c '| err')" "1"
 check "and says how it ended" "$(DIBS_SCRATCH=$S/scr $T --out "$J" 2>&1 | grep -c 'ran [0-9]*s  exit 4')" "1"
 check "an unknown job is refused" "$(DIBS_SCRATCH=$S/scr $T --out 19700101-1 >/dev/null 2>&1; echo $?)" "1"
+# rsync's transport never reaches the machine from here, so the far half is run as rsync would.
+sed -n "/^cat <<'REMOTE'$/,/^REMOTE$/p" "$(readlink -f "$T")" | sed '1d;$d' > "$S/payload"
+DIBS_SCRATCH=$S/scr bash "$S/payload" rsh sync 0 0 0 "$(printf 'echo carried' | base64 -w0)" 1 0 "" 0 "" "" "" "" "" 1 0 5</dev/null > "$S/rsh.out" 2> "$S/rsh.err"; rc=$?
+check "a transfer's far half exits with its command" "$rc" "0"
+check "and carries its stream untouched" "$(cat "$S/rsh.out")" "carried"
+check "with nothing unbound on the way out" "$(grep -c 'unbound variable' "$S/rsh.err")" "0"
 check "the recipe nag is gone" "$(grep -c 'Prefer a recipe' "$S/j1.err")" "0"
 # A caller cannot know whether a job prints 3 lines or 30000, so the tool bounds it and
 # says what it left out and where the rest is. --stream is the whole thing.

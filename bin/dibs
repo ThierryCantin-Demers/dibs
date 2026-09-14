@@ -2883,11 +2883,12 @@ mv "$DIR/waiting.$$" "$DIR/holder.$$"
 JOB=$(date +%Y%m%d)-$$
 JOBDIR=$SCRATCH/jobs/$JOB
 JOBLOG=""
+TEE=""
+SINK=""
 if [ "$MODE" != rsh ] && mkdir -p "$JOBDIR" 2>/dev/null; then
     printf '%s\n' "$CMD" > "$JOBDIR/cmd"
     export DIBS_JOB="$JOB"
     JOBLOG=$JOBDIR/log
-    TEE=""
     if [ "$STREAM" = 1 ]; then
         # Without the lock descriptors, or a tee outliving a killed job would hold the lock
         # with no holder record to show for it.
