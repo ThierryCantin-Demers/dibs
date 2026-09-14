@@ -50,8 +50,8 @@ shared benchmarking machine, and most of it exists because someone already got i
 
 - `dibs --machines -v` lists every machine's cards: the alias to name it by, its bus id, what
   can reach it, and what it is plugged into.
-- `--device <alias>` runs the job on that card and nothing else. It works with `dibs` and with
-  `dibs-run`. **A benchmark on a multi-GPU machine that names no card is not reproducible**,
+- `--device <alias>` runs the job on that card and nothing else. It works with `dibs run` and with
+  recipes. **A benchmark on a multi-GPU machine that names no card is not reproducible**,
   because which card the runtime picks is not yours to decide and is not recorded anywhere.
   dibs says so when you do it; it does not stop you, because a build does not care.
 - Two runs under one label have to name the same card, or their numbers are not comparable and
@@ -62,16 +62,16 @@ shared benchmarking machine, and most of it exists because someone already got i
   can still name either one. A card the machine cannot answer for is refused rather than run
   unpinned, because a job that measured whichever card came first and reported it under the
   name you asked for is worse than one that did not run.
-- `dibs-run ... --dry-run` prints which card it would use before anything runs. On a
+- `dibs bench ... --dry-run` prints which card it would use before anything runs. On a
   measurement worth keeping, look at that line first.
 - Do not pass `CUDA_VISIBLE_DEVICES` yourself. dibs sets it, from the alias, resolved on the
   machine at the moment the job starts. Setting it by hand with a bus id looks like it works
   and does nothing: that variable takes an index or a `GPU-<uuid>`, and it ignores anything
   else rather than failing.
 
-### Recipes: prefer `dibs-run` where a repo has one
+### Recipes: prefer one where a repo has it
 
-- `dibs-run list <repo>` says what a repo defines. `dibs-run <verb> <repo>@<ref> <recipe>` runs
+- `dibs list <repo>` says what a repo defines. `dibs <verb> <repo>@<ref> <recipe>` runs
   it, where verb is `build`, `test` or `bench`.
 - Use it in preference to writing a command by hand, because it does five things you would
   otherwise each do differently: it fetches and creates the worktree, exports one build cache
@@ -85,15 +85,15 @@ shared benchmarking machine, and most of it exists because someone already got i
   the per-tree build cache, the recorded revision and the lock split at once. It follows the
   repo's ignore rules, so no `target` and no `.git` make the trip, and the record names the
   exact tree by content so two runs are comparable only if it matches.
-- `dibs-run runs [label]` is what was actually measured: the commit of every repo, the
+- `dibs runs [label]` is what was actually measured: the commit of every repo, the
   isolation, the time. It also says when a label's recipe has changed, because two procedures
   under one name are two histories, and comparing across them is the mistake the record exists
   to prevent.
-- Recipes come in three layers, each overriding the last: bundled with `dibs-run`, then a
+- Recipes come in three layers, each overriding the last: bundled with dibs, then a
   repo's own `.dibs.toml`, then `~/.config/dibs/recipes/<repo>.toml`. The bundled ones mean a
   new person has working recipes with no setup; local config is where one lives while it is
   still moving, so it can be iterated on without a pull request against a shared repo.
-  `dibs-run list` says which layer each came from. The run record carries the procedure itself,
+  `dibs list` says which layer each came from. The run record carries the procedure itself,
   not only its fingerprint, so a recipe that is not in git is still recoverable from the record.
 - **If there is no recipe for what you need, use `dibs` directly and tell whoever owns the machine.** A missing recipe
   is a gap worth filling, and the ones that keep coming up are the specification for the next

@@ -166,7 +166,7 @@ them. It changes when a machine does.
 They live in different places, and that is not an accident of tidiness. `chips.toml` ships
 in this repo under `config/`: it is a statement about silicon, true for everyone, and the half
 worth sharing outright. `machines.toml` names your boxes and the ssh aliases that reach them,
-so it goes to `~/.config/dibs/machines.toml`, beside the recipe overrides `dibs-run` already
+so it goes to `~/.config/dibs/machines.toml`, beside the recipe overrides the recipe layer already
 reads from there. This repo is public; an inventory in it would be a list of someone's hosts.
 
 ```toml
@@ -327,7 +327,7 @@ the pool includes a workstation, ranking has to discount it beyond what CPU occu
 the dispatcher competes with its owner for their own machine.
 
 **Cache affinity is the counterweight, and it is not small.** Shared jobs are overwhelmingly
-builds, and `dibs-run` gives each repo one build cache per machine. A warm
+builds, and the recipe layer gives each repo one build cache per machine. A warm
 `$SCRATCH/target/<repo>` on one box is worth more than any imbalance that moving to another
 would relieve, so spreading without weighing it makes the system slower while looking better
 balanced. This is the strongest argument for sccache, which is on the open list as not
@@ -485,7 +485,7 @@ Each phase is useful on its own and none requires the next.
    into with `--any` or `DIBS_ROUTE=1`: candidates are polled in parallel, ranked on
    `/proc/loadavg` over core count with the dispatching machine discounted, ties broken at
    random, and a machine that does not answer is named rather than dropped. `dibs --pick`
-   exposes the choice, which is how `dibs-run` pins every step of a run to one machine.
+   exposes the choice, which is how the recipe layer pins every step of a run to one machine.
    `--needs` filtering is the half still missing.
 6. **Bindings.** Label pinned to device, history keyed per device. **Done.** A label records
    the machine and card its first benchmark ran on, and a later one elsewhere is refused rather

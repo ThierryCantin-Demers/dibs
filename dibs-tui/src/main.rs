@@ -640,7 +640,7 @@ impl App {
                             title: format!("{} writes to no file", it.label),
                             body: "Its output goes straight back to the agent that started it \
                                    and is kept nowhere, so there is nothing here to read.\n\n\
-                                   A job that redirects into a file, which is what dibs-run \
+                                   A job that redirects into a file, which is what a recipe \
                                    does for every step, can be read from here while it runs."
                                 .into(),
                             scroll: 0,

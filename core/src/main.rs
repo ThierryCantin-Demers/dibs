@@ -23,16 +23,16 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-dibs-run <verb> <repo>[@<ref>] <recipe>   run a recipe from the repo's .dibs.toml
+dibs <verb> <repo>[@<ref>] <recipe>       run a recipe from the repo's .dibs.toml
                                           @local sends your working tree, unpushed and
                                           uncommitted changes included, and is the only
                                           path for a private repo: the machines carry no
                                           GitHub credentials
-dibs-run list <repo>                      what that repo defines
-dibs-run runs [label]                     what has run here, and what is comparable
-dibs-run shell <repo>[@<ref>] --reason <why> -- <cmd>   a command in a prepared worktree
-dibs-run raw --reason <why> -- <cmd>      a command with nothing prepared
-dibs-run gaps                             what did not fit a recipe, and what recurs
+dibs list <repo>                      what that repo defines
+dibs runs [label]                     what has run here, and what is comparable
+dibs shell <repo>[@<ref>] --reason <why> -- <cmd>   a command in a prepared worktree
+dibs raw --reason <why> -- <cmd>      a command with nothing prepared
+dibs gaps                             what did not fit a recipe, and what recurs
 
   <verb>    bench, build or test
   <repo>    a path to a checkout, or a name resolved under --root
@@ -56,7 +56,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("dibs-run: {e}");
+            eprintln!("dibs: {e}");
             ExitCode::from(2)
         }
     }
@@ -105,9 +105,9 @@ fn parse() -> Result<Args, String> {
                 // Stamped by install.sh, so a binary that has drifted from the source can be
                 // told apart from one that is current.
                 println!(
-                    "dibs-run {} ({})",
+                    "dibs-core {} ({})",
                     env!("CARGO_PKG_VERSION"),
-                    option_env!("DIBS_RUN_COMMIT").unwrap_or("commit unknown")
+                    option_env!("DIBS_CORE_COMMIT").unwrap_or("commit unknown")
                 );
                 std::process::exit(0);
             }
@@ -399,11 +399,11 @@ fn run() -> Result<ExitCode, String> {
     let local = if reference == "local" { Some(worktree::local(&dir)?) } else { None };
     match &local {
         Some(l) => eprintln!(
-            "dibs-run: preparing {repo_name} from {} ({})",
+            "dibs: preparing {repo_name} from {} ({})",
             dir.display(),
             if l.dirty { "uncommitted changes included" } else { "clean" }
         ),
-        None => eprintln!("dibs-run: preparing {repo_name}@{reference}"),
+        None => eprintln!("dibs: preparing {repo_name}@{reference}"),
     }
     let setup = Request {
         label: &format!("{label}:setup"),
@@ -423,7 +423,7 @@ fn run() -> Result<ExitCode, String> {
         return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
     }
     let prepared = worktree::parse(&text)?;
-    eprintln!("dibs-run: {}", prepared.worktree);
+    eprintln!("dibs: {}", prepared.worktree);
     if local.is_some() {
         sync_local(&backend, &dir, &prepared.worktree)?;
     }
@@ -458,7 +458,7 @@ fn run() -> Result<ExitCode, String> {
             step.run,
             sh(&log)
         );
-        eprintln!("dibs-run: step {}/{} [{:?}]", i + 1, rec.steps.len(), step.lock);
+        eprintln!("dibs: step {}/{} [{:?}]", i + 1, rec.steps.len(), step.lock);
         let out = backend.run(&req, &cd)?;
         steps.push(provenance::StepRecord {
             lock: match step.lock {

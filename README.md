@@ -4,7 +4,7 @@ A lock over a shared benchmarking machine, and the interface agents use to reach
 
 The problem it solves is small and specific: several people, and several agents each, want one
 machine with a GPU in it. A benchmark is only worth reading if nothing else ran beside it, and
-nothing in ssh says so. `dibs` makes that a lock, and `dibs-run` makes it an interface that
+nothing in ssh says so. `dibs` makes that a lock, and its recipes make it an interface that
 records what was actually measured.
 
 ## Setting it up
@@ -18,8 +18,8 @@ tells two people the machine is idle at the same time.
     git clone https://github.com/ThierryCantin-Demers/dibs
     cd dibs && ./install.sh
 
-`install.sh` symlinks `bin/dibs` into `~/.local/bin` so a pull updates it, and builds `dibs-run`
-and `dibstop` if cargo is present. Pass `--copy` if you would rather have files that do not move
+`install.sh` symlinks `bin/dibs` into `~/.local/bin` so a pull updates it, and builds the recipe
+layer under `~/.local/libexec/dibs` and `dibstop` if cargo is present. Pass `--copy` if you would rather have files that do not move
 under you. Without cargo you still have a working lock, just not the interface above it.
 
 Then point it at your machine and record what is in it:
@@ -34,7 +34,7 @@ rather than only its exit code: it reports what the machine can do, and warns ab
 that are wrong in ways nothing else would tell you. There is no default host, on purpose, so
 nothing goes somewhere you did not choose.
 
-**The one thing the machine does need.** `dibs-run` prepares a git worktree from a clone at
+**The one thing the machine does need.** A recipe prepares a git worktree from a clone at
 `~/prog/<repo>` on the machine itself, so each repo you want to build has to be cloned there
 once. A machine without it is dropped from that repo's routing rather than sent work it cannot
 do, and `dibs --check` lists what it has.
@@ -52,7 +52,7 @@ instructions, and is the shortest useful description of how to use this well.
     dibs --update
 
 It fast-forwards the clone `dibs` was installed from, lists the commits that arrived, and reruns
-`install.sh` when anything changed or when the installed `dibs-run` was built from another
+`install.sh` when anything changed or when the installed recipe layer was built from another
 commit. A `--copy` install has no clone to pull and says so.
 
 ## Sharing recipes with the people you work with
@@ -165,7 +165,7 @@ benchmark are only comparable if they ran on the same silicon, and which card th
 is neither the caller's to decide nor recorded anywhere.
 
 `dibs --machines -v` lists each machine's cards, and `--device <alias>` runs a job on one of
-them. It works with `dibs` and with `dibs-run`, and `dibs-run --dry-run` prints which card it
+them. It works with `dibs run` and with recipes, and `dibs bench ... --dry-run` prints which card it
 would use before anything runs.
 
 What that turns into differs per runtime, and none of it is guessable:
@@ -207,7 +207,7 @@ lanes than it can drive is worth knowing about before believing a number that mo
 |---|---|
 | `bin/dibs` | the lock. One bash file, shipped over ssh, installs nothing on the far side. |
 | `config/chips.toml` | what to assume about a chip when no runtime can probe it. |
-| `dibs-run/` | the interface: verbs, recipes, labels, worktrees, provenance. |
+| `core/` | the recipe layer behind `dibs build`, `test` and `bench`: recipes, labels, worktrees, provenance. |
 | `dibs-tui/` | a live view of who holds the machines, one feed each. |
 | `dibs-report/` | builds a single-page handoff report from the sources themselves. |
 | `dibs-design/` | the plans, the settled decisions and their measurements, and what sharing a machine takes. |
@@ -220,7 +220,7 @@ lanes than it can drive is worth knowing about before believing a number that mo
 `bin/dibs` is the resource layer and stays bash because it travels over ssh: a machine needs
 nothing installed to be usable, which is what makes adding one cheap.
 
-`dibs-run` is everything above that, and runs on your side. It exists because an interface
+`core/` is everything above that, and runs on your side. It exists because an interface
 taking one arbitrary string invites four problems that were measured in the log it replaced.
 Labels were unstable, so estimates could not work. Two jobs in 179 redirected their output, so
 watching one almost never worked. Agents chose their own scratch paths, and one filled a shared
@@ -231,7 +231,7 @@ all exclusive time on the machine was spent compiling.
 
     bash tests/dibs-test.sh        # the protocol, locally, safe while others are working
     bash tests/dibs-live-test.sh   # needs a real machine
-    cd dibs-run && cargo test
+    cd core && cargo test
 
 ## Related
 

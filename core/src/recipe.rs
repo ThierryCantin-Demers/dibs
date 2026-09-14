@@ -116,7 +116,7 @@ impl Verb {
 /// Where a recipe was found, so an override is visible rather than surprising.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// Compiled into the binary. Anyone who has dibs-run has these, with no setup and nothing
+    /// Compiled into the binary. Anyone who has dibs installed has these, with no setup and nothing
     /// to sync, which is the only arrangement that works for someone who does not share the
     /// same dotfile manager.
     Builtin,

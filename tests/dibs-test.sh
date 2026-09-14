@@ -17,6 +17,7 @@ export DIBS_LOCK_DIR=$S/lockdir DIBS_HISTORY=$S/history DIBS_LOG=$S/log
 # reads back: a benchmark in this suite wrote its series into the real one, under the labels
 # of whoever was using the machine.
 export DIBS_SERIES=$S/series
+export DIBS_SEEN=$S/seen
 mkdir -p "$DIBS_LOCK_DIR"
 T=${DIBS:-${DIBS_BIN:-$HOME/.local/bin/dibs}}
 DIBS_LOCK_DIR_SAVED=$DIBS_LOCK_DIR
@@ -833,7 +834,7 @@ check "with routing it goes to the machine that answered" "$rc" "0"
 check "a machine that did not answer says so" \
   "$(DIBS_HOST= DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --pick -v 2>&1 >/dev/null |
      grep -c 'gone .*no answer')" "1"
-# dibs-run prepares a worktree on one machine and then runs against it, so every step of a run
+# A recipe prepares a worktree on one machine and then runs against it, so every step of a run
 # has to land on the same machine. It picks once and pins; the wrapper must not pick again.
 out=$(DIBS_HOST= DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 DIBS_FROM_RUN=1 DIBS_ROUTE=1 \
       $T --label r true 2>&1); rc=$?
@@ -929,7 +930,7 @@ unset DIBS_QUEUE DIBS_QUEUE_LOCAL DIBS_JOBS_DIR
 # would have dibs tell people to kill healthy builds.
 echo "a job that writes is a job that works"
 fifo W
-# Redirected in a child, the way dibs-run redirects every step. A holder's own fd 1 is the
+# Redirected in a child, the way a recipe redirects every step. A holder's own fd 1 is the
 # channel it was launched down and is excluded on purpose.
 $T --label writes-out "sh -c 'read -r _ < $S/f-W' > $S/written" >/dev/null 2>&1 & W1=$!; held
 until_ "[ -e $S/written ]"
@@ -974,7 +975,7 @@ gone
 # Every other mode recognises the machine it is already on and runs there. --sync went through
 # a transport anyway, and the second dibs in the middle refused to be a transport to where it
 # already was, so the transfer failed after announcing itself. The caller that cannot take the
-# advice to use cp is a program: dibs-run sending a local worktree to a machine that is this one.
+# advice to use cp is a program: a recipe sending a local worktree to a machine that is this one.
 echo "a sync to the machine you are on copies rather than refusing"
 rm -rf "$S/syncsrc" "$S/syncdst"; mkdir -p "$S/syncsrc"
 echo carried > "$S/syncsrc/f.txt"
@@ -1320,7 +1321,8 @@ git clone -q "$U/rorigin" "$U/recipes"
 echo two > "$U/origin/two" && git -C "$U/origin" add -A && git -C "$U/origin" -c user.email=t@t -c user.name=t commit -qm two
 echo r2 > "$U/rorigin/r2" && git -C "$U/rorigin" add -A && git -C "$U/rorigin" -c user.email=t@t -c user.name=t commit -qm r2
 HEAD2=$(git -C "$U/origin" rev-parse --short HEAD)
-printf '#!/bin/sh\necho "dibs-run 0.1.0 (%s)"\n' "$HEAD2" > "$U/bin/dibs-run"; chmod +x "$U/bin/dibs-run"
+printf '#!/bin/sh\necho "dibs-core 0.1.0 (%s)"\n' "$HEAD2" > "$U/bin/dibs-core"; chmod +x "$U/bin/dibs-core"
+export DIBS_CORE=$U/bin/dibs-core
 PATH=$U/bin:$PATH DIBS_RECIPES=$U/recipes "$U/clone/bin/dibs" --update > "$U/out1" 2>&1; rc=$?
 check "an update succeeds" "$rc" "0"
 check "it fast-forwards its own clone" "$(git -C "$U/clone" rev-parse --short HEAD)" "$HEAD2"
@@ -1330,13 +1332,46 @@ check "and pulls the recipes" "$(git -C "$U/recipes" rev-parse HEAD)" "$(git -C 
 PATH=$U/bin:$PATH DIBS_RECIPES=$U/recipes "$U/clone/bin/dibs" --update > "$U/out2" 2>&1
 check "a current install is not rebuilt" "$(wc -l < "$U/installs")" "1"
 check "and says it is current" "$(grep -c 'already current' "$U/out2")" "2"
-printf '#!/bin/sh\necho "dibs-run 0.1.0 (0000000)"\n' > "$U/bin/dibs-run"
+printf '#!/bin/sh\necho "dibs-core 0.1.0 (0000000)"\n' > "$U/bin/dibs-core"
 PATH=$U/bin:$PATH DIBS_RECIPES=$U/recipes "$U/clone/bin/dibs" --update > /dev/null 2>&1
-check "a stale dibs-run is rebuilt even with nothing to pull" "$(wc -l < "$U/installs")" "2"
+check "a stale recipe layer is rebuilt even with nothing to pull" "$(wc -l < "$U/installs")" "2"
 PATH=$U/bin:$PATH DIBS_RECIPES=$U/nowhere "$U/clone/bin/dibs" --update > "$U/out3" 2>&1
 check "recipes that are not a clone are left alone quietly" "$(grep -c 'recipes' "$U/out3")" "0"
 cp "$(readlink -f "$T")" "$U/loose"
 check "a copy outside a clone is refused" "$("$U/loose" --update >/dev/null 2>&1; echo $?)" "2"
+
+echo "one command"
+check "run is the bare form" "$($T run --label one-run 'echo via-run' 2>/dev/null)" "via-run"
+check "status is --status" "$($T status | grep -c 'dibs: idle')" "1"
+$T --label one-out 'echo kept' > /dev/null 2> "$S/one-out.err"
+J1=$(sed -n 's/^job \([0-9-]*\)  .*/\1/p' "$S/one-out.err")
+check "out is --out" "$($T out "$J1" 2>&1 | grep -c '| kept')" "1"
+printf '#!/bin/sh\necho "core $*"\n' > "$S/fakecore"; chmod +x "$S/fakecore"
+check "a recipe verb goes to the recipe layer, arguments intact" "$(DIBS_CORE=$S/fakecore $T bench cubek@local gemm --dry-run 2>/dev/null)" "core bench cubek@local gemm --dry-run"
+check "and list too" "$(DIBS_CORE=$S/fakecore $T list cubek 2>/dev/null)" "core list cubek"
+check "a missing recipe layer is refused" "$(DIBS_CORE= HOME=$S/nohome $T list cubek >/dev/null 2>&1; echo $?)" "2"
+
+echo "a session is told when dibs changed under it"
+V="env -u CLAUDE_CODE_HOST_SESSION_ID DIBS_SEEN=$S/seen-v CLAUDE_CODE_SESSION_ID=v1"
+commit_() { echo "$1" > "$U/origin/$1" && git -C "$U/origin" add -A && git -C "$U/origin" -c user.email=t@t -c user.name=t commit -qm "$1" && git -C "$U/clone" pull -q --ff-only; }
+$V "$U/clone/bin/dibs" --status > /dev/null 2> "$S/v1.err"
+check "a first call says nothing" "$(grep -c 'dibs changed' "$S/v1.err")" "0"
+commit_ three
+$V "$U/clone/bin/dibs" --status > /dev/null 2> "$S/v2.err"
+check "the next call after a change says so" "$(grep -c '^dibs changed since this session last ran it: ' "$S/v2.err")" "1"
+check "and lists what changed" "$(grep -c '^  [0-9a-f]* three$' "$S/v2.err")" "1"
+$V "$U/clone/bin/dibs" --status > /dev/null 2> "$S/v3.err"
+check "once" "$(grep -c 'dibs changed' "$S/v3.err")" "0"
+env -u CLAUDE_CODE_HOST_SESSION_ID DIBS_SEEN=$S/seen-v CLAUDE_CODE_SESSION_ID=v2 "$U/clone/bin/dibs" --status > /dev/null 2> "$S/v4.err"
+check "a session that never saw the old one is not told" "$(grep -c 'dibs changed' "$S/v4.err")" "0"
+commit_ four
+$V DIBS_CORE=$S/fakecore "$U/clone/bin/dibs" list x > /dev/null 2> "$S/v5.err"
+check "a recipe verb is told too" "$(grep -c 'dibs changed' "$S/v5.err")" "1"
+echo five > "$U/origin/five" && git -C "$U/origin" add -A && git -C "$U/origin" -c user.email=t@t -c user.name=t commit -qm five
+$V DIBS_RECIPES=$U/nowhere "$U/clone/bin/dibs" --update > /dev/null 2>&1
+$V "$U/clone/bin/dibs" --status > /dev/null 2> "$S/v6.err"
+check "an update it ran itself is not reported again" "$(grep -c 'dibs changed' "$S/v6.err")" "0"
+unset DIBS_CORE
 
 echo
 echo "passed $pass, failed $fail"

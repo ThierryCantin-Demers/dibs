@@ -68,7 +68,7 @@ echo "--watch dies with the terminal that was watching"
 WOUT=/tmp/dibs-live-watch.$$
 $T --watch 2 > "$WOUT" 2>&1 & W=$!
 for i in $(seq 400); do grep -q 'ctrl-c to stop' "$WOUT" 2>/dev/null && break; done
-remote_watches() { $T --peek "ps -eo args= | grep -c '[.]dibs-run[^ ]* watch'" 2>/dev/null | tr -d ' \r'; }
+remote_watches() { $T --peek "ps -eo args= | grep -c '[.]dibs-payload[^ ]* watch'" 2>/dev/null | tr -d ' \r'; }
 check "the loop is running over there" "$(remote_watches)" "1"
 kill -9 $W 2>/dev/null; wait $W 2>/dev/null
 left=no

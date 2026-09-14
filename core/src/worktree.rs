@@ -269,7 +269,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    // Reported from a real run: `dibs-run test cubecl@perf/fma-fusion-backends cuda` built
+    // Reported from a real run: `dibs test cubecl@perf/fma-fusion-backends cuda` built
     // something else, said nothing, and returned a believable number.
     #[test]
     fn a_branch_name_containing_a_slash_resolves_to_itself() {

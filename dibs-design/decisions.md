@@ -230,14 +230,14 @@ caches, so it is what every machine pays no matter how warm the cache is.
 
 ## Open
 
-**dibs-run could not run an unpushed local branch, and the workaround silently produced wrong
+**The recipe layer could not run an unpushed local branch, and the workaround silently produced wrong
 numbers twice in one session.** Built, as `<repo>@local`. The cache is keyed on the local tree's
 path, which is the only key that is both warm across edits and separate between two arms; the
 sync follows the repo's ignore rules and drops `-t`, so nothing arrives older than the artifacts
 beside it; and the record names the tree by the content that was actually sent. The rest of the
 entry is why. It needs a fetchable ref, so a perf branch that nobody wants to
 push has no way in. An agent measuring one dropped to raw `dibs` calls and rebuilt by hand
-every guarantee dibs-run already gives: a build cache isolated per ref, the commit recorded,
+every guarantee the recipe layer already gives: a build cache isolated per ref, the commit recorded,
 and the build and the measurement in separate locks. Both of that session's real failures were
 in the half that got re-implemented.
 
@@ -247,7 +247,7 @@ in the half that got re-implemented.
   artifacts already beside them. Cargo rebuilt nothing in 0.14 seconds and the previous binary
   was measured.
 
-Neither is possible through dibs-run, which is the argument for a mode that takes a local
+Neither is possible through the recipe layer, which is the argument for a mode that takes a local
 worktree, syncs it, and still does the rest. Pushing a branch to measure it is a real cost and
 refusing to is not misuse.
 
@@ -263,7 +263,7 @@ only what really changed and stamps it now, at the cost of hashing the tree per 
 when the destination has a target directory beside it is the cheap version and probably the
 right first move.
 
-**The most common gap is not a missing recipe, it is a missing parameter.** `dibs-run gaps`
+**The most common gap is not a missing recipe, it is a missing parameter.** `dibs gaps`
 names "verify a cubecl PR against the cubek tile engine" six times, more than everything else
 put together, and cubecl's own pull request template mandates exactly that: build cubek and
 burn against the PR's hash before it can merge. It cannot be written as a recipe, because the

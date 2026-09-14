@@ -1,4 +1,4 @@
-# Bundled with dibs-run. Override any of it in ~/.config/dibs/recipes/cubek.toml
+# Bundled with dibs. Override any of it in ~/.config/dibs/recipes/cubek.toml
 #
 # Reproducibility does not depend on this file surviving: every run record carries the whole
 # procedure it ran, not a reference to it, so an old result stays readable after the recipe
@@ -11,7 +11,7 @@
 # produces a number measured on hardware nobody chose. Every recipe here names exactly one.
 #
 # `needs` is deliberately absent. It is the right place to say "this wants tensor cores", but
-# the current backend knows one machine and cannot check it, so dibs-run refuses rather than
+# the current backend knows one machine and cannot check it, so dibs refuses rather than
 # routing a CMMA benchmark to a card without them. Add it when routing exists.
 
 # --- builds: shared lock, because compiling tolerates neighbours ------------------------
@@ -62,7 +62,7 @@ isolation = "machine"
   lock = "exclusive"
   run  = "cargo bench -p benchmarks --bench quantized_matmul --features cubecl/cuda"
 
-# Named by `dibs-run gaps`: "conv2d and random benches have no recipe; re-measuring rows after
+# Named by `dibs gaps`: "conv2d and random benches have no recipe; re-measuring rows after
 # the curve migration". Both are plain bench targets in the same package, so they take the same
 # shape as the ones above and needed nothing but writing down.
 [bench.conv2d]

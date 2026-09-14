@@ -139,9 +139,9 @@ A batch spanning machines cannot be killed entirely from one machine, and the su
 names the driver's host and pid so it can be reached. That is a property of the driver being
 the owner, not a gap to be closed with state on the machine.
 
-## dibs-run pipelines
+## Recipe pipelines
 
-dibs-run already runs a recipe's steps in order, one dibs invocation per step, each with its
+The recipe layer already runs a recipe's steps in order, one dibs invocation per step, each with its
 own lock, each redirected to a file, all under one run record. It is a single-machine batch
 runner that exists. What it lacks is a way to say "these recipes, on these machines and cards,
 then fetch."
@@ -166,7 +166,7 @@ to   = "./results/"
 ```
 
 One invocation, one run record, with each stage's existing run record nested inside it, so
-`dibs-run runs` can still answer "what was actually measured, at which commit, on which card"
+`dibs runs` can still answer "what was actually measured, at which commit, on which card"
 per stage while the pipeline is one comparable event.
 
 `--on-each gpu:nvidia`, which `agent-interface.md` already proposed as the bounded matrix for

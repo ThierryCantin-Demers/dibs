@@ -19,7 +19,7 @@ FILES = {
 SNIPS = {
 "SHIP": r"""# Local: the remote half travels on the command line and lands in a temp file.
 PAYLOAD=$(remote_script | base64 | tr -d '\n')
-REMOTE_SCRIPT="/tmp/.dibs-run.$$.$(date +%s).sh"
+REMOTE_SCRIPT="/tmp/.dibs-payload.$$.$(date +%s).sh"
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" \
     "printf %s '$PAYLOAD' | base64 -d > '$REMOTE_SCRIPT'; \
      bash '$REMOTE_SCRIPT' '$MODE' '$LABEL' ..."

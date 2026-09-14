@@ -2,8 +2,13 @@
 # Run a command on a remote machine under a lock, so concurrent agents cannot spoil each other's
 # measurements.
 #
-#   dibs <command>              shared: builds, tests, inspection. Many at once.
-#   dibs --bench <command>      exclusive: benchmarks. One at a time, nothing else running.
+#   dibs build|test|bench <repo>[@<ref>] <recipe>   run a recipe: dibs list <repo> says
+#                                what a repo has, dibs runs what was measured.
+#   dibs list|runs|gaps|shell|raw   the rest of the recipe layer, as in dibs build --help
+#   dibs run <command>          shared: builds, tests, inspection. Many at once. The bare
+#                                form, dibs <command>, still works.
+#   dibs run --bench <command>  exclusive: benchmarks. One at a time, nothing else running.
+#   dibs status, dibs out [job] the same as --status and --out
 #   --device <alias>             run on one named card. Two runs naming one alias are two
 #                                runs on the same silicon, which is what makes their numbers
 #                                comparable. `dibs --machines -v` lists the aliases. `cpu`
@@ -559,7 +564,7 @@ DEV_RT=""
 DEV_CHIP=""
 DEV_TWINS=1
 NEW_SERIES=0
-# The whole stream is what a person at a terminal wants and what dibs-run parses; an agent
+# The whole stream is what a person at a terminal wants and what the recipe layer parses; an agent
 # wants the bounded digest, since it cannot know whether a call prints 3 lines or 30000
 # and would cut it at the pipe, taking the exit status with it.
 STREAM=${DIBS_STREAM:-${DIBS_FROM_RUN:-0}}
@@ -568,6 +573,65 @@ COMMAND=""
 SYNC=()
 
 usage() { sed -n '2,/^# --- end of the interface/p' "$0" | sed '$d; s/^# \?//'; exit "${1:-0}"; }
+
+# The title changes, and today it is also what decides whether a job is yours. A title that
+# went stale made an agent unable to recognise its own work, and one that changes mid-session
+# would make it unable to stop it. So ownership keys on the session, which does not move, and
+# only the display uses the name.
+agent_id() {
+    printf '%s' "${CLAUDE_CODE_HOST_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-shell-${USER:-someone}}}"
+}
+
+# The recipe layer, installed beside this script rather than on PATH, so that dibs stays the
+# one command anyone types.
+dibs_core() {
+    local c
+    for c in "${DIBS_CORE:-}" "$(dirname "$0")/../libexec/dibs/bin/dibs-core" \
+             "$HOME/.local/libexec/dibs/bin/dibs-core"; do
+        [ -n "$c" ] && [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
+    done
+    return 1
+}
+
+# The commit of the clone this runs from; empty for a copy, which has no history to compare.
+dibs_version() {
+    git -C "$(dirname "$(readlink -f "$0")")/.." rev-parse --short HEAD 2>/dev/null
+}
+
+# An agent carries what it learned about flags and output for its whole session, so a change
+# underneath it is said once, to that session, the first time it calls after the change.
+version_notice() {   # [quiet]
+    local seen=${DIBS_SEEN:-${XDG_STATE_HOME:-$HOME/.local/state}/dibs/seen} now was f n clone
+    now=$(dibs_version); [ -n "$now" ] || return 0
+    f=$seen/$(agent_id | tr -c 'A-Za-z0-9._-' _)
+    was=$(cat "$f" 2>/dev/null)
+    [ "$was" = "$now" ] && return 0
+    mkdir -p "$seen" 2>/dev/null && printf '%s\n' "$now" > "$f" 2>/dev/null
+    find "$seen" -type f -mtime +30 -delete 2>/dev/null
+    [ -n "$was" ] && [ "${1:-}" != quiet ] || return 0
+    clone=$(dirname "$(readlink -f "$0")")/..; clone=$(cd "$clone" && pwd)
+    {
+        echo "dibs changed since this session last ran it: $was -> $now"
+        if git -C "$clone" merge-base --is-ancestor "$was" "$now" 2>/dev/null; then
+            n=$(git -C "$clone" rev-list --count "$was..$now")
+            git -C "$clone" log --oneline --no-decorate -10 "$was..$now" | sed 's/^/  /'
+            [ "$n" -gt 10 ] && echo "  and $((n - 10)) more:  git -C $clone log $was..$now"
+        fi
+        echo "  Flags and output you remember may be wrong now. Read dibs --help, and"
+        echo "  $clone/dibs-agent-rules.md for how it is meant to be used."
+    } >&2
+}
+
+case "${1:-}" in
+    build|test|bench|list|runs|gaps|shell|raw)
+        version_notice
+        core=$(dibs_core) ||
+            { echo "dibs: $1 needs the recipe layer, which is not installed. Run install.sh from the clone." >&2; exit 2; }
+        exec "$core" "$@" ;;
+    run)    shift ;;
+    status) shift; set -- --status "$@" ;;
+    out)    shift; set -- --out "$@" ;;
+esac
 
 ORIG_ARGS=("$@")
 
@@ -645,7 +709,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ "$MODE" = update ]; then
+if [ "$MODE" != update ]; then
+    version_notice
+else
     self=$(readlink -f "$0")
     clone=$(cd "$(dirname "$self")/.." && pwd)
     if ! git -C "$clone" rev-parse --git-dir >/dev/null 2>&1; then
@@ -667,7 +733,7 @@ if [ "$MODE" = update ]; then
         echo "dibs $before -> $after"
         git -C "$clone" log --oneline "$before..$after" | sed 's/^/  /'
     fi
-    installed=$(dibs-run --version 2>/dev/null | sed -n 's/.*(\(.*\)).*/\1/p')
+    installed=$("$(dibs_core)" --version 2>/dev/null | sed -n 's/.*(\(.*\)).*/\1/p')
     if [ "$before" != "$after" ] || [ "$installed" != "$after" ]; then
         bash "$clone/install.sh" || { echo "dibs: install.sh failed; the clone is at $after" >&2; exit 1; }
     fi
@@ -682,6 +748,7 @@ if [ "$MODE" = update ]; then
     elif [ -d "$recipes" ]; then
         echo "recipes in $recipes are not a clone with an upstream, so they were left alone"
     fi
+    version_notice quiet
     exit 0
 fi
 
@@ -1165,14 +1232,6 @@ fi
 LABEL=${LABEL//[^A-Za-z0-9._-]/_}
 
 # Who is asking. Needed by the queue below and by every mode that leaves a record.
-# The title changes, and today it is also what decides whether a job is yours. A title that
-# went stale made an agent unable to recognise its own work, and one that changes mid-session
-# would make it unable to stop it. So ownership keys on the session, which does not move, and
-# only the display uses the name.
-agent_id() {
-    printf '%s' "${CLAUDE_CODE_HOST_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-shell-${USER:-someone}}}"
-}
-
 agent_name() {
     # Said outright, which is the only thing that works for a runtime this does not know how
     # to ask. Every other branch below is a way of guessing what this states.
@@ -2246,7 +2305,7 @@ case "$MODE" in
         if [ -n "$repos" ]; then
             echo "  repos it can build:  $repos"
         else
-            warn "no clones under ~/prog, so no dibs-run work can be sent here at all"
+            warn "no clones under ~/prog, so no recipe can be run here at all"
             note "It is dropped from routing for every repo until one is cloned. Anything"
             note "this machine should build needs a clone at ~/prog/<repo> first."
         fi
@@ -3118,7 +3177,7 @@ else
     # write to it to run cannot even be used to look at why. The default is left unexpanded
     # here on purpose, for the remote shell to resolve against its own home.
     REMOTE_DIR=${DIBS_REMOTE_DIR:-'$HOME/.cache/dibs/run'}
-    REMOTE_SCRIPT="$REMOTE_DIR/.dibs-run.$$.$(date +%s).sh"
+    REMOTE_SCRIPT="$REMOTE_DIR/.dibs-payload.$$.$(date +%s).sh"
     # exec so that a script which could not be written never runs half of itself: the write
     # is the only thing between the && and the shell being replaced, and if it fails the line
     # after it is what runs. Both shells that might read this line treat exec and && alike.

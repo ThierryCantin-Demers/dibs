@@ -1,4 +1,4 @@
-# dibs-run
+# dibs-core
 
 The agent-facing half of dibs: verbs, recipes, labels and provenance, over a resource layer
 whose only job is to hand back a machine with the right things held.
@@ -7,11 +7,12 @@ It runs here rather than on the target, which is why it can be a program rather 
 script. The half that ships over ssh stays bash on purpose: installing nothing on a machine is
 what makes adding one cheap.
 
-    cargo build --release && cp target/release/dibs-run ~/.local/bin/
+Installed by `install.sh` under `~/.local/libexec/dibs`, off PATH: `dibs build`, `test`,
+`bench`, `list`, `runs`, `gaps`, `shell` and `raw` hand their arguments to it.
 
-    dibs-run list  <repo>
-    dibs-run bench <repo> <recipe>
-    dibs-run bench <repo> <recipe> --dry-run
+    dibs list  <repo>
+    dibs bench <repo> <recipe>
+    dibs bench <repo> <recipe> --dry-run
 
 ## Where it is
 

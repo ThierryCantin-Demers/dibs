@@ -116,7 +116,7 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize) -> String {
             // Saying what is there separates a query that missed from a record that was never
             // written, which are the same sentence otherwise and lead opposite ways.
             Some(l) if !records.is_empty() => format!(
-                "nothing recorded for {l}, out of {} runs recorded.\n  dibs-run runs   lists them; a label is repo/verb/recipe.\n",
+                "nothing recorded for {l}, out of {} runs recorded.\n  dibs runs   lists them; a label is repo/verb/recipe.\n",
                 records.len()
             ),
             Some(l) => format!("nothing recorded for {l}, and nothing recorded at all yet.\n"),

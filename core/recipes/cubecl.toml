@@ -1,4 +1,4 @@
-# Bundled with dibs-run. Override any of it in ~/.config/dibs/recipes/cubecl.toml
+# Bundled with dibs. Override any of it in ~/.config/dibs/recipes/cubecl.toml
 #
 # The device benchmarks here are the `throughput` example package, so they are `--example`
 # targets rather than `--bench` ones, and their feature names are bare (`cuda`, `wgpu`) rather
@@ -13,7 +13,7 @@
 #
 # One backend per recipe, named in the recipe. The families below used to be bare and mean
 # cuda, which reads as "the general one" and is why every non-CUDA curve was measured through
-# the escape hatch instead: `dibs-run gaps` named that twice before it was noticed. A name
+# the escape hatch instead: `dibs gaps` named that twice before it was noticed. A name
 # that does not say its backend is a trap on a machine whose cards do not all share one.
 #
 # The measured step repeats, so one exclusive hold reports run-to-run spread rather than a

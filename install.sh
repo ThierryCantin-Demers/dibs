@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Put dibs on this machine. Run it from the clone; run it again after a pull if you want
-# dibs-run rebuilt.
+# the recipe layer rebuilt. dibs --update does both.
 #
 #   ./install.sh
 #
@@ -20,19 +20,20 @@ for f in dibs; do
 done
 echo "installed dibs in $BIN"
 
-# dibs-run is the interface; dibs underneath it is only the lock. Without cargo you still have
-# a working machine, so this is a warning rather than a failure.
+# The recipe layer goes under libexec, off PATH: dibs build, test and bench reach it, and nothing
+# else should. Without cargo you still have a working lock, so this is a warning.
 if command -v cargo >/dev/null 2>&1; then
-    # The commit is stamped into the binary, so `dibs-run --version` says whether what is
-    # installed is what is checked out.
-    DIBS_RUN_COMMIT=$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown) \
-        cargo install --quiet --path "$HERE/dibs-run" --root "${PREFIX:-$HOME/.local}" --force
-    echo "installed dibs-run $(git -C "$HERE" rev-parse --short HEAD 2>/dev/null) in $BIN"
+    # The commit is stamped into the binary, so dibs --update can tell a stale build from a
+    # current one.
+    CORE=${PREFIX:-$HOME/.local}/libexec/dibs
+    DIBS_CORE_COMMIT=$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown) \
+        cargo install --quiet --path "$HERE/core" --root "$CORE" --force
+    echo "installed the recipe layer $(git -C "$HERE" rev-parse --short HEAD 2>/dev/null) in $CORE/bin"
     cargo install --quiet --path "$HERE/dibs-tui" --root "${PREFIX:-$HOME/.local}" --force
     echo "installed dibstop in $BIN"
 else
-    echo "no cargo, so dibs-run and dibstop were not built. Install Rust and run this again, or ask" >&2
-    echo "whoever owns the machine for a prebuilt binary to drop in $BIN." >&2
+    echo "no cargo, so the recipe layer and dibstop were not built. Install Rust and run this again, or ask" >&2
+    echo "whoever owns the machine for a prebuilt dibs-core to drop in ${PREFIX:-$HOME/.local}/libexec/dibs/bin." >&2
 fi
 
 case ":$PATH:" in

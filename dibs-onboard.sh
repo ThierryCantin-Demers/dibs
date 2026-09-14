@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Set up dibs on a machine that has never used it, and prove it works.
 #
-#   DIBS_MACHINE=<machine> bash dibs-onboard.sh /path/to/dibs [/path/to/dibs-run]
+#   DIBS_MACHINE=<machine> bash dibs-onboard.sh [/path/to/dibs]
 #
-# Both are sent to you by whoever owns the machine, and both stay on your side: nothing is
-# installed on the far side. `dibs` is one bash file and takes the lock; `dibs-run` is the
-# interface you actually use, and is optional only in the sense that the machine works
-# without it.
+# Everything stays on your side: nothing is installed on the far side. Run install.sh from a
+# clone first, which also builds the recipe layer that dibs build, test and bench use; a bare
+# copy of the script is enough for the lock alone.
 set -uo pipefail
 
 MACHINE=${DIBS_MACHINE:-}
@@ -20,7 +19,7 @@ fail() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 # No default machine. Guessing one and reporting that it is unreachable is a worse first
 # five minutes than being told what is missing.
 [ -n "$MACHINE" ] || fail "Which machine? Its owner will have told you.
-  DIBS_MACHINE=<machine> bash $0 /path/to/dibs [/path/to/dibs-run]
+  DIBS_MACHINE=<machine> bash $0 [/path/to/dibs]
   DIBS_ACCOUNT is '$ACCOUNT' unless you were told otherwise."
 
 # --- 1. the script itself -------------------------------------------------------------
@@ -38,15 +37,8 @@ case ":$PATH:" in
     *) fail "$BIN is not on your PATH. Add it, then run this again." ;;
 esac
 
-# --- 1b. the interface on top of it ---------------------------------------------------
-RUN=${2:-}
-if [ -n "$RUN" ]; then
-    [ -f "$RUN" ] || fail "No such file: $RUN"
-    install -m 755 "$RUN" "$BIN/dibs-run"
-    say "installed $BIN/dibs-run"
-fi
 HAVE_RUN=0
-[ -x "$BIN/dibs-run" ] && HAVE_RUN=1
+[ -x "$HOME/.local/libexec/dibs/bin/dibs-core" ] && HAVE_RUN=1
 
 # The default in the script is the owner's own alias, which does not exist here.
 export DIBS_HOST="$HOST"
@@ -105,8 +97,8 @@ say "working."
 
 if [ "$HAVE_RUN" = 0 ]; then
     printf '\033[33m%s\033[0m\n' \
-        "No dibs-run here. Everything below that starts with it will not run yet;" \
-        "ask the machine's owner for the binary and pass it as the second argument."
+        "No recipe layer here, so dibs build, test, bench and the rest below will not" \
+        "run yet. Run install.sh from a clone of dibs, with cargo installed."
 fi
 
 cat <<EOF
@@ -116,33 +108,33 @@ Make it permanent by setting the host in your shell, or every call goes to the w
   bash/zsh   echo 'export DIBS_HOST=$HOST' >> ~/.bashrc
   fish       set -Ux DIBS_HOST $HOST
 
-Then, the interface. Work goes through dibs-run, which picks the worktree, the
+Then, the interface. Work goes through recipes, which pick the worktree, the
 build cache and the label for you, and records what actually ran:
 
-  dibs-run list <repo>              what recipes that repo has
-  dibs-run build <repo>@<ref> <r>   shared
-  dibs-run test  <repo>@<ref> <r>   shared
-  dibs-run bench <repo>@<ref> <r>   builds shared, measures exclusive
-  dibs-run runs                     what has been measured, and what is comparable
+  dibs list <repo>              what recipes that repo has
+  dibs build <repo>@<ref> <r>   shared
+  dibs test  <repo>@<ref> <r>   shared
+  dibs bench <repo>@<ref> <r>   builds shared, measures exclusive
+  dibs runs                     what has been measured, and what is comparable
 
 For something with no recipe, so it still gets recorded rather than vanishing:
 
-  dibs-run shell <repo>@<ref> --reason "..." -- '<cmd>'    in a worktree
-  dibs-run raw --reason "..." -- '<cmd>'                   no repo
-  dibs-run gaps                     the reasons that keep coming back. Those are
+  dibs shell <repo>@<ref> --reason "..." -- '<cmd>'    in a worktree
+  dibs raw --reason "..." -- '<cmd>'                   no repo
+  dibs gaps                     the reasons that keep coming back. Those are
                                     the ones that should become recipes: tell the
                                     machine's owner what you see there.
 
 dibs itself is the layer underneath. You want it for looking, and for the rare
 command that fits nothing above:
 
-  dibs --status             who holds it, who is queued, and for how long
+  dibs status               who holds it, who is queued, and for how long
   dibs --peek <command>     look without taking the lock. Free things only:
                             ps, nvidia-smi, ls, tail. It runs beside a benchmark.
-  dibs --out                what a running job is writing
+  dibs out [job]            a job's whole log, running or finished
   dibs --log                what has run recently
-  dibs <command>            shared, by hand
-  dibs --bench <command>    exclusive, by hand
+  dibs run <command>        shared, by hand
+  dibs run --bench <command>  exclusive, by hand
   dibs --help               everything, including --sync and --kill
 
 Two things that matter more than the rest:
@@ -151,7 +143,7 @@ Two things that matter more than the rest:
   shared jobs too, because a compile running beside a benchmark spoils it as
   surely as a second benchmark would.
 
-  Prefer dibs-run over dibs <command>. Not style: a bare command files its
+  Prefer a recipe over dibs run <command>. Not style: a bare command files its
   duration under a label you invented once, so nothing ever looks it up and the
   ETAs stay useless, and it leaves no record of what was built from what. Both
   are why the estimates on this machine were bad for months.
