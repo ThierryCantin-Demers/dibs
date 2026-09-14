@@ -956,6 +956,45 @@ check "the command still lands in the last field" \
   "$(awk -F'\t' 'NR==1{print ($7 != "")}' "$DIBS_LOCK_DIR"/holder.*)" "1"
 free Q; wait $Q1 2>/dev/null; gone
 
+# A session with no id is named after the account, and every shell of that account shares it.
+echo "a job an account started is not anyone's to stop by default"
+NOID="env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID -u DIBS_AGENT"
+fifo N
+$NOID $T --label acct "$(hold N)" >/dev/null 2>&1 & N1=$!; held
+check "the record names the account and the laptop" \
+  "$(awk -F'\t' 'NR==1{print ($6 ~ /^shell-[^@]+@/)}' "$DIBS_LOCK_DIR"/holder.*)" "1"
+NP=$(pidof_ acct)
+out=$($NOID $T --kill "$NP" 2>&1); rc=$?
+check "the same account cannot stop it without saying so" "$rc" "2"
+check "and it says why" "$(grep -c 'names an account' <<<"$out")" "1"
+check "--anyone stops it" "$($NOID $T --kill "$NP" --anyone >/dev/null 2>&1; echo $?)" "0"
+wait $N1 2>/dev/null; gone
+fifo N
+env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID DIBS_AGENT='sweep a' $T --label named "$(hold N)" >/dev/null 2>&1 & N2=$!; held
+NP=$(pidof_ named)
+check "a session that named its work is told apart from another" \
+  "$(env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID DIBS_AGENT='sweep b' $T --kill "$NP" >/dev/null 2>&1; echo $?)" "2"
+check "and can stop its own" \
+  "$(env -u CLAUDE_CODE_HOST_SESSION_ID -u CLAUDE_CODE_SESSION_ID DIBS_AGENT='sweep a' $T --kill "$NP" >/dev/null 2>&1; echo $?)" "0"
+wait $N2 2>/dev/null; gone
+
+# The caller's channel closing is how the machine learns it is gone, and the lock is released
+# as soon as the job exits, so anything still running below the job would run unlocked.
+echo "a caller that goes away takes the whole job with it"
+sed -n "/^cat <<'REMOTE'$/,/^REMOTE$/p" "$(readlink -f "$T")" | sed '1d;$d' > "$S/payload"
+fifo chan; fifo gcblock; fifo gcready
+printf 'echo $$ > %s/gc.pid\necho up > %s/f-gcready\nread -r _ < %s/f-gcblock\n' "$S" "$S" "$S" > "$S/grand.sh"
+printf 'sh %s/grand.sh\necho mid-done\n' "$S" > "$S/mid.sh"
+DIBS_SCRATCH=$S/scr bash "$S/payload" shared gone-caller 0 0 0 "$(printf 'bash %s/mid.sh; echo after' "$S" | base64 -w0)" 0 0 "" 0 "" "" "" "" "" 1 0 < "$S/f-chan" > /dev/null 2>&1 & GP=$!
+exec 7> "$S/f-chan"
+sync_ gcready
+GC=$(cat "$S/gc.pid")
+check "the job reached its grandchild" "$([ -n "$GC" ] && kill -0 "$GC" 2>/dev/null; echo $?)" "0"
+exec 7>&-
+wait $GP 2>/dev/null
+check "the grandchild is gone once the job has ended" "$(kill -0 "$GC" 2>/dev/null; echo $?)" "1"
+check "and the lock with it" "$(holders)" "0"
+
 # A long compile hitting --max is ordinary, and the message is the whole of what makes it
 # ordinary: without it, exit 124 reads as the job having gone wrong.
 echo "overrunning says what to do about it"
