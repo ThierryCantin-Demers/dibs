@@ -47,6 +47,24 @@ do, and `dibs --check` lists what it has.
 `dibs --help` is the full surface. `dibs-agent-rules.md` is meant to be pasted into an agent's
 instructions, and is the shortest useful description of how to use this well.
 
+## Updating
+
+    dibs --update
+
+It fast-forwards the clone `dibs` was installed from, lists the commits that arrived, and reruns
+`install.sh` when anything changed or when the installed `dibs-run` was built from another
+commit. A `--copy` install has no clone to pull and says so.
+
+## Sharing recipes with the people you work with
+
+The local recipe layer, `~/.config/dibs/recipes`, can be a git clone. Keep it in a private
+repository your team can reach, since recipes name your repos, and everyone clones it into place:
+
+    git clone <your-recipes-repo> ~/.config/dibs/recipes
+
+`dibs --update` pulls it along with `dibs` itself. An edit is an ordinary commit and push, and a
+recipe still being tried out can sit uncommitted in the clone until it settles.
+
 ## Build caching
 
 A machine with `sccache` installed gets `RUSTC_WRAPPER` set for every job, with the cache under

@@ -1307,6 +1307,37 @@ echo "nothing left behind"
 check "no holders" "$(holders)" "0"
 check "no waiters" "$(waiters)" "0"
 check "no cpu samples" "$(count_ cpu)" "0"
+echo "updating itself"
+# A clone with a stub installer and a recipe clone, each behind its origin by one commit.
+U=$S/update; mkdir -p "$U/bin"
+git init -q -b main "$U/origin" && mkdir "$U/origin/bin" && cp "$(readlink -f "$T")" "$U/origin/bin/dibs"
+printf 'echo installed >> "%s/installs"\n' "$U" > "$U/origin/install.sh"
+git -C "$U/origin" add -A && git -C "$U/origin" -c user.email=t@t -c user.name=t commit -qm one
+git clone -q "$U/origin" "$U/clone"
+git init -q -b main "$U/rorigin" && echo '[build.x]' > "$U/rorigin/r.toml"
+git -C "$U/rorigin" add -A && git -C "$U/rorigin" -c user.email=t@t -c user.name=t commit -qm r1
+git clone -q "$U/rorigin" "$U/recipes"
+echo two > "$U/origin/two" && git -C "$U/origin" add -A && git -C "$U/origin" -c user.email=t@t -c user.name=t commit -qm two
+echo r2 > "$U/rorigin/r2" && git -C "$U/rorigin" add -A && git -C "$U/rorigin" -c user.email=t@t -c user.name=t commit -qm r2
+HEAD2=$(git -C "$U/origin" rev-parse --short HEAD)
+printf '#!/bin/sh\necho "dibs-run 0.1.0 (%s)"\n' "$HEAD2" > "$U/bin/dibs-run"; chmod +x "$U/bin/dibs-run"
+PATH=$U/bin:$PATH DIBS_RECIPES=$U/recipes "$U/clone/bin/dibs" --update > "$U/out1" 2>&1; rc=$?
+check "an update succeeds" "$rc" "0"
+check "it fast-forwards its own clone" "$(git -C "$U/clone" rev-parse --short HEAD)" "$HEAD2"
+check "and names what arrived" "$(grep -c '^  [0-9a-f]* two$' "$U/out1")" "1"
+check "and reinstalls" "$(wc -l < "$U/installs")" "1"
+check "and pulls the recipes" "$(git -C "$U/recipes" rev-parse HEAD)" "$(git -C "$U/rorigin" rev-parse HEAD)"
+PATH=$U/bin:$PATH DIBS_RECIPES=$U/recipes "$U/clone/bin/dibs" --update > "$U/out2" 2>&1
+check "a current install is not rebuilt" "$(wc -l < "$U/installs")" "1"
+check "and says it is current" "$(grep -c 'already current' "$U/out2")" "2"
+printf '#!/bin/sh\necho "dibs-run 0.1.0 (0000000)"\n' > "$U/bin/dibs-run"
+PATH=$U/bin:$PATH DIBS_RECIPES=$U/recipes "$U/clone/bin/dibs" --update > /dev/null 2>&1
+check "a stale dibs-run is rebuilt even with nothing to pull" "$(wc -l < "$U/installs")" "2"
+PATH=$U/bin:$PATH DIBS_RECIPES=$U/nowhere "$U/clone/bin/dibs" --update > "$U/out3" 2>&1
+check "recipes that are not a clone are left alone quietly" "$(grep -c 'recipes' "$U/out3")" "0"
+cp "$(readlink -f "$T")" "$U/loose"
+check "a copy outside a clone is refused" "$("$U/loose" --update >/dev/null 2>&1; echo $?)" "2"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
