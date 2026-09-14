@@ -15,16 +15,16 @@ shared benchmarking machine, and most of it exists because someone already got i
 
 ### The commands
 
-- `dibs <command>` for builds, tests and inspection: **shared**, several people at once.
-- `dibs --bench <command>` for anything timed: **exclusive**, nothing else runs, including
+- `dibs run <command>` for builds, tests and inspection: **shared**, several people at once.
+- `dibs run --bench <command>` for anything timed: **exclusive**, nothing else runs, including
   other people's builds. A compile running beside a benchmark spoils it as surely as a second
   benchmark would.
-- `dibs --status` who holds it, who is queued, and roughly how long. Never blocks.
+- `dibs status` who holds it, who is queued, and roughly how long. Never blocks.
 - `dibs --peek <command>` looks at the machine without taking the lock. Free things only:
   `ps`, `nvidia-smi`, `ls`, `tail`, `git status`. It runs *beside* whatever is being measured,
   so anything that costs CPU or IO is charged to that benchmark. When in doubt use the shared
   lock: queueing costs you nothing, and ruining a twenty-minute sweep costs someone everything.
-- `dibs --out <job>` a job's whole log, while it runs or for two weeks after; `dibs --out`
+- `dibs out <job>` a job's whole log, while it runs or for two weeks after; `dibs out`
   lists the running ones.
 - `dibs --log` what has run recently, and what was killed.
 - `dibs --help` the rest, including `--sync` for copying files and `--kill`.
@@ -101,6 +101,10 @@ shared benchmarking machine, and most of it exists because someone already got i
 
 ### Rules that are not negotiable
 
+**When dibs has changed since your session last used it, the first call says so** on stderr,
+once, with the commits that arrived. Flags and output you remember from earlier in the session
+may be wrong from then on: read `dibs --help` before relying on them.
+
 **Always launch it with the Bash tool's `run_in_background` parameter, and never poll it.**
 The machine is often busy for twenty minutes or more, a queued job waits that long before it
 starts, and a foreground call dies of its own timeout first. When that happens the work simply
@@ -117,13 +121,13 @@ work either way.
 Put the whole sequence in one script, launch that script once, and be woken once:
 
 ```bash
-dibs 'cargo build --release --bench reduce'  || exit 1
-dibs --bench 'cargo bench --bench reduce'    || exit 1
+dibs run 'cargo build --release --bench reduce'  || exit 1
+dibs run --bench 'cargo bench --bench reduce'    || exit 1
 echo "both done"        # the one thing you will read when it wakes you
 ```
 
 **Each step stays its own `dibs` call inside that script.** Do not collapse the sequence into
-`dibs 'build && bench'` to save a call: that holds one lock for both, which is the compile
+`dibs run 'build && bench'` to save a call: that holds one lock for both, which is the compile
 inside the exclusive lock that the split above exists to prevent. The saving is in how many
 times *you* are woken, never in how many locks are taken.
 
@@ -144,12 +148,12 @@ ready, block on a fifo rather than on a clock: `mkfifo f`, start the work, then 
 
 **Split building from measuring.** A `--bench` that begins with `cargo build` holds the whole
 machine for minutes doing something that tolerates neighbours perfectly, and everyone else ends
-up queued behind a compile rather than behind a benchmark. Two calls: `dibs 'cargo build ...'`
-under the shared lock, then `dibs --bench 'cargo bench ...'` for the measured run. This
+up queued behind a compile rather than behind a benchmark. Two calls: `dibs run 'cargo build ...'`
+under the shared lock, then `dibs run --bench 'cargo bench ...'` for the measured run. This
 includes `cargo bench --no-run`, which is a build.
 
 **Say who you are with `DIBS_AGENT`, unless you are Claude Code.** Every job records the agent
-that started it, so `dibs --status` can say who to go and ask about a job that is holding the
+that started it, so `dibs status` can say who to go and ask about a job that is holding the
 machine, and so stopping someone else's has to be deliberate. Claude Code is read from its
 session. Codex publishes no session id and runs all of its sessions through one shell process,
 so it can only be identified as Codex, and any other runtime arrives as the unix account, which
@@ -167,13 +171,13 @@ full one breaks every command on the machine, including the ones for finding out
 
 **Read the trailer, not the exit code and not the output.** Every job ends with one on stderr:
 `job <id>  <mode>  <label>  queued Ns  ran Ns  exit N  by=command|dibs  built=N|nothing`, then
-the log path and the `dibs --out <id>` that reads it. `by=dibs` means dibs produced the exit
+the log path and the `dibs out <id>` that reads it. `by=dibs` means dibs produced the exit
 (69, 70, 71, 75, 124), `by=command` means your command did.
 
 **A job's stdout is a digest**: its first and last 20 lines and a count of what was left out.
 Do not pipe a dibs call through `tail`, `head` or `grep`: it is already bounded, and a filter
 replaces the exit status with its own. The whole output is kept on the machine for two weeks,
-so anyone can read it with `dibs --out <id>`, and `--stream` gives the whole stream inline when
+so anyone can read it with `dibs out <id>`, and `--stream` gives the whole stream inline when
 you actually need all of it. Do not redirect inside the command to keep a log: that is done.
 
 **Read `built=` before you read the numbers.** `built=nothing` means cargo finished having
