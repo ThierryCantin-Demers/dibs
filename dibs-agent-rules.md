@@ -24,7 +24,8 @@ shared benchmarking machine, and most of it exists because someone already got i
   `ps`, `nvidia-smi`, `ls`, `tail`, `git status`. It runs *beside* whatever is being measured,
   so anything that costs CPU or IO is charged to that benchmark. When in doubt use the shared
   lock: queueing costs you nothing, and ruining a twenty-minute sweep costs someone everything.
-- `dibs --out` what a running job is writing, if it redirected into a file.
+- `dibs --out <job>` a job's whole log, while it runs or for two weeks after; `dibs --out`
+  lists the running ones.
 - `dibs --log` what has run recently, and what was killed.
 - `dibs --help` the rest, including `--sync` for copying files and `--kill`.
 
@@ -74,8 +75,7 @@ shared benchmarking machine, and most of it exists because someone already got i
   it, where verb is `build`, `test` or `bench`.
 - Use it in preference to writing a command by hand, because it does five things you would
   otherwise each do differently: it fetches and creates the worktree, exports one build cache
-  per repo, derives a stable label, redirects the output to a file so anyone can read it with
-  `dibs --out`, and records which commit of every repo was actually built.
+  per repo, derives a stable label, keeps the whole output on the machine, and records which commit of every repo was actually built.
 - **The step says which lock it takes**, so a recipe's build runs shared and only its
   measurement runs exclusive. That is the build/measure split made structural instead of being
   a rule you have to remember.
@@ -117,7 +117,6 @@ work either way.
 Put the whole sequence in one script, launch that script once, and be woken once:
 
 ```bash
-run() { dibs "$@" > "$DIBS_SCRATCH/$1.log" 2>&1; }   # or any per-step log path you like
 dibs 'cargo build --release --bench reduce'  || exit 1
 dibs --bench 'cargo bench --bench reduce'    || exit 1
 echo "both done"        # the one thing you will read when it wakes you
@@ -166,9 +165,20 @@ why the ETAs are useless when people get this wrong.
 in-memory filesystem shared by everyone, and one build tree in it fills it for all of us. A
 full one breaks every command on the machine, including the ones for finding out why.
 
-**Redirect long jobs into a file** under `$DIBS_SCRATCH`. Output otherwise goes only to you and
-is kept nowhere, so nobody can see how a job is going without asking you. Redirected, anyone
-can read it with `dibs --out`.
+**Read the trailer, not the exit code and not the output.** Every job ends with one on stderr:
+`job <id>  <mode>  <label>  queued Ns  ran Ns  exit N  by=command|dibs  built=N|nothing`, then
+the log path and the `dibs --out <id>` that reads it. `by=dibs` means dibs produced the exit
+(69, 70, 71, 75, 124), `by=command` means your command did.
+
+**A job's stdout is a digest**: its first and last 20 lines and a count of what was left out.
+Do not pipe a dibs call through `tail`, `head` or `grep`: it is already bounded, and a filter
+replaces the exit status with its own. The whole output is kept on the machine for two weeks,
+so anyone can read it with `dibs --out <id>`, and `--stream` gives the whole stream inline when
+you actually need all of it. Do not redirect inside the command to keep a log: that is done.
+
+**Read `built=` before you read the numbers.** `built=nothing` means cargo finished having
+compiled no crate, so a measurement after it measured the previous binary. A shared target
+directory, a copy that preserved mtimes and a stale worktree all produce that.
 
 ### Exit codes
 
