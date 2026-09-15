@@ -1336,6 +1336,7 @@ DIBS_SCRATCH=$S/scr $T --label j4 'echo cargo; echo "   Compiling a v1"; echo " 
 check "the trailer counts what cargo compiled" "$(grep -c 'built=2' "$S/j4.err")" "1"
 DIBS_SCRATCH=$S/scr $T --label j5 'echo cargo; echo "    Finished release"' >/dev/null 2> "$S/j5.err"
 check "and says when it compiled nothing" "$(grep -c 'built=nothing' "$S/j5.err")" "1"
+check "and counting nothing is not an error" "$(grep -c 'integer expected' "$S/j5.err")" "0"
 check "in words" "$(grep -c 'measures the previous binary' "$S/j5.err")" "1"
 check "a job that is not cargo says nothing about it" "$(grep -c 'built=' "$S/j1.err")" "0"
 # A failing command re-run unchanged is the most repeated line in the log; the second run says so.

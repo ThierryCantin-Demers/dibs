@@ -3001,7 +3001,7 @@ if [ -n "$JOBLOG" ]; then
     built=""
     case "$CMD" in *cargo*)
         if grep -q '^ *Finished ' "$JOBLOG" 2>/dev/null; then
-            n=$(grep -c '^ *Compiling ' "$JOBLOG" 2>/dev/null || echo 0)
+            n=$(grep -c '^ *Compiling ' "$JOBLOG" 2>/dev/null); n=${n:-0}
             [ "$n" -gt 0 ] && built="  built=$n" || built="  built=nothing"
         fi ;;
     esac
