@@ -2756,7 +2756,7 @@ export PATH
 if [ "${DIBS_NO_SCCACHE:-0}" != 1 ] && command -v sccache >/dev/null 2>&1; then
     export RUSTC_WRAPPER=${RUSTC_WRAPPER:-sccache}
     export SCCACHE_DIR=${SCCACHE_DIR:-$SCRATCH/sccache}
-    export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-50G}
+    export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-20G}
     export CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0}
 fi
 
