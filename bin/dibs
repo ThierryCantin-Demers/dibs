@@ -1817,11 +1817,9 @@ idle_check() {   # pid start; sets IDLE_FOR, IDLE_KIND and CPU_RATE
     elif [ -n "$prev" ] && [ "$CPU_TICKS" -le "$prev" ]; then
         IDLE_FOR=$(( NOW - worked )); IDLE_KIND=stalled
     fi
-    # A job still writing is a job still working, whatever its process tree says, and the tree
-    # stopped being the whole story the moment a compilation cache was involved: sccache runs
-    # rustc inside its own daemon, which is parented to init, so the compiling happens outside
-    # the tree entirely. Reporting that as stalled would have this tell you to kill healthy
-    # builds, which is worse than reporting no rate at all.
+    # A job still writing is a job still working, whatever its process tree says: a compiler
+    # wrapper with a daemon, such as sccache, compiles outside the tree entirely, and reporting
+    # that as stalled would have this tell you to kill a healthy build.
     if [ -n "$IDLE_FOR" ] && [ -n "${OUTPUT_FILE:-}" ] && [ -f "$OUTPUT_FILE" ]; then
         local wrote
         wrote=$(stat -c %Y "$OUTPUT_FILE" 2>/dev/null) || wrote=
@@ -2285,13 +2283,6 @@ case "$MODE" in
         missing=""
         for t in flock timeout; do command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
         [ -z "$missing" ] && ok "flock and timeout present" || bad "missing, and nothing works without them:$missing"
-        if command -v sccache >/dev/null 2>&1; then
-            ok "sccache present, so a cold target directory is cheap here"
-        else
-            warn "no sccache: every build with a cold target directory pays in full"
-            note "Measured here: 922s to fill one from nothing, 104s when sccache had seen"
-            note "the work before. Install it with:  cargo install sccache --locked"
-        fi
         if command -v setpriv >/dev/null 2>&1; then ok "setpriv present, so a job dies with its caller"
         else warn "no setpriv: a job whose caller is killed outright can outlive it"; fi
 
@@ -2740,25 +2731,6 @@ for d in "$HOME/.cargo/bin" /usr/local/cuda/bin; do
     case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
 done
 export PATH
-
-# Compilation cache, when the machine has one. Measured here: a target directory with nothing
-# in it costs 922s to fill for the largest workspace here and 104s once sccache has seen
-# before, so this is what makes a machine holding no cache for a repo usable at all. Turned on
-# by the tool being installed rather than by a flag, because a machine without it must keep
-# working unchanged, and off entirely with DIBS_NO_SCCACHE=1.
-#
-# Incremental compilation is turned off with it, and only with it. sccache declines to cache
-# an incremental build, so leaving it on means every debug build, which is most test recipes,
-# gets nothing. The usual reason to keep it is fast local iteration on one tree, and that is
-# not what happens here: each job starts from a worktree at some commit and the incremental
-# state rarely matches. It also costs disk, since the incremental directory is a large part of
-# a target directory and nothing collects one before its repo goes quiet.
-if [ "${DIBS_NO_SCCACHE:-0}" != 1 ] && command -v sccache >/dev/null 2>&1; then
-    export RUSTC_WRAPPER=${RUSTC_WRAPPER:-sccache}
-    export SCCACHE_DIR=${SCCACHE_DIR:-$SCRATCH/sccache}
-    export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-20G}
-    export CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0}
-fi
 
 if [ "$MODE" = peek ]; then
     PEEK_START=$(date +%s)

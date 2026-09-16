@@ -110,8 +110,7 @@ touch "$WT/.dibs-used"
 
 # One cache per repo rather than per tree. Cargo fingerprints per crate, so switching commits
 # reuses most of it, where a tree of its own would rebuild the world every commit. Concurrent
-# builds serialise on cargo's own lock, which is correct and is the trade being made until
-# there is a shared sccache.
+# builds serialise on cargo's own lock, which is correct.
 TARGET=$SCRATCH/target/{repo}
 mkdir -p "$TARGET" "$SCRATCH/out"
 touch "$TARGET/.dibs-used"

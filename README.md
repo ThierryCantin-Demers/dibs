@@ -67,25 +67,13 @@ recipe still being tried out can sit uncommitted in the clone until it settles.
 
 ## Build caching
 
-A machine with `sccache` installed gets `RUSTC_WRAPPER` set for every job, with the cache under
-its scratch directory. It turns on by the tool being there rather than by a flag, so a machine
-without it is unaffected, and `DIBS_NO_SCCACHE=1` turns it off.
+dibs sets no compiler wrapper and leaves incremental compilation to each profile, so dev builds
+are incremental and release builds are not, the same as on a laptop.
 
-Measured on the benchmarking machine: filling an empty target directory for the largest workspace here, whole
-workspace takes 922s cold and 104s when sccache has seen the work before, at a 98.8% hit rate.
-The cache is between a sixth and a quarter of the target directory it replaces, so it is small.
-
-One consequence worth knowing: sccache runs the compiler inside its own daemon, which is
-parented to init, so the compiling happens **outside the job's process tree**. The CPU figure
-dibs reports for a holder counts that tree, so a build using every core can read as near zero.
-Idleness is therefore judged on the job's output as well: a job whose log is still growing is
-working, whatever its tree says. Without that, a healthy build reads as stalled and dibs tells
-you to kill it.
-
-Incremental compilation is turned off wherever sccache is on, and nowhere else. sccache
-declines to cache an incremental build, so leaving it on means debug builds, which is most test
-recipes, get nothing from the cache. The usual reason to keep incremental is fast iteration on
-one tree, which is not what happens here: every job starts from a worktree at some commit.
+sccache was tried and dropped. Its key for a Rust crate includes the target directory's path,
+and `SCCACHE_BASEDIRS` does not strip it, so it hits only when a directory is refilled at the
+same path. Every `@local` tree has a target directory of its own, so on a new tree it missed on
+every crate while still costing incremental compilation, which it refuses to cache.
 
 Worktrees and target directories are both collected, by every prepare, local or fetched, across
 every repo on the machine. A worktree goes after `DIBS_KEEP_DAYS` (14) unused. A target directory

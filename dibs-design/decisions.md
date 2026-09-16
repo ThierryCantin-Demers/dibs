@@ -228,6 +228,23 @@ exists for worktrees and does not exist for target directories at all.
 The 16s floor is itself informative: it is linking and `build.rs`, neither of which sccache
 caches, so it is what every machine pays no matter how warm the cache is.
 
+## sccache does not survive a change of target directory, so it was dropped
+
+Measured on the benchmarking machine, 2026-09-16, a debug build of `cubecl-core`, 167 Rust
+crates, with the cache warm from an earlier build of the same tree:
+
+| Second build | Rust hits | Time |
+|---|---|---|
+| same tree, same target directory path | 167 of 167 | 48s against 132s |
+| same tree, new target directory | 0 of 167 | 134s |
+| new tree, new target directory | 0 of 167 | 133s |
+| either of the above with `SCCACHE_BASEDIRS` over both | 0 of 167 | |
+
+The 98.8% above was a directory refilled at its own path, which is the one case that hits. Once
+every local tree had a target directory of its own, a new tree missed on everything, and the
+cache still cost incremental compilation. dibs now sets neither, and reuse across trees has to
+come from the target directory itself.
+
 ## Open
 
 **The recipe layer could not run an unpushed local branch, and the workaround silently produced wrong
