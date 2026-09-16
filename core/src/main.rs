@@ -425,9 +425,13 @@ fn run() -> Result<ExitCode, String> {
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()),
     };
     let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock.as_deref().unwrap_or("")));
-    // The first cargo step names the profile and features a sibling must have been built with.
     let signature = rec.steps.iter().find_map(|st| worktree::build_signature(&st.run)).unwrap_or_default();
-    let script = worktree::packages_script(lock.as_deref().unwrap_or(""), &signature)
+    let token = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    );
+    let script = worktree::packages_script(lock.as_deref().unwrap_or(""), &signature, &token)
         + &match &local {
             Some(l) => worktree::setup_local_script(&repo_name, &l.key, &l.content),
             None => worktree::setup_script(&repo_name, reference),
@@ -442,7 +446,7 @@ fn run() -> Result<ExitCode, String> {
     if let Some(from) = &prepared.seeded {
         match prepared.seed_shared {
             Some((have, of)) => eprintln!(
-                "dibs: target directory copied from {from}, which had built {have} of this tree's {of} packages"
+                "dibs: target directory copied from {from}, whose builds match {have} of the {of} groups in this tree's lockfile"
             ),
             None => eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds"),
         }
@@ -479,7 +483,7 @@ fn run() -> Result<ExitCode, String> {
         // needs no file of its own: dibs keeps every job's log under its job id, and a path
         // named after the label would be shared by two runs of one recipe.
         let run = match worktree::build_signature(&step.run) {
-            Some(_) => worktree::recording(&step.run),
+            Some(_) => worktree::recording(&step.run, &token),
             None => step.run.clone(),
         };
         let cd = format!(

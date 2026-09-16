@@ -42,9 +42,10 @@ pub fn cargo_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cargo"))
 }
 
-/// The pinned commits this checkout's cargo can supply. Cargo names a cache directory after
-/// the repo plus a hash of its URL, and the hash is the same on the machine, so the directory
-/// name is what both sides agree on.
+/// The pinned commits this checkout's cargo can supply. Cargo names a cache directory after the
+/// repo plus a hash of its URL, which matches the machine's only when both cargos hash the same
+/// way. One URL spelled two ways gets two directories, and the commit may be in either, so every
+/// directory holding it is offered rather than the first: the machine reads exactly one of them.
 pub fn local(cargo_home: &Path, pins: &[(String, String)]) -> Vec<Db> {
     let Ok(entries) = std::fs::read_dir(cargo_home.join("git/db")) else { return Vec::new() };
     let dirs: Vec<(String, PathBuf)> = entries
@@ -69,7 +70,6 @@ pub fn local(cargo_home: &Path, pins: &[(String, String)]) -> Vec<Db> {
                 .is_ok_and(|s| s.success());
             if has {
                 out.push(Db { name: name.clone(), path: path.clone(), commit: commit.clone() });
-                break;
             }
         }
     }
@@ -175,6 +175,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         assert_eq!(dbs.len(), 1);
         assert_eq!(dbs[0].name, "widget-0123456789abcdef");
         assert_eq!(dbs[0].commit, commit);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // One URL spelled two ways is two cache directories, and the machine reads only one of them.
+    #[test]
+    fn every_directory_holding_the_commit_is_offered() {
+        let (root, commit) = home("spellings");
+        sh(&root, "git clone -q --bare work cargo/git/db/widget-fedcba9876543210");
+        let dbs = local(&root.join("cargo"), &[("widget".to_string(), commit)]);
+        let mut names: Vec<&str> = dbs.iter().map(|d| d.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["widget-0123456789abcdef", "widget-fedcba9876543210"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 
