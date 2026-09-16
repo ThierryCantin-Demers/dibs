@@ -96,6 +96,16 @@ every repo on the machine. A worktree goes after `DIBS_KEEP_DAYS` (14) unused. A
 goes after `DIBS_TARGET_KEEP_DAYS` (5): disk is what runs out first on a machine, and a
 compilation cache makes refilling one cheap.
 
+## Batches
+
+`dibs batch <file|->` runs a list of dibs command lines as one submission and prints one summary
+when the last step ends, so an agent is woken once for the list instead of once per job. One
+step per line, optionally prefixed `[name after=a,b cont]`. A step without `after=` waits for the
+one before it; steps that wait for nothing in common overlap only on different machines. A failed
+step stops the rest unless it is marked `cont`. Each step's output is kept under
+`~/.local/state/dibs/batch/<id>/`, and the summary names each step's jobs for `dibs --out`. The
+driver owns its steps: however it dies, they die with it and release their locks.
+
 ## More than one machine
 
 `dibs --check <host> --write` records what it finds there as an entry in

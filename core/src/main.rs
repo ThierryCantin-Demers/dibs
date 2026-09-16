@@ -11,6 +11,7 @@
 //! their own scratch paths, and one filled a shared quota. And the rule to build under the
 //! shared lock was prose, so 17% of all exclusive time was spent compiling.
 
+mod batch;
 mod gitdeps;
 mod provenance;
 mod recipe;
@@ -34,6 +35,12 @@ dibs runs [label]                     what has run here, and what is comparable
 dibs shell <repo>[@<ref>] --reason <why> -- <cmd>   a command in a prepared worktree
 dibs raw --reason <why> -- <cmd>      a command with nothing prepared
 dibs gaps                             what did not fit a recipe, and what recurs
+dibs batch <file|->                   a list of dibs command lines as one submission, with one
+                                      summary at the end. One line per step, optionally
+                                      prefixed [name after=a,b cont]. A step without after=
+                                      waits for the one before it; steps that wait for nothing
+                                      in common overlap only on different machines. A failed
+                                      step stops the batch unless it is marked cont.
 
   <verb>    bench, build or test
   <repo>    a path to a checkout, or a name resolved under --root
@@ -46,6 +53,7 @@ dibs gaps                             what did not fit a recipe, and what recurs
             second one neither mixes with the first nor replaces it. `dibs --machines -v`
             lists the aliases.
   --dry-run print what would run, take no lock, record nothing
+  --verbose with batch, each step's output as it comes, prefixed with the step's name
 
 A recipe declares the procedure and names no revisions: the invocation supplies the code and
 the run record captures what it resolved to.
@@ -76,6 +84,7 @@ struct Args {
     command: Option<String>,
     /// The card to run on, named from the machine's inventory.
     device: Option<String>,
+    verbose: bool,
 }
 
 fn parse() -> Result<Args, String> {
@@ -85,6 +94,7 @@ fn parse() -> Result<Args, String> {
     let mut reason = None;
     let mut command = None;
     let mut device: Option<String> = None;
+    let mut verbose = false;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -114,6 +124,8 @@ fn parse() -> Result<Args, String> {
             }
             "--root" => root = PathBuf::from(it.next().ok_or("--root needs a path")?),
             "--dry-run" => dry_run = true,
+            "--verbose" | "-v" => verbose = true,
+            "-" => positional.push("-".into()),
             s if s.starts_with('-') => return Err(format!("unknown option: {s}")),
             s => positional.push(s.to_string()),
         }
@@ -130,7 +142,7 @@ fn parse() -> Result<Args, String> {
     // runs takes a recorded label, not repo@ref, and a label carries its device after an @.
     // Splitting there drops the half that tells two runs of one recipe on different cards apart.
     let (repo, reference) = match target.split_once('@') {
-        Some((r, rev)) if verb != "runs" => (r.to_string(), Some(rev.to_string())),
+        Some((r, rev)) if verb != "runs" && verb != "batch" => (r.to_string(), Some(rev.to_string())),
         _ => (target, None),
     };
     Ok(Args {
@@ -143,6 +155,7 @@ fn parse() -> Result<Args, String> {
         reason,
         command,
         device,
+        verbose,
     })
 }
 
@@ -181,6 +194,15 @@ fn repo_root() -> PathBuf {
 
 fn run() -> Result<ExitCode, String> {
     let args = parse()?;
+
+    if args.verb == "batch" {
+        let text = match args.repo.as_str() {
+            "-" => std::io::read_to_string(std::io::stdin()).map_err(|e| format!("reading the batch from stdin: {e}"))?,
+            path => std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?,
+        };
+        let code = batch::run(&text, &batch::Options { dry_run: args.dry_run, verbose: args.verbose })?;
+        return Ok(ExitCode::from(code.clamp(0, 255) as u8));
+    }
 
     if args.verb == "gaps" {
         print!("{}", runs::gaps(&runs::load(&runs_path()?)?));

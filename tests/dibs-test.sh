@@ -1412,6 +1412,47 @@ check "recipes that are not a clone are left alone quietly" "$(grep -c 'recipes'
 cp "$(readlink -f "$T")" "$U/loose"
 check "a copy outside a clone is refused" "$("$U/loose" --update >/dev/null 2>&1; echo $?)" "2"
 
+echo "batch"
+# The driver is in the recipe layer, built from this checkout, and each step is dibs itself.
+BCORE=$SRC/core/target/debug/dibs-core
+[ -x "$BCORE" ] || cargo build -q --manifest-path "$SRC/core/Cargo.toml" 2>/dev/null
+mkdir -p "$S/bbin"; ln -sf "$T" "$S/bbin/dibs"
+B() { PATH=$S/bbin:$PATH DIBS_CORE=$BCORE "$T" batch "$@"; }
+printf '%s\n' "# a comment" "[a] dibs --label batch-a 'echo a-start >> $S/border; echo a-end >> $S/border'" \
+  "" "[b] dibs --label batch-b 'echo b >> $S/border'" > "$S/b1"
+out=$(B "$S/b1" 2> "$S/b1.err"); rc=$?
+check "a batch runs its steps in order" "$(tr '\n' ' ' < "$S/border")" "a-start a-end b "
+check "and exits 0 when every step did" "$rc" "0"
+check "its summary is the one thing on stdout" "$(head -1 <<<"$out" | grep -c '^batch [0-9-]*  2 steps, ')" "1"
+check "naming each step's job" "$(grep -cE '^a  .* [0-9]{8}-[0-9]+$' <<<"$out")" "1"
+check "and it says when it starts that there is nothing to watch" "$(grep -c 'nothing to watch' "$S/b1.err")" "1"
+bdir=$(sed -n 's/^each step.s output: \(.*\)\/<name>.*/\1/p' <<<"$out")
+check "each step's output is kept on this side" "$(grep -c '^job ' "$bdir/a.err")" "1"
+check "under a home of its own here, not the real one" "$(case "$bdir" in "$HOME"/*) echo inside ;; *) echo "$bdir" ;; esac)" "inside"
+printf '%s\n' "[x] dibs --label batch-x 'exit 3'" "[y] dibs --label batch-y 'echo ran > $S/by'" > "$S/b2"
+out=$(B "$S/b2" 2>/dev/null); rc=$?
+check "a failed step stops the batch" "$([ -e "$S/by" ] && echo ran || echo stopped)" "stopped"
+check "which exits 1" "$rc" "1"
+check "and the summary says which step failed and which did not run" \
+  "$(grep -cE '^x .* 3  |^y .*not run' <<<"$out")" "2"
+printf '%s\n' "[x cont] dibs --label batch-x 'exit 3'" "[y] dibs --label batch-y 'echo ran > $S/by2'" > "$S/b3"
+out=$(B "$S/b3" 2>/dev/null); rc=$?
+check "a cont step's failure lets the rest run" "$(cat "$S/by2" 2>/dev/null)" "ran"
+check "and the batch still exits 1" "$rc" "1"
+check "a batch reads stdin" "$(printf '%s\n' "dibs --label batch-stdin 'echo from-stdin'" | B - 2>/dev/null | grep -c '^1  ')" "1"
+check "a dry run runs nothing" "$(B --dry-run "$S/b2" >/dev/null 2>&1; [ -e "$S/by" ] && echo ran || echo nothing)" "nothing"
+printf '%s\n' "dibs --label ok 'echo should-not-run > $S/bz'" "cargo build" > "$S/b4"
+check "a line that is not a dibs call is refused" "$(B "$S/b4" >/dev/null 2>&1; echo $?)" "2"
+check "before anything runs" "$([ -e "$S/bz" ] && echo ran || echo nothing)" "nothing"
+# The driver owns its steps: killed outright, it must not leave one holding a lock.
+fifo BH; fifo BU
+printf '%s\n' "[hold] dibs --label batch-hold 'echo up > $S/f-BU; $(hold BH)'" > "$S/b5"
+PATH=$S/bbin:$PATH DIBS_CORE=$BCORE "$T" batch "$S/b5" >/dev/null 2>&1 &
+BDRIVER=$!
+sync_ BU
+kill -9 $BDRIVER 2>/dev/null; wait $BDRIVER 2>/dev/null
+check "a killed driver takes its running step and its lock with it" "$(gone && echo released)" "released"
+
 echo "one command"
 check "run is the bare form" "$($T run --label one-run 'echo via-run' 2>/dev/null)" "via-run"
 check "status is --status" "$($T status | grep -c 'dibs: idle')" "1"
