@@ -52,8 +52,9 @@ done
 /// new: one that outlived its target keeps the times of an earlier sync.
 ///
 /// A sibling a build holds is skipped, since cargo writes artifacts before their fingerprints.
-/// Only a reflink copy is made: a full one per tree would fill the disk, and a filesystem that
-/// cannot share blocks gets no seed at all.
+/// A target is only ever reflinked: a full copy per tree would fill the disk, and a filesystem
+/// that cannot share blocks gets no seed at all. Sources are small and may live on another
+/// filesystem than targets, so they fall back to a plain copy.
 const SEED: &str = r#"ranked=$(for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$SCRATCH/target/{repo}"-local-*/.dibs-used 2>/dev/null); do
     src=${used%/.dibs-used}
     n=0
@@ -77,7 +78,7 @@ while read -r n src; do
         case "${src##*/}" in
             {repo}-local-*)
                 sources=$SCRATCH/ws/{repo}/local-${src##*/{repo}-local-}
-                if [ -d "$sources" ] && cp -a --reflink=always "$sources" "$WT.seed.$$" 2>/dev/null && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
+                if [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
                     echo "DIBS-SEED-SOURCES"
                 fi
                 rm -rf "$WT.seed.$$" ;;
@@ -839,7 +840,10 @@ mod local_tests {
         std::fs::create_dir_all(&bin).unwrap();
         let real = String::from_utf8(Command::new("bash").args(["-c", "type -P cp"]).output().unwrap().stdout).unwrap();
         let shim = match cp {
-            "reflinks" => format!("#!/bin/bash\nargs=()\nshared=0\nfor a; do if [ \"$a\" = --reflink=always ]; then shared=1; else args+=(\"$a\"); fi; done\n[ $shared = 1 ] || exit 1\nexec {} \"${{args[@]}}\"\n", real.trim()),
+            "reflinks" => format!("#!/bin/bash\nargs=()\nshared=0\nfor a; do case \"$a\" in --reflink=always|--reflink=auto) shared=1 ;; *) args+=(\"$a\") ;; esac; done\n[ $shared = 1 ] || exit 1\nexec {} \"${{args[@]}}\"\n", real.trim()),
+            // Targets on a filesystem with reflinks, sources on one without, as on a machine
+            // whose target directories alone were moved.
+            "targets only" => format!("#!/bin/bash\nargs=()\nmode=\nfor a; do case \"$a\" in --reflink=*) mode=$a ;; *) args+=(\"$a\") ;; esac; done\ncase \"$mode:${{args[-1]}}\" in --reflink=auto:*/ws/*|--reflink=always:*/target/*) exec {} \"${{args[@]}}\" ;; esac\nexit 1\n", real.trim()),
             _ => "#!/bin/bash\nexit 1\n".to_string(),
         };
         std::fs::write(bin.join("cp"), shim).unwrap();
@@ -924,6 +928,17 @@ mod local_tests {
         assert!(age(&wt.join("src/edited.rs")) < 3600, "a changed file is rewritten and dated now");
         assert_eq!(std::fs::read_to_string(wt.join("src/edited.rs")).unwrap(), "fn after() {}\n");
         assert!(wt.join(".dibs-used").exists(), "the sync must not delete the collection marker");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn sources_are_copied_even_where_only_targets_can_be_reflinked() {
+        let scratch = tmp("seed-sources-plain");
+        sibling(&scratch);
+        sibling_sources(&scratch);
+        let p = parse(&prepare_local(&scratch, "new", None, "targets only")).unwrap();
+        assert_eq!(p.seeded.as_deref(), Some("demo-local-old"));
+        assert!(p.seeded_sources);
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
