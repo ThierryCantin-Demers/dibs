@@ -2321,6 +2321,22 @@ case "$MODE" in
             note "every command including the ones for finding out why. Set DIBS_SCRATCH."
         else ok "scratch $scratch on $fstype, $avail free"; fi
 
+        tdir=$scratch/target
+        if [ -d "$tdir" ] && [ -w "$tdir" ]; then
+            probe=$tdir/.dibs-reflink-check
+            if echo x > "$probe" && cp --reflink=always "$probe" "$probe.copy" 2>/dev/null; then
+                tfs=$(df -PT "$tdir/" 2>/dev/null | awk 'NR==2{print $2}')
+                listed=$(timeout 60 du -sh "$tdir/" 2>/dev/null | cut -f1)
+                ok "target directories on $tfs with reflinks: a new tree starts from a copy of its repo's latest"
+                note "$(ls "$tdir" | wc -l) of them list ${listed:-more than 60s of du}, counting shared blocks once per copy."
+                note "df is no better a measure: XFS reserves about 2% of the disk up front for reflinks."
+            else
+                warn "no reflinks where target directories live, so every new tree builds from nothing"
+                note "XFS or btrfs under $tdir lets a new tree start from a sibling's build for free."
+            fi
+            rm -f "$probe" "$probe.copy"
+        fi
+
         case "$HIST" in
             /var/lib/dibs/*) ok "history and log shared: $(dirname "$HIST")" ;;
             *) warn "history is per-user: $HIST"

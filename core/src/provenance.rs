@@ -45,6 +45,9 @@ pub struct Run {
     /// so rather than to let them be averaged.
     pub machine: Option<String>,
     pub revisions: Vec<(String, String)>,
+    /// The sibling target directory a new tree's was copied from. A slow build with none is a
+    /// build that started from nothing.
+    pub seeded: Option<String>,
     pub steps: Vec<StepRecord>,
 }
 
@@ -70,6 +73,9 @@ impl Run {
         }
         if let Some(r) = &self.reason {
             let _ = write!(s, ",\"reason\":{}", q(r));
+        }
+        if let Some(r) = &self.seeded {
+            let _ = write!(s, ",\"seeded\":{}", q(r));
         }
         s.push_str(",\"procedure\":[");
         for (i, (lock, run)) in self.procedure.iter().enumerate() {

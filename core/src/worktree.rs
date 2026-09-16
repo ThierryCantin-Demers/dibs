@@ -57,7 +57,7 @@ const SEED: &str = r#"for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$
         flock -n -s "$fd" || { held=1; break; }
     done
     if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
-        echo "DIBS-SEED $src" >&2
+        echo "DIBS-SEED ${src##*/}"
     fi
     for fd in $fds; do exec {fd}<&-; done
     rm -rf "$TARGET.seed.$$"
@@ -157,6 +157,8 @@ pub struct Prepared {
     pub worktree: String,
     pub target: String,
     pub revisions: Vec<(String, String)>,
+    /// The sibling target directory this one was copied from, when it was.
+    pub seeded: Option<String>,
 }
 
 /// Reads the markers back out. Anything else the setup printed is left alone, so a fetch that
@@ -165,11 +167,14 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
     let mut worktree = None;
     let mut target = None;
     let mut revisions = Vec::new();
+    let mut seeded = None;
     for line in out.lines() {
         if let Some(v) = line.strip_prefix("DIBS-WT ") {
             worktree = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("DIBS-TARGET ") {
             target = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("DIBS-SEED ") {
+            seeded = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("DIBS-REV ") {
             let mut it = v.split_whitespace();
             if let (Some(r), Some(sha)) = (it.next(), it.next()) {
@@ -178,7 +183,7 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
         }
     }
     match (worktree, target) {
-        (Some(worktree), Some(target)) => Ok(Prepared { worktree, target, revisions }),
+        (Some(worktree), Some(target)) => Ok(Prepared { worktree, target, revisions, seeded }),
         _ => Err("the worktree setup did not report a path; see its output above".into()),
     }
 }
@@ -638,7 +643,7 @@ mod local_tests {
         };
         let out = cmd.env("DIBS_SCRATCH", scratch).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stderr).into_owned()
+        String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
     fn sibling(scratch: &std::path::Path) -> std::path::PathBuf {
@@ -654,8 +659,8 @@ mod local_tests {
     fn a_new_tree_starts_from_its_repos_latest_target() {
         let scratch = tmp("seed");
         sibling(&scratch);
-        let err = prepare_local(&scratch, "new", None, "reflinks");
-        assert!(err.contains("DIBS-SEED"), "{err}");
+        let out = prepare_local(&scratch, "new", None, "reflinks");
+        assert_eq!(parse(&out).unwrap().seeded.as_deref(), Some("demo-local-old"), "{out}");
         assert!(scratch.join("target/demo-local-new/debug/deps/libdep.rlib").exists());
         let _ = std::fs::remove_dir_all(&scratch);
     }

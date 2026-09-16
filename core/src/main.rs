@@ -222,6 +222,7 @@ fn run() -> Result<ExitCode, String> {
             device: args.device.clone(),
             machine: backend.machine.clone(),
             revisions: Vec::new(),
+            seeded: None,
             steps: vec![provenance::StepRecord {
                 lock: "shared",
                 status: out.status,
@@ -420,6 +421,9 @@ fn run() -> Result<ExitCode, String> {
     }
     let prepared = worktree::parse(&text)?;
     eprintln!("dibs: {}", prepared.worktree);
+    if let Some(from) = &prepared.seeded {
+        eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds");
+    }
     if local.is_some() {
         sync_local(&backend, &dir, &prepared.worktree)?;
     }
@@ -483,6 +487,7 @@ fn run() -> Result<ExitCode, String> {
         // Read on the machine, from the tree that was actually built, rather than from a
         // checkout here that may be at a different commit entirely.
         revisions: prepared.revisions.clone(),
+        seeded: prepared.seeded.clone(),
         steps,
     };
     write_record(&record)?;
@@ -733,6 +738,7 @@ mod tests {
             device: Some("gpu:rtx2060".into()),
             machine: Some("multigpu".into()),
             revisions: vec![],
+            seeded: None,
             steps: vec![],
         };
         let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).expect("valid json");
@@ -766,6 +772,7 @@ mod tests {
             device: None,
             machine: None,
             revisions: vec![],
+            seeded: None,
             steps: vec![],
         };
         let line = run.to_json(1);
@@ -789,6 +796,7 @@ mod tests {
             device: None,
             machine: None,
             revisions: vec![("cubek".into(), "abc123".into())],
+            seeded: None,
             steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3 }],
         };
         let line = run.to_json(42);

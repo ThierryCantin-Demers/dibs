@@ -24,6 +24,7 @@ pub struct Record {
     pub seconds: u64,
     pub failed: bool,
     pub reason: Option<String>,
+    pub seeded: Option<String>,
 }
 
 /// Hand-rolled rather than pulled through serde: the file is append-only and written by this
@@ -76,6 +77,7 @@ fn parse_line(line: &str) -> Option<Record> {
         seconds,
         failed,
         reason: field(line, "reason").map(str::to_string),
+        seeded: field(line, "seeded").map(str::to_string),
     })
 }
 
@@ -128,12 +130,13 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize) -> String {
         let revs: Vec<String> =
             r.revisions.iter().map(|(k, v)| format!("{k}@{v}")).collect();
         out.push_str(&format!(
-            "{:<7} {:<28} {:>6}s  {:<9} {}{}\n",
+            "{:<7} {:<28} {:>6}s  {:<9} {}{}{}\n",
             r.verb,
             r.label,
             r.seconds,
             r.isolation,
             revs.join(" "),
+            r.seeded.as_ref().map(|s| format!("  seeded from {s}")).unwrap_or_default(),
             if r.failed { "  FAILED" } else { "" }
         ));
     }
@@ -292,5 +295,11 @@ mod tests {
     #[test]
     fn a_corrupt_tail_is_skipped_rather_than_fatal() {
         assert!(parse_line("{\"t\":1,\"verb\":\"bench\"").is_none());
+    }
+
+    #[test]
+    fn a_seeded_run_says_where_its_target_came_from() {
+        let line = r#"{"t":1,"verb":"build","label":"m/build/x","fingerprint":"f","isolation":"machine","backend":"dibs","seeded":"m-local-abc","revisions":{"m":"abc"},"steps":[{"lock":"shared","status":0,"seconds":9}]}"#;
+        assert_eq!(parse_line(line).unwrap().seeded.as_deref(), Some("m-local-abc"));
     }
 }
