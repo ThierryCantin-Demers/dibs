@@ -87,12 +87,10 @@ declines to cache an incremental build, so leaving it on means debug builds, whi
 recipes, get nothing from the cache. The usual reason to keep incremental is fast iteration on
 one tree, which is not what happens here: every job starts from a worktree at some commit.
 
-Worktrees and target directories are both collected, on different clocks and for different
-reasons. A worktree is per commit and disposable, so it goes after `DIBS_KEEP_DAYS` (14). A
-target directory is one per repo, shared by every tree of it, and is the thing that makes a
-build fast, so it goes only when a repo has stopped being built on that machine at all, after
-`DIBS_TARGET_KEEP_DAYS` (45). A compilation cache is what makes even that reasonable: refilling
-a collected directory costs a fraction of filling it the first time.
+Worktrees and target directories are both collected, by every prepare, local or fetched, across
+every repo on the machine. A worktree goes after `DIBS_KEEP_DAYS` (14) unused. A target directory
+goes after `DIBS_TARGET_KEEP_DAYS` (5): disk is what runs out first on a machine, and a
+compilation cache makes refilling one cheap.
 
 ## More than one machine
 

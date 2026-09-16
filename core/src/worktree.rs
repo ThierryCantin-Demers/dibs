@@ -11,6 +11,33 @@
 
 use std::fmt::Write as _;
 
+/// Collection runs on every prepare, fetched or local, and sweeps every repo's trees and targets
+/// rather than only the one being prepared: most runs are local, and a repo nobody prepares any
+/// more would otherwise never be swept at all.
+///
+/// A target directory goes on a short clock because the disk is what runs out first on a
+/// machine, and a compilation cache makes refilling one cheap. One with no marker predates the
+/// marker, so it is dated rather than deleted. The current tree and target were touched a moment
+/// ago, and a running job touched its own when it started, so neither can be a victim.
+const GC: &str = r#"KEEP=${DIBS_KEEP_DAYS:-14}
+for old in "$SCRATCH"/ws/*/*; do
+    [ -d "$old" ] || continue
+    [ "$old" = "$WT" ] && continue
+    [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+    echo "DIBS-GC $old" >&2
+    git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+done
+TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
+for old in "$SCRATCH/target"/*; do
+    [ -d "$old" ] || continue
+    [ "$old" = "$TARGET" ] && continue
+    if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
+    [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+    echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
+    rm -rf "$old"
+done
+"#;
+
 /// Where everything lives, under the account's scratch. Keyed by commit rather than by branch
 /// name: two agents on the same branch at different commits then get different trees instead
 /// of racing to check out over each other, and a rerun of the same commit reuses its tree.
@@ -89,46 +116,13 @@ TARGET=$SCRATCH/target/{repo}
 mkdir -p "$TARGET" "$SCRATCH/out"
 touch "$TARGET/.dibs-used"
 
-# Trees are keyed by commit, so they accumulate: every commit ever measured leaves one. That
-# is a garbage collection problem rather than a correctness one, and it is solvable here for
-# exactly the reason the layout is owned at all, which is that the last use of each tree is
-# known. Nobody could know that when the paths were written by hand.
-#
-# The current tree was touched a moment ago, so it can never be its own victim, and a job that
-# is still running touched its tree when it started.
-KEEP=${{DIBS_KEEP_DAYS:-14}}
-for old in "$SCRATCH/ws/{repo}"/*; do
-    [ -d "$old" ] || continue
-    [ "$old" = "$WT" ] && continue
-    [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
-    echo "DIBS-GC $old" >&2
-    git -C "$SRC" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
-done
-git -C "$SRC" worktree prune
-
-# Target directories are not worktrees. There is one per repo, every tree of that repo shares
-# it, and it is the thing that makes a build fast rather than a by-product of one, so it is
-# collected only when a repo has stopped being built here at all and on a much longer clock. A
-# compilation cache on the machine is what makes this reasonable at all: refilling a collected
-# directory costs a fraction of what filling it the first time did.
-#
-# A directory with no marker gets one rather than being removed. Everything already on disk
-# predates the marker, and starting its clock is the answer that cannot delete something that
-# is still in daily use.
-TKEEP=${{DIBS_TARGET_KEEP_DAYS:-45}}
-for old in "$SCRATCH/target"/*; do
-    [ -d "$old" ] || continue
-    [ "$old" = "$TARGET" ] && continue
-    if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
-    [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
-    echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-    rm -rf "$old"
-done
+{gc}git -C "$SRC" worktree prune
 
 echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
 echo "DIBS-REV {repo} $SHORT"
-"#
+"#,
+        gc = GC
     );
     s
 }
@@ -352,7 +346,7 @@ mod tests {
 
     /// Three target directories: the one about to be used, one last touched long ago, and one
     /// that has never been marked at all because it predates the marker.
-    fn targets(home: &std::path::Path, keep: &str) -> Vec<String> {
+    fn targets(home: &std::path::Path, keep: &str, script: &str) -> Vec<String> {
         let t = home.join("scratch/target");
         std::fs::create_dir_all(t.join("abandoned")).unwrap();
         std::fs::create_dir_all(t.join("unmarked")).unwrap();
@@ -366,7 +360,7 @@ mod tests {
             .unwrap();
         let out = std::process::Command::new("bash")
             .arg("-c")
-            .arg(setup_script("demo", "local-only"))
+            .arg(script)
             .env("HOME", home)
             .env("DIBS_SCRATCH", home.join("scratch"))
             .env("DIBS_TARGET_KEEP_DAYS", keep)
@@ -386,9 +380,28 @@ mod tests {
     #[test]
     fn a_target_directory_nobody_has_used_is_collected() {
         let (home, _, _) = sandbox("gc");
-        let left = targets(&home, "45");
+        let left = targets(&home, "45", &setup_script("demo", "local-only"));
         assert!(!left.contains(&"abandoned".to_string()), "left {left:?}");
         assert!(left.contains(&"demo".to_string()), "the one being used must survive");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // Most runs are local, so a sweep that only a fetched ref triggers never runs at all.
+    #[test]
+    fn a_local_prepare_collects_stale_targets_and_trees_of_every_repo() {
+        let (home, _, _) = sandbox("gc-local");
+        let stale = home.join("scratch/ws/other/local-old");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::process::Command::new("touch")
+            .arg("-d")
+            .arg("400 days ago")
+            .arg(stale.join(".dibs-used"))
+            .status()
+            .unwrap();
+        let left = targets(&home, "5", &setup_local_script("demo", "k", "c"));
+        assert!(!left.contains(&"abandoned".to_string()), "left {left:?}");
+        assert!(left.contains(&"demo-local-k".to_string()), "the one being used must survive");
+        assert!(!stale.exists(), "a stale tree of another repo must be collected");
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -397,7 +410,7 @@ mod tests {
     #[test]
     fn a_target_directory_with_no_marker_is_dated_rather_than_deleted() {
         let (home, _, _) = sandbox("unmarked");
-        let left = targets(&home, "45");
+        let left = targets(&home, "45", &setup_script("demo", "local-only"));
         assert!(left.contains(&"unmarked".to_string()), "left {left:?}");
         assert!(home.join("scratch/target/unmarked/.dibs-used").exists());
         let _ = std::fs::remove_dir_all(&home);
@@ -527,10 +540,11 @@ WT=$SCRATCH/ws/{repo}/local-{key}
 TARGET=$SCRATCH/target/{repo}-local-{key}
 mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
 touch "$WT/.dibs-used" "$TARGET/.dibs-used"
-echo "DIBS-WT $WT"
+{gc}echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
 echo "DIBS-REV {repo} local:{content}"
-"#
+"#,
+        gc = GC
     );
     s
 }
