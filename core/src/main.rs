@@ -425,10 +425,12 @@ fn run() -> Result<ExitCode, String> {
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()),
     };
     let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock.as_deref().unwrap_or("")));
-    let script = match &local {
-        Some(l) => worktree::setup_local_script(&repo_name, &l.key, &l.content),
-        None => worktree::setup_script(&repo_name, reference),
-    } + &gitdeps::check_script(&gitdbs);
+    let script = worktree::packages_script(lock.as_deref().unwrap_or(""))
+        + &match &local {
+            Some(l) => worktree::setup_local_script(&repo_name, &l.key, &l.content),
+            None => worktree::setup_script(&repo_name, reference),
+        }
+        + &gitdeps::check_script(&gitdbs);
     let (out, text) = backend.run_capture(&setup, &script)?;
     if out.status != 0 {
         return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
@@ -436,7 +438,12 @@ fn run() -> Result<ExitCode, String> {
     let prepared = worktree::parse(&text)?;
     eprintln!("dibs: {}", prepared.worktree);
     if let Some(from) = &prepared.seeded {
-        eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds");
+        match prepared.seed_shared {
+            Some((have, of)) => eprintln!(
+                "dibs: target directory copied from {from}, which had built {have} of this tree's {of} packages"
+            ),
+            None => eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds"),
+        }
     }
     if local.is_some() {
         sync_local(&backend, &dir, &prepared.worktree)?;

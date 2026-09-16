@@ -38,8 +38,10 @@ for old in "$SCRATCH/target"/*; do
 done
 "#;
 
-/// A new local tree starts from a copy of its repo's most recently used target directory rather
-/// than from nothing, since trees of one repo differ in a few files. Only a tree that is itself
+/// A new local tree starts from a copy of a sibling target directory rather than from nothing,
+/// since trees of one repo differ in a few files. The sibling is the one that has built the most
+/// of this tree's `Cargo.lock`, newest first among equals: cargo reuses a crate only at the same
+/// version and git revision, so the newest sibling on another cubecl revision saves little. Only a tree that is itself
 /// new: the sync that follows gives every file the current time, which is what makes cargo
 /// rebuild the workspace crates instead of trusting the copy. A tree that outlived its target
 /// keeps old times, so a copy there could be taken as fresh.
@@ -47,8 +49,16 @@ done
 /// A sibling a build holds is skipped, since cargo writes artifacts before their fingerprints.
 /// Only a reflink copy is made: a full one per tree would fill the disk, and a filesystem that
 /// cannot share blocks gets no seed at all.
-const SEED: &str = r#"for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$SCRATCH/target/{repo}"-local-*/.dibs-used 2>/dev/null); do
+const SEED: &str = r#"ranked=$(for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$SCRATCH/target/{repo}"-local-*/.dibs-used 2>/dev/null); do
     src=${used%/.dibs-used}
+    n=0
+    if [ -s "${DIBS_PKGS:-/nonexistent}" ] && [ -f "$src/.dibs-packages" ]; then
+        n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+    fi
+    echo "$n $src"
+done | sort -s -k1,1nr)
+while read -r n src; do
+    [ -n "$src" ] || continue
     fds=
     held=0
     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
@@ -58,12 +68,62 @@ const SEED: &str = r#"for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$
     done
     if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
         echo "DIBS-SEED ${src##*/}"
+        [ -s "${DIBS_PKGS:-/nonexistent}" ] && echo "DIBS-SEED-SHARED $n $(wc -l < "$DIBS_PKGS")"
     fi
     for fd in $fds; do exec {fd}<&-; done
     rm -rf "$TARGET.seed.$$"
     [ -d "$TARGET" ] && break
-done
+done <<< "$ranked"
 "#;
+
+/// What a target directory has been built against, as the union of every lockfile prepared into
+/// it: old artifacts stay when a tree moves on, so a revision built last week still counts.
+const RECORD: &str = r#"if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+    { cat "$TARGET/.dibs-packages" 2>/dev/null || true; cat "$DIBS_PKGS"; } | LC_ALL=C sort -u > "$TARGET/.dibs-packages.new"
+    mv "$TARGET/.dibs-packages.new" "$TARGET/.dibs-packages"
+fi
+rm -f "${DIBS_PKGS:-/nonexistent}"
+"#;
+
+/// Written ahead of a setup script: one short hash per package in the tree's `Cargo.lock`, which
+/// the seed and the record above compare as sorted lines.
+pub fn packages_script(lock: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hashes = std::collections::BTreeSet::new();
+    let (mut name, mut version, mut source) = (None, None, None);
+    let mut flush = |name: &mut Option<String>, version: &mut Option<String>, source: &mut Option<String>| {
+        if let (Some(n), Some(v)) = (name.take(), version.take()) {
+            let key = format!("{n} {v} {}", source.take().unwrap_or_default());
+            hashes.insert(format!("{:.12}", hex(&Sha256::digest(key.as_bytes()))));
+        }
+        *source = None;
+    };
+    for line in lock.lines() {
+        let line = line.trim();
+        if line == "[[package]]" {
+            flush(&mut name, &mut version, &mut source);
+        } else if let Some(v) = line.strip_prefix("name = ") {
+            name = Some(v.trim_matches('"').to_string());
+        } else if let Some(v) = line.strip_prefix("version = ") {
+            version = Some(v.trim_matches('"').to_string());
+        } else if let Some(v) = line.strip_prefix("source = ") {
+            source = Some(v.trim_matches('"').to_string());
+        }
+    }
+    flush(&mut name, &mut version, &mut source);
+    if hashes.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from(
+        "DIBS_PKGS=${DIBS_SCRATCH:-$HOME/.cache/dibs}/.packages.$$\nmkdir -p \"${DIBS_PKGS%/*}\"\ncat > \"$DIBS_PKGS\" <<'DIBS_PACKAGES'\n",
+    );
+    for h in hashes {
+        s.push_str(&h);
+        s.push('\n');
+    }
+    s.push_str("DIBS_PACKAGES\n");
+    s
+}
 
 /// Where everything lives, under the account's scratch. Keyed by commit rather than by branch
 /// name: two agents on the same branch at different commits then get different trees instead
@@ -142,13 +202,14 @@ TARGET=$SCRATCH/target/{repo}
 mkdir -p "$TARGET" "$SCRATCH/out"
 touch "$TARGET/.dibs-used"
 
-{gc}git -C "$SRC" worktree prune
+{record}{gc}git -C "$SRC" worktree prune
 
 echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
 echo "DIBS-REV {repo} $SHORT"
 "#,
-        gc = GC
+        gc = GC,
+        record = RECORD
     );
     s
 }
@@ -159,6 +220,8 @@ pub struct Prepared {
     pub revisions: Vec<(String, String)>,
     /// The sibling target directory this one was copied from, when it was.
     pub seeded: Option<String>,
+    /// How many of this tree's packages that sibling had built, out of how many.
+    pub seed_shared: Option<(usize, usize)>,
 }
 
 /// Reads the markers back out. Anything else the setup printed is left alone, so a fetch that
@@ -168,11 +231,17 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
     let mut target = None;
     let mut revisions = Vec::new();
     let mut seeded = None;
+    let mut seed_shared = None;
     for line in out.lines() {
         if let Some(v) = line.strip_prefix("DIBS-WT ") {
             worktree = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("DIBS-TARGET ") {
             target = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("DIBS-SEED-SHARED ") {
+            let mut it = v.split_whitespace().map(|x| x.parse::<usize>());
+            if let (Some(Ok(a)), Some(Ok(b))) = (it.next(), it.next()) {
+                seed_shared = Some((a, b));
+            }
         } else if let Some(v) = line.strip_prefix("DIBS-SEED ") {
             seeded = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("DIBS-REV ") {
@@ -183,7 +252,7 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
         }
     }
     match (worktree, target) {
-        (Some(worktree), Some(target)) => Ok(Prepared { worktree, target, revisions, seeded }),
+        (Some(worktree), Some(target)) => Ok(Prepared { worktree, target, revisions, seeded, seed_shared }),
         _ => Err("the worktree setup did not report a path; see its output above".into()),
     }
 }
@@ -573,11 +642,12 @@ if [ ! -d "$WT" ] && [ ! -d "$TARGET" ]; then
 {seed}fi
 mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
 touch "$WT/.dibs-used" "$TARGET/.dibs-used"
-{gc}echo "DIBS-WT $WT"
+{record}{gc}echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
 echo "DIBS-REV {repo} local:{content}"
 "#,
         gc = GC,
+        record = RECORD,
         seed = SEED.replace("{repo}", repo)
     );
     s
@@ -624,7 +694,11 @@ mod local_tests {
     /// `cp` stands in for the filesystem: the test directory is usually a tmpfs, which has no
     /// reflinks, so a shim decides whether the reflink copy succeeds.
     fn prepare_local(scratch: &std::path::Path, key: &str, hold: Option<&str>, cp: &str) -> String {
-        let script = setup_local_script("demo", key, "c");
+        prepare_local_with(scratch, key, hold, cp, "")
+    }
+
+    fn prepare_local_with(scratch: &std::path::Path, key: &str, hold: Option<&str>, cp: &str, lock: &str) -> String {
+        let script = packages_script(lock) + &setup_local_script("demo", key, "c");
         let bin = scratch.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let real = String::from_utf8(Command::new("bash").args(["-c", "type -P cp"]).output().unwrap().stdout).unwrap();
@@ -653,6 +727,68 @@ mod local_tests {
         std::fs::write(t.join("debug/.cargo-lock"), "").unwrap();
         std::fs::write(t.join(".dibs-used"), "").unwrap();
         t
+    }
+
+    const LOCK_A: &str = "[[package]]\nname = \"cubecl\"\nversion = \"0.11.0\"\nsource = \"git+https://github.com/tracel-ai/cubecl?rev=aaa#aaa\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\n";
+
+    fn packages_of(lock: &str) -> String {
+        packages_script(lock).lines().filter(|l| l.len() == 12).map(|l| format!("{l}\n")).collect()
+    }
+
+    #[test]
+    fn a_lockfile_becomes_one_sorted_hash_per_package_and_a_revision_is_a_different_package() {
+        let a = packages_of(LOCK_A);
+        assert_eq!(a.lines().count(), 3);
+        let mut sorted: Vec<&str> = a.lines().collect();
+        sorted.sort();
+        assert_eq!(sorted, a.lines().collect::<Vec<_>>());
+        let b = packages_of(&LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"));
+        assert_eq!(a.lines().filter(|l| b.contains(*l)).count(), 2);
+        assert_eq!(packages_script(""), "");
+    }
+
+    // The newest sibling on another revision saves less than an older one on this one.
+    #[test]
+    fn the_sibling_that_built_the_most_of_this_lockfile_wins_over_a_newer_one() {
+        let scratch = tmp("seed-match");
+        let old = sibling(&scratch);
+        std::fs::write(old.join(".dibs-packages"), packages_of(LOCK_A)).unwrap();
+        let newer = scratch.join("target/demo-local-newer");
+        std::fs::create_dir_all(newer.join("debug")).unwrap();
+        std::fs::write(newer.join(".dibs-packages"), packages_of(&LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"))).unwrap();
+        Command::new("touch").arg("-d").arg("400 days ago").arg(old.join(".dibs-used")).status().unwrap();
+        std::fs::write(newer.join(".dibs-used"), "").unwrap();
+        let out = prepare_local_with(&scratch, "new", None, "reflinks", LOCK_A);
+        let p = parse(&out).unwrap();
+        assert_eq!(p.seeded.as_deref(), Some("demo-local-old"), "{out}");
+        assert_eq!(p.seed_shared, Some((3, 3)));
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn among_equal_matches_the_newest_sibling_wins() {
+        let scratch = tmp("seed-tie");
+        let old = sibling(&scratch);
+        Command::new("touch").arg("-d").arg("400 days ago").arg(old.join(".dibs-used")).status().unwrap();
+        let newer = scratch.join("target/demo-local-newer");
+        std::fs::create_dir_all(newer.join("debug")).unwrap();
+        std::fs::write(newer.join(".dibs-used"), "").unwrap();
+        let out = prepare_local_with(&scratch, "new", None, "reflinks", LOCK_A);
+        assert_eq!(parse(&out).unwrap().seeded.as_deref(), Some("demo-local-newer"), "{out}");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    // The union, not the last lockfile: artifacts from an earlier revision are still there.
+    #[test]
+    fn a_target_remembers_every_lockfile_prepared_into_it() {
+        let scratch = tmp("record");
+        prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A);
+        let moved = LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb");
+        prepare_local_with(&scratch, "k", None, "no reflinks", &moved);
+        let kept = std::fs::read_to_string(scratch.join("target/demo-local-k/.dibs-packages")).unwrap();
+        assert_eq!(kept.lines().count(), 4);
+        assert!(std::fs::read_dir(&scratch).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().starts_with(".packages.")));
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
