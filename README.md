@@ -76,7 +76,9 @@ same path. Every `@local` tree has a target directory of its own, so on a new tr
 every crate while still costing incremental compilation, which it refuses to cache.
 
 A new `@local` tree's target directory starts as a reflink copy of the sibling that has built the
-most of its `Cargo.lock`, newest first among equals, skipping any a build holds. Each target
+most of its `Cargo.lock`, newest first among equals, skipping any a build holds. That sibling's
+sources are copied with it, and the sync then rewrites only files whose bytes differ, so an
+unchanged file keeps the time its artifacts were built at and only changed crates rebuild. Each target
 directory keeps the union of every lockfile built into it in `.dibs-packages`, written only once
 a `cargo build`, `test`, `bench`, `run` or `nextest` step exits 0, and each entry carries that
 build's toolchain, profile, target, feature flags and RUSTFLAGS, so a debug build never passes

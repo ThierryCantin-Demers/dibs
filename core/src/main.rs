@@ -446,7 +446,8 @@ fn run() -> Result<ExitCode, String> {
     if let Some(from) = &prepared.seeded {
         match prepared.seed_shared {
             Some((have, of)) => eprintln!(
-                "dibs: target directory copied from {from}, whose builds match {have} of the {of} groups in this tree's lockfile"
+                "dibs: target directory copied from {from}, whose builds match {have} of the {of} groups in this tree's lockfile{}",
+                if prepared.seeded_sources { ", with its sources so unchanged crates stay built" } else { "" }
             ),
             None => eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds"),
         }
@@ -589,12 +590,7 @@ fn sync_local(backend: &Dibs, from: &Path, to: &str) -> Result<(), String> {
         cmd.arg("--on").arg(m);
     }
     cmd.arg("--sync")
-        .arg("-rlpgo")
-        .arg("--checksum")
-        .arg("--no-times")
-        .arg("--delete")
-        .arg("--exclude=.git")
-        .arg("--filter=:- .gitignore")
+        .args(worktree::SYNC_ARGS)
         .arg(format!("{}/", from.display()))
         .arg(format!(":{to}/"))
         .env("DIBS_FROM_RUN", "1")

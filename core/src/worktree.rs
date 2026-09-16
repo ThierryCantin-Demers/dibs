@@ -23,6 +23,7 @@ const GC: &str = r#"KEEP=${DIBS_KEEP_DAYS:-14}
 for old in "$SCRATCH"/ws/*/*; do
     [ -d "$old" ] || continue
     [ "$old" = "$WT" ] && continue
+    if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
     echo "DIBS-GC $old" >&2
     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
@@ -38,13 +39,17 @@ for old in "$SCRATCH/target"/*; do
 done
 "#;
 
-/// A new local tree starts from a copy of a sibling target directory rather than from nothing,
-/// since trees of one repo differ in a few files. The sibling is the one that has built the most
-/// of this tree's `Cargo.lock`, newest first among equals: cargo reuses a crate only at the same
-/// version and git revision, so the newest sibling on another cubecl revision saves little. Only a tree that is itself
-/// new: the sync that follows gives every file the current time, which is what makes cargo
-/// rebuild the workspace crates instead of trusting the copy. A tree that outlived its target
-/// keeps old times, so a copy there could be taken as fresh.
+/// A new local tree starts from a reflink copy of a sibling's target directory, and of that
+/// sibling's sources when it has some, since trees of one repo differ in a few files. The sibling
+/// is the one that has built the most of this tree's `Cargo.lock`, newest first among equals:
+/// cargo reuses a crate only at the same version and git revision, so the newest sibling on
+/// another revision saves little.
+///
+/// The sync that follows rewrites only files whose bytes differ, and a rewritten file takes the
+/// current time, so cargo rebuilds the crates whose sources changed and trusts the rest. Sources
+/// and target come from one sibling under one set of locks, because a file dated from one tree
+/// and compared against another tree's artifacts could pass for fresh. Only a tree that is itself
+/// new: one that outlived its target keeps the times of an earlier sync.
 ///
 /// A sibling a build holds is skipped, since cargo writes artifacts before their fingerprints.
 /// Only a reflink copy is made: a full one per tree would fill the disk, and a filesystem that
@@ -69,6 +74,14 @@ while read -r n src; do
     if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
         echo "DIBS-SEED ${src##*/}"
         [ -s "${DIBS_PKGS:-/nonexistent}" ] && echo "DIBS-SEED-SHARED $n $(wc -l < "$DIBS_PKGS")"
+        case "${src##*/}" in
+            {repo}-local-*)
+                sources=$SCRATCH/ws/{repo}/local-${src##*/{repo}-local-}
+                if [ -d "$sources" ] && cp -a --reflink=always "$sources" "$WT.seed.$$" 2>/dev/null && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
+                    echo "DIBS-SEED-SOURCES"
+                fi
+                rm -rf "$WT.seed.$$" ;;
+        esac
     fi
     for fd in $fds; do exec {fd}<&-; done
     rm -rf "$TARGET.seed.$$"
@@ -315,6 +328,12 @@ echo "DIBS-REV {repo} $SHORT"
     s
 }
 
+/// How a local tree is sent. `--checksum` without `--times` is what the seed relies on: a file
+/// whose bytes match is left alone with the time it was copied with, and any other is rewritten
+/// and takes the current time.
+/// The marker is excluded so `--delete` leaves it, or collection could never date the tree.
+pub const SYNC_ARGS: &[&str] = &["-rlpgo", "--checksum", "--no-times", "--delete", "--exclude=.git", "--exclude=/.dibs-used", "--filter=:- .gitignore"];
+
 pub struct Prepared {
     pub worktree: String,
     pub target: String,
@@ -323,6 +342,8 @@ pub struct Prepared {
     pub seeded: Option<String>,
     /// How many of this tree's packages that sibling had built, out of how many.
     pub seed_shared: Option<(usize, usize)>,
+    /// Whether the sibling's sources came too, so unchanged files keep the times they were built at.
+    pub seeded_sources: bool,
 }
 
 /// Reads the markers back out. Anything else the setup printed is left alone, so a fetch that
@@ -333,11 +354,14 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
     let mut revisions = Vec::new();
     let mut seeded = None;
     let mut seed_shared = None;
+    let mut seeded_sources = false;
     for line in out.lines() {
         if let Some(v) = line.strip_prefix("DIBS-WT ") {
             worktree = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("DIBS-TARGET ") {
             target = Some(v.trim().to_string());
+        } else if line.trim() == "DIBS-SEED-SOURCES" {
+            seeded_sources = true;
         } else if let Some(v) = line.strip_prefix("DIBS-SEED-SHARED ") {
             let mut it = v.split_whitespace().map(|x| x.parse::<usize>());
             if let (Some(Ok(a)), Some(Ok(b))) = (it.next(), it.next()) {
@@ -353,7 +377,7 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
         }
     }
     match (worktree, target) {
-        (Some(worktree), Some(target)) => Ok(Prepared { worktree, target, revisions, seeded, seed_shared }),
+        (Some(worktree), Some(target)) => Ok(Prepared { worktree, target, revisions, seeded, seed_shared, seeded_sources }),
         _ => Err("the worktree setup did not report a path; see its output above".into()),
     }
 }
@@ -606,6 +630,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    // Every local tree lost its marker to the sync's --delete, so none could ever be collected.
+    #[test]
+    fn a_tree_with_no_marker_is_dated_rather_than_kept_forever() {
+        let (home, _, _) = sandbox("ws-unmarked");
+        let lost = home.join("scratch/ws/other/local-unmarked");
+        std::fs::create_dir_all(&lost).unwrap();
+        targets(&home, "5", &setup_script("demo", "local-only"));
+        assert!(lost.join(".dibs-used").exists());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     // Everything already on a machine predates the marker. Treating that as "never used"
     // would delete every target directory on the first run after an upgrade.
     #[test]
@@ -852,6 +887,58 @@ mod local_tests {
         assert_eq!(packages_script("", SIG, "t0"), "");
         let debug = packages_script(LOCK_A, "|dev||||", "t0");
         assert_eq!(a.lines().filter(|l| debug.contains(*l)).count(), 0, "another profile shares nothing");
+    }
+
+    fn age(path: &std::path::Path) -> u64 {
+        std::fs::metadata(path).unwrap().modified().unwrap().elapsed().map(|d| d.as_secs()).unwrap_or(0)
+    }
+
+    /// A local sibling tree whose two source files were last written long ago.
+    fn sibling_sources(scratch: &std::path::Path) -> std::path::PathBuf {
+        let ws = scratch.join("ws/demo/local-old");
+        std::fs::create_dir_all(ws.join("src")).unwrap();
+        std::fs::write(ws.join("src/same.rs"), "fn same() {}\n").unwrap();
+        std::fs::write(ws.join("src/edited.rs"), "fn before() {}\n").unwrap();
+        Command::new("touch").args(["-d", "400 days ago"]).arg(ws.join("src/same.rs")).arg(ws.join("src/edited.rs")).status().unwrap();
+        ws
+    }
+
+    // The whole point, and the rsync behaviour it rests on: after the sync, a file this tree did
+    // not change is still dated before the copied artifacts, and a changed one is dated after.
+    #[test]
+    fn after_the_sync_only_changed_files_are_newer_than_the_copied_build() {
+        let scratch = tmp("seed-sources");
+        sibling(&scratch);
+        sibling_sources(&scratch);
+        let out = prepare_local(&scratch, "new", None, "reflinks");
+        let p = parse(&out).unwrap();
+        assert!(p.seeded_sources, "{out}");
+        let wt = std::path::PathBuf::from(&p.worktree);
+        let mine = scratch.join("mine");
+        std::fs::create_dir_all(mine.join("src")).unwrap();
+        std::fs::write(mine.join("src/same.rs"), "fn same() {}\n").unwrap();
+        std::fs::write(mine.join("src/edited.rs"), "fn after() {}\n").unwrap();
+        let st = Command::new("rsync").args(SYNC_ARGS).arg(format!("{}/", mine.display())).arg(format!("{}/", wt.display())).status().unwrap();
+        assert!(st.success());
+        assert!(age(&wt.join("src/same.rs")) > 86400 * 300, "an unchanged file keeps the sibling's time");
+        assert!(age(&wt.join("src/edited.rs")) < 3600, "a changed file is rewritten and dated now");
+        assert_eq!(std::fs::read_to_string(wt.join("src/edited.rs")).unwrap(), "fn after() {}\n");
+        assert!(wt.join(".dibs-used").exists(), "the sync must not delete the collection marker");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    // A fetched ref's shared target has no single tree its artifacts were built from.
+    #[test]
+    fn a_target_from_a_fetched_ref_brings_no_sources() {
+        let scratch = tmp("seed-fetched");
+        let shared = scratch.join("target/demo");
+        std::fs::create_dir_all(shared.join("debug")).unwrap();
+        std::fs::write(shared.join(".dibs-used"), "").unwrap();
+        std::fs::create_dir_all(scratch.join("ws/demo/abc123")).unwrap();
+        let p = parse(&prepare_local(&scratch, "new", None, "reflinks")).unwrap();
+        assert_eq!(p.seeded.as_deref(), Some("demo"));
+        assert!(!p.seeded_sources);
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
