@@ -45,6 +45,8 @@ done
 /// keeps old times, so a copy there could be taken as fresh.
 ///
 /// A sibling a build holds is skipped, since cargo writes artifacts before their fingerprints.
+/// Only a reflink copy is made: a full one per tree would fill the disk, and a filesystem that
+/// cannot share blocks gets no seed at all.
 const SEED: &str = r#"for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$SCRATCH/target/{repo}"-local-*/.dibs-used 2>/dev/null); do
     src=${used%/.dibs-used}
     fds=
@@ -54,7 +56,7 @@ const SEED: &str = r#"for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$
         fds="$fds $fd"
         flock -n -s "$fd" || { held=1; break; }
     done
-    if [ "$held" = 0 ] && cp -a "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
+    if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
         echo "DIBS-SEED $src" >&2
     fi
     for fd in $fds; do exec {fd}<&-; done
@@ -614,9 +616,22 @@ mod local_tests {
             .contains("target/r-local-"));
     }
 
-    fn prepare_local(scratch: &std::path::Path, key: &str, hold: Option<&str>) -> String {
+    /// `cp` stands in for the filesystem: the test directory is usually a tmpfs, which has no
+    /// reflinks, so a shim decides whether the reflink copy succeeds.
+    fn prepare_local(scratch: &std::path::Path, key: &str, hold: Option<&str>, cp: &str) -> String {
         let script = setup_local_script("demo", key, "c");
+        let bin = scratch.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let real = String::from_utf8(Command::new("bash").args(["-c", "type -P cp"]).output().unwrap().stdout).unwrap();
+        let shim = match cp {
+            "reflinks" => format!("#!/bin/bash\nargs=()\nshared=0\nfor a; do if [ \"$a\" = --reflink=always ]; then shared=1; else args+=(\"$a\"); fi; done\n[ $shared = 1 ] || exit 1\nexec {} \"${{args[@]}}\"\n", real.trim()),
+            _ => "#!/bin/bash\nexit 1\n".to_string(),
+        };
+        std::fs::write(bin.join("cp"), shim).unwrap();
+        Command::new("chmod").arg("+x").arg(bin.join("cp")).status().unwrap();
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
         let mut cmd = Command::new("bash");
+        cmd.env("PATH", path);
         match hold {
             Some(lock) => cmd.args(["-c", &format!("flock -x {lock} bash -c \"$0\"")]).arg(&script),
             None => cmd.arg("-c").arg(&script),
@@ -639,7 +654,7 @@ mod local_tests {
     fn a_new_tree_starts_from_its_repos_latest_target() {
         let scratch = tmp("seed");
         sibling(&scratch);
-        let err = prepare_local(&scratch, "new", None);
+        let err = prepare_local(&scratch, "new", None, "reflinks");
         assert!(err.contains("DIBS-SEED"), "{err}");
         assert!(scratch.join("target/demo-local-new/debug/deps/libdep.rlib").exists());
         let _ = std::fs::remove_dir_all(&scratch);
@@ -649,8 +664,20 @@ mod local_tests {
     fn a_target_a_build_holds_is_not_copied() {
         let scratch = tmp("seed-held");
         let old = sibling(&scratch);
-        prepare_local(&scratch, "new", Some(old.join("debug/.cargo-lock").to_str().unwrap()));
+        prepare_local(&scratch, "new", Some(old.join("debug/.cargo-lock").to_str().unwrap()), "reflinks");
         assert!(!scratch.join("target/demo-local-new/debug").exists());
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_filesystem_without_reflinks_gets_no_seed_and_no_partial_copy() {
+        let scratch = tmp("seed-no-reflink");
+        sibling(&scratch);
+        prepare_local(&scratch, "new", None, "no reflinks");
+        assert!(!scratch.join("target/demo-local-new/debug").exists());
+        let leftovers = std::fs::read_dir(scratch.join("target")).unwrap()
+            .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().contains(".seed.")).count();
+        assert_eq!(leftovers, 0);
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
@@ -660,7 +687,7 @@ mod local_tests {
         let scratch = tmp("seed-old-tree");
         sibling(&scratch);
         std::fs::create_dir_all(scratch.join("ws/demo/local-new")).unwrap();
-        prepare_local(&scratch, "new", None);
+        prepare_local(&scratch, "new", None, "reflinks");
         assert!(!scratch.join("target/demo-local-new/debug").exists());
         let _ = std::fs::remove_dir_all(&scratch);
     }

@@ -75,6 +75,11 @@ and `SCCACHE_BASEDIRS` does not strip it, so it hits only when a directory is re
 same path. Every `@local` tree has a target directory of its own, so on a new tree it missed on
 every crate while still costing incremental compilation, which it refuses to cache.
 
+A new `@local` tree's target directory starts as a reflink copy of the one its repo used most
+recently, skipping any a build holds. Dependencies are then reused, and the workspace crates
+rebuild because the sync gives every file the current time. Only a filesystem with reflinks,
+such as XFS or btrfs, gets the copy, since a full copy per tree would fill the disk.
+
 Worktrees and target directories are both collected, by every prepare, local or fetched, across
 every repo on the machine. A worktree goes after `DIBS_KEEP_DAYS` (14) unused. A target directory
 goes after `DIBS_TARGET_KEEP_DAYS` (5): disk is what runs out first on a machine, and a
