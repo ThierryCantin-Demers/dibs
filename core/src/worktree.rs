@@ -85,23 +85,30 @@ fi
 rm -f "${DIBS_PKGS:-/nonexistent}"
 "#;
 
-/// Written ahead of a setup script: one short hash per package in the tree's `Cargo.lock`, which
-/// the seed and the record above compare as sorted lines.
+/// Written ahead of a setup script, as short sorted hashes the seed and the record compare. A git
+/// package gets a line of its own, since a revision is what most often differs and costs most.
+/// Registry packages share 64 lines, one per bucket of their contents, because the whole script
+/// travels in one command-line argument and a line per package does not fit in it.
 pub fn packages_script(lock: &str) -> String {
     use sha2::{Digest, Sha256};
-    let mut hashes = std::collections::BTreeSet::new();
-    let (mut name, mut version, mut source) = (None, None, None);
-    let mut flush = |name: &mut Option<String>, version: &mut Option<String>, source: &mut Option<String>| {
-        if let (Some(n), Some(v)) = (name.take(), version.take()) {
-            let key = format!("{n} {v} {}", source.take().unwrap_or_default());
-            hashes.insert(format!("{:.12}", hex(&Sha256::digest(key.as_bytes()))));
+    let short = |text: &str| format!("{:.12}", hex(&Sha256::digest(text.as_bytes())));
+    let mut lines = std::collections::BTreeSet::new();
+    let mut buckets: Vec<Vec<String>> = vec![Vec::new(); 64];
+    let mut take = |name: Option<String>, version: Option<String>, source: Option<String>| {
+        let (Some(n), Some(v), Some(src)) = (name, version, source) else { return };
+        let key = format!("{n} {v} {src}");
+        if src.starts_with("git+") {
+            lines.insert(short(&key));
+        } else {
+            let i = usize::from_str_radix(&short(&key)[..2], 16).unwrap_or(0) % 64;
+            buckets[i].push(key);
         }
-        *source = None;
     };
+    let (mut name, mut version, mut source) = (None, None, None);
     for line in lock.lines() {
         let line = line.trim();
         if line == "[[package]]" {
-            flush(&mut name, &mut version, &mut source);
+            take(name.take(), version.take(), source.take());
         } else if let Some(v) = line.strip_prefix("name = ") {
             name = Some(v.trim_matches('"').to_string());
         } else if let Some(v) = line.strip_prefix("version = ") {
@@ -110,15 +117,21 @@ pub fn packages_script(lock: &str) -> String {
             source = Some(v.trim_matches('"').to_string());
         }
     }
-    flush(&mut name, &mut version, &mut source);
-    if hashes.is_empty() {
+    take(name, version, source);
+    for (i, mut keys) in buckets.into_iter().enumerate() {
+        if !keys.is_empty() {
+            keys.sort();
+            lines.insert(short(&format!("bucket {i}\n{}", keys.join("\n"))));
+        }
+    }
+    if lines.is_empty() {
         return String::new();
     }
     let mut s = String::from(
         "DIBS_PKGS=${DIBS_SCRATCH:-$HOME/.cache/dibs}/.packages.$$\nmkdir -p \"${DIBS_PKGS%/*}\"\ncat > \"$DIBS_PKGS\" <<'DIBS_PACKAGES'\n",
     );
-    for h in hashes {
-        s.push_str(&h);
+    for l in lines {
+        s.push_str(&l);
         s.push('\n');
     }
     s.push_str("DIBS_PACKAGES\n");
@@ -736,14 +749,16 @@ mod local_tests {
     }
 
     #[test]
-    fn a_lockfile_becomes_one_sorted_hash_per_package_and_a_revision_is_a_different_package() {
+    fn a_lockfile_becomes_sorted_hashes_and_a_revision_is_a_different_package() {
         let a = packages_of(LOCK_A);
-        assert_eq!(a.lines().count(), 3);
+        assert_eq!(a.lines().count(), 2, "one git package, one registry bucket, no workspace member");
         let mut sorted: Vec<&str> = a.lines().collect();
         sorted.sort();
         assert_eq!(sorted, a.lines().collect::<Vec<_>>());
         let b = packages_of(&LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"));
-        assert_eq!(a.lines().filter(|l| b.contains(*l)).count(), 2);
+        assert_eq!(a.lines().filter(|l| b.contains(*l)).count(), 1);
+        let bumped = packages_of(&LOCK_A.replace("version = \"1.0.0\"", "version = \"1.0.1\""));
+        assert_eq!(a.lines().filter(|l| bumped.contains(*l)).count(), 1);
         assert_eq!(packages_script(""), "");
     }
 
@@ -761,7 +776,7 @@ mod local_tests {
         let out = prepare_local_with(&scratch, "new", None, "reflinks", LOCK_A);
         let p = parse(&out).unwrap();
         assert_eq!(p.seeded.as_deref(), Some("demo-local-old"), "{out}");
-        assert_eq!(p.seed_shared, Some((3, 3)));
+        assert_eq!(p.seed_shared, Some((2, 2)));
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
@@ -786,7 +801,7 @@ mod local_tests {
         let moved = LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb");
         prepare_local_with(&scratch, "k", None, "no reflinks", &moved);
         let kept = std::fs::read_to_string(scratch.join("target/demo-local-k/.dibs-packages")).unwrap();
-        assert_eq!(kept.lines().count(), 4);
+        assert_eq!(kept.lines().count(), 3);
         assert!(std::fs::read_dir(&scratch).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().starts_with(".packages.")));
         let _ = std::fs::remove_dir_all(&scratch);
     }
