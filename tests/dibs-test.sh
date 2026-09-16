@@ -1427,6 +1427,40 @@ $V "$U/clone/bin/dibs" --status > /dev/null 2> "$S/v6.err"
 check "an update it ran itself is not reported again" "$(grep -c 'dibs changed' "$S/v6.err")" "0"
 unset DIBS_CORE
 
+echo "transport"
+# A fake ssh that runs the far side here, as a real one would on the machine: options and the
+# host dropped, the remaining words one shell string. It inherits no descriptor from the
+# caller that a real ssh would not either.
+mkdir -p "$S/fakessh" "$S/remote-run"
+printf '%s\n' '#!/bin/bash' 'while [ $# -gt 0 ]; do case $1 in -o) shift 2 ;; -*) shift ;; *) break ;; esac; done' 'shift' 'exec bash -c "$*"' > "$S/fakessh/ssh"
+chmod +x "$S/fakessh/ssh"
+R() { PATH=$S/fakessh:$PATH DIBS_LOCAL=0 DIBS_HOST=fake-remote DIBS_HOSTNAME=laptop-here DIBS_REMOTE_DIR=$S/remote-run DIBS_SCRATCH=$S/scr "$@"; }
+# The script and the command used to travel as one ssh argument, capped at 128KB, which the
+# script alone nearly filled.
+big=$(head -c 100000 /dev/zero | tr '\0' x)
+check "a command near the argument limit reaches the machine" \
+  "$(R $T --label transport-big "b='$big'; echo \${#b}" 2>/dev/null)" "100000"
+check "and one run here" "$($T --label transport-big-local "b='$big'; echo \${#b}" 2>/dev/null)" "100000"
+check "the job's exit comes back" "$(R $T --label transport-exit 'exit 7' >/dev/null 2>&1; echo $?)" "7"
+check "no script is left on the machine" "$(ls -A "$S/remote-run" | wc -l)" "0"
+# Without the parent-death signal, the caller's death has to reach the far side as EOF on
+# the stream the script and command arrived on.
+fifo T1; fifo T2
+PATH=$S/fakessh:$PATH DIBS_LOCAL=0 DIBS_HOST=fake-remote DIBS_HOSTNAME=laptop-here DIBS_REMOTE_DIR=$S/remote-run \
+  DIBS_SCRATCH=$S/scr DIBS_NO_PDEATHSIG=1 $T --label transport-hangup "echo up > $S/f-T1; $(hold T2)" >/dev/null 2>&1 &
+TCALLER=$!
+sync_ T1
+kill -9 $TCALLER 2>/dev/null; wait $TCALLER 2>/dev/null
+check "a dead caller's job is noticed through the stream" \
+  "$(timeout 30 grep -m1 -c 'caller-gone.*transport-hangup' <(tail -n +1 -f "$DIBS_LOG"))" "1"
+check "and its lock is released" "$(gone && echo yes)" "yes"
+# rsync's own protocol follows the script and command on the same stream.
+mkdir -p "$S/tsrc/sub"; head -c 2000000 /dev/urandom > "$S/tsrc/sub/blob"
+R $T --sync -a --no-times --checksum "$S/tsrc/" ":$S/tdst/" >/dev/null 2>&1
+check "a sync sends a file intact" "$(cmp -s "$S/tsrc/sub/blob" "$S/tdst/sub/blob" && echo same)" "same"
+R $T --sync -a ":$S/tdst/" "$S/tback/" >/dev/null 2>&1
+check "and fetches it back intact" "$(cmp -s "$S/tsrc/sub/blob" "$S/tback/sub/blob" && echo same)" "same"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

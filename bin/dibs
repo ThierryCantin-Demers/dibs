@@ -1489,6 +1489,12 @@ remote_script() {
 cat <<'REMOTE'
 set -uo pipefail
 MODE=$1; LABEL=$2; WAIT=$3; MAXHOLD=$4; VERBOSE=$5; CMDB64=${6:-}; NO_WATCH=${7:-0}; TTY=${8:-0}
+# One argument holds at most 128KB, so the command travels beside the arguments: ahead of the
+# channel on stdin, which has to be read before the watch below takes it, or in a file.
+case "$CMDB64" in
+    stdin:*) CMDB64=$(head -c "${CMDB64#stdin:}") ;;
+    file:*) CMDFILE=${CMDB64#file:}; CMDB64=$(cat "$CMDFILE"); rm -f "$CMDFILE" ;;
+esac
 JSON=${10:-0}
 AGENT=$(printf %s "${9:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
 AGENT_ID=$(printf %s "${11:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
@@ -3162,7 +3168,9 @@ if [ "$(lower "$SELF")" = "$(lower "$TARGET")" ] || [ "${DIBS_LOCAL:-0}" = 1 ]; 
         rsh|sync) echo "dibs: --sync reaches the machine from elsewhere. You are on it: use cp." >&2
                   exit 2 ;;
     esac
-    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$CMDB64" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM"
+    CMDFILE=$(mktemp "${TMPDIR:-/tmp}/dibs-cmd.XXXXXX") || exit 70
+    printf %s "$CMDB64" > "$CMDFILE"
+    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM"
     STATUS=$?
     [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
     series_stayed_put
@@ -3183,10 +3191,13 @@ else
     # Killing the caller has to kill the job, and neither half of that is free. An ssh
     # client whose parent dies keeps running as an orphan with the channel up, so
     # --pdeathsig has the kernel signal it the moment this process dies, SIGKILL included.
-    # The remote learns of it through EOF on its stdin, which means the script has to
-    # arrive as a file rather than on stdin, and our end must never reach EOF on its own:
-    # a fifo held open read-write delivers neither data nor EOF while we live, and closes
-    # with us when we do not.
+    # The remote learns of it through EOF on its stdin, and our end must never reach EOF on
+    # its own: a fifo this process holds open read-write delivers neither data nor EOF while
+    # we live, and closes with us when we do not.
+    #
+    # The script and the command go down that same stdin ahead of it, each read by length on
+    # the far side. As arguments they are one ssh command string, which the kernel caps at
+    # 128KB on both ends, and the script alone is most of that.
     DIE_WITH_ME=""
     [ "${DIBS_NO_PDEATHSIG:-0}" = 1 ] || command -v setpriv >/dev/null 2>&1 \
         && DIE_WITH_ME="setpriv --pdeathsig=TERM"
@@ -3200,17 +3211,23 @@ else
     # rsync speaks its protocol over this process's stdin and stdout, so there is nothing
     # spare to hold a liveness channel on. Losing the caller closes the stream, which rsync's
     # far side treats as the failure it is; it does not leave a half-written file behind.
+    #
+    # Whatever follows the command is read from descriptor 7 and relayed into ssh. The
+    # fifo's read end is opened on its own, and neither the relay nor ssh keeps descriptor 6,
+    # so this process is the fifo's only writer: its death reaches the far side as EOF even
+    # where no parent-death signal took ssh down with it.
     if [ "$MODE" = rsh ]; then
-        exec 6<&0; WATCH=0
+        exec 7<&0; WATCH=0
     elif [ "${DIBS_NO_LIVE:-0}" = 1 ]; then
-        exec 6<&0; WATCH=0
+        exec 7<&0; WATCH=0
     else
         LIVE=$(mktemp -u "${TMPDIR:-/tmp}/dibs-live.XXXXXX")
-        if mkfifo "$LIVE" 2>/dev/null && exec 6<>"$LIVE"; then
+        if mkfifo "$LIVE" 2>/dev/null && exec 6<>"$LIVE" && exec 7<"$LIVE"; then
             rm -f "$LIVE"
         else
+            rm -f "$LIVE"
             echo "dibs: could not open a liveness fifo; this job will outlive its caller." >&2
-            exec 6<&0; WATCH=0
+            exec 7<&0; WATCH=0
         fi
     fi
     [ "${DIBS_NO_WATCHDOG:-0}" = 1 ] && WATCH=0
@@ -3224,10 +3241,10 @@ else
     # after it is what runs. Both shells that might read this line treat exec and && alike.
     $DIE_WITH_ME ssh -o BatchMode=yes -o LogLevel=ERROR \
         -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
-        "mkdir -p $REMOTE_DIR 2>/dev/null; printf %s '$PAYLOAD' | base64 -d > $REMOTE_SCRIPT && \
-         exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' '$CMDB64' \
+        "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
+         exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
          '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM'
-exit 70" <&6
+exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec cat <&7 6>&- 7<&-) 6>&- 7<&-
     STATUS=$?
     [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
     series_stayed_put
