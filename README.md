@@ -80,6 +80,10 @@ recently, skipping any a build holds. Dependencies are then reused, and the work
 rebuild because the sync gives every file the current time. Only a filesystem with reflinks,
 such as XFS or btrfs, gets the copy, since a full copy per tree would fill the disk.
 
+A git dependency pinned in `Cargo.lock` that the machine lacks is sent from this machine's cargo
+before the build, when this cargo has that commit. A machine holds no credentials, so a private
+repo would otherwise fail the build after it had queued. Files are only added, never replaced.
+
 Worktrees and target directories are both collected, by every prepare, local or fetched, across
 every repo on the machine. A worktree goes after `DIBS_KEEP_DAYS` (14) unused. A target directory
 goes after `DIBS_TARGET_KEEP_DAYS` (5): disk is what runs out first on a machine, and a

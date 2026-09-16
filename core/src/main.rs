@@ -11,6 +11,7 @@
 //! their own scratch paths, and one filled a shared quota. And the rule to build under the
 //! shared lock was prose, so 17% of all exclusive time was spent compiling.
 
+mod gitdeps;
 mod provenance;
 mod recipe;
 mod resource;
@@ -411,10 +412,23 @@ fn run() -> Result<ExitCode, String> {
         // on a machine whose card has been pulled.
         device: None,
         };
+    let lock = match &local {
+        Some(_) => std::fs::read_to_string(dir.join("Cargo.lock")).ok(),
+        None => std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["show", &format!("{reference}:Cargo.lock")])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()),
+    };
+    let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock.as_deref().unwrap_or("")));
     let script = match &local {
         Some(l) => worktree::setup_local_script(&repo_name, &l.key, &l.content),
         None => worktree::setup_script(&repo_name, reference),
-    };
+    } + &gitdeps::check_script(&gitdbs);
     let (out, text) = backend.run_capture(&setup, &script)?;
     if out.status != 0 {
         return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
@@ -426,6 +440,17 @@ fn run() -> Result<ExitCode, String> {
     }
     if local.is_some() {
         sync_local(&backend, &dir, &prepared.worktree)?;
+    }
+    if let (Some(remote), gone) = gitdeps::missing(&text, &gitdbs) {
+        for db in gone {
+            eprintln!(
+                "dibs: sending {} at {:.8}, which the machine does not have and may not be able to fetch",
+                db.name, db.commit
+            );
+            if let Err(e) = sync_gitdb(&backend, &db.path, &format!("{remote}/{}", db.name)) {
+                eprintln!("dibs: {e}; the build will try to fetch it itself");
+            }
+        }
     }
 
     let mut steps = Vec::new();
@@ -560,6 +585,27 @@ fn sync_local(backend: &Dibs, from: &Path, to: &str) -> Result<(), String> {
     let st = cmd.status().map_err(|e| format!("dibs --sync: {e}"))?;
     if !st.success() {
         return Err(format!("sending {} to {to} failed", from.display()));
+    }
+    Ok(())
+}
+
+/// Adds files and never replaces one: git names objects by their content, so what is already
+/// there is already right, and a cargo on the machine may be reading it.
+fn sync_gitdb(backend: &Dibs, from: &Path, to: &str) -> Result<(), String> {
+    let mut cmd = std::process::Command::new(&backend.program);
+    if let Some(m) = &backend.machine {
+        cmd.arg("--on").arg(m);
+    }
+    cmd.arg("--sync")
+        .arg("-a")
+        .arg("--ignore-existing")
+        .arg(format!("{}/", from.display()))
+        .arg(format!(":{to}/"))
+        .env("DIBS_FROM_RUN", "1")
+        .stdin(std::process::Stdio::null());
+    let st = cmd.status().map_err(|e| format!("dibs --sync: {e}"))?;
+    if !st.success() {
+        return Err(format!("sending {} failed", from.display()));
     }
     Ok(())
 }
