@@ -18,10 +18,32 @@ export DIBS_LOCK_DIR=$S/lockdir DIBS_HISTORY=$S/history DIBS_LOG=$S/log
 # of whoever was using the machine.
 export DIBS_SERIES=$S/series
 export DIBS_SEEN=$S/seen
+export DIBS_SCRATCH=$S/scratch
 mkdir -p "$DIBS_LOCK_DIR"
+# Every machine named here is made up, and a real lookup of one takes seconds to fail, several
+# times over while dibs asks ssh why. These stand in and fail at once, the way ssh does for a
+# name that does not resolve. The transport section puts a working one ahead of them.
+mkdir -p "$S/nossh"
+printf '%s\n' '#!/bin/bash' \
+  'while [ $# -gt 0 ]; do case $1 in -[oiFJlpP]) shift 2 ;; -*) shift ;; *) break ;; esac; done' \
+  'host=${1%%:*}; host=${host##*@}' \
+  'echo "$(basename "$0"): Could not resolve hostname $host: Name or service not known" >&2' \
+  'exit 255' > "$S/nossh/ssh"
+chmod +x "$S/nossh/ssh"; cp "$S/nossh/ssh" "$S/nossh/scp"
+export PATH=$S/nossh:$PATH
 T=${DIBS:-${DIBS_BIN:-$HOME/.local/bin/dibs}}
-DIBS_LOCK_DIR_SAVED=$DIBS_LOCK_DIR
+SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# A home of its own, so every default dibs keeps under ~ or the XDG directories (scratch,
+# state, config, the machine inventory, the recipe layer) resolves inside $S, including any
+# default added later. The real ones are neither read nor written.
+export HOME=$S/home XDG_CONFIG_HOME=$S/home/.config XDG_STATE_HOME=$S/home/.local/state \
+       XDG_CACHE_HOME=$S/home/.cache XDG_RUNTIME_DIR=$S/runtime
+mkdir -p "$HOME/.cargo/bin" "$DIBS_SCRATCH" "$XDG_RUNTIME_DIR"
 pass=0; fail=0
+[ -z "$(grep -rlE '/(usr/)?(local/)?bin/(ssh|scp)\b' "$SRC/bin" "$SRC/core/src" 2>/dev/null)" ] || {
+    echo "dibs names ssh or scp by path, so these tests could reach a real machine. Refusing to run." >&2
+    exit 1; }
+DIBS_LOCK_DIR_SAVED=$DIBS_LOCK_DIR
 
 check() { if [ "$2" = "$3" ]; then pass=$((pass+1));
           else echo "  FAIL $1: expected [$3], got [$2]"; fail=$((fail+1)); fi; }
@@ -419,7 +441,7 @@ check "it names the cpu" "$($T --check | grep -c '    cpu   ')" "1"
 # rocm-smi is installed on machines with no AMD GPU, prints a driver error, and exits 0.
 # Presence of a tool and its exit status both say nothing about presence of hardware.
 check "a machine with nothing to run on is not called ready" \
-  "$(PATH=/nonexistent:$PATH $T --check 2>/dev/null | grep -c 'ready\.')" "0"
+  "$(PATH=/nonexistent:$PATH $T --check 2>/dev/null | grep -c '^  ready\.$')" "0"
 check "--check takes only a host" "$($T --check a b 2>&1 >/dev/null | grep -c 'only a host')" "1"
 
 echo "reading what a running job is writing"

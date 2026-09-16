@@ -2335,7 +2335,7 @@ case "$MODE" in
                 listed=$(timeout 60 du -sh "$tdir/" 2>/dev/null | cut -f1)
                 ok "target directories on $tfs with reflinks: a new tree starts from a copy of its repo's latest"
                 note "$(ls "$tdir" | wc -l) of them list ${listed:-more than 60s of du}, counting shared blocks once per copy."
-                note "df is no better a measure: XFS reserves about 2% of the disk up front for reflinks."
+                [ "$tfs" = xfs ] && note "df is no better a measure: XFS reserves about 2% of the disk up front for reflinks."
             else
                 warn "no reflinks where target directories live, so every new tree builds from nothing"
                 note "XFS or btrfs under $tdir lets a new tree start from a sibling's build for free."
@@ -3007,14 +3007,16 @@ if [ -n "$JOBLOG" ]; then
     # several times over. Said once, in the trailer, when the previous attempt is minutes old.
     if [ "$STATUS" -ne 0 ]; then
         prev=""
-        for d in "$SCRATCH"/jobs/*/; do
-            d=${d%/}
+        # Only jobs inside the window are read at all: two weeks of them is thousands of
+        # directories, and comparing each one made every failure take seconds to report.
+        window=${DIBS_REPEAT_WINDOW:-900}
+        while read -r d; do
             [ "$d" != "$JOBDIR" ] && [ -f "$d/meta" ] && cmp -s "$d/cmd" "$JOBDIR/cmd" || continue
             age=$(( $(date +%s) - $(stat -c %Y "$d/meta" 2>/dev/null || echo 0) ))
-            [ "$age" -le "${DIBS_REPEAT_WINDOW:-900}" ] || continue
+            [ "$age" -le "$window" ] || continue
             e=$(awk -F'\t' '$1=="exit"{print $2}' "$d/meta")
             [ "$e" != 0 ] && prev="${d##*/} exit $e, $(dur "$age") ago"
-        done
+        done < <(find "$SCRATCH/jobs" -mindepth 1 -maxdepth 1 -type d -mmin -$(( window / 60 + 1 )) 2>/dev/null | sort)
         [ -n "$prev" ] && echo "  this exact command already failed here: job $prev. Unchanged, it failed the same way." >&2
     fi
     printf 'mode\t%s\nlabel\t%s\nqueued\t%s\nran\t%s\nexit\t%s\nby\t%s\nagent\t%s\nlines\t%s\n' \
