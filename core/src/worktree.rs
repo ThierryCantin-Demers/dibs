@@ -38,6 +38,31 @@ for old in "$SCRATCH/target"/*; do
 done
 "#;
 
+/// A new local tree starts from a copy of its repo's most recently used target directory rather
+/// than from nothing, since trees of one repo differ in a few files. Only a tree that is itself
+/// new: the sync that follows gives every file the current time, which is what makes cargo
+/// rebuild the workspace crates instead of trusting the copy. A tree that outlived its target
+/// keeps old times, so a copy there could be taken as fresh.
+///
+/// A sibling a build holds is skipped, since cargo writes artifacts before their fingerprints.
+const SEED: &str = r#"for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$SCRATCH/target/{repo}"-local-*/.dibs-used 2>/dev/null); do
+    src=${used%/.dibs-used}
+    fds=
+    held=0
+    for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+        exec {fd}<"$lock"
+        fds="$fds $fd"
+        flock -n -s "$fd" || { held=1; break; }
+    done
+    if [ "$held" = 0 ] && cp -a "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
+        echo "DIBS-SEED $src" >&2
+    fi
+    for fd in $fds; do exec {fd}<&-; done
+    rm -rf "$TARGET.seed.$$"
+    [ -d "$TARGET" ] && break
+done
+"#;
+
 /// Where everything lives, under the account's scratch. Keyed by commit rather than by branch
 /// name: two agents on the same branch at different commits then get different trees instead
 /// of racing to check out over each other, and a rerun of the same commit reuses its tree.
@@ -537,13 +562,16 @@ SCRATCH=${{DIBS_SCRATCH:-$HOME/.cache/dibs}}
 WT=$SCRATCH/ws/{repo}/local-{key}
 # Its own target directory, so two local trees of one repo cannot hand each other a binary.
 TARGET=$SCRATCH/target/{repo}-local-{key}
+if [ ! -d "$WT" ] && [ ! -d "$TARGET" ]; then
+{seed}fi
 mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
 touch "$WT/.dibs-used" "$TARGET/.dibs-used"
 {gc}echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
 echo "DIBS-REV {repo} local:{content}"
 "#,
-        gc = GC
+        gc = GC,
+        seed = SEED.replace("{repo}", repo)
     );
     s
 }
@@ -584,6 +612,57 @@ mod local_tests {
         assert_ne!(local(&a).unwrap().key, local(&b).unwrap().key);
         assert!(setup_local_script("r", &local(&a).unwrap().key, "x")
             .contains("target/r-local-"));
+    }
+
+    fn prepare_local(scratch: &std::path::Path, key: &str, hold: Option<&str>) -> String {
+        let script = setup_local_script("demo", key, "c");
+        let mut cmd = Command::new("bash");
+        match hold {
+            Some(lock) => cmd.args(["-c", &format!("flock -x {lock} bash -c \"$0\"")]).arg(&script),
+            None => cmd.arg("-c").arg(&script),
+        };
+        let out = cmd.env("DIBS_SCRATCH", scratch).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    }
+
+    fn sibling(scratch: &std::path::Path) -> std::path::PathBuf {
+        let t = scratch.join("target/demo-local-old");
+        std::fs::create_dir_all(t.join("debug/deps")).unwrap();
+        std::fs::write(t.join("debug/deps/libdep.rlib"), "artifact\n").unwrap();
+        std::fs::write(t.join("debug/.cargo-lock"), "").unwrap();
+        std::fs::write(t.join(".dibs-used"), "").unwrap();
+        t
+    }
+
+    #[test]
+    fn a_new_tree_starts_from_its_repos_latest_target() {
+        let scratch = tmp("seed");
+        sibling(&scratch);
+        let err = prepare_local(&scratch, "new", None);
+        assert!(err.contains("DIBS-SEED"), "{err}");
+        assert!(scratch.join("target/demo-local-new/debug/deps/libdep.rlib").exists());
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_target_a_build_holds_is_not_copied() {
+        let scratch = tmp("seed-held");
+        let old = sibling(&scratch);
+        prepare_local(&scratch, "new", Some(old.join("debug/.cargo-lock").to_str().unwrap()));
+        assert!(!scratch.join("target/demo-local-new/debug").exists());
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    // Its files keep the times of an earlier sync, so cargo could take a copied artifact as fresh.
+    #[test]
+    fn a_tree_that_outlived_its_target_is_not_seeded() {
+        let scratch = tmp("seed-old-tree");
+        sibling(&scratch);
+        std::fs::create_dir_all(scratch.join("ws/demo/local-new")).unwrap();
+        prepare_local(&scratch, "new", None);
+        assert!(!scratch.join("target/demo-local-new/debug").exists());
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     // Keyed on content instead, every edit would be a cold build, which is the reason the
