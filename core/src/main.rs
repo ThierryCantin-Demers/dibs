@@ -425,7 +425,9 @@ fn run() -> Result<ExitCode, String> {
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()),
     };
     let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock.as_deref().unwrap_or("")));
-    let script = worktree::packages_script(lock.as_deref().unwrap_or(""))
+    // The first cargo step names the profile and features a sibling must have been built with.
+    let signature = rec.steps.iter().find_map(|st| worktree::build_signature(&st.run)).unwrap_or_default();
+    let script = worktree::packages_script(lock.as_deref().unwrap_or(""), &signature)
         + &match &local {
             Some(l) => worktree::setup_local_script(&repo_name, &l.key, &l.content),
             None => worktree::setup_script(&repo_name, reference),
@@ -476,11 +478,15 @@ fn run() -> Result<ExitCode, String> {
         // One cache per repo, exported rather than left to each recipe to remember. The output
         // needs no file of its own: dibs keeps every job's log under its job id, and a path
         // named after the label would be shared by two runs of one recipe.
+        let run = match worktree::build_signature(&step.run) {
+            Some(_) => worktree::recording(&step.run),
+            None => step.run.clone(),
+        };
         let cd = format!(
             "cd {} && export CARGO_TARGET_DIR={} && {{ {}; }}",
             sh(&prepared.worktree),
             sh(&prepared.target),
-            step.run
+            run
         );
         eprintln!("dibs: step {}/{} [{:?}]", i + 1, rec.steps.len(), step.lock);
         let out = backend.run(&req, &cd)?;

@@ -77,7 +77,9 @@ every crate while still costing incremental compilation, which it refuses to cac
 
 A new `@local` tree's target directory starts as a reflink copy of the sibling that has built the
 most of its `Cargo.lock`, newest first among equals, skipping any a build holds. Each target
-directory keeps the union of every lockfile prepared into it in `.dibs-packages`. Dependencies are then reused, and the workspace crates
+directory keeps the union of every lockfile built into it in `.dibs-packages`, written only once
+a cargo step exits 0, and each entry carries that build's profile and feature flags, so a debug
+build never passes for a release one. Dependencies are then reused, and the workspace crates
 rebuild because the sync gives every file the current time. Only a filesystem with reflinks,
 such as XFS or btrfs, gets the copy, since a full copy per tree would fill the disk.
 

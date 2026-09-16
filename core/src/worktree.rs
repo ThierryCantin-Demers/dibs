@@ -76,22 +76,76 @@ while read -r n src; do
 done <<< "$ranked"
 "#;
 
-/// What a target directory has been built against, as the union of every lockfile prepared into
-/// it: old artifacts stay when a tree moves on, so a revision built last week still counts.
-const RECORD: &str = r#"if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
-    { cat "$TARGET/.dibs-packages" 2>/dev/null || true; cat "$DIBS_PKGS"; } | LC_ALL=C sort -u > "$TARGET/.dibs-packages.new"
-    mv "$TARGET/.dibs-packages.new" "$TARGET/.dibs-packages"
+/// The tree's package list waits beside its target directory until a build step succeeds, so a
+/// target is never credited with a lockfile whose build failed or never ran.
+const STAGE: &str = r#"if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+    mv "$DIBS_PKGS" "$TARGET/.dibs-packages.pending"
+else
+    rm -f "$TARGET/.dibs-packages.pending"
 fi
 rm -f "${DIBS_PKGS:-/nonexistent}"
 "#;
+
+/// A cargo step wrapped so that, once it exits 0, the staged list joins the target's record. The
+/// record is a union: old artifacts stay when a tree moves on, so a revision built last week
+/// still counts.
+pub fn recording(run: &str) -> String {
+    format!(
+        r#"( {run} ); rc=$?
+if [ "$rc" = 0 ] && [ -s "$CARGO_TARGET_DIR/.dibs-packages.pending" ]; then
+    {{ cat "$CARGO_TARGET_DIR/.dibs-packages" 2>/dev/null || true; cat "$CARGO_TARGET_DIR/.dibs-packages.pending"; }} | LC_ALL=C sort -u > "$CARGO_TARGET_DIR/.dibs-packages.new" && mv "$CARGO_TARGET_DIR/.dibs-packages.new" "$CARGO_TARGET_DIR/.dibs-packages"
+fi
+exit $rc"#
+    )
+}
+
+/// What a cargo invocation's artifacts depend on besides the lockfile: the profile and the
+/// feature flags. Two builds that differ here share almost nothing, so it is folded into every
+/// line of the package list and they never match each other.
+pub fn build_signature(run: &str) -> Option<String> {
+    let words: Vec<&str> = run.split(|c: char| c.is_whitespace() || c == ';' || c == '&' || c == '|').filter(|w| !w.is_empty()).collect();
+    let at = words.iter().position(|w| *w == "cargo")?;
+    let words = &words[at..];
+    let mut profile = if words.get(1) == Some(&"bench") { "release".to_string() } else { "dev".to_string() };
+    let mut features: Vec<String> = Vec::new();
+    let mut flags: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        let w = words[i].trim_matches(|c| c == '"' || c == '\'');
+        match w {
+            "--release" | "-r" => profile = "release".into(),
+            "--profile" => profile = words.get(i + 1).map(|v| v.trim_matches('"').to_string()).unwrap_or(profile),
+            "--features" | "-F" => {
+                if let Some(v) = words.get(i + 1) {
+                    features.extend(v.trim_matches(|c| c == '"' || c == '\'').split(',').map(str::to_string));
+                }
+            }
+            "--no-default-features" | "--all-features" => flags.push(w),
+            _ => {
+                if let Some(v) = w.strip_prefix("--profile=") {
+                    profile = v.into();
+                } else if let Some(v) = w.strip_prefix("--features=") {
+                    features.extend(v.split(',').map(str::to_string));
+                }
+            }
+        }
+        i += 1;
+    }
+    features.retain(|f| !f.is_empty());
+    features.sort();
+    features.dedup();
+    flags.sort();
+    flags.dedup();
+    Some(format!("{profile} {} {}", flags.join(" "), features.join(",")))
+}
 
 /// Written ahead of a setup script, as short sorted hashes the seed and the record compare. A git
 /// package gets a line of its own, since a revision is what most often differs and costs most.
 /// Registry packages share 64 lines, one per bucket of their contents, because the whole script
 /// travels in one command-line argument and a line per package does not fit in it.
-pub fn packages_script(lock: &str) -> String {
+pub fn packages_script(lock: &str, signature: &str) -> String {
     use sha2::{Digest, Sha256};
-    let short = |text: &str| format!("{:.12}", hex(&Sha256::digest(text.as_bytes())));
+    let short = |text: &str| format!("{:.12}", hex(&Sha256::digest(format!("{signature}\n{text}").as_bytes())));
     let mut lines = std::collections::BTreeSet::new();
     let mut buckets: Vec<Vec<String>> = vec![Vec::new(); 64];
     let mut take = |name: Option<String>, version: Option<String>, source: Option<String>| {
@@ -215,14 +269,14 @@ TARGET=$SCRATCH/target/{repo}
 mkdir -p "$TARGET" "$SCRATCH/out"
 touch "$TARGET/.dibs-used"
 
-{record}{gc}git -C "$SRC" worktree prune
+{stage}{gc}git -C "$SRC" worktree prune
 
 echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
 echo "DIBS-REV {repo} $SHORT"
 "#,
         gc = GC,
-        record = RECORD
+        stage = STAGE
     );
     s
 }
@@ -655,12 +709,12 @@ if [ ! -d "$WT" ] && [ ! -d "$TARGET" ]; then
 {seed}fi
 mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
 touch "$WT/.dibs-used" "$TARGET/.dibs-used"
-{record}{gc}echo "DIBS-WT $WT"
+{stage}{gc}echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
 echo "DIBS-REV {repo} local:{content}"
 "#,
         gc = GC,
-        record = RECORD,
+        stage = STAGE,
         seed = SEED.replace("{repo}", repo)
     );
     s
@@ -711,7 +765,7 @@ mod local_tests {
     }
 
     fn prepare_local_with(scratch: &std::path::Path, key: &str, hold: Option<&str>, cp: &str, lock: &str) -> String {
-        let script = packages_script(lock) + &setup_local_script("demo", key, "c");
+        let script = packages_script(lock, SIG) + &setup_local_script("demo", key, "c");
         let bin = scratch.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let real = String::from_utf8(Command::new("bash").args(["-c", "type -P cp"]).output().unwrap().stdout).unwrap();
@@ -742,10 +796,12 @@ mod local_tests {
         t
     }
 
+    const SIG: &str = "release --no-default-features cpu,fusion";
+
     const LOCK_A: &str = "[[package]]\nname = \"cubecl\"\nversion = \"0.11.0\"\nsource = \"git+https://github.com/tracel-ai/cubecl?rev=aaa#aaa\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"demo\"\nversion = \"0.1.0\"\n";
 
     fn packages_of(lock: &str) -> String {
-        packages_script(lock).lines().filter(|l| l.len() == 12).map(|l| format!("{l}\n")).collect()
+        packages_script(lock, SIG).lines().filter(|l| l.len() == 12).map(|l| format!("{l}\n")).collect()
     }
 
     #[test]
@@ -759,7 +815,9 @@ mod local_tests {
         assert_eq!(a.lines().filter(|l| b.contains(*l)).count(), 1);
         let bumped = packages_of(&LOCK_A.replace("version = \"1.0.0\"", "version = \"1.0.1\""));
         assert_eq!(a.lines().filter(|l| bumped.contains(*l)).count(), 1);
-        assert_eq!(packages_script(""), "");
+        assert_eq!(packages_script("", SIG), "");
+        let debug = packages_script(LOCK_A, "dev  ");
+        assert_eq!(a.lines().filter(|l| debug.contains(*l)).count(), 0, "another profile shares nothing");
     }
 
     // The newest sibling on another revision saves less than an older one on this one.
@@ -793,17 +851,71 @@ mod local_tests {
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
-    // The union, not the last lockfile: artifacts from an earlier revision are still there.
+    /// Runs a step the way dibs wraps it, against a target a prepare has staged.
+    fn step(scratch: &std::path::Path, key: &str, run: &str) {
+        let target = scratch.join(format!("target/demo-local-{key}"));
+        let script = format!("export CARGO_TARGET_DIR={}\n{}", target.display(), recording(run));
+        Command::new("bash").args(["-c", &script]).status().unwrap();
+    }
+
+    fn record(scratch: &std::path::Path, key: &str) -> Option<String> {
+        std::fs::read_to_string(scratch.join(format!("target/demo-local-{key}/.dibs-packages"))).ok()
+    }
+
     #[test]
-    fn a_target_remembers_every_lockfile_prepared_into_it() {
-        let scratch = tmp("record");
+    fn a_target_is_credited_with_a_lockfile_only_once_a_build_succeeds() {
+        let scratch = tmp("record-success");
         prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A);
-        let moved = LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb");
-        prepare_local_with(&scratch, "k", None, "no reflinks", &moved);
-        let kept = std::fs::read_to_string(scratch.join("target/demo-local-k/.dibs-packages")).unwrap();
-        assert_eq!(kept.lines().count(), 3);
+        assert_eq!(record(&scratch, "k"), None, "a prepare alone records nothing");
+        step(&scratch, "k", "false");
+        assert_eq!(record(&scratch, "k"), None, "a failed build records nothing");
+        step(&scratch, "k", "true; exit 0");
+        assert_eq!(record(&scratch, "k").unwrap().lines().count(), 2, "a command that exits itself still records");
         assert!(std::fs::read_dir(&scratch).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().starts_with(".packages.")));
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_wrapped_step_keeps_the_commands_exit_status() {
+        let scratch = tmp("record-exit");
+        std::fs::create_dir_all(scratch.join("target/demo-local-k")).unwrap();
+        let script = format!("export CARGO_TARGET_DIR={}\n{}", scratch.join("target/demo-local-k").display(), recording("exit 7"));
+        assert_eq!(Command::new("bash").args(["-c", &script]).status().unwrap().code(), Some(7));
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    // The union, not the last lockfile: artifacts from an earlier revision are still there.
+    #[test]
+    fn a_prepare_without_a_lockfile_leaves_nothing_staged_to_record() {
+        let scratch = tmp("record-stale");
+        prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A);
+        prepare_local_with(&scratch, "k", None, "no reflinks", "");
+        step(&scratch, "k", "true");
+        assert_eq!(record(&scratch, "k"), None);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_target_remembers_every_lockfile_built_into_it() {
+        let scratch = tmp("record");
+        prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A);
+        step(&scratch, "k", "true");
+        prepare_local_with(&scratch, "k", None, "no reflinks", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"));
+        step(&scratch, "k", "true");
+        assert_eq!(record(&scratch, "k").unwrap().lines().count(), 3);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_signature_is_the_profile_and_the_features_of_the_cargo_command() {
+        let a = build_signature("start=$(date +%s); cargo build --release -p app --no-default-features --features cpu,fusion; rc=$?").unwrap();
+        let b = build_signature("cargo build -p app --features fusion,cpu --release --no-default-features").unwrap();
+        assert_eq!(a, b, "flag order and feature order do not matter");
+        assert_eq!(a, "release --no-default-features cpu,fusion");
+        assert_ne!(a, build_signature("cargo build -p app --no-default-features --features cpu,fusion").unwrap());
+        assert_eq!(build_signature("cargo bench --no-run").unwrap(), "release  ");
+        assert_eq!(build_signature("cargo test --profile=ci -F a").unwrap(), "ci  a");
+        assert_eq!(build_signature("./target/release/app bench"), None);
     }
 
     #[test]
