@@ -516,6 +516,10 @@ struct App {
     /// Capturing the mouse takes the terminal's own text selection away, which is worth
     /// having back sometimes. The wheel and clicks go with it while it is off.
     mouse: bool,
+    /// When the round now being collected began, and when the last complete one ended. A round
+    /// is every live feed having reported, which is the only moment the whole screen was current.
+    round_from: Instant,
+    refreshed: Option<Instant>,
 }
 
 impl App {
@@ -535,6 +539,17 @@ impl App {
             .map(|it| it.machine.clone())
             .or_else(|| self.views.keys().next().cloned())
             .unwrap_or_default()
+    }
+
+    /// Every feed that can still report has reported since the round began. The header dates the
+    /// screen by that, because it is the one moment all of it was current: the newest feed resets
+    /// the number several times an interval with several machines, and the oldest walks up and
+    /// down as they drift apart. A feed that has stopped reporting holds the round open, which is
+    /// the staleness worth seeing.
+    fn round_over(&self) -> bool {
+        self.views
+            .values()
+            .all(|v| v.dead.is_some() || v.seen_at.is_some_and(|t| t >= self.round_from))
     }
 
     /// The column is worth its width only when there is more than one machine to tell apart.
@@ -861,20 +876,6 @@ fn behind(age: u64, interval: u64) -> bool {
     age > interval * 3 + 2
 }
 
-/// When the screen last changed, and whether some feed has stopped keeping up. The newest feed
-/// dates the screen: machines tick out of phase, so the oldest of them walks up and down as each
-/// one refreshes, which reads as a broken clock rather than as one machine lagging. A feed that
-/// has genuinely fallen behind says so against its own name.
-fn freshness(ages: impl IntoIterator<Item = u64>, interval: u64) -> Option<(u64, bool)> {
-    let mut newest: Option<u64> = None;
-    let mut any = false;
-    for age in ages {
-        newest = Some(newest.map_or(age, |n: u64| n.min(age)));
-        any |= behind(age, interval);
-    }
-    newest.map(|n| (n, any))
-}
-
 fn draw(f: &mut Frame, app: &mut App) {
     let dim = Style::new().fg(Color::DarkGray);
     let rows = app.rows();
@@ -925,10 +926,12 @@ fn draw(f: &mut Frame, app: &mut App) {
             }
         }
     }
-    if let Some((age, any_behind)) = freshness(ages.iter().copied(), app.interval) {
+    if let Some(t) = app.refreshed {
+        let age = t.elapsed().as_secs();
+        let late = ages.iter().any(|a| behind(*a, app.interval));
         head.push(Span::styled(
             format!("   updated {age}s ago, every {}s", app.interval),
-            if any_behind { Style::new().fg(Color::Yellow) } else { dim },
+            if late { Style::new().fg(Color::Yellow) } else { dim },
         ));
     }
     if let Some(b) = &app.busy {
@@ -1226,17 +1229,26 @@ fn run(
         while let Ok(msg) = rx.try_recv() {
             match msg {
                 Msg::State(g, m, s) if g == app.gen => {
+                    let now = Instant::now();
                     let v = app.views.entry(m).or_default();
                     v.status = Some(s);
-                    v.seen_at = Some(Instant::now());
+                    v.seen_at = Some(now);
                     v.dead = None;
                     app.busy = None;
+                    if app.round_over() {
+                        app.refreshed = Some(now);
+                        app.round_from = now;
+                    }
                 }
                 Msg::Trouble(g, m, t) if g == app.gen => {
                     app.views.entry(m).or_default().trouble = Some(t)
                 }
                 Msg::Ended(g, m, e) if g == app.gen => {
-                    app.views.entry(m).or_default().dead = Some(e)
+                    app.views.entry(m).or_default().dead = Some(e);
+                    if app.round_over() {
+                        app.refreshed = Some(Instant::now());
+                        app.round_from = Instant::now();
+                    }
                 }
                 Msg::State(..) | Msg::Trouble(..) | Msg::Ended(..) => {}
                 Msg::Action { title, body } => {
@@ -1298,6 +1310,8 @@ fn main() -> std::io::Result<()> {
         table_top: 0,
         table_rows: 0,
         mouse: true,
+        round_from: Instant::now(),
+        refreshed: None,
     };
 
     let mut terminal = ratatui::init();
@@ -1340,11 +1354,39 @@ mod tests {
         assert_eq!(parse_machines(listing), vec!["bench1", "laptop"]);
     }
 
+    fn view(seen: Option<Instant>, dead: bool) -> View {
+        View { status: None, seen_at: seen, trouble: None, dead: dead.then(|| "gone".to_string()) }
+    }
+
     #[test]
-    fn the_screen_is_dated_by_its_newest_feed_while_one_left_behind_still_shows() {
-        assert_eq!(freshness([4, 1], 5), Some((1, false)), "the oldest feed would walk up and down");
-        assert_eq!(freshness([1, 40], 5), Some((1, true)));
-        assert_eq!(freshness([], 5), None);
+    fn a_round_is_over_when_every_feed_that_can_report_has() {
+        let mut app = App {
+            views: Default::default(),
+            sel: 0,
+            top: 0,
+            overlay: None,
+            confirm: None,
+            busy: None,
+            interval: 5,
+            feeds: Vec::new(),
+            gen: 0,
+            table_top: 0,
+            table_rows: 0,
+            mouse: false,
+            round_from: Instant::now(),
+            refreshed: None,
+        };
+        let before = app.round_from - Duration::from_secs(1);
+        let now = Instant::now();
+        app.views.insert("a".into(), view(Some(now), false));
+        app.views.insert("b".into(), view(Some(before), false));
+        assert!(!app.round_over(), "b has not reported since the round began");
+        app.views.insert("b".into(), view(Some(now), false));
+        assert!(app.round_over());
+        app.views.insert("c".into(), view(None, false));
+        assert!(!app.round_over(), "a feed yet to say anything holds the round open");
+        app.views.insert("c".into(), view(None, true));
+        assert!(app.round_over(), "one that has ended cannot report at all");
     }
 
     #[test]
