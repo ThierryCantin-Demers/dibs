@@ -2162,6 +2162,7 @@ show() {
     for f in "$DIR"/holder.*; do
         [ -e "$f" ] || continue
         IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
+        [ "$dev" = - ] && dev=
         if [ "$held" -eq 0 ]; then
             [ "$mode" = bench ] && echo "${C_BUSY}dibs: BUSY, benchmark in progress${C_OFF}$qnote" \
                                 || echo "${C_WARN}dibs: in use, shared${C_OFF}$qnote"
@@ -2277,6 +2278,7 @@ show() {
     for f in "${QF[@]}"; do
         [ -e "$f" ] || continue
         IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
+        [ "$dev" = - ] && dev=
         i=$((i+1))
         age_ wa "$start"
         agent_hue "$agent"; mode_hue "$mode"

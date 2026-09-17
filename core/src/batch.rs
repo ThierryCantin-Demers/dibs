@@ -437,6 +437,10 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
 
     let owned = has("setsid") && has("setpriv");
     let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
+    let recipes: Vec<Option<Vec<Pending>>> = steps
+        .iter()
+        .map(|s| if s.lock == "recipe" { split_words(&s.line).ok().and_then(|w| crate::recipe_jobs(&w)) } else { None })
+        .collect();
     let started = Instant::now();
     let mut states = vec![State::Waiting; steps.len()];
     let mut stopped = false;
@@ -460,7 +464,13 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
             };
             let pending: Vec<Pending> = (0..steps.len())
                 .filter(|&j| j != i && states[j] == State::Waiting)
-                .map(|j| pending_of(&steps[j], machines[j] == machines[i], &cwd))
+                .flat_map(|j| {
+                    let here = machines[j] == machines[i];
+                    match &recipes[j] {
+                        Some(jobs) => jobs.iter().map(|p| Pending { name: format!("{}: {}", steps[j].name, p.name), here, ..p.clone() }).collect(),
+                        None => vec![pending_of(&steps[j], here, &cwd)],
+                    }
+                })
                 .collect();
             cmd.envs(step_env(&id, &step.name, i + 1, steps.len(), &pending))
                 .stdin(Stdio::null())

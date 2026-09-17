@@ -1574,6 +1574,20 @@ check "over ssh, the setup rides with rsync's own stream" "$rc $out $(( $(arriva
 check "and the transfer lands in the tree, nowhere else" "$(ls "$S" | grep -c '^local-')" "0"
 check "both its jobs reach the log as steps of one batch" \
   "$(tail -n 4 "$DIBS_LOG" | awk -F'\t' '{print $11}' | sed 's/ .*//' | sort -u | grep -cE '^[0-9]{8}-[0-9]{6}-[0-9]+$')" "1"
+for i in 1 2 3; do printf 'rsh\tapp_shell_send\t4\tx\nshared\tapp_shell\t60\tx\nshared\tbatch-rhold\t10\tx\n' >> "$DIBS_HISTORY"; done
+fifo RH; fifo RHU
+printf '%s\n' "[hold] dibs --label batch-rhold 'echo up > $S/f-RHU; $(hold RH)'" \
+  "[rec] dibs shell $S/app@local --reason test -- true" > "$S/b7"
+PATH=$S/bbin:$PATH DIBS_CORE=$BCORE "$T" batch "$S/b7" >/dev/null 2>&1 &
+BDRIVER=$!
+sync_ RHU
+st=$($T status)
+check "a recipe waiting in a batch is planned as the jobs it will make, each estimated" \
+  "$(grep -cE '^    then here: rec: app/shell:send ~4s, rec: app/shell ~[0-9ms]+$' <<<"$st")" "1"
+check "so a batch of recipes has a time left" "$(grep -cE '^    batch time left here: ~[0-9ms]+$' <<<"$st")" "1"
+check "and a job run on no particular card does not claim one called -" "$(grep -c ' on -$' <<<"$st")" "0"
+free RH
+wait $BDRIVER
 
 echo
 echo "passed $pass, failed $fail"

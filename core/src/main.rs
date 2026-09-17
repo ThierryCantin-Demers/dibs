@@ -88,6 +88,10 @@ struct Args {
 }
 
 fn parse() -> Result<Args, String> {
+    parse_words(std::env::args().skip(1))
+}
+
+fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut positional: Vec<String> = Vec::new();
     let mut root = repo_root();
     let mut dry_run = false;
@@ -95,7 +99,7 @@ fn parse() -> Result<Args, String> {
     let mut command = None;
     let mut device: Option<String> = None;
     let mut verbose = false;
-    let mut it = std::env::args().skip(1);
+    let mut it = words.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--" => {
@@ -264,15 +268,9 @@ fn run() -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let dir = resolve_repo(&args.repo, &args.root)?;
-    let repo_name = worktree::identity(&dir);
-    let manifest = if args.verb == "shell" {
-        Manifest::default()
-    } else {
-        Manifest::load(&dir, &repo_name)?
-    };
-
     if args.verb == "list" {
+        let dir = resolve_repo(&args.repo, &args.root)?;
+        let manifest = Manifest::load(&dir, &worktree::identity(&dir))?;
         for v in [Verb::Bench, Verb::Build, Verb::Test] {
             let listing = manifest.listing(v);
             if !listing.is_empty() {
@@ -290,73 +288,11 @@ fn run() -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let shell_reason = if args.verb == "shell" {
-        Some(args.reason.clone().ok_or(
-            "shell needs --reason. Most of what gets run is neither a build nor a benchmark,\n             and knowing what those were is how the next recipe gets written.",
-        )?)
-    } else {
-        None
-    };
-    let shell_recipe = shell_reason.as_ref().map(|_| recipe::Recipe {
-        source: recipe::Source::Local,
-        needs: None,
-        isolation: recipe::Isolation::Machine,
-        steps: vec![recipe::Step {
-            lock: Lock::Shared,
-            run: args.command.clone().unwrap_or_default(),
-        }],
-    });
-    if shell_recipe.is_some() && args.command.is_none() {
-        return Err("shell needs -- <command>".into());
-    }
-
-    let verb = Verb::parse(&args.verb).or(if args.verb == "shell" {
-        Some(Verb::Build)
-    } else {
-        None
-    })
-    .ok_or_else(|| {
-        format!("not a verb: {} (build, test, bench, shell, raw, list, runs or gaps)", args.verb)
-    })?;
-    let name = if shell_recipe.is_some() { Some("shell") } else { args.recipe.as_deref() }
-        .ok_or_else(|| {
-        let have = manifest.names(verb);
-        if have.is_empty() {
-            format!("{} defines no {} recipes", dir.display(), verb.as_str())
-        } else {
-            format!("needs a recipe name; {} has: {}", dir.display(), have.join(", "))
-        }
-        })?;
-    let rec = shell_recipe.as_ref().map(Ok).unwrap_or_else(|| manifest.recipe(verb, name).ok_or_else(|| {
-        let have = manifest.names(verb);
-        format!(
-            "no {} recipe called '{name}'; {} has: {}",
-            verb.as_str(),
-            dir.display(),
-            if have.is_empty() { "none".into() } else { have.join(", ") }
-        )
-    }))?;
-    if rec.steps.is_empty() {
-        return Err(format!("recipe '{name}' declares no steps"));
-    }
-
-    // Derived, never supplied. A label an agent writes by hand names the run rather than the
-    // kind of work, which is why 51 of 80 labels in the old history appeared exactly once and
-    // filed their duration where nothing would look it up again.
-    //
-    // The verb is in it because a recipe name is only unique within a verb: `build cubek cuda`
-    // and `test cubek cuda` are different work, and one history for both predicts each from
-    // the other. Shell has no recipe name to carry.
-    let label = match &shell_recipe {
-        Some(_) => run_label(&repo_name, "shell", None, args.device.as_deref()),
-        None => run_label(&repo_name, verb.as_str(), Some(name), args.device.as_deref()),
-    };
+    let resolved = resolve(&args)?;
+    let calls = jobs_of(&resolved, args.reference.as_deref() == Some("local"));
+    let Resolved { dir, repo_name, verb, name, rec, label, step_labels, shell_reason } = resolved;
+    let (name, rec) = (name.as_str(), &rec);
     let fingerprint = rec.fingerprint();
-    // The duration history keys on lock and label together, so a recipe's build and its
-    // measurement stay apart on their own. Two steps taking the *same* lock would not, and
-    // their durations would average into one meaningless number: the bimodal history that
-    // made estimates useless in the first place, rebuilt deliberately.
-    let step_labels = label_steps(&label, &rec.steps);
 
     if args.dry_run {
         println!("label       {label}");
@@ -452,25 +388,8 @@ fn run() -> Result<ExitCode, String> {
         }
         + &gitdeps::check_script(&gitdbs);
 
-    // The setup rides at the head of the first job that needs the tree: the transfer for a local
-    // tree, or the first step when it is shared. Its own job would be a second round trip and a
-    // second place in the queue, and a benchmark that arrives in between is waited out twice.
-    // An exclusive first step keeps its setup apart, or a fetch would run inside the hold.
     let fold = local.is_none() && rec.steps[0].lock == Lock::Shared;
-    let lock_name = |l: Lock| match l {
-        Lock::Shared => "shared",
-        Lock::Exclusive => "bench",
-    };
-    let mut calls = Vec::new();
-    if local.is_some() {
-        calls.push(batch::Pending { name: format!("{label}:send"), mode: "rsh", label: format!("{label}:send"), here: true });
-    } else if !fold {
-        calls.push(batch::Pending { name: format!("{label}:setup"), mode: "shared", label: format!("{label}:setup"), here: true });
-    }
-    let first_step_call = calls.len();
-    for (i, st) in rec.steps.iter().enumerate() {
-        calls.push(batch::Pending { name: step_labels[i].clone(), mode: lock_name(st.lock), label: step_labels[i].clone(), here: true });
-    }
+    let first_step_call = calls.len() - rec.steps.len();
     let own_batch = batch::batch_id();
     let env_of = |k: usize| batch::recipe_env(&own_batch, &calls, k);
     let setup_env = env_of(0);
@@ -611,6 +530,147 @@ fn run() -> Result<ExitCode, String> {
         Some(c) => ExitCode::from(c.clamp(1, 255) as u8),
         None => ExitCode::SUCCESS,
     })
+}
+
+/// A recipe invocation resolved as far as it can be without a machine: which recipe, and the
+/// labels its jobs are filed under.
+struct Resolved {
+    dir: PathBuf,
+    repo_name: String,
+    verb: Verb,
+    name: String,
+    rec: recipe::Recipe,
+    label: String,
+    step_labels: Vec<String>,
+    shell_reason: Option<String>,
+}
+
+fn resolve(args: &Args) -> Result<Resolved, String> {
+    let dir = resolve_repo(&args.repo, &args.root)?;
+    let repo_name = worktree::identity(&dir);
+    let manifest = if args.verb == "shell" {
+        Manifest::default()
+    } else {
+        Manifest::load(&dir, &repo_name)?
+    };
+
+
+    let shell_reason = if args.verb == "shell" {
+        Some(args.reason.clone().ok_or(
+            "shell needs --reason. Most of what gets run is neither a build nor a benchmark,\n             and knowing what those were is how the next recipe gets written.",
+        )?)
+    } else {
+        None
+    };
+    let shell_recipe = shell_reason.as_ref().map(|_| recipe::Recipe {
+        source: recipe::Source::Local,
+        needs: None,
+        isolation: recipe::Isolation::Machine,
+        steps: vec![recipe::Step {
+            lock: Lock::Shared,
+            run: args.command.clone().unwrap_or_default(),
+        }],
+    });
+    if shell_recipe.is_some() && args.command.is_none() {
+        return Err("shell needs -- <command>".into());
+    }
+
+    let verb = Verb::parse(&args.verb).or(if args.verb == "shell" {
+        Some(Verb::Build)
+    } else {
+        None
+    })
+    .ok_or_else(|| {
+        format!("not a verb: {} (build, test, bench, shell, raw, list, runs or gaps)", args.verb)
+    })?;
+    let name = if shell_recipe.is_some() { Some("shell") } else { args.recipe.as_deref() }
+        .ok_or_else(|| {
+        let have = manifest.names(verb);
+        if have.is_empty() {
+            format!("{} defines no {} recipes", dir.display(), verb.as_str())
+        } else {
+            format!("needs a recipe name; {} has: {}", dir.display(), have.join(", "))
+        }
+        })?;
+    let rec = shell_recipe.clone().map(Ok).unwrap_or_else(|| manifest.recipe(verb, name).cloned().ok_or_else(|| {
+        let have = manifest.names(verb);
+        format!(
+            "no {} recipe called '{name}'; {} has: {}",
+            verb.as_str(),
+            dir.display(),
+            if have.is_empty() { "none".into() } else { have.join(", ") }
+        )
+    }))?;
+    if rec.steps.is_empty() {
+        return Err(format!("recipe '{name}' declares no steps"));
+    }
+
+    // Derived, never supplied. A label an agent writes by hand names the run rather than the
+    // kind of work, which is why 51 of 80 labels in the old history appeared exactly once and
+    // filed their duration where nothing would look it up again.
+    //
+    // The verb is in it because a recipe name is only unique within a verb: `build cubek cuda`
+    // and `test cubek cuda` are different work, and one history for both predicts each from
+    // the other. Shell has no recipe name to carry.
+    let label = match &shell_recipe {
+        Some(_) => run_label(&repo_name, "shell", None, args.device.as_deref()),
+        None => run_label(&repo_name, verb.as_str(), Some(name), args.device.as_deref()),
+    };
+    // The duration history keys on lock and label together, so a recipe's build and its
+    // measurement stay apart on their own. Two steps taking the *same* lock would not, and
+    // their durations would average into one meaningless number: the bimodal history that
+    // made estimates useless in the first place, rebuilt deliberately.
+    let step_labels = label_steps(&label, &rec.steps);
+    Ok(Resolved {
+        dir,
+        repo_name,
+        verb,
+        name: name.to_string(),
+        rec,
+        label,
+        step_labels,
+        shell_reason,
+    })
+}
+
+/// The jobs a recipe makes, in order, under the labels their durations are filed by. The setup
+/// rides at the head of the first job that needs the tree: the transfer for a local tree, or the
+/// first step when it is shared. Its own job would be a second round trip and a second place in
+/// the queue. An exclusive first step keeps its setup apart, or a fetch would run inside the hold.
+fn jobs_of(r: &Resolved, local: bool) -> Vec<batch::Pending> {
+    let job = |suffix: &str, mode: &'static str| {
+        let label = format!("{}{suffix}", r.label);
+        batch::Pending { name: label.clone(), mode, label, here: true }
+    };
+    let mut jobs = Vec::new();
+    if local {
+        jobs.push(job(":send", "rsh"));
+    } else if r.rec.steps[0].lock != Lock::Shared {
+        jobs.push(job(":setup", "shared"));
+    }
+    for (i, st) in r.rec.steps.iter().enumerate() {
+        let mode = match st.lock {
+            Lock::Shared => "shared",
+            Lock::Exclusive => "bench",
+        };
+        jobs.push(batch::Pending { name: r.step_labels[i].clone(), mode, label: r.step_labels[i].clone(), here: true });
+    }
+    jobs
+}
+
+/// The jobs a recipe line in a batch will make, so the batch's plan can estimate them. None
+/// when the line does not resolve here, which leaves that step without an estimate.
+fn recipe_jobs(words: &[String]) -> Option<Vec<batch::Pending>> {
+    if words.iter().any(|w| matches!(w.as_str(), "-h" | "--help" | "--version")) {
+        return None;
+    }
+    let mut i = 1;
+    while i < words.len() && words[i].starts_with('-') {
+        i += if words[i] == "--on" { 2 } else { 1 };
+    }
+    let args = parse_words(words.get(i..)?.iter().cloned()).ok()?;
+    let r = resolve(&args).ok()?;
+    Some(jobs_of(&r, args.reference.as_deref() == Some("local")))
 }
 
 fn run_label(repo: &str, verb: &str, name: Option<&str>, device: Option<&str>) -> String {
@@ -820,6 +880,31 @@ mod tests {
 
     fn step(lock: Lock, run: &str) -> Step {
         Step { lock, run: run.into() }
+    }
+
+    fn resolved(steps: Vec<Step>) -> Resolved {
+        let rec = Recipe { source: recipe::Source::Local, needs: None, isolation: Isolation::Machine, steps };
+        let step_labels = label_steps("app/bench/r", &rec.steps);
+        Resolved {
+            dir: PathBuf::from("."),
+            repo_name: "app".into(),
+            verb: Verb::Bench,
+            name: "r".into(),
+            rec,
+            label: "app/bench/r".into(),
+            step_labels,
+            shell_reason: None,
+        }
+    }
+
+    #[test]
+    fn a_recipe_s_jobs_are_what_it_will_send_and_run() {
+        let names = |jobs: Vec<batch::Pending>| jobs.into_iter().map(|j| format!("{} {}", j.mode, j.label)).collect::<Vec<_>>();
+        let build_then_bench = resolved(vec![step(Lock::Shared, "cargo build"), step(Lock::Exclusive, "cargo bench")]);
+        assert_eq!(names(jobs_of(&build_then_bench, true)), ["rsh app/bench/r:send", "shared app/bench/r", "bench app/bench/r"]);
+        assert_eq!(names(jobs_of(&build_then_bench, false)), ["shared app/bench/r", "bench app/bench/r"], "the setup rides with the build");
+        let bench_only = resolved(vec![step(Lock::Exclusive, "cargo bench")]);
+        assert_eq!(names(jobs_of(&bench_only, false)), ["shared app/bench/r:setup", "bench app/bench/r"], "never inside the hold");
     }
 
     #[test]
