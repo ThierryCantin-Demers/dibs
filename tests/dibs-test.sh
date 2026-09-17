@@ -1722,6 +1722,46 @@ wk=$(cat "$S/w6.pid"); timeout 15 tail --pid="$wk" -f /dev/null
 check "a caller that dies takes its service with it" "$(kill -0 "$wk" 2>/dev/null && echo running || echo stopped)" "stopped"
 check "and the lock" "$(gone && echo yes)" "yes"
 
+echo "a port picked on the machine"
+# Both sides read the port out of the environment, so nothing in these commands names one.
+printf '%s\n' 'import os, signal, socket' 's = socket.socket()' \
+  's.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)' \
+  's.bind(("0.0.0.0", int(os.environ["DIBS_PORT_API"])))' 's.listen()' 'signal.pause()' > "$S/pserve.py"
+printf '%s\n' 'import socket, sys' 'host, _, port = sys.argv[1].rpartition(":")' \
+  'socket.create_connection((host or "127.0.0.1", int(port)))' 'print("answered at", sys.argv[1])' > "$S/pclient.py"
+out=$($T --label port-one --port api --with srv="python3 $S/pserve.py" --ready tcp:api \
+        "python3 $S/pclient.py 127.0.0.1:\$DIBS_PORT_API" 2>&1)
+picked=$(sed -n 's/^  port api: \([0-9]*\) on .*/\1/p' <<<"$out")
+check "a service and a command agree on the port dibs picked" "$(grep -c "^answered at 127.0.0.1:$picked\$" <<<"$out")" "1"
+check "a hold's command is told where to reach the service, by machine and port" \
+  "$(H --hold --label port-hold --port api --with srv="python3 $S/pserve.py" --ready tcp:api \
+       "python3 $S/pclient.py \"\$DIBS_SERVICE_API\"" 2>/dev/null | sed 's/:[0-9]*$/:<port>/')" \
+  "answered at $(hostname -s):<port>"
+fifo pgo
+for i in 1 2; do
+    $T --label port-race$i --port api "echo \$DIBS_PORT_API > $S/port$i; read -r _ < $S/f-pgo" >/dev/null 2>&1 &
+done
+until [ -s "$S/port1" ] && [ -s "$S/port2" ]; do :; done
+check "two calls at once are never given the same port" \
+  "$([ "$(cat "$S/port1")" = "$(cat "$S/port2")" ] && echo same || echo different)" "different"
+check "and each port is reserved while it is held" "$(count_ port)" "2"
+printf 'go\ngo\n' > "$S/f-pgo"; wait
+check "the reservation goes when the job does" "$(count_ port)" "0"
+printf '%s\n' 'import signal, socket, sys' 's = socket.socket()' \
+  's.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)' 's.bind(("127.0.0.1", int(sys.argv[1])))' \
+  's.listen()' 'print("held", flush=True)' 'signal.pause()' > "$S/phold.py"
+taken=$(python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+python3 "$S/phold.py" "$taken" > "$S/phold.out" 2>&1 & PB=$!
+until [ -s "$S/phold.out" ]; do :; done
+out=$(DIBS_PORTS=$taken-$taken $T --label port-none --port api "touch $S/port-ran" 2>&1); rc=$?
+check "a port in use is not handed out, and the call stops rather than colliding" \
+  "$rc$([ -e "$S/port-ran" ] && echo ' and ran')" "77"
+check "which says the range had nothing free" "$(grep -c "no free port in $taken-$taken" <<<"$out")" "1"
+kill $PB 2>/dev/null; wait $PB 2>/dev/null
+check "--ready tcp: takes a number or a port name" "$($T --with srv=true --ready tcp:nope true >/dev/null 2>&1; echo $?)" "2"
+check "and --port takes a name to call it by" "$($T --port 8080 true >/dev/null 2>&1; echo $?)" "2"
+
 echo "recipes"
 # A repo the recipe layer can prepare: its clone on the machine's side, and a tree here.
 git init -q --bare "$S/origin.git"

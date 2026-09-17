@@ -41,6 +41,10 @@ spoiled without it.
   can be used. Use it rather than starting a server in the background of a job: one left running
   holds cards and memory while the next person measures. A server that exits early, or is never
   ready, stops the call with exit 77.
+- Never write a port number into both the server and the client: two agents serving the same thing
+  pick the same one and the second fails. `--port <name>` has the machine pick a free one and
+  reserve it, which the server and the command read as `$DIBS_PORT_<NAME>`, a `--hold` command as
+  `$DIBS_SERVICE_<NAME>` (`host:port`), and `--ready tcp:<name>` waits for.
 - A shared job whose label's history says it is quick goes around a queued benchmark instead of
   waiting it out, delaying it by about a minute at most. Two shared holders while a benchmark is
   queued is that, not a bug.

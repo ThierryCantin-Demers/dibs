@@ -20,7 +20,11 @@
 #                                server the command talks to. It starts once the lock is taken
 #                                and is stopped before the lock is released, however the call
 #                                ends. Repeatable.
-#   --ready tcp:<port>           when the --with before it can be used, as a port that answers
+#   --port <name>                have the machine pick a free port and reserve it for this call:
+#                                the service and the command read it as $DIBS_PORT_<NAME>, and a
+#                                --hold command also gets $DIBS_SERVICE_<NAME> as host:port. A
+#                                port written into both by hand is one two agents can collide on.
+#   --ready tcp:<port|name>      when the --with before it can be used, as a port that answers
 #   --ready '<command>'          or a command that exits 0 once it does. --ready-within bounds
 #                                the wait (300s). A service that exits early, or is never
 #                                ready, stops the call with exit 77 and its log is shown.
@@ -649,6 +653,7 @@ HOLD=0
 WITH_NAME=()
 WITH_READY=()
 WITH_CMD=()
+PORT_NAME=()
 READY_WITHIN=300
 # The whole stream is what a person at a terminal wants and what the recipe layer parses; an agent
 # wants the bounded digest, since it cannot know whether a call prints 3 lines or 30000
@@ -743,6 +748,16 @@ while [ $# -gt 0 ]; do
         --ready)      [ "${#WITH_NAME[@]}" -gt 0 ] ||
                           { echo "dibs: --ready says when the --with before it is ready, and none comes before it" >&2; exit 2; }
                       WITH_READY[-1]=${2:-}; shift 2 ;;
+        --port)       n=${2:-}
+                      case "$n" in
+                          ''|[!a-z]*|*[!a-z0-9_]*)
+                              echo "dibs: --port names a port for the machine to pick, as in --port api, which the" >&2
+                              echo "  service and the command then read as \$DIBS_PORT_API. It does not ask for a" >&2
+                              echo "  number: a number everyone writes down is the collision this avoids." >&2
+                              exit 2 ;;
+                      esac
+                      case " ${PORT_NAME[*]} " in *" $n "*) echo "dibs: two ports are called $n" >&2; exit 2 ;; esac
+                      PORT_NAME+=("$n"); shift 2 ;;
         --ready-within) READY_WITHIN=${2:-}
                       case "$READY_WITHIN" in ''|*[!0-9]*) echo "dibs: --ready-within takes seconds" >&2; exit 2 ;; esac
                       shift 2 ;;
@@ -1094,12 +1109,25 @@ if [ "$HOLD" = 1 ]; then
     [ -n "$DEVICE" ] && [ "${#WITH_NAME[@]}" = 0 ] &&
         { echo "dibs: --hold runs its command on this computer, so it cannot be pinned to a card there." >&2; exit 2; }
 fi
-if [ "${#WITH_NAME[@]}" -gt 0 ]; then
+if [ "${#WITH_NAME[@]}" -gt 0 ] || [ "${#PORT_NAME[@]}" -gt 0 ]; then
     case "$MODE" in
         shared|bench) ;;
-        *) echo "dibs: --with starts a service under the lock of a call that takes one: a run, --bench, or --hold." >&2
+        *) echo "dibs: --with and --port belong to a call that takes a lock: a run, --bench, or --hold." >&2
            exit 2 ;;
     esac
+    # A readiness check on a port nobody picks would wait for something that cannot answer.
+    for r in "${WITH_READY[@]}"; do
+        case "$r" in
+            tcp:*) n=${r#tcp:}; n=${n##*:}
+                   case "$n" in
+                       *[!0-9]*) case " ${PORT_NAME[*]} " in
+                                     *" $n "*) ;;
+                                     *) echo "dibs: --ready tcp:$n names no port. Use a number, or --port $n to have one picked." >&2
+                                        exit 2 ;;
+                                 esac ;;
+                   esac ;;
+        esac
+    done
 fi
 
 # --detach moves the caller and nothing else. It used to be a mode, so it and --bench each
@@ -1123,6 +1151,7 @@ if [ "$DETACH" = 1 ]; then
     [ -n "$WAIT" ]        && unhonoured="--wait"
     [ -n "$MAXHOLD" ]     && unhonoured="--max"
     [ "${#WITH_NAME[@]}" -gt 0 ] && unhonoured="--with"
+    [ "${#PORT_NAME[@]}" -gt 0 ] && unhonoured="--port"
     if [ -n "$unhonoured" ]; then
         echo "dibs: $unhonoured describes a run, and --detach starts a caller." >&2
         echo "  Give it to the dibs call inside:  dibs --detach 'dibs $unhonoured ... <command>'" >&2
@@ -1636,6 +1665,8 @@ BATCH=$(printf %s "${18:-}" | base64 -d 2>/dev/null)
 BATCH_TAG=$(printf '%s\n' "$BATCH" | head -1 | tr '\t' ' ')
 HOLD=${19:-0}
 LEASE=${20:-0}; case "$LEASE" in ''|*[!0-9]*) LEASE=0 ;; esac
+PORT_NAME=(); PORT_NUM=()
+[ -n "${22:-}" ] && read -r -a PORT_NAME <<< "${22}"
 # --with: a line saying how long a service may take to be ready, then name|readiness|command, the
 # last two in base64. Not tabs: read collapses a run of them, and an empty readiness is one.
 WITH_NAME=(); WITH_READY=(); WITH_CMD=(); WITH_PID=(); WITH_LOG=(); WITH_END=(); WITH_BAD=(); WITH_UP=0
@@ -1971,6 +2002,11 @@ kill_batch_here() {   # id anyone
 prune() {
     local f pid
     find "$DIR" -maxdepth 1 -name 'cancelled.*' -mmin +1440 -delete 2>/dev/null
+    for f in "$DIR"/port.*; do
+        [ -e "$f" ] || continue
+        pid=$(cat "$f" 2>/dev/null)
+        { [ -n "$pid" ] && [ -d "/proc/$pid" ]; } || rm -f "$f"
+    done
     for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.* "$DIR"/batch.* "$DIR"/hold.* "$DIR"/with.*; do
         [ -e "$f" ] || continue
         pid=${f##*.}
@@ -2092,6 +2128,45 @@ reap() {   # pids
     done
 }
 
+ports_listening() {
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | awk 'NR > 1 {n = split($4, a, ":"); print a[n]}'
+    else
+        # 0A is LISTEN. The port is hex, and converting it is bash's job: mawk has no strtonum.
+        awk 'NR > 1 && $4 == "0A" {split($2, a, ":"); print a[2]}' /proc/net/tcp /proc/net/tcp6 2>/dev/null |
+            while read -r x; do printf '%d\n' "$(( 16#$x ))"; done
+    fi
+}
+
+# A port two jobs both chose is the collision this exists to prevent, so the reservation is an
+# exclusive create under the lock directory, and it names the pid holding it so prune can clear it.
+ports_take() {   # 1 when the range has nothing free
+    local lo hi used i try p range=${DIBS_PORTS:-20500-20999}
+    lo=${range%%-*}; hi=${range##*-}
+    used=" $(ports_listening | tr '\n' ' ') "
+    for i in "${!PORT_NAME[@]}"; do
+        PORT_NUM[$i]=""
+        for try in $(seq 200); do
+            p=$(( lo + RANDOM % (hi - lo + 1) ))
+            case "$used" in *" $p "*) continue ;; esac
+            ( set -o noclobber; echo $$ > "$DIR/port.$p" ) 2>/dev/null || continue
+            PORT_NUM[$i]=$p
+            used="$used$p "
+            break
+        done
+        [ -n "${PORT_NUM[$i]}" ] || return 1
+        export "DIBS_PORT_$(printf %s "${PORT_NAME[$i]}" | tr 'a-z' 'A-Z')=${PORT_NUM[$i]}"
+    done
+}
+
+port_of() {   # name; the port picked for it, or the name back when it is a number already
+    local i
+    for i in "${!PORT_NAME[@]}"; do
+        [ "${PORT_NAME[$i]}" = "$1" ] && { printf '%s' "${PORT_NUM[$i]}"; return 0; }
+    done
+    printf '%s' "$1"
+}
+
 with_lines() {   # pid
     local n p c
     [ -e "$DIR/with.$1" ] || return 0
@@ -2121,6 +2196,7 @@ with_answers() {   # readiness seconds; readiness is empty, tcp:[host:]port, or 
         '') return 0 ;;
         tcp:*) a=${1#tcp:}
                case "$a" in *:*) h=${a%:*}; a=${a##*:} ;; esac
+               case "$a" in *[!0-9]*) a=$(port_of "$a") ;; esac
                timeout "$2" bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$h" "$a" 8>&- 9>&- 5<&- 2>/dev/null ;;
         *) timeout --kill-after=2 "$2" bash -c "$1" 8>&- 9>&- 5<&- < /dev/null > /dev/null 2>&1 ;;
     esac
@@ -3255,6 +3331,7 @@ log_event arrived
 # the caller's ssh cannot return, so giving up on a busy lock would hang the caller.
 trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DIR/batch.$$" "$DIR/hold.$$" "$DIR/with.$$" "$0"
       [ "$WITH_UP" = 1 ] && kill -TERM "${WITH_PID[@]}" 2>/dev/null
+      for p in ${PORT_NUM[*]:-}; do rm -f "$DIR/port.$p"; done
       [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
       [ "$LOGGED_END" = 1 ] || log_event aborted' EXIT
 
@@ -3419,7 +3496,11 @@ fi
 RUN=$CMD
 [ "$HOLD" = 1 ] && RUN="read -r st < $(printf %q "$DIR/hold.$$") && exit \"\$st\""
 WITH_FAIL=""
-[ "${#WITH_NAME[@]}" -gt 0 ] && { with_start; with_ready || with_stop; }
+if [ "${#PORT_NAME[@]}" -gt 0 ] && ! ports_take; then
+    WITH_FAIL="no free port in ${DIBS_PORTS:-20500-20999} on $(hostname -s)"
+    echo "dibs: $WITH_FAIL, so the command did not run." >&2
+fi
+[ -z "$WITH_FAIL" ] && [ "${#WITH_NAME[@]}" -gt 0 ] && { with_start; with_ready || with_stop; }
 if [ -n "$WITH_FAIL" ]; then
     STATUS=77
     [ -n "$JOBLOG" ] && : >> "$JOBLOG"
@@ -3439,7 +3520,12 @@ else
     fi
     WORK=$!
     echo "$WORK" >> "$WORKFILE"
-    [ "$HOLD" = 1 ] && echo DIBS-HOLDING
+    if [ "$HOLD" = 1 ]; then
+        # The caller's command needs the ports too, and only this side knows what they are.
+        ports=""
+        for i in "${!PORT_NAME[@]}"; do ports="$ports ${PORT_NAME[$i]}=${PORT_NUM[$i]}"; done
+        echo "DIBS-HOLDING$ports"
+    fi
     if [ "$WITH_UP" = 1 ]; then
         wait -n -p ENDED "$WORK" "${WITH_PID[@]}"
         STATUS=$?
@@ -3505,6 +3591,9 @@ if [ -n "$JOBLOG" ]; then
         "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$built" >&2
     # A hold's command printed where it ran, so the log here has nothing in it.
     [ "$HOLD" = 1 ] || printf '  log %s:%s  (%s lines)  dibs --out %s\n' "$(hostname -s)" "$JOBLOG" "$lines" "$JOB" >&2
+    for i in "${!PORT_NAME[@]}"; do
+        printf '  port %s: %s on %s\n' "${PORT_NAME[$i]}" "${PORT_NUM[$i]:-none free}" "$(hostname -s)" >&2
+    done
     for i in "${!WITH_NAME[@]}"; do
         printf '  with %s: %s  log %s:%s\n' "${WITH_NAME[$i]}" "${WITH_END[$i]:-not started}" "$(hostname -s)" "${WITH_LOG[$i]}" >&2
     done
@@ -3718,8 +3807,9 @@ hold_tree() {   # pid; it and everything below it
 # The lock is held by a job on the machine that only waits, while the command runs here with the
 # terminal. Its exit goes down the liveness channel, so a release is not logged as the caller dying,
 # and the command is stopped if the lock goes first, since it would then run unlocked.
+HOLD_ENV=()
 hold_run() {   # the command that takes the lock
-    local mark line holder st status pid
+    local mark line holder st status pid p
     mark=$(mktemp -u "${TMPDIR:-/tmp}/dibs-hold.XXXXXX")
     mkfifo "$mark" 2>/dev/null ||
         { echo "dibs: --hold could not make a fifo in ${TMPDIR:-/tmp}, so nothing ran." >&2; return 2; }
@@ -3737,8 +3827,19 @@ hold_run() {   # the command that takes the lock
     holder=$!
     exec 4<"$mark" 7<&-
     rm -f "$mark"
-    while IFS= read -r line <&4 && [ "$line" != DIBS-HOLDING ]; do printf '%s\n' "$line"; done
-    if [ "$line" != DIBS-HOLDING ]; then
+    while IFS= read -r line <&4; do
+        case "$line" in DIBS-HOLDING|"DIBS-HOLDING "*) break ;; esac
+        printf '%s\n' "$line"
+    done
+    case "$line" in
+        "DIBS-HOLDING "*)
+            # Named where the command here has to reach them, which is the machine, not localhost.
+            for p in ${line#DIBS-HOLDING }; do
+                HOLD_ENV+=("DIBS_PORT_$(printf %s "${p%%=*}" | tr 'a-z' 'A-Z')=${p#*=}")
+                HOLD_ENV+=("DIBS_SERVICE_$(printf %s "${p%%=*}" | tr 'a-z' 'A-Z')=${TARGET:-$SELF}:${p#*=}")
+            done ;;
+    esac
+    if [ "${line%% *}" != DIBS-HOLDING ]; then
         exec 4<&- 6>&-
         wait "$holder"; return
     fi
@@ -3748,7 +3849,7 @@ hold_run() {   # the command that takes the lock
     # The command gets stderr back on 3, while bash's own notice of a stopped command, which
     # would name this function's code, goes nowhere.
     { ( printf '%s\n' "$BASHPID" > "$mark.pid"; exec 2>&3 3>&-
-        export DIBS_HOLDING="${DIBS_HOLDING:+$DIBS_HOLDING }$LOCK_AT"
+        export DIBS_HOLDING="${DIBS_HOLDING:+$DIBS_HOLDING }$LOCK_AT" ${HOLD_ENV[@]+"${HOLD_ENV[@]}"}
         if [ "${#HOLD_CMD[@]}" -eq 1 ]; then exec bash -c "${HOLD_CMD[0]}"; else exec "${HOLD_CMD[@]}"; fi ) 4<&- 6>&-; } 3>&2 2>/dev/null
     st=$?
     trap - INT
@@ -3794,11 +3895,11 @@ if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
         SCRIPT=$(mktemp "${TMPDIR:-/tmp}/dibs-hold-script.XXXXXX") || exit 70
         remote_script > "$SCRIPT"
         hold_here() {
-            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 0 "$WITHB64" <&7 7<&-
+            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 0 "$WITHB64" "${PORT_NAME[*]}" <&7 7<&-
         }
         hold_run hold_here
     else
-        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 0 0 "$WITHB64"
+        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 0 0 "$WITHB64" "${PORT_NAME[*]}"
     fi
     STATUS=$?
     [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
@@ -3874,7 +3975,7 @@ else
             -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
             "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
              exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
-             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE' '$WITHB64'
+             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE' '$WITHB64' '${PORT_NAME[*]}'
 exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec <&7 6>&- 7<&-; relay) 6>&- 7<&-
     }
     if [ "$HOLD" = 1 ]; then hold_run to_machine; else to_machine; fi

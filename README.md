@@ -139,9 +139,15 @@ only while something is using it and never while someone else holds the machine.
 when it can be used, as `tcp:<port>` or a command that exits 0 once it is, and `--ready-within`
 bounds that wait. Its output is kept beside the job's, and the trailer says how it went.
 
+`--port <name>` has the machine pick a free port and reserve it for the call, rather than a
+number written into both sides by hand, which two agents serving the same thing collide on. The
+service and the command read it as `$DIBS_PORT_<NAME>`, a `--hold` command also gets
+`$DIBS_SERVICE_<NAME>` as `host:port`, and `--ready tcp:<name>` means that port.
+
 ```
-dibs --on multigpu --hold --with cuda='target/debug/gpu-server --listen 0.0.0.0:7700' \
-    --ready tcp:7700 -- 'curl http://multigpu:7700/gpus'
+dibs --on multigpu --hold --port api \
+    --with cuda='target/debug/gpu-server --listen 0.0.0.0:$DIBS_PORT_API' --ready tcp:api \
+    -- 'curl http://$DIBS_SERVICE_API/gpus'
 ```
 
 A client on the machine itself is the same call without `--hold`, and a measured one adds
