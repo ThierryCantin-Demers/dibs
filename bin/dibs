@@ -1968,12 +1968,50 @@ queue_eta() {   # mode label agent; sets QE_ETA, -1 when it cannot be said
     QE_PENDING=0 QE_PENDING_KNOWN=1
 }
 
+# Where the queue will stand once everything waiting now has started, as queue_eta leaves it. A
+# batch's steps still to come arrive after all of it, so they are placed behind it.
+queue_tail() {
+    local f mode start label agent free=0 known=1
+    QT_EXCL=0
+    now
+    for f in "$DIR"/holder.*; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode _ start label agent _ < "$f"
+        [ "$mode" = bench ] && QT_EXCL=1
+        if estimate "$mode" "$label" "$agent"; then
+            remaining_of $(( NOW - start ))
+            [ "$REM" -lt 0 ] && known=0
+            [ "$REM" -gt "$free" ] && free=$REM
+        else
+            known=0
+        fi
+    done
+    queue_sorted
+    queue_eta_start "$free" "$known"
+    for f in "${QF[@]}"; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode _ _ label agent _ < "$f"
+        [ "$mode" = bench ] && QT_EXCL=1
+        queue_eta "$mode" "$label" "$agent"
+    done
+    QT_AT=$QE_AT QT_KNOWN=$QE_KNOWN QT_PENDING=$QE_PENDING QT_PKNOWN=$QE_PENDING_KNOWN
+}
+
+batch_tail() {
+    local f
+    QT_AT=0 QT_KNOWN=0 QT_PENDING=0 QT_PKNOWN=0 QT_EXCL=0
+    for f in "$DIR"/batch.*; do
+        [ -e "$f" ] && { queue_tail; return; }
+    done
+}
+
 # A batch reaches the machine one step at a time, so without its plan a job looks like the last
 # thing its agent asked for, and the time that agent has left reads as this job's alone. Only a
 # label's own history counts toward it: what an agent or the machine usually takes says nothing
 # about a step that has never run.
 batch_read() {   # pid left-of-this-job; sets BT_*, 1 when the job is not part of a batch
-    local f=$DIR/batch.$1 name mode label here d
+    local f=$DIR/batch.$1 name mode label here d start
+    local at=${QT_AT:-0} known=${QT_KNOWN:-0} pend=${QT_PENDING:-0} pknown=${QT_PKNOWN:-0} excl=${QT_EXCL:-0}
     BT_ID= BT_STEP= BT_K= BT_N= BT_HERE=0 BT_NEXT= BT_FARN=0 BT_FAR= BT_LEFT=$2 BT_PARTIAL=0
     [ -s "$f" ] || return 1
     {
@@ -1988,12 +2026,41 @@ batch_read() {   # pid left-of-this-job; sets BT_*, 1 when the job is not part o
             fi
             BT_HERE=$((BT_HERE+1))
             if [ "$mode" = peek ]; then
-                d=""
-            elif estimate "$mode" "$label" "" && [ "$EST_SCOPE" = this ]; then
+                [ "$BT_HERE" -le 6 ] && BT_NEXT="$BT_NEXT${BT_NEXT:+, }$name"
+                continue
+            fi
+            # A shared step waits only while a benchmark holds or is queued; a benchmark waits
+            # for everything admitted before it. Where the queue cannot be estimated the step
+            # is placed as if it were empty, and the total becomes a floor.
+            start=$BT_LEFT
+            if [ "$BT_LEFT" -ge 0 ]; then
+                if [ "$mode" = bench ]; then
+                    if [ "$known" = 1 ] && [ "$pknown" = 1 ]; then
+                        [ $(( at + pend )) -gt "$start" ] && start=$(( at + pend ))
+                    else
+                        BT_PARTIAL=1
+                    fi
+                elif [ "$excl" = 1 ]; then
+                    if [ "$known" = 1 ]; then
+                        [ "$at" -gt "$start" ] && start=$at
+                    else
+                        BT_PARTIAL=1
+                    fi
+                fi
+            fi
+            if estimate "$mode" "$label" "" && [ "$EST_SCOPE" = this ]; then
                 dur_ d "$EST_V"; d=" ~$d"
-                [ "$BT_LEFT" -ge 0 ] && BT_LEFT=$(( BT_LEFT + EST_V ))
+                if [ "$BT_LEFT" -ge 0 ]; then
+                    BT_LEFT=$(( start + EST_V ))
+                    if [ "$mode" = bench ]; then
+                        at=$BT_LEFT pend=0 known=1 pknown=1
+                    elif [ $(( BT_LEFT - at )) -gt "$pend" ]; then
+                        pend=$(( BT_LEFT - at ))
+                    fi
+                fi
             else
                 d=" (no history)"; BT_PARTIAL=1
+                [ "$BT_LEFT" -ge 0 ] && BT_LEFT=$start
             fi
             [ "$BT_HERE" -le 6 ] && BT_NEXT="$BT_NEXT${BT_NEXT:+, }$name$d"
         done
@@ -2015,7 +2082,7 @@ batch_lines() {   # pid left-of-this-job
     else
         dur_ l "$BT_LEFT"
         if [ "$BT_PARTIAL" = 1 ]; then
-            echo "    ${C_DIM}batch time left here: over $l, since some steps have no history$C_OFF"
+            echo "    ${C_DIM}batch time left here: over $l, since some of what is ahead has no history$C_OFF"
         else
             echo "    ${C_DIM}batch time left here: ~$l$C_OFF"
         fi
@@ -2037,6 +2104,7 @@ show_json() {
     local f mode pid start label agent cmd elapsed sep="" st=idle jl ja jc jo i=0 free=0 eta_known=1 jleft
     local c csep sc
     prune
+    batch_tail
     now
     for f in "$DIR"/holder.*; do
         [ -e "$f" ] || continue
@@ -2156,6 +2224,7 @@ show() {
     prune
     for f in "$DIR"/holder.* "$DIR"/waiting.*; do sig="$sig ${f##*/}"; done
     [ "$sig" = "$EST_SIG" ] || { EST=(); EST_SIG=$sig; }
+    batch_tail
     for f in "$DIR"/waiting.*; do [ -e "$f" ] && depth=$((depth+1)); done
     [ "$depth" -gt 0 ] && qnote="$C_DIM ($depth queued)$C_OFF"
 

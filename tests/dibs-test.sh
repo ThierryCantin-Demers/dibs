@@ -33,6 +33,9 @@ chmod +x "$S/nossh/ssh"; cp "$S/nossh/ssh" "$S/nossh/scp"
 export PATH=$S/nossh:$PATH
 T=${DIBS:-${DIBS_BIN:-$HOME/.local/bin/dibs}}
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# Built while HOME is still the real one: a cargo on PATH may be a wrapper that looks for the
+# real cargo under HOME, and under the home below it finds only itself.
+[ -x "$SRC/core/target/debug/dibs-core" ] || cargo build -q --manifest-path "$SRC/core/Cargo.toml" 2>/dev/null
 # A home of its own, so every default dibs keeps under ~ or the XDG directories (scratch,
 # state, config, the machine inventory, the recipe layer) resolves inside $S, including any
 # default added later. The real ones are neither read nor written.
@@ -1415,7 +1418,6 @@ check "a copy outside a clone is refused" "$("$U/loose" --update >/dev/null 2>&1
 echo "batch"
 # The driver is in the recipe layer, built from this checkout, and each step is dibs itself.
 BCORE=$SRC/core/target/debug/dibs-core
-[ -x "$BCORE" ] || cargo build -q --manifest-path "$SRC/core/Cargo.toml" 2>/dev/null
 mkdir -p "$S/bbin"; ln -sf "$T" "$S/bbin/dibs"
 B() { PATH=$S/bbin:$PATH DIBS_CORE=$BCORE "$T" batch "$@"; }
 printf '%s\n' "# a comment" "[a] dibs --label batch-a 'echo a-start >> $S/border; echo a-end >> $S/border'" \
@@ -1465,11 +1467,20 @@ check "status names the batch and the step" "$(grep -cE '^    batch [0-9]{8}-[0-
 check "what is still to come on this machine, with its estimate" "$(grep -c '^    then here: next ~5m00s, fresh (no history)$' <<<"$st")" "1"
 check "and what goes elsewhere" "$(grep -c '^    then on other machines: far$' <<<"$st")" "1"
 check "with the time left for the batch here, as a floor when a step has no history" \
-  "$(grep -cE '^    batch time left here: over (6m59s|7m00s), since some steps have no history$' <<<"$st")" "1"
+  "$(grep -cE '^    batch time left here: over (6m59s|7m00s), since some of what is ahead has no history$' <<<"$st")" "1"
 check "the same in json" "$($T status --json | grep -cE '"batch":\{"id":"[0-9-]+","step":"hold","k":1,"n":4,"here":2,"elsewhere":1,"left":(419|420),"left_partial":true\}')" "1"
+for i in 1 2 3; do printf 'bench\tbatch-queued-bench\t200\tx\n' >> "$DIBS_HISTORY"; done
+$T --bench --label batch-queued-bench true >/dev/null 2>&1 &
+QBENCH=$!
+queued
+check "a benchmark queued now goes ahead of the batch's next step, and the time left counts its wait" \
+  "$($T status | grep -cE '^    batch time left here: over 10m(19|20)s, since some of what is ahead has no history$')" "1"
 kill -9 $BDRIVER 2>/dev/null; wait $BDRIVER 2>/dev/null
+wait $QBENCH
 gone
-check "the log names the batch and step of every event" "$($T --log 3 | grep -cE 'batch-cur .*\[batch [0-9-]+ hold\]$')" "2"
+check "the log names the batch and step of every event" \
+  "$(awk -F'\t' '$5=="batch-cur" {n++; if ($11 ~ /^[0-9-]+ hold$/) t++} END {print (n >= 2 && n == t) ? "all" : n " " t}' "$DIBS_LOG")" "all"
+check "and --log shows it" "$($T --log 50 | grep -cE 'batch-cur .*\[batch [0-9-]+ hold\]$' | grep -c '^[1-9]')" "1"
 check "and a record left behind by a killed job goes with it" "$(ls "$DIBS_LOCK_DIR" | grep -c '^batch\.')" "0"
 
 echo "one command"
