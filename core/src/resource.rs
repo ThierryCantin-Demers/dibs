@@ -22,6 +22,8 @@ pub struct Request<'a> {
     pub device: Option<&'a str>,
     /// Which batch this is a step of and what is still to come, for the machine's status.
     pub env: &'a [(&'static str, String)],
+    /// Seconds the job may hold the lock, when the caller knows the default is too short.
+    pub max: Option<u64>,
 }
 
 pub struct Outcome {
@@ -217,6 +219,9 @@ impl Dibs {
             cmd.arg("--bench");
         }
         cmd.arg("--label").arg(req.label);
+        if let Some(m) = req.max {
+            cmd.arg("--max").arg(m.to_string());
+        }
         if let Some(d) = req.device {
             cmd.arg("--device").arg(d);
         }

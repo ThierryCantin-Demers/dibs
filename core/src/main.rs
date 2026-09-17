@@ -33,7 +33,7 @@ dibs <verb> <repo>[@<ref>] <recipe>       run a recipe from the repo's .dibs.tom
                                           GitHub credentials
 dibs list <repo>                      what that repo defines
 dibs runs [label]                     what has run here, and what is comparable
-dibs shell <repo>[@<ref>] --reason <why> -- <cmd>   a command in a prepared worktree
+dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>   a command in a prepared worktree
 dibs raw --reason <why> -- <cmd>      a command with nothing prepared
 dibs with <repo>[@<ref>] <service> -- <cmd>   run the command here while the repo's servers
                                       run on the machine under its lock, started once they
@@ -60,6 +60,13 @@ dibs batch <file|->                   a list of dibs command lines as one submis
             `dibs list <repo>` prints what each recipe takes, with its default and its
             choices. The label does not carry them, so one recipe keeps one duration
             history; the run record carries them.
+  --sweep   <name>=<a,b,c>, one run per value, submitted as one batch with one summary.
+            Repeatable, and the combinations are the cross product. A value is never split
+            on commas, so --sweep is how a sweep is asked for and --<name> always means
+            one value.
+  --reps    run each point this many times, in one batch
+  --bench   shell only: the exclusive lock, for a one-off that is a measurement
+  --max     seconds the job may hold the lock, when the default is too short for it
   --dry-run print what would run, take no lock, record nothing
   --verbose with batch, each step's output as it comes, prefixed with the step's name
 
@@ -79,6 +86,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[derive(Clone)]
 struct Args {
     verb: String,
     repo: String,
@@ -95,6 +103,14 @@ struct Args {
     /// `--<name> <value>` for whatever the recipe declares. Unknown here rather than refused,
     /// because which names are valid is the recipe's to say, and it says so with the list.
     params: BTreeMap<String, String>,
+    /// `--sweep <name>=<a,b,c>`, in the order given, so the points come out in an order a
+    /// reader can follow. Spelled apart from `--<name>` because a value may contain a comma:
+    /// splitting one would make `--problems a,b` mean two runs of one problem each.
+    sweep: Vec<(String, Vec<String>)>,
+    reps: u32,
+    /// shell only: the exclusive lock, for a one-off that is a measurement.
+    bench: bool,
+    max: Option<u64>,
     verbose: bool,
 }
 
@@ -110,6 +126,10 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut command = None;
     let mut device: Option<String> = None;
     let mut params: BTreeMap<String, String> = BTreeMap::new();
+    let mut sweep: Vec<(String, Vec<String>)> = Vec::new();
+    let mut reps: u32 = 1;
+    let mut bench = false;
+    let mut max = None;
     let mut verbose = false;
     let mut it = words.into_iter();
     while let Some(a) = it.next() {
@@ -139,6 +159,24 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
                 std::process::exit(0);
             }
             "--root" => root = PathBuf::from(it.next().ok_or("--root needs a path")?),
+            "--sweep" => {
+                let s = it.next().ok_or("--sweep needs <name>=<value,value,...>")?;
+                let (name, values) = s.split_once('=').ok_or_else(|| {
+                    format!("--sweep takes <name>=<value,value,...>, not {s}")
+                })?;
+                sweep.push((name.to_string(), values.split(',').map(str::to_string).collect()));
+            }
+            "--reps" => {
+                reps = it
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .filter(|n| *n > 0)
+                    .ok_or("--reps needs a count")?;
+            }
+            "--bench" | "-b" => bench = true,
+            "--max" => {
+                max = Some(it.next().and_then(|n| n.parse().ok()).ok_or("--max needs seconds")?);
+            }
             "--dry-run" => dry_run = true,
             "--verbose" | "-v" => verbose = true,
             "-" => positional.push("-".into()),
@@ -190,6 +228,10 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         command,
         device,
         params,
+        sweep,
+        reps,
+        bench,
+        max,
         verbose,
     })
 }
@@ -265,6 +307,7 @@ fn run() -> Result<ExitCode, String> {
                 needs: None,
                 device: args.device.as_deref(),
                 env: &[],
+                max: args.max,
             },
             command,
         )?;
@@ -346,6 +389,13 @@ fn run() -> Result<ExitCode, String> {
         println!("\nlocal recipes: {}", recipe::local_dir().display());
         return Ok(ExitCode::SUCCESS);
     }
+
+    let points = sweep_points(&args);
+    if points.len() as u32 * args.reps > 1 {
+        return sweep_run(&args, &points);
+    }
+    // One point is the ordinary call with its values filled in, not a batch of one.
+    let args = Args { params: points.into_iter().next().unwrap_or_default(), ..args };
 
     let resolved = resolve(&args)?;
     let calls = jobs_of(&resolved, args.reference.as_deref() == Some("local"));
@@ -445,6 +495,7 @@ fn run() -> Result<ExitCode, String> {
         // on a machine whose card has been pulled.
         device: None,
         env: &setup_env,
+        max: None,
     };
     // One cache per repo, exported rather than left to each recipe to remember. The output
     // needs no file of its own: dibs keeps every job's log under its job id, and a path named
@@ -489,6 +540,7 @@ fn run() -> Result<ExitCode, String> {
                 needs: rec.needs.as_deref(),
                 device: args.device.as_deref(),
                 env: &env,
+                max: args.max,
             };
             let (out, text) = backend.run_reporting(&req, &command, &mut announce)?;
             if !text.contains("DIBS-READY") && !text.contains("DIBS-HELD") {
@@ -535,6 +587,7 @@ fn run() -> Result<ExitCode, String> {
             needs: rec.needs.as_deref(),
             device: args.device.as_deref(),
             env: &env,
+            max: args.max,
         };
         let out = backend.run(&req, &cd)?;
         steps.push(provenance::StepRecord { lock: step_lock(step.lock), status: out.status, seconds: out.seconds });
@@ -580,6 +633,94 @@ fn run() -> Result<ExitCode, String> {
         Some(c) => ExitCode::from(c.clamp(1, 255) as u8),
         None => ExitCode::SUCCESS,
     })
+}
+
+/// Every combination `--sweep` asks for, each a complete set of values for one run. Without a
+/// sweep this is the one point the call already described.
+fn sweep_points(args: &Args) -> Vec<BTreeMap<String, String>> {
+    let mut points = vec![args.params.clone()];
+    for (name, values) in &args.sweep {
+        points = points
+            .iter()
+            .flat_map(|p| {
+                values.iter().map(|v| {
+                    let mut q = p.clone();
+                    q.insert(name.clone(), v.clone());
+                    q
+                })
+            })
+            .collect();
+    }
+    points
+}
+
+/// A sweep is a batch of ordinary calls, which is what makes it one wake and one summary rather
+/// than one per point. They run in sequence because they share a worktree and its build cache.
+fn sweep_run(args: &Args, points: &[BTreeMap<String, String>]) -> Result<ExitCode, String> {
+    // Every point is checked before any of them is queued: a value the recipe refuses should be
+    // found now, not two measurements into a sweep that is already holding the machine.
+    for p in points {
+        let probe = Args { params: p.clone(), sweep: Vec::new(), reps: 1, ..args.clone() };
+        resolve(&probe)?;
+    }
+    let text = sweep_text(args, points);
+    let code = batch::run(&text, &batch::Options { dry_run: args.dry_run, verbose: args.verbose })?;
+    Ok(ExitCode::from(code.clamp(0, 255) as u8))
+}
+
+/// The batch a sweep becomes: one ordinary dibs call per point, named by what makes it that
+/// point, in the order the sweep was written.
+fn sweep_text(args: &Args, points: &[BTreeMap<String, String>]) -> String {
+    let target = match &args.reference {
+        Some(r) => format!("{}@{r}", args.repo),
+        None => args.repo.clone(),
+    };
+    let mut text = String::new();
+    for p in points {
+        for rep in 1..=args.reps {
+            let mut line = format!("dibs {} {}", args.verb, sh(&target));
+            if let Some(r) = &args.recipe {
+                line += &format!(" {r}");
+            }
+            if args.bench {
+                line += " --bench";
+            }
+            if let Some(m) = args.max {
+                line += &format!(" --max {m}");
+            }
+            if let Some(d) = &args.device {
+                line += &format!(" --device {d}");
+            }
+            if let Some(r) = &args.reason {
+                line += &format!(" --reason {}", sh(r));
+            }
+            for (k, v) in p {
+                line += &format!(" --{k} {}", sh(v));
+            }
+            if let Some(c) = &args.command {
+                line += &format!(" -- {}", sh(c));
+            }
+            text += &format!("[{}] {line}\n", point_name(args, p, rep));
+        }
+    }
+    text
+}
+
+/// What the summary calls one point: the values that make it that point, and the repetition
+/// where there is more than one.
+fn point_name(args: &Args, p: &BTreeMap<String, String>, rep: u32) -> String {
+    let slug = |v: &str| {
+        v.chars().map(|c| if c.is_ascii_alphanumeric() || "_.-".contains(c) { c } else { '_' }).collect::<String>()
+    };
+    let mut parts: Vec<String> = args
+        .sweep
+        .iter()
+        .map(|(k, _)| format!("{k}-{}", slug(p.get(k).map(String::as_str).unwrap_or(""))))
+        .collect();
+    if args.reps > 1 {
+        parts.push(format!("r{rep}"));
+    }
+    parts.join(".")
 }
 
 /// A repo's servers, running on the machine under one lock while the command runs here: a
@@ -632,6 +773,7 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
         needs: None,
         device: None,
         env: &[],
+        max: None,
     };
     let mut announce = |text: &str| announce_prepared(text);
     let text = match &local {
@@ -668,6 +810,7 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
             needs: None,
             device: args.device.as_deref(),
             env: &[],
+            max: None,
         };
         let out = backend.run(&req, &in_tree(build))?;
         if out.status != 0 {
@@ -793,7 +936,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         isolation: recipe::Isolation::Machine,
         params: BTreeMap::new(),
         steps: vec![recipe::Step {
-            lock: Lock::Shared,
+            lock: if args.bench { Lock::Exclusive } else { Lock::Shared },
             run: args.command.clone().unwrap_or_default(),
             env: BTreeMap::new(),
         }],
@@ -1111,6 +1254,56 @@ mod tests {
 
     fn step(lock: Lock, run: &str) -> Step {
         Step { lock, run: run.into(), env: BTreeMap::new() }
+    }
+
+    fn swept(words: &[&str]) -> Args {
+        parse_words(words.iter().map(|w| w.to_string())).unwrap()
+    }
+
+    #[test]
+    fn a_sweep_is_every_combination_over_the_values_already_given() {
+        let args = swept(&[
+            "bench", "app@local", "r", "--backend", "cuda", "--sweep", "size=64,128", "--sweep",
+            "layout=rc,cr",
+        ]);
+        let points = sweep_points(&args);
+        let shape: Vec<String> =
+            points.iter().map(|p| format!("{} {} {}", p["backend"], p["size"], p["layout"])).collect();
+        assert_eq!(shape, ["cuda 64 rc", "cuda 64 cr", "cuda 128 rc", "cuda 128 cr"]);
+    }
+
+    #[test]
+    fn a_value_with_a_comma_in_it_is_one_value() {
+        let args = swept(&["bench", "app@local", "r", "--problems", "topk1,topk2", "--sweep", "samples=10,30"]);
+        let points = sweep_points(&args);
+        assert_eq!(points.len(), 2, "only the sweep multiplies the runs");
+        assert_eq!(points[0]["problems"], "topk1,topk2");
+    }
+
+    #[test]
+    fn a_swept_run_is_a_batch_of_ordinary_calls() {
+        let args = swept(&[
+            "bench", "app@local", "r", "--device", "gpu0", "--sweep", "samples=10,30", "--reps", "2",
+        ]);
+        let text = sweep_text(&args, &sweep_points(&args));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 4, "two values, twice each");
+        assert_eq!(lines[0], "[samples-10.r1] dibs bench app@local r --device gpu0 --samples 10");
+        assert_eq!(lines[3], "[samples-30.r2] dibs bench app@local r --device gpu0 --samples 30");
+    }
+
+    #[test]
+    fn a_repeated_shell_carries_its_reason_its_lock_and_its_command_quoted() {
+        let args = swept(&[
+            "shell", "app@local", "--reason", "why not", "--bench", "--max", "60", "--reps", "2",
+            "--", "echo a; echo b",
+        ]);
+        let text = sweep_text(&args, &sweep_points(&args));
+        assert_eq!(
+            text.lines().next().unwrap(),
+            "[r1] dibs shell app@local --bench --max 60 --reason 'why not' -- 'echo a; echo b'",
+            "a batch line is one dibs call, so anything the shell would read has to be quoted"
+        );
     }
 
     fn resolved(steps: Vec<Step>) -> Resolved {

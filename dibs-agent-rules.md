@@ -184,6 +184,12 @@ spoiled without it.
   than copying a recipe's command out to change one thing: the run is still recorded, still
   labelled, and the record carries the values. A value outside the choices, or a name the recipe
   does not declare, is refused here before anything is sent.
+- **A sweep is one call**: `--sweep <name>=<a,b,c>` runs one point per value and `--reps <n>`
+  repeats each, as a single batch with one summary, so a sweep wakes you once. Never write a loop
+  of dibs calls for it. `--<name>` never splits on commas, so a value that contains one, such as a
+  problem list, stays one value.
+- `dibs shell` takes `--bench` when the one-off is a measurement, and `--max <seconds>` when it
+  would otherwise be killed at the default cap.
 - `@local` in place of a ref sends your working tree, uncommitted changes included, following the
   repo's ignore rules. It is how to run a branch you have not pushed, and the only way to run a
   private repo, because the machines hold no credentials. Reach for it before carrying code over by

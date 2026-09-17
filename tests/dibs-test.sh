@@ -1901,6 +1901,33 @@ out=$(RC build "$S/app@local" p --samples 30 --dry-run 2>/dev/null)
 check "a dry run says what the parameters came out as" "$(grep -c '^param       samples = 30$' <<<"$out")" "1"
 check "and what each step will export" "$(grep -c '^            env SAMPLES=30$' <<<"$out")" "1"
 
+# A sweep is a batch of ordinary calls, so a set of points costs one wake and one summary rather
+# than one of each per point, and the machine sees them in sequence over one worktree.
+out=$(RC build "$S/app@local" p --sweep samples=11,31 --verbose 2>"$S/sw.err")
+check "a sweep runs one call per value" \
+  "$(grep -c '^samples-11 ran cuda samples=11$' "$S/sw.err")$(grep -c '^samples-31 ran cuda samples=31$' "$S/sw.err")" "11"
+check "as one batch with one summary" "$(grep -c '^batch [0-9-]*  2 steps, ' <<<"$out")" "1"
+check "each point named by what makes it one" "$(grep -cE '^samples-(11|31)  .* 0  ' <<<"$out")" "2"
+check "and each writes its own record" \
+  "$(grep -c '"params":{"backend":"cuda","samples":"11"}' "$HOME/.local/state/dibs/runs.jsonl")" "1"
+out=$(RC build "$S/app@local" p --sweep samples=10,30 --reps 2 --dry-run 2>&1)
+check "--reps repeats every point, in the same batch" "$(grep -cE '^  samples-(10|30)\.r[12] ' <<<"$out")" "4"
+out=$(RC build "$S/app@local" p --sweep backend=cuda,metal 2>&1); rc=$?
+check "a value the recipe refuses stops the sweep before any of it runs" "$rc" "2"
+check "without starting the batch" "$(grep -c 'steps\. You are told' <<<"$out")" "0"
+check "a comma in a value is not a sweep" \
+  "$(RC build "$S/app@local" p --samples 10,30 --dry-run 2>/dev/null | grep -c '^param       samples = 10,30$')" "1"
+
+# shell is the escape hatch, and a one-off can be a measurement or can outlast the default cap.
+out=$(RC shell "$S/app@local" --reason 'measure once' --bench -- 'echo measured' 2>"$S/sb.err")
+check "shell --bench takes the exclusive lock" "$(grep -c '	arrived	.*	bench	app_shell	' "$DIBS_LOG")" "1"
+check "and still runs the command in the tree" "$(grep -c '^measured$' <<<"$out")" "1"
+RC shell "$S/app@local" --reason 'long one' --max 4242 -- true >/dev/null 2>&1
+check "shell --max reaches the lock rather than being dropped" \
+  "$(grep -c 'holding the lock for 4242s' "$DIBS_LOG")$(RC shell "$S/app@local" --reason x --max 4242 --dry-run -- true >/dev/null 2>&1; echo $?)" "00"
+check "a shell that would compile under --bench is refused, with the two calls to use instead" \
+  "$(RC shell "$S/app@local" --reason 'measure' --bench -- 'cargo bench --bench gemm' 2>&1 | grep -c 'then measure with --bench')" "1"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

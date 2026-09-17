@@ -101,6 +101,21 @@ The label does not carry the values, deliberately: one label is one duration his
 per value would predict none of them. The run record carries them, so two points stay
 distinguishable in `dibs runs`.
 
+A sweep is one submission:
+
+    dibs bench cubek@local reduce --sweep samples=10,30,100 --reps 2
+
+`--sweep` is repeatable and the combinations are the cross product; `--reps` runs each point that
+many times. They become a batch of ordinary calls, one per point, run in sequence because they
+share a worktree and its build cache, so you are woken once and get one summary with a row per
+point. Every point is checked before any of them is queued.
+
+The sweep has its own flag rather than splitting `--samples 10,30`, because a value may contain a
+comma: `--problems sum_axis2,arg_topk` is one value, and `--<name>` always means exactly one.
+
+`dibs shell` takes `--bench` for a one-off that is a measurement, and `--max <seconds>` where the
+default cap is too short for it.
+
 Two things in a recipe are refused when it loads, because both produce a number that looks fine:
 
 - A step naming a relative `target/` path. `CARGO_TARGET_DIR` is redirected per tree, so that
