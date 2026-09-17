@@ -281,11 +281,19 @@ pub fn ready(steps: &[Step], machines: &[String], states: &[State], stopped: boo
     out
 }
 
-/// The job ids a step's trailers named, in order. A recipe step prints several.
+/// The jobs a step's trailers named, in order, each with what its trailer says about the exit
+/// and the build: `by=dibs` when dibs produced the exit, and `built=`, which is what says whether
+/// a measurement ran on a fresh binary. A recipe step prints several.
 pub fn jobs(stderr: &str) -> Vec<String> {
     stderr
         .lines()
-        .filter_map(|l| l.strip_prefix("job ").and_then(|r| r.split_whitespace().next()).map(str::to_string))
+        .filter_map(|l| l.strip_prefix("job "))
+        .filter_map(|r| {
+            let mut words = r.split_whitespace();
+            let id = words.next()?;
+            let verdict: Vec<&str> = words.filter(|w| *w == "by=dibs" || w.starts_with("built=")).collect();
+            Some(if verdict.is_empty() { id.to_string() } else { format!("{id} {}", verdict.join(" ")) })
+        })
         .collect()
 }
 
@@ -561,7 +569,7 @@ pub fn summary(id: &str, steps: &[Step], machines: &[String], states: &[State], 
             st.lock,
             wall,
             exit,
-            jobs(&err).join(" ")
+            jobs(&err).join(", ")
         ));
     }
     out.push_str(&format!(
@@ -701,7 +709,7 @@ mod tests {
 
     #[test]
     fn the_job_ids_come_from_the_trailers() {
-        let err = "dibs: step 1/2\njob 20260916-1  shared  a:setup  queued 0s  ran 1s  exit 0  by=command\n  log m:/x\njob 20260916-2  bench  a  queued 3s  ran 9s  exit 0  by=command  built=nothing\n";
-        assert_eq!(jobs(err), ["20260916-1", "20260916-2"]);
+        let err = "dibs: step 1/2\njob 20260916-1  shared  a:setup  queued 0s  ran 1s  exit 0  by=command\n  log m:/x\njob 20260916-2  bench  a  queued 3s  ran 9s  exit 0  by=command  built=nothing\njob 20260916-3  shared  a  queued 0s  ran 0s  exit 69  by=dibs\n";
+        assert_eq!(jobs(err), ["20260916-1", "20260916-2 built=nothing", "20260916-3 by=dibs"]);
     }
 }

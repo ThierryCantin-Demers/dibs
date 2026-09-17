@@ -120,26 +120,57 @@ launching a hundred jobs one at a time costs three hundred turns at full context
 alone has been most of a day's token budget, for no benefit at all: the machine did the same
 work either way.
 
-Put the whole sequence in one script, launch that script once, and be woken once:
+Put the whole sequence in one `dibs batch`, launch that once, and be woken once. It takes one
+dibs call per line, from a file or from stdin, and prints one summary when the last step ends:
 
-```bash
-dibs run 'cargo build --release --bench reduce'  || exit 1
-dibs run --bench 'cargo bench --bench reduce'    || exit 1
-echo "both done"        # the one thing you will read when it wakes you
+```
+[build]              dibs --label reduce-build 'cargo build --release --bench reduce'
+[bench after=build]  dibs --bench --label reduce-bench 'cargo bench --bench reduce'
 ```
 
-**Each step stays its own `dibs` call inside that script.** Do not collapse the sequence into
-`dibs run 'build && bench'` to save a call: that holds one lock for both, which is the compile
+**Read the summary, not the steps' output.** One row per step: its machine, lock, time and exit,
+and each of its jobs with `by=dibs` when dibs produced the exit and the `built=` its trailer
+reported. `built=nothing` before a measurement means it measured the previous binary. A step's
+whole output is in the files the summary names, and `dibs --out <job>` reads a job's log.
+
+**A line is one dibs call and nothing else.** `;`, `&&`, a pipe, a redirect, `$(...)` or a
+backtick outside quotes is refused before anything runs. What runs on the machine goes in single
+quotes, which is also what keeps `$DIBS_SCRATCH` unexpanded until it gets there.
+
+**Generate a list rather than wrapping the calls in a script.** Loops and functions belong in
+the generator, and the batch runs what it prints:
+
+```bash
+{
+  echo "[build] dibs --label gemv-build 'cd \$DIBS_SCRATCH/src && cargo bench --no-run --bench gemv'"
+  for p in rr rc cr; do
+    echo "[gemv-$p after=build cont] dibs --bench --label gemv-$p 'cd \$DIBS_SCRATCH/src && cargo bench --bench gemv -- $p'"
+  done
+} | dibs batch -
+```
+
+**Order.** A step waits for the line before it. `[name after=a,b]` waits for those steps instead,
+and a bare `after=` waits for nothing. Steps that wait for nothing in common overlap when they go
+to different machines and take turns on the same one, so work on two machines is one batch whose
+second chain starts with `after=`, not two scripts joined with `&` and `wait`. A failed step
+stops the rest of the batch; mark `cont` on a step whose failure should not, such as one
+configuration of a sweep.
+
+**Each step stays its own `dibs` call.** Do not collapse the sequence into
+`dibs run 'build && bench'` to save a line: that holds one lock for both, which is the compile
 inside the exclusive lock that the split above exists to prevent. The saving is in how many
 times *you* are woken, never in how many locks are taken.
 
-**Steps on different machines may overlap** with `&` and a `wait` inside the script. That is
-not detaching, because the harness still owns the script and killing it kills everything under
-it. Steps on the same machine stay in order.
+**Asked how long your work will take, run `dibs status` rather than guessing.** It never
+blocks, and for a step of a batch it shows which step of how many is running, what is still to
+come on that machine with what each usually takes, and the time the batch has left there. The
+later calls of a script are invisible to it until they arrive. The estimate is only as good as
+the labels: one label over several different benchmarks averages them into a number that
+predicts none of them.
 
 **Do not batch across a decision.** If a later step should only run depending on what an
-earlier one *said*, you will not see the earlier answer until the whole script is done, and
-the rest will have run for nothing. Two scripts with a look in between is six turns and still
+earlier one *said*, you will not see the earlier answer until the whole batch is done, and
+the rest will have run for nothing. Two batches with a look in between is six turns and still
 far cheaper than one per job. When you can state the criterion up front, put it in the step
 itself and let a non-zero exit stop the rest.
 

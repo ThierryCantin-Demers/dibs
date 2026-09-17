@@ -101,9 +101,10 @@ compilation cache makes refilling one cheap.
 `dibs batch <file|->` runs a list of dibs command lines as one submission and prints one summary
 when the last step ends, so an agent is woken once for the list instead of once per job. One
 step per line, optionally prefixed `[name after=a,b cont]`. A step without `after=` waits for the
-one before it; steps that wait for nothing in common overlap only on different machines. A failed
-step stops the rest unless it is marked `cont`. Each step's output is kept under
-`~/.local/state/dibs/batch/<id>/`, and the summary names each step's jobs for `dibs --out`. The
+one before it, and a bare `after=` waits for nothing; steps that wait for nothing in common overlap
+only on different machines. A failed step stops the rest unless it is marked `cont`. Each step's
+output is kept under `~/.local/state/dibs/batch/<id>/`, and the summary names each step's jobs for
+`dibs --out`, with `by=dibs` and `built=` from their trailers. The
 driver owns its steps: however it dies, they die with it and release their locks.
 
 Each step carries the batch's plan to the machine, so `dibs status` shows a job as step k of n,
