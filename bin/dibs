@@ -1999,6 +1999,27 @@ kill_batch_here() {   # id anyone
     exit 0
 }
 
+# A pid names one process only while it has the same start time. pid_max comes round in days on a
+# busy machine, so a record left behind by a job that was killed outright, before its own cleanup
+# could run, would otherwise name whoever holds that pid by then.
+started_at() {   # pid; when it started, in seconds since the epoch
+    local rest
+    rest=$(sed 's/.*) //' "/proc/$1/stat" 2>/dev/null) || return 1
+    [ -n "$rest" ] || return 1
+    [ -n "${BTIME:-}" ] || BTIME=$(awk '/^btime/{print $2}' /proc/stat 2>/dev/null)
+    set -- $rest
+    printf '%s' $(( BTIME + ${20} / CLK ))
+}
+
+# A record is written after the process it names started, so one whose process is younger than the
+# record itself is the remains of a job that has ended. Two seconds of slack for the rounding.
+still_the_same() {   # pid record-file
+    local began wrote
+    began=$(started_at "$1") || return 1
+    wrote=$(stat -c %Y "$2" 2>/dev/null) || return 0
+    [ "$began" -le $(( wrote + 2 )) ]
+}
+
 prune() {
     local f pid
     find "$DIR" -maxdepth 1 -name 'cancelled.*' -mmin +1440 -delete 2>/dev/null
@@ -2007,7 +2028,12 @@ prune() {
         pid=$(cat "$f" 2>/dev/null)
         { [ -n "$pid" ] && [ -d "/proc/$pid" ]; } || rm -f "$f"
     done
-    for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.* "$DIR"/batch.* "$DIR"/hold.* "$DIR"/with.*; do
+    for f in "$DIR"/holder.* "$DIR"/waiting.*; do
+        [ -e "$f" ] || continue
+        pid=${f##*.}
+        still_the_same "$pid" "$f" || rm -f "$f"
+    done
+    for f in "$DIR"/cpu.* "$DIR"/batch.* "$DIR"/hold.* "$DIR"/with.*; do
         [ -e "$f" ] || continue
         pid=${f##*.}
         # /proc rather than kill -0: signalling another user's process fails with EPERM,
@@ -3151,6 +3177,12 @@ case "$MODE" in
         done
         [ -n "$found" ] || { echo "Nothing holding or queued with pid $target." >&2; show >&2; exit 1; }
         IFS=$'\t' read -r mode pid start label agent who dev cmd < "$found"
+        if ! still_the_same "$pid" "$found"; then
+            rm -f "$found"
+            echo "dibs: $mode $label ended without clearing its record, and pid $pid belongs to" >&2
+            echo "  something else now. The record is gone and nothing was signalled." >&2
+            exit 1
+        fi
         # Whose job this is, checked before anything is signalled rather than reported after.
         # Several agents share this machine and read the same --status, so a pid copied out of
         # it belongs to whoever happens to be there; stopping someone else's measurement has
@@ -3475,7 +3507,7 @@ mv "$DIR/waiting.$$" "$DIR/holder.$$"
 # with tail it was gone; now the whole of it is on the machine, readable with --out after
 # the job has finished, and the caller is told where. Both streams land in one file, in
 # order, the way a build log is read. Old directories go with the worktrees' own age limit.
-JOB=$(date +%Y%m%d)-$$
+JOB=$(date +%Y%m%d%H%M%S)-$$
 JOBDIR=$SCRATCH/jobs/$JOB
 JOBLOG=""
 TEE=""

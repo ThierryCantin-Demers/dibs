@@ -1379,6 +1379,28 @@ out=$(DIBS_LOCAL=0 DIBS_HOST=me@lap $T --bench true 2>&1); rc=$?
 check "a benchmark sent by ssh string to a machine that does not measure is refused" "$rc" "2"
 check "and says so" "$(grep -c 'measure = false' <<<"$out")" "1"
 
+# pid_max comes round every few days on a busy machine, so nothing may rest on a pid naming one
+# process forever, nor on two jobs of one day never sharing one.
+echo "a pid that comes round again"
+check "a job id carries the time, not only the day and the pid" \
+  "$($T --label pidwrap-id true 2>&1 | sed -n 's/^job \([0-9-]*\) .*/\1/p' | grep -cE '^[0-9]{14}-[0-9]+$')" "1"
+fifo pw
+bash -c "read -r _ < $S/f-pw" & PW=$!
+# Written ten minutes ago by a job that has since ended, and the pid now belongs to a process
+# that started well after it, which is what a wraparound leaves behind.
+ghost() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' shared "$PW" "$(( $(date +%s) - 600 ))" \
+    pidwrap-ghost "an agent" "a-session" - 'a job that ended without clearing up' > "$DIBS_LOCK_DIR/holder.$PW"
+          touch -d "@$(( $(date +%s) - 600 ))" "$DIBS_LOCK_DIR/holder.$PW"; }
+ghost
+check "a record older than the process now holding its pid is not that job" "$($T --status | grep -c pidwrap-ghost)" "0"
+check "and it is cleared" "$([ -e "$DIBS_LOCK_DIR/holder.$PW" ] && echo there || echo gone)" "gone"
+ghost
+out=$($T --kill "$PW" 2>&1); rc=$?
+check "--kill refuses it rather than signalling whatever has that pid" "$rc" "1"
+check "saying why" "$(grep -c 'ended without clearing its record' <<<"$out")" "1"
+check "and the process it would have killed is untouched" "$(kill -0 "$PW" 2>/dev/null && echo alive)" "alive"
+free pw; wait $PW 2>/dev/null
+
 echo "nothing left behind"
 check "no holders" "$(holders)" "0"
 check "no waiters" "$(waiters)" "0"
@@ -1426,7 +1448,7 @@ out=$(B "$S/b1" 2> "$S/b1.err"); rc=$?
 check "a batch runs its steps in order" "$(tr '\n' ' ' < "$S/border")" "a-start a-end b "
 check "and exits 0 when every step did" "$rc" "0"
 check "its summary is the one thing on stdout" "$(head -1 <<<"$out" | grep -c '^batch [0-9-]*  2 steps, ')" "1"
-check "naming each step's job" "$(grep -cE '^a  .* [0-9]{8}-[0-9]+$' <<<"$out")" "1"
+check "naming each step's job" "$(grep -cE '^a  .* [0-9]{14}-[0-9]+$' <<<"$out")" "1"
 check "and it says when it starts that there is nothing to watch" "$(grep -c 'nothing to watch' "$S/b1.err")" "1"
 bdir=$(sed -n 's/^each step.s output: \(.*\)\/<name>.*/\1/p' <<<"$out")
 check "each step's output is kept on this side" "$(grep -c '^job ' "$bdir/a.err")" "1"
