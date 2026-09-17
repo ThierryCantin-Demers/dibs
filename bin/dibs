@@ -2091,10 +2091,10 @@ batch_lines() {   # pid left-of-this-job
 
 batch_json() {   # pid left-of-this-job
     batch_read "$1" "$2" || return 0
-    local ji js
-    jstr ji "$BT_ID"; jstr js "$BT_STEP"
-    printf ',"batch":{"id":%s,"step":%s,"k":%s,"n":%s,"here":%s,"elsewhere":%s' \
-        "$ji" "$js" "${BT_K:-0}" "${BT_N:-0}" "$BT_HERE" "$BT_FARN"
+    local ji js jn jf
+    jstr ji "$BT_ID"; jstr js "$BT_STEP"; jstr jn "$BT_NEXT"; jstr jf "$BT_FAR"
+    printf ',"batch":{"id":%s,"step":%s,"k":%s,"n":%s,"here":%s,"elsewhere":%s,"next":%s,"far":%s' \
+        "$ji" "$js" "${BT_K:-0}" "${BT_N:-0}" "$BT_HERE" "$BT_FARN" "$jn" "$jf"
     [ "$BT_LEFT" -ge 0 ] && printf ',"left":%s,"left_partial":%s' "$BT_LEFT" \
         "$([ "$BT_PARTIAL" = 1 ] && echo true || echo false)"
     printf '}'

@@ -55,6 +55,31 @@ struct Holder {
     /// nothing to show, and saying so beats offering a key that does nothing.
     #[serde(default)]
     output: Option<String>,
+    #[serde(default)]
+    batch: Option<Batch>,
+}
+
+/// The batch a job is a step of, as the machine sees it: the steps still to come there and the
+/// time the batch has left there, queue included. Absent for a job that is not in a batch.
+#[derive(Debug, Clone, Deserialize)]
+struct Batch {
+    id: String,
+    step: String,
+    k: i64,
+    n: i64,
+    #[serde(default)]
+    next: String,
+    #[serde(default)]
+    far: String,
+    left: Option<i64>,
+    #[serde(default)]
+    left_partial: bool,
+}
+
+impl Batch {
+    fn left_text(&self) -> Option<String> {
+        self.left.map(|l| if self.left_partial { format!("over {}", dur(l)) } else { format!("~{}", dur(l)) })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -70,6 +95,8 @@ struct Queued {
     waiting: i64,
     #[serde(default)]
     eta: Option<i64>,
+    #[serde(default)]
+    batch: Option<Batch>,
 }
 
 enum Msg {
@@ -173,6 +200,7 @@ struct Item {
     long: String,
     alarm: bool,
     output: Option<String>,
+    batch: Option<Batch>,
 }
 
 fn items(machine: &str, s: &Status) -> Vec<Item> {
@@ -259,6 +287,7 @@ fn items(machine: &str, s: &Status) -> Vec<Item> {
             long,
             alarm,
             output: h.output.clone(),
+            batch: h.batch.clone(),
         });
     }
     for q in &s.queue {
@@ -291,7 +320,16 @@ fn items(machine: &str, s: &Status) -> Vec<Item> {
             },
             alarm: false,
             output: None,   // it has no processes yet, so nothing to write with
+            batch: q.batch.clone(),
         });
+    }
+    for it in &mut v {
+        if let Some(b) = &it.batch {
+            it.note = match b.left_text() {
+                Some(l) => format!("{} · step {}/{}, {l} left", it.note, b.k, b.n),
+                None => format!("{} · step {}/{}", it.note, b.k, b.n),
+            };
+        }
     }
     v
 }
@@ -821,16 +859,17 @@ fn centred(area: Rect, pct_x: u16, pct_y: u16) -> Rect {
 
 fn draw(f: &mut Frame, app: &mut App) {
     let dim = Style::new().fg(Color::DarkGray);
+    let rows = app.rows();
+    let in_batch = rows.get(app.sel).is_some_and(|it| it.batch.is_some());
     let chunks = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(4),
-        Constraint::Length(8),
+        Constraint::Length(if in_batch { 10 } else { 8 }),
         Constraint::Length(1),
     ])
     .split(f.area());
 
     // --- header -------------------------------------------------------------
-    let rows = app.rows();
     let mut head: Vec<Span> = Vec::new();
     // One machine per group rather than a single verdict: "the feed is down" and "it is idle"
     // are different answers, and a summary across machines can only give one of them.
@@ -1032,6 +1071,31 @@ fn draw(f: &mut Frame, app: &mut App) {
                     Span::raw(out.clone()),
                     Span::styled("   press o", dim),
                 ]));
+            }
+            if let Some(b) = &it.batch {
+                let mut first = vec![
+                    Span::styled("batch ", dim),
+                    Span::raw(b.id.clone()),
+                    Span::styled(format!("   step {} of {}: ", b.k, b.n), dim),
+                    Span::raw(b.step.clone()),
+                ];
+                if let Some(l) = b.left_text() {
+                    first.push(Span::styled("   left here ", dim));
+                    first.push(Span::raw(l));
+                }
+                lines.push(Line::from(first));
+                let mut then = Vec::new();
+                if !b.next.is_empty() {
+                    then.push(Span::styled("then here ", dim));
+                    then.push(Span::raw(b.next.clone()));
+                }
+                if !b.far.is_empty() {
+                    then.push(Span::styled(if then.is_empty() { "elsewhere " } else { "   elsewhere " }, dim));
+                    then.push(Span::raw(b.far.clone()));
+                }
+                if !then.is_empty() {
+                    lines.push(Line::from(then));
+                }
             }
             lines.push(Line::from(Span::styled(
                 if it.alarm {
@@ -1254,6 +1318,17 @@ mod tests {
     fn the_default_marker_is_not_part_of_the_name() {
         let listing = " * bench1 dibs@bench1\n   laptop     laptop  (no measurements)\n";
         assert_eq!(parse_machines(listing), vec!["bench1", "laptop"]);
+    }
+
+    #[test]
+    fn a_job_in_a_batch_says_which_step_and_how_long_the_batch_has_left() {
+        let s: Status = serde_json::from_str(
+            r#"{"state":"shared","holders":[{"mode":"shared","pid":7,"label":"b","agent":"a","cmd":"c","elapsed":3,"cpu":1,"est":10,"est_n":3,"est_scope":"this","remaining":7,"batch":{"id":"20260917-1","step":"build","k":2,"n":5,"here":2,"elsewhere":1,"next":"bench ~4m00s","far":"home","left":620,"left_partial":true}}],"queue":[{"position":1,"mode":"bench","pid":8,"label":"q","agent":"x","cmd":"c","waiting":1,"eta":7}]}"#,
+        )
+        .unwrap();
+        let v = items("m", &s);
+        assert_eq!(v[0].note, "usually 10s over 3 runs · step 2/5, over 10m20s left");
+        assert_eq!(v[1].note, "starts in ~7s", "a job outside a batch is unchanged");
     }
 
     #[test]

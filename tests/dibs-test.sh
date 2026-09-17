@@ -1468,7 +1468,7 @@ check "what is still to come on this machine, with its estimate" "$(grep -c '^  
 check "and what goes elsewhere" "$(grep -c '^    then on other machines: far$' <<<"$st")" "1"
 check "with the time left for the batch here, as a floor when a step has no history" \
   "$(grep -cE '^    batch time left here: over (6m59s|7m00s), since some of what is ahead has no history$' <<<"$st")" "1"
-check "the same in json" "$($T status --json | grep -cE '"batch":\{"id":"[0-9-]+","step":"hold","k":1,"n":4,"here":2,"elsewhere":1,"left":(419|420),"left_partial":true\}')" "1"
+check "the same in json" "$($T status --json | grep -cE '"batch":\{"id":"[0-9-]+","step":"hold","k":1,"n":4,"here":2,"elsewhere":1,"next":"next ~5m00s, fresh \(no history\)","far":"far","left":(419|420),"left_partial":true\}')" "1"
 for i in 1 2 3; do printf 'bench\tbatch-queued-bench\t200\tx\n' >> "$DIBS_HISTORY"; done
 $T --bench --label batch-queued-bench true >/dev/null 2>&1 &
 QBENCH=$!
