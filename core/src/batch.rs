@@ -493,6 +493,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                     std::thread::spawn(move || {
                         let o = copy(child.stdout.take(), out, verbose.then(|| format!("{} ", step.name)));
                         let e = copy(child.stderr.take(), err, verbose.then(|| format!("{} ", step.name)));
+                        // No code means a signal ended it, which the summary shows as killed.
                         let status = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
                         let _ = (o.join(), e.join());
                         let _ = tx.send((i, status, t.elapsed().as_secs()));
@@ -618,6 +619,7 @@ pub fn summary(id: &str, steps: &[Step], machines: &[String], states: &[State], 
     for (i, st) in steps.iter().enumerate() {
         let err = std::fs::read_to_string(dir.join(format!("{}.err", st.name))).unwrap_or_default();
         let (wall, exit) = match &states[i] {
+            State::Done { exit: -1, seconds } => (duration(*seconds), "killed".into()),
             State::Done { exit, seconds } => (duration(*seconds), exit.to_string()),
             _ => ("-".into(), "not run".into()),
         };
@@ -764,6 +766,16 @@ mod tests {
         assert_eq!(inside[0].1, "b9");
         assert_eq!(inside[1].1, "arm-a: build");
         assert_eq!(inside[2].1, "2\t4\nbench\tbench\tbench_x\t1\narm-b\trecipe\t\t1\n");
+    }
+
+    #[test]
+    fn a_step_ended_by_a_signal_reads_as_killed_rather_than_as_an_exit_code() {
+        let steps = parse("[a] dibs run true\n[b] dibs run true\n").unwrap();
+        let machines = vec!["m".to_string(), "m".to_string()];
+        let states = [State::Done { exit: -1, seconds: 6 }, State::Done { exit: 3, seconds: 1 }];
+        let out = summary("1", &steps, &machines, &states, Path::new("/nonexistent"), 7, None);
+        assert!(out.lines().any(|l| l.starts_with("a ") && l.contains(" killed")), "{out}");
+        assert!(out.lines().any(|l| l.starts_with("b ") && l.contains(" 3 ")), "{out}");
     }
 
     #[test]
