@@ -1580,6 +1580,35 @@ kill -9 $TCALLER 2>/dev/null; wait $TCALLER 2>/dev/null
 check "a dead caller's job is noticed through the stream" \
   "$(timeout 30 grep -m1 -c 'caller-gone.*transport-hangup' <(tail -n +1 -f "$DIBS_LOG"))" "1"
 check "and its lock is released" "$(gone && echo yes)" "yes"
+# A laptop that sleeps closes nothing. Stopping the caller's group is that, as long as the far side
+# runs in a session of its own and so keeps going, as a machine does.
+mkdir -p "$S/sleepyssh"
+sed 's/^exec bash -c/exec setsid bash -c/' "$S/fakessh/ssh" > "$S/sleepyssh/ssh"; chmod +x "$S/sleepyssh/ssh"
+fifo L1; fifo L2; fifo L3; fifo tick
+PATH=$S/sleepyssh:$PATH DIBS_LOCAL=0 DIBS_HOST=fake-remote DIBS_HOSTNAME=laptop-here DIBS_REMOTE_DIR=$S/remote-run \
+  DIBS_SCRATCH=$S/scr DIBS_LEASE=2 setsid $T --label lease-asleep "echo up > $S/f-L1; $(hold L2)" >/dev/null 2>&1 &
+LCALLER=$!
+sync_ L1
+kill -STOP -- -$LCALLER
+check "a caller that stops answering, as a sleeping laptop does, is let go when its lease runs out" \
+  "$(timeout 30 grep -m1 -c 'caller-gone.*lease-asleep.*caller silent for 2s' <(tail -n +1 -f "$DIBS_LOG"))" "1"
+check "and its lock with it" "$(gone && echo yes)" "yes"
+kill -CONT -- -$LCALLER; wait $LCALLER 2>/dev/null
+check "while a caller that answers outlasts many leases" \
+  "$(R env DIBS_LEASE=1 $T --label lease-alive "read -r -t 4 _ <> $S/f-L3; echo held" 2>/dev/null)" "held"
+PATH=$S/sleepyssh:$PATH DIBS_LOCAL=0 DIBS_HOST=fake-remote DIBS_HOSTNAME=laptop-here DIBS_REMOTE_DIR=$S/remote-run \
+  DIBS_SCRATCH=$S/scr DIBS_LEASE=2 setsid $T --watch 2 >/dev/null 2>&1 &
+WCALLER=$!
+for i in $(seq 100); do WR=$(pgrep -f "^bash $S/remote-run/.dibs-payload") && break; read -r -t 0.1 _ <> "$S/f-tick"; done
+kill -STOP -- -$WCALLER
+# Its parent is the stopped caller, so the far side stays a zombie once it has ended.
+for i in $(seq 150); do
+    st=$(awk '{print $3}' "/proc/$WR/stat" 2>/dev/null)
+    { [ -z "$st" ] || [ "$st" = Z ]; } && break
+    read -r -t 0.1 _ <> "$S/f-tick"
+done
+check "and a watch whose caller stops answering stops redrawing, which costs the machine" "${st:-gone}" "Z"
+kill -CONT -- -$WCALLER; kill -- -$WCALLER 2>/dev/null; wait $WCALLER 2>/dev/null
 # rsync's own protocol follows the script and command on the same stream.
 mkdir -p "$S/tsrc/sub"; head -c 2000000 /dev/urandom > "$S/tsrc/sub/blob"
 R $T --sync -a --no-times --checksum "$S/tsrc/" ":$S/tdst/" >/dev/null 2>&1

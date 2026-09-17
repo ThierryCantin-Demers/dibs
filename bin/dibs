@@ -130,8 +130,10 @@
 # in when the default one has filled up.
 #
 # A job dies with the caller that started it: kill the caller, however you kill it, and the
-# work stops and the lock frees. DIBS_TRACE=1 traces the remote side, and
-# DIBS_NO_PDEATHSIG / DIBS_NO_LIVE / DIBS_NO_WATCHDOG each switch off one half of that
+# work stops and the lock frees. A caller that stops answering, as a laptop does when it sleeps
+# or a shell does after Ctrl-Z, counts as gone after DIBS_LEASE seconds (120, and 0 turns it
+# off); work that has to outlive that is what --detach is for. DIBS_TRACE=1 traces the remote
+# side, and DIBS_NO_PDEATHSIG / DIBS_NO_LIVE / DIBS_NO_WATCHDOG each switch off one half of that
 # machinery, which is how it gets debugged when it misbehaves. DIBS_NO_CHILDREN forces the
 # fallback way of finding a holder's descendants, which is otherwise unreachable on a kernel
 # built the ordinary way.
@@ -1596,6 +1598,7 @@ STREAM=${17:-0}
 BATCH=$(printf %s "${18:-}" | base64 -d 2>/dev/null)
 BATCH_TAG=$(printf '%s\n' "$BATCH" | head -1 | tr '\t' ' ')
 HOLD=${19:-0}
+LEASE=${20:-0}; case "$LEASE" in ''|*[!0-9]*) LEASE=0 ;; esac
 [ -n "$AGENT" ] || AGENT=?
 # The caller cannot clean this up: its command line is read by fish, which has no $?.
 # Unlinking a running script is safe; bash keeps the open inode.
@@ -2502,6 +2505,7 @@ case "$MODE" in
         # and the liveness check, since EOF on the channel is how this side hears that the
         # terminal watching it is gone.
         exec 5<&0
+        now; HEARD=$NOW
         while :; do
             if [ "$JSON" = 1 ]; then
                 show_json
@@ -2514,7 +2518,12 @@ case "$MODE" in
                 sleep "$LABEL"
             else
                 read -r -t "$LABEL" -u 5 _
-                [ $? -gt 128 ] || exit 0
+                rc=$?
+                now
+                if [ "$rc" = 0 ]; then HEARD=$NOW
+                elif [ "$rc" -le 128 ]; then exit 0
+                elif [ "$LEASE" -gt 0 ] && [ $(( NOW - HEARD )) -gt "$LEASE" ]; then exit 0
+                fi
             fi
         done ;;
     log)     n=$LABEL
@@ -3105,15 +3114,21 @@ WORKFILE=$DIR/work.$$
 MAIN=$$
 WATCHDOG=""
 if [ "$NO_WATCH" != 1 ]; then
-{ read -r -u 5 line 2>/dev/null   # returns when the channel closes; no child to reap
-  # A hold ends with its caller saying how the command went, which is not the caller going away.
-  if [ "$HOLD" = 1 ] && [ "${line%% *}" = release ]; then
-      st=${line#release }; case "$st" in ''|*[!0-9]*) st=1 ;; esac
-      printf '%s\n' "$st" > "$DIR/hold.$MAIN"
-      exit 0
-  fi
+# A caller that is alive says something at least once a lease, and one that sleeps closes nothing,
+# so silence counts as gone.
+{ while :; do
+      if [ "$LEASE" -gt 0 ]; then read -r -t "$LEASE" -u 5 line; else read -r -u 5 line; fi
+      rc=$?
+      [ "$rc" = 0 ] || break
+      # A hold ends with its caller saying how the command went, which is not the caller going away.
+      if [ "$HOLD" = 1 ] && [ "${line%% *}" = release ]; then
+          st=${line#release }; case "$st" in ''|*[!0-9]*) st=1 ;; esac
+          printf '%s\n' "$st" > "$DIR/hold.$MAIN"
+          exit 0
+      fi
+  done 2>/dev/null
   work=$(cat "$WORKFILE" 2>/dev/null)
-  CMD_ONE="caller gone: $CMD_ONE"
+  if [ "$rc" -gt 128 ]; then CMD_ONE="caller silent for ${LEASE}s: $CMD_ONE"; else CMD_ONE="caller gone: $CMD_ONE"; fi
   log_event caller-gone
   if [ -n "$work" ] && kill -0 "$work" 2>/dev/null; then
       # Everything below the job goes before the job itself. The lock is released the moment
@@ -3485,6 +3500,21 @@ unreachable() {
 
 # Descriptor 6 writes to a fifo and 7 reads it. Only this process holds 6, so its death is EOF
 # on 7 wherever 7 was handed.
+# Copies what this process writes to the channel on to the machine, and a bare newline whenever
+# a quarter of the lease passes with nothing to copy. It must hold no copy of descriptor 6, or it
+# would never read EOF and would go on answering for a caller that is gone.
+relay() {
+    local line rc ms=$(( LEASE * 250 ))
+    [ "$WATCH" = 1 ] && [ "$LEASE" -gt 0 ] || exec cat
+    while :; do
+        IFS= read -r -t "$(( ms / 1000 )).$(printf %03d $(( ms % 1000 )))" line; rc=$?
+        if [ "$rc" = 0 ]; then printf '%s\n' "$line"
+        elif [ "$rc" -gt 128 ]; then printf '%s' "${line:-$'\n'}"
+        else exit 0
+        fi
+    done
+}
+
 live_channel() {
     local f ok
     f=$(mktemp -u "${TMPDIR:-/tmp}/dibs-live.XXXXXX")
@@ -3639,6 +3669,11 @@ else
         exec 7<&0; WATCH=0
     fi
     [ "${DIBS_NO_WATCHDOG:-0}" = 1 ] && [ "$HOLD" = 0 ] && WATCH=0
+    # A laptop that sleeps closes nothing, and the machine would hear of it only when TCP gives up
+    # on the connection, hours later. 0 turns it off.
+    LEASE=${DIBS_LEASE:-120}
+    case "$LEASE" in ''|*[!0-9]*) LEASE=120 ;; esac
+    [ "$WATCH" = 1 ] || LEASE=0
     # Not /tmp: that is a tmpfs under a quota there, and when it fills, a tool that needs to
     # write to it to run cannot even be used to look at why. The default is left unexpanded
     # here on purpose, for the remote shell to resolve against its own home.
@@ -3652,8 +3687,8 @@ else
             -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
             "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
              exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
-             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD'
-exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec cat <&7 6>&- 7<&-) 6>&- 7<&-
+             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE'
+exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec <&7 6>&- 7<&-; relay) 6>&- 7<&-
     }
     if [ "$HOLD" = 1 ]; then hold_run to_machine; else to_machine; fi
     STATUS=$?

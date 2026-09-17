@@ -53,6 +53,8 @@ spoiled without it.
   first, so the work never runs. In Claude Code that is the Bash tool's `run_in_background`; in
   Codex, an `exec_command` that yields, collected later with `write_stdin`. If you genuinely
   cannot wait, pass `--wait <seconds>` and handle exit 75.
+- A job dies with the call that started it, and a call that has not been heard from for two
+  minutes, as when a laptop sleeps, counts as dead: the job is stopped and the lock released.
 - **One background call per piece of work, not per dibs command.** Every completion wakes you, and
   you re-read your whole context to answer it, so a hundred jobs launched one at a time cost three
   hundred turns at full context. That pattern alone has used most of a day's token budget for
