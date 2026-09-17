@@ -2777,13 +2777,19 @@ case "$MODE" in
             if [ "$NO_WATCH" = 1 ]; then
                 sleep "$LABEL"
             else
-                read -r -t "$LABEL" -u 5 _
-                rc=$?
-                now
-                if [ "$rc" = 0 ]; then HEARD=$NOW
-                elif [ "$rc" -le 128 ]; then exit 0
-                elif [ "$LEASE" -gt 0 ] && [ $(( NOW - HEARD )) -gt "$LEASE" ]; then exit 0
-                fi
+                # The interval is the tick. A word from the caller only says it is still there,
+                # and redrawing on one would cost the machine a render every time it spoke and
+                # give a reader ticks that are not the interval it asked for.
+                now; due=$(( NOW + LABEL ))
+                while [ "$NOW" -lt "$due" ]; do
+                    read -r -t "$(( due - NOW ))" -u 5 _
+                    rc=$?
+                    now
+                    if [ "$rc" = 0 ]; then HEARD=$NOW
+                    elif [ "$rc" -le 128 ]; then exit 0
+                    elif [ "$LEASE" -gt 0 ] && [ $(( NOW - HEARD )) -gt "$LEASE" ]; then exit 0
+                    fi
+                done
             fi
         done ;;
     log)     n=$LABEL

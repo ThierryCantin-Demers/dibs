@@ -1631,6 +1631,11 @@ for i in $(seq 150); do
 done
 check "and a watch whose caller stops answering stops redrawing, which costs the machine" "${st:-gone}" "Z"
 kill -CONT -- -$WCALLER; kill -- -$WCALLER 2>/dev/null; wait $WCALLER 2>/dev/null
+# Every heartbeat woke the watch, so it redrew far more often than the interval it was given:
+# renders the machine pays for, and ticks a reader cannot tell the interval from.
+ticks=$(R env DIBS_LEASE=1 timeout 4 $T --watch 3 --json 2>/dev/null | grep -c '"state"')
+check "a heartbeat is not a tick, so a watch redraws on its interval and no oftener" \
+  "$([ "$ticks" -le 2 ] && echo "on its interval" || echo "$ticks in 4s of a 3s watch")" "on its interval"
 # rsync's own protocol follows the script and command on the same stream.
 mkdir -p "$S/tsrc/sub"; head -c 2000000 /dev/urandom > "$S/tsrc/sub/blob"
 R $T --sync -a --no-times --checksum "$S/tsrc/" ":$S/tdst/" >/dev/null 2>&1
