@@ -1587,6 +1587,62 @@ check "a sync sends a file intact" "$(cmp -s "$S/tsrc/sub/blob" "$S/tdst/sub/blo
 R $T --sync -a ":$S/tdst/" "$S/tback/" >/dev/null 2>&1
 check "and fetches it back intact" "$(cmp -s "$S/tsrc/sub/blob" "$S/tback/sub/blob" && echo same)" "same"
 
+echo "holding a lock for a command run here"
+mkdir -p "$S/htmp"
+H() { TMPDIR=$S/htmp "$T" "$@"; }
+check "a hold exits with its command's status" "$(H --hold --label hold-exit 'exit 3' >/dev/null 2>&1; echo $?)" "3"
+check "the command runs here, not inside the job" "$(H --hold --label hold-where 'echo "${DIBS_JOB:-here}"' 2>/dev/null)" "here"
+check "under the lock" "$(H --bench --hold --label hold-in 'cut -f1,4 "$DIBS_LOCK_DIR"/holder.*' 2>/dev/null)" "bench	hold-in"
+check "which goes when it ends" "$(gone && echo yes)" "yes"
+check "the log has what was held and how it ended" \
+  "$(awk -F'\t' '$2 == "finished" && $5 == "hold-exit" {print $8 ": " $9}' "$DIBS_LOG")" "3: held for a command run elsewhere: exit 3"
+check "several words stay several words" "$(H --hold --label hold-words printf '%s|' a 'b c' 2>/dev/null)" "a|b c|"
+check "the command keeps stdin" "$(echo in | H --hold --label hold-stdin 'read -r x; echo "$x"' 2>/dev/null)" "in"
+H --bench --hold --label hold-series true >/dev/null 2>&1
+check "a bench hold starts no series, since it measured nothing there" \
+  "$(awk -F'\t' '$1 == "hold-series"' "$DIBS_SERIES" 2>/dev/null | wc -l)" "0"
+fifo hup; fifo hgo
+H --hold --label hold-status "echo up > $S/f-hup; read -r _ < $S/f-hgo" >/dev/null 2>&1 & HP=$!
+sync_ hup
+$T --status >/dev/null
+check "status does not call a hold idle" "$(DIBS_IDLE_AFTER=-1 $T --status | grep -c IDLE)" "0"
+check "nor does its JSON" "$(DIBS_IDLE_AFTER=-1 $T --status --json | grep -c idle_for)" "0"
+free hgo; wait $HP
+fifo hmnever
+check "a lock that goes first ends the hold" \
+  "$(H --hold --max 1 --label hold-max "echo \$\$ > $S/hold-m.pid; read -r _ < $S/f-hmnever" >/dev/null 2>&1; echo $?)" "124"
+check "and stops the command, which would otherwise run on unlocked" \
+  "$(kill -0 "$(cat "$S/hold-m.pid")" 2>/dev/null && echo running || echo stopped)" "stopped"
+fifo hbup; fifo hbgo
+$T --bench --label hold-blocker "echo up > $S/f-hbup; read -r _ < $S/f-hbgo" >/dev/null 2>&1 & HB=$!
+sync_ hbup
+check "busy past --wait, the command never runs" \
+  "$(H --hold --wait 1 --label hold-busy "touch $S/hold-busy-ran" >/dev/null 2>&1; echo $?; [ -e "$S/hold-busy-ran" ] && echo ran)" "75"
+free hbgo; wait $HB
+check "a peek holds nothing, so it cannot hold" "$($T --peek --hold true >/dev/null 2>&1; echo $?)" "2"
+check "and a card there is nothing a command here could use" "$($T --hold --device gpu:x true >/dev/null 2>&1; echo $?)" "2"
+check "over the transport, the command runs here" "$(TMPDIR=$S/htmp R $T --hold --label hold-remote 'echo "${DIBS_JOB:-here}"' 2>/dev/null)" "here"
+check "and its exit comes back" "$(TMPDIR=$S/htmp R $T --bench --hold --label hold-remote 'exit 4' >/dev/null 2>&1; echo $?)" "4"
+check "a lock inside a hold of the same machine is refused, not left waiting on the hold" \
+  "$(H --hold --max 20 --label hold-nest "$T --label hold-inner true" >/dev/null 2>&1; echo $?)" "2"
+check "while a peek there still runs" "$(H --hold --label hold-nest "$T --peek true" >/dev/null 2>&1; echo $?)" "0"
+check "and so does a lock on another machine" \
+  "$(TMPDIR=$S/htmp R $T --hold --label hold-nest "DIBS_LOCAL=1 $T --label hold-inner true" >/dev/null 2>&1; echo $?)" "0"
+check "a batch step can hold" \
+  "$(printf '%s\n' "[h] dibs --hold --label hold-batch 'echo \${DIBS_JOB:-here} > $S/hold-batch'" | TMPDIR=$S/htmp B - >/dev/null 2>&1; echo $? "$(cat "$S/hold-batch" 2>/dev/null)")" "0 here"
+check "a hold leaves nothing in TMPDIR" "$(ls -A "$S/htmp" | wc -l)" "0"
+fifo hkup; fifo hknever
+PATH=$S/fakessh:$PATH DIBS_LOCAL=0 DIBS_HOST=fake-remote DIBS_HOSTNAME=laptop-here DIBS_REMOTE_DIR=$S/remote-run \
+  DIBS_SCRATCH=$S/scr TMPDIR=$S/htmp $T --hold --label hold-gone "echo \$\$ > $S/hold-k.pid; echo up > $S/f-hkup; read -r _ < $S/f-hknever" >/dev/null 2>&1 &
+HK=$!
+sync_ hkup
+kill -9 $HK; wait $HK 2>/dev/null
+check "a hold whose caller died is let go" \
+  "$(timeout 30 grep -m1 -c 'caller-gone.*hold-gone' <(tail -n +1 -f "$DIBS_LOG"))" "1"
+check "its lock with it" "$(gone && echo yes)" "yes"
+hk=$(cat "$S/hold-k.pid"); timeout 10 tail --pid="$hk" -f /dev/null
+check "and the command it was held for" "$(kill -0 "$hk" 2>/dev/null && echo running || echo stopped)" "stopped"
+
 echo "recipes"
 # A repo the recipe layer can prepare: its clone on the machine's side, and a tree here.
 git init -q --bare "$S/origin.git"

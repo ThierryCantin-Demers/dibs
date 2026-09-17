@@ -11,6 +11,11 @@
 #   dibs run <command>          shared: builds, tests, inspection. Many at once. The bare
 #                                form, dibs <command>, still works.
 #   dibs run --bench <command>  exclusive: benchmarks. One at a time, nothing else running.
+#   dibs --hold <command>       take the lock on the machine and run the command here, on this
+#                                computer: for work aimed at the machine from outside, such as
+#                                provisioning it. With --bench nothing else runs there meanwhile.
+#                                The lock goes when the command ends, and the command is stopped
+#                                if the lock goes first, through --max or --kill.
 #   dibs status, dibs out [job] the same as --status and --out
 #   --device <alias>             run on one named card. Two runs naming one alias are two
 #                                runs on the same silicon, which is what makes their numbers
@@ -630,6 +635,7 @@ DEV_RT=""
 DEV_CHIP=""
 DEV_TWINS=1
 NEW_SERIES=0
+HOLD=0
 # The whole stream is what a person at a terminal wants and what the recipe layer parses; an agent
 # wants the bounded digest, since it cannot know whether a call prints 3 lines or 30000
 # and would cut it at the pipe, taking the exit status with it.
@@ -709,6 +715,7 @@ while [ $# -gt 0 ]; do
                           WATCH_N=$1; shift
                       fi ;;
         --peek)       MODE=peek; shift ;;
+        --hold)       HOLD=1; shift ;;
         -v|--verbose) VERBOSE=1; shift ;;
         --json)       JSON=1; shift ;;
         --release)    MODE=release; shift ;;
@@ -873,7 +880,7 @@ fi
 # A machine can say it is not worth measuring on, and a laptop sharing one memory pool
 # between its CPU and its iGPU is the case this exists for. Left to a rule, the wrong number
 # gets produced and looks like every other number.
-if [ "$MODE" = bench ] && [ "$MEASURABLE" = 0 ]; then
+if [ "$MODE" = bench ] && [ "$MEASURABLE" = 0 ] && [ "$HOLD" = 0 ]; then
     echo "dibs: $MACHINE is marked measure = false, so a benchmark cannot run there." >&2
     echo "  Name one that measures with --on <machine>, or run it shared if it is not a measurement." >&2
     exit 2
@@ -1045,6 +1052,18 @@ case "$MODE" in
         exit 0 ;;
 esac
 
+if [ "$HOLD" = 1 ]; then
+    case "$MODE" in
+        shared|bench) ;;
+        *) echo "dibs: --hold takes a lock for a command run on this computer. It goes alone or with --bench." >&2
+           exit 2 ;;
+    esac
+    [ "$DETACH" = 1 ] && { echo "dibs: --hold runs its command on this computer, and --detach would leave it." >&2; exit 2; }
+    # A card is pinned through the environment of the job on the machine, which a command run
+    # here never sees.
+    [ -n "$DEVICE" ] && { echo "dibs: --hold runs its command on this computer, so it cannot be pinned to a card there." >&2; exit 2; }
+fi
+
 # --detach moves the caller and nothing else. It used to be a mode, so it and --bench each
 # overwrote the other and whichever came last won without a word: --bench --detach measured
 # with no lock at all, and --detach --bench held the lock in the foreground of a session that
@@ -1077,7 +1096,7 @@ fi
 # A detached job is not ranked: it goes to one machine that stays up, and --jobs reads that
 # machine, so scattering the jobs would be scattering the record of them too.
 if [ "$MODE" = pick ] || { [ "$MODE" = shared ] && [ "$PINNED" = 0 ] && [ "$ROUTE" = 1 ] &&
-                           [ "$DETACH" = 0 ] && [ "${DIBS_FROM_RUN:-0}" != 1 ]; }; then
+                           [ "$DETACH" = 0 ] && [ "$HOLD" = 0 ] && [ "${DIBS_FROM_RUN:-0}" != 1 ]; }; then
     picked=$(pick_machine); ranked=$?
     if [ "$ranked" = 0 ]; then
         [ "$MODE" = pick ] && { printf '%s\n' "$picked"; exit 0; }
@@ -1128,7 +1147,7 @@ fi
 # nothing downstream can tell its number from one that was pinned. dibs cannot record which
 # card the process chose, because that choice happens inside the runtime where it cannot see,
 # so the only honest thing it can do is say the number is unpinned before it is believed.
-if [ "$MODE" = bench ] && [ -z "$DEVICE" ] && [ "${DIBS_UNPINNED_QUIET:-0}" != 1 ]; then
+if [ "$MODE" = bench ] && [ -z "$DEVICE" ] && [ "$HOLD" = 0 ] && [ "${DIBS_UNPINNED_QUIET:-0}" != 1 ]; then
     bench_m=${MACHINE:-$(inv_name_for_host)}
     if [ -n "$bench_m" ]; then
         gpus=$(inv_device_names "$bench_m" | grep -c '^gpu:') || gpus=0
@@ -1329,6 +1348,7 @@ if [ "$MODE" != rsh ]; then
         COMMAND=$(printf '%q ' "$@")
     fi
 fi
+HOLD_CMD=("$@")
 [ -n "$LABEL" ] || LABEL=$(basename "$(pwd)")
 LABEL=${LABEL//[^A-Za-z0-9._-]/_}
 
@@ -1425,7 +1445,7 @@ series_stayed_put() {
 # claim the label. A deliberate move starts the series again rather than appending to it,
 # since filing the new numbers beside the old ones rebuilds the mixed history this exists to
 # refuse.
-if [ "$MODE" = bench ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && [ "$NEW_SERIES" != 1 ]; then
+if [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && [ "$NEW_SERIES" != 1 ]; then
     series_check || exit 2
 fi
 
@@ -1575,6 +1595,7 @@ DEV_PCI=${12:-}; DEV_RT=${13:-}; DEV_NAME=${14:-}; DEV_CHIP=${15:-}; DEV_TWINS=$
 STREAM=${17:-0}
 BATCH=$(printf %s "${18:-}" | base64 -d 2>/dev/null)
 BATCH_TAG=$(printf '%s\n' "$BATCH" | head -1 | tr '\t' ' ')
+HOLD=${19:-0}
 [ -n "$AGENT" ] || AGENT=?
 # The caller cannot clean this up: its command line is read by fish, which has no $?.
 # Unlinking a running script is safe; bash keeps the open inode.
@@ -1897,7 +1918,7 @@ kill_batch_here() {   # id anyone
 prune() {
     local f pid
     find "$DIR" -maxdepth 1 -name 'cancelled.*' -mmin +1440 -delete 2>/dev/null
-    for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.* "$DIR"/batch.*; do
+    for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.* "$DIR"/batch.* "$DIR"/hold.*; do
         [ -e "$f" ] || continue
         pid=${f##*.}
         # /proc rather than kill -0: signalling another user's process fails with EPERM,
@@ -2267,7 +2288,7 @@ show_json() {
         elapsed=$(( NOW - start ))
         cpu_used "$pid"
         holder_output "$pid"
-        idle_check "$pid" "$start"
+        idle_check "$pid" "$start"; [ -p "$DIR/hold.$pid" ] && IDLE_FOR=
         jstr jl "$label"; jstr ja "$agent"; jstr jc "$cmd"
         jstr jd "$dev"
         printf '%s{"mode":"%s","pid":%s,"label":%s,"agent":%s,"device":%s,"cmd":%s,"started":%s,"elapsed":%s,"cpu":%s' \
@@ -2344,7 +2365,7 @@ show() {
         cpu_used "$pid"; used=$CPU_USED
         dur_ el "$elapsed"
         holder_output "$pid"
-        idle_check "$pid" "$start"
+        idle_check "$pid" "$start"; [ -p "$DIR/hold.$pid" ] && IDLE_FOR=
         agent_hue "$agent"; mode_hue "$mode"
         if [ -n "$IDLE_FOR" ] && [ "$IDLE_FOR" -gt "${DIBS_IDLE_AFTER:-60}" ]; then
             dur_ idl "$IDLE_FOR"
@@ -3054,6 +3075,9 @@ START=$(date +%s)
 # and write a file the size of the script it is running.
 CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
 [ "${#CMD}" -gt 200 ] && CMD_ONE="$CMD_ONE …"
+[ "$HOLD" = 1 ] && CMD_ONE="held for a command run elsewhere: $CMD_ONE"
+# The fifo is also how --status tells a hold, which waits on purpose, from a job that is idle.
+[ "$HOLD" = 1 ] && ! mkfifo "$DIR/hold.$$" && { echo "dibs: could not make $DIR/hold.$$, so nothing is held." >&2; exit 71; }
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
 [ -n "$BATCH" ] && printf '%s\n' "$BATCH" > "$DIR/batch.$$"
 log_event arrived
@@ -3061,7 +3085,7 @@ log_event arrived
 # Nothing can be written if it is SIGKILLed, which is itself worth knowing when reading it.
 # Every exit, not just the happy one: while the watch lives it holds the channel open and
 # the caller's ssh cannot return, so giving up on a busy lock would hang the caller.
-trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DIR/batch.$$" "$0"
+trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DIR/batch.$$" "$DIR/hold.$$" "$0"
       [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
       [ "$LOGGED_END" = 1 ] || log_event aborted' EXIT
 
@@ -3081,7 +3105,13 @@ WORKFILE=$DIR/work.$$
 MAIN=$$
 WATCHDOG=""
 if [ "$NO_WATCH" != 1 ]; then
-{ read -r -u 5 _ 2>/dev/null   # returns when the channel closes; no child to reap
+{ read -r -u 5 line 2>/dev/null   # returns when the channel closes; no child to reap
+  # A hold ends with its caller saying how the command went, which is not the caller going away.
+  if [ "$HOLD" = 1 ] && [ "${line%% *}" = release ]; then
+      st=${line#release }; case "$st" in ''|*[!0-9]*) st=1 ;; esac
+      printf '%s\n' "$st" > "$DIR/hold.$MAIN"
+      exit 0
+  fi
   work=$(cat "$WORKFILE" 2>/dev/null)
   CMD_ONE="caller gone: $CMD_ONE"
   log_event caller-gone
@@ -3220,19 +3250,22 @@ if [ "$MODE" != rsh ] && mkdir -p "$JOBDIR" 2>/dev/null; then
     fi
     find "$SCRATCH/jobs" -mindepth 1 -maxdepth 1 -mtime +"${DIBS_KEEP_DAYS:-14}" -exec rm -rf {} + 2>/dev/null 8>&- 9>&- 5<&- &
 fi
+RUN=$CMD
+[ "$HOLD" = 1 ] && RUN="read -r st < $(printf %q "$DIR/hold.$$") && exit \"\$st\""
 if [ "$MODE" = rsh ]; then
     timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 0<&5 5<&- &
 elif [ -n "$JOBLOG" ] && [ "$MAXHOLD" -gt 0 ]; then
-    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
+    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
 elif [ -n "$JOBLOG" ]; then
-    bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
+    bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
 elif [ "$MAXHOLD" -gt 0 ]; then
-    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null &
+    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null &
 else
-    bash -c "$CMD" 8>&- 9>&- 5<&- < /dev/null &
+    bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null &
 fi
 WORK=$!
 echo "$WORK" > "$WORKFILE"
+[ "$HOLD" = 1 ] && echo DIBS-HOLDING
 wait "$WORK"
 STATUS=$?
 [ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ] && STATUS=76
@@ -3277,13 +3310,15 @@ if [ -n "$JOBLOG" ]; then
             [ "$n" -gt 0 ] && built="  built=$n" || built="  built=nothing"
         fi ;;
     esac
-    printf 'job %s  %s  %s  queued %ss  ran %ss  exit %s  by=%s%s\n  log %s:%s  (%s lines)  dibs --out %s\n' \
-        "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$built" "$(hostname -s)" "$JOBLOG" "$lines" "$JOB" >&2
+    printf 'job %s  %s  %s  queued %ss  ran %ss  exit %s  by=%s%s\n' \
+        "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$built" >&2
+    # A hold's command printed where it ran, so the log here has nothing in it.
+    [ "$HOLD" = 1 ] || printf '  log %s:%s  (%s lines)  dibs --out %s\n' "$(hostname -s)" "$JOBLOG" "$lines" "$JOB" >&2
     [ "$built" = "  built=nothing" ] &&
         echo "  built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary." >&2
     # The same failing command re-run unchanged fails the same way, and the log shows it done
     # several times over. Said once, in the trailer, when the previous attempt is minutes old.
-    if [ "$STATUS" -ne 0 ]; then
+    if [ "$STATUS" -ne 0 ] && [ "$HOLD" = 0 ]; then
         prev=""
         # Only jobs inside the window are read at all: two weeks of them is thousands of
         # directories, and comparing each one made every failure take seconds to report.
@@ -3310,8 +3345,10 @@ fi
 if [ "$STATUS" -eq 124 ]; then
     echo "dibs: stopped after holding the lock for ${MAXHOLD}s, which is --max for a $MODE job." >&2
     echo "  Nothing is wrong with it; it was simply told to hold no longer than that." >&2
-    echo "  Run it again; a compile picks up from the crates that already finished, since the" >&2
-    echo "  build cache outlives the job. Anything else starts over." >&2
+    [ "$HOLD" = 1 ] || {
+        echo "  Run it again; a compile picks up from the crates that already finished, since the" >&2
+        echo "  build cache outlives the job. Anything else starts over." >&2
+    }
     echo "  If it truly needs one long run, say so:  --max $(( MAXHOLD * 2 ))" >&2
 fi
 
@@ -3446,7 +3483,82 @@ unreachable() {
     exit 69
 }
 
+# Descriptor 6 writes to a fifo and 7 reads it. Only this process holds 6, so its death is EOF
+# on 7 wherever 7 was handed.
+live_channel() {
+    local f ok
+    f=$(mktemp -u "${TMPDIR:-/tmp}/dibs-live.XXXXXX")
+    mkfifo "$f" 2>/dev/null && exec 6<>"$f" && exec 7<"$f"
+    ok=$?; rm -f "$f"; return "$ok"
+}
+
+hold_tree() {   # pid; it and everything below it
+    local c
+    printf '%s\n' "$1"
+    for c in $(pgrep -P "$1" 2>/dev/null); do hold_tree "$c"; done
+}
+
+# The lock is held by a job on the machine that only waits, while the command runs here with the
+# terminal. Its exit goes down the liveness channel, so a release is not logged as the caller dying,
+# and the command is stopped if the lock goes first, since it would then run unlocked.
+hold_run() {   # the command that takes the lock
+    local mark line holder st status pid
+    mark=$(mktemp -u "${TMPDIR:-/tmp}/dibs-hold.XXXXXX")
+    mkfifo "$mark" 2>/dev/null ||
+        { echo "dibs: --hold could not make a fifo in ${TMPDIR:-/tmp}, so nothing ran." >&2; return 2; }
+    {
+        "$@" > "$mark"
+        status=$?
+        pid=$(cat "$mark.pid" 2>/dev/null)
+        if [ -n "$pid" ] && [ ! -e "$mark.done" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "dibs: the lock on ${MACHINE:-${TARGET:-$SELF}} ended before the command did, so the command was stopped." >&2
+            kill -TERM $(hold_tree "$pid") 2>/dev/null
+        fi
+        rm -f "$mark.pid"
+        exit "$status"
+    } 6>&- &
+    holder=$!
+    exec 4<"$mark" 7<&-
+    rm -f "$mark"
+    while IFS= read -r line <&4 && [ "$line" != DIBS-HOLDING ]; do printf '%s\n' "$line"; done
+    if [ "$line" != DIBS-HOLDING ]; then
+        exec 4<&- 6>&-
+        wait "$holder"; return
+    fi
+    echo "dibs: holding the $MODE lock on ${MACHINE:-${TARGET:-$SELF}}, running here: $COMMAND" >&2
+    # Ctrl-C is for the command. Trapped, this carries on and releases the lock with its exit.
+    trap : INT
+    # The command gets stderr back on 3, while bash's own notice of a stopped command, which
+    # would name this function's code, goes nowhere.
+    { ( printf '%s\n' "$BASHPID" > "$mark.pid"; exec 2>&3 3>&-
+        export DIBS_HOLDING="${DIBS_HOLDING:+$DIBS_HOLDING }$LOCK_AT"
+        if [ "${#HOLD_CMD[@]}" -eq 1 ]; then exec bash -c "${HOLD_CMD[0]}"; else exec "${HOLD_CMD[@]}"; fi ) 4<&- 6>&-; } 3>&2 2>/dev/null
+    st=$?
+    trap - INT
+    : > "$mark.done"
+    printf 'release %s\n' "$st" >&6
+    exec 6>&-
+    cat <&4
+    exec 4<&-
+    wait "$holder"; status=$?
+    rm -f "$mark.pid" "$mark.done"
+    return "$status"
+}
+
 if [ "$(lower "$SELF")" = "$(lower "$TARGET")" ] || [ "${DIBS_LOCAL:-0}" = 1 ]; then
+    LOCK_AT=$(lower "$SELF")
+else
+    LOCK_AT=$(lower "$TARGET")
+fi
+# Inside a hold, a lock on the same machine queues behind the hold, which only ends when this does.
+case "$MODE:: ${DIBS_HOLDING:-} " in
+    shared::*" $LOCK_AT "*|bench::*" $LOCK_AT "*|rsh::*" $LOCK_AT "*)
+        echo "dibs: this runs inside a --hold of the lock on $LOCK_AT, so it would queue behind that hold and never start." >&2
+        echo "  Take the lock once: run this outside the --hold, or peek if it is free to run." >&2
+        exit 2 ;;
+esac
+
+if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
     # No channel to watch when this runs on the machine itself, and stdin here belongs to
     # whoever called us: watching it would kill the job the moment they redirect from
     # /dev/null. The caller and the job share a machine, so ordinary process death covers it.
@@ -3458,9 +3570,21 @@ if [ "$(lower "$SELF")" = "$(lower "$TARGET")" ] || [ "${DIBS_LOCAL:-0}" = 1 ]; 
     esac
     CMDFILE=$(mktemp "${TMPDIR:-/tmp}/dibs-cmd.XXXXXX") || exit 70
     printf %s "$CMDB64" > "$CMDFILE"
-    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64"
+    if [ "$HOLD" = 1 ]; then
+        # A hold is released through the channel, so here too it needs one, and the script
+        # comes from a file instead of stdin.
+        live_channel || { echo "dibs: --hold could not open a fifo in ${TMPDIR:-/tmp}, so nothing ran." >&2; exit 2; }
+        SCRIPT=$(mktemp "${TMPDIR:-/tmp}/dibs-hold-script.XXXXXX") || exit 70
+        remote_script > "$SCRIPT"
+        hold_here() {
+            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 <&7 7<&-
+        }
+        hold_run hold_here
+    else
+        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64"
+    fi
     STATUS=$?
-    [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
+    [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
     series_stayed_put
     exit "$STATUS"
 else
@@ -3504,21 +3628,17 @@ else
     # fifo's read end is opened on its own, and neither the relay nor ssh keeps descriptor 6,
     # so this process is the fifo's only writer: its death reaches the far side as EOF even
     # where no parent-death signal took ssh down with it.
+    # A hold cannot go without the channel, since releasing it is a message on the channel.
     if [ "$MODE" = rsh ]; then
         exec 7<&0; WATCH=0
-    elif [ "${DIBS_NO_LIVE:-0}" = 1 ]; then
+    elif [ "${DIBS_NO_LIVE:-0}" = 1 ] && [ "$HOLD" = 0 ]; then
         exec 7<&0; WATCH=0
-    else
-        LIVE=$(mktemp -u "${TMPDIR:-/tmp}/dibs-live.XXXXXX")
-        if mkfifo "$LIVE" 2>/dev/null && exec 6<>"$LIVE" && exec 7<"$LIVE"; then
-            rm -f "$LIVE"
-        else
-            rm -f "$LIVE"
-            echo "dibs: could not open a liveness fifo; this job will outlive its caller." >&2
-            exec 7<&0; WATCH=0
-        fi
+    elif ! live_channel; then
+        [ "$HOLD" = 1 ] && { echo "dibs: --hold could not open a fifo in ${TMPDIR:-/tmp}, so nothing ran." >&2; exit 2; }
+        echo "dibs: could not open a liveness fifo; this job will outlive its caller." >&2
+        exec 7<&0; WATCH=0
     fi
-    [ "${DIBS_NO_WATCHDOG:-0}" = 1 ] && WATCH=0
+    [ "${DIBS_NO_WATCHDOG:-0}" = 1 ] && [ "$HOLD" = 0 ] && WATCH=0
     # Not /tmp: that is a tmpfs under a quota there, and when it fills, a tool that needs to
     # write to it to run cannot even be used to look at why. The default is left unexpanded
     # here on purpose, for the remote shell to resolve against its own home.
@@ -3527,14 +3647,17 @@ else
     # exec so that a script which could not be written never runs half of itself: the write
     # is the only thing between the && and the shell being replaced, and if it fails the line
     # after it is what runs. Both shells that might read this line treat exec and && alike.
-    $DIE_WITH_ME ssh -o BatchMode=yes -o LogLevel=ERROR \
-        -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
-        "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
-         exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
-         '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64'
+    to_machine() {
+        $DIE_WITH_ME ssh -o BatchMode=yes -o LogLevel=ERROR \
+            -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
+            "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
+             exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
+             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD'
 exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec cat <&7 6>&- 7<&-) 6>&- 7<&-
+    }
+    if [ "$HOLD" = 1 ]; then hold_run to_machine; else to_machine; fi
     STATUS=$?
-    [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
+    [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
     series_stayed_put
     # 255 is ssh's own failure code, not the command's.
     [ "$STATUS" -eq 255 ] && unreachable

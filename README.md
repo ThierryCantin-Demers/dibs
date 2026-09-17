@@ -120,6 +120,16 @@ A recipe is a batch of its own jobs, and prepares its worktree inside the first 
 it: the transfer for `@local`, or the first step at a ref when that step is shared. That is one
 round trip and one place in the queue less than a setup job of its own.
 
+## Holding a lock for a command run elsewhere
+
+Some work on a machine does not run on it: a playbook that provisions it, or a client driving it
+over the network. `dibs --on <machine> --hold <command>` takes the machine's lock, shared or with
+`--bench` exclusive, and runs the command on your side in the foreground, with your terminal, so
+prompts and Ctrl-C work. The lock goes when the command ends, with its exit in the trailer and
+the log. If the lock goes first, through `--max`, `--kill` or a cancelled batch, the command is
+stopped rather than left running unlocked. If your side dies, the machine hears it through the
+same channel every job has, and lets go.
+
 ## More than one machine
 
 `dibs --check <host> --write` records what it finds there as an entry in

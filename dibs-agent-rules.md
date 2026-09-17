@@ -31,6 +31,11 @@ spoiled without it.
   it: a copy competes with a measurement for memory bandwidth and writeback. Mark the machine's
   side with a colon: `dibs --sync -a ./tree :~/.cache/dibs/tree` sends,
   `dibs --sync -a :~/.cache/dibs/out ./` fetches, and rsync's own options pass through.
+- `dibs --on <machine> --hold <command>` runs the command on your own side while the machine's lock
+  is held for it, for work aimed at the machine from outside: provisioning it, or driving it over
+  the network. Add `--bench` when nothing else may run there meanwhile. The command is stopped if
+  the lock goes first. Do not build this by hand from a job blocking on a fifo and a `--peek` that
+  writes to release it: a peek is for looking.
 - A shared job whose label's history says it is quick goes around a queued benchmark instead of
   waiting it out, delaying it by about a minute at most. Two shared holders while a benchmark is
   queued is that, not a bug.
