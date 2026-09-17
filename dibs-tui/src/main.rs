@@ -857,6 +857,24 @@ fn centred(area: Rect, pct_x: u16, pct_y: u16) -> Rect {
     }
 }
 
+fn behind(age: u64, interval: u64) -> bool {
+    age > interval * 3 + 2
+}
+
+/// When the screen last changed, and whether some feed has stopped keeping up. The newest feed
+/// dates the screen: machines tick out of phase, so the oldest of them walks up and down as each
+/// one refreshes, which reads as a broken clock rather than as one machine lagging. A feed that
+/// has genuinely fallen behind says so against its own name.
+fn freshness(ages: impl IntoIterator<Item = u64>, interval: u64) -> Option<(u64, bool)> {
+    let mut newest: Option<u64> = None;
+    let mut any = false;
+    for age in ages {
+        newest = Some(newest.map_or(age, |n: u64| n.min(age)));
+        any |= behind(age, interval);
+    }
+    newest.map(|n| (n, any))
+}
+
 fn draw(f: &mut Frame, app: &mut App) {
     let dim = Style::new().fg(Color::DarkGray);
     let rows = app.rows();
@@ -874,7 +892,7 @@ fn draw(f: &mut Frame, app: &mut App) {
     // One machine per group rather than a single verdict: "the feed is down" and "it is idle"
     // are different answers, and a summary across machines can only give one of them.
     let multi = app.multi();
-    let mut oldest: Option<u64> = None;
+    let mut ages: Vec<u64> = Vec::new();
     for (name, v) in &app.views {
         if !head.is_empty() {
             head.push(Span::styled("   ", dim));
@@ -901,14 +919,16 @@ fn draw(f: &mut Frame, app: &mut App) {
         }
         if let Some(t) = v.seen_at {
             let age = t.elapsed().as_secs();
-            oldest = Some(oldest.map_or(age, |o: u64| o.max(age)));
+            ages.push(age);
+            if multi && behind(age, app.interval) {
+                head.push(Span::styled(format!(" {age}s behind"), Style::new().fg(Color::Yellow)));
+            }
         }
     }
-    if let Some(age) = oldest {
-        let stale = age > app.interval * 3 + 2;
+    if let Some((age, any_behind)) = freshness(ages.iter().copied(), app.interval) {
         head.push(Span::styled(
             format!("   updated {age}s ago, every {}s", app.interval),
-            if stale { Style::new().fg(Color::Yellow) } else { dim },
+            if any_behind { Style::new().fg(Color::Yellow) } else { dim },
         ));
     }
     if let Some(b) = &app.busy {
@@ -1318,6 +1338,13 @@ mod tests {
     fn the_default_marker_is_not_part_of_the_name() {
         let listing = " * bench1 dibs@bench1\n   laptop     laptop  (no measurements)\n";
         assert_eq!(parse_machines(listing), vec!["bench1", "laptop"]);
+    }
+
+    #[test]
+    fn the_screen_is_dated_by_its_newest_feed_while_one_left_behind_still_shows() {
+        assert_eq!(freshness([4, 1], 5), Some((1, false)), "the oldest feed would walk up and down");
+        assert_eq!(freshness([1, 40], 5), Some((1, true)));
+        assert_eq!(freshness([], 5), None);
     }
 
     #[test]
