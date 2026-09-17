@@ -366,6 +366,16 @@ fi
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
+# The recipe layer prepares a tree and sends it in one job: DIBS_SYNC_BEFORE names a script that
+# runs on the machine ahead of the transfer, under the same lock, and leaves it in the directory
+# the transfer names. A script that cannot be read refuses the transfer, since without it the
+# transfer would land wherever the job started.
+sync_before() {
+    [ -n "${DIBS_SYNC_BEFORE:-}" ] || return 0
+    [ -s "$DIBS_SYNC_BEFORE" ] || { echo "dibs: DIBS_SYNC_BEFORE names $DIBS_SYNC_BEFORE, which cannot be read" >&2; return 1; }
+    cat "$DIBS_SYNC_BEFORE"
+}
+
 # Fetched with scp because that is the form the source is written in, and because a machine
 # that can be reached at all can be reached this way. A failure leaves the cached copy in
 # place: a registry that cannot be reached should cost the freshness of a list, never the
@@ -1179,7 +1189,8 @@ case "$MODE" in
             # An ordinary shared job from here on, which is what a local copy is.
             # Handed on as the positional command, because the general path below rebuilds
             # COMMAND from the arguments and would otherwise overwrite this with rsync's flags.
-            set -- "rsync$(printf ' %q' "${HERE[@]}")"
+            BEFORE=$(sync_before) || exit 2
+            set -- "${BEFORE:+$BEFORE$'\n'}rsync$(printf ' %q' "${HERE[@]}")"
             MODE=shared
             LABEL=${LABEL:-sync}
         else
@@ -1210,7 +1221,8 @@ case "$MODE" in
         [ $# -ge 2 ] || { echo "--rsh is rsync's transport, not for calling directly" >&2; exit 2; }
         [ "$1" = "-l" ] && shift 2 # a user, when rsync was given one; the ssh config owns that
         shift                      # the host, which we already know
-        COMMAND=$*
+        BEFORE=$(sync_before) || exit 2
+        COMMAND=${BEFORE:+$BEFORE$'\n'}$*
         # The label was given to the dibs that started rsync, not to this one, and it
         # arrives the same way the host does. Without it every transfer ever made is filed
         # under one name, which is why nothing about copying could be estimated.
@@ -1500,6 +1512,8 @@ AGENT=$(printf %s "${9:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48
 AGENT_ID=$(printf %s "${11:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
 DEV_PCI=${12:-}; DEV_RT=${13:-}; DEV_NAME=${14:-}; DEV_CHIP=${15:-}; DEV_TWINS=${16:-1}
 STREAM=${17:-0}
+BATCH=$(printf %s "${18:-}" | base64 -d 2>/dev/null)
+BATCH_TAG=$(printf '%s\n' "$BATCH" | head -1 | tr '\t' ' ')
 [ -n "$AGENT" ] || AGENT=?
 # The caller cannot clean this up: its command line is read by fish, which has no $?.
 # Unlinking a running script is safe; bash keeps the open inode.
@@ -1565,10 +1579,10 @@ mkdir -p "$(dirname "$HIST")" "$(dirname "$LOG")" 2>/dev/null
 # precisely why the jobs worth investigating are the ones missing from it.
 LOGGED_END=0
 log_event() {   # event queued run exit
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$(date -Is)" "$1" "$$" "$MODE" "$LABEL" \
         "${2:--}" "${3:--}" "${4:--}" "${CMD_ONE:-${LABEL}}" \
-        "${AGENT:-?}${DEV_NAME:+ on $DEV_NAME}" >> "$LOG" 2>/dev/null
+        "${AGENT:-?}${DEV_NAME:+ on $DEV_NAME}" "${BATCH_TAG:--}" >> "$LOG" 2>/dev/null
 }
 
 # Assigning rather than printing is the difference: show() renders several of these per
@@ -1780,7 +1794,7 @@ estimate_compute() {   # mode label agent
 # lock itself is the open descriptor. Trust the pid, not the file.
 prune() {
     local f pid
-    for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.*; do
+    for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.* "$DIR"/batch.*; do
         [ -e "$f" ] || continue
         pid=${f##*.}
         # /proc rather than kill -0: signalling another user's process fails with EPERM,
@@ -1954,8 +1968,73 @@ queue_eta() {   # mode label agent; sets QE_ETA, -1 when it cannot be said
     QE_PENDING=0 QE_PENDING_KNOWN=1
 }
 
+# A batch reaches the machine one step at a time, so without its plan a job looks like the last
+# thing its agent asked for, and the time that agent has left reads as this job's alone. Only a
+# label's own history counts toward it: what an agent or the machine usually takes says nothing
+# about a step that has never run.
+batch_read() {   # pid left-of-this-job; sets BT_*, 1 when the job is not part of a batch
+    local f=$DIR/batch.$1 name mode label here d
+    BT_ID= BT_STEP= BT_K= BT_N= BT_HERE=0 BT_NEXT= BT_FARN=0 BT_FAR= BT_LEFT=$2 BT_PARTIAL=0
+    [ -s "$f" ] || return 1
+    {
+        IFS=$'\t' read -r BT_ID BT_STEP
+        IFS=$'\t' read -r BT_K BT_N
+        while IFS=$'\t' read -r name mode label here; do
+            [ -n "$name" ] || continue
+            if [ "$here" != 1 ]; then
+                BT_FARN=$((BT_FARN+1))
+                [ "$BT_FARN" -le 6 ] && BT_FAR="$BT_FAR${BT_FAR:+, }$name"
+                continue
+            fi
+            BT_HERE=$((BT_HERE+1))
+            if [ "$mode" = peek ]; then
+                d=""
+            elif estimate "$mode" "$label" "" && [ "$EST_SCOPE" = this ]; then
+                dur_ d "$EST_V"; d=" ~$d"
+                [ "$BT_LEFT" -ge 0 ] && BT_LEFT=$(( BT_LEFT + EST_V ))
+            else
+                d=" (no history)"; BT_PARTIAL=1
+            fi
+            [ "$BT_HERE" -le 6 ] && BT_NEXT="$BT_NEXT${BT_NEXT:+, }$name$d"
+        done
+    } < "$f"
+    [ "$BT_HERE" -gt 6 ] && BT_NEXT="$BT_NEXT and $(( BT_HERE - 6 )) more"
+    [ "$BT_FARN" -gt 6 ] && BT_FAR="$BT_FAR and $(( BT_FARN - 6 )) more"
+    BT_K=${BT_K//[^0-9]/} BT_N=${BT_N//[^0-9]/}
+    [ -n "$BT_ID" ]
+}
+
+batch_lines() {   # pid left-of-this-job
+    batch_read "$1" "$2" || return 0
+    local l
+    echo "    ${C_DIM}batch$C_OFF $BT_ID${C_DIM}, step ${BT_K:-?} of ${BT_N:-?}: $BT_STEP$C_OFF"
+    [ "$BT_HERE" -gt 0 ] && echo "    ${C_DIM}then here:$C_OFF $BT_NEXT"
+    [ "$BT_FARN" -gt 0 ] && echo "    ${C_DIM}then on other machines:$C_OFF $BT_FAR"
+    if [ "$BT_LEFT" -lt 0 ]; then
+        echo "    ${C_DIM}batch time left here: unknown, this step's own time cannot be estimated$C_OFF"
+    else
+        dur_ l "$BT_LEFT"
+        if [ "$BT_PARTIAL" = 1 ]; then
+            echo "    ${C_DIM}batch time left here: over $l, since some steps have no history$C_OFF"
+        else
+            echo "    ${C_DIM}batch time left here: ~$l$C_OFF"
+        fi
+    fi
+}
+
+batch_json() {   # pid left-of-this-job
+    batch_read "$1" "$2" || return 0
+    local ji js
+    jstr ji "$BT_ID"; jstr js "$BT_STEP"
+    printf ',"batch":{"id":%s,"step":%s,"k":%s,"n":%s,"here":%s,"elsewhere":%s' \
+        "$ji" "$js" "${BT_K:-0}" "${BT_N:-0}" "$BT_HERE" "$BT_FARN"
+    [ "$BT_LEFT" -ge 0 ] && printf ',"left":%s,"left_partial":%s' "$BT_LEFT" \
+        "$([ "$BT_PARTIAL" = 1 ] && echo true || echo false)"
+    printf '}'
+}
+
 show_json() {
-    local f mode pid start label agent cmd elapsed sep="" st=idle jl ja jc jo i=0 free=0 eta_known=1
+    local f mode pid start label agent cmd elapsed sep="" st=idle jl ja jc jo i=0 free=0 eta_known=1 jleft
     local c csep sc
     prune
     now
@@ -2022,9 +2101,11 @@ show_json() {
         jstr jd "$dev"
         printf '%s{"mode":"%s","pid":%s,"label":%s,"agent":%s,"device":%s,"cmd":%s,"started":%s,"elapsed":%s,"cpu":%s' \
             "$sep" "$mode" "$pid" "$jl" "$ja" "$jd" "$jc" "$start" "$elapsed" "$CPU_USED"
+        jleft=-1
         if estimate "$mode" "$label" "$agent"; then
             remaining_of "$elapsed"
             [ "$REM" -gt "$free" ] && free=$REM
+            jleft=$REM
             [ "$REM" -lt 0 ] && eta_known=0
             printf ',"est":%s,"est_lo":%s,"est_hi":%s,"est_n":%s,"est_scope":"%s"' \
                 "$EST_V" "$EST_LO" "$EST_HI" "$EST_N" "$EST_SCOPE"
@@ -2038,6 +2119,7 @@ show_json() {
         [ -n "$OUTPUT_FILE" ] && { jstr jo "$OUTPUT_FILE"; printf ',"output":%s' "$jo"; }
         [ "$CPU_RATE" -ge 0 ] && printf ',"cpu_rate":%s' "$CPU_RATE"
         [ -n "$IDLE_FOR" ] && printf ',"idle_for":%s,"idle_kind":"%s"' "$IDLE_FOR" "$IDLE_KIND"
+        batch_json "$pid" "$jleft"
         printf '}'
         sep=","
     done
@@ -2054,6 +2136,9 @@ show_json() {
             "$sep" "$i" "$mode" "$pid" "$jl" "$ja" "$jd" "$jc" "$start" "$(( NOW - start ))"
         queue_eta "$mode" "$label" "$agent"
         [ "$QE_ETA" -ge 0 ] && printf ',"eta":%s' "$QE_ETA"
+        jleft=-1
+        [ "$QE_ETA" -ge 0 ] && estimate "$mode" "$label" "$agent" && [ "$EST_SCOPE" = this ] && jleft=$(( QE_ETA + EST_V ))
+        batch_json "$pid" "$jleft"
         printf '}'
         sep=","
     done
@@ -2062,7 +2147,7 @@ show_json() {
 
 show() {
     local f held=0 mode pid start label cmd elapsed rem free=0 total=0 eta_known=1 sig=
-    local used el ue uh rr wa idl agent AC MC left usual depth=0 qnote=
+    local used el ue uh rr wa idl agent AC MC left usual depth=0 qnote= jleft
     if [ "$VERBOSE" = 1 ]; then
         echo "  [$DIR]"
         ls -la "$DIR" 2>&1 | sed 's/^/  /'
@@ -2098,12 +2183,15 @@ show() {
             echo "    ${C_WARN}stop it with: dibs --kill $pid$C_OFF"
             echo "    $C_DIM$cmd$C_OFF"
             echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF${dev:+${C_DIM} on $C_OFF$dev}"
+            batch_lines "$pid" -1
             held=$((held+1))
             continue
         fi
+        jleft=-1
         if estimate "$mode" "$label" "$agent"; then
             remaining_of "$elapsed"
             [ "$REM" -gt "$free" ] && free=$REM
+            jleft=$REM
             if [ "$REM" -lt 0 ]; then
                 eta_known=0; left="longer than it has ever taken"
             elif [ "$REM_KIND" = bound ]; then
@@ -2142,6 +2230,7 @@ show() {
         fi
         echo "    $C_DIM$cmd$C_OFF"
         echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF${dev:+${C_DIM} on $C_OFF$dev}"
+        batch_lines "$pid" "$jleft"
         # Where its output is going, so --out is discovered by reading the status rather than
         # by already knowing the feature exists. Silent when a job redirected nowhere, because
         # there is then nothing to offer and a line saying so would be noise on every tick.
@@ -2192,6 +2281,8 @@ show() {
         age_ wa "$start"
         agent_hue "$agent"; mode_hue "$mode"
         queue_eta "$mode" "$label" "$agent"
+        jleft=-1
+        [ "$QE_ETA" -ge 0 ] && estimate "$mode" "$label" "$agent" && [ "$EST_SCOPE" = this ] && jleft=$(( QE_ETA + EST_V ))
         if [ "$QE_ETA" -gt 0 ]; then
             dur_ rr "$QE_ETA"
             echo "  ${C_Q}queued $i of $total$C_OFF: $MC$mode$C_OFF  $AC$label$C_OFF  waiting $C_B$wa$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_DIM}[~$rr until it starts]$C_OFF"
@@ -2202,6 +2293,7 @@ show() {
         fi
         echo "    $C_DIM$cmd$C_OFF"
         echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF${dev:+${C_DIM} on $C_OFF$dev}"
+        batch_lines "$pid" "$jleft"
     done
     [ "$total" -gt 1 ] && echo "  $C_DIM(queued in arrival order; the kernel picks the actual wake order)$C_OFF"
     return 0
@@ -2235,9 +2327,10 @@ case "$MODE" in
              printf '%-19s %-9s %-7s %-14s %6s %6s %5s  %-22s %s\n' \
                  WHEN EVENT MODE LABEL QUEUED RAN EXIT AGENT COMMAND
              tail -n "$n" "$LOG" | awk -F'\t' '{
-                 printf "%-19s %-9s %-7s %-14s %6s %6s %5s  %-22s %s\n",
+                 printf "%-19s %-9s %-7s %-14s %6s %6s %5s  %-22s %s%s\n",
                         substr($1,1,19), $2, $4, substr($5,1,14), $6, $7, $8,
-                        substr(($10 == "" ? "?" : $10),1,22), substr($9,1,50)
+                        substr(($10 == "" ? "?" : $10),1,22), substr($9,1,50),
+                        (NF >= 11 && $11 != "-" ? "  [batch " $11 "]" : "")
              }'
              exit 0 ;;
     # What decides whether a binary built here can run somewhere else. Reported as facts
@@ -2780,12 +2873,13 @@ START=$(date +%s)
 CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
 [ "${#CMD}" -gt 200 ] && CMD_ONE="$CMD_ONE …"
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
+[ -n "$BATCH" ] && printf '%s\n' "$BATCH" > "$DIR/batch.$$"
 log_event arrived
 # An end line even when the job is torn down, so the log never just stops mid-story.
 # Nothing can be written if it is SIGKILLed, which is itself worth knowing when reading it.
 # Every exit, not just the happy one: while the watch lives it holds the channel open and
 # the caller's ssh cannot return, so giving up on a busy lock would hang the caller.
-trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$0"
+trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DIR/batch.$$" "$0"
       [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
       [ "$LOGGED_END" = 1 ] || log_event aborted' EXIT
 
@@ -3063,6 +3157,14 @@ case "$MODE" in
         AGENTB64=$(agent_name | base64 | tr -d '\n')
         AGENTIDB64=$(agent_id | base64 | tr -d '\n') ;;
 esac
+# Set by `dibs batch` and by the recipe layer: which batch this call is a step of, and what is
+# still to come, one step per line, so the machine's --status can say how long the batch has left.
+BATCHB64=""
+case "$MODE" in
+    shared|bench|peek|rsh)
+        [ -n "${DIBS_BATCH:-}" ] && BATCHB64=$(printf '%s\t%s\n%s\n' "$DIBS_BATCH" "${DIBS_BATCH_STEP:-}" \
+            "${DIBS_BATCH_PLAN:-}" | head -n 200 | base64 | tr -d '\n') ;;
+esac
 # Only a terminal wants a redraw. Piped to a file, --watch is a timestamped log instead.
 ISTTY=0; [ -t 1 ] && ISTTY=1
 
@@ -3172,7 +3274,7 @@ if [ "$(lower "$SELF")" = "$(lower "$TARGET")" ] || [ "${DIBS_LOCAL:-0}" = 1 ]; 
     esac
     CMDFILE=$(mktemp "${TMPDIR:-/tmp}/dibs-cmd.XXXXXX") || exit 70
     printf %s "$CMDB64" > "$CMDFILE"
-    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM"
+    remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64"
     STATUS=$?
     [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
     series_stayed_put
@@ -3245,7 +3347,7 @@ else
         -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
         "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
          exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
-         '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM'
+         '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64'
 exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec cat <&7 6>&- 7<&-) 6>&- 7<&-
     STATUS=$?
     [ "$MODE" = bench ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record

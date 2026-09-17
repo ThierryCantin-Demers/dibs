@@ -19,7 +19,9 @@ shared benchmarking machine, and most of it exists because someone already got i
 - `dibs run --bench <command>` for anything timed: **exclusive**, nothing else runs, including
   other people's builds. A compile running beside a benchmark spoils it as surely as a second
   benchmark would.
-- `dibs status` who holds it, who is queued, and roughly how long. Never blocks.
+- `dibs status` who holds it, who is queued, and roughly how long, including what is left of a
+  `dibs batch` or a recipe. Never blocks. Asked how long your work will take, run it rather
+  than guessing.
 - `dibs --peek <command>` looks at the machine without taking the lock. Free things only:
   `ps`, `nvidia-smi`, `ls`, `tail`, `git status`. It runs *beside* whatever is being measured,
   so anything that costs CPU or IO is charged to that benchmark. When in doubt use the shared

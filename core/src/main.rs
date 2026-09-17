@@ -229,6 +229,7 @@ fn run() -> Result<ExitCode, String> {
                 isolation: recipe::Isolation::Machine,
                 needs: None,
                 device: args.device.as_deref(),
+                env: &[],
             },
             command,
         )?;
@@ -425,15 +426,6 @@ fn run() -> Result<ExitCode, String> {
         ),
         None => eprintln!("dibs: preparing {repo_name}@{reference}"),
     }
-    let setup = Request {
-        label: &format!("{label}:setup"),
-        lock: Lock::Shared,
-        isolation: rec.isolation,
-        needs: None,
-        // Preparing a worktree touches no GPU, so pinning it would only make the setup fail
-        // on a machine whose card has been pulled.
-        device: None,
-        };
     let lock = match &local {
         Some(_) => std::fs::read_to_string(dir.join("Cargo.lock")).ok(),
         None => std::process::Command::new("git")
@@ -459,24 +451,95 @@ fn run() -> Result<ExitCode, String> {
             None => worktree::setup_script(&repo_name, reference),
         }
         + &gitdeps::check_script(&gitdbs);
-    let (out, text) = backend.run_capture(&setup, &script)?;
-    if out.status != 0 {
-        return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
-    }
-    let prepared = worktree::parse(&text)?;
-    eprintln!("dibs: {}", prepared.worktree);
-    if let Some(from) = &prepared.seeded {
-        match prepared.seed_shared {
-            Some((have, of)) => eprintln!(
-                "dibs: target directory copied from {from}, whose builds match {have} of the {of} groups in this tree's lockfile{}",
-                if prepared.seeded_sources { ", with its sources so unchanged crates stay built" } else { "" }
-            ),
-            None => eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds"),
-        }
-    }
+
+    // The setup rides at the head of the first job that needs the tree: the transfer for a local
+    // tree, or the first step when it is shared. Its own job would be a second round trip and a
+    // second place in the queue, and a benchmark that arrives in between is waited out twice.
+    // An exclusive first step keeps its setup apart, or a fetch would run inside the hold.
+    let fold = local.is_none() && rec.steps[0].lock == Lock::Shared;
+    let lock_name = |l: Lock| match l {
+        Lock::Shared => "shared",
+        Lock::Exclusive => "bench",
+    };
+    let mut calls = Vec::new();
     if local.is_some() {
-        sync_local(&backend, &dir, &prepared.worktree)?;
+        calls.push(batch::Pending { name: format!("{label}:send"), mode: "rsh", label: format!("{label}:send"), here: true });
+    } else if !fold {
+        calls.push(batch::Pending { name: format!("{label}:setup"), mode: "shared", label: format!("{label}:setup"), here: true });
     }
+    let first_step_call = calls.len();
+    for (i, st) in rec.steps.iter().enumerate() {
+        calls.push(batch::Pending { name: step_labels[i].clone(), mode: lock_name(st.lock), label: step_labels[i].clone(), here: true });
+    }
+    let own_batch = batch::batch_id();
+    let env_of = |k: usize| batch::recipe_env(&own_batch, &calls, k);
+    let setup_env = env_of(0);
+    let setup = Request {
+        label: &calls[0].label,
+        lock: Lock::Shared,
+        isolation: rec.isolation,
+        needs: None,
+        // Preparing a worktree touches no GPU, so pinning it would only make the setup fail
+        // on a machine whose card has been pulled.
+        device: None,
+        env: &setup_env,
+    };
+    // One cache per repo, exported rather than left to each recipe to remember. The output
+    // needs no file of its own: dibs keeps every job's log under its job id, and a path named
+    // after the label would be shared by two runs of one recipe.
+    let run_of = |i: usize| match worktree::build_signature(&rec.steps[i].run) {
+        Some(_) => worktree::recording(&rec.steps[i].run, &token),
+        None => rec.steps[i].run.clone(),
+    };
+    let mut announce = |text: &str| announce_prepared(text);
+
+    let mut steps = Vec::new();
+    let mut failed = None;
+    let text = match &local {
+        Some(l) => {
+            let (out, text) = sync_prepared(&backend, &dir, &script, &l.key, &setup, &mut announce)?;
+            if !text.contains("DIBS-READY") {
+                return Err(format!("could not prepare {repo_name} from {} (exit {})", dir.display(), out.status));
+            }
+            if out.status != 0 {
+                return Err(format!("sending {} failed (exit {})", dir.display(), out.status));
+            }
+            text
+        }
+        None if fold => {
+            eprintln!("dibs: step 1/{} [{:?}], with the setup ahead of it", rec.steps.len(), rec.steps[0].lock);
+            let env = env_of(first_step_call);
+            let command = worktree::ahead(&script, worktree::Then::Step, &rec.steps[0].run) + &format!("{{ {}; }}", run_of(0));
+            let req = Request {
+                label: &step_labels[0],
+                lock: rec.steps[0].lock,
+                isolation: rec.isolation,
+                needs: rec.needs.as_deref(),
+                device: args.device.as_deref(),
+                env: &env,
+            };
+            let (out, text) = backend.run_reporting(&req, &command, &mut announce)?;
+            if !text.contains("DIBS-READY") && !text.contains("DIBS-HELD") {
+                return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
+            }
+            if text.contains("DIBS-READY") {
+                steps.push(provenance::StepRecord { lock: step_lock(rec.steps[0].lock), status: out.status, seconds: out.seconds });
+                if out.status != 0 {
+                    failed = Some(out.status);
+                }
+            }
+            text
+        }
+        None => {
+            let (out, text) = backend.run_capture(&setup, &script)?;
+            if out.status != 0 {
+                return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
+            }
+            announce(&text);
+            text
+        }
+    };
+    let prepared = worktree::parse(&text)?;
     if let (Some(remote), gone) = gitdeps::missing(&text, &gitdbs) {
         for db in gone {
             eprintln!(
@@ -489,45 +552,32 @@ fn run() -> Result<ExitCode, String> {
         }
     }
 
-    let mut steps = Vec::new();
-    let mut failed = None;
-
-    for (i, step) in rec.steps.iter().enumerate() {
+    for (i, step) in rec.steps.iter().enumerate().skip(steps.len()) {
+        if failed.is_some() {
+            break;
+        }
+        let cd = format!(
+            "cd {} && export CARGO_TARGET_DIR={} && {{ {}; }}",
+            sh(&prepared.worktree),
+            sh(&prepared.target),
+            run_of(i)
+        );
+        eprintln!("dibs: step {}/{} [{:?}]", i + 1, rec.steps.len(), step.lock);
         // The step says which lock it wants, where it can be reviewed, instead of a compile
         // being invisible inside a script that holds the machine exclusively.
+        let env = env_of(first_step_call + i);
         let req = Request {
             label: &step_labels[i],
             lock: step.lock,
             isolation: rec.isolation,
             needs: rec.needs.as_deref(),
             device: args.device.as_deref(),
+            env: &env,
         };
-        // One cache per repo, exported rather than left to each recipe to remember. The output
-        // needs no file of its own: dibs keeps every job's log under its job id, and a path
-        // named after the label would be shared by two runs of one recipe.
-        let run = match worktree::build_signature(&step.run) {
-            Some(_) => worktree::recording(&step.run, &token),
-            None => step.run.clone(),
-        };
-        let cd = format!(
-            "cd {} && export CARGO_TARGET_DIR={} && {{ {}; }}",
-            sh(&prepared.worktree),
-            sh(&prepared.target),
-            run
-        );
-        eprintln!("dibs: step {}/{} [{:?}]", i + 1, rec.steps.len(), step.lock);
         let out = backend.run(&req, &cd)?;
-        steps.push(provenance::StepRecord {
-            lock: match step.lock {
-                Lock::Shared => "shared",
-                Lock::Exclusive => "exclusive",
-            },
-            status: out.status,
-            seconds: out.seconds,
-        });
+        steps.push(provenance::StepRecord { lock: step_lock(step.lock), status: out.status, seconds: out.seconds });
         if out.status != 0 {
             failed = Some(out.status);
-            break;
         }
     }
 
@@ -593,7 +643,7 @@ fn label_steps(base: &str, steps: &[recipe::Step]) -> Vec<String> {
     out
 }
 
-/// Sends the local tree to the worktree the setup just made.
+/// Prepares the worktree and sends the local tree into it, as one job under one lock.
 ///
 /// `--no-times` is the load-bearing option and it is not tidiness. rsync's `-a` implies `-t`,
 /// which is right for a transfer and wrong for sources about to be compiled: files that arrive
@@ -606,22 +656,55 @@ fn label_steps(base: &str, steps: &[recipe::Step]) -> Vec<String> {
 /// The filter follows the repo's own ignore rules, so a target directory or an editor's
 /// droppings never make the trip, and `--delete` means a file deleted locally stops existing
 /// there too rather than going on compiling.
-fn sync_local(backend: &Dibs, from: &Path, to: &str) -> Result<(), String> {
+fn sync_prepared(
+    backend: &Dibs,
+    from: &Path,
+    setup: &str,
+    key: &str,
+    req: &Request,
+    on_report: &mut dyn FnMut(&str),
+) -> Result<(resource::Outcome, String), String> {
+    let before = std::env::temp_dir().join(format!("dibs-before.{}.{key}", std::process::id()));
+    std::fs::write(&before, worktree::ahead(setup, worktree::Then::Transfer, &format!("prepare, then receive {}", from.display())))
+        .map_err(|e| format!("{}: {e}", before.display()))?;
     let mut cmd = std::process::Command::new(&backend.program);
     if let Some(m) = &backend.machine {
         cmd.arg("--on").arg(m);
     }
-    cmd.arg("--sync")
+    cmd.arg("--label")
+        .arg(req.label)
+        .arg("--sync")
         .args(worktree::SYNC_ARGS)
         .arg(format!("{}/", from.display()))
-        .arg(format!(":{to}/"))
+        .arg(format!(":local-{key}/"))
         .env("DIBS_FROM_RUN", "1")
+        .env("DIBS_SYNC_BEFORE", &before)
+        .envs(req.env.iter().map(|(k, v)| (*k, v)))
         .stdin(std::process::Stdio::null());
-    let st = cmd.status().map_err(|e| format!("dibs --sync: {e}"))?;
-    if !st.success() {
-        return Err(format!("sending {} to {to} failed", from.display()));
+    let result = resource::reporting(cmd, on_report);
+    let _ = std::fs::remove_file(&before);
+    result
+}
+
+fn announce_prepared(text: &str) {
+    let Ok(prepared) = worktree::parse(text) else { return };
+    eprintln!("dibs: {}", prepared.worktree);
+    if let Some(from) = &prepared.seeded {
+        match prepared.seed_shared {
+            Some((have, of)) => eprintln!(
+                "dibs: target directory copied from {from}, whose builds match {have} of the {of} groups in this tree's lockfile{}",
+                if prepared.seeded_sources { ", with its sources so unchanged crates stay built" } else { "" }
+            ),
+            None => eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds"),
+        }
     }
-    Ok(())
+}
+
+fn step_lock(lock: Lock) -> &'static str {
+    match lock {
+        Lock::Shared => "shared",
+        Lock::Exclusive => "exclusive",
+    }
 }
 
 /// Adds files and never replaces one: git names objects by their content, so what is already

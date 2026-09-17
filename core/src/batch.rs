@@ -321,7 +321,7 @@ fn machine_of(step: &Step) -> String {
     }
 }
 
-fn batch_id() -> String {
+pub fn batch_id() -> String {
     let stamp = Command::new("date")
         .arg("+%Y%m%d-%H%M%S")
         .output()
@@ -340,6 +340,71 @@ fn collect_old(dir: &Path) {
             let _ = std::fs::remove_dir_all(e.path());
         }
     }
+}
+
+/// A step not yet started, as the machine's `--status` reads it to say how long a batch has left.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pending {
+    pub name: String,
+    /// The lock as the duration history files it: shared, bench, rsh, peek, or recipe, which
+    /// runs several jobs under labels of its own and so has no single history.
+    pub mode: &'static str,
+    pub label: String,
+    /// On the same machine as the step carrying the plan.
+    pub here: bool,
+}
+
+/// What a step of a batch is started with. `DIBS_BATCH_PLAN` is `k<TAB>n` and then one pending
+/// step per line; dibs sends it with the job and the machine keeps it beside the holder.
+pub fn step_env(id: &str, step: &str, k: usize, n: usize, pending: &[Pending]) -> Vec<(&'static str, String)> {
+    let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
+    let mut plan = format!("{k}\t{n}\n");
+    for p in pending {
+        plan.push_str(&format!("{}\t{}\t{}\t{}\n", clean(&p.name), p.mode, history_key(&p.label), u8::from(p.here)));
+    }
+    vec![("DIBS_BATCH", clean(id)), ("DIBS_BATCH_STEP", clean(step)), ("DIBS_BATCH_PLAN", plan)]
+}
+
+/// The plan each of a recipe's jobs carries. Inside a batch the recipe is one of its steps, so
+/// the recipe's jobs still to come go ahead of the batch's own.
+pub fn recipe_env(own_id: &str, calls: &[Pending], k: usize) -> Vec<(&'static str, String)> {
+    let var = |n: &str| std::env::var(n).unwrap_or_default();
+    let outer = Some(var("DIBS_BATCH")).filter(|v| !v.is_empty()).map(|id| (id, var("DIBS_BATCH_STEP"), var("DIBS_BATCH_PLAN")));
+    nested_env(outer, own_id, calls, k)
+}
+
+fn nested_env(outer: Option<(String, String, String)>, own_id: &str, calls: &[Pending], k: usize) -> Vec<(&'static str, String)> {
+    let pending = &calls[k + 1..];
+    match outer {
+        Some((id, outer_step, outer)) => {
+            let (head, rest) = outer.split_once('\n').unwrap_or((outer.as_str(), ""));
+            let mut nums = head.split('\t').map(|x| x.trim().parse::<usize>().unwrap_or(0));
+            let (bk, bn) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0));
+            let step = format!("{outer_step}: {}", calls[k].name);
+            let mut env = step_env(&id, &step, bk, bn, pending);
+            if let Some((_, plan)) = env.iter_mut().find(|(name, _)| *name == "DIBS_BATCH_PLAN") {
+                plan.push_str(rest);
+            }
+            env
+        }
+        None if calls.len() > 1 => step_env(own_id, &calls[k].name, k + 1, calls.len(), pending),
+        None => Vec::new(),
+    }
+}
+
+/// The history key dibs will file a step under, which is what its estimate is looked up by.
+fn pending_of(step: &Step, here: bool, cwd: &str) -> Pending {
+    let (mode, default) = match step.lock {
+        "sync" => ("rsh", "sync".to_string()),
+        "recipe" => ("recipe", String::new()),
+        other => (other, cwd.rsplit('/').next().unwrap_or_default().to_string()),
+    };
+    Pending { name: step.name.clone(), mode, label: step.label.clone().unwrap_or(default), here }
+}
+
+/// dibs files a label with everything but `[A-Za-z0-9._-]` replaced.
+fn history_key(label: &str) -> String {
+    label.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect()
 }
 
 pub struct Options {
@@ -363,13 +428,17 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
     eprint!("dibs: batch {id}, {} steps. You are told when it ends; there is nothing to watch.\n{plan}", steps.len());
 
     let owned = has("setsid") && has("setpriv");
+    let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
     let started = Instant::now();
     let mut states = vec![State::Waiting; steps.len()];
     let mut stopped = false;
     let (tx, rx) = mpsc::channel::<(usize, i32, u64)>();
     loop {
-        for i in ready(&steps, &machines, &states, stopped) {
+        let starting = ready(&steps, &machines, &states, stopped);
+        for &i in &starting {
             states[i] = State::Running;
+        }
+        for i in starting {
             let step = steps[i].clone();
             let (out, err) = (dir.join(format!("{}.out", step.name)), dir.join(format!("{}.err", step.name)));
             let mut cmd = if owned {
@@ -381,8 +450,11 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                 c.args(["-c", &step.line]);
                 c
             };
-            cmd.env("DIBS_BATCH", &id)
-                .env("DIBS_BATCH_STEP", &step.name)
+            let pending: Vec<Pending> = (0..steps.len())
+                .filter(|&j| j != i && states[j] == State::Waiting)
+                .map(|j| pending_of(&steps[j], machines[j] == machines[i], &cwd))
+                .collect();
+            cmd.envs(step_env(&id, &step.name, i + 1, steps.len(), &pending))
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -598,6 +670,33 @@ mod tests {
         let machines = vec!["x".to_string(), "x".to_string()];
         let states = vec![State::Done { exit: 1, seconds: 0 }, State::Waiting];
         assert_eq!(names(&ready(&steps, &machines, &states, false), &steps), ["b"]);
+    }
+
+    fn call(name: &str, mode: &'static str) -> Pending {
+        Pending { name: name.into(), mode, label: format!("{name}/x"), here: true }
+    }
+
+    #[test]
+    fn a_step_carries_what_is_still_to_come_under_the_keys_its_history_is_filed_by() {
+        let env = step_env("b1", "build", 1, 3, &[call("bench", "bench"), Pending { here: false, ..call("home", "rsh") }]);
+        let get = |k: &str| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone()).unwrap();
+        assert_eq!(get("DIBS_BATCH"), "b1");
+        assert_eq!(get("DIBS_BATCH_STEP"), "build");
+        assert_eq!(get("DIBS_BATCH_PLAN"), "1\t3\nbench\tbench\tbench_x\t1\nhome\trsh\thome_x\t0\n");
+    }
+
+    #[test]
+    fn a_recipe_alone_is_its_own_batch_and_inside_one_goes_ahead_of_the_rest() {
+        let calls = [call("send", "rsh"), call("build", "shared"), call("bench", "bench")];
+        let alone = nested_env(None, "own", &calls, 1);
+        assert_eq!(alone[0].1, "own");
+        assert_eq!(alone[2].1, "2\t3\nbench\tbench\tbench_x\t1\n");
+        assert!(nested_env(None, "own", &calls[..1], 0).is_empty(), "one job is not a batch");
+        let outer = Some(("b9".to_string(), "arm-a".to_string(), "2\t4\narm-b\trecipe\t\t1\n".to_string()));
+        let inside = nested_env(outer, "own", &calls, 1);
+        assert_eq!(inside[0].1, "b9");
+        assert_eq!(inside[1].1, "arm-a: build");
+        assert_eq!(inside[2].1, "2\t4\nbench\tbench\tbench_x\t1\narm-b\trecipe\t\t1\n");
     }
 
     #[test]

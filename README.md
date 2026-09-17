@@ -106,6 +106,16 @@ step stops the rest unless it is marked `cont`. Each step's output is kept under
 `~/.local/state/dibs/batch/<id>/`, and the summary names each step's jobs for `dibs --out`. The
 driver owns its steps: however it dies, they die with it and release their locks.
 
+Each step carries the batch's plan to the machine, so `dibs status` shows a job as step k of n,
+lists the steps still to come on that machine with what their labels usually take, names those
+bound elsewhere, and gives the time the batch has left there. A step whose label has never run
+makes that a floor. `dibs --log` tags every event with its batch and step. A list is often
+generated rather than written: `./make-steps.sh | dibs batch -`.
+
+A recipe is a batch of its own jobs, and prepares its worktree inside the first job that needs
+it: the transfer for `@local`, or the first step at a ref when that step is shared. That is one
+round trip and one place in the queue less than a setup job of its own.
+
 ## More than one machine
 
 `dibs --check <host> --write` records what it finds there as an entry in

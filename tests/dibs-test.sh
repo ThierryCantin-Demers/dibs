@@ -1452,6 +1452,25 @@ BDRIVER=$!
 sync_ BU
 kill -9 $BDRIVER 2>/dev/null; wait $BDRIVER 2>/dev/null
 check "a killed driver takes its running step and its lock with it" "$(gone && echo released)" "released"
+# The machine sees one step at a time, so the batch's plan travels with each one.
+for i in 1 2 3; do printf 'shared\tbatch-cur\t120\tx\nshared\tbatch-next\t300\tx\n' >> "$DIBS_HISTORY"; done
+fifo BL; fifo BLU
+printf '%s\n' "[hold] dibs --label batch-cur 'echo up > $S/f-BLU; $(hold BL)'" "[next] dibs --label batch-next true" \
+  "[fresh] dibs --label batch-never-run true" "[far] dibs --on elsewhere --label batch-far true" > "$S/b6"
+PATH=$S/bbin:$PATH DIBS_CORE=$BCORE "$T" batch "$S/b6" >/dev/null 2>&1 &
+BDRIVER=$!
+sync_ BLU
+st=$($T status)
+check "status names the batch and the step" "$(grep -cE '^    batch [0-9]{8}-[0-9]{6}-[0-9]+, step 1 of 4: hold$' <<<"$st")" "1"
+check "what is still to come on this machine, with its estimate" "$(grep -c '^    then here: next ~5m00s, fresh (no history)$' <<<"$st")" "1"
+check "and what goes elsewhere" "$(grep -c '^    then on other machines: far$' <<<"$st")" "1"
+check "with the time left for the batch here, as a floor when a step has no history" \
+  "$(grep -cE '^    batch time left here: over (6m59s|7m00s), since some steps have no history$' <<<"$st")" "1"
+check "the same in json" "$($T status --json | grep -cE '"batch":\{"id":"[0-9-]+","step":"hold","k":1,"n":4,"here":2,"elsewhere":1,"left":(419|420),"left_partial":true\}')" "1"
+kill -9 $BDRIVER 2>/dev/null; wait $BDRIVER 2>/dev/null
+gone
+check "the log names the batch and step of every event" "$($T --log 3 | grep -cE 'batch-cur .*\[batch [0-9-]+ hold\]$')" "2"
+check "and a record left behind by a killed job goes with it" "$(ls "$DIBS_LOCK_DIR" | grep -c '^batch\.')" "0"
 
 echo "one command"
 check "run is the bare form" "$($T run --label one-run 'echo via-run' 2>/dev/null)" "via-run"
@@ -1523,6 +1542,38 @@ R $T --sync -a --no-times --checksum "$S/tsrc/" ":$S/tdst/" >/dev/null 2>&1
 check "a sync sends a file intact" "$(cmp -s "$S/tsrc/sub/blob" "$S/tdst/sub/blob" && echo same)" "same"
 R $T --sync -a ":$S/tdst/" "$S/tback/" >/dev/null 2>&1
 check "and fetches it back intact" "$(cmp -s "$S/tsrc/sub/blob" "$S/tback/sub/blob" && echo same)" "same"
+
+echo "recipes"
+# A repo the recipe layer can prepare: its clone on the machine's side, and a tree here.
+git init -q --bare "$S/origin.git"
+git clone -q "$S/origin.git" "$S/app" 2>/dev/null
+( cd "$S/app" && printf 'x\n' > a.txt && printf 'target\n' > .gitignore && git add -A &&
+  git -c user.email=t@t -c user.name=t commit -qm one && git push -q origin HEAD:main 2>/dev/null )
+mkdir -p "$HOME/prog" && git clone -q "$S/origin.git" "$HOME/prog/app" 2>/dev/null
+RC() { PATH=$S/bbin:$PATH DIBS_CORE=$BCORE "$T" "$@"; }
+arrivals() { grep -c "	arrived	" "$DIBS_LOG" 2>/dev/null || echo 0; }
+n0=$(arrivals)
+out=$(RC shell "$S/app@local" --reason test -- 'echo "in $PWD"; cat a.txt' 2>"$S/r1.err"); rc=$?
+check "a local recipe runs" "$rc" "0"
+check "in the tree it sent" "$(grep -c "^in $DIBS_SCRATCH/ws/app/local-" <<<"$out")$(grep -c '^x$' <<<"$out")" "11"
+check "in two jobs, the setup riding with the transfer" "$(( $(arrivals) - n0 ))" "2"
+check "and says where it prepared" "$(grep -c "^dibs: $DIBS_SCRATCH/ws/app/local-" "$S/r1.err")" "1"
+check "without the setup's report in the output" "$(cat "$S/r1.err" - <<<"$out" | grep -c '^DIBS-')" "0"
+n0=$(arrivals)
+out=$(RC shell "$S/app@main" --reason test -- 'echo "in $PWD"; cat a.txt' 2>/dev/null); rc=$?
+check "a recipe at a ref runs" "$rc" "0"
+check "in one job, the setup riding with its first step" "$(( $(arrivals) - n0 ))" "1"
+check "in its worktree" "$(grep -c "^in $DIBS_SCRATCH/ws/app/" <<<"$out")" "1"
+check "and the log shows the step's command rather than the setup's" \
+  "$(grep -c '	arrived	.*	app_shell	.*	# echo "in $PWD"; cat a.txt ' "$DIBS_LOG")" "1"
+n0=$(arrivals)
+echo y > "$S/app/b.txt"
+out=$(cd "$S" && PATH=$S/fakessh:$S/bbin:$PATH DIBS_CORE=$BCORE DIBS_LOCAL=0 DIBS_HOST=fake-remote DIBS_HOSTNAME=laptop-here \
+  DIBS_REMOTE_DIR=$S/remote-run "$T" shell "$S/app@local" --reason test -- 'cat b.txt' 2>/dev/null); rc=$?
+check "over ssh, the setup rides with rsync's own stream" "$rc $out $(( $(arrivals) - n0 ))" "0 y 2"
+check "and the transfer lands in the tree, nowhere else" "$(ls "$S" | grep -c '^local-')" "0"
+check "both its jobs reach the log as steps of one batch" \
+  "$(tail -n 4 "$DIBS_LOG" | awk -F'\t' '{print $11}' | sed 's/ .*//' | sort -u | grep -cE '^[0-9]{8}-[0-9]{6}-[0-9]+$')" "1"
 
 echo
 echo "passed $pass, failed $fail"

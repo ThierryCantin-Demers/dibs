@@ -329,6 +329,55 @@ echo "DIBS-REV {repo} $SHORT"
     s
 }
 
+/// What follows a setup inside the same job.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Then {
+    /// A recipe step, run in the worktree with the target exported.
+    Step,
+    /// rsync's far side, which owns stdout, into the worktree's name under its parent: the
+    /// transfer names `local-<key>/`, so a tree that was never prepared cannot turn `--delete`
+    /// on whatever directory the job happened to start in.
+    Transfer,
+}
+
+/// A setup run at the head of the job that needs it, so a recipe pays for one round trip and
+/// one place in the queue instead of two. Its report is what `parse` reads and ends with
+/// `DIBS-READY`, or `DIBS-HELD` when a git dependency must be sent before anything can build.
+/// `title` leads as a comment, since the first line is what `--status` and `--log` show of a job.
+pub fn ahead(setup: &str, then: Then, title: &str) -> String {
+    let fd = match then {
+        Then::Step => 1,
+        Then::Transfer => 2,
+    };
+    let title = title.replace(['\n', '\r'], " ");
+    let mut s = format!(
+        r#"# {title}
+__dibs_report=$(mktemp "${{TMPDIR:-/tmp}}/dibs-prepare.XXXXXX") || exit 70
+(
+{setup}
+) > "$__dibs_report"
+__dibs_rc=$?
+cat "$__dibs_report" >&{fd}
+__dibs_wt=$(sed -n 's/^DIBS-WT //p' "$__dibs_report" | tail -n 1)
+__dibs_target=$(sed -n 's/^DIBS-TARGET //p' "$__dibs_report" | tail -n 1)
+__dibs_missing=$(grep -c '^DIBS-GITMISSING ' "$__dibs_report")
+rm -f "$__dibs_report"
+[ "$__dibs_rc" = 0 ] || exit "$__dibs_rc"
+case $__dibs_wt in
+    "${{DIBS_SCRATCH:-$HOME/.cache/dibs}}"/ws/?*) ;;
+    *) echo "dibs: the setup reported no worktree under scratch, so nothing ran" >&2; exit 3 ;;
+esac
+"#
+    );
+    match then {
+        Then::Step => s.push_str(
+            "[ \"$__dibs_missing\" = 0 ] || { echo DIBS-HELD; echo 'dibs: a git dependency has to be sent first; the step runs once it is' >&2; exit 3; }\necho DIBS-READY\ncd -- \"$__dibs_wt\" || exit 3\nexport CARGO_TARGET_DIR=\"$__dibs_target\"\n",
+        ),
+        Then::Transfer => s.push_str("echo DIBS-READY >&2\ncd -- \"${__dibs_wt%/*}\" || exit 3\n"),
+    }
+    s
+}
+
 /// How a local tree is sent. `--checksum` without `--times` is what the seed relies on: a file
 /// whose bytes match is left alone with the time it was copied with, and any other is rewritten
 /// and takes the current time.
@@ -794,6 +843,64 @@ echo "DIBS-REV {repo} local:{content}"
 mod local_tests {
     use super::*;
     use std::process::Command;
+
+    fn run_ahead(scratch: &std::path::Path, setup: &str, then: Then, after: &str) -> (i32, String) {
+        std::fs::create_dir_all(scratch).unwrap();
+        let out = Command::new("bash")
+            .arg("-c")
+            .arg(ahead(setup, then, "a step") + after)
+            .current_dir(scratch)
+            .env("DIBS_SCRATCH", scratch)
+            .env("TMPDIR", scratch)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+        (out.status.code().unwrap_or(-1), text)
+    }
+
+    #[test]
+    fn a_step_after_its_setup_runs_in_the_prepared_tree_with_its_target() {
+        let scratch = tmp("ahead-step");
+        let (code, out) = run_ahead(&scratch, &setup_local_script("demo", "k1", "c"), Then::Step, "echo \"at $PWD with $CARGO_TARGET_DIR\"\n");
+        assert_eq!(code, 0, "{out}");
+        let wt = scratch.join("ws/demo/local-k1");
+        let parsed = parse(&out).unwrap();
+        assert_eq!(parsed.worktree, wt.display().to_string());
+        let ready = out.find("DIBS-READY").expect("the report ends before the step");
+        let step = out.find("at ").unwrap();
+        assert!(ready < step);
+        assert!(out.contains(&format!("at {} with {}", wt.display(), scratch.join("target/demo-local-k1").display())), "{out}");
+        assert!(std::fs::read_dir(&scratch).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().starts_with("dibs-prepare")), "the report file is removed");
+    }
+
+    #[test]
+    fn nothing_runs_after_a_setup_that_failed_or_named_no_tree() {
+        let scratch = tmp("ahead-fail");
+        for (setup, want) in [("exit 5", 5), ("echo DIBS-WT /somewhere/else", 3), ("true", 3)] {
+            for then in [Then::Step, Then::Transfer] {
+                let (code, out) = run_ahead(&scratch, setup, then, "echo RAN\n");
+                assert_eq!(code, want, "{setup} {then:?}: {out}");
+                assert!(!out.contains("RAN") && !out.contains("DIBS-READY"), "{setup} {then:?}: {out}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_transfer_starts_beside_the_tree_it_names() {
+        let scratch = tmp("ahead-transfer");
+        let (code, out) = run_ahead(&scratch, &setup_local_script("demo", "k2", "c"), Then::Transfer, "echo \"at $PWD\" >&2\n");
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains(&format!("at {}", scratch.join("ws/demo").display())), "{out}");
+    }
+
+    #[test]
+    fn a_step_waits_while_a_git_dependency_is_missing() {
+        let scratch = tmp("ahead-held");
+        let setup = setup_local_script("demo", "k3", "c") + "echo 'DIBS-GITMISSING widget-0123456789abcdef deadbeef'\n";
+        let (code, out) = run_ahead(&scratch, &setup, Then::Step, "echo RAN\n");
+        assert_eq!(code, 3, "{out}");
+        assert!(out.contains("DIBS-HELD") && !out.contains("DIBS-READY") && !out.contains("RAN"), "{out}");
+    }
 
     fn repo(dir: &std::path::Path) {
         std::fs::create_dir_all(dir).unwrap();

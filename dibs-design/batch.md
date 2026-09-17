@@ -1,5 +1,12 @@
 # One submission, one wake, one summary
 
+**Built** as the subcommand `dibs batch <file|->` rather than a `--batch` flag, to match the
+one-command form. The linkage below is built with one change: the `batch.<pid>` file carries the
+steps still to come, not only the position, so `--status` gives the time the batch has left on
+that machine. There is no cost line at submission: a batch is launched in the background, so a
+line printed as it starts reaches the agent only with the final summary, and `--status` is what
+it can ask mid-run. Recipes run as a batch of their own jobs. `--kill <batch-id>` is not built.
+
 ## Why this reverses a deferred decision
 
 `decisions.md` defers a per-call step spec, and `agent-interface.md` says outright that
