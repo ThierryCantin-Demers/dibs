@@ -130,6 +130,26 @@ the log. If the lock goes first, through `--max`, `--kill` or a cancelled batch,
 stopped rather than left running unlocked. If your side dies, the machine hears it through the
 same channel every job has, and lets go.
 
+## A service for the length of one call
+
+Some work needs a server on the machine that the command talks to: a GPU server a client drives
+over the network, or a database a test suite needs. `--with <name>='<command>'` starts one once
+the lock is taken and stops it before the lock is released, however the call ends, so it is up
+only while something is using it and never while someone else holds the machine. `--ready` says
+when it can be used, as `tcp:<port>` or a command that exits 0 once it is, and `--ready-within`
+bounds that wait. Its output is kept beside the job's, and the trailer says how it went.
+
+```
+dibs --on multigpu --hold --with cuda='target/debug/gpu-server --listen 0.0.0.0:7700' \
+    --ready tcp:7700 -- 'curl http://multigpu:7700/gpus'
+```
+
+A client on the machine itself is the same call without `--hold`, and a measured one adds
+`--bench`, which is what puts the server inside the exclusive lock rather than beside it. A
+service that exits before it is ready, or while the command is still running, stops the command
+and the call exits 77 with the end of the service's log, since a client that goes on without its
+server produces a failure that reads like the client's own.
+
 ## More than one machine
 
 `dibs --check <host> --write` records what it finds there as an entry in

@@ -16,6 +16,14 @@
 #                                provisioning it. With --bench nothing else runs there meanwhile.
 #                                The lock goes when the command ends, and the command is stopped
 #                                if the lock goes first, through --max or --kill.
+#   --with <name>='<command>'    run a service on the machine for the length of this call: a
+#                                server the command talks to. It starts once the lock is taken
+#                                and is stopped before the lock is released, however the call
+#                                ends. Repeatable.
+#   --ready tcp:<port>           when the --with before it can be used, as a port that answers
+#   --ready '<command>'          or a command that exits 0 once it does. --ready-within bounds
+#                                the wait (300s). A service that exits early, or is never
+#                                ready, stops the call with exit 77 and its log is shown.
 #   dibs status, dibs out [job] the same as --status and --out
 #   --device <alias>             run on one named card. Two runs naming one alias are two
 #                                runs on the same silicon, which is what makes their numbers
@@ -92,7 +100,7 @@
 #   -v                 with --status, also dump the raw lock directory
 #
 #   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran    75 busy
-#        76 its batch was cancelled    124 overran --max
+#        76 its batch was cancelled    77 a --with service failed    124 overran --max
 #
 # --- end of the interface, everything below is why -------------------------------------
 #
@@ -638,6 +646,10 @@ DEV_CHIP=""
 DEV_TWINS=1
 NEW_SERIES=0
 HOLD=0
+WITH_NAME=()
+WITH_READY=()
+WITH_CMD=()
+READY_WITHIN=300
 # The whole stream is what a person at a terminal wants and what the recipe layer parses; an agent
 # wants the bounded digest, since it cannot know whether a call prints 3 lines or 30000
 # and would cut it at the pipe, taking the exit status with it.
@@ -718,6 +730,22 @@ while [ $# -gt 0 ]; do
                       fi ;;
         --peek)       MODE=peek; shift ;;
         --hold)       HOLD=1; shift ;;
+        --with)       n=${2:-}; n=${n%%=*}
+                      case "${2:-}" in
+                          [a-z]*=*) ;;
+                          *) echo "dibs: --with takes name='<command>', as in --with server='./serve --port 7700'" >&2; exit 2 ;;
+                      esac
+                      case "$n" in *[!a-z0-9_]*)
+                          echo "dibs: a --with name is lowercase letters, digits and _, and '$n' is not" >&2; exit 2 ;;
+                      esac
+                      case " ${WITH_NAME[*]} " in *" $n "*) echo "dibs: two services are called $n" >&2; exit 2 ;; esac
+                      WITH_NAME+=("$n"); WITH_CMD+=("${2#*=}"); WITH_READY+=(""); shift 2 ;;
+        --ready)      [ "${#WITH_NAME[@]}" -gt 0 ] ||
+                          { echo "dibs: --ready says when the --with before it is ready, and none comes before it" >&2; exit 2; }
+                      WITH_READY[-1]=${2:-}; shift 2 ;;
+        --ready-within) READY_WITHIN=${2:-}
+                      case "$READY_WITHIN" in ''|*[!0-9]*) echo "dibs: --ready-within takes seconds" >&2; exit 2 ;; esac
+                      shift 2 ;;
         -v|--verbose) VERBOSE=1; shift ;;
         --json)       JSON=1; shift ;;
         --release)    MODE=release; shift ;;
@@ -1062,8 +1090,16 @@ if [ "$HOLD" = 1 ]; then
     esac
     [ "$DETACH" = 1 ] && { echo "dibs: --hold runs its command on this computer, and --detach would leave it." >&2; exit 2; }
     # A card is pinned through the environment of the job on the machine, which a command run
-    # here never sees.
-    [ -n "$DEVICE" ] && { echo "dibs: --hold runs its command on this computer, so it cannot be pinned to a card there." >&2; exit 2; }
+    # here never sees, though a service started there with --with does.
+    [ -n "$DEVICE" ] && [ "${#WITH_NAME[@]}" = 0 ] &&
+        { echo "dibs: --hold runs its command on this computer, so it cannot be pinned to a card there." >&2; exit 2; }
+fi
+if [ "${#WITH_NAME[@]}" -gt 0 ]; then
+    case "$MODE" in
+        shared|bench) ;;
+        *) echo "dibs: --with starts a service under the lock of a call that takes one: a run, --bench, or --hold." >&2
+           exit 2 ;;
+    esac
 fi
 
 # --detach moves the caller and nothing else. It used to be a mode, so it and --bench each
@@ -1086,6 +1122,7 @@ if [ "$DETACH" = 1 ]; then
     [ "$NEW_SERIES" = 1 ] && unhonoured="--new-series"
     [ -n "$WAIT" ]        && unhonoured="--wait"
     [ -n "$MAXHOLD" ]     && unhonoured="--max"
+    [ "${#WITH_NAME[@]}" -gt 0 ] && unhonoured="--with"
     if [ -n "$unhonoured" ]; then
         echo "dibs: $unhonoured describes a run, and --detach starts a caller." >&2
         echo "  Give it to the dibs call inside:  dibs --detach 'dibs $unhonoured ... <command>'" >&2
@@ -1599,6 +1636,19 @@ BATCH=$(printf %s "${18:-}" | base64 -d 2>/dev/null)
 BATCH_TAG=$(printf '%s\n' "$BATCH" | head -1 | tr '\t' ' ')
 HOLD=${19:-0}
 LEASE=${20:-0}; case "$LEASE" in ''|*[!0-9]*) LEASE=0 ;; esac
+# --with: a line saying how long a service may take to be ready, then name|readiness|command, the
+# last two in base64. Not tabs: read collapses a run of them, and an empty readiness is one.
+WITH_NAME=(); WITH_READY=(); WITH_CMD=(); WITH_PID=(); WITH_LOG=(); WITH_END=(); WITH_BAD=(); WITH_UP=0
+READY_WITHIN=300
+if [ -n "${21:-}" ]; then
+    { read -r READY_WITHIN
+      while IFS='|' read -r n r c; do
+          WITH_NAME+=("$n")
+          WITH_READY+=("$(printf %s "$r" | base64 -d 2>/dev/null)")
+          WITH_CMD+=("$(printf %s "$c" | base64 -d 2>/dev/null)")
+      done; } < <(printf %s "${21}" | base64 -d 2>/dev/null)
+    case "$READY_WITHIN" in ''|*[!0-9]*) READY_WITHIN=300 ;; esac
+fi
 [ -n "$AGENT" ] || AGENT=?
 # The caller cannot clean this up: its command line is read by fish, which has no $?.
 # Unlinking a running script is safe; bash keeps the open inode.
@@ -1816,7 +1866,7 @@ holder_output() {   # pid; sets OUTPUT_FILE
     local root
     OUTPUT_FILE=
     root=$(readlink "/proc/$1/fd/1" 2>/dev/null)
-    OUTPUT_FILE=$(fd_targets "$1" "$root" | head -1)
+    OUTPUT_FILE=$(fd_targets "$1" "$root" | grep -v '/with-[a-z0-9_]*\.log$' | head -1)
 }
 
 # A median moves only when a run finishes, and a run appends to the history before its
@@ -1921,7 +1971,7 @@ kill_batch_here() {   # id anyone
 prune() {
     local f pid
     find "$DIR" -maxdepth 1 -name 'cancelled.*' -mmin +1440 -delete 2>/dev/null
-    for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.* "$DIR"/batch.* "$DIR"/hold.*; do
+    for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.* "$DIR"/batch.* "$DIR"/hold.* "$DIR"/with.*; do
         [ -e "$f" ] || continue
         pid=${f##*.}
         # /proc rather than kill -0: signalling another user's process fails with EPERM,
@@ -2015,6 +2065,108 @@ tree_below() {   # pid; its descendants, parents before children, the pid itself
                     }
             } while (added)
         }'
+}
+
+# The lock is released the moment a job exits, and a grandchild still running then runs unlocked
+# beside the next measurement, so everything below goes first, then what was named: TERM, and
+# KILL ten seconds later for whatever ignores it.
+reap() {   # pids
+    local round below p sig alive st
+    for round in $(seq 50); do
+        below=$(for p in "$@"; do tree_below "$p"; done)
+        [ -n "$below" ] || break
+        [ "$round" -gt 40 ] && sig=KILL || sig=TERM
+        for p in $(printf '%s\n' $below | tac); do kill -"$sig" "$p" 2>/dev/null; done
+        sleep 0.25
+    done
+    kill -TERM "$@" 2>/dev/null
+    for round in $(seq 41); do
+        # A zombie has ended, and outside its parent kill -0 would still find it.
+        alive=$(for p in "$@"; do
+                    st=$(sed 's/.*) //; s/ .*//' "/proc/$p/stat" 2>/dev/null)
+                    [ -n "$st" ] && [ "$st" != Z ] && echo "$p"
+                done)
+        [ -n "$alive" ] || return 0
+        [ "$round" = 41 ] && kill -KILL $alive 2>/dev/null
+        sleep 0.25
+    done
+}
+
+with_lines() {   # pid
+    local n p c
+    [ -e "$DIR/with.$1" ] || return 0
+    while IFS=$'\t' read -r n p c; do
+        echo "    ${C_DIM}with $n, pid $p:$C_OFF $C_DIM$c$C_OFF"
+    done < "$DIR/with.$1"
+}
+
+with_start() {
+    local i
+    WITH_UP=1
+    WITH_STARTED=$(date +%s)
+    for i in "${!WITH_NAME[@]}"; do
+        WITH_LOG[$i]=/dev/null
+        [ -n "$JOBLOG" ] && WITH_LOG[$i]=$JOBDIR/with-${WITH_NAME[$i]}.log
+        bash -c "${WITH_CMD[$i]}" 8>&- 9>&- 5<&- < /dev/null > "${WITH_LOG[$i]}" 2>&1 &
+        WITH_PID[$i]=$!
+        printf '%s\n' "$!" >> "$WORKFILE"
+        printf '%s\t%s\t%s\n' "${WITH_NAME[$i]}" "$!" \
+            "$(printf %s "${WITH_CMD[$i]}" | tr '\n\t' '  ' | cut -c1-160)" >> "$DIR/with.$$"
+    done
+}
+
+with_answers() {   # readiness seconds; readiness is empty, tcp:[host:]port, or a command that exits 0
+    local a h=127.0.0.1
+    case "$1" in
+        '') return 0 ;;
+        tcp:*) a=${1#tcp:}
+               case "$a" in *:*) h=${a%:*}; a=${a##*:} ;; esac
+               timeout "$2" bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$h" "$a" 8>&- 9>&- 5<&- 2>/dev/null ;;
+        *) timeout --kill-after=2 "$2" bash -c "$1" 8>&- 9>&- 5<&- < /dev/null > /dev/null 2>&1 ;;
+    esac
+}
+
+with_failed() {   # index what consequence; with the end of its log, which is usually where the reason is
+    WITH_END[$1]="${WITH_END[$1]:+${WITH_END[$1]}, }$2"
+    WITH_BAD[$1]=1
+    WITH_FAIL="service ${WITH_NAME[$1]} $2"
+    echo "dibs: $WITH_FAIL, so $3." >&2
+    if [ -s "${WITH_LOG[$1]}" ]; then
+        echo "  The end of its log, ${WITH_LOG[$1]}:" >&2
+        tail -n 10 "${WITH_LOG[$1]}" | sed 's/^/    /' >&2
+    fi
+}
+
+with_ready() {   # 1 when a service is not there to be used
+    local i st left deadline=$(( $(date +%s) + READY_WITHIN ))
+    for i in "${!WITH_NAME[@]}"; do
+        until left=$(( deadline - $(date +%s) )); with_answers "${WITH_READY[$i]}" $(( left > 0 ? left : 1 )); do
+            if ! kill -0 "${WITH_PID[$i]}" 2>/dev/null; then
+                wait "${WITH_PID[$i]}"; st=$?
+                with_failed "$i" "exited $st before it was ready" "the command did not run"
+                return 1
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+                with_failed "$i" "was not ready within ${READY_WITHIN}s" "the command did not run"
+                return 1
+            fi
+            sleep 0.2
+        done
+        WITH_END[$i]="ready after $(( $(date +%s) - WITH_STARTED ))s"
+    done
+}
+
+with_stop() {
+    local i alive=()
+    for i in "${!WITH_PID[@]}"; do
+        kill -0 "${WITH_PID[$i]}" 2>/dev/null || continue
+        alive+=("${WITH_PID[$i]}")
+        if [ -n "${WITH_BAD[$i]:-}" ]; then WITH_END[$i]="${WITH_END[$i]}, and stopped"
+        else WITH_END[$i]="${WITH_END[$i]:+${WITH_END[$i]}, }stopped when the command ended"; fi
+    done
+    [ "${#alive[@]}" -gt 0 ] && { reap "${alive[@]}"; wait "${alive[@]}" 2>/dev/null; }
+    rm -f "$DIR/with.$$"
+    WITH_UP=0
 }
 
 pgid_of() {   # pid; prints its process group, empty if it has gone
@@ -2379,6 +2531,7 @@ show() {
             fi
             echo "    ${C_WARN}stop it with: dibs --kill $pid$C_OFF"
             echo "    $C_DIM$cmd$C_OFF"
+            with_lines "$pid"
             echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF${dev:+${C_DIM} on $C_OFF$dev}"
             batch_lines "$pid" -1
             held=$((held+1))
@@ -2426,6 +2579,7 @@ show() {
             echo "  $MC$mode$C_OFF  $AC$label$C_OFF  $C_B$el$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_DIM}[no history for this one yet]$C_OFF"
         fi
         echo "    $C_DIM$cmd$C_OFF"
+        with_lines "$pid"
         echo "    ${C_DIM}from$C_OFF $AC$agent$C_OFF${dev:+${C_DIM} on $C_OFF$dev}"
         batch_lines "$pid" "$jleft"
         # Where its output is going, so --out is discovered by reading the status rather than
@@ -3059,6 +3213,11 @@ if [ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ]; then
     exit 76
 fi
 
+if [ "${#WITH_NAME[@]}" -gt 0 ] && ! [ "${BASH_VERSINFO[0]}${BASH_VERSINFO[1]}" -ge 51 ]; then
+    echo "dibs: --with needs bash 5.1 on the machine, and $(hostname -s) has $BASH_VERSION. Nothing ran." >&2
+    exit 2
+fi
+
 if [ "$MODE" = peek ]; then
     PEEK_START=$(date +%s)
     timeout --signal=TERM --kill-after=5 "$MAXHOLD" bash -c "$CMD" < /dev/null
@@ -3094,7 +3253,8 @@ log_event arrived
 # Nothing can be written if it is SIGKILLed, which is itself worth knowing when reading it.
 # Every exit, not just the happy one: while the watch lives it holds the channel open and
 # the caller's ssh cannot return, so giving up on a busy lock would hang the caller.
-trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DIR/batch.$$" "$DIR/hold.$$" "$0"
+trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DIR/batch.$$" "$DIR/hold.$$" "$DIR/with.$$" "$0"
+      [ "$WITH_UP" = 1 ] && kill -TERM "${WITH_PID[@]}" 2>/dev/null
       [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
       [ "$LOGGED_END" = 1 ] || log_event aborted' EXIT
 
@@ -3127,21 +3287,12 @@ if [ "$NO_WATCH" != 1 ]; then
           exit 0
       fi
   done 2>/dev/null
-  work=$(cat "$WORKFILE" 2>/dev/null)
+  work=""
+  for p in $(cat "$WORKFILE" 2>/dev/null); do kill -0 "$p" 2>/dev/null && work="$work $p"; done
   if [ "$rc" -gt 128 ]; then CMD_ONE="caller silent for ${LEASE}s: $CMD_ONE"; else CMD_ONE="caller gone: $CMD_ONE"; fi
   log_event caller-gone
-  if [ -n "$work" ] && kill -0 "$work" 2>/dev/null; then
-      # Everything below the job goes before the job itself. The lock is released the moment
-      # the job exits, and a grandchild still running then runs unlocked beside the next
-      # measurement. TERM first, KILL after ten seconds for whatever ignores it.
-      for round in $(seq 50); do
-          below=$(tree_below "$work")
-          [ -n "$below" ] || break
-          [ "$round" -gt 40 ] && sig=KILL || sig=TERM
-          for p in $(printf '%s\n' $below | tac); do kill -"$sig" "$p" 2>/dev/null; done
-          sleep 0.25
-      done
-      kill -TERM "$work" 2>/dev/null
+  if [ -n "$work" ]; then
+      reap $work
   else
       kill -TERM "$MAIN" 2>/dev/null   # still queueing: stop waiting for a lock nobody wants
   fi
@@ -3267,22 +3418,46 @@ if [ "$MODE" != rsh ] && mkdir -p "$JOBDIR" 2>/dev/null; then
 fi
 RUN=$CMD
 [ "$HOLD" = 1 ] && RUN="read -r st < $(printf %q "$DIR/hold.$$") && exit \"\$st\""
-if [ "$MODE" = rsh ]; then
-    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 0<&5 5<&- &
-elif [ -n "$JOBLOG" ] && [ "$MAXHOLD" -gt 0 ]; then
-    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
-elif [ -n "$JOBLOG" ]; then
-    bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
-elif [ "$MAXHOLD" -gt 0 ]; then
-    timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null &
+WITH_FAIL=""
+[ "${#WITH_NAME[@]}" -gt 0 ] && { with_start; with_ready || with_stop; }
+if [ -n "$WITH_FAIL" ]; then
+    STATUS=77
+    [ -n "$JOBLOG" ] && : >> "$JOBLOG"
+    # A tee waiting for the job's output never gets a writer otherwise.
+    [ -n "$TEE" ] && : > "$JOBDIR/pipe"
 else
-    bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null &
+    if [ "$MODE" = rsh ]; then
+        timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 0<&5 5<&- &
+    elif [ -n "$JOBLOG" ] && [ "$MAXHOLD" -gt 0 ]; then
+        timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
+    elif [ -n "$JOBLOG" ]; then
+        bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null > "${SINK:-$JOBDIR/pipe}" 2>&1 &
+    elif [ "$MAXHOLD" -gt 0 ]; then
+        timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null &
+    else
+        bash -c "$RUN" 8>&- 9>&- 5<&- < /dev/null &
+    fi
+    WORK=$!
+    echo "$WORK" >> "$WORKFILE"
+    [ "$HOLD" = 1 ] && echo DIBS-HOLDING
+    if [ "$WITH_UP" = 1 ]; then
+        wait -n -p ENDED "$WORK" "${WITH_PID[@]}"
+        STATUS=$?
+        if [ "$ENDED" != "$WORK" ]; then
+            for i in "${!WITH_PID[@]}"; do
+                [ "${WITH_PID[$i]}" = "$ENDED" ] &&
+                    with_failed "$i" "exited $STATUS while the command ran" "the command was stopped"
+            done
+            reap "$WORK"
+            wait "$WORK"
+            STATUS=77
+        fi
+        with_stop
+    else
+        wait "$WORK"
+        STATUS=$?
+    fi
 fi
-WORK=$!
-echo "$WORK" > "$WORKFILE"
-[ "$HOLD" = 1 ] && echo DIBS-HOLDING
-wait "$WORK"
-STATUS=$?
 [ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ] && STATUS=76
 if [ -n "$TEE" ]; then
     wait "$TEE" 2>/dev/null
@@ -3302,6 +3477,7 @@ LOGGED_END=1
 if [ -n "$JOBLOG" ]; then
     by=command
     [ "$STATUS" -eq 124 ] && [ "$MAXHOLD" -gt 0 ] && by=dibs
+    [ "$STATUS" -eq 77 ] && [ -n "$WITH_FAIL" ] && by=dibs
     [ "$STATUS" -eq 76 ] && [ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ] && by=dibs
     lines=$(wc -l < "$JOBLOG" 2>/dev/null || echo 0)
     # The digest: enough to see how it went, never so much that a caller has to cut it.
@@ -3329,6 +3505,9 @@ if [ -n "$JOBLOG" ]; then
         "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$built" >&2
     # A hold's command printed where it ran, so the log here has nothing in it.
     [ "$HOLD" = 1 ] || printf '  log %s:%s  (%s lines)  dibs --out %s\n' "$(hostname -s)" "$JOBLOG" "$lines" "$JOB" >&2
+    for i in "${!WITH_NAME[@]}"; do
+        printf '  with %s: %s  log %s:%s\n' "${WITH_NAME[$i]}" "${WITH_END[$i]:-not started}" "$(hostname -s)" "${WITH_LOG[$i]}" >&2
+    done
     [ "$built" = "  built=nothing" ] &&
         echo "  built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary." >&2
     # The same failing command re-run unchanged fails the same way, and the log shows it done
@@ -3401,6 +3580,14 @@ case "$MODE" in
         [ -n "${DIBS_BATCH:-}" ] && BATCHB64=$(printf '%s\t%s\n%s\n' "$DIBS_BATCH" "${DIBS_BATCH_STEP:-}" \
             "${DIBS_BATCH_PLAN:-}" | head -n 200 | base64 | tr -d '\n') ;;
 esac
+WITHB64=""
+if [ "${#WITH_NAME[@]}" -gt 0 ]; then
+    WITHB64=$({ printf '%s\n' "$READY_WITHIN"
+                for i in "${!WITH_NAME[@]}"; do
+                    printf '%s|%s|%s\n' "${WITH_NAME[$i]}" "$(printf %s "${WITH_READY[$i]}" | base64 | tr -d '\n')" \
+                        "$(printf %s "${WITH_CMD[$i]}" | base64 | tr -d '\n')"
+                done; } | base64 | tr -d '\n')
+fi
 # Only a terminal wants a redraw. Piped to a file, --watch is a timestamped log instead.
 ISTTY=0; [ -t 1 ] && ISTTY=1
 
@@ -3607,11 +3794,11 @@ if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
         SCRIPT=$(mktemp "${TMPDIR:-/tmp}/dibs-hold-script.XXXXXX") || exit 70
         remote_script > "$SCRIPT"
         hold_here() {
-            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 <&7 7<&-
+            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 0 "$WITHB64" <&7 7<&-
         }
         hold_run hold_here
     else
-        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64"
+        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 0 0 "$WITHB64"
     fi
     STATUS=$?
     [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
@@ -3687,7 +3874,7 @@ else
             -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
             "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
              exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
-             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE'
+             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE' '$WITHB64'
 exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec <&7 6>&- 7<&-; relay) 6>&- 7<&-
     }
     if [ "$HOLD" = 1 ]; then hold_run to_machine; else to_machine; fi

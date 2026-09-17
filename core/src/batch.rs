@@ -220,6 +220,7 @@ fn describe(words: &[String]) -> Result<Step, String> {
                 device = next;
                 i += 1;
             }
+            "--with" | "--ready" | "--ready-within" => i += 1,
             "--bench" | "-b" => lock = "bench",
             "--peek" => lock = "peek",
             "--sync" => {

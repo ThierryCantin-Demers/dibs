@@ -36,6 +36,11 @@ spoiled without it.
   the network. Add `--bench` when nothing else may run there meanwhile. The command is stopped if
   the lock goes first. Do not build this by hand from a job blocking on a fifo and a `--peek` that
   writes to release it: a peek is for looking.
+- `--with <name>='<server>'` runs a server on the machine for the length of one call, started under
+  its lock and stopped before the lock goes, with `--ready tcp:<port>` or a command saying when it
+  can be used. Use it rather than starting a server in the background of a job: one left running
+  holds cards and memory while the next person measures. A server that exits early, or is never
+  ready, stops the call with exit 77.
 - A shared job whose label's history says it is quick goes around a queued benchmark instead of
   waiting it out, delaying it by about a minute at most. Two shared holders while a benchmark is
   queued is that, not a bug.

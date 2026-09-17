@@ -1672,6 +1672,56 @@ check "its lock with it" "$(gone && echo yes)" "yes"
 hk=$(cat "$S/hold-k.pid"); timeout 10 tail --pid="$hk" -f /dev/null
 check "and the command it was held for" "$(kill -0 "$hk" 2>/dev/null && echo running || echo stopped)" "stopped"
 
+echo "a service started for the length of one call"
+fifo wnever; fifo wnever2
+# Blocks until it is stopped, and says its pid first, which exec keeps.
+svc() { echo "echo \$\$ > $S/$1.pid; ${2:-}exec bash -c 'read -r _ <> $S/f-wnever'"; }
+WPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+listen="python3 -c 'import os, signal, socket; s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"127.0.0.1\", $WPORT)); s.listen(); signal.pause()'"
+connect="python3 -c 'import socket; socket.create_connection((\"127.0.0.1\", $WPORT)); print(\"answered\")'"
+check "a service answering on its port is ready before the command runs" \
+  "$($T --label with-tcp --with srv="$listen" --ready tcp:$WPORT "$connect" 2>/dev/null)" "answered"
+out=$($T --label with-exit --with srv="$(svc w1)" "exit 3" 2>&1); rc=$?
+check "the call exits with the command's status" "$rc" "3"
+check "and the service is stopped when the command ends, whatever its exit" \
+  "$(kill -0 "$(cat "$S/w1.pid")" 2>/dev/null && echo running || echo stopped)" "stopped"
+check "the trailer says how the service went" "$(grep -c '^  with srv: ready after [0-9]*s, stopped when the command ended  log ' <<<"$out")" "1"
+check "readiness can be a command" \
+  "$($T --label with-cmd --with srv="$(svc w2 "echo up > $S/w2.up; ")" --ready "test -s $S/w2.up" "cat $S/w2.up" 2>/dev/null)" "up"
+out=$($T --label with-dies --with bad='echo oops; exit 4' --ready false "touch $S/w-ran" 2>&1); rc=$?
+check "a service that exits before it is ready ends the call with 77" "$rc" "77"
+check "and the command never runs" "$([ -e "$S/w-ran" ] && echo ran || echo not)" "not"
+check "it says why, with the end of the service's log" "$(grep -c '^    oops$' <<<"$out")" "1"
+check "and that dibs ended it" "$(grep -c '  exit 77  by=dibs' <<<"$out")" "1"
+out=$($T --label with-slow --with slow="$(svc w3)" --ready false --ready-within 1 "touch $S/w-ran" 2>&1); rc=$?
+check "one that is not ready in time ends the call with 77 too" "$rc$([ -e "$S/w-ran" ] && echo ' and ran')" "77"
+check "and is stopped" "$(kill -0 "$(cat "$S/w3.pid")" 2>/dev/null && echo running || echo stopped)" "stopped"
+out=$($T --label with-mid --with brief="read -r -t 1 _ <> $S/f-wnever2; exit 5" "read -r _ < $S/f-wnever; touch $S/w-ran" 2>&1); rc=$?
+check "a service that exits while the command runs stops the command" "$rc$([ -e "$S/w-ran" ] && echo ' and it ran on')" "77"
+check "and the trailer says so" "$(grep -c '^  with brief: ready after [0-9]*s, exited 5 while the command ran' <<<"$out")" "1"
+fifo wup; fifo wgo
+$T --label with-status --with srv="$(svc w4)" "echo up > $S/f-wup; read -r _ < $S/f-wgo" >/dev/null 2>&1 & WP=$!
+sync_ wup
+check "status names a running service under its job" "$($T --status | grep -c '^    with srv, pid [0-9]*: echo')" "1"
+free wgo; wait $WP
+check "a hold's command here runs once the service there is ready" \
+  "$(H --hold --label with-hold --with srv="$(svc w5 "echo up > $S/w5.up; ")" --ready "test -s $S/w5.up" "cat $S/w5.up" 2>/dev/null)" "up"
+check "and a hold with a service may name the card the service runs on" \
+  "$($T --hold --device gpu:x --with srv=true true 2>&1 | grep -c 'cannot be pinned')" "0"
+check "a peek takes no lock for a service to live under" "$($T --peek --with srv=true true >/dev/null 2>&1; echo $?)" "2"
+check "--ready belongs to a --with before it" "$($T --ready tcp:1 true >/dev/null 2>&1; echo $?)" "2"
+check "and a service needs a name" "$($T --with './serve' true >/dev/null 2>&1; echo $?)" "2"
+fifo wkup
+PATH=$S/fakessh:$PATH DIBS_LOCAL=0 DIBS_HOST=fake-remote DIBS_HOSTNAME=laptop-here DIBS_REMOTE_DIR=$S/remote-run \
+  DIBS_SCRATCH=$S/scr $T --label with-gone --with srv="$(svc w6)" "echo up > $S/f-wkup; read -r _ < $S/f-wnever" >/dev/null 2>&1 &
+WK=$!
+sync_ wkup
+kill -9 $WK; wait $WK 2>/dev/null
+timeout 30 grep -m1 -q 'caller-gone.*with-gone' <(tail -n +1 -f "$DIBS_LOG")
+wk=$(cat "$S/w6.pid"); timeout 15 tail --pid="$wk" -f /dev/null
+check "a caller that dies takes its service with it" "$(kill -0 "$wk" 2>/dev/null && echo running || echo stopped)" "stopped"
+check "and the lock" "$(gone && echo yes)" "yes"
+
 echo "recipes"
 # A repo the recipe layer can prepare: its clone on the machine's side, and a tree here.
 git init -q --bare "$S/origin.git"
