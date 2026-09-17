@@ -121,6 +121,9 @@ spoiled without it.
 - `dibs --kill <pid>` stops a wedged job, refusing someone else's without `--anyone`, and
   `dibs --log [n]` shows what ran, what it cost and what was killed. Both ignore the lock, so a
   stuck machine can still be freed.
+- `dibs --kill <batch-id>` stops a whole batch, the id being the one `dibs status` and the summary
+  show. Where its driver runs, nothing more starts and it prints its summary; from anywhere else
+  every machine stops that batch's jobs and refuses its later steps, which stops the driver too.
 - `dibs --watch` is for a person at a terminal. A backgrounded job tells you when it is done, and
   watching costs the machine.
 
@@ -183,4 +186,6 @@ spoiled without it.
   - **71** the lock directory cannot be written, so **nothing ran**; a sandboxed shell is the usual
     cause. Never point `DIBS_LOCK_DIR` somewhere writable: a lock nobody else uses excludes nobody.
 - **75** it was busy and you passed `--wait`.
+- **76** its batch was cancelled with `dibs --kill <batch-id>`. It was meant to stop: do not run it
+  again unless asked.
 - **124** it overran `--max` and was killed while holding the lock.

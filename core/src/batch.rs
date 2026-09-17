@@ -11,7 +11,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// The exit dibs gives a step of a batch that `dibs --kill <batch-id>` cancelled on a machine.
+pub const CANCELLED: i32 = 76;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Step {
@@ -433,6 +436,9 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
     collect_old(&root);
     let dir = root.join(&id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if let Ok(owner) = std::env::var("DIBS_BATCH_OWNER") {
+        let _ = std::fs::write(dir.join("owner"), owner);
+    }
     eprint!("dibs: batch {id}, {} steps. You are told when it ends; there is nothing to watch.\n{plan}", steps.len());
 
     let owned = has("setsid") && has("setpriv");
@@ -444,6 +450,8 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
     let started = Instant::now();
     let mut states = vec![State::Waiting; steps.len()];
     let mut stopped = false;
+    let mut cancelled: Option<String> = None;
+    let mut running: HashMap<usize, u32> = HashMap::new();
     let (tx, rx) = mpsc::channel::<(usize, i32, u64)>();
     loop {
         let starting = ready(&steps, &machines, &states, stopped);
@@ -478,27 +486,46 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                 .stderr(Stdio::piped());
             let tx = tx.clone();
             let verbose = opts.verbose;
-            std::thread::spawn(move || {
-                let t = Instant::now();
-                let code = match cmd.spawn() {
-                    Ok(mut child) => {
+            let t = Instant::now();
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    running.insert(i, child.id());
+                    std::thread::spawn(move || {
                         let o = copy(child.stdout.take(), out, verbose.then(|| format!("{} ", step.name)));
                         let e = copy(child.stderr.take(), err, verbose.then(|| format!("{} ", step.name)));
                         let status = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
                         let _ = (o.join(), e.join());
-                        status
-                    }
-                    Err(_) => 127,
-                };
-                let _ = tx.send((i, code, t.elapsed().as_secs()));
-            });
+                        let _ = tx.send((i, status, t.elapsed().as_secs()));
+                    });
+                }
+                Err(_) => {
+                    let _ = tx.send((i, 127, 0));
+                }
+            }
         }
         if !states.contains(&State::Running) {
             break;
         }
-        let (i, exit, seconds) = rx.recv().map_err(|e| e.to_string())?;
+        let (i, exit, seconds) = loop {
+            match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(done) => break done,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if cancelled.is_none() && dir.join("cancel").exists() {
+                        cancelled = Some("with dibs --kill".into());
+                        stopped = true;
+                        running.values().for_each(|&pid| stop(pid, owned));
+                    }
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        };
+        running.remove(&i);
         states[i] = State::Done { exit, seconds };
-        if exit != 0 && !steps[i].cont {
+        if exit == CANCELLED && cancelled.is_none() && was_cancelled(&std::fs::read_to_string(dir.join(format!("{}.err", steps[i].name))).unwrap_or_default()) {
+            cancelled = Some(format!("with dibs --kill on {}", machines[i]));
+            running.values().for_each(|&pid| stop(pid, owned));
+        }
+        if exit != 0 && (!steps[i].cont || cancelled.is_some()) {
             stopped = true;
         }
     }
@@ -507,9 +534,28 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
             *s = State::NotRun;
         }
     }
-    let report = summary(&id, &steps, &machines, &states, &dir, started.elapsed().as_secs());
+    let report = summary(&id, &steps, &machines, &states, &dir, started.elapsed().as_secs(), cancelled.as_deref());
+    let _ = std::fs::write(dir.join("summary"), &report);
     print!("{report}");
-    Ok(if states.iter().all(|s| matches!(s, State::Done { exit: 0, .. })) { 0 } else { 1 })
+    Ok(if cancelled.is_some() {
+        CANCELLED
+    } else if states.iter().all(|s| matches!(s, State::Done { exit: 0, .. })) {
+        0
+    } else {
+        1
+    })
+}
+
+/// A command may exit 76 of its own accord, so only dibs saying so makes it a cancellation.
+fn was_cancelled(stderr: &str) -> bool {
+    stderr.contains("was cancelled with dibs --kill") || stderr.lines().any(|l| l.starts_with("job ") && l.contains("  exit 76  by=dibs"))
+}
+
+/// A step is its own process group, so the signal reaches the dibs call under it and that call's
+/// death reaches the machine, which stops the job and releases its lock.
+fn stop(pid: u32, owned: bool) {
+    let target = if owned { format!("-{pid}") } else { pid.to_string() };
+    let _ = Command::new("kill").args(["-TERM", "--", &target]).status();
 }
 
 fn has(tool: &str) -> bool {
@@ -552,10 +598,13 @@ fn plan(steps: &[Step], machines: &[String]) -> String {
     s
 }
 
-pub fn summary(id: &str, steps: &[Step], machines: &[String], states: &[State], dir: &Path, seconds: u64) -> String {
+pub fn summary(id: &str, steps: &[Step], machines: &[String], states: &[State], dir: &Path, seconds: u64, cancelled: Option<&str>) -> String {
     let failed = states.iter().filter(|s| matches!(s, State::Done { exit, .. } if *exit != 0)).count();
     let not_run = states.iter().filter(|s| **s == State::NotRun).count();
     let mut out = format!("batch {id}  {} steps", steps.len());
+    if let Some(how) = cancelled {
+        out.push_str(&format!(", cancelled {how}"));
+    }
     if failed > 0 {
         out.push_str(&format!(", {failed} failed"));
     }
@@ -715,6 +764,13 @@ mod tests {
         assert_eq!(inside[0].1, "b9");
         assert_eq!(inside[1].1, "arm-a: build");
         assert_eq!(inside[2].1, "2\t4\nbench\tbench\tbench_x\t1\narm-b\trecipe\t\t1\n");
+    }
+
+    #[test]
+    fn only_dibs_saying_so_makes_exit_76_a_cancellation() {
+        assert!(was_cancelled("dibs: batch 1 was cancelled with dibs --kill, so this step does not run.\n"));
+        assert!(was_cancelled("job 20260917-9  bench  x  queued 0s  ran 4s  exit 76  by=dibs\n"));
+        assert!(!was_cancelled("job 20260917-9  shared  x  queued 0s  ran 1s  exit 76  by=command\n"));
     }
 
     #[test]

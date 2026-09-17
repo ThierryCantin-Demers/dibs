@@ -1482,6 +1482,39 @@ check "the log names the batch and step of every event" \
   "$(awk -F'\t' '$5=="batch-cur" {n++; if ($11 ~ /^[0-9-]+ hold$/) t++} END {print (n >= 2 && n == t) ? "all" : n " " t}' "$DIBS_LOG")" "all"
 check "and --log shows it" "$($T --log 50 | grep -cE 'batch-cur .*\[batch [0-9-]+ hold\]$' | grep -c '^[1-9]')" "1"
 check "and a record left behind by a killed job goes with it" "$(ls "$DIBS_LOCK_DIR" | grep -c '^batch\.')" "0"
+# A batch is cancelled by its id: at its driver when that runs here, on the machines otherwise.
+fifo KB; fifo KBU
+printf '%s\n' "[hold cont] dibs --label batch-kill-hold 'echo up > $S/f-KBU; $(hold KB)'" \
+  "[after] dibs --label batch-kill-after 'echo ran > $S/kb-after'" > "$S/b8"
+PATH=$S/bbin:$PATH DIBS_CORE=$BCORE "$T" batch "$S/b8" > "$S/b8.out" 2> "$S/b8.err" &
+BDRIVER=$!
+sync_ KBU
+KID=$(sed -n 's/^dibs: batch \([0-9-]*\), .*/\1/p' "$S/b8.err")
+out=$(PATH=$S/bbin:$PATH DIBS_CORE=$BCORE "$T" --kill "$KID" 2>&1)
+wait $BDRIVER; rc=$?
+check "killing a batch where its driver runs cancels all of it, a cont step included" \
+  "$rc $([ -e "$S/kb-after" ] && echo ran || echo not-run)" "76 not-run"
+check "its summary says it was cancelled" "$(head -1 "$S/b8.out" | grep -c ', cancelled with dibs --kill')" "1"
+check "and the kill prints that summary" "$(grep -c '^batch .*, cancelled with dibs --kill' <<<"$out")" "1"
+check "and its running step's lock is released" "$($T --bench --wait 10 --label batch-kill-next true >/dev/null 2>&1; echo $?)" "0"
+fifo KR; fifo KRU
+printf '%s\n' "[hold cont] dibs --label batch-kill-hold 'echo up > $S/f-KRU; $(hold KR)'" \
+  "[after] dibs --label batch-kill-after 'echo ran > $S/kr-after'" > "$S/b9"
+PATH=$S/bbin:$PATH DIBS_CORE=$BCORE "$T" batch "$S/b9" > "$S/b9.out" 2> "$S/b9.err" &
+BDRIVER=$!
+sync_ KRU
+KID=$(sed -n 's/^dibs: batch \([0-9-]*\), .*/\1/p' "$S/b9.err")
+check "on a machine, another session's batch is not stopped without --anyone" \
+  "$(env -u CLAUDE_CODE_HOST_SESSION_ID CLAUDE_CODE_SESSION_ID=someone-else DIBS_KILL_HERE=1 "$T" --kill "$KID" >/dev/null 2>&1; echo $?) $(ls "$DIBS_LOCK_DIR" | grep -c '^cancelled\.')" "2 0"
+out=$(DIBS_KILL_HERE=1 "$T" --kill "$KID" 2>&1)
+wait $BDRIVER; rc=$?
+check "on a machine, it stops the batch's job there, and the driver elsewhere stops with it" \
+  "$rc $([ -e "$S/kr-after" ] && echo ran || echo not-run)" "76 not-run"
+check "the machine says what it stopped" "$(grep -c "^Cancelled batch $KID on .*: stopped 1 job" <<<"$out")" "1"
+check "the stopped step's trailer puts its exit on dibs" "$(grep -c '  exit 76  by=dibs' "$XDG_STATE_HOME/dibs/batch/$KID/hold.err")" "1"
+check "and a later step of that batch is refused there" \
+  "$(DIBS_BATCH=$KID DIBS_BATCH_STEP=late "$T" --label batch-kill-late 'echo ran > '"$S"'/kr-late' >/dev/null 2>&1; echo $?) $([ -e "$S/kr-late" ] && echo ran || echo not-run)" "76 not-run"
+check "and its lock is released" "$($T --bench --wait 10 --label batch-kill-next true >/dev/null 2>&1; echo $?)" "0"
 
 echo "one command"
 check "run is the bare form" "$($T run --label one-run 'echo via-run' 2>/dev/null)" "via-run"

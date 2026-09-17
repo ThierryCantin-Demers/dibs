@@ -67,6 +67,8 @@
 #                                every job ends with names the job. --out <job> tails it,
 #                                during the run or after; --out <pid> reads a redirect a
 #                                running job made itself.
+#   dibs --kill <batch-id>      stop a whole batch: at its driver when that runs here, else on
+#                                every machine, which also refuses the batch's later steps
 #   dibs --kill <pid>           stop a holder that is wedged (also takes no lock). Refuses a
 #                                job that is someone else's until you add --anyone.
 #   dibs --release              drop metadata left by processes that are already dead
@@ -85,7 +87,7 @@
 #   -v                 with --status, also dump the raw lock directory
 #
 #   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran    75 busy
-#        124 overran --max
+#        76 its batch was cancelled    124 overran --max
 #
 # --- end of the interface, everything below is why -------------------------------------
 #
@@ -369,6 +371,56 @@ else
 fi
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+is_batch_id() { [[ $1 =~ ^[0-9]{8}-[0-9]{6}-[0-9]+$ ]]; }
+
+# A batch belongs to the driver running it. On the computer where that driver runs, it is
+# stopped there: nothing more starts, its running steps are stopped, and it prints its summary.
+# Anywhere else only the machines can be reached, so each one stops the batch's jobs and refuses
+# its later steps, and a driver whose step is refused stops as well.
+kill_batch() {   # id
+    local id=$1 dir pid owner m tmp status=1
+    dir=${XDG_STATE_HOME:-$HOME/.local/state}/dibs/batch/$id
+    pid=${id##*-}
+    if [ -d "$dir" ] && [ -r "/proc/$pid/cmdline" ] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q 'dibs-core batch '; then
+        owner=$(cat "$dir/owner" 2>/dev/null)
+        if [ -n "$owner" ] && [ "$owner" != "$(agent_id)" ] && [ "$ANYONE" != 1 ]; then
+            echo "dibs: batch $id was started by another session. If it should stop:  dibs --kill $id --anyone" >&2
+            exit 2
+        fi
+        : > "$dir/cancel"
+        echo "dibs: cancelling batch $id here: nothing more starts, and its running steps are stopped." >&2
+        timeout 60 tail --pid="$pid" -f /dev/null 2>/dev/null
+        if [ -d "/proc/$pid" ]; then
+            kill -TERM "$pid" 2>/dev/null
+            echo "dibs: its driver did not stop within a minute, so it was sent SIGTERM; its steps die with it." >&2
+        fi
+        [ -s "$dir/summary" ] && cat "$dir/summary"
+        exit 0
+    fi
+    [ "$HOSTFROM" = --on ] && [ -n "$MACHINE" ] && set -- "$MACHINE" || set --
+    if [ $# -eq 0 ] && [ -f "$MACHINES" ]; then
+        while read -r m; do [ -n "$m" ] && set -- "$@" "$m"; done < <(inv_names)
+    fi
+    if [ $# -eq 0 ]; then
+        DIBS_KILL_HERE=1 exec "$0" --kill "$id" $([ "$ANYONE" = 1 ] && echo --anyone) $([ "$FORCE" = 1 ] && echo --force)
+    fi
+    echo "dibs: batch $id is not driven from this computer, so it is stopped on the machines: $*" >&2
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/dibs-kill.XXXXXX") || exit 1
+    for m in "$@"; do
+        ( DIBS_KILL_HERE=1 bounded "${DIBS_POLL_TIMEOUT:-20}" "$0" --on "$m" --kill "$id" \
+            $([ "$ANYONE" = 1 ] && echo --anyone) $([ "$FORCE" = 1 ] && echo --force) > "$tmp/$m" 2>&1
+          echo $? > "$tmp/$m.rc" ) &
+    done
+    wait
+    for m in "$@"; do
+        printf '%s\n' "$m"
+        if [ -s "$tmp/$m" ]; then sed 's/^/  /' "$tmp/$m"; else echo "  no answer"; fi
+        [ "$(cat "$tmp/$m.rc" 2>/dev/null)" = 0 ] && status=0
+    done
+    rm -rf "$tmp"
+    exit "$status"
+}
 
 # The recipe layer prepares a tree and sends it in one job: DIBS_SYNC_BEFORE names a script that
 # runs on the machine ahead of the transfer, under the same lock, and leaves it in the directory
@@ -735,6 +787,7 @@ while [ $# -gt 0 ]; do
                         exit 2
                     fi
                     [ "$HOSTFROM" = --on ] && export DIBS_ON=$MACHINE
+                    [ "$1" = batch ] && export DIBS_BATCH_OWNER=$(agent_id)
                     version_notice
                     core=$(dibs_core) ||
                         { echo "dibs: $1 needs the recipe layer, which is not installed. Run install.sh from the clone." >&2; exit 2; }
@@ -1116,8 +1169,12 @@ fi
 
 case "$MODE" in
     kill)
-        [ -n "$KILLPID" ] || { echo "--kill needs the pid from --status" >&2; exit 2; }
-        case "$KILLPID" in (*[!0-9]*) echo "not a pid: $KILLPID" >&2; exit 2 ;; esac
+        [ -n "$KILLPID" ] || { echo "--kill needs the pid from --status, or a batch id" >&2; exit 2; }
+        if is_batch_id "$KILLPID" && [ "${DIBS_KILL_HERE:-0}" != 1 ]; then
+            kill_batch "$KILLPID"
+        fi
+        is_batch_id "$KILLPID" ||
+            case "$KILLPID" in (*[!0-9]*) echo "not a pid or a batch id: $KILLPID" >&2; exit 2 ;; esac
         [ "$FORCE" = 1 ] && MODE=kill-force
         LABEL=$KILLPID
         [ "$ANYONE" = 1 ] && LABEL=$KILLPID.any ;;
@@ -1796,8 +1853,50 @@ estimate_compute() {   # mode label agent
 
 # A holder file outlives its process only if that process was killed outright, since the
 # lock itself is the open descriptor. Trust the pid, not the file.
+# A job of a cancelled batch that is holding the lock loses what runs under it and then exits
+# 76 itself, so the lock is released the ordinary way. One still queued is killed outright,
+# since its flock would otherwise return and the command would run unlocked. The mark refuses
+# the batch's later steps here for a day, which is what stops a driver on another computer.
+kill_batch_here() {   # id anyone
+    local id=$1 anyone=$2 f pid mode start label agent who stopped=0 sig victim
+    local -a jobs=()
+    for f in "$DIR"/batch.*; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r bid _ < "$f"
+        [ "$bid" = "$id" ] && jobs+=("${f##*.}")
+    done
+    for pid in "${jobs[@]}"; do
+        f=$DIR/holder.$pid; [ -e "$f" ] || f=$DIR/waiting.$pid
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode _ start label agent who _ < "$f"
+        if [ -z "$anyone" ] && { case "$who" in shell-*) true ;; *) [ -n "$who" ] && [ -n "$AGENT_ID" ] && [ "$who" != "$AGENT_ID" ] ;; esac; }; then
+            echo "dibs: batch $id is running $label for $agent, not for you. If it should stop:" >&2
+            echo "  dibs --kill $id --anyone" >&2
+            exit 2
+        fi
+    done
+    : > "$DIR/cancelled.$id"
+    [ "$MODE" = kill-force ] && sig=KILL || sig=TERM
+    for pid in "${jobs[@]}"; do
+        if [ -e "$DIR/holder.$pid" ]; then
+            for victim in $(tree_below "$pid" | tac); do kill -"$sig" "$victim" 2>/dev/null; done
+        elif [ -e "$DIR/waiting.$pid" ]; then
+            for victim in $(printf '%s\n' "$pid" $(tree_below "$pid") | tac); do kill -"$sig" "$victim" 2>/dev/null; done
+        else
+            continue
+        fi
+        stopped=$((stopped+1))
+    done
+    CMD_ONE="cancelled batch $id: $stopped job(s) stopped"
+    LABEL=$id
+    log_event cancelled
+    echo "Cancelled batch $id on $(hostname -s): stopped $stopped job(s), and its later steps are refused here."
+    exit 0
+}
+
 prune() {
     local f pid
+    find "$DIR" -maxdepth 1 -name 'cancelled.*' -mmin +1440 -delete 2>/dev/null
     for f in "$DIR"/holder.* "$DIR"/waiting.* "$DIR"/cpu.* "$DIR"/batch.*; do
         [ -e "$f" ] || continue
         pid=${f##*.}
@@ -2784,6 +2883,7 @@ case "$MODE" in
         # Takes no lock. The whole point is to work when the lock is what is broken.
         target=${LABEL%%.*} anyone=""
         [ "${LABEL#*.}" = any ] && anyone=1
+        [[ $target =~ ^[0-9]{8}-[0-9]{6}-[0-9]+$ ]] && kill_batch_here "$target" "$anyone"
         found=""
         for f in "$DIR"/holder.* "$DIR"/waiting.*; do
             [ -e "$f" ] || continue
@@ -2921,6 +3021,13 @@ for d in "$HOME/.cargo/bin" /usr/local/cuda/bin; do
     case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
 done
 export PATH
+
+if [ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ]; then
+    echo "dibs: batch ${BATCH_TAG%% *} was cancelled with dibs --kill, so this step does not run." >&2
+    CMD_ONE="refused, batch cancelled: $(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-160)"
+    log_event refused
+    exit 76
+fi
 
 if [ "$MODE" = peek ]; then
     PEEK_START=$(date +%s)
@@ -3128,6 +3235,7 @@ WORK=$!
 echo "$WORK" > "$WORKFILE"
 wait "$WORK"
 STATUS=$?
+[ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ] && STATUS=76
 if [ -n "$TEE" ]; then
     wait "$TEE" 2>/dev/null
     rm -f "$JOBDIR/pipe"
@@ -3146,6 +3254,7 @@ LOGGED_END=1
 if [ -n "$JOBLOG" ]; then
     by=command
     [ "$STATUS" -eq 124 ] && [ "$MAXHOLD" -gt 0 ] && by=dibs
+    [ "$STATUS" -eq 76 ] && [ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ] && by=dibs
     lines=$(wc -l < "$JOBLOG" 2>/dev/null || echo 0)
     # The digest: enough to see how it went, never so much that a caller has to cut it.
     if [ "$STREAM" != 1 ]; then
