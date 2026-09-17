@@ -78,6 +78,35 @@ pub struct Recipe {
     pub steps: Vec<Step>,
 }
 
+/// One server, and what it takes for something to be able to use it.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Serve {
+    pub name: String,
+    pub run: String,
+    /// tcp:<port or port name>, or a command that exits 0 once the server answers. Without it a
+    /// client races the server it was started for.
+    #[serde(default)]
+    pub ready: Option<String>,
+}
+
+/// Servers a repo knows how to start, for work that runs against them rather than in them. Not a
+/// recipe: it measures nothing itself, and it lives exactly as long as the command using it.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Service {
+    #[serde(skip, default = "default_source")]
+    pub source: Source,
+    /// Run under the shared lock before anything is served, since a server must never compile:
+    /// it would do so inside whatever lock the command using it holds.
+    #[serde(default)]
+    pub build: Option<String>,
+    /// Named rather than numbered, so the machine picks one nothing is listening on and both
+    /// sides read it from the environment.
+    #[serde(default)]
+    pub ports: Vec<String>,
+    #[serde(default, rename = "serve")]
+    pub serves: Vec<Serve>,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct Manifest {
     #[serde(default)]
@@ -86,6 +115,8 @@ pub struct Manifest {
     pub build: BTreeMap<String, Recipe>,
     #[serde(default)]
     pub test: BTreeMap<String, Recipe>,
+    #[serde(default)]
+    pub service: BTreeMap<String, Service>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -198,6 +229,18 @@ impl Manifest {
                 table.insert(name, rec);
             }
         }
+        for (name, mut svc) in other.service {
+            svc.source = src;
+            self.service.insert(name, svc);
+        }
+    }
+
+    pub fn service(&self, name: &str) -> Option<&Service> {
+        self.service.get(name)
+    }
+
+    pub fn service_listing(&self) -> Vec<(&str, Source)> {
+        self.service.iter().map(|(k, v)| (k.as_str(), v.source)).collect()
     }
 
     pub fn recipe(&self, verb: Verb, name: &str) -> Option<&Recipe> {
@@ -302,6 +345,29 @@ mod tests {
         let r = m.recipe(Verb::Build, "x").unwrap();
         assert_eq!(r.steps[0].run, "from local");
         assert_eq!(r.source, Source::Local, "an override has to be visible as one");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_service_carries_its_servers_ports_and_what_makes_them_ready() {
+        let tmp = std::env::temp_dir().join(format!("dibs-service-{}", std::process::id()));
+        let repo = tmp.join("app");
+        let cfg = tmp.join("cfg");
+        write(
+            &repo,
+            ".dibs.toml",
+            "[service.gpus]\nbuild=\"cargo build -p server\"\nports=[\"cuda\",\"vulkan\"]\n\
+             [[service.gpus.serve]]\nname=\"cuda\"\nrun=\"server --listen :$DIBS_PORT_CUDA\"\nready=\"tcp:cuda\"\n\
+             [[service.gpus.serve]]\nname=\"vulkan\"\nrun=\"server --vulkan\"\n",
+        );
+        let m = Manifest::load_from(&repo, "app", &cfg).unwrap();
+        let svc = m.service("gpus").unwrap();
+        assert_eq!(svc.build.as_deref(), Some("cargo build -p server"));
+        assert_eq!(svc.ports, ["cuda", "vulkan"]);
+        assert_eq!(svc.serves.len(), 2);
+        assert_eq!((svc.serves[0].name.as_str(), svc.serves[0].ready.as_deref()), ("cuda", Some("tcp:cuda")));
+        assert_eq!(svc.serves[1].ready, None, "a server may say nothing about being ready");
+        assert_eq!(svc.source, Source::Repo);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

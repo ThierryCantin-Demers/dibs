@@ -156,6 +156,22 @@ service that exits before it is ready, or while the command is still running, st
 and the call exits 77 with the end of the service's log, since a client that goes on without its
 server produces a failure that reads like the client's own.
 
+A repo that keeps needing the same servers declares them once, beside its recipes, and
+`dibs with <repo>[@<ref>] <service> -- <command>` prepares the worktree, builds them under the
+shared lock, starts them there and runs the command here against them. `dibs list <repo>` says
+which it defines.
+
+```toml
+[service.gpu-servers]
+build = "cargo build -p colony-gpu-server --features cuda,vulkan"
+ports = ["cuda", "vulkan"]
+
+[[service.gpu-servers.serve]]
+name = "cuda"
+run = "target/debug/colony-gpu-server --backend cuda --listen 0.0.0.0:$DIBS_PORT_CUDA"
+ready = "tcp:cuda"
+```
+
 ## More than one machine
 
 `dibs --check <host> --write` records what it finds there as an entry in

@@ -4,6 +4,10 @@
 #
 #   dibs build|test|bench <repo>[@<ref>] <recipe>   run a recipe: dibs list <repo> says
 #                                what a repo has, dibs runs what was measured.
+#   dibs with <repo>[@<ref>] <service> -- <command>
+#                               run the command here while the repo's servers run on the
+#                                machine under its lock, ready before it starts and stopped
+#                                when it ends. dibs list <repo> says which it defines.
 #   dibs list|runs|gaps|shell|raw   the rest of the recipe layer, as in dibs build --help
 #   dibs batch <file|->        a list of dibs calls, one per line, run as one submission with
 #                                one summary at the end: [name after=a,b cont] before a line
@@ -830,7 +834,7 @@ while [ $# -gt 0 ]; do
                         if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9-]/}" ]; then
                             OUTPID=$1; shift
                         fi ;;
-                build|test|bench|list|runs|gaps|shell|raw|batch)
+                build|test|bench|list|runs|gaps|shell|raw|batch|with)
                     # The recipe layer takes its own flags, after the verb. --on is the one that
                     # can come first, and it travels as DIBS_ON.
                     consumed=$(( ${#ORIG_ARGS[@]} - $# ))

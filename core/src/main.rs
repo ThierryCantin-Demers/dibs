@@ -34,6 +34,9 @@ dibs list <repo>                      what that repo defines
 dibs runs [label]                     what has run here, and what is comparable
 dibs shell <repo>[@<ref>] --reason <why> -- <cmd>   a command in a prepared worktree
 dibs raw --reason <why> -- <cmd>      a command with nothing prepared
+dibs with <repo>[@<ref>] <service> -- <cmd>   run the command here while the repo's servers
+                                      run on the machine under its lock, started once they
+                                      are ready and stopped when the command ends
 dibs gaps                             what did not fit a recipe, and what recurs
 dibs batch <file|->                   a list of dibs command lines as one submission, with one
                                       summary at the end. One line per step, optionally
@@ -142,6 +145,9 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let target = positional.first().cloned().unwrap_or_default();
     if target.is_empty() && !matches!(verb.as_str(), "runs" | "gaps" | "raw") {
         return Err("needs a repo".into());
+    }
+    if verb == "with" && command.is_none() {
+        return Err("with runs a command here against the repo's servers: dibs with <repo>[@<ref>] <service> -- <command>".into());
     }
     // runs takes a recorded label, not repo@ref, and a label carries its device after an @.
     // Splitting there drops the half that tells two runs of one recipe on different cards apart.
@@ -268,6 +274,10 @@ fn run() -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    if args.verb == "with" {
+        return with_service(&args);
+    }
+
     if args.verb == "list" {
         let dir = resolve_repo(&args.repo, &args.root)?;
         let manifest = Manifest::load(&dir, &worktree::identity(&dir))?;
@@ -281,6 +291,17 @@ fn run() -> Result<ExitCode, String> {
                         recipe::Source::Repo => println!("  {n}   (from the repo)"),
                         recipe::Source::Local => println!("  {n}   (your local config)"),
                     }
+                }
+            }
+        }
+        let services = manifest.service_listing();
+        if !services.is_empty() {
+            println!("service:");
+            for (n, src) in services {
+                match src {
+                    recipe::Source::Builtin => println!("  {n}"),
+                    recipe::Source::Repo => println!("  {n}   (from the repo)"),
+                    recipe::Source::Local => println!("  {n}   (your local config)"),
                 }
             }
         }
@@ -362,31 +383,9 @@ fn run() -> Result<ExitCode, String> {
         ),
         None => eprintln!("dibs: preparing {repo_name}@{reference}"),
     }
-    let lock = match &local {
-        Some(_) => std::fs::read_to_string(dir.join("Cargo.lock")).ok(),
-        None => std::process::Command::new("git")
-            .arg("-C")
-            .arg(&dir)
-            .args(["show", &format!("{reference}:Cargo.lock")])
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()),
-    };
-    let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock.as_deref().unwrap_or("")));
     let signature = rec.steps.iter().find_map(|st| worktree::build_signature(&st.run)).unwrap_or_default();
-    let token = format!(
-        "{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-    );
-    let script = worktree::packages_script(lock.as_deref().unwrap_or(""), &signature, &token)
-        + &match &local {
-            Some(l) => worktree::setup_local_script(&repo_name, &l.key, &l.content),
-            None => worktree::setup_script(&repo_name, reference),
-        }
-        + &gitdeps::check_script(&gitdbs);
+    let token = new_token();
+    let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &token);
 
     let fold = local.is_none() && rec.steps[0].lock == Lock::Shared;
     let first_step_call = calls.len() - rec.steps.len();
@@ -459,17 +458,7 @@ fn run() -> Result<ExitCode, String> {
         }
     };
     let prepared = worktree::parse(&text)?;
-    if let (Some(remote), gone) = gitdeps::missing(&text, &gitdbs) {
-        for db in gone {
-            eprintln!(
-                "dibs: sending {} at {:.8}, which the machine does not have and may not be able to fetch",
-                db.name, db.commit
-            );
-            if let Err(e) = sync_gitdb(&backend, &db.path, &format!("{remote}/{}", db.name)) {
-                eprintln!("dibs: {e}; the build will try to fetch it itself");
-            }
-        }
-    }
+    send_missing_gitdbs(&backend, &text, &gitdbs);
 
     for (i, step) in rec.steps.iter().enumerate().skip(steps.len()) {
         if failed.is_some() {
@@ -530,6 +519,180 @@ fn run() -> Result<ExitCode, String> {
         Some(c) => ExitCode::from(c.clamp(1, 255) as u8),
         None => ExitCode::SUCCESS,
     })
+}
+
+/// A repo's servers, running on the machine under one lock while the command runs here: a
+/// dashboard, a client, a test suite driving them over the network. It ends by becoming that
+/// dibs call rather than waiting on one, so the command keeps this terminal.
+fn with_service(args: &Args) -> Result<ExitCode, String> {
+    let dir = resolve_repo(&args.repo, &args.root)?;
+    let repo_name = worktree::identity(&dir);
+    let manifest = Manifest::load(&dir, &repo_name)?;
+    let name = args
+        .recipe
+        .as_deref()
+        .ok_or_else(|| format!("with needs a service: dibs with {} <service> -- <command>", args.repo))?;
+    let svc = manifest.service(name).ok_or_else(|| {
+        let have: Vec<&str> = manifest.service_listing().iter().map(|(n, _)| *n).collect();
+        match have.is_empty() {
+            true => format!("{repo_name} defines no services, so there is nothing to run against"),
+            false => format!("no service '{name}' for {repo_name}. It has: {}", have.join(", ")),
+        }
+    })?;
+    if svc.serves.is_empty() {
+        return Err(format!("service '{name}' starts nothing: it needs a [[service.{name}.serve]] with a run"));
+    }
+    let command = args.command.as_deref().ok_or("with needs a command after --")?;
+
+    let mut backend = Dibs::default();
+    backend.machine = Dibs::which(&backend.program);
+    if let Some(m) = &backend.machine {
+        affinity_set(&repo_name, m);
+    }
+    let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
+
+    let reference = args.reference.as_deref().unwrap_or("HEAD");
+    let local = if reference == "local" { Some(worktree::local(&dir)?) } else { None };
+    match &local {
+        Some(l) => eprintln!(
+            "dibs: preparing {repo_name} from {} ({})",
+            dir.display(),
+            if l.dirty { "uncommitted changes included" } else { "clean" }
+        ),
+        None => eprintln!("dibs: preparing {repo_name}@{reference}"),
+    }
+    let signature = svc.build.as_deref().and_then(worktree::build_signature).unwrap_or_default();
+    let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &new_token());
+    let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
+    let setup = Request {
+        label: &setup_label,
+        lock: Lock::Shared,
+        isolation: recipe::Isolation::Machine,
+        needs: None,
+        device: None,
+        env: &[],
+    };
+    let mut announce = |text: &str| announce_prepared(text);
+    let text = match &local {
+        Some(l) => {
+            let (out, text) = sync_prepared(&backend, &dir, &script, &l.key, &setup, &mut announce)?;
+            if !text.contains("DIBS-READY") || out.status != 0 {
+                return Err(format!("could not prepare {repo_name} from {} (exit {})", dir.display(), out.status));
+            }
+            text
+        }
+        None => {
+            let (out, text) = backend.run_capture(&setup, &script)?;
+            if out.status != 0 {
+                return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
+            }
+            announce(&text);
+            text
+        }
+    };
+    let prepared = worktree::parse(&text)?;
+    send_missing_gitdbs(&backend, &text, &gitdbs);
+
+    // In the tree, with the repo's build cache, exactly as a recipe step runs.
+    let in_tree = |run: &str| {
+        format!("cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}", sh(&prepared.worktree), sh(&prepared.target))
+    };
+    if let Some(build) = &svc.build {
+        eprintln!("dibs: building {name}");
+        let build_label = format!("{label}:build");
+        let req = Request {
+            label: &build_label,
+            lock: Lock::Shared,
+            isolation: recipe::Isolation::Machine,
+            needs: None,
+            device: args.device.as_deref(),
+            env: &[],
+        };
+        let out = backend.run(&req, &in_tree(build))?;
+        if out.status != 0 {
+            return Ok(ExitCode::from(out.status.clamp(1, 255) as u8));
+        }
+    }
+
+    let mut cmd = std::process::Command::new(&backend.program);
+    if let Some(m) = &backend.machine {
+        cmd.arg("--on").arg(m);
+    }
+    cmd.arg("--hold").arg("--label").arg(&label);
+    if let Some(d) = &args.device {
+        cmd.arg("--device").arg(d);
+    }
+    for p in &svc.ports {
+        cmd.arg("--port").arg(p);
+    }
+    for serve in &svc.serves {
+        cmd.arg("--with").arg(format!("{}={}", serve.name, in_tree(&serve.run)));
+        if let Some(ready) = &serve.ready {
+            cmd.arg("--ready").arg(ready);
+        }
+    }
+    cmd.arg("--").arg(command);
+    Err(format!("could not run {}: {}", backend.program, exec(cmd)))
+}
+
+/// The script that prepares the tree on the machine, and the git databases it may need sent.
+fn tree_script(
+    dir: &Path,
+    repo_name: &str,
+    reference: &str,
+    local: Option<&worktree::Local>,
+    signature: &str,
+    token: &str,
+) -> (String, Vec<gitdeps::Db>) {
+    let lock = match local {
+        Some(_) => std::fs::read_to_string(dir.join("Cargo.lock")).ok(),
+        None => std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["show", &format!("{reference}:Cargo.lock")])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()),
+    };
+    let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock.as_deref().unwrap_or("")));
+    let script = worktree::packages_script(lock.as_deref().unwrap_or(""), signature, token)
+        + &match local {
+            Some(l) => worktree::setup_local_script(repo_name, &l.key, &l.content),
+            None => worktree::setup_script(repo_name, reference),
+        }
+        + &gitdeps::check_script(&gitdbs);
+    (script, gitdbs)
+}
+
+/// Unique per invocation, and what a build's package list is staged under until it succeeds.
+fn new_token() -> String {
+    format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    )
+}
+
+fn send_missing_gitdbs(backend: &Dibs, text: &str, gitdbs: &[gitdeps::Db]) {
+    let (Some(remote), gone) = gitdeps::missing(text, gitdbs) else { return };
+    for db in gone {
+        eprintln!(
+            "dibs: sending {} at {:.8}, which the machine does not have and may not be able to fetch",
+            db.name, db.commit
+        );
+        if let Err(e) = sync_gitdb(backend, &db.path, &format!("{remote}/{}", db.name)) {
+            eprintln!("dibs: {e}; the build will try to fetch it itself");
+        }
+    }
+}
+
+/// Becomes the command, so it keeps this terminal: prompts, Ctrl-C and the exit status are the
+/// command's own rather than something relayed.
+fn exec(mut cmd: std::process::Command) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    cmd.exec()
 }
 
 /// A recipe invocation resolved as far as it can be without a machine: which recipe, and the

@@ -1830,6 +1830,26 @@ check "and a job run on no particular card does not claim one called -" "$(grep 
 free RH
 wait $BDRIVER
 
+# A repo that declares the servers its work runs against, so a client is a command rather than a
+# launch line, a port and a kill, written out again in every script that needs them.
+printf '%s\n' 'import os, signal, socket' 's = socket.socket()' \
+  's.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)' \
+  's.bind(("0.0.0.0", int(os.environ["DIBS_PORT_API"])))' 's.listen()' 'signal.pause()' > "$S/app/serve.py"
+printf '%s\n' 'import os, socket' 'where = os.environ["DIBS_SERVICE_API"]' \
+  'host, _, port = where.rpartition(":")' 'socket.create_connection((host, int(port)), timeout=10)' \
+  'print("the client reached", where)' > "$S/wclient.py"
+printf '%s\n' '[service.servers]' 'build = "echo built > built.txt"' 'ports = ["api"]' \
+  '' '[[service.servers.serve]]' 'name = "api"' 'run = "python3 serve.py"' 'ready = "tcp:api"' > "$S/app/.dibs.toml"
+check "a repo says which servers it defines" "$(RC list "$S/app" 2>/dev/null | grep -cE '^  servers   \(from the repo\)$')" "1"
+out=$(RC with "$S/app@local" servers -- python3 "$S/wclient.py" 2>&1); rc=$?
+check "and a command here runs against them, on a port neither side named" \
+  "$(grep -cE '^the client reached [^:]+:[0-9]+$' <<<"$out")" "1"
+check "exiting with the command's own status" "$rc" "0"
+check "after building them under the shared lock" "$(grep -c 'app_with_servers_build' "$DIBS_LOG")" "2"
+check "and stopping them when it ends" "$(grep -c 'with api: ready after [0-9]*s, stopped when the command ended' <<<"$out")" "1"
+check "a service it does not define says what it has" \
+  "$(RC with "$S/app@local" nope -- true 2>&1 | grep -c "It has: servers")" "1"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

@@ -188,6 +188,9 @@ spoiled without it.
 - Recipes come in three layers, each overriding the last: bundled with dibs, the repo's
   `.dibs.toml`, and `~/.config/dibs/recipes/<repo>.toml` for one still being worked out. `dibs list`
   says which layer each came from.
+- `dibs with <repo>[@<ref>] <service> -- <command>` where a repo declares its servers: the worktree
+  is prepared, they are built under the shared lock and started on the machine, and the command
+  runs on your side against them, on ports dibs picked. `dibs list <repo>` says which it defines.
 - **If no recipe fits, use `dibs run` and tell the person you work for.** A missing recipe that
   keeps coming up is the specification for the next one.
 
