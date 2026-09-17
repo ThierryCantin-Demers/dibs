@@ -1855,6 +1855,52 @@ check "and stopping them when it ends" "$(grep -c 'with api: ready after [0-9]*s
 check "a service it does not define says what it has" \
   "$(RC with "$S/app@local" nope -- true 2>&1 | grep -c "It has: servers")" "1"
 
+# A recipe that takes values, so one procedure covers a sweep instead of fifteen near-identical
+# copies of it, and so the set of valid invocations stays something dibs can print.
+printf '%s\n' '' '[build.p]' '  [build.p.params]' \
+  '  backend = { choices = ["cuda", "vulkan"], default = "cuda" }' \
+  '  samples = { default = "10" }' '  [[build.p.step]]' '  lock = "shared"' \
+  '  env = { SAMPLES = "{samples}" }' '  run = "echo ran {backend} samples=$SAMPLES"' \
+  '' '[build.need]' '  [build.need.params]' '  size = {}' '  [[build.need.step]]' \
+  '  lock = "shared"' '  run = "echo {size}"' \
+  '' '[build.rel]' '  [[build.rel.step]]' '  lock = "shared"' '  run = "ls target/release"' \
+  '' '[bench.hot]' '  [[bench.hot.step]]' '  lock = "exclusive"' \
+  '  run = "cargo bench --bench gemm"' >> "$S/app/.dibs.toml"
+listed=$(RC list "$S/app" 2>/dev/null)
+check "a recipe says what it takes, with the default" \
+  "$(grep -cE '^      --samples 10$' <<<"$listed")" "1"
+check "and what the choices are where there are any" \
+  "$(grep -cE '^      --backend cuda  one of cuda, vulkan$' <<<"$listed")" "1"
+check "one with no default says it is required" \
+  "$(grep -cE '^      --size <value>, required$' <<<"$listed")" "1"
+out=$(RC build "$S/app@local" p 2>/dev/null)
+check "a parameter left out takes its default, in the command and in what is exported" \
+  "$(grep -c '^ran cuda samples=10$' <<<"$out")" "1"
+out=$(RC build "$S/app@local" p --backend vulkan --samples 30 2>/dev/null)
+check "and given, it reaches both" "$(grep -c '^ran vulkan samples=30$' <<<"$out")" "1"
+check "the run record carries what it was set to" \
+  "$(grep -c '"params":{"backend":"vulkan","samples":"30"}' "$HOME/.local/state/dibs/runs.jsonl")" "1"
+check "but the label does not, so one recipe keeps one history" \
+  "$(grep -c '"label":"app/build/p"' "$HOME/.local/state/dibs/runs.jsonl")" "2"
+out=$(RC build "$S/app@local" p --backend metal 2>&1); rc=$?
+check "a value outside the choices is refused before anything is sent" "$rc" "2"
+check "saying which are allowed" "$(grep -c 'not one of: cuda, vulkan' <<<"$out")" "1"
+out=$(RC build "$S/app@local" p --backends cuda 2>&1); rc=$?
+check "a name the recipe does not declare is refused" "$rc" "2"
+check "saying which names it takes" "$(grep -c 'this recipe takes: backend, samples' <<<"$out")" "1"
+check "and one with no default cannot be left out" \
+  "$(RC build "$S/app@local" need 2>&1 | grep -cF -- '--size has no default')" "1"
+out=$(RC build "$S/app@local" rel 2>&1); rc=$?
+check "a step naming a relative target/ is refused: the build writes elsewhere" "$rc" "2"
+check "and is told where the build actually writes" "$(grep -cF 'Use $CARGO_TARGET_DIR/... instead.' <<<"$out")" "1"
+out=$(RC bench "$S/app@local" hot 2>&1); rc=$?
+check "a measured step that would compile is refused" "$rc" "2"
+check "with the two-step form to replace it" \
+  "$(grep -c 'run = "cargo bench --bench gemm --no-run"' <<<"$out")" "1"
+out=$(RC build "$S/app@local" p --samples 30 --dry-run 2>/dev/null)
+check "a dry run says what the parameters came out as" "$(grep -c '^param       samples = 30$' <<<"$out")" "1"
+check "and what each step will export" "$(grep -c '^            env SAMPLES=30$' <<<"$out")" "1"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

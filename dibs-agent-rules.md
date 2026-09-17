@@ -179,6 +179,11 @@ spoiled without it.
   runs one. Prefer it to a hand-written command: it prepares the worktree, keeps a build cache per
   tree, derives a stable label, keeps the output, and records the commit of every repo it built.
 - Each recipe step names its lock, so the build runs shared and only the measurement exclusive.
+- A recipe may take values: `dibs bench <repo>@<ref> <recipe> --backend vulkan --samples 30`.
+  `dibs list <repo>` prints what each one takes, with its default and its choices. Use them rather
+  than copying a recipe's command out to change one thing: the run is still recorded, still
+  labelled, and the record carries the values. A value outside the choices, or a name the recipe
+  does not declare, is refused here before anything is sent.
 - `@local` in place of a ref sends your working tree, uncommitted changes included, following the
   repo's ignore rules. It is how to run a branch you have not pushed, and the only way to run a
   private repo, because the machines hold no credentials. Reach for it before carrying code over by

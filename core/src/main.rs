@@ -21,6 +21,7 @@ mod worktree;
 
 use recipe::{Lock, Manifest, Verb};
 use resource::{Backend, Dibs, Request};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -55,6 +56,10 @@ dibs batch <file|->                   a list of dibs command lines as one submis
             derived label, so each card keeps its own history and running a recipe on a
             second one neither mixes with the first nor replaces it. `dibs --machines -v`
             lists the aliases.
+  --<name>  a value for a parameter the recipe declares, such as --backend vulkan.
+            `dibs list <repo>` prints what each recipe takes, with its default and its
+            choices. The label does not carry them, so one recipe keeps one duration
+            history; the run record carries them.
   --dry-run print what would run, take no lock, record nothing
   --verbose with batch, each step's output as it comes, prefixed with the step's name
 
@@ -87,6 +92,9 @@ struct Args {
     command: Option<String>,
     /// The card to run on, named from the machine's inventory.
     device: Option<String>,
+    /// `--<name> <value>` for whatever the recipe declares. Unknown here rather than refused,
+    /// because which names are valid is the recipe's to say, and it says so with the list.
+    params: BTreeMap<String, String>,
     verbose: bool,
 }
 
@@ -101,6 +109,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut reason = None;
     let mut command = None;
     let mut device: Option<String> = None;
+    let mut params: BTreeMap<String, String> = BTreeMap::new();
     let mut verbose = false;
     let mut it = words.into_iter();
     while let Some(a) = it.next() {
@@ -133,6 +142,21 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
             "--dry-run" => dry_run = true,
             "--verbose" | "-v" => verbose = true,
             "-" => positional.push("-".into()),
+            s if s.starts_with("--") => {
+                let (name, value) = match s.split_once('=') {
+                    Some((n, v)) => (n, Some(v.to_string())),
+                    None => (s, None),
+                };
+                let name = name.trim_start_matches('-').to_string();
+                let value = match value {
+                    Some(v) => v,
+                    None => it
+                        .next()
+                        .filter(|v| !v.starts_with("--"))
+                        .ok_or(format!("--{name} needs a value, or is not a flag dibs has"))?,
+                };
+                params.insert(name, value);
+            }
             s if s.starts_with('-') => return Err(format!("unknown option: {s}")),
             s => positional.push(s.to_string()),
         }
@@ -165,6 +189,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         reason,
         command,
         device,
+        params,
         verbose,
     })
 }
@@ -252,6 +277,7 @@ fn run() -> Result<ExitCode, String> {
             needs: None,
             reason: Some(reason.to_string()),
             procedure: vec![("shared".into(), command.to_string())],
+            params: BTreeMap::new(),
             backend: backend.name(),
             device: args.device.clone(),
             machine: backend.machine.clone(),
@@ -291,6 +317,18 @@ fn run() -> Result<ExitCode, String> {
                         recipe::Source::Repo => println!("  {n}   (from the repo)"),
                         recipe::Source::Local => println!("  {n}   (your local config)"),
                     }
+                    // What it accepts, so the valid invocations can be read off rather than
+                    // reconstructed from the recipe file.
+                    for (p, spec) in manifest.recipe(v, n).map(|r| &r.params).into_iter().flatten() {
+                        let choices = match spec.choices.is_empty() {
+                            true => String::new(),
+                            false => format!("  one of {}", spec.choices.join(", ")),
+                        };
+                        match &spec.default {
+                            Some(d) => println!("      --{p} {d}{choices}"),
+                            None => println!("      --{p} <value>, required{choices}"),
+                        }
+                    }
                 }
             }
         }
@@ -311,7 +349,7 @@ fn run() -> Result<ExitCode, String> {
 
     let resolved = resolve(&args)?;
     let calls = jobs_of(&resolved, args.reference.as_deref() == Some("local"));
-    let Resolved { dir, repo_name, verb, name, rec, label, step_labels, shell_reason } = resolved;
+    let Resolved { dir, repo_name, verb, name, rec, label, step_labels, shell_reason, params } = resolved;
     let (name, rec) = (name.as_str(), &rec);
     let fingerprint = rec.fingerprint();
 
@@ -339,8 +377,14 @@ fn run() -> Result<ExitCode, String> {
             Some(d) => println!("device      {d}"),
             None => println!("device      none named, so the runtime picks and a repeat is luck"),
         }
+        for (k, v) in &params {
+            println!("param       {k} = {v}");
+        }
         for (i, s) in rec.steps.iter().enumerate() {
             println!("step {}      [{:?}] {}", i + 1, s.lock, s.run);
+            for (k, v) in &s.env {
+                println!("            env {k}={v}");
+            }
             println!("            label {}", step_labels[i]);
         }
         return Ok(ExitCode::SUCCESS);
@@ -405,9 +449,19 @@ fn run() -> Result<ExitCode, String> {
     // One cache per repo, exported rather than left to each recipe to remember. The output
     // needs no file of its own: dibs keeps every job's log under its job id, and a path named
     // after the label would be shared by two runs of one recipe.
-    let run_of = |i: usize| match worktree::build_signature(&rec.steps[i].run) {
-        Some(_) => worktree::recording(&rec.steps[i].run, &token),
-        None => rec.steps[i].run.clone(),
+    let run_of = |i: usize| {
+        let run = match worktree::build_signature(&rec.steps[i].run) {
+            Some(_) => worktree::recording(&rec.steps[i].run, &token),
+            None => rec.steps[i].run.clone(),
+        };
+        // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop
+        // in the step as well as the first word of it.
+        let exports: String = rec.steps[i]
+            .env
+            .iter()
+            .map(|(k, v)| format!("export {k}={}; ", sh(v)))
+            .collect();
+        format!("{exports}{run}")
     };
     let mut announce = |text: &str| announce_prepared(text);
 
@@ -502,8 +556,15 @@ fn run() -> Result<ExitCode, String> {
         procedure: rec
             .steps
             .iter()
-            .map(|st| (format!("{:?}", st.lock).to_lowercase(), st.run.clone()))
+            // With what it exported, since a recipe in local config cannot be recovered by
+            // checking out a ref and an environment variable changes what was measured.
+            .map(|st| {
+                let exports: String =
+                    st.env.iter().map(|(k, v)| format!("export {k}={}; ", sh(v))).collect();
+                (format!("{:?}", st.lock).to_lowercase(), format!("{exports}{}", st.run))
+            })
             .collect(),
+        params,
         backend: backend.name(),
         device: args.device.clone(),
         machine: backend.machine.clone(),
@@ -706,6 +767,7 @@ struct Resolved {
     label: String,
     step_labels: Vec<String>,
     shell_reason: Option<String>,
+    params: BTreeMap<String, String>,
 }
 
 fn resolve(args: &Args) -> Result<Resolved, String> {
@@ -729,9 +791,11 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         source: recipe::Source::Local,
         needs: None,
         isolation: recipe::Isolation::Machine,
+        params: BTreeMap::new(),
         steps: vec![recipe::Step {
             lock: Lock::Shared,
             run: args.command.clone().unwrap_or_default(),
+            env: BTreeMap::new(),
         }],
     });
     if shell_recipe.is_some() && args.command.is_none() {
@@ -755,7 +819,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
             format!("needs a recipe name; {} has: {}", dir.display(), have.join(", "))
         }
         })?;
-    let rec = shell_recipe.clone().map(Ok).unwrap_or_else(|| manifest.recipe(verb, name).cloned().ok_or_else(|| {
+    let mut rec = shell_recipe.clone().map(Ok).unwrap_or_else(|| manifest.recipe(verb, name).cloned().ok_or_else(|| {
         let have = manifest.names(verb);
         format!(
             "no {} recipe called '{name}'; {} has: {}",
@@ -767,6 +831,9 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
     if rec.steps.is_empty() {
         return Err(format!("recipe '{name}' declares no steps"));
     }
+    let params = rec.values(&args.params).map_err(|e| format!("{name}: {e}"))?;
+    rec = rec.bound(&params);
+    rec.check(name)?;
 
     // Derived, never supplied. A label an agent writes by hand names the run rather than the
     // kind of work, which is why 51 of 80 labels in the old history appeared exactly once and
@@ -793,6 +860,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         label,
         step_labels,
         shell_reason,
+        params,
     })
 }
 
@@ -1042,11 +1110,11 @@ mod tests {
     use recipe::{Isolation, Recipe, Step};
 
     fn step(lock: Lock, run: &str) -> Step {
-        Step { lock, run: run.into() }
+        Step { lock, run: run.into(), env: BTreeMap::new() }
     }
 
     fn resolved(steps: Vec<Step>) -> Resolved {
-        let rec = Recipe { source: recipe::Source::Local, needs: None, isolation: Isolation::Machine, steps };
+        let rec = Recipe { source: recipe::Source::Local, needs: None, isolation: Isolation::Machine, params: BTreeMap::new(), steps };
         let step_labels = label_steps("app/bench/r", &rec.steps);
         Resolved {
             dir: PathBuf::from("."),
@@ -1057,6 +1125,7 @@ mod tests {
             label: "app/bench/r".into(),
             step_labels,
             shell_reason: None,
+            params: BTreeMap::new(),
         }
     }
 
@@ -1100,24 +1169,28 @@ mod tests {
             source: recipe::Source::Repo,
             needs: None,
             isolation: Isolation::Machine,
+            params: BTreeMap::new(),
             steps: vec![step(Lock::Shared, "cargo build")],
         };
         let same = Recipe {
             source: recipe::Source::Repo,
             needs: None,
             isolation: Isolation::Machine,
+            params: BTreeMap::new(),
             steps: vec![step(Lock::Shared, "cargo build")],
         };
         let changed_command = Recipe {
             source: recipe::Source::Repo,
             needs: None,
             isolation: Isolation::Machine,
+            params: BTreeMap::new(),
             steps: vec![step(Lock::Shared, "cargo build --release")],
         };
         let changed_lock = Recipe {
             source: recipe::Source::Repo,
             needs: None,
             isolation: Isolation::Machine,
+            params: BTreeMap::new(),
             steps: vec![step(Lock::Exclusive, "cargo build")],
         };
         assert_eq!(a.fingerprint(), same.fingerprint());
@@ -1146,6 +1219,7 @@ mod tests {
             needs: None,
             reason: None,
             procedure: vec![],
+            params: BTreeMap::new(),
             backend: "dibs",
             device: Some("gpu:rtx2060".into()),
             machine: Some("multigpu".into()),
@@ -1180,6 +1254,7 @@ mod tests {
             needs: None,
             reason: None,
             procedure: vec![],
+            params: BTreeMap::new(),
             backend: "dibs",
             device: None,
             machine: None,
@@ -1204,6 +1279,7 @@ mod tests {
             needs: Some("gpu, num_tensor_cores >= 1".into()),
             reason: None,
             procedure: vec![("shared".into(), "cargo build".into())],
+            params: BTreeMap::new(),
             backend: "dibs",
             device: None,
             machine: None,

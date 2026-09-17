@@ -68,6 +68,47 @@ repository your team can reach, since recipes name your repos, and everyone clon
 `dibs --update` pulls it along with `dibs` itself. An edit is an ordinary commit and push, and a
 recipe still being tried out can sit uncommitted in the clone until it settles.
 
+## A recipe that takes values
+
+A recipe declares its knobs, so one procedure covers a sweep instead of a copy of itself per
+value. The names are substituted into every command and into what each step exports:
+
+```toml
+[bench.reduce]
+  [bench.reduce.params]
+  backend = { choices = ["cuda", "vulkan", "cpu"], default = "cuda" }
+  samples = { default = "10" }
+  problems = { default = "sum_axis2,arg_topk,topk5_" }
+
+  [[bench.reduce.step]]
+  lock = "shared"
+  run  = "cargo bench --no-run -p benchmarks --bench reduce --features cubecl/{backend}"
+
+  [[bench.reduce.step]]
+  lock = "exclusive"
+  env  = { CUBEK_BENCH_SAMPLES = "{samples}", CUBEK_BENCH_PROBLEMS = "{problems}" }
+  run  = "cargo bench -p benchmarks --bench reduce --features cubecl/{backend}"
+```
+
+    dibs bench cubek@local reduce --backend vulkan --samples 30
+
+`dibs list <repo>` prints what each recipe takes, its default, and its choices where it has any.
+A value outside the choices, a name the recipe does not declare, and a parameter with no default
+left unset are all refused here, before anything is sent. Only declared names are substituted, so
+`${VAR}`, `awk '{print $1}'` and the rest of the shell pass through untouched.
+
+The label does not carry the values, deliberately: one label is one duration history, and a label
+per value would predict none of them. The run record carries them, so two points stay
+distinguishable in `dibs runs`.
+
+Two things in a recipe are refused when it loads, because both produce a number that looks fine:
+
+- A step naming a relative `target/` path. `CARGO_TARGET_DIR` is redirected per tree, so that
+  directory is not the one the build writes, and the step reads whatever an earlier tree left.
+- A step that compiles under the exclusive lock, which holds the whole machine for work that
+  tolerates neighbours. The message shows the two-step form: build with `--no-run` under the
+  shared lock, measure under the exclusive one.
+
 ## Build caching
 
 dibs sets no compiler wrapper and leaves incremental compilation to each profile, so dev builds

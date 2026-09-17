@@ -35,6 +35,9 @@ pub struct Run {
     /// recoverable by checking out a ref, so the record carries it: otherwise the fingerprint
     /// could say two runs differed without anyone being able to see how.
     pub procedure: Vec<(String, String)>,
+    /// What the recipe's knobs were set to. Not in the label, deliberately: one label keeps one
+    /// duration history, and a sweep that split it per value would predict none of its points.
+    pub params: std::collections::BTreeMap<String, String>,
     pub backend: &'static str,
     /// Which card it ran on. Two devices under one label are two histories, exactly as two
     /// procedures under one label are: a number from one card cannot be compared with a
@@ -76,6 +79,16 @@ impl Run {
         }
         if let Some(r) = &self.seeded {
             let _ = write!(s, ",\"seeded\":{}", q(r));
+        }
+        if !self.params.is_empty() {
+            s.push_str(",\"params\":{");
+            for (i, (k, v)) in self.params.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                let _ = write!(s, "{}:{}", q(k), q(v));
+            }
+            s.push('}');
         }
         s.push_str(",\"procedure\":[");
         for (i, (lock, run)) in self.procedure.iter().enumerate() {

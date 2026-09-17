@@ -62,6 +62,21 @@ pub enum Isolation {
 pub struct Step {
     pub lock: Lock,
     pub run: String,
+    /// Exported before the command, since ssh forwards nothing from this side.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
+/// One knob a recipe takes. Declaring them is what keeps the set of valid invocations
+/// enumerable, so `dibs list` can say what a recipe accepts instead of the caller reading it.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct Param {
+    #[serde(default)]
+    pub default: Option<String>,
+    /// When it is not empty, a value outside it is refused rather than passed to the workload,
+    /// which is where a typo currently becomes a silently different measurement.
+    #[serde(default)]
+    pub choices: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -74,6 +89,8 @@ pub struct Recipe {
     pub needs: Option<String>,
     #[serde(default)]
     pub isolation: Isolation,
+    #[serde(default)]
+    pub params: BTreeMap<String, Param>,
     #[serde(default, rename = "step")]
     pub steps: Vec<Step>,
 }
@@ -274,6 +291,9 @@ impl Recipe {
     /// Identifies the procedure a number was produced by. Recorded with every run, because a
     /// label alone is not provenance: one name can cover two different benchmarks at two refs,
     /// and comparing across that is the failure the history exists to prevent.
+    ///
+    /// Taken after the parameters are bound, so two values of one knob fingerprint apart: what
+    /// ran is what has to be identified, not the template it came from.
     pub fn fingerprint(&self) -> String {
         let mut h = Sha256::new();
         h.update(self.needs.as_deref().unwrap_or("").as_bytes());
@@ -281,8 +301,87 @@ impl Recipe {
         for s in &self.steps {
             h.update(format!("{:?}", s.lock).as_bytes());
             h.update(s.run.as_bytes());
+            for (k, v) in &s.env {
+                h.update(k.as_bytes());
+                h.update(v.as_bytes());
+            }
         }
         format!("{:x}", h.finalize())[..16].to_string()
+    }
+
+    /// The value of every parameter for one invocation: what was asked for, checked against
+    /// what is declared, over the defaults.
+    pub fn values(&self, given: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+        if let Some(unknown) = given.keys().find(|k| !self.params.contains_key(*k)) {
+            let have: Vec<&str> = self.params.keys().map(|s| s.as_str()).collect();
+            return Err(match have.is_empty() {
+                true => format!("this recipe takes no parameters, so --{unknown} means nothing to it"),
+                false => format!("no parameter '{unknown}'; this recipe takes: {}", have.join(", ")),
+            });
+        }
+        let mut out = BTreeMap::new();
+        for (name, p) in &self.params {
+            let v = match given.get(name).or(p.default.as_ref()) {
+                Some(v) => v.clone(),
+                None => return Err(format!("--{name} has no default, so it has to be given")),
+            };
+            if !p.choices.is_empty() && !p.choices.contains(&v) {
+                return Err(format!("--{name} {v} is not one of: {}", p.choices.join(", ")));
+            }
+            out.insert(name.clone(), v);
+        }
+        Ok(out)
+    }
+
+    /// The recipe as it will run, with `{name}` replaced in every command and every exported
+    /// value. Only declared names are substituted: a command is shell, and `${VAR}`, `awk
+    /// '{print $1}'` and `find -exec {}` all pass through untouched.
+    pub fn bound(&self, values: &BTreeMap<String, String>) -> Recipe {
+        let fill = |s: &str| {
+            let mut out = s.to_string();
+            for (k, v) in values {
+                out = out.replace(&format!("{{{k}}}"), v);
+            }
+            out
+        };
+        let mut rec = self.clone();
+        for st in &mut rec.steps {
+            st.run = fill(&st.run);
+            st.env = st.env.iter().map(|(k, v)| (k.clone(), fill(v))).collect();
+        }
+        rec
+    }
+
+    /// The two ways a recipe invalidates its own measurement, refused before anything is paid
+    /// for rather than found in the numbers afterwards.
+    pub fn check(&self, name: &str) -> Result<(), String> {
+        for st in &self.steps {
+            // CARGO_TARGET_DIR is redirected per tree, so a relative target/ names a directory
+            // the build never writes: the step reads whatever an earlier tree left there.
+            if let Some(t) = st.run.split_whitespace().find(|w| {
+                let w = w.trim_start_matches("./").trim_start_matches(['"', '\'']);
+                w == "target" || w.starts_with("target/")
+            }) {
+                return Err(format!(
+                    "recipe '{name}' names {t}, but the build writes to $CARGO_TARGET_DIR, which dibs\n             \
+                     puts outside the tree. Use $CARGO_TARGET_DIR/... instead."
+                ));
+            }
+        }
+        let cargo = |st: &Step| st.run.split_whitespace().any(|w| w == "cargo");
+        let built_first = self.steps.iter().take_while(|st| st.lock == Lock::Shared).any(cargo);
+        if let Some(st) = self.steps.iter().find(|st| st.lock == Lock::Exclusive && cargo(st)) {
+            if !built_first {
+                return Err(format!(
+                    "recipe '{name}' compiles under the exclusive lock, which holds the whole machine\n             \
+                     for work that tolerates neighbours. Split it in two:\n               \
+                     [[step]] lock = \"shared\"     run = \"{} --no-run\"\n               \
+                     [[step]] lock = \"exclusive\"  run = \"{}\"",
+                    st.run, st.run
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -369,6 +468,84 @@ mod tests {
         assert_eq!(svc.serves[1].ready, None, "a server may say nothing about being ready");
         assert_eq!(svc.source, Source::Repo);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn parse(body: &str) -> Recipe {
+        let m: Manifest = toml::from_str(body).unwrap();
+        m.bench.into_iter().next().unwrap().1
+    }
+
+    const SWEEP: &str = "\
+[bench.r.params]\n\
+backend = { choices = [\"cuda\", \"vulkan\"], default = \"cuda\" }\n\
+samples = { default = \"10\" }\n\
+size = {}\n\
+[[bench.r.step]]\n\
+lock = \"shared\"\n\
+run = \"cargo build --features cubecl/{backend}\"\n\
+[[bench.r.step]]\n\
+lock = \"exclusive\"\n\
+env = { SAMPLES = \"{samples}\", SHAPE = \"{size}x{size}\" }\n\
+run = \"cargo bench --features cubecl/{backend} -- $FILTER\"\n";
+
+    #[test]
+    fn a_parameter_falls_back_to_its_default_and_is_checked_against_its_choices() {
+        let r = parse(SWEEP);
+        let given = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        let v = r.values(&given(&[("size", "64")])).unwrap();
+        assert_eq!(v["backend"], "cuda");
+        assert_eq!(v["samples"], "10");
+
+        let e = r.values(&given(&[("backend", "metal"), ("size", "64")])).unwrap_err();
+        assert!(e.contains("cuda, vulkan"), "a refusal has to say what is allowed: {e}");
+        let e = r.values(&given(&[("backends", "cuda"), ("size", "64")])).unwrap_err();
+        assert!(e.contains("backend, samples, size"), "and which names exist: {e}");
+        let e = r.values(&given(&[])).unwrap_err();
+        assert!(e.contains("--size"), "a parameter with no default cannot be left out: {e}");
+    }
+
+    #[test]
+    fn binding_fills_the_declared_names_and_leaves_the_shell_alone() {
+        let r = parse(SWEEP);
+        let given: BTreeMap<String, String> =
+            [("backend", "vulkan"), ("size", "64")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let b = r.bound(&r.values(&given).unwrap());
+        assert_eq!(b.steps[0].run, "cargo build --features cubecl/vulkan");
+        assert_eq!(b.steps[1].env["SAMPLES"], "10");
+        assert_eq!(b.steps[1].env["SHAPE"], "64x64", "a name can appear twice in one value");
+        assert!(b.steps[1].run.ends_with("-- $FILTER"), "the command is shell, not a template");
+        assert_ne!(r.fingerprint(), b.fingerprint(), "what ran is what has to be identified");
+    }
+
+    #[test]
+    fn a_step_cannot_name_the_target_directory_it_does_not_write_to() {
+        let r = parse(
+            "[[bench.r.step]]\nlock=\"shared\"\nrun=\"ls target/release/bench\"\n",
+        );
+        let e = r.check("r").unwrap_err();
+        assert!(e.contains("CARGO_TARGET_DIR"), "{e}");
+        let fine = parse(
+            "[[bench.r.step]]\nlock=\"shared\"\nrun=\"ls $CARGO_TARGET_DIR/release && ls $R/target-main\"\n",
+        );
+        fine.check("r").expect("an absolute target directory is the whole point");
+    }
+
+    #[test]
+    fn a_measurement_that_would_compile_under_the_exclusive_lock_is_refused() {
+        let alone = parse("[[bench.r.step]]\nlock=\"exclusive\"\nrun=\"cargo bench --bench gemm\"\n");
+        let e = alone.check("r").unwrap_err();
+        assert!(e.contains("--no-run"), "the message has to show the two-step form: {e}");
+        let split = parse(
+            "[[bench.r.step]]\nlock=\"shared\"\nrun=\"cargo bench --no-run\"\n\
+             [[bench.r.step]]\nlock=\"exclusive\"\nrun=\"cargo bench --bench gemm\"\n",
+        );
+        split.check("r").expect("built shared then measured exclusive is the shape being asked for");
+        let prebuilt = parse(
+            "[[bench.r.step]]\nlock=\"exclusive\"\nrun=\"$CARGO_TARGET_DIR/release/bench\"\n",
+        );
+        prebuilt.check("r").expect("a binary that was already built compiles nothing");
     }
 
     #[test]
