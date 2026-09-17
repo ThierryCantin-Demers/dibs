@@ -549,7 +549,10 @@ impl App {
     fn round_over(&self) -> bool {
         self.views
             .values()
-            .all(|v| v.dead.is_some() || v.seen_at.is_some_and(|t| t >= self.round_from))
+            // After the round began, not at the moment it did: the feed whose report ended the
+            // last round is the one that starts this one, and counting it twice leaves the round
+            // needing only the others, which ends it early and by a different amount each time.
+            .all(|v| v.dead.is_some() || v.seen_at.is_some_and(|t| t > self.round_from))
     }
 
     /// The column is worth its width only when there is more than one machine to tell apart.
@@ -1376,13 +1379,14 @@ mod tests {
             round_from: Instant::now(),
             refreshed: None,
         };
-        let before = app.round_from - Duration::from_secs(1);
         let now = Instant::now();
         app.views.insert("a".into(), view(Some(now), false));
-        app.views.insert("b".into(), view(Some(before), false));
+        app.views.insert("b".into(), view(Some(app.round_from - Duration::from_secs(1)), false));
         assert!(!app.round_over(), "b has not reported since the round began");
         app.views.insert("b".into(), view(Some(now), false));
         assert!(app.round_over());
+        app.views.insert("c".into(), view(Some(app.round_from), false));
+        assert!(!app.round_over(), "the report that ended the last round does not count in this one");
         app.views.insert("c".into(), view(None, false));
         assert!(!app.round_over(), "a feed yet to say anything holds the round open");
         app.views.insert("c".into(), view(None, true));
