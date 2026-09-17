@@ -5,6 +5,9 @@
 #   dibs build|test|bench <repo>[@<ref>] <recipe>   run a recipe: dibs list <repo> says
 #                                what a repo has, dibs runs what was measured.
 #   dibs list|runs|gaps|shell|raw   the rest of the recipe layer, as in dibs build --help
+#   dibs batch <file|->        a list of dibs calls, one per line, run as one submission with
+#                                one summary at the end: [name after=a,b cont] before a line
+#                                orders it, and a failed step stops the rest unless cont
 #   dibs run <command>          shared: builds, tests, inspection. Many at once. The bare
 #                                form, dibs <command>, still works.
 #   dibs run --bench <command>  exclusive: benchmarks. One at a time, nothing else running.
@@ -81,7 +84,8 @@
 #   --label <name>     what shows up in --status (default: the caller's directory)
 #   -v                 with --status, also dump the raw lock directory
 #
-#   exit 69 unreachable    70 no room on the target    75 busy    124 overran --max
+#   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran    75 busy
+#        124 overran --max
 #
 # --- end of the interface, everything below is why -------------------------------------
 #

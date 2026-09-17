@@ -1,237 +1,186 @@
-Paste this into your `~/.claude/CLAUDE.md`. It is what tells your agents how to use the
-shared benchmarking machine, and most of it exists because someone already got it wrong.
+## Dibs, the benchmarking machines
 
----
+Everything run on a benchmarking machine goes through `dibs`, which takes a lock. The machines are
+shared with other people and their agents, and each rule here exists because a measurement was
+spoiled without it.
 
-## Dibs, the benchmarking machine
+- Anything measured runs on a benchmarking machine, never on a laptop: a laptop throttles and
+  shares memory bandwidth with everything else on it, so its timings are noise.
+- Never `ssh` a machine to do work. An unlocked command ruins whoever is benchmarking at the time.
+- Never delete anything on a shared machine to make room, and never work around a permission
+  error. Tell the person you work for.
 
-- Anything measured runs on the benchmarking machine, never on this laptop: a laptop throttles,
-  shares memory bandwidth with everything else running, and its GPU timings are noise.
-- The machine is **shared with other people**. Every rule below is about not spoiling someone
-  else's measurement, and they are not stylistic.
-- Set `DIBS_HOST` to the machine you were given, or every call fails: there is no default.
-- Never `ssh` the machine directly to do work. Everything goes through `dibs`, which takes a
-  lock. An unlocked command ruins whoever is benchmarking at the time.
+### Locks
 
-### The commands
-
-- `dibs run <command>` for builds, tests and inspection: **shared**, several people at once.
-- `dibs run --bench <command>` for anything timed: **exclusive**, nothing else runs, including
-  other people's builds. A compile running beside a benchmark spoils it as surely as a second
+- `dibs run <command>`, or just `dibs <command>`, for builds, tests and anything else that does
+  work: **shared**, several at once.
+- `dibs run --bench <command>` for anything timed: **exclusive**. Nothing else runs beside it,
+  shared work included, because a compile beside a benchmark spoils it as surely as a second
   benchmark would.
-- `dibs status` who holds it, who is queued, and roughly how long, including what is left of a
-  `dibs batch` or a recipe. Never blocks. Asked how long your work will take, run it rather
-  than guessing.
-- `dibs --peek <command>` looks at the machine without taking the lock. Free things only:
-  `ps`, `nvidia-smi`, `ls`, `tail`, `git status`. It runs *beside* whatever is being measured,
-  so anything that costs CPU or IO is charged to that benchmark. When in doubt use the shared
-  lock: queueing costs you nothing, and ruining a twenty-minute sweep costs someone everything.
-- `dibs out <job>` a job's whole log, while it runs or for two weeks after; `dibs out`
-  lists the running ones.
-- `dibs --log` what has run recently, and what was killed.
-- `dibs --help` the rest, including `--sync` for copying files and `--kill`.
+- **Split building from measuring.** The exclusive lock is for what is being measured and nothing
+  else. A `--bench` that begins with `cargo build`, or that is `cargo bench --no-run`, holds the
+  whole machine for minutes doing work that tolerates neighbours, and everyone queues behind a
+  compile. Build with `dibs run`, then measure with `dibs run --bench`, as two calls, never one
+  `--bench 'build && bench'`.
+- `dibs --peek <command>` takes no lock and runs beside whatever is being measured, which pays for
+  it. Only for what is effectively free: `ps`, `nvidia-smi`, `ls`, `tail`, `cat` of a small file,
+  `git status`. Anything that compiles, downloads, copies, searches a tree or reads gigabytes
+  belongs in `dibs run`, however read-only it looks. A peek that takes more than a moment is
+  logged as `peek-slow`.
+- `dibs --sync` copies to or from a machine under the shared lock. Never scp or rsync straight at
+  it: a copy competes with a measurement for memory bandwidth and writeback. Mark the machine's
+  side with a colon: `dibs --sync -a ./tree :~/.cache/dibs/tree` sends,
+  `dibs --sync -a :~/.cache/dibs/out ./` fetches, and rsync's own options pass through.
+- A shared job whose label's history says it is quick goes around a queued benchmark instead of
+  waiting it out, delaying it by about a minute at most. Two shared holders while a benchmark is
+  queued is that, not a bug.
+- **Never `sleep`**, here or inside a command sent to a machine: under the exclusive lock it stalls
+  everyone for its whole duration. To wait until something is ready, block on a fifo: `mkfifo f`,
+  start the work, then `read -r _ < f`.
+- Scratch on a machine goes under `$DIBS_SCRATCH`, never `/tmp`, which is a small tmpfs shared by
+  everyone that one build tree fills for all of us. dibs exports it and points `TMPDIR` into it;
+  put build trees, logs and binaries in a subdirectory you name.
 
-### When there is more than one machine
+### One submission, one wake
 
-- `dibs --machines` says which ones are known and which is the default; `dibs --on <machine>`
-  sends one call to a named one. Without `--on` the default is used, so you rarely need it.
-- A machine can be marked `measure = false`, and `--bench` refuses it outright. That is not an
-  obstacle to work around: its numbers would not mean anything. Send the benchmark to a machine
-  that measures, or run it shared if it was never a measurement.
-- `dibs --check <host> --write` records a new machine in the inventory. Run it once per machine.
-- With `DIBS_ROUTE=1`, or `dibs --any <command>`, a shared job goes to the least busy machine
-  on its own. `dibs --pick -v` shows the ranking without running anything. Benchmarks are never
-  routed and you should not try to route one: its history keys on the machine it ran on.
-- `dibs --status --all` is every machine at once. Once work is being ranked, `--status` alone
-  answers for one machine and that is rarely the question.
-- A repo's work sticks to whichever machine holds its build cache, and you do not manage this.
-  Do not try to force a build onto an idle machine to make it finish sooner: the benchmark that
-  needs what it built cannot follow it there, and would compile inside its own exclusive lock.
+- **Launch dibs in the background and never poll it.** A machine is often busy for twenty minutes,
+  a queued job waits that long before it starts, and a foreground call dies of its own timeout
+  first, so the work never runs. In Claude Code that is the Bash tool's `run_in_background`; in
+  Codex, an `exec_command` that yields, collected later with `write_stdin`. If you genuinely
+  cannot wait, pass `--wait <seconds>` and handle exit 75.
+- **One background call per piece of work, not per dibs command.** Every completion wakes you, and
+  you re-read your whole context to answer it, so a hundred jobs launched one at a time cost three
+  hundred turns at full context. That pattern alone has used most of a day's token budget for
+  nothing.
+- **Put the sequence in one `dibs batch`.** It takes one dibs call per line, from a file or from
+  stdin, and prints one summary when the last step ends:
 
-### Naming the card, on a machine with more than one
+  ```
+  [build]              dibs run --label reduce-build 'cargo build --release --bench reduce'
+  [bench after=build]  dibs run --bench --label reduce-bench 'cargo bench --bench reduce'
+  ```
 
-- `dibs --machines -v` lists every machine's cards: the alias to name it by, its bus id, what
-  can reach it, and what it is plugged into.
-- `--device <alias>` runs the job on that card and nothing else. It works with `dibs run` and with
-  recipes. **A benchmark on a multi-GPU machine that names no card is not reproducible**,
-  because which card the runtime picks is not yours to decide and is not recorded anywhere.
-  dibs says so when you do it; it does not stop you, because a build does not care.
-- Two runs under one label have to name the same card, or their numbers are not comparable and
-  nothing about the two numbers says so. dibs refuses the second one and tells you what the
-  first ran on. If you mean to move a label to another card or machine, say
-  `--new-series`: its history starts again rather than mixing the new numbers into the old.
-- Two cards of the same model are told apart by their slot, so a machine with a matched pair
-  can still name either one. A card the machine cannot answer for is refused rather than run
-  unpinned, because a job that measured whichever card came first and reported it under the
-  name you asked for is worse than one that did not run.
-- `dibs bench ... --dry-run` prints which card it would use before anything runs. On a
-  measurement worth keeping, look at that line first.
-- Do not pass `CUDA_VISIBLE_DEVICES` yourself. dibs sets it, from the alias, resolved on the
-  machine at the moment the job starts. Setting it by hand with a bus id looks like it works
-  and does nothing: that variable takes an index or a `GPU-<uuid>`, and it ignores anything
-  else rather than failing.
+- A line is one dibs call and nothing else: `;`, `&&`, a pipe, a redirect, `$(...)` or a backtick
+  outside quotes is refused before anything runs. What runs on the machine goes in single quotes,
+  which also keeps `$DIBS_SCRATCH` unexpanded until it gets there.
+- Loops go in a generator, not in a script wrapped around the calls:
 
-### Recipes: prefer one where a repo has it
+  ```bash
+  {
+    echo "[build] dibs run --label gemv-build 'cd \$DIBS_SCRATCH/src && cargo bench --no-run --bench gemv'"
+    for p in rr rc cr; do
+      echo "[gemv-$p after=build cont] dibs run --bench --label gemv-$p 'cd \$DIBS_SCRATCH/src && cargo bench --bench gemv -- $p'"
+    done
+  } | dibs batch -
+  ```
 
-- `dibs list <repo>` says what a repo defines. `dibs <verb> <repo>@<ref> <recipe>` runs
-  it, where verb is `build`, `test` or `bench`.
-- Use it in preference to writing a command by hand, because it does five things you would
-  otherwise each do differently: it fetches and creates the worktree, exports one build cache
-  per repo, derives a stable label, keeps the whole output on the machine, and records which commit of every repo was actually built.
-- **The step says which lock it takes**, so a recipe's build runs shared and only its
-  measurement runs exclusive. That is the build/measure split made structural instead of being
-  a rule you have to remember.
-- **`<repo>@local` sends your working tree**, uncommitted changes and all, instead of fetching a
-  ref. Use it rather than hand-rolling a sync and a build for a branch you have not pushed:
-  refusing to push a perf branch to measure it is reasonable, and the hand-rolled version loses
-  the per-tree build cache, the recorded revision and the lock split at once. It follows the
-  repo's ignore rules, so no `target` and no `.git` make the trip, and the record names the
-  exact tree by content so two runs are comparable only if it matches.
-- `dibs runs [label]` is what was actually measured: the commit of every repo, the
-  isolation, the time. It also says when a label's recipe has changed, because two procedures
-  under one name are two histories, and comparing across them is the mistake the record exists
-  to prevent.
-- Recipes come in three layers, each overriding the last: bundled with dibs, then a
-  repo's own `.dibs.toml`, then `~/.config/dibs/recipes/<repo>.toml`. The bundled ones mean a
-  new person has working recipes with no setup; local config is where one lives while it is
-  still moving, so it can be iterated on without a pull request against a shared repo.
-  `dibs list` says which layer each came from. The run record carries the procedure itself,
-  not only its fingerprint, so a recipe that is not in git is still recoverable from the record.
-- **If there is no recipe for what you need, use `dibs` directly and tell whoever owns the machine.** A missing recipe
-  is a gap worth filling, and the ones that keep coming up are the specification for the next
-  one. Do not quietly go back to hand-written commands for something you will do again.
+- A step waits for the line before it. `[name after=a,b]` waits for those steps instead, and a bare
+  `after=` waits for nothing. Steps that wait for nothing in common overlap on different machines
+  and take turns on one, so work on two machines is one batch. A failed step stops the rest; mark
+  `cont` on a step whose failure should not, such as one configuration of a sweep.
+- **Do not batch across a decision.** If a later step depends on what an earlier one *said*, you
+  will not see that until the whole batch is done. Two batches with a look in between is still far
+  cheaper than one call per job. When the criterion can be stated up front, put it in the step and
+  let a non-zero exit stop the rest.
+- `--on <machine>` binds one call. A step that forgets it goes to the default machine and comes
+  back unreachable, which reads as your machine going down. `export DIBS_ON=<machine>` before
+  `dibs batch` covers every step, including ones added later.
 
-### Rules that are not negotiable
+### Reading what came back
 
-**When dibs has changed since your session last used it, the first call says so** on stderr,
-once, with the commits that arrived. Flags and output you remember from earlier in the session
-may be wrong from then on: read `dibs --help` before relying on them.
+- **Read the summary or the trailer, not the output.** A batch's summary has one row per step:
+  machine, lock, time, exit, and each job with `by=dibs` when dibs produced the exit and the
+  `built=` its trailer reported. A single call ends with the trailer on stderr,
+  `job <id>  <mode>  <label>  queued Ns  ran Ns  exit N  by=command|dibs  built=N|nothing`, then
+  the log path. A pipe on your side cannot cut it off, and it carries the real exit.
+- **Read `built=` before the numbers.** `built=nothing` means cargo compiled no crate, so a
+  measurement after it measured the previous binary. A shared target directory, a copy that kept
+  mtimes, or a stale worktree all do that.
+- A job's stdout is a digest: its first and last 20 lines and a count of the rest. Do not pipe dibs
+  through `tail`, `head` or `grep`, which replaces the exit status with the filter's, and do not
+  redirect inside the command to keep a log. The whole output stays on the machine for two weeks:
+  `dibs out <job>` reads it during the run or after, `dibs out` lists the running jobs, and
+  `--stream` gives the whole stream inline when you need all of it. Say which job ids a run
+  produced, so a person can follow it.
 
-**Always launch it with the Bash tool's `run_in_background` parameter, and never poll it.**
-The machine is often busy for twenty minutes or more, a queued job waits that long before it
-starts, and a foreground call dies of its own timeout first. When that happens the work simply
-never runs, and you report a failure whose cause is invisible. Queueing costs nothing in the
-background: do other work and read the result when the notification arrives.
+### Status, labels and names
 
-**One background call per piece of work, not per `dibs` command.** A completion does not
-merely hand back a result: it wakes the agent, which re-reads its entire context before it can
-look at that result and answer. One job therefore costs three turns whatever it returns, so
-launching a hundred jobs one at a time costs three hundred turns at full context. That pattern
-alone has been most of a day's token budget, for no benefit at all: the machine did the same
-work either way.
+- `dibs status` says who holds a machine, who is queued and roughly how long, and never blocks;
+  `dibs --status --all` covers every machine. For a step of a batch it says which step of how many,
+  what is still to come on that machine, and how long the batch has left there, queue included.
+  **Asked how long your work will take, run it rather than guessing.** The later calls of a script
+  are invisible to it.
+- **Label the kind of work, not the run**: `--label yield-sweep`, never `yield-sweep-run3`. The
+  label is the key durations are filed under, so it stays the same every time that work runs. A
+  label used once files its time where nothing looks, and one label over several different
+  benchmarks averages them into a number that predicts none of them.
+- Each job names the agent that started it, so a person can ask that agent what it is doing.
+  Claude Code is identified from its session. Any other runtime, Codex included, must
+  `export DIBS_AGENT='<the work>'` once per session as its own statement, naming the work rather
+  than the tool: `DIBS_AGENT='cubek reduce sweep'`.
+- `dibs --kill <pid>` stops a wedged job, refusing someone else's without `--anyone`, and
+  `dibs --log [n]` shows what ran, what it cost and what was killed. Both ignore the lock, so a
+  stuck machine can still be freed.
+- `dibs --watch` is for a person at a terminal. A backgrounded job tells you when it is done, and
+  watching costs the machine.
 
-Put the whole sequence in one `dibs batch`, launch that once, and be woken once. It takes one
-dibs call per line, from a file or from stdin, and prints one summary when the last step ends:
+### Machines
 
-```
-[build]              dibs --label reduce-build 'cargo build --release --bench reduce'
-[bench after=build]  dibs --bench --label reduce-bench 'cargo bench --bench reduce'
-```
+- `dibs --machines` lists the known machines and the default. `dibs --check <host>` says whether a
+  machine is usable and what is in it; run it before first use and read its warnings, not only its
+  exit code, and `--write` records the machine.
+- A machine marked `measure = false` refuses `--bench`. That is not an obstacle to route around: its
+  numbers would mean nothing. Send the benchmark to a machine that measures, or run it shared if it
+  was never a measurement. Such a machine is still good for builds and tests through `--on`.
+- `dibs --any <command>`, or `DIBS_ROUTE=1`, sends a shared job to the least busy machine, and
+  `dibs --pick -v` shows the ranking. Benchmarks are never routed: their history keys on the
+  machine they ran on.
+- A repo's work sticks to the machine holding its build cache. Do not push a build onto an idle
+  machine to finish sooner: the benchmark that needs what it built cannot follow it there, and
+  would compile inside its own exclusive lock.
+- The same commands work on the machine itself; dibs recognises it and locks locally.
 
-**Read the summary, not the steps' output.** One row per step: its machine, lock, time and exit,
-and each of its jobs with `by=dibs` when dibs produced the exit and the `built=` its trailer
-reported. `built=nothing` before a measurement means it measured the previous binary. A step's
-whole output is in the files the summary names, and `dibs --out <job>` reads a job's log.
+### Cards, on a machine with more than one
 
-**A line is one dibs call and nothing else.** `;`, `&&`, a pipe, a redirect, `$(...)` or a
-backtick outside quotes is refused before anything runs. What runs on the machine goes in single
-quotes, which is also what keeps `$DIBS_SCRATCH` unexpanded until it gets there.
+- `dibs --machines -v` lists each machine's cards by the alias to name them with.
+- `--device <alias>` runs a job, or a recipe, on that card only. **A benchmark on a multi-GPU
+  machine that names no card is not reproducible**, because which card the runtime picks is
+  recorded nowhere.
+- Every run under one label must name the same card, or their numbers are not comparable, so dibs
+  refuses the second and says what the first ran on. To move a label to another card or machine on
+  purpose, pass `--new-series`: its history starts again instead of mixing.
+- `dibs bench ... --dry-run` prints which card it would use. On a measurement worth keeping, read
+  that line first.
+- Never set `CUDA_VISIBLE_DEVICES` yourself. dibs sets it from the alias, resolved on the machine
+  when the job starts; a bus id there is silently ignored rather than refused.
 
-**Generate a list rather than wrapping the calls in a script.** Loops and functions belong in
-the generator, and the batch runs what it prints:
+### Recipes: use one where a repo has it
 
-```bash
-{
-  echo "[build] dibs --label gemv-build 'cd \$DIBS_SCRATCH/src && cargo bench --no-run --bench gemv'"
-  for p in rr rc cr; do
-    echo "[gemv-$p after=build cont] dibs --bench --label gemv-$p 'cd \$DIBS_SCRATCH/src && cargo bench --bench gemv -- $p'"
-  done
-} | dibs batch -
-```
+- `dibs list <repo>` says what a repo defines, and `dibs build|test|bench <repo>@<ref> <recipe>`
+  runs one. Prefer it to a hand-written command: it prepares the worktree, keeps a build cache per
+  tree, derives a stable label, keeps the output, and records the commit of every repo it built.
+- Each recipe step names its lock, so the build runs shared and only the measurement exclusive.
+- `@local` in place of a ref sends your working tree, uncommitted changes included, following the
+  repo's ignore rules. It is how to run a branch you have not pushed, and the only way to run a
+  private repo, because the machines hold no credentials. Reach for it before carrying code over by
+  hand: a bundle, a tarball or a hand-written sync of a tree is this feature done worse.
+- `dibs runs [label]` is what was measured: every repo's commit, the isolation, the time, and
+  whether the label's recipe changed, since two procedures under one name are two histories.
+- Recipes come in three layers, each overriding the last: bundled with dibs, the repo's
+  `.dibs.toml`, and `~/.config/dibs/recipes/<repo>.toml` for one still being worked out. `dibs list`
+  says which layer each came from.
+- **If no recipe fits, use `dibs run` and tell the person you work for.** A missing recipe that
+  keeps coming up is the specification for the next one.
 
-**Order.** A step waits for the line before it. `[name after=a,b]` waits for those steps instead,
-and a bare `after=` waits for nothing. Steps that wait for nothing in common overlap when they go
-to different machines and take turns on the same one, so work on two machines is one batch whose
-second chain starts with `after=`, not two scripts joined with `&` and `wait`. A failed step
-stops the rest of the batch; mark `cont` on a step whose failure should not, such as one
-configuration of a sweep.
+### When dibs says no
 
-**Each step stays its own `dibs` call.** Do not collapse the sequence into
-`dibs run 'build && bench'` to save a line: that holds one lock for both, which is the compile
-inside the exclusive lock that the split above exists to prevent. The saving is in how many
-times *you* are woken, never in how many locks are taken.
-
-**Asked how long your work will take, run `dibs status` rather than guessing.** It never
-blocks, and for a step of a batch it shows which step of how many is running, what is still to
-come on that machine with what each usually takes, and the time the batch has left there. The
-later calls of a script are invisible to it until they arrive. The estimate is only as good as
-the labels: one label over several different benchmarks averages them into a number that
-predicts none of them.
-
-**Do not batch across a decision.** If a later step should only run depending on what an
-earlier one *said*, you will not see the earlier answer until the whole batch is done, and
-the rest will have run for nothing. Two batches with a look in between is six turns and still
-far cheaper than one per job. When you can state the criterion up front, put it in the step
-itself and let a non-zero exit stop the rest.
-
-**Never `sleep`, anywhere, including inside a command sent to the machine.** Locally it blocks
-your turn so nothing can steer you. Remotely it is worse: a sleep inside a job holding the
-exclusive lock stalls every other person for its whole duration. To wait for something to be
-ready, block on a fifo rather than on a clock: `mkfifo f`, start the work, then `read -r _ < f`.
-
-**Split building from measuring.** A `--bench` that begins with `cargo build` holds the whole
-machine for minutes doing something that tolerates neighbours perfectly, and everyone else ends
-up queued behind a compile rather than behind a benchmark. Two calls: `dibs run 'cargo build ...'`
-under the shared lock, then `dibs run --bench 'cargo bench ...'` for the measured run. This
-includes `cargo bench --no-run`, which is a build.
-
-**Say who you are with `DIBS_AGENT`, unless you are Claude Code.** Every job records the agent
-that started it, so `dibs status` can say who to go and ask about a job that is holding the
-machine, and so stopping someone else's has to be deliberate. Claude Code is read from its
-session. Codex publishes no session id and runs all of its sessions through one shell process,
-so it can only be identified as Codex, and any other runtime arrives as the unix account, which
-on a shared machine is everyone. Export `DIBS_AGENT` once per session, naming the work rather
-than the tool: `DIBS_AGENT='cubek reduce sweep'`.
-
-**Label the kind of work, not the run.** `--label cubek-gemm`, never `--label run3`. The label
-is the key the duration history is filed under, so it must be the same every time you run that
-kind of work. A label used once files its timing where nothing will ever look it up, which is
-why the ETAs are useless when people get this wrong.
-
-**Scratch goes under `$DIBS_SCRATCH` on the machine, never `/tmp`.** That `/tmp` is a small
-in-memory filesystem shared by everyone, and one build tree in it fills it for all of us. A
-full one breaks every command on the machine, including the ones for finding out why.
-
-**Read the trailer, not the exit code and not the output.** Every job ends with one on stderr:
-`job <id>  <mode>  <label>  queued Ns  ran Ns  exit N  by=command|dibs  built=N|nothing`, then
-the log path and the `dibs out <id>` that reads it. `by=dibs` means dibs produced the exit
-(69, 70, 71, 75, 124), `by=command` means your command did.
-
-**A job's stdout is a digest**: its first and last 20 lines and a count of what was left out.
-Do not pipe a dibs call through `tail`, `head` or `grep`: it is already bounded, and a filter
-replaces the exit status with its own. The whole output is kept on the machine for two weeks,
-so anyone can read it with `dibs out <id>`, and `--stream` gives the whole stream inline when
-you actually need all of it. Do not redirect inside the command to keep a log: that is done.
-
-**Read `built=` before you read the numbers.** `built=nothing` means cargo finished having
-compiled no crate, so a measurement after it measured the previous binary. A shared target
-directory, a copy that preserved mtimes and a stale worktree all produce that.
-
-### Exit codes
-
-- **69** the machine is unreachable. Tell the user, do whatever does not need it, and do not
-  retry in a loop.
-- **70** its scratch filesystem is full. Tell the user. Never delete anything on a shared
-  machine to make room.
-- **71** the lock directory cannot be written, so no lock could be taken and **nothing ran**.
-  A sandboxed shell is the usual cause. Do not work around it by pointing `DIBS_LOCK_DIR`
-  somewhere writable: a lock in a directory nobody else uses excludes nobody, which is worse
-  than not running. Tell the user.
-- **75** it was busy and you had passed `--wait`.
-- **124** the command overran `--max` and was killed while holding the lock.
-
-### The account is deliberately unprivileged
-
-Jobs run as a user with no `sudo` and no ability to touch anything outside its own home. If
-something genuinely needs more than that, **ask the human** rather than working around it. A
-permission error is the system working, not an obstacle to route around.
+- The first call after dibs has changed says so on stderr, once per session, with the commits that
+  arrived. Flags and output you remember may be wrong from then on: read `dibs --help`.
+- Exits 69, 70 and 71 are for telling the person you work for, never for working around:
+  - **69** unreachable: off, asleep, or its network needs a login. Do what does not need the
+    machine, and do not retry in a loop.
+  - **70** no room: the machine's scratch is full or over quota, so nothing can run there.
+  - **71** the lock directory cannot be written, so **nothing ran**; a sandboxed shell is the usual
+    cause. Never point `DIBS_LOCK_DIR` somewhere writable: a lock nobody else uses excludes nobody.
+- **75** it was busy and you passed `--wait`.
+- **124** it overran `--max` and was killed while holding the lock.

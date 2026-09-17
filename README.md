@@ -44,8 +44,11 @@ do, and `dibs --check` lists what it has.
     dibs --status                              # who holds it, who is queued
     bash dibs-onboard.sh                       # takes the lock, queues behind itself, explains
 
-`dibs --help` is the full surface. `dibs-agent-rules.md` is meant to be pasted into an agent's
-instructions, and is the shortest useful description of how to use this well.
+`dibs --help` is the full surface. `dibs-agent-rules.md` is the rules your agents follow, and is
+the shortest useful description of how to use this well. Load it from your clone rather than
+copying it, so a `dibs --update` updates the rules too: a line `@~/<clone>/dibs-agent-rules.md`
+in `~/.claude/CLAUDE.md` imports it, and an `AGENTS.md`, which has no imports, can have it
+included when that file is generated.
 
 ## Updating
 
@@ -234,7 +237,7 @@ lanes than it can drive is worth knowing about before believing a number that mo
 | `dibs-tui/` | a live view of who holds the machines, one feed each. |
 | `dibs-report/` | builds a single-page handoff report from the sources themselves. |
 | `dibs-design/` | the plans, the settled decisions and their measurements, and what sharing a machine takes. |
-| `dibs-agent-rules.md` | paste into `~/.claude/CLAUDE.md` so your agents know the rules. |
+| `dibs-agent-rules.md` | the rules your agents follow, loaded from here into their instructions. |
 | `dibs-onboard.sh` | sets a new person up and demonstrates the lock actually blocking. |
 | `tests/` | the lock protocol, on a scratch directory. Never touches a real machine. |
 

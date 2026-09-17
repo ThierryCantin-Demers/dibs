@@ -66,4 +66,4 @@ more than the install: it is the only part that shows a new person what the lock
 uses real work rather than a sleep, because a sleep under the exclusive lock stalls everyone on
 the machine for its whole duration and that is the worst possible place to teach it.
 
-`dibs-agent-rules.md` is the section to paste into an agent's instructions.
+`dibs-agent-rules.md` is the section an agent's instructions load.
