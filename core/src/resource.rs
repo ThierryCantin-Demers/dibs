@@ -24,7 +24,7 @@ pub struct Request<'a> {
     pub env: &'a [(&'static str, String)],
     /// Seconds the job may hold the lock, when the caller knows the default is too short.
     pub max: Option<u64>,
-    /// A measurement that starts its label's series again, on another card or machine.
+    /// A measurement that starts its label's series on this machine again, on another card.
     pub new_series: bool,
 }
 

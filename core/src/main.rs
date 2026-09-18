@@ -70,9 +70,9 @@ dibs batch <file|->                   a list of dibs command lines as one submis
   --max     seconds the job may hold the lock, when the default is too short for it
   --anyway  measure even when another tree built into the target after this one did,
             which is otherwise refused with exit 78
-  --new-series  the measurement is moving to another card or machine on purpose, so its
-            label's series starts again. Checked before anything is built, as the refusal
-            that asks for it is
+  --new-series  the measurement is moving to another card of its machine on purpose, so
+            its label's series there starts again. Each machine keeps its own series, so
+            another machine needs no flag. Checked before anything is built
   --dry-run print what would run, take no lock, record nothing
   --verbose with batch, each step's output as it comes, prefixed with the step's name
 
@@ -121,7 +121,7 @@ struct Args {
     anyway: bool,
     /// runs only: failed runs too.
     all: bool,
-    /// The measurement starts its label's series again, on another card or machine.
+    /// The measurement starts its label's series on this machine again, on another card.
     new_series: bool,
     verbose: bool,
 }

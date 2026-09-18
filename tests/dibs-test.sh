@@ -1260,37 +1260,45 @@ check "the first benchmark under a label claims it" \
   "$(awk -F'\t' '$1=="series-a" {print "yes"}' "$DIBS_SERIES")" "yes"
 check "running it again the same way is fine" \
   "$($T --on alpha --bench --label series-a 'echo two' >/dev/null 2>&1; echo $?)" "0"
-check "a second machine under one label is refused" \
-  "$($T --on beta --bench --label series-a 'echo no' 2>&1 >/dev/null | grep -c 'two histories')" "1"
-check "and it names what the label was measured on before" \
-  "$($T --on beta --bench --label series-a 'echo no' 2>&1 >/dev/null | grep -c 'before:  dibs@alpha')" "1"
+# Numbers from two machines never compare, and the machine is named on every call, so a second
+# machine is a series of its own rather than a refusal that pushes the machine into the label.
+err=$($T --on beta --bench --label series-a 'echo three' 2>&1 >/dev/null); rc=$?
+check "a second machine under one label starts a series of its own" "$rc" "0"
+check "and says where the label's other series is, which is what shows a forgotten --on" \
+  "$(grep -c "^dibs: first run of 'series-a' on beta; its series is on alpha (2 runs)\.$" <<<"$err")" "1"
+check "once, not on every run there" \
+  "$($T --on beta --bench --label series-a 'echo four' 2>&1 >/dev/null | grep -c 'first run of')" "0"
+check "each machine keeping its own" "$(awk -F'\t' '$1=="series-a"' "$DIBS_SERIES" | wc -l)" "2"
 # One machine reached under two names is one machine. Keying on the name it was called rather
-# than on where it goes would record it twice and refuse a run that was never a move.
-check "the same machine under another name is not a move" \
+# than on where it goes would record it twice.
+check "the same machine under another name is not a new series" \
   "$(printf '#dibs-series 1\nsame\tdibs@alpha\tnone\tx\t1\n' > "$DIBS_SERIES"
-     DIBS_HOST=dibs@alpha $T --bench --label same 'echo fine' >/dev/null 2>&1; echo $?)" "0"
-$T --on alpha --bench --label series-a 'echo again' >/dev/null 2>&1
-check "and refusing is an error, not a note" \
-  "$($T --on beta --bench --label series-a 'echo no' >/dev/null 2>&1; echo $?)" "2"
-# Suppressing the message and filing the new numbers beside the old ones would rebuild the
-# mixed history the check exists to prevent, so a deliberate move starts the series over.
-check "--new-series moves it rather than merging" \
-  "$($T --on beta --bench --label series-a --new-series 'echo moved' >/dev/null 2>&1; echo $?)" "0"
-check "so the old machine is now the odd one out" \
-  "$($T --on alpha --bench --label series-a 'echo no' 2>&1 >/dev/null | grep -c 'two histories')" "1"
-check "and the new machine does not need the flag again" \
-  "$($T --on beta --bench --label series-a 'echo settled' >/dev/null 2>&1; echo $?)" "0"
+     DIBS_HOST=dibs@alpha $T --bench --label same 'echo fine' 2>&1 >/dev/null | grep -c 'first run of')" "0"
+# A card change on one machine is usually a missing --device, and nothing else would show it.
+printf 'series-c\tdibs@alpha\tgpu:x\tx\t1\t3\nseries-c\tdibs@beta\tgpu:y\tx\t1\t4\n' >> "$DIBS_SERIES"
+err=$($T --on alpha --bench --label series-c 'echo no' 2>&1 >/dev/null); rc=$?
+check "another card on the same machine is refused, as an error rather than a note" "$rc" "2"
+check "naming the card it was measured on" \
+  "$(grep -c "another card of alpha" <<<"$err")$(grep -c '^  before:  gpu:x' <<<"$err")" "11"
+check "--new-series starts its series on that machine again" \
+  "$($T --on alpha --bench --label series-c --new-series 'echo moved' >/dev/null 2>&1; echo $?)
+$(awk -F'\t' '$1=="series-c" && $2=="dibs@alpha" {print $3, $6}' "$DIBS_SERIES")" "0
+none 1"
+check "and leaves the other machine's alone" \
+  "$(awk -F'\t' '$1=="series-c" && $2=="dibs@beta" {print $3, $6}' "$DIBS_SERIES")" "gpu:y 4"
+check "and the new card does not need the flag again" \
+  "$($T --on alpha --bench --label series-c 'echo settled' >/dev/null 2>&1; echo $?)" "0"
 # The flag rides on the run it is passed with and takes effect only if that run succeeds, which
 # is right: a migration that measured nothing must not claim the label any more than a first
 # attempt may. What it looks like from outside is the flag being ignored, because the next run
 # is refused again with the same "before", and the reading that follows is that it has to be
 # passed forever, which turns the guard off for that label permanently.
-$T --on alpha --bench --label series-a --new-series 'exit 3' >/dev/null 2>&1
+printf 'series-d\tdibs@alpha\tgpu:x\tx\t1\t3\n' >> "$DIBS_SERIES"
+err=$($T --on alpha --bench --label series-d --new-series 'exit 3' 2>&1 >/dev/null)
 check "a --new-series run that failed moves nothing" \
-  "$($T --on beta --bench --label series-a 'echo still beta' >/dev/null 2>&1; echo $?)" "0"
+  "$($T --on alpha --bench --label series-d 'echo still' >/dev/null 2>&1; echo $?)" "2"
 check "and says so, rather than leaving it looking ignored" \
-  "$($T --on alpha --bench --label series-a --new-series 'exit 3' 2>&1 >/dev/null |
-     grep -c 'did not move')" "1"
+  "$(grep -c 'did not start its series here again' <<<"$err")" "1"
 # A job that measured nothing must not claim the label: a first attempt that failed would
 # otherwise pin every later run to wherever it happened to fail.
 rm -f "$DIBS_SERIES"
@@ -1300,7 +1308,8 @@ check "a benchmark that failed claims nothing" \
 # Builds and tests do not care which card they did not use, and blocking one would make this
 # an obstacle rather than a guard.
 check "shared work is not checked at all" \
-  "$($T --on beta --label series-a 'echo fine' >/dev/null 2>&1; echo $?)" "0"
+  "$(printf '#dibs-series 1\nseries-e\tdibs@beta\tgpu:x\tx\t1\t1\n' > "$DIBS_SERIES"
+     $T --on beta --label series-e 'echo fine' >/dev/null 2>&1; echo $?)" "0"
 
 echo "a transfer goes where it was told"
 cat > "$DIBS_MACHINES" <<TOML
@@ -1976,17 +1985,23 @@ check "and listed only when asked for" \
 # A measurement its label's series would refuse is refused before its build, not after it.
 printf '%s\n' '' '[bench.moved]' '  [[bench.moved.step]]' '  lock = "shared"' "  run = \"$S/fc/cargo build\"" \
   '  [[bench.moved.step]]' '  lock = "exclusive"' '  run = "echo measured"' >> "$S/app/.dibs.toml"
-[ -s "$DIBS_SERIES" ] || printf '#dibs-series 1\n' > "$DIBS_SERIES"
-printf 'app_bench_moved\telsewhere\tnone\tx\t1\n' >> "$DIBS_SERIES"
+here=$(awk -F'\t' '$1=="app_bench_gate" {print $2; exit}' "$DIBS_SERIES")
+printf 'app_bench_moved\t%s\tgpu:x\tx\t1\t2\n' "$here" >> "$DIBS_SERIES"
 n0=$(arrivals)
 out=$(RC bench "$S/app@main" moved 2>&1); rc=$?
 check "a recipe its series would refuse is refused before anything is built" \
   "$rc $(( $(arrivals) - n0 )) $(grep -c 'two histories' <<<"$out")" "2 0 1"
 out=$(RC bench "$S/app@main" moved --new-series 2>&1); rc=$?
 check "and --new-series reaches its measurement" "$rc $(grep -c '^measured$' <<<"$out")" "0 1"
-check "moving the series" "$(awk -F'\t' '$1=="app_bench_moved" {print $2}' "$DIBS_SERIES" | grep -vc elsewhere)" "1"
+check "starting its series on that machine again" \
+  "$(awk -F'\t' -v m="$here" '$1=="app_bench_moved" && $2==m {print $3}' "$DIBS_SERIES")" "none"
 check "which its record says" \
   "$(grep '"label":"app/bench/moved"' "$HOME/.local/state/dibs/runs.jsonl" | grep -c '"new_series":true')" "1"
+printf '%s\n' '' '[bench.noted]' '  [[bench.noted.step]]' '  lock = "shared"' '  run = "true"' \
+  '  [[bench.noted.step]]' '  lock = "exclusive"' '  run = "echo measured"' >> "$S/app/.dibs.toml"
+printf 'app_bench_noted\tdibs@elsewhere\tnone\tx\t1\t5\n' >> "$DIBS_SERIES"
+check "a recipe's first run on a machine says where its series is, once, before its build" \
+  "$(RC bench "$S/app@main" noted 2>&1 | grep -c "first run of 'app_bench_noted' on .*; its series is on elsewhere (5 runs)\.$")" "1"
 
 # An @local tree is reused from run to run, and so is any cache a tool keeps inside it, so a run
 # after an edit would read the autotune winners of the run before. fresh gives each run its own.

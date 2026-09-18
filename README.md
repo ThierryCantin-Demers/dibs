@@ -373,13 +373,16 @@ picks an index itself can still reach another card.
 
 **One label, one series.** A label is the key a measurement's history is filed under, so two
 runs of it are meant to be two samples of one thing. They are not if they ran on different
-cards or different machines, and nothing about the two numbers says so. The first benchmark
-under a label records where it ran, and a later one elsewhere is refused, naming what it was
-measured on before. `--new-series` moves a label deliberately and starts its history again,
-rather than mixing the new numbers into the old, which would rebuild the thing the check exists
-to prevent. Checked before the run and recorded after it, so a benchmark that failed claims
-nothing. A recipe is checked before its build, so a refusal costs nothing on the machine, and
-takes `--new-series` the same way.
+cards or different machines, and nothing about the two numbers says so. Each machine keeps its
+own series of a label: the machine is named on every call and in every record, so numbers from
+two machines never mix. The first run of a label on a machine says where its other series are,
+with how many runs each has, which is what catches a forgotten `--on`. Within one machine the
+first benchmark records which card it ran on, and one on another card is refused, naming the card
+it was measured on before, since that is usually a missing `--device` and nothing else shows it.
+`--new-series` moves a label to another card deliberately and starts its series on that machine
+again, rather than mixing the new numbers into the old. Checked before the run and recorded after
+it, so a benchmark that failed claims nothing. A recipe is checked before its build, so a refusal
+costs nothing on the machine, and takes `--new-series` the same way.
 
 `--check` also reports what each card is plugged into, walked to the root complex rather than
 read off the endpoint: a card with its own bridge reports the width between its die and its own
