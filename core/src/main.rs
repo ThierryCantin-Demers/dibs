@@ -48,7 +48,8 @@ dibs batch <file|->                   a list of dibs command lines as one submis
                                       step stops the batch unless it is marked cont.
 
   <verb>    bench, build or test
-  <repo>    a path to a checkout, or a name resolved under --root
+  <repo>    a path to a checkout, or a name: the checkout you are in when it is that
+            repo, a worktree of it included, else the one under --root
   --root    where named repos live (default $DIBS_ROOT, then `root` in machines.toml,
             else the current directory)
   --reason  why this does not fit a recipe. Required for shell and raw, and recorded:
@@ -1263,6 +1264,12 @@ fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
     let direct = PathBuf::from(repo);
     if direct.join(".dibs.toml").exists() || direct.join(".git").exists() {
         return canon(direct);
+    }
+    // Inside a worktree of the named repo, `@local` means that tree, and the clone under the
+    // root would otherwise be sent in its place without a word.
+    let here = std::env::current_dir().ok().and_then(|d| worktree::toplevel(&d));
+    if let Some(here) = here.filter(|h| !repo.contains('/') && worktree::identity(h) == repo) {
+        return Ok(here);
     }
     let under = root.join(repo);
     if under.exists() {

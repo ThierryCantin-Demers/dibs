@@ -786,8 +786,7 @@ pub fn identity(dir: &std::path::Path) -> String {
     let fallback = folder(dir).unwrap_or_else(|| "repo".into());
     // A directory inside some other repo is not that repo, so only a checkout's own top level
     // is asked.
-    let top = git(dir, &["rev-parse", "--show-toplevel"]).map(|t| std::path::PathBuf::from(t.trim()));
-    if top.ok().and_then(|t| t.canonicalize().ok()) != dir.canonicalize().ok() {
+    if toplevel(dir) != dir.canonicalize().ok() {
         return fallback;
     }
     let Ok(common) = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"]) else {
@@ -800,6 +799,12 @@ pub fn identity(dir: &std::path::Path) -> String {
         folder(&common).map(|n| n.trim_end_matches(".git").to_string())
     };
     named.filter(|n| !n.is_empty()).unwrap_or(fallback)
+}
+
+/// The checkout `dir` is inside, if any.
+pub fn toplevel(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let top = git(dir, &["rev-parse", "--show-toplevel"]).ok()?;
+    std::path::PathBuf::from(top.trim()).canonicalize().ok()
 }
 
 /// The folder a worktree sits in, which says which line of work a run came from. Only for the

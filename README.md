@@ -92,6 +92,10 @@ value. The names are substituted into every command and into what each step expo
 
     dibs bench cubek@local reduce --backend vulkan --samples 30
 
+A bare repo name is the checkout you are in when that checkout is the repo, a worktree of it
+included, and otherwise the one under `DIBS_ROOT`: inside a worktree of cubek, `cubek@local` sends
+that worktree.
+
 `dibs list <repo>` prints what each recipe takes, its default, and its choices where it has any.
 A value outside the choices, a name the recipe does not declare, and a parameter with no default
 left unset are all refused here, before anything is sent. Only declared names are substituted, so

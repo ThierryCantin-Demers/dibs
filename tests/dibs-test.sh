@@ -2062,6 +2062,12 @@ check "an unpinned run says which machine has the repo's cache, and since when" 
 rm -f "$HOME/.local/state/dibs/affinity"
 DIBS_ON=lap RC build "$S/app@local" p >/dev/null 2>&1; rc=$?
 check "a pinned one does not" "$rc $(ls "$HOME/.local/state/dibs" | grep -c '^affinity')" "0 0"
+last_variant() { grep '"label":"app/build/p"' "$HOME/.local/state/dibs/runs.jsonl" | tail -n 1 | grep -o '"variant":"[^"]*"'; }
+( cd "$S/app-topk" && DIBS_ROOT=$S RC build app@local p >/dev/null 2>&1 )
+check "a bare name inside a worktree of that repo is the worktree, not the clone under the root" \
+  "$(last_variant)" '"variant":"app-topk"'
+( cd "$S/app-topk" && DIBS_ROOT=$S RC build "$S/app@local" p >/dev/null 2>&1 )
+check "while a path is still that path" "$(last_variant)" ""
 
 echo
 echo "passed $pass, failed $fail"
