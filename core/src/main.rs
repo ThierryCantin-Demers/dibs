@@ -70,6 +70,9 @@ dibs batch <file|->                   a list of dibs command lines as one submis
   --max     seconds the job may hold the lock, when the default is too short for it
   --anyway  measure even when another tree built into the target after this one did,
             which is otherwise refused with exit 78
+  --new-series  the measurement is moving to another card or machine on purpose, so its
+            label's series starts again. Checked before anything is built, as the refusal
+            that asks for it is
   --dry-run print what would run, take no lock, record nothing
   --verbose with batch, each step's output as it comes, prefixed with the step's name
 
@@ -118,6 +121,8 @@ struct Args {
     anyway: bool,
     /// runs only: failed runs too.
     all: bool,
+    /// The measurement starts its label's series again, on another card or machine.
+    new_series: bool,
     verbose: bool,
 }
 
@@ -139,6 +144,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut max = None;
     let mut anyway = false;
     let mut all = false;
+    let mut new_series = false;
     let mut verbose = false;
     let mut it = words.into_iter();
     while let Some(a) = it.next() {
@@ -188,6 +194,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
             }
             "--anyway" => anyway = true,
             "--all" => all = true,
+            "--new-series" => new_series = true,
             "--dry-run" => dry_run = true,
             "--verbose" | "-v" => verbose = true,
             "-" => positional.push("-".into()),
@@ -245,6 +252,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         max,
         anyway,
         all,
+        new_series,
         verbose,
     })
 }
@@ -321,6 +329,7 @@ fn run() -> Result<ExitCode, String> {
                 device: args.device.as_deref(),
                 env: &[],
                 max: args.max,
+                new_series: args.new_series,
             },
             command,
         )?;
@@ -342,6 +351,7 @@ fn run() -> Result<ExitCode, String> {
             seeded: None,
             batch: batch_of_caller(),
             anyway: false,
+            new_series: false,
             state: Vec::new(),
             steps: vec![provenance::StepRecord::of("shared", &out)],
         })?;
@@ -472,6 +482,21 @@ fn run() -> Result<ExitCode, String> {
     if let Some(m) = &backend.machine {
         affinity_set(&repo_name, m);
     }
+    for (i, step) in rec.steps.iter().enumerate().filter(|(_, s)| s.lock == Lock::Exclusive) {
+        let req = Request {
+            label: &step_labels[i],
+            lock: step.lock,
+            isolation: rec.isolation,
+            needs: None,
+            device: args.device.as_deref(),
+            env: &[],
+            max: None,
+            new_series: args.new_series,
+        };
+        if !backend.preflight(&req)? {
+            return Ok(ExitCode::from(2));
+        }
+    }
 
     // The worktree comes first and takes the shared lock, because a fetch and a checkout are
     // work that tolerates neighbours. Doing it inside a measured step would put a git fetch
@@ -509,6 +534,7 @@ fn run() -> Result<ExitCode, String> {
         device: None,
         env: &setup_env,
         max: None,
+        new_series: false,
     };
     // One cache per repo, exported rather than left to each recipe to remember. The output
     // needs no file of its own: dibs keeps every job's log under its job id, and a path named
@@ -542,6 +568,7 @@ fn run() -> Result<ExitCode, String> {
                 device: args.device.as_deref(),
                 env: &env,
                 max: args.max,
+                new_series: args.new_series,
             };
             let (out, text) = backend.run_reporting(&req, &command, &mut announce)?;
             if !text.contains("DIBS-READY") && !text.contains("DIBS-HELD") {
@@ -589,6 +616,7 @@ fn run() -> Result<ExitCode, String> {
             device: args.device.as_deref(),
             env: &env,
             max: args.max,
+            new_series: args.new_series,
         };
         let (out, report) = backend.run_reporting(&req, &cd, &mut |_| {})?;
         // The machine has said why; a refusal is not a run, so it leaves no record.
@@ -637,6 +665,7 @@ fn run() -> Result<ExitCode, String> {
         seeded: prepared.seeded.clone(),
         batch: batch_of_caller(),
         anyway: args.anyway,
+        new_series: args.new_series,
         state,
         steps,
     };
@@ -703,6 +732,9 @@ fn sweep_text(args: &Args, points: &[BTreeMap<String, String>]) -> String {
             }
             if args.anyway {
                 line += " --anyway";
+            }
+            if args.new_series {
+                line += " --new-series";
             }
             if let Some(d) = &args.device {
                 line += &format!(" --device {d}");
@@ -790,6 +822,7 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
         device: None,
         env: &[],
         max: None,
+        new_series: false,
     };
     let mut announce = |text: &str| announce_prepared(text);
     let text = match &local {
@@ -827,6 +860,7 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
             device: args.device.as_deref(),
             env: &[],
             max: None,
+            new_series: false,
         };
         let build = match worktree::build_signature(build) {
             Some(_) => worktree::claiming(build),
@@ -1330,12 +1364,13 @@ mod tests {
     fn a_swept_run_is_a_batch_of_ordinary_calls() {
         let args = swept(&[
             "bench", "app@local", "r", "--device", "gpu0", "--sweep", "samples=10,30", "--reps", "2", "--anyway",
+            "--new-series",
         ]);
         let text = sweep_text(&args, &sweep_points(&args));
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 4, "two values, twice each");
-        assert_eq!(lines[0], "[samples-10.r1] dibs bench app@local r --anyway --device gpu0 --samples 10");
-        assert_eq!(lines[3], "[samples-30.r2] dibs bench app@local r --anyway --device gpu0 --samples 30");
+        assert_eq!(lines[0], "[samples-10.r1] dibs bench app@local r --anyway --new-series --device gpu0 --samples 10");
+        assert_eq!(lines[3], "[samples-30.r2] dibs bench app@local r --anyway --new-series --device gpu0 --samples 30");
     }
 
     #[test]
@@ -1483,6 +1518,7 @@ mod tests {
             seeded: None,
             batch: None,
             anyway: false,
+            new_series: false,
             state: Vec::new(),
             steps: vec![],
         };
@@ -1522,6 +1558,7 @@ mod tests {
             seeded: None,
             batch: None,
             anyway: false,
+            new_series: false,
             state: Vec::new(),
             steps: vec![],
         };
@@ -1551,6 +1588,7 @@ mod tests {
             seeded: None,
             batch: None,
             anyway: false,
+            new_series: false,
             state: Vec::new(),
             steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3, job: None, built: None, log: None }],
         };

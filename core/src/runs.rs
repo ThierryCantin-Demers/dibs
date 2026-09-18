@@ -28,6 +28,7 @@ pub struct Record {
     pub measured: Option<u64>,
     pub failed: bool,
     pub anyway: bool,
+    pub new_series: bool,
     pub reason: Option<String>,
     pub seeded: Option<String>,
 }
@@ -71,6 +72,7 @@ fn parse_line(line: &str) -> Option<Record> {
         measured: (!exclusive.is_empty()).then(|| exclusive.iter().map(|s| secs(s)).sum()),
         failed,
         anyway: v.get("anyway").and_then(Value::as_bool).unwrap_or(false),
+        new_series: v.get("new_series").and_then(Value::as_bool).unwrap_or(false),
         reason: text("reason"),
         seeded: text("seeded"),
     })
@@ -171,6 +173,7 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
             (!r.params.is_empty()).then(|| words(&r.params, "=")),
             r.seeded.as_ref().map(|s| format!("seeded from {s}")),
             r.anyway.then(|| "measured with --anyway".to_string()),
+            r.new_series.then(|| "a new series starts here".to_string()),
             r.failed.then(|| "FAILED".to_string()),
         ];
         let extra: String = extra.into_iter().flatten().map(|e| format!("  {e}")).collect();

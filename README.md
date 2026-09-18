@@ -351,7 +351,8 @@ under a label records where it ran, and a later one elsewhere is refused, naming
 measured on before. `--new-series` moves a label deliberately and starts its history again,
 rather than mixing the new numbers into the old, which would rebuild the thing the check exists
 to prevent. Checked before the run and recorded after it, so a benchmark that failed claims
-nothing.
+nothing. A recipe is checked before its build, so a refusal costs nothing on the machine, and
+takes `--new-series` the same way.
 
 `--check` also reports what each card is plugged into, walked to the root complex rather than
 read off the endpoint: a card with its own bridge reports the width between its die and its own

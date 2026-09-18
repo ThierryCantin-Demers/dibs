@@ -24,6 +24,8 @@ pub struct Request<'a> {
     pub env: &'a [(&'static str, String)],
     /// Seconds the job may hold the lock, when the caller knows the default is too short.
     pub max: Option<u64>,
+    /// A measurement that starts its label's series again, on another card or machine.
+    pub new_series: bool,
 }
 
 pub struct Outcome {
@@ -223,7 +225,25 @@ pub fn reporting(mut cmd: Command, on_report: &mut dyn FnMut(&str)) -> Result<(O
 }
 
 impl Dibs {
+    /// Whether the wrapper would refuse this request on grounds it decides here, without the
+    /// machine: a machine that does not measure, or a label measured somewhere else.
+    pub fn preflight(&self, req: &Request) -> Result<bool, String> {
+        let mut cmd = self.flags(req)?;
+        cmd.arg("--preflight").arg("true").stdin(Stdio::null());
+        let status = cmd.status().map_err(|e| format!("could not run {}: {e}", self.program))?;
+        Ok(status.success())
+    }
+
     fn build(&self, req: &Request, command: &str) -> Result<Command, String> {
+        let mut cmd = self.flags(req)?;
+        cmd.arg(command);
+        // A job must never inherit this process's stdin: the wrapper reads its own channel to
+        // learn that the caller is gone, and a shared stdin makes that signal meaningless.
+        cmd.stdin(Stdio::null());
+        Ok(cmd)
+    }
+
+    fn flags(&self, req: &Request) -> Result<Command, String> {
         if req.isolation == Isolation::Device {
             return Err("per-device isolation needs a backend that knows what is in the machine; \
                         this one locks the whole machine or nothing"
@@ -240,6 +260,9 @@ impl Dibs {
         }
         if req.lock == Lock::Exclusive {
             cmd.arg("--bench");
+            if req.new_series {
+                cmd.arg("--new-series");
+            }
         }
         cmd.arg("--label").arg(req.label);
         if let Some(m) = req.max {
@@ -252,10 +275,6 @@ impl Dibs {
         // that points at the interface.
         cmd.env("DIBS_FROM_RUN", "1");
         cmd.envs(req.env.iter().map(|(k, v)| (*k, v)));
-        cmd.arg(command);
-        // A job must never inherit this process's stdin: the wrapper reads its own channel to
-        // learn that the caller is gone, and a shared stdin makes that signal meaningless.
-        cmd.stdin(Stdio::null());
         Ok(cmd)
     }
 }
@@ -274,5 +293,18 @@ mod tests {
         }
         let t = t.unwrap();
         assert_eq!((t.job.as_str(), t.built.as_deref(), t.log.as_deref()), ("1-2", Some("nothing"), Some("m:/j/1-2/log")));
+    }
+
+    fn request(lock: Lock, new_series: bool) -> Request<'static> {
+        Request { label: "a/bench/x", lock, isolation: Isolation::Machine, needs: None, device: None, env: &[], max: None, new_series }
+    }
+
+    #[test]
+    fn a_new_series_reaches_the_measurement_and_nothing_else() {
+        let d = Dibs { program: "dibs".into(), machine: Some("m".into()) };
+        let args = |req: &Request| d.build(req, "cmd").unwrap().get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        assert_eq!(args(&request(Lock::Exclusive, true)), ["--on", "m", "--bench", "--new-series", "--label", "a/bench/x", "cmd"]);
+        assert!(!args(&request(Lock::Shared, true)).contains(&"--new-series".to_string()));
+        assert!(!args(&request(Lock::Exclusive, false)).contains(&"--new-series".to_string()));
     }
 }

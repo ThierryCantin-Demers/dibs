@@ -99,6 +99,8 @@ pub struct Run {
     pub batch: Option<String>,
     /// Measured with `--anyway` over a target another tree had built into.
     pub anyway: bool,
+    /// Where the label's series started again, so older runs are not compared with this one.
+    pub new_series: bool,
     /// What `stated` read on the machine when the measurement started.
     pub state: Vec<(String, String)>,
     pub steps: Vec<StepRecord>,
@@ -149,6 +151,9 @@ impl Run {
         }
         if self.anyway {
             s.push_str(",\"anyway\":true");
+        }
+        if self.new_series {
+            s.push_str(",\"new_series\":true");
         }
         if !self.state.is_empty() {
             s.push_str(",\"state\":{");
@@ -268,6 +273,7 @@ mod tests {
             seeded: None,
             batch: Some("20260918-1".into()),
             anyway: true,
+            new_series: false,
             state: vec![("governor".into(), "performance".into())],
             steps: vec![step("shared", 0, "1-1", Some("nothing")), step("exclusive", 3, "1-2", None)],
         };

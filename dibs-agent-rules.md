@@ -169,7 +169,8 @@ spoiled without it.
   recorded nowhere.
 - Every run under one label must name the same card, or their numbers are not comparable, so dibs
   refuses the second and says what the first ran on. To move a label to another card or machine on
-  purpose, pass `--new-series`: its history starts again instead of mixing.
+  purpose, pass `--new-series`: its history starts again instead of mixing. A recipe takes it too,
+  and is checked before it builds anything.
 - `dibs bench ... --dry-run` prints which card it would use. On a measurement worth keeping, read
   that line first.
 - Never set `CUDA_VISIBLE_DEVICES` yourself. dibs sets it from the alias, resolved on the machine

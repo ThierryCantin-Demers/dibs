@@ -1973,6 +1973,21 @@ check "a failed run is recorded as one" \
 check "and listed only when asked for" \
   "$(RC runs app/build/fails 2>&1 | grep -c 'nothing but failed runs')$(RC runs app/build/fails --all 2>&1 | grep -c 'FAILED$')" "11"
 
+# A measurement its label's series would refuse is refused before its build, not after it.
+printf '%s\n' '' '[bench.moved]' '  [[bench.moved.step]]' '  lock = "shared"' "  run = \"$S/fc/cargo build\"" \
+  '  [[bench.moved.step]]' '  lock = "exclusive"' '  run = "echo measured"' >> "$S/app/.dibs.toml"
+[ -s "$DIBS_SERIES" ] || printf '#dibs-series 1\n' > "$DIBS_SERIES"
+printf 'app_bench_moved\telsewhere\tnone\tx\t1\n' >> "$DIBS_SERIES"
+n0=$(arrivals)
+out=$(RC bench "$S/app@main" moved 2>&1); rc=$?
+check "a recipe its series would refuse is refused before anything is built" \
+  "$rc $(( $(arrivals) - n0 )) $(grep -c 'two histories' <<<"$out")" "2 0 1"
+out=$(RC bench "$S/app@main" moved --new-series 2>&1); rc=$?
+check "and --new-series reaches its measurement" "$rc $(grep -c '^measured$' <<<"$out")" "0 1"
+check "moving the series" "$(awk -F'\t' '$1=="app_bench_moved" {print $2}' "$DIBS_SERIES" | grep -vc elsewhere)" "1"
+check "which its record says" \
+  "$(grep '"label":"app/bench/moved"' "$HOME/.local/state/dibs/runs.jsonl" | grep -c '"new_series":true')" "1"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

@@ -654,6 +654,7 @@ DEV_RT=""
 DEV_CHIP=""
 DEV_TWINS=1
 NEW_SERIES=0
+PREFLIGHT=0
 HOLD=0
 WITH_NAME=()
 WITH_READY=()
@@ -819,6 +820,7 @@ while [ $# -gt 0 ]; do
         --max)        MAXHOLD=$2; shift 2 ;;
         --device)     DEVICE=${2:-}; shift 2 ;;
         --new-series) NEW_SERIES=1; shift ;;
+        --preflight)  PREFLIGHT=1; shift ;;
         --stream)     STREAM=1; shift ;;
         --label)      LABEL=$2; shift 2 ;;
         -h|--help)    usage ;;
@@ -1220,7 +1222,7 @@ fi
 # nothing downstream can tell its number from one that was pinned. dibs cannot record which
 # card the process chose, because that choice happens inside the runtime where it cannot see,
 # so the only honest thing it can do is say the number is unpinned before it is believed.
-if [ "$MODE" = bench ] && [ -z "$DEVICE" ] && [ "$HOLD" = 0 ] && [ "${DIBS_UNPINNED_QUIET:-0}" != 1 ]; then
+if [ "$MODE" = bench ] && [ -z "$DEVICE" ] && [ "$HOLD" = 0 ] && [ "$PREFLIGHT" = 0 ] && [ "${DIBS_UNPINNED_QUIET:-0}" != 1 ]; then
     bench_m=${MACHINE:-$(inv_name_for_host)}
     if [ -n "$bench_m" ]; then
         gpus=$(inv_device_names "$bench_m" | grep -c '^gpu:') || gpus=0
@@ -1521,6 +1523,9 @@ series_stayed_put() {
 if [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && [ "$NEW_SERIES" != 1 ]; then
     series_check || exit 2
 fi
+# The recipe layer asks this before it builds, so a measurement refused here is refused before
+# minutes of building under the shared lock rather than after them.
+[ "$PREFLIGHT" = 1 ] && exit 0
 
 
 # --- running somewhere that does not sleep ---------------------------------------------
