@@ -1988,6 +1988,20 @@ check "moving the series" "$(awk -F'\t' '$1=="app_bench_moved" {print $2}' "$DIB
 check "which its record says" \
   "$(grep '"label":"app/bench/moved"' "$HOME/.local/state/dibs/runs.jsonl" | grep -c '"new_series":true')" "1"
 
+# An @local tree is reused from run to run, and so is any cache a tool keeps inside it, so a run
+# after an edit would read the autotune winners of the run before. fresh gives each run its own.
+printf '%s\n' '' '[bench.fresh]' 'fresh = ["STORE"]' '  [[bench.fresh.step]]' '  lock = "shared"' \
+  '  run = "echo build sees $STORE"' '  [[bench.fresh.step]]' '  lock = "exclusive"' '  run = "echo measure sees $STORE"' >> "$S/app/.dibs.toml"
+check "a recipe says what it gives a value of its own each run" \
+  "$(RC list "$S/app" 2>/dev/null | grep -c '^      fresh each run: STORE$')" "1"
+one=$(RC bench "$S/app@local" fresh 2>/dev/null)
+two=$(RC bench "$S/app@local" fresh 2>/dev/null)
+v1=$(sed -n 's/^measure sees //p' <<<"$one")
+check "every step of a run sees one value" "$(grep -c "^build sees $v1\$" <<<"$one") ${v1%%-*}" "1 dibs"
+check "and the next run another" "$(grep -c "^measure sees $v1\$" <<<"$two")" "0"
+check "which the record carries" \
+  "$(grep '"label":"app/bench/fresh"' "$HOME/.local/state/dibs/runs.jsonl" | grep -c "\"fresh\":{\"STORE\":\"$v1\"}")" "1"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

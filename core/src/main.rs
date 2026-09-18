@@ -352,6 +352,7 @@ fn run() -> Result<ExitCode, String> {
             batch: batch_of_caller(),
             anyway: false,
             new_series: false,
+            fresh: Vec::new(),
             state: Vec::new(),
             steps: vec![provenance::StepRecord::of("shared", &out)],
         })?;
@@ -394,6 +395,9 @@ fn run() -> Result<ExitCode, String> {
                             Some(d) => println!("      --{p} {d}{choices}"),
                             None => println!("      --{p} <value>, required{choices}"),
                         }
+                    }
+                    if let Some(r) = manifest.recipe(v, n).filter(|r| !r.fresh.is_empty()) {
+                        println!("      fresh each run: {}", r.fresh.join(", "));
                     }
                 }
             }
@@ -452,6 +456,9 @@ fn run() -> Result<ExitCode, String> {
         }
         for (k, v) in &params {
             println!("param       {k} = {v}");
+        }
+        for v in &rec.fresh {
+            println!("fresh       {v}, a value of its own each run");
         }
         for (i, s) in rec.steps.iter().enumerate() {
             println!("step {}      [{:?}] {}", i + 1, s.lock, s.run);
@@ -666,6 +673,7 @@ fn run() -> Result<ExitCode, String> {
         batch: batch_of_caller(),
         anyway: args.anyway,
         new_series: args.new_series,
+        fresh: fresh_values(rec, &token).into_iter().collect(),
         state,
         steps,
     };
@@ -910,8 +918,17 @@ fn step_command(rec: &recipe::Recipe, i: usize, token: &str, anyway: bool) -> St
     };
     // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop in the
     // step as well as the first word of it.
-    let exports: String = step.env.iter().map(|(k, v)| format!("export {k}={}; ", sh(v))).collect();
+    let exports: String = fresh_values(rec, token)
+        .iter()
+        .chain(&step.env)
+        .map(|(k, v)| format!("export {k}={}; ", sh(v)))
+        .collect();
     format!("{exports}{run}")
+}
+
+/// One value per run for each of the recipe's `fresh` variables, the same in every step of it.
+fn fresh_values(rec: &recipe::Recipe, token: &str) -> BTreeMap<String, String> {
+    rec.fresh.iter().map(|v| (v.clone(), format!("dibs-{token}"))).collect()
 }
 
 /// The script that prepares the tree on the machine, and the git databases it may need sent.
@@ -1010,6 +1027,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         needs: None,
         isolation: recipe::Isolation::Machine,
         params: BTreeMap::new(),
+        fresh: Vec::new(),
         steps: vec![recipe::Step {
             lock: if args.bench { Lock::Exclusive } else { Lock::Shared },
             run: args.command.clone().unwrap_or_default(),
@@ -1388,7 +1406,7 @@ mod tests {
     }
 
     fn resolved(steps: Vec<Step>) -> Resolved {
-        let rec = Recipe { source: recipe::Source::Local, needs: None, isolation: Isolation::Machine, params: BTreeMap::new(), steps };
+        let rec = Recipe { source: recipe::Source::Local, needs: None, isolation: Isolation::Machine, params: BTreeMap::new(), fresh: Vec::new(), steps };
         let step_labels = label_steps("app/bench/r", &rec.steps);
         Resolved {
             dir: PathBuf::from("."),
@@ -1453,6 +1471,17 @@ mod tests {
         assert_eq!(label_steps("r/x", &steps), vec!["r/x.1", "r/x.2", "r/x"]);
     }
 
+    // Both steps of one run see one store, and the next run another.
+    #[test]
+    fn a_fresh_variable_has_one_value_per_run_in_every_step() {
+        let mut rec = resolved(vec![step(Lock::Shared, "make"), step(Lock::Exclusive, "./bench")]).rec;
+        rec.fresh = vec!["CUBECL_ENVIRONMENT".into()];
+        for i in 0..2 {
+            assert!(step_command(&rec, i, "t1", false).starts_with("export CUBECL_ENVIRONMENT=dibs-t1; "));
+        }
+        assert!(step_command(&rec, 1, "t2", false).starts_with("export CUBECL_ENVIRONMENT=dibs-t2; "));
+    }
+
     #[test]
     fn the_fingerprint_follows_the_procedure_and_nothing_else() {
         let a = Recipe {
@@ -1460,6 +1489,7 @@ mod tests {
             needs: None,
             isolation: Isolation::Machine,
             params: BTreeMap::new(),
+            fresh: Vec::new(),
             steps: vec![step(Lock::Shared, "cargo build")],
         };
         let same = Recipe {
@@ -1467,6 +1497,7 @@ mod tests {
             needs: None,
             isolation: Isolation::Machine,
             params: BTreeMap::new(),
+            fresh: Vec::new(),
             steps: vec![step(Lock::Shared, "cargo build")],
         };
         let changed_command = Recipe {
@@ -1474,6 +1505,7 @@ mod tests {
             needs: None,
             isolation: Isolation::Machine,
             params: BTreeMap::new(),
+            fresh: Vec::new(),
             steps: vec![step(Lock::Shared, "cargo build --release")],
         };
         let changed_lock = Recipe {
@@ -1481,6 +1513,7 @@ mod tests {
             needs: None,
             isolation: Isolation::Machine,
             params: BTreeMap::new(),
+            fresh: Vec::new(),
             steps: vec![step(Lock::Exclusive, "cargo build")],
         };
         assert_eq!(a.fingerprint(), same.fingerprint());
@@ -1519,6 +1552,7 @@ mod tests {
             batch: None,
             anyway: false,
             new_series: false,
+            fresh: Vec::new(),
             state: Vec::new(),
             steps: vec![],
         };
@@ -1559,6 +1593,7 @@ mod tests {
             batch: None,
             anyway: false,
             new_series: false,
+            fresh: Vec::new(),
             state: Vec::new(),
             steps: vec![],
         };
@@ -1589,6 +1624,7 @@ mod tests {
             batch: None,
             anyway: false,
             new_series: false,
+            fresh: Vec::new(),
             state: Vec::new(),
             steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3, job: None, built: None, log: None }],
         };

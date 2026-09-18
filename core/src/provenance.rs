@@ -101,6 +101,8 @@ pub struct Run {
     pub anyway: bool,
     /// Where the label's series started again, so older runs are not compared with this one.
     pub new_series: bool,
+    /// The value each of the recipe's `fresh` variables had in this run.
+    pub fresh: Vec<(String, String)>,
     /// What `stated` read on the machine when the measurement started.
     pub state: Vec<(String, String)>,
     pub steps: Vec<StepRecord>,
@@ -154,6 +156,16 @@ impl Run {
         }
         if self.new_series {
             s.push_str(",\"new_series\":true");
+        }
+        if !self.fresh.is_empty() {
+            s.push_str(",\"fresh\":{");
+            for (i, (k, v)) in self.fresh.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                let _ = write!(s, "{}:{}", q(k), q(v));
+            }
+            s.push('}');
         }
         if !self.state.is_empty() {
             s.push_str(",\"state\":{");
@@ -274,6 +286,7 @@ mod tests {
             batch: Some("20260918-1".into()),
             anyway: true,
             new_series: false,
+            fresh: vec![("CUBECL_ENVIRONMENT".into(), "dibs-1".into())],
             state: vec![("governor".into(), "performance".into())],
             steps: vec![step("shared", 0, "1-1", Some("nothing")), step("exclusive", 3, "1-2", None)],
         };
@@ -284,6 +297,7 @@ mod tests {
         assert!(v["steps"][1].get("built").is_none());
         assert_eq!((&v["repo"], &v["batch"], &v["anyway"]), (&"r".into(), &"20260918-1".into(), &true.into()));
         assert_eq!(v["state"]["governor"], "performance");
+        assert_eq!(v["fresh"]["CUBECL_ENVIRONMENT"], "dibs-1");
         assert_eq!(v["outcome"], "failed");
     }
 }

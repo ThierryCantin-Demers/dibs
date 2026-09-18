@@ -29,6 +29,8 @@ pub struct Record {
     pub failed: bool,
     pub anyway: bool,
     pub new_series: bool,
+    /// The names of the variables the run was given a value of its own for.
+    pub fresh: Vec<String>,
     pub reason: Option<String>,
     pub seeded: Option<String>,
 }
@@ -73,6 +75,7 @@ fn parse_line(line: &str) -> Option<Record> {
         failed,
         anyway: v.get("anyway").and_then(Value::as_bool).unwrap_or(false),
         new_series: v.get("new_series").and_then(Value::as_bool).unwrap_or(false),
+        fresh: v.get("fresh").map(pairs).unwrap_or_default().into_iter().map(|(k, _)| k).collect(),
         reason: text("reason"),
         seeded: text("seeded"),
     })
@@ -243,10 +246,16 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
         if let [newer, older, ..] = latest[..] {
             let n = newer.procedure.len().max(older.procedure.len());
             let step = |r: &Record, i: usize| r.procedure.get(i).map(|(l, run)| format!("[{l}] {}", short(run)));
-            let change = (0..n).find(|&i| step(older, i) != step(newer, i)).map(|i| {
-                let say = |s: Option<String>| s.map(|s| format!("`{s}`")).unwrap_or_else(|| "nothing".into());
-                format!(" The latest change is step {}: {} became {}.", i + 1, say(step(older, i)), say(step(newer, i)))
-            });
+            let say = |s: Option<String>| s.map(|s| format!("`{s}`")).unwrap_or_else(|| "nothing".into());
+            let fresh = |r: &Record| (!r.fresh.is_empty()).then(|| r.fresh.join(", "));
+            let change = (0..n)
+                .find(|&i| step(older, i) != step(newer, i))
+                .map(|i| format!(" The latest change is step {}: {} became {}.", i + 1, say(step(older, i)), say(step(newer, i))))
+                .or_else(|| {
+                    (older.fresh != newer.fresh).then(|| {
+                        format!(" The latest change is what gets a fresh value each run: {} became {}.", say(fresh(older)), say(fresh(newer)))
+                    })
+                });
             split.push_str(&format!(
                 "  {label}: {} different recipes have run under this name, and runs under one are not \
                  comparable with runs under another.{}\n",
@@ -407,6 +416,16 @@ mod tests {
         assert!(!out.contains("different recipes"), "{out}");
         let out = report(&[point(1, "f10", "10"), point(2, "g10", "10")], None, 10, false);
         assert!(out.contains("a/build/p with samples=10: 2 different recipes"), "{out}");
+    }
+
+    #[test]
+    fn a_recipe_that_changed_only_what_runs_fresh_says_so() {
+        let mut older = v2(1, "f1", "cargo bench", 9, "performance", "ok");
+        let mut newer = v2(2, "f2", "cargo bench", 9, "performance", "ok");
+        older.fresh = vec![];
+        newer.fresh = vec!["CUBECL_ENVIRONMENT".into()];
+        let out = report(&[older, newer], None, 10, false);
+        assert!(out.contains("fresh value each run: nothing became `CUBECL_ENVIRONMENT`"), "{out}");
     }
 
     // Nothing was measured under the one that failed, so there is no second history to warn of.

@@ -79,7 +79,10 @@ while read -r n src; do
         case "${src##*/}" in
             {repo}-local-*)
                 sources=$SCRATCH/ws/{repo}/local-${src##*/{repo}-local-}
-                if [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
+                # cubecl keeps autotune winners and throughput numbers in the tree's target/environment,
+                # and a new tree must start without its sibling's.
+                if [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null &&
+                    rm -rf "$WT.seed.$$/target/environment" && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
                     echo "DIBS-SEED-SOURCES"
                 fi
                 rm -rf "$WT.seed.$$" ;;
@@ -1104,6 +1107,21 @@ mod local_tests {
         sibling_sources(&scratch);
         let p = parse(&prepare_local(&scratch, "new", None, "reflinks")).unwrap();
         assert_eq!(std::fs::read_to_string(std::path::Path::new(&p.target).join(".dibs-tree")).unwrap().trim(), p.worktree);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_seeded_tree_does_not_start_with_its_sibling_s_autotune_store() {
+        let scratch = tmp("seed-environment");
+        sibling(&scratch);
+        let store = sibling_sources(&scratch).join("target/environment/default");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(store.join("autotune"), "winners\n").unwrap();
+        let p = parse(&prepare_local(&scratch, "new", None, "reflinks")).unwrap();
+        assert!(p.seeded_sources);
+        let wt = std::path::Path::new(&p.worktree);
+        assert!(wt.join("src/same.rs").exists() && !wt.join("target/environment").exists());
+        assert!(store.join("autotune").exists(), "the sibling keeps its own");
         let _ = std::fs::remove_dir_all(&scratch);
     }
 

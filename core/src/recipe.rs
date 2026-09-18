@@ -91,6 +91,11 @@ pub struct Recipe {
     pub isolation: Isolation,
     #[serde(default)]
     pub params: BTreeMap<String, Param>,
+    /// Variables given a value unique to each run, such as `CUBECL_ENVIRONMENT`, which names the
+    /// store of autotune results a run would otherwise share with the last run in its tree. A
+    /// value rather than a directory, since that is what a tool's knob takes.
+    #[serde(default)]
+    pub fresh: Vec<String>,
     #[serde(default, rename = "step")]
     pub steps: Vec<Step>,
 }
@@ -306,6 +311,10 @@ impl Recipe {
                 h.update(v.as_bytes());
             }
         }
+        for f in &self.fresh {
+            h.update(b"fresh");
+            h.update(f.as_bytes());
+        }
         format!("{:x}", h.finalize())[..16].to_string()
     }
 
@@ -355,6 +364,11 @@ impl Recipe {
     /// The two ways a recipe invalidates its own measurement, refused before anything is paid
     /// for rather than found in the numbers afterwards.
     pub fn check(&self, name: &str) -> Result<(), String> {
+        let variable = |v: &str| v.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if let Some(v) = self.fresh.iter().find(|v| !variable(v)) {
+            return Err(format!("recipe '{name}': fresh lists variables to give each run its own value, and '{v}' is not a variable name"));
+        }
         for st in &self.steps {
             // CARGO_TARGET_DIR is redirected per tree, so a relative target/ names a directory
             // the build never writes: the step reads whatever an earlier tree left there.
@@ -483,6 +497,16 @@ mod tests {
     fn parse(body: &str) -> Recipe {
         let m: Manifest = toml::from_str(body).unwrap();
         m.bench.into_iter().next().unwrap().1
+    }
+
+    #[test]
+    fn a_fresh_variable_changes_the_procedure_and_has_to_be_a_variable() {
+        let plain = parse("[bench.r]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n");
+        let fresh = parse("[bench.r]\nfresh = [\"CUBECL_ENVIRONMENT\"]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n");
+        assert_eq!(fresh.fresh, ["CUBECL_ENVIRONMENT"]);
+        assert_ne!(plain.fingerprint(), fresh.fingerprint(), "a cold cache and a warm one are two procedures");
+        let bad = parse("[bench.r]\nfresh = [\"A B\"]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n");
+        assert!(bad.check("r").unwrap_err().contains("'A B' is not a variable name"));
     }
 
     const SWEEP: &str = "\

@@ -124,6 +124,33 @@ Two things in a recipe are refused when it loads, because both produce a number 
   tolerates neighbours. The message shows the two-step form: build with `--no-run` under the
   shared lock, measure under the exclusive one.
 
+## A cache of its own each run
+
+cubecl keeps autotune winners, compiled kernels and throughput numbers in one store, under
+`target/environment` beside the outermost `Cargo.toml` above where a step runs, whatever
+`CARGO_TARGET_DIR` says. Recipe steps run inside their tree, so each tree has its own. A fetched ref
+gets a tree per commit, so comparing two commits is safe. An `@local` tree is named after the
+checkout's path, so run, edit, run reuses it, and the second run reads the first one's winners and
+throughput numbers.
+
+    [bench.reduce]
+    fresh = ["CUBECL_ENVIRONMENT"]
+
+`fresh` names variables that get a value unique to each run, the same in every step of it, and the
+record carries the value. `CUBECL_ENVIRONMENT` names a store rather than a path, so each run gets a
+store of its own inside its tree, and it goes when the tree does. dibs gives a value, not a
+directory, since a value is what such a knob takes. A new tree seeded from a sibling never takes
+the sibling's `target/environment`.
+
+A fresh store is cold, so every run pays for autotune. The benchmark's warmup has to absorb it or
+the first measured iterations include it, and the spread across `--reps` now includes autotune
+picking different kernels. A margin smaller than that spread is not a result. To keep compiled
+kernels warm and turn off only the two caches that can fake a result, give the measured step
+`env = { CUBECL_AUTOTUNE_CACHE = "0", CUBECL_THROUGHPUT_CACHE = "0" }` instead.
+
+A repo whose cubecl config sets `path = "global"`, or a step run outside any cargo tree, keeps its
+stores in `~/.cache/cubecl`, shared by the whole account, where a store per run is never removed.
+
 ## Build caching
 
 dibs sets no compiler wrapper and leaves incremental compilation to each profile, so dev builds

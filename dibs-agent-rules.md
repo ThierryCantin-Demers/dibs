@@ -197,6 +197,11 @@ spoiled without it.
   repo's ignore rules. It is how to run a branch you have not pushed, and the only way to run a
   private repo, because the machines hold no credentials. Reach for it before carrying code over by
   hand: a bundle, a tarball or a hand-written sync of a tree is this feature done worse.
+- An `@local` tree is reused from run to run, and so is cubecl's autotune store inside it: after
+  run, edit, run, the second run reads the first one's winners. A recipe with
+  `fresh = ["CUBECL_ENVIRONMENT"]` gives each run its own store and pays for autotune every time,
+  so its warmup has to absorb that. A margin smaller than the spread across `--reps` is not a
+  result.
 - `dibs runs [label]` is what was measured: when and where, every repo's commit, the values, the
   measured step's time and lock, the spread across repeats of one procedure on the same code, and
   whether the label's recipe changed, since two procedures under one name are two histories. A
