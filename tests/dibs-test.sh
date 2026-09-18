@@ -110,8 +110,11 @@ fifo QN; $T --bench --label qn-holder "$(hold QN)" >/dev/null 2>&1 & QN=$!; held
 out=$($T --wait 1 --label queued-notice 'echo nope' 2>&1)
 check "a queued caller is told at once, not after the wait" \
   "$(grep -c 'queued and has not started' <<<"$out")" "1"
-check "and what each kind of caller should do about it" \
-  "$(grep -c 'backgrounded, leave it' <<<"$out")" "1"
+check "in one line saying what it is behind" \
+  "$(grep -c "^dibs: queued and has not started, behind the benchmark qn-holder[,.].* dibs status shows the queue\.$" <<<"$out")" "1"
+check "without the whole queue, which is what -v is for" \
+  "$(sed -n '/queued and has not started/,/gave up/p' <<<"$out" | grep -c 'BUSY')$($T -v --wait 1 --label queued-notice 'echo nope' 2>&1 |
+     sed -n '/queued and has not started/,/gave up/p' | grep -c 'BUSY')" "01"
 free QN; wait $QN
 
 echo "surviving abuse"
@@ -294,6 +297,11 @@ check "outcomes are logged" "$([ "$(grep -c finished "$DIBS_LOG")" -ge 3 ] && ec
 check "a kill is logged with its target" "$(grep -c 'killed.*blocker' "$DIBS_LOG")" "1"
 check "a torn-down job is logged too" "$([ "$(grep -c aborted "$DIBS_LOG")" -ge 1 ] && echo yes || echo no)" "yes"
 check "--log renders" "$($T --log 5 | head -1 | grep -c WHEN)" "1"
+err=$($T --label jobcol 'true' 2>&1 >/dev/null)
+job=$(sed -n 's/^job \([0-9-]*\) .*/\1/p' <<<"$err")
+check "every event names the job it belongs to, as the trailer does" \
+  "$(awk -F'\t' -v j="$job" '$5 == "jobcol" && $12 == j {print $2}' "$DIBS_LOG" | tr '\n' ' ')" "arrived finished "
+check "and --log shows it" "$($T --log 3 | grep -c "finished .* $job ")" "1"
 
 echo "watching"
 check "an interval under the floor is refused" "$($T --watch 1 >/dev/null 2>&1; echo $?)" "2"
@@ -1029,6 +1037,12 @@ while True: pass"' 2>&1); rc=$?
 check "an overrun exits 124" "$rc" "124"
 check "it says it was stopped, not that it failed" "$(grep -c 'stopped after holding' <<<"$out")" "1"
 check "and what running it again would do" "$(grep -c 'picks up from the crates' <<<"$out")" "1"
+# A suite that always runs past the default cap was killed as an overrun every time.
+for i in 1 2 3; do printf 'shared\tlong-suite\t1500\tx\n' >> "$DIBS_HISTORY"; done
+check "a label whose history runs long gets a cap from it, said when it starts" \
+  "$($T --label long-suite 'true' 2>&1 >/dev/null | grep -c 'may hold the lock for 50m00s rather than 30m00s')" "1"
+check "unless the caller chose one" "$($T --max 60 --label long-suite 'true' 2>&1 >/dev/null | grep -c 'may hold')" "0"
+check "and a label that fits the default hears nothing" "$($T --label overran 'true' 2>&1 >/dev/null | grep -c 'may hold')" "0"
 gone
 
 # setsid, because an orphan is the remains of a session that has gone: held from this shell

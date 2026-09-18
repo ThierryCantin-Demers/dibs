@@ -104,9 +104,12 @@
 #   --on <machine>     send this call there. DIBS_ON=<machine> does the same for every
 #                      call, which is the form a step added to a script later cannot forget.
 #   --wait <seconds>   give up rather than queue past this
-#   --max <seconds>    kill the command if it holds the lock longer than this (default 7200)
+#   --max <seconds>    kill the command if it holds the lock longer than this (default 7200
+#                      for --bench and 1800 otherwise, or twice the label's 90th percentile
+#                      where its history runs longer, said when it starts)
 #   --label <name>     what shows up in --status (default: the caller's directory)
-#   -v                 with --status, also dump the raw lock directory
+#   -v                 with --status, also dump the raw lock directory; with a call that
+#                      queues, the whole queue rather than one line
 #
 #   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran    75 busy
 #        76 its batch was cancelled    77 a --with service failed    124 overran --max
@@ -1405,7 +1408,9 @@ case "$MODE" in
 esac
 
 # A build that runs for half an hour has gone wrong; a benchmark legitimately might not.
+MAXFROM=given
 if [ -z "$MAXHOLD" ]; then
+    MAXFROM=default
     case "$MODE" in
         bench)     MAXHOLD=7200 ;;
         peek)      MAXHOLD=30 ;;
@@ -1702,6 +1707,7 @@ HOLD=${19:-0}
 LEASE=${20:-0}; case "$LEASE" in ''|*[!0-9]*) LEASE=0 ;; esac
 PORT_NAME=(); PORT_NUM=()
 [ -n "${22:-}" ] && read -r -a PORT_NAME <<< "${22}"
+MAXFROM=${23:-given}
 # --with: a line saying how long a service may take to be ready, then name|readiness|command, the
 # last two in base64. Not tabs: read collapses a run of them, and an empty readiness is one.
 WITH_NAME=(); WITH_READY=(); WITH_CMD=(); WITH_PID=(); WITH_LOG=(); WITH_END=(); WITH_BAD=(); WITH_UP=0
@@ -1780,10 +1786,10 @@ mkdir -p "$(dirname "$HIST")" "$(dirname "$LOG")" 2>/dev/null
 # precisely why the jobs worth investigating are the ones missing from it.
 LOGGED_END=0
 log_event() {   # event queued run exit
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$(date -Is)" "$1" "$$" "$MODE" "$LABEL" \
         "${2:--}" "${3:--}" "${4:--}" "${CMD_ONE:-${LABEL}}" \
-        "${AGENT:-?}${DEV_NAME:+ on $DEV_NAME}" "${BATCH_TAG:--}" >> "$LOG" 2>/dev/null
+        "${AGENT:-?}${DEV_NAME:+ on $DEV_NAME}" "${BATCH_TAG:--}" "${JOB:--}" >> "$LOG" 2>/dev/null
 }
 
 # Assigning rather than printing is the difference: show() renders several of these per
@@ -2384,6 +2390,40 @@ queue_eta() {   # mode label agent; sets QE_ETA, -1 when it cannot be said
     QE_PENDING=0 QE_PENDING_KNOWN=1
 }
 
+# What a caller that has just been queued is told, in one line: what holds the machine, how many
+# wait ahead of it and when it should start. The whole picture is dibs status, or -v here.
+queued_line() {
+    local f mode pid start label agent first= n=0 ahead=0 free=0 known=1 eta=-1 line d
+    prune
+    now
+    for f in "$DIR"/holder.*; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode pid start label agent _ < "$f"
+        n=$((n+1))
+        [ -n "$first" ] || { [ "$mode" = bench ] && first="the benchmark $label" || first=$label; }
+        if estimate "$mode" "$label" "$agent"; then
+            remaining_of $(( NOW - start ))
+            if [ "$REM" -lt 0 ]; then known=0; elif [ "$REM" -gt "$free" ]; then free=$REM; fi
+        else
+            known=0
+        fi
+    done
+    queue_sorted
+    queue_eta_start "$free" "$known"
+    for f in "${QF[@]}"; do
+        [ -e "$f" ] || continue
+        IFS=$'\t' read -r mode pid start label agent _ < "$f"
+        queue_eta "$mode" "$label" "$agent"
+        [ "$pid" = "$$" ] && { eta=$QE_ETA; break; }
+        ahead=$((ahead+1))
+    done
+    line="dibs: queued and has not started, behind ${first:-a job starting up}"
+    [ "$n" -gt 1 ] && line="$line and $((n-1)) more"
+    [ "$ahead" -gt 0 ] && line="$line, with $ahead queued first"
+    if [ "$eta" -gt 0 ]; then dur_ d "$eta"; line="$line, ~$d until it starts"; fi
+    printf '%s. dibs status shows the queue.\n' "$line"
+}
+
 # Where the queue will stand once everything waiting now has started, as queue_eta leaves it. A
 # batch's steps still to come arrive after all of it, so they are placed behind it.
 queue_tail() {
@@ -2825,11 +2865,13 @@ case "$MODE" in
         done ;;
     log)     n=$LABEL
              [ -s "$LOG" ] || { echo "Nothing logged yet ($LOG)."; exit 0; }
-             printf '%-19s %-9s %-7s %-14s %6s %6s %5s  %-22s %s\n' \
-                 WHEN EVENT MODE LABEL QUEUED RAN EXIT AGENT COMMAND
+             printf '%-19s %-9s %-7s %-14s %6s %6s %5s  %-21s  %-22s %s\n' \
+                 WHEN EVENT MODE LABEL QUEUED RAN EXIT JOB AGENT COMMAND
+             # Lines written before events carried a job id name the process instead.
              tail -n "$n" "$LOG" | awk -F'\t' '{
-                 printf "%-19s %-9s %-7s %-14s %6s %6s %5s  %-22s %s%s\n",
+                 printf "%-19s %-9s %-7s %-14s %6s %6s %5s  %-21s  %-22s %s%s\n",
                         substr($1,1,19), $2, $4, substr($5,1,14), $6, $7, $8,
+                        (NF >= 12 && $12 != "-" ? $12 : "pid " $3),
                         substr(($10 == "" ? "?" : $10),1,22), substr($9,1,50),
                         (NF >= 11 && $11 != "-" ? "  [batch " $11 "]" : "")
              }'
@@ -3388,6 +3430,7 @@ if [ "$MODE" = peek ]; then
 fi
 
 START=$(date +%s)
+printf -v JOB '%(%Y%m%d%H%M%S)T-%s' "$START" "$$"
 # One record is one line. A multi-line command would otherwise be counted once per line
 # and write a file the size of the script it is running.
 CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
@@ -3398,6 +3441,15 @@ CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
 [ -n "$BATCH" ] && printf '%s\n' "$BATCH" > "$DIR/batch.$$"
 log_event arrived
+# A cap nobody chose follows the label's own history, so work that always runs long is not killed
+# at its mode's default, and the caller hears the cap now rather than as exit 124.
+if [ "$MAXFROM" = default ] && [ "$HOLD" = 0 ] && [ "$MAXHOLD" -gt 0 ] && { [ "$MODE" = bench ] || [ "$MODE" = shared ]; } &&
+    estimate "$MODE" "$LABEL" "$AGENT" && [ "$EST_SCOPE" = this ] && [ "$EST_N" -ge 3 ] &&
+    [ $(( EST_HI * 2 )) -gt "$MAXHOLD" ]; then
+    dur_ CAP_WAS "$MAXHOLD"; dur_ CAP_P90 "$EST_HI"
+    MAXHOLD=$(( EST_HI * 2 )); dur_ CAP_NOW "$MAXHOLD"
+    echo "dibs: 90% of this label's $EST_N runs took up to $CAP_P90, so it may hold the lock for $CAP_NOW rather than $CAP_WAS. --max sets it." >&2
+fi
 # An end line even when the job is torn down, so the log never just stops mid-story.
 # Nothing can be written if it is SIGKILLed, which is itself worth knowing when reading it.
 # Every exit, not just the happy one: while the watch lives it holds the channel open and
@@ -3502,14 +3554,8 @@ if [ "$MODE" = bench ]; then FLAG=-x; else FLAG=-s; fi
 # caller that cannot afford the wait can act on this; one that goes quiet gets killed by
 # its own timeout and leaves the work undone with nothing to show why.
 if ! flock -n $FLAG 8 2>/dev/null; then
-    echo "dibs: busy, so this is queued and has not started." >&2
-    show >&2
-    # Phrased for both callers, because nothing here can tell them apart: a backgrounded
-    # call and a foreground one are identical from inside, so an instruction to background it
-    # reached the callers who already had.
-    echo "dibs: backgrounded, leave it and it starts when the queue clears. A foreground call" >&2
-    echo "  hits its own timeout first and the work goes undone. --wait <seconds> gives up" >&2
-    echo "  instead of queueing." >&2
+    queued_line >&2
+    [ "$VERBOSE" = 1 ] && show >&2
 else
     flock -u 8   # let the real acquisition below take it under the same rules
 fi
@@ -3548,7 +3594,6 @@ mv "$DIR/waiting.$$" "$DIR/holder.$$"
 # with tail it was gone; now the whole of it is on the machine, readable with --out after
 # the job has finished, and the caller is told where. Both streams land in one file, in
 # order, the way a build log is read. Old directories go with the worktrees' own age limit.
-JOB=$(date +%Y%m%d%H%M%S)-$$
 JOBDIR=$SCRATCH/jobs/$JOB
 JOBLOG=""
 TEE=""
@@ -3969,11 +4014,11 @@ if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
         SCRIPT=$(mktemp "${TMPDIR:-/tmp}/dibs-hold-script.XXXXXX") || exit 70
         remote_script > "$SCRIPT"
         hold_here() {
-            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 0 "$WITHB64" "${PORT_NAME[*]}" <&7 7<&-
+            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 0 "$WITHB64" "${PORT_NAME[*]}" "$MAXFROM" <&7 7<&-
         }
         hold_run hold_here
     else
-        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 0 0 "$WITHB64" "${PORT_NAME[*]}"
+        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 0 0 "$WITHB64" "${PORT_NAME[*]}" "$MAXFROM"
     fi
     STATUS=$?
     [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
@@ -4049,7 +4094,7 @@ else
             -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
             "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
              exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
-             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE' '$WITHB64' '${PORT_NAME[*]}'
+             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE' '$WITHB64' '${PORT_NAME[*]}' '$MAXFROM'
 exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec <&7 6>&- 7<&-; relay) 6>&- 7<&-
     }
     if [ "$HOLD" = 1 ]; then hold_run to_machine; else to_machine; fi

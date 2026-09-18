@@ -236,4 +236,5 @@ spoiled without it.
 - **78** a recipe's measurement was refused: another tree built into its target after this one
   did, so the binary there may be that tree's. Run it again, which rebuilds first. `--anyway`
   measures what is there, and is only for when that binary is the one you mean to measure.
-- **124** it overran `--max` and was killed while holding the lock.
+- **124** it overran `--max` and was killed while holding the lock. Without `--max`, a label whose
+  history runs past the default is given twice its 90th percentile, and says so when it starts.
