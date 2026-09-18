@@ -88,7 +88,9 @@
 #                                machine under $DIBS_SCRATCH/jobs/<job>/log, and the trailer
 #                                every job ends with names the job. --out <job> tails it,
 #                                during the run or after; --out <pid> reads a redirect a
-#                                running job made itself.
+#                                running job made itself. The first read of a finished job
+#                                keeps its whole log in ~/.local/state/dibs/jobs, which
+#                                answers later reads even once the machine is gone.
 #   dibs --kill <batch-id>      stop a whole batch: at its driver when that runs here, else on
 #                                every machine, which also refuses the batch's later steps
 #   dibs --kill <pid>           stop a holder that is wedged (also takes no lock). Refuses a
@@ -1406,6 +1408,35 @@ case "$MODE" in
         LABEL=$JOBID ;;
     *)              [ $# -gt 0 ] || { echo "no command given" >&2; usage 2; } ;;
 esac
+
+# The first read of a finished job's log keeps the whole of it here, and later reads are served
+# from that copy, so a log someone needed stays readable when its machine is asleep, gone or
+# past its two weeks. A running job's log is not kept: it would stand in for the whole one.
+KEPT=${DIBS_KEPT:-${XDG_STATE_HOME:-$HOME/.local/state}/dibs/jobs}
+out_kept() {   # dir
+    cat "$1/head"
+    printf '  kept on this computer: %s  (%s bytes, last %s lines)\n' "$1/log" "$(wc -c < "$1/log")" "$OUT_N"
+    tail -n "$OUT_N" "$1/log" | sed 's/^/  | /'
+}
+if [ "$MODE" = out ] && [[ ${OUTPID:-} == *-* ]]; then
+    if [ "${DIBS_OUT_WHOLE:-0}" = 1 ]; then
+        LABEL="$OUTPID.whole"
+    else
+        if [ ! -f "$KEPT/$OUTPID/log" ]; then
+            raw=$(mktemp "${TMPDIR:-/tmp}/dibs-out.XXXXXX") || exit 1
+            DIBS_OUT_WHOLE=1 "$0" "${ORIG_ARGS[@]}" > "$raw"; status=$?
+            if [ "$(head -n 1 "$raw")" != DIBS-OUT-HEAD ] || ! mkdir -p "$KEPT/$OUTPID.part"; then
+                cat "$raw"; rm -f "$raw"; exit "$status"
+            fi
+            sed -n '2,/^DIBS-OUT-LOG$/{/^DIBS-OUT-LOG$/!p}' "$raw" > "$KEPT/$OUTPID.part/head"
+            sed '1,/^DIBS-OUT-LOG$/d' "$raw" > "$KEPT/$OUTPID.part/log"
+            rm -f "$raw"
+            mv -T "$KEPT/$OUTPID.part" "$KEPT/$OUTPID" 2>/dev/null || rm -rf "$KEPT/$OUTPID.part"
+        fi
+        out_kept "$KEPT/$OUTPID"
+        exit 0
+    fi
+fi
 
 # A build that runs for half an hour has gone wrong; a benchmark legitimately might not.
 MAXFROM=given
@@ -3198,13 +3229,25 @@ case "$MODE" in
         # descriptor: the kernel will say where it points. So the output is not lost, it is
         # just somewhere nobody thought to look, and the tree walk that already exists for
         # CPU finds it.
-        target=${LABEL%%.*} lines=${LABEL##*.}
+        target=${LABEL%%.*} lines=${LABEL##*.} whole=0
+        [ "$lines" = whole ] && { whole=1; lines=40; }
         # A job id names a directory, running or finished, so this works after the fact, which
         # is the case the process walk below cannot serve: a job that is gone has no fds.
         case "$target" in
             *-*)
                 d=${DIBS_SCRATCH:-$HOME/.cache/dibs}/jobs/$target
                 [ -f "$d/log" ] || { echo "no job $target under ${DIBS_SCRATCH:-$HOME/.cache/dibs}/jobs" >&2; exit 1; }
+                # The whole log, for the caller to keep, once the job has finished. Capped, since
+                # this takes no lock and a benchmark may be running beside it.
+                if [ "$whole" = 1 ] && [ -f "$d/meta" ] && [ "$(wc -c < "$d/log")" -le 16777216 ]; then
+                    echo DIBS-OUT-HEAD
+                    echo "job $target  $(awk -F'\t' '$1=="mode"{m=$2} $1=="label"{l=$2} $1=="exit"{e=$2} $1=="ran"{r=$2} END{print m"  "l"  ran "r"s  exit "e}' "$d/meta")"
+                    echo "  $(head -c 200 "$d/cmd" 2>/dev/null | tr '\n' ' ')"
+                    echo "  $(hostname -s):$d/log"
+                    echo DIBS-OUT-LOG
+                    cat "$d/log"
+                    exit 0
+                fi
                 if [ -f "$d/meta" ]; then
                     echo "job $target  $(awk -F'\t' '$1=="mode"{m=$2} $1=="label"{l=$2} $1=="exit"{e=$2} $1=="ran"{r=$2} END{print m"  "l"  ran "r"s  exit "e}' "$d/meta")"
                 else

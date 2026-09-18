@@ -118,7 +118,8 @@ spoiled without it.
   through `tail`, `head` or `grep`, which replaces the exit status with the filter's, and do not
   redirect inside the command to keep a log. The whole output stays on the machine for two weeks:
   `dibs out <job>` reads it during the run or after, `dibs out` lists the running jobs, and
-  `--stream` gives the whole stream inline when you need all of it. Say which job ids a run
+  `--stream` gives the whole stream inline when you need all of it. Reading a finished job's log
+  keeps a copy on your side, which still answers once the machine is gone. Say which job ids a run
   produced, so a person can follow it.
 
 ### Status, labels and names

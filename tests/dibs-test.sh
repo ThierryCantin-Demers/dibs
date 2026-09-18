@@ -1395,6 +1395,23 @@ check "the second says it is the same failure" "$(grep -c 'already failed here: 
 # The one mechanism that runs beside a measurement leaves a row saying so.
 $T --peek true >/dev/null 2>&1
 check "a peek is an event" "$(tail -1 "$DIBS_LOG" | grep -c '	peek	')" "1"
+# A log someone read stays readable here once its machine is asleep, gone or past two weeks.
+job=$(DIBS_SCRATCH=$S/scr $T --label keepme 'seq 1 50' 2>&1 >/dev/null | sed -n 's/^job \([0-9-]*\)  .*/\1/p')
+out=$(DIBS_SCRATCH=$S/scr $T out "$job" 2>/dev/null)
+check "reading a finished job's log keeps the whole of it here" \
+  "$(cmp -s "$S/scr/jobs/$job/log" "$XDG_STATE_HOME/dibs/jobs/$job/log" && echo same)" "same"
+check "and shows its end, saying where the copy is" \
+  "$(grep -c "^  kept on this computer: .*/dibs/jobs/$job/log" <<<"$out")$(tail -n 1 <<<"$out")" "1  | 50"
+rm -rf "$S/scr/jobs/$job"
+check "which answers once the machine's copy is gone" \
+  "$(DIBS_SCRATCH=$S/scr $T out "$job" 2>/dev/null | grep -c "^job $job  shared  keepme  ran [0-9]*s  exit 0$")" "1"
+fifo KR; fifo KRU
+DIBS_SCRATCH=$S/scr $T --label keeprun "echo up > $S/f-KRU; $(hold KR)" >/dev/null 2>&1 & KRP=$!
+sync_ KRU
+running=$(basename "$(dirname "$(grep -l f-KRU "$S"/scr/jobs/*/cmd)")")
+check "a running job's log is shown but not kept, since it is not the whole of it" \
+  "$(DIBS_SCRATCH=$S/scr $T out "$running" 2>/dev/null | grep -c 'still running')$([ -e "$XDG_STATE_HOME/dibs/jobs/$running" ] && echo kept)" "1"
+free KR; wait $KRP
 
 echo "measure = false on every path"
 printf '[machine.lap]\nssh = "me@lap"\nhostname = "lap"\nmeasure = false\n' > "$DIBS_MACHINES"
