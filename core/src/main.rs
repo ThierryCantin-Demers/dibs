@@ -50,6 +50,12 @@ dibs batch <file|->                   a list of dibs command lines as one submis
   <verb>    bench, build or test
   <repo>    a path to a checkout, or a name: the checkout you are in when it is that
             repo, a worktree of it included, else the one under --root
+  <ref>     a branch, tag or commit the machine fetches, or local. Two or more are one
+            comparison with one record: A..B measures B against where it left A, their
+            merge base, so what landed on A since is not credited to B; a,b,c measures
+            each in turn. Every arm is built in a tree and target directory of its own,
+            then each rep measures them all, the order reversed every other rep (A B B A),
+            which cancels a drift such as a card warming up
   --root    where named repos live (default $DIBS_ROOT, then `root` in machines.toml,
             else the current directory)
   --reason  why this does not fit a recipe. Required for shell and raw, and recorded:
@@ -66,7 +72,7 @@ dibs batch <file|->                   a list of dibs command lines as one submis
             Repeatable, and the combinations are the cross product. A value is never split
             on commas, so --sweep is how a sweep is asked for and --<name> always means
             one value.
-  --reps    run each point this many times, in one batch
+  --reps    measure this many times. The build runs once, and the record holds each rep
   --bench   shell only: the exclusive lock, for a one-off that is a measurement
   --max     seconds the job may hold the lock, when the default is too short for it
   --anyway  measure even when another tree built into the target after this one did,
@@ -351,6 +357,9 @@ fn run() -> Result<ExitCode, String> {
             machine: backend.machine.clone(),
             revisions: Vec::new(),
             seeded: None,
+            refs: None,
+            arms: Vec::new(),
+            reps: 1,
             batch: batch_of_caller(),
             anyway: false,
             new_series: false,
@@ -419,18 +428,180 @@ fn run() -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    run_recipe(args)
+}
+
+/// What `@<ref>` names, before anything is looked up.
+#[derive(Debug, Clone, PartialEq)]
+enum Side {
+    Local,
+    /// Fetched on the machine by this name.
+    Ref(String),
+    /// The tip of a range: resolved here, so the merge base and the arm come from one history.
+    Pinned(String),
+    /// Where the second left the first.
+    Base(String, String),
+}
+
+impl Side {
+    fn name(&self) -> String {
+        match self {
+            Side::Local => "local".into(),
+            Side::Ref(r) | Side::Pinned(r) => r.clone(),
+            Side::Base(..) => "base".into(),
+        }
+    }
+}
+
+/// One tree, `A..B`, or `a,b,c`.
+fn sides(reference: Option<&str>) -> Result<Vec<Side>, String> {
+    let one = |r: &str| if r == "local" { Side::Local } else { Side::Ref(r.to_string()) };
+    let Some(r) = reference else { return Ok(vec![Side::Ref("HEAD".into())]) };
+    if r.contains("...") {
+        return Err(format!("{r}: A...B is not a comparison dibs makes. A..B measures B against where it left A"));
+    }
+    if let Some((a, b)) = r.split_once("..") {
+        if a.is_empty() || b.is_empty() || b.contains("..") || r.contains(',') {
+            return Err(format!("{r}: a range names both ends, as main..local. Several arms in turn are a,b,c"));
+        }
+        let tip = if b == "local" { Side::Local } else { Side::Pinned(b.to_string()) };
+        return Ok(vec![Side::Base(a.into(), b.into()), tip]);
+    }
+    let list: Vec<Side> = r.split(',').map(one).collect();
+    if list.iter().any(|s| s.name().is_empty()) {
+        return Err(format!("{r}: an empty arm"));
+    }
+    if let Some(twice) = list.iter().enumerate().find(|(i, s)| list[..*i].contains(s)) {
+        return Err(format!("{r}: {} is named twice", twice.1.name()));
+    }
+    Ok(list)
+}
+
+/// One side of a comparison, looked up.
+struct Arm {
+    name: String,
+    /// What the machine fetches, or None for the tree here.
+    fetch: Option<String>,
+    /// How a merge base was found, for a person to check.
+    note: Option<String>,
+}
+
+fn arms(sides: &[Side], dir: &Path) -> Result<Vec<Arm>, String> {
+    let here = |r: &str| if r == "local" { "HEAD".to_string() } else { r.to_string() };
+    let arms: Vec<Arm> = sides
+        .iter()
+        .map(|s| {
+            let (fetch, note) = match s {
+                Side::Local => (None, None),
+                Side::Ref(r) => (Some(r.clone()), None),
+                Side::Pinned(r) => (Some(worktree::commit(dir, r)?), None),
+                Side::Base(a, b) => {
+                    let (sha, upstream) = worktree::merge_base(dir, &here(a), &here(b))?;
+                    let note = match upstream {
+                        Some(u) => format!("where {b} left {u}, since {a} is behind it"),
+                        None => format!("where {b} left {a}"),
+                    };
+                    (Some(sha), Some(note))
+                }
+            };
+            Ok(Arm { name: s.name(), fetch, note })
+        })
+        .collect::<Result<_, String>>()?;
+    if let [base, Arm { fetch: Some(tip), name, .. }] = &arms[..] {
+        if base.note.is_some() && base.fetch.as_ref() == Some(tip) {
+            return Err(format!("{name} has nothing its base does not, so there is nothing to compare"));
+        }
+    }
+    Ok(arms)
+}
+
+/// One job of a recipe run, in the order they are sent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Job {
+    /// The local tree sent and prepared, in one transfer.
+    Send(usize),
+    /// A fetched tree prepared on its own, since the step after it may not carry it.
+    Setup(usize),
+    /// A step of an arm, carrying the arm's setup at its head when `setup`. `rep` is None for
+    /// the steps that run once, ahead of what is repeated.
+    Step { arm: usize, step: usize, rep: Option<u32>, setup: bool },
+}
+
+/// Every arm is built before any is measured, then each rep measures them all, the order reversed
+/// every other rep: A B B A cancels a drift linear in time, such as a card warming up, which
+/// A B A B credits to B. Without an exclusive step the whole recipe repeats.
+fn schedule(local: &[bool], steps: &[recipe::Step], reps: u32) -> Vec<Job> {
+    let first = steps.iter().position(|s| s.lock == Lock::Exclusive).unwrap_or(0);
+    let mut ready = vec![false; local.len()];
+    let mut jobs = Vec::new();
+    let mut visit = |arm: usize, step: usize, rep: Option<u32>| {
+        let fresh = !std::mem::replace(&mut ready[arm], true);
+        let fold = fresh && !local[arm] && steps[step].lock == Lock::Shared;
+        match (fresh, local[arm]) {
+            (true, true) => jobs.push(Job::Send(arm)),
+            (true, false) if !fold => jobs.push(Job::Setup(arm)),
+            _ => {}
+        }
+        jobs.push(Job::Step { arm, step, rep, setup: fold });
+    };
+    for arm in 0..local.len() {
+        for step in 0..first {
+            visit(arm, step, None);
+        }
+    }
+    for rep in 1..=reps {
+        let order: Vec<usize> = match rep % 2 {
+            1 => (0..local.len()).collect(),
+            _ => (0..local.len()).rev().collect(),
+        };
+        for arm in order {
+            for step in first..steps.len() {
+                visit(arm, step, Some(rep));
+            }
+        }
+    }
+    jobs
+}
+
+/// A tree on its way to the machine, and what it became there.
+struct Tree {
+    token: String,
+    script: String,
+    gitdbs: Vec<gitdeps::Db>,
+    local: Option<worktree::Local>,
+    prepared: Option<worktree::Prepared>,
+}
+
+fn run_recipe(args: Args) -> Result<ExitCode, String> {
     let points = sweep_points(&args);
-    if points.len() as u32 * args.reps > 1 {
+    if points.len() > 1 {
         return sweep_run(&args, &points);
     }
     // One point is the ordinary call with its values filled in, not a batch of one.
     let args = Args { params: points.into_iter().next().unwrap_or_default(), ..args };
 
+    let sides = sides(args.reference.as_deref())?;
     let resolved = resolve(&args)?;
-    let calls = jobs_of(&resolved, args.reference.as_deref() == Some("local"));
+    let calls = jobs_of(&resolved, &sides, args.reps);
     let Resolved { dir, repo_name, verb, name, rec, label, step_labels, shell_reason, params } = resolved;
     let (name, rec) = (name.as_str(), &rec);
     let fingerprint = rec.fingerprint();
+    let arms = arms(&sides, &dir)?;
+    let local: Vec<bool> = arms.iter().map(|a| a.fetch.is_none()).collect();
+    let jobs = schedule(&local, &rec.steps, args.reps);
+    let compared = arms.len() > 1;
+    let order = |jobs: &[Job]| -> String {
+        let mut reps: BTreeMap<u32, Vec<&str>> = BTreeMap::new();
+        for j in jobs {
+            if let Job::Step { arm, rep: Some(r), .. } = j {
+                let names = reps.entry(*r).or_default();
+                if names.last() != Some(&arms[*arm].name.as_str()) {
+                    names.push(&arms[*arm].name);
+                }
+            }
+        }
+        reps.values().map(|n| n.join(" ")).collect::<Vec<_>>().join(" | ")
+    };
 
     if args.dry_run {
         println!("label       {label}");
@@ -439,15 +610,21 @@ fn run() -> Result<ExitCode, String> {
         if let Some(n) = &rec.needs {
             println!("needs       {n}");
         }
-        match args.reference.as_deref() {
-            Some("local") => {
-                let l = worktree::local(&dir)?;
-                println!("ref         local {} from {}", l.content, dir.display());
-                println!("            {}", if l.dirty {
-                    "uncommitted changes are included and are in that hash"
-                } else { "clean, so this is the commit as it stands" });
+        for arm in &arms {
+            let head = if compared { format!("arm         {}  ", arm.name) } else { "ref         ".to_string() };
+            match &arm.fetch {
+                None => {
+                    let l = worktree::local(&dir)?;
+                    println!("{head}local {} from {}", l.content, dir.display());
+                    println!("            {}", if l.dirty {
+                        "uncommitted changes are included and are in that hash"
+                    } else { "clean, so this is the commit as it stands" });
+                }
+                Some(r) => println!("{head}{r}{}", arm.note.as_ref().map(|n| format!(", {n}")).unwrap_or_default()),
             }
-            r => println!("ref         {}", r.unwrap_or("HEAD")),
+        }
+        if compared || args.reps > 1 {
+            println!("measured    {}", order(&jobs));
         }
         // Which card, printed whether or not one was named: a dry run is where someone checks
         // they are about to measure the thing they mean to, and "no card named" is the answer
@@ -512,116 +689,110 @@ fn run() -> Result<ExitCode, String> {
     // The worktree comes first and takes the shared lock, because a fetch and a checkout are
     // work that tolerates neighbours. Doing it inside a measured step would put a git fetch
     // inside the exclusive hold.
-    let reference = args.reference.as_deref().unwrap_or("HEAD");
+    //
     // A branch that was never pushed has no fetchable ref, and refusing to push a perf branch
-    // just to measure it is not misuse. Without this the answer was to hand-roll sync and
+    // just to measure it is not misuse. Without @local the answer was to hand-roll sync and
     // build, which loses the cache isolation, the recorded revision and the lock split all at
     // once, and the two wrong numbers that produced were both in the part that got rewritten.
-    let local = if reference == "local" { Some(worktree::local(&dir)?) } else { None };
-    match &local {
-        Some(l) => eprintln!(
-            "dibs: preparing {repo_name} from {} ({})",
-            dir.display(),
-            if l.dirty { "uncommitted changes included" } else { "clean" }
-        ),
-        None => eprintln!("dibs: preparing {repo_name}@{reference}"),
-    }
     let signature = rec.steps.iter().find_map(|st| worktree::build_signature(&st.run)).unwrap_or_default();
-    let token = new_token();
-    let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &token);
+    let mut slot = 0;
+    let mut trees = Vec::with_capacity(arms.len());
+    if compared {
+        eprintln!("dibs: comparing {} arms of {repo_name}, measured {}", arms.len(), order(&jobs));
+    }
+    for arm in &arms {
+        let token = new_token();
+        let local = match arm.fetch {
+            None => Some(worktree::local(&dir)?),
+            Some(_) => None,
+        };
+        let lead = if compared { format!("  {}: ", arm.name) } else { "dibs: preparing ".to_string() };
+        match (&local, &arm.fetch) {
+            (Some(l), _) => eprintln!(
+                "{lead}{repo_name} from {} ({})",
+                dir.display(),
+                if l.dirty { "uncommitted changes included" } else { "clean" }
+            ),
+            (None, Some(r)) => eprintln!("{lead}{repo_name}@{r}{}", arm.note.as_ref().map(|n| format!(", {n}")).unwrap_or_default()),
+            (None, None) => unreachable!(),
+        }
+        let reference = arm.fetch.as_deref().unwrap_or("local");
+        let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &token, slot);
+        slot += usize::from(arm.fetch.is_some());
+        trees.push(Tree { token, script, gitdbs, local, prepared: None });
+    }
 
-    let fold = local.is_none() && rec.steps[0].lock == Lock::Shared;
-    let first_step_call = calls.len() - rec.steps.len();
     let own_batch = batch::batch_id();
     let env_of = |k: usize| batch::recipe_env(&own_batch, &calls, k);
-    let setup_env = env_of(0);
-    let setup = Request {
-        label: &calls[0].label,
-        lock: Lock::Shared,
-        isolation: rec.isolation,
-        needs: None,
-        // Preparing a worktree touches no GPU, so pinning it would only make the setup fail
-        // on a machine whose card has been pulled.
-        device: None,
-        env: &setup_env,
-        max: None,
-        new_series: false,
-    };
-    // One cache per repo, exported rather than left to each recipe to remember. The output
-    // needs no file of its own: dibs keeps every job's log under its job id, and a path named
-    // after the label would be shared by two runs of one recipe.
-    let run_of = |i: usize| step_command(rec, i, &token, args.anyway);
     let mut announce = |text: &str| announce_prepared(text);
+    let what = |arm: usize| match &arms[arm].fetch {
+        Some(r) => format!("{repo_name}@{r}"),
+        None => format!("{repo_name} from {}", dir.display()),
+    };
+    let tag = |arm: usize, rep: Option<u32>| {
+        let mut t = String::new();
+        if compared {
+            t += &format!("{}: ", arms[arm].name);
+        }
+        t
+            + &match rep.filter(|_| args.reps > 1) {
+                Some(r) => format!("rep {r}/{}, ", args.reps),
+                None => String::new(),
+            }
+    };
 
     let mut steps = Vec::new();
     let mut failed = None;
     let mut state = Vec::new();
-    let text = match &local {
-        Some(l) => {
-            let (out, text) = sync_prepared(&backend, &dir, &script, &l.key, &setup, &mut announce)?;
-            if !text.contains("DIBS-READY") {
-                return Err(format!("could not prepare {repo_name} from {} (exit {})", dir.display(), out.status));
-            }
-            if out.status != 0 {
-                return Err(format!("sending {} failed (exit {})", dir.display(), out.status));
-            }
-            text
-        }
-        None if fold => {
-            eprintln!("dibs: step 1/{} [{:?}], with the setup ahead of it", rec.steps.len(), rec.steps[0].lock);
-            let env = env_of(first_step_call);
-            let command = worktree::ahead(&script, worktree::Then::Step, &rec.steps[0].run) + &format!("{{ {}; }}", run_of(0));
-            let req = Request {
-                label: &step_labels[0],
-                lock: rec.steps[0].lock,
-                isolation: rec.isolation,
-                needs: rec.needs.as_deref(),
-                device: args.device.as_deref(),
-                env: &env,
-                max: args.max,
-                new_series: args.new_series,
-            };
-            let (out, text) = backend.run_reporting(&req, &command, &mut announce)?;
-            if !text.contains("DIBS-READY") && !text.contains("DIBS-HELD") {
-                return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
-            }
-            if text.contains("DIBS-READY") {
-                steps.push(provenance::StepRecord::of(step_lock(rec.steps[0].lock), &out));
-                if out.status != 0 {
-                    failed = Some(out.status);
-                }
-            }
-            text
-        }
-        None => {
-            let (out, text) = backend.run_capture(&setup, &script)?;
-            if out.status != 0 {
-                return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
-            }
-            announce(&text);
-            text
-        }
-    };
-    let prepared = worktree::parse(&text)?;
-    send_missing_gitdbs(&backend, &text, &gitdbs);
-
-    for (i, step) in rec.steps.iter().enumerate().skip(steps.len()) {
+    for (k, job) in jobs.iter().copied().enumerate() {
         if failed.is_some() {
             break;
         }
-        let cd = format!(
-            "cd {} && export CARGO_TARGET_DIR={} && {{ {}; }}",
-            sh(&prepared.worktree),
-            sh(&prepared.target),
-            run_of(i)
-        );
-        eprintln!("dibs: step {}/{} [{:?}]", i + 1, rec.steps.len(), step.lock);
-        // The step says which lock it wants, where it can be reviewed, instead of a compile
-        // being invisible inside a script that holds the machine exclusively.
-        let env = env_of(first_step_call + i);
+        let env = env_of(k);
+        let setup = Request {
+            label: &calls[k].label,
+            lock: Lock::Shared,
+            isolation: rec.isolation,
+            needs: None,
+            // Preparing a worktree touches no GPU, so pinning it would only make the setup fail
+            // on a machine whose card has been pulled.
+            device: None,
+            env: &env,
+            max: None,
+            new_series: false,
+        };
+        let (arm, step, rep, fold) = match job {
+            Job::Send(a) => {
+                let t = &mut trees[a];
+                let key = &t.local.as_ref().expect("a sent tree is local").key;
+                let (out, text) = sync_prepared(&backend, &dir, &t.script, key, &setup, &mut announce)?;
+                if !text.contains("DIBS-READY") {
+                    return Err(format!("could not prepare {} (exit {})", what(a), out.status));
+                }
+                if out.status != 0 {
+                    return Err(format!("sending {} failed (exit {})", dir.display(), out.status));
+                }
+                t.prepared = Some(worktree::parse(&text)?);
+                send_missing_gitdbs(&backend, &text, &t.gitdbs);
+                continue;
+            }
+            Job::Setup(a) => {
+                let t = &mut trees[a];
+                let (out, text) = backend.run_capture(&setup, &t.script)?;
+                if out.status != 0 {
+                    return Err(format!("could not prepare {} (exit {})", what(a), out.status));
+                }
+                announce(&text);
+                t.prepared = Some(worktree::parse(&text)?);
+                send_missing_gitdbs(&backend, &text, &t.gitdbs);
+                continue;
+            }
+            Job::Step { arm, step, rep, setup } => (arm, step, rep, setup),
+        };
+        let lock = rec.steps[step].lock;
         let req = Request {
-            label: &step_labels[i],
-            lock: step.lock,
+            label: &step_labels[step],
+            lock,
             isolation: rec.isolation,
             needs: rec.needs.as_deref(),
             device: args.device.as_deref(),
@@ -629,6 +800,41 @@ fn run() -> Result<ExitCode, String> {
             max: args.max,
             new_series: args.new_series,
         };
+        // One cache per repo, exported rather than left to each recipe to remember. The output
+        // needs no file of its own: dibs keeps every job's log under its job id, and a path named
+        // after the label would be shared by two runs of one recipe.
+        let t = &mut trees[arm];
+        let fresh = match args.reps {
+            1 => t.token.clone(),
+            _ => format!("{}-r{}", t.token, rep.unwrap_or(1)),
+        };
+        let run = step_command(rec, step, &t.token, &fresh, args.anyway);
+        let record = |out: &resource::Outcome| {
+            provenance::StepRecord::of(step_lock(lock), out)
+                .tagged(compared.then(|| arms[arm].name.clone()), rep.filter(|_| args.reps > 1))
+        };
+        if fold {
+            eprintln!("dibs: {}step {}/{} [{lock:?}], with the setup ahead of it", tag(arm, rep), step + 1, rec.steps.len());
+            let command = worktree::ahead(&t.script, worktree::Then::Step, &rec.steps[step].run) + &format!("{{ {run}; }}");
+            let (out, text) = backend.run_reporting(&req, &command, &mut announce)?;
+            if !text.contains("DIBS-READY") && !text.contains("DIBS-HELD") {
+                return Err(format!("could not prepare {} (exit {})", what(arm), out.status));
+            }
+            t.prepared = Some(worktree::parse(&text)?);
+            send_missing_gitdbs(&backend, &text, &t.gitdbs);
+            if text.contains("DIBS-READY") {
+                steps.push(record(&out));
+                if out.status != 0 {
+                    failed = Some(out.status);
+                }
+                continue;
+            }
+        }
+        let p = t.prepared.as_ref().expect("an arm is prepared before its steps run");
+        let cd = format!("cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}", sh(&p.worktree), sh(&p.target));
+        eprintln!("dibs: {}step {}/{} [{lock:?}]", tag(arm, rep), step + 1, rec.steps.len());
+        // The step says which lock it wants, where it can be reviewed, instead of a compile
+        // being invisible inside a script that holds the machine exclusively.
         let (out, report) = backend.run_reporting(&req, &cd, &mut |_| {})?;
         // The machine has said why; a refusal is not a run, so it leaves no record.
         if report.lines().any(|l| l == "DIBS-REFUSED") {
@@ -638,12 +844,16 @@ fn run() -> Result<ExitCode, String> {
         if !read.is_empty() {
             state = read;
         }
-        steps.push(provenance::StepRecord::of(step_lock(step.lock), &out));
+        steps.push(record(&out));
         if out.status != 0 {
             failed = Some(out.status);
         }
     }
 
+    let prepared = |a: usize| trees[a].prepared.as_ref();
+    if compared || args.reps > 1 {
+        eprint!("{}", measured_summary(&arms, &steps, &|a| prepared(a).map(|p| p.revisions.clone()).unwrap_or_default()));
+    }
     let record = provenance::Run {
         label,
         repo: repo_name.clone(),
@@ -673,12 +883,30 @@ fn run() -> Result<ExitCode, String> {
         machine: backend.machine.clone(),
         // Read on the machine, from the tree that was actually built, rather than from a
         // checkout here that may be at a different commit entirely.
-        revisions: prepared.revisions.clone(),
-        seeded: prepared.seeded.clone(),
+        revisions: match compared {
+            false => prepared(0).map(|p| p.revisions.clone()).unwrap_or_default(),
+            true => Vec::new(),
+        },
+        seeded: prepared(0).filter(|_| !compared).and_then(|p| p.seeded.clone()),
+        refs: compared.then(|| args.reference.clone()).flatten(),
+        arms: match compared {
+            false => Vec::new(),
+            true => arms
+                .iter()
+                .enumerate()
+                .map(|(a, arm)| provenance::ArmRecord {
+                    name: arm.name.clone(),
+                    fetched: arm.fetch.clone(),
+                    revisions: prepared(a).map(|p| p.revisions.clone()).unwrap_or_default(),
+                    seeded: prepared(a).and_then(|p| p.seeded.clone()),
+                })
+                .collect(),
+        },
+        reps: args.reps,
         batch: batch_of_caller(),
         anyway: args.anyway,
         new_series: args.new_series,
-        fresh: fresh_values(rec, &token).into_iter().collect(),
+        fresh: fresh_values(rec, &trees[0].token).into_iter().collect(),
         state,
         steps,
     };
@@ -688,6 +916,34 @@ fn run() -> Result<ExitCode, String> {
         Some(c) => ExitCode::from(c.clamp(1, 255) as u8),
         None => ExitCode::SUCCESS,
     })
+}
+
+/// Each arm's measured seconds per rep, and the jobs whose logs hold its numbers. The seconds
+/// are the steps' wall time, which is only a first look: the recipe's own output is the result.
+fn measured_summary(arms: &[Arm], steps: &[provenance::StepRecord], revisions: &dyn Fn(usize) -> Vec<(String, String)>) -> String {
+    let width = arms.iter().map(|a| a.name.len()).max().unwrap_or(0);
+    let mut out = String::from("dibs: measured, each rep's exclusive seconds and the jobs with its output:\n");
+    for (a, arm) in arms.iter().enumerate() {
+        let mine: Vec<&provenance::StepRecord> = steps
+            .iter()
+            .filter(|s| s.lock == "exclusive" && (arms.len() == 1 || s.arm.as_deref() == Some(arm.name.as_str())))
+            .collect();
+        let mut per_rep: BTreeMap<u32, u64> = BTreeMap::new();
+        for s in &mine {
+            *per_rep.entry(s.rep.unwrap_or(1)).or_default() += s.seconds;
+        }
+        let secs: Vec<String> = per_rep.values().map(|s| format!("{s}s")).collect();
+        let jobs: Vec<&str> = mine.iter().filter_map(|s| s.job.as_deref()).collect();
+        let revs: Vec<String> = revisions(a).iter().map(|(r, sha)| format!("{r}@{sha}")).collect();
+        out += &format!(
+            "  {:<width$}  {}  {}  jobs {}\n",
+            arm.name,
+            revs.join(" "),
+            if secs.is_empty() { "nothing measured".to_string() } else { secs.join(" ") },
+            if jobs.is_empty() { "-".to_string() } else { jobs.join(" ") }
+        );
+    }
+    out
 }
 
 /// Every combination `--sweep` asks for, each a complete set of values for one run. Without a
@@ -714,6 +970,7 @@ fn sweep_points(args: &Args) -> Vec<BTreeMap<String, String>> {
 fn sweep_run(args: &Args, points: &[BTreeMap<String, String>]) -> Result<ExitCode, String> {
     // Every point is checked before any of them is queued: a value the recipe refuses should be
     // found now, not two measurements into a sweep that is already holding the machine.
+    sides(args.reference.as_deref())?;
     for p in points {
         let probe = Args { params: p.clone(), sweep: Vec::new(), reps: 1, ..args.clone() };
         resolve(&probe)?;
@@ -732,55 +989,52 @@ fn sweep_text(args: &Args, points: &[BTreeMap<String, String>]) -> String {
     };
     let mut text = String::new();
     for p in points {
-        for rep in 1..=args.reps {
-            let mut line = format!("dibs {} {}", args.verb, sh(&target));
-            if let Some(r) = &args.recipe {
-                line += &format!(" {r}");
-            }
-            if args.bench {
-                line += " --bench";
-            }
-            if let Some(m) = args.max {
-                line += &format!(" --max {m}");
-            }
-            if args.anyway {
-                line += " --anyway";
-            }
-            if args.new_series {
-                line += " --new-series";
-            }
-            if let Some(d) = &args.device {
-                line += &format!(" --device {d}");
-            }
-            if let Some(r) = &args.reason {
-                line += &format!(" --reason {}", sh(r));
-            }
-            for (k, v) in p {
-                line += &format!(" --{k} {}", sh(v));
-            }
-            if let Some(c) = &args.command {
-                line += &format!(" -- {}", sh(c));
-            }
-            text += &format!("[{}] {line}\n", point_name(args, p, rep));
+        let mut line = format!("dibs {} {}", args.verb, sh(&target));
+        if let Some(r) = &args.recipe {
+            line += &format!(" {r}");
         }
+        if args.bench {
+            line += " --bench";
+        }
+        if let Some(m) = args.max {
+            line += &format!(" --max {m}");
+        }
+        if args.reps > 1 {
+            line += &format!(" --reps {}", args.reps);
+        }
+        if args.anyway {
+            line += " --anyway";
+        }
+        if args.new_series {
+            line += " --new-series";
+        }
+        if let Some(d) = &args.device {
+            line += &format!(" --device {d}");
+        }
+        if let Some(r) = &args.reason {
+            line += &format!(" --reason {}", sh(r));
+        }
+        for (k, v) in p {
+            line += &format!(" --{k} {}", sh(v));
+        }
+        if let Some(c) = &args.command {
+            line += &format!(" -- {}", sh(c));
+        }
+        text += &format!("[{}] {line}\n", point_name(args, p));
     }
     text
 }
 
-/// What the summary calls one point: the values that make it that point, and the repetition
-/// where there is more than one.
-fn point_name(args: &Args, p: &BTreeMap<String, String>, rep: u32) -> String {
+/// What the summary calls one point: the values that make it that point.
+fn point_name(args: &Args, p: &BTreeMap<String, String>) -> String {
     let slug = |v: &str| {
         v.chars().map(|c| if c.is_ascii_alphanumeric() || "_.-".contains(c) { c } else { '_' }).collect::<String>()
     };
-    let mut parts: Vec<String> = args
+    let parts: Vec<String> = args
         .sweep
         .iter()
         .map(|(k, _)| format!("{k}-{}", slug(p.get(k).map(String::as_str).unwrap_or(""))))
         .collect();
-    if args.reps > 1 {
-        parts.push(format!("r{rep}"));
-    }
     parts.join(".")
 }
 
@@ -788,6 +1042,9 @@ fn point_name(args: &Args, p: &BTreeMap<String, String>, rep: u32) -> String {
 /// dashboard, a client, a test suite driving them over the network. It ends by becoming that
 /// dibs call rather than waiting on one, so the command keeps this terminal.
 fn with_service(args: &Args) -> Result<ExitCode, String> {
+    if sides(args.reference.as_deref())?.len() > 1 {
+        return Err("with runs against one tree, so it takes one ref".into());
+    }
     let dir = resolve_repo(&args.repo, &args.root)?;
     let repo_name = worktree::identity(&dir);
     let manifest = Manifest::load(&dir, &repo_name)?;
@@ -825,7 +1082,7 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
         None => eprintln!("dibs: preparing {repo_name}@{reference}"),
     }
     let signature = svc.build.as_deref().and_then(worktree::build_signature).unwrap_or_default();
-    let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &new_token());
+    let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &new_token(), 0);
     let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
     let setup = Request {
         label: &setup_label,
@@ -908,7 +1165,8 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
 
 /// What step `i` runs in its tree. A build claims the target for this tree, and a measurement
 /// after one refuses a target some other tree has built into since, unless told `anyway`.
-fn step_command(rec: &recipe::Recipe, i: usize, token: &str, anyway: bool) -> String {
+/// `token` is the tree's prepare, whose package list a build records; `fresh` is this run's.
+fn step_command(rec: &recipe::Recipe, i: usize, token: &str, fresh: &str, anyway: bool) -> String {
     let step = &rec.steps[i];
     let run = match (worktree::build_signature(&step.run), step.lock) {
         (Some(_), Lock::Shared) => worktree::claiming(&worktree::recording(&step.run, token)),
@@ -923,7 +1181,7 @@ fn step_command(rec: &recipe::Recipe, i: usize, token: &str, anyway: bool) -> St
     };
     // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop in the
     // step as well as the first word of it.
-    let exports: String = fresh_values(rec, token)
+    let exports: String = fresh_values(rec, fresh)
         .iter()
         .chain(&step.env)
         .map(|(k, v)| format!("export {k}={}; ", sh(v)))
@@ -944,6 +1202,7 @@ fn tree_script(
     local: Option<&worktree::Local>,
     signature: &str,
     token: &str,
+    slot: usize,
 ) -> (String, Vec<gitdeps::Db>) {
     let lock = match local {
         Some(_) => std::fs::read_to_string(dir.join("Cargo.lock")).ok(),
@@ -961,7 +1220,7 @@ fn tree_script(
     let script = worktree::packages_script(lock.as_deref().unwrap_or(""), signature, token)
         + &match local {
             Some(l) => worktree::setup_local_script(repo_name, &l.key, &l.content),
-            None => worktree::setup_script(repo_name, reference),
+            None => worktree::setup_script(repo_name, reference, slot),
         }
         + &gitdeps::check_script(&gitdbs);
     (script, gitdbs)
@@ -1105,29 +1364,41 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
     })
 }
 
-/// The jobs a recipe makes, in order, under the labels their durations are filed by. The setup
-/// rides at the head of the first job that needs the tree: the transfer for a local tree, or the
-/// first step when it is shared. Its own job would be a second round trip and a second place in
-/// the queue. An exclusive first step keeps its setup apart, or a fetch would run inside the hold.
-fn jobs_of(r: &Resolved, local: bool) -> Vec<batch::Pending> {
-    let job = |suffix: &str, mode: &'static str| {
-        let label = format!("{}{suffix}", r.label);
-        batch::Pending { name: label.clone(), mode, label, here: true }
+/// The jobs a recipe makes, in the order `schedule` sends them, under the labels their durations
+/// are filed by. The setup rides at the head of the first job that needs the tree: the transfer for
+/// a local tree, or the first step when it is shared. Its own job would be a second round trip and
+/// a second place in the queue. An exclusive first step keeps its setup apart, or a fetch would run
+/// inside the hold.
+fn jobs_of(r: &Resolved, sides: &[Side], reps: u32) -> Vec<batch::Pending> {
+    let local: Vec<bool> = sides.iter().map(|s| *s == Side::Local).collect();
+    let of = |arm: usize, rep: Option<u32>| {
+        let mut tags = Vec::new();
+        if sides.len() > 1 {
+            tags.push(sides[arm].name());
+        }
+        if let Some(r) = rep.filter(|_| reps > 1) {
+            tags.push(format!("r{r}"));
+        }
+        match tags.is_empty() {
+            true => String::new(),
+            false => format!(" ({})", tags.join(" ")),
+        }
     };
-    let mut jobs = Vec::new();
-    if local {
-        jobs.push(job(":send", "rsh"));
-    } else if r.rec.steps[0].lock != Lock::Shared {
-        jobs.push(job(":setup", "shared"));
-    }
-    for (i, st) in r.rec.steps.iter().enumerate() {
-        let mode = match st.lock {
-            Lock::Shared => "shared",
-            Lock::Exclusive => "bench",
-        };
-        jobs.push(batch::Pending { name: r.step_labels[i].clone(), mode, label: r.step_labels[i].clone(), here: true });
-    }
-    jobs
+    let job = |label: String, mode: &'static str, tag: String| batch::Pending { name: format!("{label}{tag}"), mode, label, here: true };
+    schedule(&local, &r.rec.steps, reps)
+        .into_iter()
+        .map(|j| match j {
+            Job::Send(a) => job(format!("{}:send", r.label), "rsh", of(a, None)),
+            Job::Setup(a) => job(format!("{}:setup", r.label), "shared", of(a, None)),
+            Job::Step { arm, step, rep, .. } => {
+                let mode = match r.rec.steps[step].lock {
+                    Lock::Shared => "shared",
+                    Lock::Exclusive => "bench",
+                };
+                job(r.step_labels[step].clone(), mode, of(arm, rep))
+            }
+        })
+        .collect()
 }
 
 /// The jobs a recipe line in a batch will make, so the batch's plan can estimate them. None
@@ -1142,7 +1413,7 @@ fn recipe_jobs(words: &[String]) -> Option<Vec<batch::Pending>> {
     }
     let args = parse_words(words.get(i..)?.iter().cloned()).ok()?;
     let r = resolve(&args).ok()?;
-    Some(jobs_of(&r, args.reference.as_deref() == Some("local")))
+    Some(jobs_of(&r, &sides(args.reference.as_deref()).ok()?, args.reps))
 }
 
 fn run_label(repo: &str, verb: &str, name: Option<&str>, device: Option<&str>) -> String {
@@ -1438,21 +1709,21 @@ mod tests {
         ]);
         let text = sweep_text(&args, &sweep_points(&args));
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 4, "two values, twice each");
-        assert_eq!(lines[0], "[samples-10.r1] dibs bench app@local r --anyway --new-series --device gpu0 --samples 10");
-        assert_eq!(lines[3], "[samples-30.r2] dibs bench app@local r --anyway --new-series --device gpu0 --samples 30");
+        assert_eq!(lines.len(), 2, "one call per value, each repeating its own measurement");
+        assert_eq!(lines[0], "[samples-10] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 10");
+        assert_eq!(lines[1], "[samples-30] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 30");
     }
 
     #[test]
-    fn a_repeated_shell_carries_its_reason_its_lock_and_its_command_quoted() {
+    fn a_swept_shell_carries_its_reason_its_lock_and_its_command_quoted() {
         let args = swept(&[
-            "shell", "app@local", "--reason", "why not", "--bench", "--max", "60", "--reps", "2",
-            "--", "echo a; echo b",
+            "shell", "app@main..local", "--reason", "why not", "--bench", "--max", "60", "--reps", "2",
+            "--sweep", "n=1,2", "--", "echo a; echo b",
         ]);
         let text = sweep_text(&args, &sweep_points(&args));
         assert_eq!(
             text.lines().next().unwrap(),
-            "[r1] dibs shell app@local --bench --max 60 --reason 'why not' -- 'echo a; echo b'",
+            "[n-1] dibs shell app@main..local --bench --max 60 --reps 2 --reason 'why not' --n 1 -- 'echo a; echo b'",
             "a batch line is one dibs call, so anything the shell would read has to be quoted"
         );
     }
@@ -1476,27 +1747,84 @@ mod tests {
     #[test]
     fn a_build_claims_its_target_and_the_measurement_after_it_checks_the_claim() {
         let rec = resolved(vec![step(Lock::Shared, "cargo build --release"), step(Lock::Exclusive, "cargo bench")]).rec;
-        assert_eq!(step_command(&rec, 0, "t", false), worktree::claiming(&worktree::recording("cargo build --release", "t")));
+        assert_eq!(step_command(&rec, 0, "t", "t", false), worktree::claiming(&worktree::recording("cargo build --release", "t")));
         let measured = provenance::stated(&worktree::recording("cargo bench", "t"));
-        assert_eq!(step_command(&rec, 1, "t", false), worktree::checked(&measured));
-        assert_eq!(step_command(&rec, 1, "t", true), measured);
+        assert_eq!(step_command(&rec, 1, "t", "t", false), worktree::checked(&measured));
+        assert_eq!(step_command(&rec, 1, "t", "t", true), measured);
     }
 
     // Nothing was built into the target, so whatever claimed it last says nothing about this run.
     #[test]
     fn a_measurement_after_no_build_is_not_checked() {
         let rec = resolved(vec![step(Lock::Shared, "make data"), step(Lock::Exclusive, "./bench.sh")]).rec;
-        assert_eq!(step_command(&rec, 1, "t", false), provenance::stated("./bench.sh"));
+        assert_eq!(step_command(&rec, 1, "t", "t", false), provenance::stated("./bench.sh"));
     }
 
     #[test]
     fn a_recipe_s_jobs_are_what_it_will_send_and_run() {
         let names = |jobs: Vec<batch::Pending>| jobs.into_iter().map(|j| format!("{} {}", j.mode, j.label)).collect::<Vec<_>>();
         let build_then_bench = resolved(vec![step(Lock::Shared, "cargo build"), step(Lock::Exclusive, "cargo bench")]);
-        assert_eq!(names(jobs_of(&build_then_bench, true)), ["rsh app/bench/r:send", "shared app/bench/r", "bench app/bench/r"]);
-        assert_eq!(names(jobs_of(&build_then_bench, false)), ["shared app/bench/r", "bench app/bench/r"], "the setup rides with the build");
+        assert_eq!(names(jobs_of(&build_then_bench, &[Side::Local], 1)), ["rsh app/bench/r:send", "shared app/bench/r", "bench app/bench/r"]);
+        assert_eq!(names(jobs_of(&build_then_bench, &[Side::Ref("main".into())], 1)), ["shared app/bench/r", "bench app/bench/r"], "the setup rides with the build");
         let bench_only = resolved(vec![step(Lock::Exclusive, "cargo bench")]);
-        assert_eq!(names(jobs_of(&bench_only, false)), ["shared app/bench/r:setup", "bench app/bench/r"], "never inside the hold");
+        assert_eq!(names(jobs_of(&bench_only, &[Side::Ref("main".into())], 1)), ["shared app/bench/r:setup", "bench app/bench/r"], "never inside the hold");
+    }
+
+    #[test]
+    fn a_ref_is_one_tree_a_range_is_a_tip_against_its_base_and_a_list_is_arms_in_turn() {
+        let r = |s: &str| Side::Ref(s.into());
+        assert_eq!(sides(None).unwrap(), [r("HEAD")]);
+        assert_eq!(sides(Some("local")).unwrap(), [Side::Local]);
+        assert_eq!(sides(Some("main..local")).unwrap(), [Side::Base("main".into(), "local".into()), Side::Local]);
+        assert_eq!(sides(Some("main..perf/x")).unwrap(), [Side::Base("main".into(), "perf/x".into()), Side::Pinned("perf/x".into())]);
+        assert_eq!(sides(Some("a1,b2,local")).unwrap(), [r("a1"), r("b2"), Side::Local]);
+        for bad in ["main...local", "..local", "main..", "a..b..c", "a..b,c", "a,,b", "a,a", "local,local"] {
+            assert!(sides(Some(bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn every_arm_is_built_before_any_is_measured_and_the_order_turns_each_rep() {
+        let build_then_bench = [step(Lock::Shared, "cargo build"), step(Lock::Exclusive, "cargo bench")];
+        let s = |arm, step, rep, setup| Job::Step { arm, step, rep, setup };
+        assert_eq!(
+            schedule(&[false, true], &build_then_bench, 2),
+            [
+                s(0, 0, None, true),
+                Job::Send(1),
+                s(1, 0, None, false),
+                s(0, 1, Some(1), false),
+                s(1, 1, Some(1), false),
+                s(1, 1, Some(2), false),
+                s(0, 1, Some(2), false),
+            ]
+        );
+        let bench_only = [step(Lock::Exclusive, "./bench")];
+        assert_eq!(
+            schedule(&[false], &bench_only, 2),
+            [Job::Setup(0), s(0, 0, Some(1), false), s(0, 0, Some(2), false)],
+            "a tree is set up where its first step needs it, never inside the hold"
+        );
+        let test = [step(Lock::Shared, "cargo test")];
+        assert_eq!(schedule(&[false], &test, 2), [s(0, 0, Some(1), true), s(0, 0, Some(2), false)], "nothing exclusive, so all of it repeats");
+    }
+
+    #[test]
+    fn a_comparison_s_jobs_say_which_arm_and_rep_they_are() {
+        let r = resolved(vec![step(Lock::Shared, "cargo build"), step(Lock::Exclusive, "cargo bench")]);
+        let names: Vec<String> = jobs_of(&r, &sides(Some("main..local")).unwrap(), 2).into_iter().map(|j| j.name).collect();
+        assert_eq!(
+            names,
+            [
+                "app/bench/r (base)",
+                "app/bench/r:send (local)",
+                "app/bench/r (local)",
+                "app/bench/r (base r1)",
+                "app/bench/r (local r1)",
+                "app/bench/r (local r2)",
+                "app/bench/r (base r2)",
+            ]
+        );
     }
 
     #[test]
@@ -1529,9 +1857,9 @@ mod tests {
         let mut rec = resolved(vec![step(Lock::Shared, "make"), step(Lock::Exclusive, "./bench")]).rec;
         rec.fresh = vec!["CUBECL_ENVIRONMENT".into()];
         for i in 0..2 {
-            assert!(step_command(&rec, i, "t1", false).starts_with("export CUBECL_ENVIRONMENT=dibs-t1; "));
+            assert!(step_command(&rec, i, "t1", "t1", false).starts_with("export CUBECL_ENVIRONMENT=dibs-t1; "));
         }
-        assert!(step_command(&rec, 1, "t2", false).starts_with("export CUBECL_ENVIRONMENT=dibs-t2; "));
+        assert!(step_command(&rec, 1, "t2", "t2", false).starts_with("export CUBECL_ENVIRONMENT=dibs-t2; "));
     }
 
     #[test]
@@ -1602,6 +1930,9 @@ mod tests {
             machine: Some("multigpu".into()),
             revisions: vec![],
             seeded: None,
+            refs: None,
+            arms: Vec::new(),
+            reps: 1,
             batch: None,
             anyway: false,
             new_series: false,
@@ -1644,6 +1975,9 @@ mod tests {
             machine: None,
             revisions: vec![],
             seeded: None,
+            refs: None,
+            arms: Vec::new(),
+            reps: 1,
             batch: None,
             anyway: false,
             new_series: false,
@@ -1676,12 +2010,15 @@ mod tests {
             machine: None,
             revisions: vec![("cubek".into(), "abc123".into())],
             seeded: None,
+            refs: None,
+            arms: Vec::new(),
+            reps: 1,
             batch: None,
             anyway: false,
             new_series: false,
             fresh: Vec::new(),
             state: Vec::new(),
-            steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3, job: None, built: None, log: None }],
+            steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3, job: None, built: None, log: None, arm: None, rep: None }],
         };
         let line = run.to_json(42);
         assert!(!line.contains('\n'), "a record has to stay one line");

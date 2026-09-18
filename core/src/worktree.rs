@@ -55,7 +55,7 @@ done
 /// A target is only ever reflinked: a full copy per tree would fill the disk, and a filesystem
 /// that cannot share blocks gets no seed at all. Sources are small and may live on another
 /// filesystem than targets, so they fall back to a plain copy.
-const SEED: &str = r#"ranked=$(for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$SCRATCH/target/{repo}"-local-*/.dibs-used 2>/dev/null); do
+const SEED: &str = r#"ranked=$(for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$SCRATCH/target/{repo}"-local-*/.dibs-used "$SCRATCH/target/{repo}"-arm*/.dibs-used 2>/dev/null); do
     src=${used%/.dibs-used}
     n=0
     if [ -s "${DIBS_PKGS:-/nonexistent}" ] && [ -f "$src/.dibs-packages" ]; then
@@ -81,7 +81,7 @@ while read -r n src; do
                 sources=$SCRATCH/ws/{repo}/local-${src##*/{repo}-local-}
                 # cubecl keeps autotune winners and throughput numbers in the tree's target/environment,
                 # and a new tree must start without its sibling's.
-                if [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null &&
+                if [ ! -e "$WT" ] && [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null &&
                     rm -rf "$WT.seed.$$/target/environment" && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
                     echo "DIBS-SEED-SOURCES"
                 fi
@@ -282,7 +282,20 @@ pub fn packages_script(lock: &str, signature: &str, token: &str) -> String {
 /// The cost is that trees accumulate, which is a garbage collection problem rather than a
 /// correctness one, and dibs can solve it precisely because it owns the layout: it knows when
 /// each tree was last used, which nobody could know when the paths were hand-written.
-pub fn setup_script(repo: &str, reference: &str) -> String {
+///
+/// `slot` is which of a comparison's fetched arms this is. The first shares the repo's target;
+/// each later one has its own, since the arms' measurements alternate and one target holds only
+/// the binary of whichever arm built last.
+pub fn setup_script(repo: &str, reference: &str, slot: usize) -> String {
+    let (suffix, seed) = match slot {
+        0 => (String::new(), String::new()),
+        n => (
+            format!("-arm{n}"),
+            // The checkout's files may be older than the copied artifacts, so the copy's claim is
+            // dropped and the first build dates them after it.
+            format!("if [ ! -d \"$TARGET\" ]; then\n{}rm -f \"$TARGET/.dibs-tree\"\nfi\n", SEED.replace("{repo}", repo)),
+        ),
+    };
     let mut s = String::new();
     let _ = write!(
         s,
@@ -348,8 +361,8 @@ touch "$WT/.dibs-used"
 # One cache per repo rather than per tree. Cargo fingerprints per crate, so switching commits
 # reuses most of it, where a tree of its own would rebuild the world every commit. Concurrent
 # builds serialise on cargo's own lock, which is correct.
-TARGET=$SCRATCH/target/{repo}
-mkdir -p "$TARGET" "$SCRATCH/out"
+TARGET=$SCRATCH/target/{repo}{suffix}
+{seed}mkdir -p "$TARGET" "$SCRATCH/out"
 touch "$TARGET/.dibs-used"
 
 {stage}{gc}git -C "$SRC" worktree prune
@@ -362,6 +375,30 @@ echo "DIBS-REV {repo} $SHORT"
         stage = STAGE
     );
     s
+}
+
+/// The commit `name` is here, in full.
+pub fn commit(dir: &std::path::Path, name: &str) -> Result<String, String> {
+    git(dir, &["rev-parse", "--verify", "-q", &format!("{name}^{{commit}}")])
+        .map(|s| s.trim().to_string())
+        .map_err(|_| format!("no {name} in {}", dir.display()))
+}
+
+/// Where `tip` left `from`: the commit an A/B of `from..tip` measures `tip` against. A local branch
+/// that is behind its upstream would put that point too early and credit `tip` with commits it
+/// merely did not have, so the upstream is asked too and the later of the two answers wins.
+/// Returns the commit and, when the upstream decided it, the upstream's name.
+pub fn merge_base(dir: &std::path::Path, from: &str, tip: &str) -> Result<(String, Option<String>), String> {
+    let tip = commit(dir, tip)?;
+    let own = commit(dir, from)?;
+    let base = |c: &str| git(dir, &["merge-base", c, &tip]).map(|s| s.trim().to_string());
+    let mine = base(&own).map_err(|_| format!("{from} and {tip:.8} share no history in {}", dir.display()))?;
+    let upstream = git(dir, &["rev-parse", "--abbrev-ref", "-q", &format!("{from}@{{upstream}}")]).ok().map(|s| s.trim().to_string());
+    let theirs = upstream.as_deref().and_then(|u| Some((u.to_string(), base(&commit(dir, u).ok()?).ok()?)));
+    match theirs {
+        Some((u, b)) if b != mine && git(dir, &["merge-base", "--is-ancestor", &mine, &b]).is_ok() => Ok((b, Some(u))),
+        _ => Ok((mine, None)),
+    }
 }
 
 /// What follows a setup inside the same job.
@@ -476,7 +513,7 @@ mod tests {
     #[test]
     fn the_generated_scripts_are_valid_shell() {
         use std::io::Write;
-        for script in [setup_script("cubek", "main"), setup_local_script("cubek", "k1", "c1")] {
+        for script in [setup_script("cubek", "main", 0), setup_script("cubek", "main", 1), setup_local_script("cubek", "k1", "c1")] {
             let mut c = std::process::Command::new("bash")
                 .arg("-n")
                 .stdin(std::process::Stdio::piped())
@@ -493,7 +530,7 @@ mod tests {
     // the ref being wrong and sends people to carry the code over by hand.
     #[test]
     fn a_credentials_failure_names_local_rather_than_the_ref() {
-        let s = setup_script("cubek", "main");
+        let s = setup_script("cubek", "main", 0);
         assert!(s.contains("could not read Username"), "the fetch error has to be inspected");
         assert!(s.contains("cubek@local"), "and the way out has to be named");
     }
@@ -516,7 +553,7 @@ mod tests {
 
     #[test]
     fn collection_can_never_remove_the_tree_just_prepared() {
-        let s = setup_script("cubek", "main");
+        let s = setup_script("cubek", "main", 0);
         assert!(s.contains(r#"[ "$old" = "$WT" ] && continue"#),
                 "the current tree must be excluded from collection by identity, not by luck");
         assert!(s.contains("-mtime +"), "collection has to be by age, not unconditional");
@@ -570,7 +607,7 @@ mod tests {
 
     fn resolve(home: &std::path::Path, reference: &str) -> (bool, String) {
         let out = std::process::Command::new("bash")
-            .arg("-c").arg(setup_script("demo", reference))
+            .arg("-c").arg(setup_script("demo", reference, 0))
             .env("HOME", home)
             .env("DIBS_SCRATCH", home.join("scratch"))
             .output().unwrap();
@@ -599,7 +636,7 @@ mod tests {
         let kids: Vec<_> = (0..8)
             .map(|_| {
                 std::process::Command::new("bash")
-                    .arg("-c").arg(setup_script("demo", &wanted))
+                    .arg("-c").arg(setup_script("demo", &wanted, 0))
                     .env("HOME", &home)
                     .env("DIBS_SCRATCH", home.join("scratch"))
                     .stdout(std::process::Stdio::null())
@@ -632,6 +669,59 @@ mod tests {
         assert!(ok, "a branch with a slash should prepare");
         assert_eq!(sha, wanted[..12], "resolved somewhere else entirely");
         assert_ne!(sha, decoy[..12]);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // The arms of a comparison alternate, so each needs a binary of its own to go back to.
+    #[test]
+    fn a_later_arm_builds_into_a_target_of_its_own() {
+        let (home, wanted, _) = sandbox("slot");
+        let target = |slot| {
+            let out = std::process::Command::new("bash")
+                .arg("-c").arg(setup_script("demo", &wanted, slot))
+                .env("HOME", &home)
+                .env("DIBS_SCRATCH", home.join("scratch"))
+                .output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            parse(&String::from_utf8_lossy(&out.stdout)).unwrap().target
+        };
+        assert!(target(0).ends_with("/target/demo"));
+        assert!(target(1).ends_with("/target/demo-arm1"));
+        let s = setup_script("demo", &wanted, 1);
+        let seed = s.find("DIBS-SEED ").unwrap();
+        assert!(s[seed..].find("rm -f \"$TARGET/.dibs-tree\"").is_some(), "a copied target is not this checkout's build");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // A local main behind origin/main puts the base before the branch's real fork point, and the
+    // branch is then credited with everything main gained in between.
+    #[test]
+    fn a_merge_base_is_taken_from_the_upstream_when_the_branch_is_behind_it() {
+        let home = std::env::temp_dir().join(format!("dibs-mb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let sh = |cmd: &str| -> String {
+            let o = std::process::Command::new("bash").arg("-c").arg(cmd).current_dir(&home).output().unwrap();
+            assert!(o.status.success(), "{cmd}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        sh("git init -q --bare origin.git && git clone -q origin.git r 2>/dev/null");
+        let r = home.join("r");
+        let git = |cmd: &str| sh(&format!("cd r && git -c user.email=a@b -c user.name=t {cmd}"));
+        git("checkout -q -b main");
+        git("commit -q --allow-empty -m c1");
+        git("push -q -u origin main");
+        let c1 = git("rev-parse HEAD");
+        git("commit -q --allow-empty -m c2");
+        git("push -q origin main");
+        let c2 = git("rev-parse HEAD");
+        git("reset -q --hard HEAD~1");
+        git("checkout -q -b feat origin/main");
+        git("commit -q --allow-empty -m f1");
+        assert_eq!(merge_base(&r, "main", "feat").unwrap(), (c2.clone(), Some("origin/main".to_string())));
+        assert_eq!(merge_base(&r, "origin/main", "HEAD").unwrap(), (c2.clone(), None));
+        assert_eq!(merge_base(&r, &c1, "feat").unwrap(), (c1, None), "a commit has no upstream to ask");
+        assert!(merge_base(&r, "no-such", "feat").is_err());
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -692,7 +782,7 @@ mod tests {
     #[test]
     fn a_target_directory_nobody_has_used_is_collected() {
         let (home, _, _) = sandbox("gc");
-        let left = targets(&home, "45", &setup_script("demo", "local-only"));
+        let left = targets(&home, "45", &setup_script("demo", "local-only", 0));
         assert!(!left.contains(&"abandoned".to_string()), "left {left:?}");
         assert!(left.contains(&"demo".to_string()), "the one being used must survive");
         let _ = std::fs::remove_dir_all(&home);
@@ -723,7 +813,7 @@ mod tests {
         let (home, _, _) = sandbox("ws-unmarked");
         let lost = home.join("scratch/ws/other/local-unmarked");
         std::fs::create_dir_all(&lost).unwrap();
-        targets(&home, "5", &setup_script("demo", "local-only"));
+        targets(&home, "5", &setup_script("demo", "local-only", 0));
         assert!(lost.join(".dibs-used").exists());
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -733,7 +823,7 @@ mod tests {
     #[test]
     fn a_target_directory_with_no_marker_is_dated_rather_than_deleted() {
         let (home, _, _) = sandbox("unmarked");
-        let left = targets(&home, "45", &setup_script("demo", "local-only"));
+        let left = targets(&home, "45", &setup_script("demo", "local-only", 0));
         assert!(left.contains(&"unmarked".to_string()), "left {left:?}");
         assert!(home.join("scratch/target/unmarked/.dibs-used").exists());
         let _ = std::fs::remove_dir_all(&home);
@@ -744,7 +834,7 @@ mod tests {
     // rule is structural: this script must never consult it.
     #[test]
     fn resolution_never_goes_through_the_shared_fetch_head() {
-        let s = setup_script("cubek", "main");
+        let s = setup_script("cubek", "main", 0);
         // Comments may name it; the code may not use it.
         let code: String = s
             .lines()
@@ -757,7 +847,7 @@ mod tests {
 
     #[test]
     fn the_script_keys_the_tree_by_commit_not_by_ref() {
-        let s = setup_script("cubek", "main");
+        let s = setup_script("cubek", "main", 0);
         assert!(s.contains("ws/cubek/$SHORT"), "tree path must be keyed by the resolved commit");
         assert!(s.contains("--detach"), "a tracking worktree would move under a running job");
     }

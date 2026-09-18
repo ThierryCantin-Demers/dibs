@@ -192,10 +192,16 @@ spoiled without it.
   than copying a recipe's command out to change one thing: the run is still recorded, still
   labelled, and the record carries the values. A value outside the choices, or a name the recipe
   does not declare, is refused here before anything is sent.
-- **A sweep is one call**: `--sweep <name>=<a,b,c>` runs one point per value and `--reps <n>`
-  repeats each, as a single batch with one summary, so a sweep wakes you once. Never write a loop
-  of dibs calls for it. `--<name>` never splits on commas, so a value that contains one, such as a
-  problem list, stays one value.
+- **A sweep is one call**: `--sweep <name>=<a,b,c>` runs one point per value, as a single batch
+  with one summary, so a sweep wakes you once. Never write a loop of dibs calls for it. `--<name>`
+  never splits on commas, so a value that contains one, such as a problem list, stays one value.
+  `--reps <n>` measures each point n times after one build, into one record.
+- **An A/B is one call**: `dibs bench <repo>@main..local <recipe> --reps 3` measures your tree
+  against where it left main, never against main as it is now, which would credit your branch with
+  whatever landed since. `@a,b,c` compares any refs in turn. Each arm gets its own tree and target,
+  all are built first, then the measurements alternate A B B A. Never hand-write the arms, their
+  target directories or the alternation. The run ends with each arm's jobs: read the numbers with
+  `dibs out <job>`.
 - `dibs shell` takes `--bench` when the one-off is a measurement, and `--max <seconds>` when it
   would otherwise be killed at the default cap.
 - `@local` in place of a ref sends your working tree, uncommitted changes included, following the

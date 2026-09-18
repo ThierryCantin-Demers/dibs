@@ -109,13 +109,38 @@ A sweep is one submission:
 
     dibs bench cubek@local reduce --sweep samples=10,30,100 --reps 2
 
-`--sweep` is repeatable and the combinations are the cross product; `--reps` runs each point that
-many times. They become a batch of ordinary calls, one per point, run in sequence because they
-share a worktree and its build cache, so you are woken once and get one summary with a row per
-point. Every point is checked before any of them is queued.
+`--sweep` is repeatable and the combinations are the cross product. The points become a batch of
+ordinary calls, one per point, run in sequence because they share a worktree and its build cache,
+so you are woken once and get one summary with a row per point. Every point is checked before any
+of them is queued.
+
+`--reps` measures a point that many times: the build runs once, each rep runs the recipe from its
+first exclusive step on, and one record holds every rep. `dibs runs` gives the median and the
+spread across them. A recipe with no exclusive step repeats whole.
 
 The sweep has its own flag rather than splitting `--samples 10,30`, because a value may contain a
 comma: `--problems sum_axis2,arg_topk` is one value, and `--<name>` always means exactly one.
+
+## Comparing code
+
+An A/B is one call:
+
+    dibs bench cubek@main..local reduce --reps 3
+
+`A..B` measures B against where it left A, their merge base, so what landed on main since the
+branch left it is not credited to the branch. A local branch behind its upstream would put that
+point too early, so the upstream is asked too and the later answer wins; the output says which.
+Both ends are resolved here, and B is fetched by the commit it resolved to. `a,b,c` compares any
+list of refs in turn, which is a bisect, and `local` can be any one of them.
+
+Every arm is prepared and built before any is measured, each in a tree and a target directory of
+its own: a local tree already has one, and a second fetched arm gets `<repo>-arm1` rather than
+sharing the repo's. Each rep then measures every arm, the order reversed every other rep, so three
+reps of an A/B run A B B A A B. That cancels a drift that is linear in time, such as a card
+warming up, which A B A B would credit to B. The run ends with each arm's seconds per rep and the
+jobs holding its output, and writes one record naming every arm's revisions, with each step
+tagged by its arm and rep. The seconds are the steps' wall time, a first look; the numbers are in
+the recipe's own output, which `dibs out <job>` reads.
 
 `dibs shell` takes `--bench` for a one-off that is a measurement, and `--max <seconds>` where the
 default cap is too short for it.
@@ -141,7 +166,7 @@ throughput numbers.
     fresh = ["CUBECL_ENVIRONMENT"]
 
 `fresh` names variables that get a value unique to each run, the same in every step of it, and the
-record carries the value. `CUBECL_ENVIRONMENT` names a store rather than a path, so each run gets a
+record carries the value. Each rep and each arm of a run gets one of its own. `CUBECL_ENVIRONMENT` names a store rather than a path, so each run gets a
 store of its own inside its tree, and it goes when the tree does. dibs gives a value, not a
 directory, since a value is what such a knob takes. A new tree seeded from a sibling never takes
 the sibling's `target/environment`.

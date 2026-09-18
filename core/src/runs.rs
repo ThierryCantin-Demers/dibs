@@ -27,6 +27,13 @@ pub struct Record {
     /// that queued for twenty minutes did not take twenty minutes, so neither counts the wait.
     pub seconds: u64,
     pub measured: Option<u64>,
+    /// The exclusive seconds of each rep, keyed by arm: one sample for a run without reps, and
+    /// the empty arm for a run that compared nothing.
+    pub samples: Vec<(String, u64)>,
+    /// A comparison's `@`, and each arm's name and revisions in the order they were given.
+    pub refs: Option<String>,
+    pub arms: Vec<(String, Vec<(String, String)>)>,
+    pub reps: u64,
     pub failed: bool,
     pub anyway: bool,
     pub new_series: bool,
@@ -50,6 +57,21 @@ fn parse_line(line: &str) -> Option<Record> {
     let steps = v.get("steps").and_then(Value::as_array).cloned().unwrap_or_default();
     let secs = |s: &Value| s.get("seconds").and_then(Value::as_u64).unwrap_or(0);
     let exclusive: Vec<&Value> = steps.iter().filter(|s| s.get("lock").and_then(Value::as_str) == Some("exclusive")).collect();
+    let mut per_rep: BTreeMap<(String, u64), u64> = BTreeMap::new();
+    for st in &exclusive {
+        let arm = st.get("arm").and_then(Value::as_str).unwrap_or_default().to_string();
+        *per_rep.entry((arm, st.get("rep").and_then(Value::as_u64).unwrap_or(1))).or_default() += secs(st);
+    }
+    let samples: Vec<(String, u64)> = per_rep.into_iter().map(|((arm, _), s)| (arm, s)).collect();
+    let arms = v
+        .get("arms")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|arm| (arm.get("name").and_then(Value::as_str).unwrap_or_default().to_string(), arm.get("revisions").map(pairs).unwrap_or_default()))
+                .collect()
+        })
+        .unwrap_or_default();
     let failed = match v.get("outcome").and_then(Value::as_str) {
         Some(o) => o != "ok",
         None => steps.iter().any(|s| s.get("status").and_then(Value::as_i64).unwrap_or(0) != 0),
@@ -73,7 +95,11 @@ fn parse_line(line: &str) -> Option<Record> {
             }).collect())
             .unwrap_or_default(),
         seconds: steps.iter().map(secs).sum(),
-        measured: (!exclusive.is_empty()).then(|| exclusive.iter().map(|s| secs(s)).sum()),
+        measured: median(samples.iter().filter(|(a, _)| a.is_empty()).map(|(_, s)| *s).collect()).map(|(m, ..)| m),
+        samples,
+        refs: text("refs"),
+        arms,
+        reps: v.get("reps").and_then(Value::as_u64).unwrap_or(1),
         failed,
         anyway: v.get("anyway").and_then(Value::as_bool).unwrap_or(false),
         new_series: v.get("new_series").and_then(Value::as_bool).unwrap_or(false),
@@ -81,6 +107,13 @@ fn parse_line(line: &str) -> Option<Record> {
         reason: text("reason"),
         seeded: text("seeded"),
     })
+}
+
+/// The median, lowest and highest, or None for no samples.
+fn median(mut secs: Vec<u64>) -> Option<(u64, u64, u64)> {
+    secs.sort_unstable();
+    let n = secs.len();
+    (n > 0).then(|| ((secs[(n - 1) / 2] + secs[n / 2]) / 2, secs[0], secs[n - 1]))
 }
 
 pub fn load(path: &Path) -> Result<Vec<Record>, String> {
@@ -174,8 +207,10 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
             Some(m) => (m, "exclusive"),
             None => (r.seconds, "shared"),
         };
+        let spread = median(r.samples.iter().map(|(_, s)| *s).collect()).filter(|_| r.arms.is_empty() && r.reps > 1);
         let extra = [
             r.variant.as_ref().map(|v| format!("from {v}")),
+            spread.map(|(_, lo, hi)| format!("median of {} reps, {lo}s to {hi}s", r.reps)),
             (!r.params.is_empty()).then(|| words(&r.params, "=")),
             r.seeded.as_ref().map(|s| format!("seeded from {s}")),
             r.anyway.then(|| "measured with --anyway".to_string()),
@@ -183,6 +218,30 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
             r.failed.then(|| "FAILED".to_string()),
         ];
         let extra: String = extra.into_iter().flatten().map(|e| format!("  {e}")).collect();
+        if !r.arms.is_empty() {
+            out.push_str(&format!(
+                "{}  {:<machine_w$}  {:<label_w$}  {} arms, {} each{extra}\n",
+                date(r.when as i64 + offset),
+                r.machine.as_deref().unwrap_or("-"),
+                r.label,
+                r.refs.as_deref().unwrap_or("compared"),
+                if r.reps == 1 { "measured once".to_string() } else { format!("{} reps", r.reps) },
+            ));
+            let name_w = r.arms.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
+            for (name, revisions) in &r.arms {
+                let secs = median(r.samples.iter().filter(|(a, _)| a == name).map(|(_, s)| *s).collect());
+                out.push_str(&format!(
+                    "    {name:<name_w$}  {}  {}\n",
+                    words(revisions, "@"),
+                    match secs {
+                        Some((m, lo, hi)) if lo != hi => format!("median {m}s exclusive, {lo}s to {hi}s"),
+                        Some((m, ..)) => format!("{m}s exclusive"),
+                        None => "nothing measured".to_string(),
+                    }
+                ));
+            }
+            continue;
+        }
         out.push_str(&format!(
             "{}  {:<machine_w$}  {:<label_w$} {:>6}s {:<9}  {}{extra}\n",
             date(r.when as i64 + offset),
@@ -196,9 +255,10 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
 
     // Runs that differ in nothing dibs can see: the spread among them is the noise any
     // difference elsewhere has to beat. State is part of the key, so two governors are two lines.
+    // A comparison's arms are set against each other in its own record instead.
     let mut repeated: BTreeMap<(&str, &str, &str, String, String, String), Vec<u64>> = BTreeMap::new();
-    for r in picked.iter().filter(|r| !r.failed) {
-        if let Some(m) = r.measured {
+    for r in picked.iter().filter(|r| !r.failed && r.arms.is_empty()) {
+        if r.measured.is_some() {
             let key = (
                 r.label.as_str(),
                 r.fingerprint.as_str(),
@@ -207,22 +267,17 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
                 words(&r.params, "="),
                 words(&r.state, "="),
             );
-            repeated.entry(key).or_default().push(m);
+            repeated.entry(key).or_default().extend(r.samples.iter().map(|(_, s)| *s));
         }
     }
     let repeated: Vec<_> = repeated.into_iter().filter(|(_, v)| v.len() > 1).collect();
     if !repeated.is_empty() {
         out.push_str("\nrepeated on the same code, measured step only:\n");
-        for ((label, _, machine, revs, params, state), mut secs) in repeated {
-            secs.sort_unstable();
+        for ((label, _, machine, revs, params, state), secs) in repeated {
             let n = secs.len();
-            let median = (secs[(n - 1) / 2] + secs[n / 2]) / 2;
+            let Some((m, lo, hi)) = median(secs) else { continue };
             let context: String = [params, state].into_iter().filter(|s| !s.is_empty()).map(|s| format!(", {s}")).collect();
-            out.push_str(&format!(
-                "  {label} on {machine} at {revs}{context}: {n} runs, median {median}s, {}s to {}s\n",
-                secs[0],
-                secs[n - 1]
-            ));
+            out.push_str(&format!("  {label} on {machine} at {revs}{context}: measured {n} times, median {m}s, {lo}s to {hi}s\n"));
         }
     }
 
@@ -340,6 +395,24 @@ mod tests {
     }
 
     #[test]
+    fn a_comparison_lists_each_arm_with_its_median_across_reps() {
+        let line = r#"{"t":1,"verb":"bench","label":"cubek/bench/gemm","repo":"cubek","fingerprint":"f","machine":"m1","refs":"main..local","arms":[{"name":"base","fetched":"626548f5aa","revisions":{"cubek":"626548f5aa"}},{"name":"local","revisions":{"cubek":"local:8f12+dirty-ab"}}],"reps":2,"procedure":[],"revisions":{},"steps":[{"lock":"shared","status":0,"seconds":90,"arm":"base"},{"lock":"exclusive","status":0,"seconds":40,"arm":"base","rep":1},{"lock":"exclusive","status":0,"seconds":30,"arm":"local","rep":1},{"lock":"exclusive","status":0,"seconds":32,"arm":"local","rep":2},{"lock":"exclusive","status":0,"seconds":42,"arm":"base","rep":2}],"outcome":"ok"}"#;
+        let out = report(&[parse_line(line).unwrap()], None, 30, false);
+        assert!(out.contains("cubek/bench/gemm  main..local arms, 2 reps each"), "{out}");
+        assert!(out.contains("    base   cubek@626548f5aa  median 41s exclusive, 40s to 42s"), "{out}");
+        assert!(out.contains("    local  cubek@local:8f12+dirty-ab  median 31s exclusive, 30s to 32s"), "{out}");
+        assert!(!out.contains("repeated on the same code"), "the arms are compared in their own record: {out}");
+    }
+
+    #[test]
+    fn the_reps_of_one_run_are_its_spread() {
+        let line = r#"{"t":1,"verb":"bench","label":"cubek/bench/gemm","fingerprint":"f","machine":"m1","reps":3,"procedure":[],"revisions":{"cubek":"abc"},"steps":[{"lock":"shared","status":0,"seconds":90},{"lock":"exclusive","status":0,"seconds":12,"rep":1},{"lock":"exclusive","status":0,"seconds":10,"rep":2},{"lock":"exclusive","status":0,"seconds":11,"rep":3}],"outcome":"ok"}"#;
+        let out = report(&[parse_line(line).unwrap()], None, 30, false);
+        assert!(out.contains("    11s exclusive  cubek@abc  median of 3 reps, 10s to 12s"), "{out}");
+        assert!(out.contains("measured 3 times, median 11s, 10s to 12s"), "{out}");
+    }
+
+    #[test]
     fn a_query_that_missed_does_not_read_as_an_empty_record() {
         let recs = vec![parse_line(A).unwrap()];
         let out = report(&recs, Some("no-such-label"), 30, false);
@@ -397,8 +470,8 @@ mod tests {
             v2(5, "f", "cargo bench", 31, "powersave", "ok"),
         ];
         let out = report(&recs, None, 10, false);
-        assert!(out.contains("governor=performance: 3 runs, median 11s, 10s to 14s"), "{out}");
-        assert!(out.contains("governor=powersave: 2 runs, median 30s, 30s to 31s"), "{out}");
+        assert!(out.contains("governor=performance: measured 3 times, median 11s, 10s to 14s"), "{out}");
+        assert!(out.contains("governor=powersave: measured 2 times, median 30s, 30s to 31s"), "{out}");
     }
 
     #[test]
@@ -407,7 +480,7 @@ mod tests {
         from_worktree.variant = Some("topk-packed".into());
         let out = report(&[v2(1, "f", "cargo bench", 10, "performance", "ok"), from_worktree], None, 10, false);
         assert_eq!(out.matches("from topk-packed").count(), 1, "{out}");
-        assert!(out.contains(": 2 runs, median 11s"), "{out}");
+        assert!(out.contains(": measured 2 times, median 11s"), "{out}");
     }
 
     #[test]

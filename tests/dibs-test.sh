@@ -1953,7 +1953,7 @@ check "and each writes its own record" \
 check "naming the batch, which is what ties the points of one sweep together" \
   "$(grep '"samples":"11"' "$HOME/.local/state/dibs/runs.jsonl" | grep -cE '"batch":"[0-9]{8}-[0-9]{6}-[0-9]+"')" "1"
 out=$(RC build "$S/app@local" p --sweep samples=10,30 --reps 2 --dry-run 2>&1)
-check "--reps repeats every point, in the same batch" "$(grep -cE '^  samples-(10|30)\.r[12] ' <<<"$out")" "4"
+check "--reps repeats inside each point, which stays one call" "$(grep -cE '^  samples-(10|30) ' <<<"$out")" "2"
 out=$(RC build "$S/app@local" p --sweep backend=cuda,metal 2>&1); rc=$?
 check "a value the recipe refuses stops the sweep before any of it runs" "$rc" "2"
 check "without starting the batch" "$(grep -c 'steps\. You are told' <<<"$out")" "0"
@@ -2005,7 +2005,7 @@ check "and how it ended" "$(grep -c '"outcome":"ok"}$' <<<"$rec")" "1"
 out=$(RC runs app/bench/gate 2>&1)
 check "dibs runs gives each run's date, and the measured step's time and lock" \
   "$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}  .* app/bench/gate +[0-9]+s exclusive ' <<<"$out")" "2"
-check "and puts runs of one procedure on the same code together" "$(grep -c '^  app/bench/gate on .*: 2 runs, median ' <<<"$out")" "1"
+check "and puts runs of one procedure on the same code together" "$(grep -c '^  app/bench/gate on .*: measured 2 times, median ' <<<"$out")" "1"
 printf '%s\n' '' '[build.fails]' '  [[build.fails.step]]' '  lock = "shared"' '  run = "exit 3"' >> "$S/app/.dibs.toml"
 RC build "$S/app@local" fails >/dev/null 2>&1
 check "a failed run is recorded as one" \
@@ -2068,6 +2068,55 @@ check "a bare name inside a worktree of that repo is the worktree, not the clone
   "$(last_variant)" '"variant":"app-topk"'
 ( cd "$S/app-topk" && DIBS_ROOT=$S RC build "$S/app@local" p >/dev/null 2>&1 )
 check "while a path is still that path" "$(last_variant)" ""
+
+# Reps are one run: built once, measured each time, one record.
+n0=$(arrivals)
+out=$(RC bench "$S/app@main" gate --reps 3 2>&1); rc=$?
+check "--reps builds once and measures each time" "$rc $(( $(arrivals) - n0 )) $(grep -c '^measured$' <<<"$out")" "0 4 3"
+rec=$(grep '"label":"app/bench/gate"' "$HOME/.local/state/dibs/runs.jsonl" | tail -n 1)
+check "into one record whose measurements say which rep they were" \
+  "$(grep -o '"lock":"exclusive","status":0,"seconds":[0-9]*,"rep":[123]' <<<"$rec" | wc -l) $(grep -c '"reps":3' <<<"$rec")" "3 1"
+check "and dibs runs gives the spread across them" \
+  "$(RC runs app/bench/gate 2>/dev/null | grep -cE 'median of 3 reps, [0-9]+s to [0-9]+s$')" "1"
+
+# A comparison is one call: every arm built in a tree and a target of its own, then measured in
+# turn, the order reversed every other rep, into one record. main moved on after this branch left
+# it, and the local branch named as the base is behind its upstream.
+git clone -q -b main "$S/origin.git" "$S/app2" 2>/dev/null
+( cd "$S/app2" && printf 'main2\n' > a.txt && git -c user.email=t@t -c user.name=t commit -qam two && git push -q origin HEAD:main 2>/dev/null )
+old_main=$(git -C "$S/app" rev-parse HEAD)
+git -C "$S/app-topk" fetch -q origin 2>/dev/null
+new_main=$(git -C "$S/app" rev-parse origin/main)
+git -C "$S/app" branch -f -q stale-main "$old_main" && git -C "$S/app" branch -q -u origin/main stale-main
+git -C "$S/app-topk" reset -q --hard origin/main && printf 'topk\n' > "$S/app-topk/a.txt"
+printf '%s\n' '' '[bench.ab]' '  [[bench.ab.step]]' '  lock = "shared"' "  run = \"$S/fc/cargo build\"" \
+  '  [[bench.ab.step]]' '  lock = "exclusive"' '  run = "echo measured $(cat a.txt) in ${CARGO_TARGET_DIR##*/}"' >> "$S/app/.dibs.toml"
+cp "$S/app/.dibs.toml" "$S/app-topk/"
+out=$(RC bench "$S/app-topk@stale-main..local" ab --dry-run 2>&1)
+check "a dry run of a comparison names each arm and where its base came from" \
+  "$(grep -c "^arm         base  $new_main, where local left origin/main, since stale-main is behind it$" <<<"$out")$(grep -c '^arm         local  local ' <<<"$out")" "11"
+check "and the order they will be measured in" "$(grep -c '^measured    base local | local base$' <<<"$(RC bench "$S/app-topk@stale-main..local" ab --reps 2 --dry-run 2>&1)")" "1"
+out=$(RC bench "$S/app-topk@stale-main..local" ab --reps 2 2>&1); rc=$?
+check "main..local measures the tree against where it left main, A B B A" \
+  "$rc $(grep '^measured ' <<<"$out" | cut -d' ' -f2 | paste -sd' ')" "0 main2 topk topk main2"
+check "each arm from a target directory of its own" \
+  "$(grep '^measured main2 ' <<<"$out" | sort -u | cut -d' ' -f4) $(grep '^measured topk ' <<<"$out" | sort -u | cut -d' ' -f4 | sed 's/-local-.*/-local/')" "app app-local"
+check "with a summary naming each arm's jobs" "$(grep -cE '^  (base |local)  app@.*  [0-9]+s [0-9]+s  jobs [0-9-]+ [0-9-]+$' <<<"$out")" "2"
+rec=$(grep '"label":"app/bench/ab"' "$HOME/.local/state/dibs/runs.jsonl" | tail -n 1)
+check "one record names both arms and what each resolved to" \
+  "$(grep -c "\"refs\":\"stale-main..local\",\"arms\":\[{\"name\":\"base\",\"fetched\":\"$new_main\",\"revisions\":{\"app\":\"${new_main:0:12}\"}},{\"name\":\"local\",\"revisions\":{\"app\":\"local:" <<<"$rec")" "1"
+check "and tags every step with its arm" "$(grep -o '"arm":"\(base\|local\)"' <<<"$rec" | wc -l)" "6"
+out=$(RC runs app/bench/ab 2>&1)
+check "dibs runs lists a comparison arm by arm" \
+  "$(grep -c 'app/bench/ab  stale-main..local arms, 2 reps each' <<<"$out")$(grep -cE '^    (base |local)  app@' <<<"$out")" "12"
+out=$(RC bench "$S/app-topk@$old_main,$new_main" ab 2>&1); rc=$?
+check "a list compares each in turn, a later fetched arm in a target of its own" \
+  "$rc $(grep '^measured ' <<<"$out" | cut -d' ' -f2,4 | paste -sd' ')" "0 x app main2 app-arm1"
+check "a range with no base named is refused" "$(RC bench "$S/app-topk@main...local" ab >/dev/null 2>&1; echo $?)" "2"
+check "an arm named twice is refused" "$(RC bench "$S/app-topk@local,local" ab >/dev/null 2>&1; echo $?)" "2"
+check "a tip with nothing its base lacks is refused" \
+  "$(RC bench "$S/app-topk@origin/main..$new_main" ab 2>&1 | grep -c 'nothing to compare')" "1"
+check "and with runs against one tree only" "$(RC with "$S/app@main..local" servers -- true 2>&1 | grep -c 'takes one ref')" "1"
 
 echo
 echo "passed $pass, failed $fail"

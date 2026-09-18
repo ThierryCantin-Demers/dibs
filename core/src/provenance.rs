@@ -22,6 +22,9 @@ pub struct StepRecord {
     pub job: Option<String>,
     pub built: Option<String>,
     pub log: Option<String>,
+    /// Which arm of a comparison, and which rep, the step belonged to.
+    pub arm: Option<String>,
+    pub rep: Option<u32>,
 }
 
 impl StepRecord {
@@ -34,8 +37,23 @@ impl StepRecord {
             job: t.map(|t| t.job.clone()),
             built: t.and_then(|t| t.built.clone()),
             log: t.and_then(|t| t.log.clone()),
+            arm: None,
+            rep: None,
         }
     }
+
+    pub fn tagged(self, arm: Option<String>, rep: Option<u32>) -> StepRecord {
+        StepRecord { arm, rep, ..self }
+    }
+}
+
+/// One side of a comparison: what it was asked as, and what the machine built.
+pub struct ArmRecord {
+    pub name: String,
+    /// The ref the machine fetched, None for the tree sent from here.
+    pub fetched: Option<String>,
+    pub revisions: Vec<(String, String)>,
+    pub seeded: Option<String>,
 }
 
 /// Printed by a measured step before it runs, as `DIBS-STATE key=value ...`. Read from files
@@ -92,10 +110,16 @@ pub struct Run {
     /// machines' timings under one label are two distributions, and the record exists to say
     /// so rather than to let them be averaged.
     pub machine: Option<String>,
+    /// Empty for a comparison, whose arms carry their own.
     pub revisions: Vec<(String, String)>,
     /// The sibling target directory a new tree's was copied from. A slow build with none is a
     /// build that started from nothing.
     pub seeded: Option<String>,
+    /// A comparison's `@` as it was given, such as `main..local`.
+    pub refs: Option<String>,
+    pub arms: Vec<ArmRecord>,
+    /// How many times what the recipe repeats ran, each step tagged with its rep.
+    pub reps: u32,
     /// The batch this run was a step of, which is what ties the points and repetitions of one
     /// sweep together.
     pub batch: Option<String>,
@@ -156,6 +180,37 @@ impl Run {
         if let Some(b) = &self.batch {
             let _ = write!(s, ",\"batch\":{}", q(b));
         }
+        if let Some(r) = &self.refs {
+            let _ = write!(s, ",\"refs\":{}", q(r));
+        }
+        if !self.arms.is_empty() {
+            s.push_str(",\"arms\":[");
+            for (i, a) in self.arms.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                let _ = write!(s, "{{\"name\":{}", q(&a.name));
+                if let Some(f) = &a.fetched {
+                    let _ = write!(s, ",\"fetched\":{}", q(f));
+                }
+                s.push_str(",\"revisions\":{");
+                for (j, (name, sha)) in a.revisions.iter().enumerate() {
+                    if j > 0 {
+                        s.push(',');
+                    }
+                    let _ = write!(s, "{}:{}", q(name), q(sha));
+                }
+                s.push('}');
+                if let Some(d) = &a.seeded {
+                    let _ = write!(s, ",\"seeded\":{}", q(d));
+                }
+                s.push('}');
+            }
+            s.push(']');
+        }
+        if self.reps > 1 {
+            let _ = write!(s, ",\"reps\":{}", self.reps);
+        }
         if self.anyway {
             s.push_str(",\"anyway\":true");
         }
@@ -212,6 +267,12 @@ impl Run {
                 s.push(',');
             }
             let _ = write!(s, "{{\"lock\":\"{}\",\"status\":{},\"seconds\":{}", st.lock, st.status, st.seconds);
+            if let Some(a) = &st.arm {
+                let _ = write!(s, ",\"arm\":{}", q(a));
+            }
+            if let Some(r) = st.rep {
+                let _ = write!(s, ",\"rep\":{r}");
+            }
             for (key, value) in [("job", &st.job), ("built", &st.built), ("log", &st.log)] {
                 if let Some(v) = value {
                     let _ = write!(s, ",\"{key}\":{}", q(v));
@@ -271,6 +332,8 @@ mod tests {
             job: Some(job.into()),
             built: built.map(str::to_string),
             log: Some(format!("m:/jobs/{job}/log")),
+            arm: None,
+            rep: None,
         };
         let run = Run {
             label: "r/bench/x".into(),
@@ -289,6 +352,9 @@ mod tests {
             machine: Some("m".into()),
             revisions: vec![],
             seeded: None,
+            refs: None,
+            arms: Vec::new(),
+            reps: 1,
             batch: Some("20260918-1".into()),
             anyway: true,
             new_series: false,
@@ -306,5 +372,47 @@ mod tests {
         assert_eq!(v["state"]["governor"], "performance");
         assert_eq!(v["fresh"]["CUBECL_ENVIRONMENT"], "dibs-1");
         assert_eq!(v["outcome"], "failed");
+    }
+
+    #[test]
+    fn a_comparison_names_its_arms_and_tags_each_step() {
+        let out = crate::resource::Outcome { status: 0, seconds: 4, trailer: None };
+        let run = Run {
+            label: "r/bench/x".into(),
+            verb: "bench",
+            repo: "r".into(),
+            variant: None,
+            recipe: "x".into(),
+            fingerprint: "f".into(),
+            isolation: "machine".into(),
+            needs: None,
+            reason: None,
+            procedure: vec![],
+            params: Default::default(),
+            backend: "dibs",
+            device: None,
+            machine: None,
+            revisions: vec![],
+            seeded: None,
+            refs: Some("main..local".into()),
+            arms: vec![
+                ArmRecord { name: "base".into(), fetched: Some("abc".into()), revisions: vec![("r".into(), "abc".into())], seeded: None },
+                ArmRecord { name: "local".into(), fetched: None, revisions: vec![("r".into(), "local:d".into())], seeded: Some("r-local-1".into()) },
+            ],
+            reps: 2,
+            batch: None,
+            anyway: false,
+            new_series: false,
+            fresh: vec![],
+            state: vec![],
+            steps: vec![StepRecord::of("exclusive", &out).tagged(Some("local".into()), Some(2))],
+        };
+        let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).unwrap();
+        assert_eq!(v["refs"], "main..local");
+        assert_eq!(v["arms"][0]["fetched"], "abc");
+        assert!(v["arms"][1].get("fetched").is_none(), "the local tree was sent, not fetched");
+        assert_eq!(v["arms"][1]["revisions"]["r"], "local:d");
+        assert_eq!(v["arms"][1]["seeded"], "r-local-1");
+        assert_eq!((&v["reps"], &v["steps"][0]["arm"], &v["steps"][0]["rep"]), (&2.into(), &"local".into(), &2.into()));
     }
 }
