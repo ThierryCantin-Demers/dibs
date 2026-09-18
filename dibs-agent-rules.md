@@ -196,8 +196,11 @@ spoiled without it.
   repo's ignore rules. It is how to run a branch you have not pushed, and the only way to run a
   private repo, because the machines hold no credentials. Reach for it before carrying code over by
   hand: a bundle, a tarball or a hand-written sync of a tree is this feature done worse.
-- `dibs runs [label]` is what was measured: every repo's commit, the isolation, the time, and
-  whether the label's recipe changed, since two procedures under one name are two histories.
+- `dibs runs [label]` is what was measured: when and where, every repo's commit, the values, the
+  measured step's time and lock, the spread across repeats of one procedure on the same code, and
+  whether the label's recipe changed, since two procedures under one name are two histories. A
+  failed run is listed only with `--all`. A record names its jobs, so `dibs out <job>` finds the
+  log behind a number.
 - Recipes come in three layers, each overriding the last: bundled with dibs, the repo's
   `.dibs.toml`, and `~/.config/dibs/recipes/<repo>.toml` for one still being worked out. `dibs list`
   says which layer each came from.

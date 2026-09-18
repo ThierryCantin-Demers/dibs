@@ -1910,6 +1910,8 @@ check "as one batch with one summary" "$(grep -c '^batch [0-9-]*  2 steps, ' <<<
 check "each point named by what makes it one" "$(grep -cE '^samples-(11|31)  .* 0  ' <<<"$out")" "2"
 check "and each writes its own record" \
   "$(grep -c '"params":{"backend":"cuda","samples":"11"}' "$HOME/.local/state/dibs/runs.jsonl")" "1"
+check "naming the batch, which is what ties the points of one sweep together" \
+  "$(grep '"samples":"11"' "$HOME/.local/state/dibs/runs.jsonl" | grep -cE '"batch":"[0-9]{8}-[0-9]{6}-[0-9]+"')" "1"
 out=$(RC build "$S/app@local" p --sweep samples=10,30 --reps 2 --dry-run 2>&1)
 check "--reps repeats every point, in the same batch" "$(grep -cE '^  samples-(10|30)\.r[12] ' <<<"$out")" "4"
 out=$(RC build "$S/app@local" p --sweep backend=cuda,metal 2>&1); rc=$?
@@ -1952,6 +1954,24 @@ check "and no record, since nothing was measured" \
   "$(grep -c '"label":"app/bench/stolen"' "$HOME/.local/state/dibs/runs.jsonl")" "$records"
 out=$(RC bench "$S/app@main" stolen --anyway 2>&1); rc=$?
 check "--anyway measures what is there" "$rc $(grep -c '^measured$' <<<"$out")" "0 1"
+check "and its record says so" "$(grep '"label":"app/bench/stolen"' "$HOME/.local/state/dibs/runs.jsonl" | grep -c '"anyway":true')" "1"
+
+# A record names every job it made, so the whole log of a number can be found from the number.
+rec=$(grep '"label":"app/bench/gate"' "$HOME/.local/state/dibs/runs.jsonl" | tail -n 1)
+check "a record carries each step's job, what it built and where its log is" \
+  "$(grep -c '"steps":\[{"lock":"shared","status":0,"seconds":[0-9]*,"job":"[0-9-]*","built":"nothing","log":"[^"]*:/[^"]*/log"}' <<<"$rec")" "1"
+check "the state the machine measured in" "$(grep -c '"state":{[^}]*"kernel":"' <<<"$rec")" "1"
+check "and how it ended" "$(grep -c '"outcome":"ok"}$' <<<"$rec")" "1"
+out=$(RC runs app/bench/gate 2>&1)
+check "dibs runs gives each run's date, and the measured step's time and lock" \
+  "$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}  .* app/bench/gate +[0-9]+s exclusive ' <<<"$out")" "2"
+check "and puts runs of one procedure on the same code together" "$(grep -c '^  app/bench/gate on .*: 2 runs, median ' <<<"$out")" "1"
+printf '%s\n' '' '[build.fails]' '  [[build.fails.step]]' '  lock = "shared"' '  run = "exit 3"' >> "$S/app/.dibs.toml"
+RC build "$S/app@local" fails >/dev/null 2>&1
+check "a failed run is recorded as one" \
+  "$(grep '"label":"app/build/fails"' "$HOME/.local/state/dibs/runs.jsonl" | grep -c '"outcome":"failed"')" "1"
+check "and listed only when asked for" \
+  "$(RC runs app/build/fails 2>&1 | grep -c 'nothing but failed runs')$(RC runs app/build/fails --all 2>&1 | grep -c 'FAILED$')" "11"
 
 echo
 echo "passed $pass, failed $fail"

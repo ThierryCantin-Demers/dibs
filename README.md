@@ -164,6 +164,20 @@ every repo on the machine. A worktree goes after `DIBS_KEEP_DAYS` (14) unused. A
 goes after `DIBS_TARGET_KEEP_DAYS` (5): disk is what runs out first on a machine, and a
 compilation cache makes refilling one cheap.
 
+## What was measured
+
+Every recipe run appends a line to `~/.local/state/dibs/runs.jsonl`, or `$DIBS_RUNS`: the label, the
+repo and the commit of every repo it built, the values, the machine and card, the procedure and
+its fingerprint, the batch it was a step of, and for each step its lock, exit, seconds, job,
+`built=` and log. A measured step first reads the machine's state into it (CPU governor, kernel,
+NVIDIA driver), and the run ends `ok` or `failed`.
+
+`dibs runs [label]` lists them newest first with the date, machine, label, the measured step's time
+and lock, and the commits. A failed run is listed only with `--all`. Runs that differ in nothing
+recorded are grouped with their median and range, which is the noise a difference has to beat,
+and another governor or driver makes another group rather than a wider one. A label whose
+procedure changed under the same values is called out with the step that changed.
+
 ## Batches
 
 `dibs batch <file|->` runs a list of dibs command lines as one submission and prints one summary

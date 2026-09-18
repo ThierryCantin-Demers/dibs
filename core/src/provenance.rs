@@ -19,11 +19,54 @@ pub struct StepRecord {
     pub lock: &'static str,
     pub status: i32,
     pub seconds: u64,
+    pub job: Option<String>,
+    pub built: Option<String>,
+    pub log: Option<String>,
+}
+
+impl StepRecord {
+    pub fn of(lock: &'static str, out: &crate::resource::Outcome) -> StepRecord {
+        let t = out.trailer.as_ref();
+        StepRecord {
+            lock,
+            status: out.status,
+            seconds: out.seconds,
+            job: t.map(|t| t.job.clone()),
+            built: t.and_then(|t| t.built.clone()),
+            log: t.and_then(|t| t.log.clone()),
+        }
+    }
+}
+
+/// Printed by a measured step before it runs, as `DIBS-STATE key=value ...`. Read from files
+/// rather than tools, since it runs inside the exclusive lock: a governor other than
+/// `performance`, or another driver, makes two runs of one recipe two histories.
+pub fn stated(run: &str) -> String {
+    format!(
+        r#"echo "DIBS-STATE governor=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort -u | paste -sd+ -) kernel=$(uname -r) nvidia=$(grep -m1 -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' /proc/driver/nvidia/version 2>/dev/null | head -n 1)"
+{run}"#
+    )
+}
+
+/// The values a `DIBS-STATE` line carried, empty ones dropped.
+pub fn state_of(report: &str) -> Vec<(String, String)> {
+    report
+        .lines()
+        .filter_map(|l| l.strip_prefix("DIBS-STATE "))
+        .last()
+        .into_iter()
+        .flat_map(|l| l.split_whitespace())
+        .filter_map(|kv| kv.split_once('='))
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 pub struct Run {
     pub label: String,
     pub verb: &'static str,
+    /// The repo's identity, which the label only starts with.
+    pub repo: String,
     pub recipe: String,
     pub fingerprint: String,
     pub isolation: String,
@@ -51,7 +94,25 @@ pub struct Run {
     /// The sibling target directory a new tree's was copied from. A slow build with none is a
     /// build that started from nothing.
     pub seeded: Option<String>,
+    /// The batch this run was a step of, which is what ties the points and repetitions of one
+    /// sweep together.
+    pub batch: Option<String>,
+    /// Measured with `--anyway` over a target another tree had built into.
+    pub anyway: bool,
+    /// What `stated` read on the machine when the measurement started.
+    pub state: Vec<(String, String)>,
     pub steps: Vec<StepRecord>,
+}
+
+impl Run {
+    /// A failed run stays in the file, so what went wrong can be looked up, and out of every
+    /// listing and comparison that assumes a number came out of it.
+    pub fn outcome(&self) -> &'static str {
+        match self.steps.iter().all(|s| s.status == 0) {
+            true => "ok",
+            false => "failed",
+        }
+    }
 }
 
 impl Run {
@@ -61,6 +122,9 @@ impl Run {
         let mut s = String::new();
         let _ = write!(s, "{{\"t\":{when},\"verb\":\"{}\"", self.verb);
         let _ = write!(s, ",\"label\":{}", q(&self.label));
+        if !self.repo.is_empty() {
+            let _ = write!(s, ",\"repo\":{}", q(&self.repo));
+        }
         let _ = write!(s, ",\"recipe\":{}", q(&self.recipe));
         let _ = write!(s, ",\"fingerprint\":{}", q(&self.fingerprint));
         let _ = write!(s, ",\"isolation\":{}", q(&self.isolation));
@@ -79,6 +143,22 @@ impl Run {
         }
         if let Some(r) = &self.seeded {
             let _ = write!(s, ",\"seeded\":{}", q(r));
+        }
+        if let Some(b) = &self.batch {
+            let _ = write!(s, ",\"batch\":{}", q(b));
+        }
+        if self.anyway {
+            s.push_str(",\"anyway\":true");
+        }
+        if !self.state.is_empty() {
+            s.push_str(",\"state\":{");
+            for (i, (k, v)) in self.state.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                let _ = write!(s, "{}:{}", q(k), q(v));
+            }
+            s.push('}');
         }
         if !self.params.is_empty() {
             s.push_str(",\"params\":{");
@@ -109,13 +189,15 @@ impl Run {
             if i > 0 {
                 s.push(',');
             }
-            let _ = write!(
-                s,
-                "{{\"lock\":\"{}\",\"status\":{},\"seconds\":{}}}",
-                st.lock, st.status, st.seconds
-            );
+            let _ = write!(s, "{{\"lock\":\"{}\",\"status\":{},\"seconds\":{}", st.lock, st.status, st.seconds);
+            for (key, value) in [("job", &st.job), ("built", &st.built), ("log", &st.log)] {
+                if let Some(v) = value {
+                    let _ = write!(s, ",\"{key}\":{}", q(v));
+                }
+            }
+            s.push('}');
         }
-        s.push_str("]}");
+        let _ = write!(s, "],\"outcome\":\"{}\"}}", self.outcome());
         s
     }
 }
@@ -137,4 +219,65 @@ fn q(v: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_measured_step_says_what_state_the_machine_was_in_before_it_runs() {
+        let out = std::process::Command::new("bash").arg("-c").arg(stated("echo RAN")).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(state_of(&text).iter().any(|(k, v)| k == "kernel" && !v.is_empty()), "{text}");
+        assert!(text.find("DIBS-STATE").unwrap() < text.find("RAN").unwrap(), "{text}");
+    }
+
+    // A machine with no NVIDIA driver has no version for it, which is not a version called "".
+    #[test]
+    fn a_value_the_machine_did_not_have_is_left_out() {
+        let state = state_of("noise\nDIBS-STATE governor=performance kernel=6.8.0 nvidia=\n");
+        assert_eq!(state, [("governor".to_string(), "performance".to_string()), ("kernel".into(), "6.8.0".into())]);
+    }
+
+    #[test]
+    fn a_record_carries_each_step_s_job_build_and_log_and_how_it_ended() {
+        let step = |lock, status, job: &str, built: Option<&str>| StepRecord {
+            lock,
+            status,
+            seconds: 1,
+            job: Some(job.into()),
+            built: built.map(str::to_string),
+            log: Some(format!("m:/jobs/{job}/log")),
+        };
+        let run = Run {
+            label: "r/bench/x".into(),
+            verb: "bench",
+            repo: "r".into(),
+            recipe: "x".into(),
+            fingerprint: "f".into(),
+            isolation: "machine".into(),
+            needs: None,
+            reason: None,
+            procedure: vec![],
+            params: Default::default(),
+            backend: "dibs",
+            device: None,
+            machine: Some("m".into()),
+            revisions: vec![],
+            seeded: None,
+            batch: Some("20260918-1".into()),
+            anyway: true,
+            state: vec![("governor".into(), "performance".into())],
+            steps: vec![step("shared", 0, "1-1", Some("nothing")), step("exclusive", 3, "1-2", None)],
+        };
+        let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).unwrap();
+        assert_eq!(v["steps"][0]["built"], "nothing");
+        assert_eq!(v["steps"][1]["job"], "1-2");
+        assert_eq!(v["steps"][1]["log"], "m:/jobs/1-2/log");
+        assert!(v["steps"][1].get("built").is_none());
+        assert_eq!((&v["repo"], &v["batch"], &v["anyway"]), (&"r".into(), &"20260918-1".into(), &true.into()));
+        assert_eq!(v["state"]["governor"], "performance");
+        assert_eq!(v["outcome"], "failed");
+    }
 }

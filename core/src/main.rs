@@ -32,7 +32,8 @@ dibs <verb> <repo>[@<ref>] <recipe>       run a recipe from the repo's .dibs.tom
                                           path for a private repo: the machines carry no
                                           GitHub credentials
 dibs list <repo>                      what that repo defines
-dibs runs [label]                     what has run here, and what is comparable
+dibs runs [label] [--all]             what has run here, and what is comparable. A failed run
+                                      is listed only with --all
 dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>   a command in a prepared worktree
 dibs raw --reason <why> -- <cmd>      a command with nothing prepared
 dibs with <repo>[@<ref>] <service> -- <cmd>   run the command here while the repo's servers
@@ -115,6 +116,8 @@ struct Args {
     max: Option<u64>,
     /// Measure even when another tree built into the target after this one did.
     anyway: bool,
+    /// runs only: failed runs too.
+    all: bool,
     verbose: bool,
 }
 
@@ -135,6 +138,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut bench = false;
     let mut max = None;
     let mut anyway = false;
+    let mut all = false;
     let mut verbose = false;
     let mut it = words.into_iter();
     while let Some(a) = it.next() {
@@ -183,6 +187,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
                 max = Some(it.next().and_then(|n| n.parse().ok()).ok_or("--max needs seconds")?);
             }
             "--anyway" => anyway = true,
+            "--all" => all = true,
             "--dry-run" => dry_run = true,
             "--verbose" | "-v" => verbose = true,
             "-" => positional.push("-".into()),
@@ -239,6 +244,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         bench,
         max,
         anyway,
+        all,
         verbose,
     })
 }
@@ -321,6 +327,7 @@ fn run() -> Result<ExitCode, String> {
         write_record(&provenance::Run {
             label: "raw".into(),
             verb: "raw",
+            repo: String::new(),
             recipe: String::new(),
             fingerprint: String::new(),
             isolation: "machine".into(),
@@ -333,11 +340,10 @@ fn run() -> Result<ExitCode, String> {
             machine: backend.machine.clone(),
             revisions: Vec::new(),
             seeded: None,
-            steps: vec![provenance::StepRecord {
-                lock: "shared",
-                status: out.status,
-                seconds: out.seconds,
-            }],
+            batch: batch_of_caller(),
+            anyway: false,
+            state: Vec::new(),
+            steps: vec![provenance::StepRecord::of("shared", &out)],
         })?;
         return Ok(ExitCode::from(out.status.clamp(0, 255) as u8));
     }
@@ -346,7 +352,7 @@ fn run() -> Result<ExitCode, String> {
     if args.verb == "runs" {
         let label = if args.repo.is_empty() { None } else { Some(args.repo.as_str()) };
         let records = runs::load(&runs_path()?)?;
-        print!("{}", runs::report(&records, label, 30));
+        print!("{}", runs::report(&records, label, 30, args.all));
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -512,6 +518,7 @@ fn run() -> Result<ExitCode, String> {
 
     let mut steps = Vec::new();
     let mut failed = None;
+    let mut state = Vec::new();
     let text = match &local {
         Some(l) => {
             let (out, text) = sync_prepared(&backend, &dir, &script, &l.key, &setup, &mut announce)?;
@@ -541,7 +548,7 @@ fn run() -> Result<ExitCode, String> {
                 return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
             }
             if text.contains("DIBS-READY") {
-                steps.push(provenance::StepRecord { lock: step_lock(rec.steps[0].lock), status: out.status, seconds: out.seconds });
+                steps.push(provenance::StepRecord::of(step_lock(rec.steps[0].lock), &out));
                 if out.status != 0 {
                     failed = Some(out.status);
                 }
@@ -588,7 +595,11 @@ fn run() -> Result<ExitCode, String> {
         if report.lines().any(|l| l == "DIBS-REFUSED") {
             return Ok(ExitCode::from(78));
         }
-        steps.push(provenance::StepRecord { lock: step_lock(step.lock), status: out.status, seconds: out.seconds });
+        let read = provenance::state_of(&report);
+        if !read.is_empty() {
+            state = read;
+        }
+        steps.push(provenance::StepRecord::of(step_lock(step.lock), &out));
         if out.status != 0 {
             failed = Some(out.status);
         }
@@ -596,6 +607,7 @@ fn run() -> Result<ExitCode, String> {
 
     let record = provenance::Run {
         label,
+        repo: repo_name.clone(),
         // shell borrows Build's machinery but is not a build, and a record that says
         // otherwise is a record that misleads whoever reads it later.
         verb: if shell_reason.is_some() { "shell" } else { verb.as_str() },
@@ -623,6 +635,9 @@ fn run() -> Result<ExitCode, String> {
         // checkout here that may be at a different commit entirely.
         revisions: prepared.revisions.clone(),
         seeded: prepared.seeded.clone(),
+        batch: batch_of_caller(),
+        anyway: args.anyway,
+        state,
         steps,
     };
     write_record(&record)?;
@@ -854,9 +869,10 @@ fn step_command(rec: &recipe::Recipe, i: usize, token: &str, anyway: bool) -> St
         (None, _) => step.run.clone(),
     };
     let built = rec.steps[..i].iter().any(|s| s.lock == Lock::Shared && worktree::build_signature(&s.run).is_some());
-    let run = match step.lock == Lock::Exclusive && built && !anyway {
-        true => worktree::checked(&run),
-        false => run,
+    let run = match step.lock {
+        Lock::Exclusive if built && !anyway => worktree::checked(&provenance::stated(&run)),
+        Lock::Exclusive => provenance::stated(&run),
+        Lock::Shared => run,
     };
     // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop in the
     // step as well as the first word of it.
@@ -1236,6 +1252,11 @@ fn affinity_set(repo: &str, machine: &str) {
     let _ = std::fs::write(&p, kept.join("\n") + "\n");
 }
 
+/// The batch a call is a step of, as the batch driver told it.
+fn batch_of_caller() -> Option<String> {
+    std::env::var("DIBS_BATCH").ok().filter(|b| !b.is_empty())
+}
+
 fn runs_path() -> Result<PathBuf, String> {
     match std::env::var_os("DIBS_RUNS") {
         Some(p) => Ok(PathBuf::from(p)),
@@ -1351,15 +1372,16 @@ mod tests {
     fn a_build_claims_its_target_and_the_measurement_after_it_checks_the_claim() {
         let rec = resolved(vec![step(Lock::Shared, "cargo build --release"), step(Lock::Exclusive, "cargo bench")]).rec;
         assert_eq!(step_command(&rec, 0, "t", false), worktree::claiming(&worktree::recording("cargo build --release", "t")));
-        assert_eq!(step_command(&rec, 1, "t", false), worktree::checked(&worktree::recording("cargo bench", "t")));
-        assert_eq!(step_command(&rec, 1, "t", true), worktree::recording("cargo bench", "t"));
+        let measured = provenance::stated(&worktree::recording("cargo bench", "t"));
+        assert_eq!(step_command(&rec, 1, "t", false), worktree::checked(&measured));
+        assert_eq!(step_command(&rec, 1, "t", true), measured);
     }
 
     // Nothing was built into the target, so whatever claimed it last says nothing about this run.
     #[test]
     fn a_measurement_after_no_build_is_not_checked() {
         let rec = resolved(vec![step(Lock::Shared, "make data"), step(Lock::Exclusive, "./bench.sh")]).rec;
-        assert_eq!(step_command(&rec, 1, "t", false), "./bench.sh");
+        assert_eq!(step_command(&rec, 1, "t", false), provenance::stated("./bench.sh"));
     }
 
     #[test]
@@ -1446,6 +1468,7 @@ mod tests {
         let run = provenance::Run {
             label: "cubecl/bench/throughput-all@gpu:rtx2060".into(),
             verb: "bench",
+            repo: "r".into(),
             recipe: "throughput-all".into(),
             fingerprint: "abc".into(),
             isolation: "machine".into(),
@@ -1458,6 +1481,9 @@ mod tests {
             machine: Some("multigpu".into()),
             revisions: vec![],
             seeded: None,
+            batch: None,
+            anyway: false,
+            state: Vec::new(),
             steps: vec![],
         };
         let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).expect("valid json");
@@ -1481,6 +1507,7 @@ mod tests {
         let run = provenance::Run {
             label: "r/\"x\\y\nz".into(),
             verb: "bench",
+            repo: "r".into(),
             recipe: "x".into(),
             fingerprint: "abc".into(),
             isolation: "machine".into(),
@@ -1493,6 +1520,9 @@ mod tests {
             machine: None,
             revisions: vec![],
             seeded: None,
+            batch: None,
+            anyway: false,
+            state: Vec::new(),
             steps: vec![],
         };
         let line = run.to_json(1);
@@ -1506,6 +1536,7 @@ mod tests {
         let run = provenance::Run {
             label: "r/x".into(),
             verb: "bench",
+            repo: "r".into(),
             recipe: "x".into(),
             fingerprint: "abc".into(),
             isolation: "machine".into(),
@@ -1518,7 +1549,10 @@ mod tests {
             machine: None,
             revisions: vec![("cubek".into(), "abc123".into())],
             seeded: None,
-            steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3 }],
+            batch: None,
+            anyway: false,
+            state: Vec::new(),
+            steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3, job: None, built: None, log: None }],
         };
         let line = run.to_json(42);
         assert!(!line.contains('\n'), "a record has to stay one line");

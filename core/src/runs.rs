@@ -8,76 +8,71 @@
 //! So this does not just list. It says when a label's runs stopped being comparable, and
 //! where.
 
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 pub struct Record {
-    /// Kept so a record can be placed in time when something needs explaining, even though
-    /// the report orders by position in the file rather than printing a clock.
-    #[allow(dead_code)]
     pub when: u64,
     pub verb: String,
     pub label: String,
     pub fingerprint: String,
-    pub isolation: String,
+    pub machine: Option<String>,
+    pub params: Vec<(String, String)>,
+    pub state: Vec<(String, String)>,
     pub revisions: Vec<(String, String)>,
+    pub procedure: Vec<(String, String)>,
+    /// Every step's seconds, and the exclusive steps' alone, which are the measurement. A job
+    /// that queued for twenty minutes did not take twenty minutes, so neither counts the wait.
     pub seconds: u64,
+    pub measured: Option<u64>,
     pub failed: bool,
+    pub anyway: bool,
     pub reason: Option<String>,
     pub seeded: Option<String>,
 }
 
-/// Hand-rolled rather than pulled through serde: the file is append-only and written by this
-/// program, so a line that does not parse is a corrupted tail rather than a schema question,
-/// and skipping it is the right answer.
-fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-    let pat = format!("\"{key}\":\"");
-    let i = line.find(&pat)? + pat.len();
-    let rest = &line[i..];
-    let end = rest.find('"')?;
-    Some(&rest[..end])
+fn pairs(v: &Value) -> Vec<(String, String)> {
+    v.as_object()
+        .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string())).collect())
+        .unwrap_or_default()
 }
 
-fn number(line: &str, key: &str) -> Option<u64> {
-    let pat = format!("\"{key}\":");
-    let i = line.find(&pat)? + pat.len();
-    let rest = &line[i..];
-    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-    rest[..end].parse().ok()
-}
-
+/// A line that does not parse is a corrupted tail, since only this program writes the file,
+/// so it is skipped rather than fatal.
 fn parse_line(line: &str) -> Option<Record> {
-    let revs_start = line.find("\"revisions\":{")? + "\"revisions\":{".len();
-    let revs_end = revs_start + line[revs_start..].find('}')?;
-    let mut revisions = Vec::new();
-    for pair in line[revs_start..revs_end].split("\",\"") {
-        let cleaned = pair.trim_matches(|c| c == '"');
-        if let Some((k, v)) = cleaned.split_once("\":\"") {
-            revisions.push((k.trim_matches('"').to_string(), v.trim_matches('"').to_string()));
-        }
-    }
-    // Sum the steps rather than the whole run: what a comparison cares about is the work, and
-    // a job that queued for twenty minutes did not take twenty minutes.
-    let mut seconds = 0;
-    let mut failed = false;
-    let steps = line.find("\"steps\":[").map(|i| &line[i..]).unwrap_or("");
-    for chunk in steps.split("{\"lock\"").skip(1) {
-        seconds += number(chunk, "seconds").unwrap_or(0);
-        if number(chunk, "status").unwrap_or(0) != 0 {
-            failed = true;
-        }
-    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    let text = |key: &str| v.get(key).and_then(Value::as_str).map(str::to_string);
+    let steps = v.get("steps").and_then(Value::as_array).cloned().unwrap_or_default();
+    let secs = |s: &Value| s.get("seconds").and_then(Value::as_u64).unwrap_or(0);
+    let exclusive: Vec<&Value> = steps.iter().filter(|s| s.get("lock").and_then(Value::as_str) == Some("exclusive")).collect();
+    let failed = match v.get("outcome").and_then(Value::as_str) {
+        Some(o) => o != "ok",
+        None => steps.iter().any(|s| s.get("status").and_then(Value::as_i64).unwrap_or(0) != 0),
+    };
     Some(Record {
-        when: number(line, "t")?,
-        verb: field(line, "verb")?.to_string(),
-        label: field(line, "label")?.to_string(),
-        fingerprint: field(line, "fingerprint").unwrap_or("").to_string(),
-        isolation: field(line, "isolation").unwrap_or("").to_string(),
-        revisions,
-        seconds,
+        when: v.get("t")?.as_u64()?,
+        verb: text("verb")?,
+        label: text("label")?,
+        fingerprint: text("fingerprint").unwrap_or_default(),
+        machine: text("machine"),
+        params: v.get("params").map(pairs).unwrap_or_default(),
+        state: v.get("state").map(pairs).unwrap_or_default(),
+        revisions: v.get("revisions").map(pairs).unwrap_or_default(),
+        procedure: v
+            .get("procedure")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().map(|p| {
+                let f = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+                (f("lock"), f("run"))
+            }).collect())
+            .unwrap_or_default(),
+        seconds: steps.iter().map(secs).sum(),
+        measured: (!exclusive.is_empty()).then(|| exclusive.iter().map(|s| secs(s)).sum()),
         failed,
-        reason: field(line, "reason").map(str::to_string),
-        seeded: field(line, "seeded").map(str::to_string),
+        anyway: v.get("anyway").and_then(Value::as_bool).unwrap_or(false),
+        reason: text("reason"),
+        seeded: text("seeded"),
     })
 }
 
@@ -104,19 +99,56 @@ fn matches(label: &str, query: &str) -> bool {
         || path.rsplit('/').next() == Some(query)
 }
 
-pub fn report(records: &[Record], only: Option<&str>, limit: usize) -> String {
+/// Seconds east of UTC here, asked once of `date` rather than of a time zone database.
+fn local_offset() -> i64 {
+    let out = std::process::Command::new("date").arg("+%z").output().ok();
+    let z = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let (sign, digits) = match z.split_at_checked(1) {
+        Some(("-", d)) => (-1, d),
+        Some(("+", d)) => (1, d),
+        _ => return 0,
+    };
+    let n: i64 = digits.parse().unwrap_or(0);
+    sign * (n / 100 * 3600 + n % 100 * 60)
+}
+
+/// `YYYY-MM-DD HH:MM` for seconds since the epoch, by the days-to-civil conversion.
+fn date(t: i64) -> String {
+    let (days, secs) = (t.div_euclid(86400), t.rem_euclid(86400));
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", secs / 3600, secs / 60 % 60)
+}
+
+fn words(kv: &[(String, String)], join: &str) -> String {
+    kv.iter().map(|(k, v)| format!("{k}{join}{v}")).collect::<Vec<_>>().join(" ")
+}
+
+fn short(run: &str) -> String {
+    match run.char_indices().nth(90) {
+        Some((i, _)) => format!("{}...", &run[..i]),
+        None => run.to_string(),
+    }
+}
+
+pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -> String {
     let mut out = String::new();
-    let shown: Vec<&Record> = records
-        .iter()
-        .rev()
-        .filter(|r| only.is_none_or(|l| matches(&r.label, l)))
-        .take(limit)
-        .collect();
+    let picked: Vec<&Record> = records.iter().filter(|r| only.is_none_or(|l| matches(&r.label, l))).collect();
+    let hidden = if all { 0 } else { picked.iter().filter(|r| r.failed).count() };
+    let shown: Vec<&Record> = picked.iter().rev().filter(|r| all || !r.failed).take(limit).copied().collect();
 
     if shown.is_empty() {
         return match only {
             // Saying what is there separates a query that missed from a record that was never
             // written, which are the same sentence otherwise and lead opposite ways.
+            Some(l) if !picked.is_empty() => format!("nothing but failed runs for {l}.\n  dibs runs {l} --all   lists them.\n"),
             Some(l) if !records.is_empty() => format!(
                 "nothing recorded for {l}, out of {} runs recorded.\n  dibs runs   lists them; a label is repo/verb/recipe.\n",
                 records.len()
@@ -126,47 +158,110 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize) -> String {
         };
     }
 
+    let offset = local_offset();
+    let width = |f: fn(&Record) -> usize| shown.iter().map(|r| f(r)).max().unwrap_or(0);
+    let machine_w = width(|r| r.machine.as_deref().map_or(1, str::len));
+    let label_w = width(|r| r.label.len());
     for r in &shown {
-        let revs: Vec<String> =
-            r.revisions.iter().map(|(k, v)| format!("{k}@{v}")).collect();
+        let (secs, lock) = match r.measured {
+            Some(m) => (m, "exclusive"),
+            None => (r.seconds, "shared"),
+        };
+        let extra = [
+            (!r.params.is_empty()).then(|| words(&r.params, "=")),
+            r.seeded.as_ref().map(|s| format!("seeded from {s}")),
+            r.anyway.then(|| "measured with --anyway".to_string()),
+            r.failed.then(|| "FAILED".to_string()),
+        ];
+        let extra: String = extra.into_iter().flatten().map(|e| format!("  {e}")).collect();
         out.push_str(&format!(
-            "{:<7} {:<28} {:>6}s  {:<9} {}{}{}\n",
-            r.verb,
+            "{}  {:<machine_w$}  {:<label_w$} {:>6}s {:<9}  {}{extra}\n",
+            date(r.when as i64 + offset),
+            r.machine.as_deref().unwrap_or("-"),
             r.label,
-            r.seconds,
-            r.isolation,
-            revs.join(" "),
-            r.seeded.as_ref().map(|s| format!("  seeded from {s}")).unwrap_or_default(),
-            if r.failed { "  FAILED" } else { "" }
+            secs,
+            lock,
+            words(&r.revisions, "@"),
         ));
     }
 
-    // The point of recording the fingerprint. A label whose procedure changed has a history
-    // that is two histories, and nothing else would say so.
-    let mut by_label: BTreeMap<&str, Vec<&Record>> = BTreeMap::new();
-    for r in records {
-        by_label.entry(&r.label).or_default().push(r);
-    }
-    let mut split = Vec::new();
-    for (label, rs) in &by_label {
-        if only.is_some_and(|l| !(label == &l || label.starts_with(&format!("{l}/")))) {
-            continue;
+    // Runs that differ in nothing dibs can see: the spread among them is the noise any
+    // difference elsewhere has to beat. State is part of the key, so two governors are two lines.
+    let mut repeated: BTreeMap<(&str, &str, &str, String, String, String), Vec<u64>> = BTreeMap::new();
+    for r in picked.iter().filter(|r| !r.failed) {
+        if let Some(m) = r.measured {
+            let key = (
+                r.label.as_str(),
+                r.fingerprint.as_str(),
+                r.machine.as_deref().unwrap_or("-"),
+                words(&r.revisions, "@"),
+                words(&r.params, "="),
+                words(&r.state, "="),
+            );
+            repeated.entry(key).or_default().push(m);
         }
-        let mut seen: Vec<&str> = rs.iter().map(|r| r.fingerprint.as_str()).collect();
-        seen.sort_unstable();
-        seen.dedup();
-        if seen.len() > 1 {
-            split.push((*label, seen.len()));
+    }
+    let repeated: Vec<_> = repeated.into_iter().filter(|(_, v)| v.len() > 1).collect();
+    if !repeated.is_empty() {
+        out.push_str("\nrepeated on the same code, measured step only:\n");
+        for ((label, _, machine, revs, params, state), mut secs) in repeated {
+            secs.sort_unstable();
+            let n = secs.len();
+            let median = (secs[(n - 1) / 2] + secs[n / 2]) / 2;
+            let context: String = [params, state].into_iter().filter(|s| !s.is_empty()).map(|s| format!(", {s}")).collect();
+            out.push_str(&format!(
+                "  {label} on {machine} at {revs}{context}: {n} runs, median {median}s, {}s to {}s\n",
+                secs[0],
+                secs[n - 1]
+            ));
+        }
+    }
+
+    // The point of recording the fingerprint. A label whose procedure changed has a history
+    // that is two histories, and nothing else would say so. Compared within one set of values,
+    // since a parameter changes the commands on purpose. A procedure that never ran cleanly left
+    // no numbers to mix, and a shell, which older records filed as a build, is a one-off.
+    let mut by_label: BTreeMap<(&str, String), Vec<&Record>> = BTreeMap::new();
+    for r in picked.iter().filter(|r| !r.failed && r.verb != "shell" && !r.label.ends_with("/shell")) {
+        by_label.entry((&r.label, words(&r.params, "="))).or_default().push(r);
+    }
+    let mut split = String::new();
+    for ((label, params), rs) in &by_label {
+        let label = match params.is_empty() {
+            true => label.to_string(),
+            false => format!("{label} with {params}"),
+        };
+        let mut latest: Vec<&Record> = Vec::new();
+        for r in rs.iter().rev() {
+            if !latest.iter().any(|l| l.fingerprint == r.fingerprint) {
+                latest.push(r);
+            }
+        }
+        if let [newer, older, ..] = latest[..] {
+            let n = newer.procedure.len().max(older.procedure.len());
+            let step = |r: &Record, i: usize| r.procedure.get(i).map(|(l, run)| format!("[{l}] {}", short(run)));
+            let change = (0..n).find(|&i| step(older, i) != step(newer, i)).map(|i| {
+                let say = |s: Option<String>| s.map(|s| format!("`{s}`")).unwrap_or_else(|| "nothing".into());
+                format!(" The latest change is step {}: {} became {}.", i + 1, say(step(older, i)), say(step(newer, i)))
+            });
+            split.push_str(&format!(
+                "  {label}: {} different recipes have run under this name, and runs under one are not \
+                 comparable with runs under another.{}\n",
+                latest.len(),
+                change.unwrap_or_default()
+            ));
         }
     }
     if !split.is_empty() {
         out.push('\n');
-        for (label, n) in split {
-            out.push_str(&format!(
-                "  {label}: {n} different recipes have run under this name. Runs made under \
-                 one are not comparable with runs made under another.\n"
-            ));
-        }
+        out.push_str(&split);
+    }
+    if hidden > 0 {
+        out.push_str(&format!(
+            "\n{hidden} failed run{} not shown:  dibs runs{} --all\n",
+            if hidden == 1 { " is" } else { "s are" },
+            only.map(|l| format!(" {l}")).unwrap_or_default()
+        ));
     }
     out
 }
@@ -232,41 +327,103 @@ mod tests {
     #[test]
     fn a_query_that_missed_does_not_read_as_an_empty_record() {
         let recs = vec![parse_line(A).unwrap()];
-        let out = report(&recs, Some("no-such-label"), 30);
+        let out = report(&recs, Some("no-such-label"), 30, false);
         assert!(out.contains("out of 1 runs recorded"), "{out}");
-        assert!(report(&[], Some("x"), 30).contains("nothing recorded at all"));
+        assert!(report(&[], Some("x"), 30, false).contains("nothing recorded at all"));
     }
 
-    const A: &str = r#"{"t":100,"verb":"bench","label":"cubek/gemm","fingerprint":"aaa","isolation":"machine","backend":"dibs","revisions":{"cubek":"abc123"},"steps":[{"lock":"shared","status":0,"seconds":30},{"lock":"exclusive","status":0,"seconds":120}]}"#;
+    const A: &str = r#"{"t":100,"verb":"bench","label":"cubek/gemm","fingerprint":"aaa","isolation":"machine","backend":"dibs","procedure":[{"lock":"shared","run":"cargo build"},{"lock":"exclusive","run":"cargo bench"}],"revisions":{"cubek":"abc123"},"steps":[{"lock":"shared","status":0,"seconds":30},{"lock":"exclusive","status":0,"seconds":120}]}"#;
     const B: &str = r#"{"t":200,"verb":"bench","label":"cubek/gemm","fingerprint":"bbb","isolation":"machine","backend":"dibs","revisions":{"cubek":"def456"},"steps":[{"lock":"exclusive","status":1,"seconds":5}]}"#;
+
+    fn v2(t: u64, fingerprint: &str, bench: &str, measured: u64, state: &str, outcome: &str) -> Record {
+        parse_line(&format!(
+            r#"{{"t":{t},"verb":"bench","label":"cubek/bench/gemm","repo":"cubek","fingerprint":"{fingerprint}","machine":"m1","state":{{"governor":"{state}"}},"procedure":[{{"lock":"shared","run":"cargo build --release"}},{{"lock":"exclusive","run":"{bench}"}}],"revisions":{{"cubek":"abc123"}},"steps":[{{"lock":"shared","status":0,"seconds":30,"job":"1-1","built":"nothing"}},{{"lock":"exclusive","status":0,"seconds":{measured},"job":"1-2","log":"m1:/j/1-2/log"}}],"outcome":"{outcome}"}}"#
+        ))
+        .unwrap()
+    }
 
     #[test]
     fn a_record_reads_back_whole() {
         let r = parse_line(A).unwrap();
         assert_eq!(r.label, "cubek/gemm");
         assert_eq!(r.revisions, vec![("cubek".into(), "abc123".into())]);
-        // The work, not the wall clock: both steps summed.
-        assert_eq!(r.seconds, 150);
+        assert_eq!((r.seconds, r.measured), (150, Some(120)));
         assert!(!r.failed);
     }
 
     #[test]
-    fn a_failing_step_marks_the_run() {
+    fn a_failing_step_marks_a_run_written_before_outcomes_were() {
         assert!(parse_line(B).unwrap().failed);
     }
 
     #[test]
-    fn a_label_whose_recipe_changed_is_called_out() {
-        let recs = vec![parse_line(A).unwrap(), parse_line(B).unwrap()];
-        let out = report(&recs, None, 10);
-        assert!(out.contains("2 different recipes have run under this name"),
-                "a changed procedure has to be reported, or two histories average silently");
+    fn a_failed_run_is_left_out_unless_asked_for() {
+        let recs = vec![v2(1, "f", "cargo bench", 9, "performance", "ok"), v2(2, "f", "cargo bench", 1, "performance", "failed")];
+        let out = report(&recs, None, 10, false);
+        assert_eq!(out.lines().filter(|l| l.contains("cubek/bench/gemm")).count(), 1, "{out}");
+        assert!(out.contains("1 failed run is not shown:  dibs runs --all"), "{out}");
+        assert!(report(&recs, None, 10, true).contains("FAILED"));
+    }
+
+    #[test]
+    fn a_row_says_when_where_and_which_lock_its_number_is_from() {
+        let out = report(&[v2(1789745748, "f", "cargo bench", 42, "performance", "ok")], None, 10, false);
+        assert!(out.contains(" m1 "), "{out}");
+        assert!(out.contains("42s exclusive"), "the measured step, not the build before it: {out}");
+    }
+
+    #[test]
+    fn repeated_runs_give_a_median_and_a_second_state_is_a_second_line() {
+        let recs = vec![
+            v2(1, "f", "cargo bench", 10, "performance", "ok"),
+            v2(2, "f", "cargo bench", 14, "performance", "ok"),
+            v2(3, "f", "cargo bench", 11, "performance", "ok"),
+            v2(4, "f", "cargo bench", 30, "powersave", "ok"),
+            v2(5, "f", "cargo bench", 31, "powersave", "ok"),
+        ];
+        let out = report(&recs, None, 10, false);
+        assert!(out.contains("governor=performance: 3 runs, median 11s, 10s to 14s"), "{out}");
+        assert!(out.contains("governor=powersave: 2 runs, median 30s, 30s to 31s"), "{out}");
+    }
+
+    #[test]
+    fn a_label_whose_recipe_changed_names_the_step() {
+        let recs = vec![v2(1, "f1", "cargo bench", 9, "performance", "ok"), v2(2, "f2", "cargo bench -- --quick", 9, "performance", "ok")];
+        let out = report(&recs, None, 10, false);
+        assert!(out.contains("2 different recipes have run under this name"), "{out}");
+        assert!(out.contains("step 2: `[exclusive] cargo bench` became `[exclusive] cargo bench -- --quick`"), "{out}");
+    }
+
+    // A sweep changes the commands on purpose, and says so in its parameters.
+    #[test]
+    fn two_values_of_a_parameter_are_not_two_recipes() {
+        let point = |t: u64, f: &str, samples: &str| {
+            parse_line(&format!(r#"{{"t":{t},"verb":"build","label":"a/build/p","fingerprint":"{f}","params":{{"samples":"{samples}"}},"procedure":[],"revisions":{{}},"steps":[]}}"#)).unwrap()
+        };
+        let out = report(&[point(1, "f10", "10"), point(2, "f30", "30")], None, 10, false);
+        assert!(!out.contains("different recipes"), "{out}");
+        let out = report(&[point(1, "f10", "10"), point(2, "g10", "10")], None, 10, false);
+        assert!(out.contains("a/build/p with samples=10: 2 different recipes"), "{out}");
+    }
+
+    // Nothing was measured under the one that failed, so there is no second history to warn of.
+    #[test]
+    fn a_recipe_that_never_ran_cleanly_is_not_a_second_history() {
+        let recs = vec![v2(1, "f1", "cargo bench", 9, "performance", "ok"), v2(2, "f2", "cargo bench --x", 1, "performance", "failed")];
+        assert!(!report(&recs, None, 10, true).contains("different recipes"));
     }
 
     #[test]
     fn one_recipe_throughout_says_nothing() {
         let recs = vec![parse_line(A).unwrap()];
-        assert!(!report(&recs, None, 10).contains("different recipes"));
+        assert!(!report(&recs, None, 10, false).contains("different recipes"));
+    }
+
+    #[test]
+    fn a_date_is_civil_time() {
+        assert_eq!(date(0), "1970-01-01 00:00");
+        assert_eq!(date(1789745748), "2026-09-18 15:35");
+        assert_eq!(date(951782400), "2000-02-29 00:00");
     }
 
     #[test]
@@ -301,5 +458,12 @@ mod tests {
     fn a_seeded_run_says_where_its_target_came_from() {
         let line = r#"{"t":1,"verb":"build","label":"m/build/x","fingerprint":"f","isolation":"machine","backend":"dibs","seeded":"m-local-abc","revisions":{"m":"abc"},"steps":[{"lock":"shared","status":0,"seconds":9}]}"#;
         assert_eq!(parse_line(line).unwrap().seeded.as_deref(), Some("m-local-abc"));
+    }
+
+    // Written by this program and read by this program, with a command in it that has quotes.
+    #[test]
+    fn a_command_with_quotes_in_it_reads_back() {
+        let line = r#"{"t":1,"verb":"bench","label":"x","fingerprint":"f","procedure":[{"lock":"exclusive","run":"echo \"a b\" > \"$T\""}],"revisions":{},"steps":[]}"#;
+        assert_eq!(parse_line(line).unwrap().procedure[0].1, r#"echo "a b" > "$T""#);
     }
 }

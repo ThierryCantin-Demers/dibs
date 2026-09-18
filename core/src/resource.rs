@@ -29,6 +29,32 @@ pub struct Request<'a> {
 pub struct Outcome {
     pub status: i32,
     pub seconds: u64,
+    /// What the job's trailer said, when its stderr passed through here and it printed one.
+    pub trailer: Option<Trailer>,
+}
+
+pub struct Trailer {
+    pub job: String,
+    /// `built=` as printed: a count of crates, or `nothing`. Absent when cargo did not run.
+    pub built: Option<String>,
+    /// `<host>:<path>` of the job's whole log.
+    pub log: Option<String>,
+}
+
+impl Trailer {
+    /// Reads `job <id>  <mode>  <label>  ...  built=N` and the `  log <host>:<path>` after it. The
+    /// last job wins: a call is one job, and anything before it was a setup riding ahead.
+    fn read(line: &str, into: &mut Option<Trailer>) {
+        if let Some(rest) = line.strip_prefix("job ") {
+            let mut words = rest.split_whitespace();
+            if let Some(job) = words.next() {
+                let built = words.find_map(|w| w.strip_prefix("built=")).map(str::to_string);
+                *into = Some(Trailer { job: job.to_string(), built, log: None });
+            }
+        } else if let (Some(rest), Some(t)) = (line.strip_prefix("  log "), into.as_mut()) {
+            t.log = rest.split_whitespace().next().map(str::to_string);
+        }
+    }
 }
 
 pub trait Backend {
@@ -104,15 +130,7 @@ impl Dibs {
 
 impl Backend for Dibs {
     fn run(&self, req: &Request, command: &str) -> Result<Outcome, String> {
-        let mut cmd = self.build(req, command)?;
-        let start = std::time::Instant::now();
-        let status = cmd
-            .status()
-            .map_err(|e| format!("could not run {}: {e}", self.program))?;
-        Ok(Outcome {
-            status: status.code().unwrap_or(-1),
-            seconds: start.elapsed().as_secs(),
-        })
+        Ok(reporting(self.build(req, command)?, &mut |_| {})?.0)
     }
 
     fn run_capture(&self, req: &Request, command: &str) -> Result<(Outcome, String), String> {
@@ -126,6 +144,7 @@ impl Backend for Dibs {
             Outcome {
                 status: out.status.code().unwrap_or(-1),
                 seconds: start.elapsed().as_secs(),
+                trailer: None,
             },
             String::from_utf8_lossy(&out.stdout).into_owned(),
         ))
@@ -172,7 +191,11 @@ pub fn reporting(mut cmd: Command, on_report: &mut dyn FnMut(&str)) -> Result<(O
     drop(tx);
     let mut report = String::new();
     let mut told = false;
+    let mut trailer = None;
     for (is_err, line) in rx {
+        if is_err {
+            Trailer::read(String::from_utf8_lossy(&line).trim_end(), &mut trailer);
+        }
         if line.starts_with(b"DIBS-") {
             let text = String::from_utf8_lossy(&line);
             let text = text.trim_end();
@@ -196,7 +219,7 @@ pub fn reporting(mut cmd: Command, on_report: &mut dyn FnMut(&str)) -> Result<(O
         let _ = r.join();
     }
     let status = child.wait().map_err(|e| e.to_string())?;
-    Ok((Outcome { status: status.code().unwrap_or(-1), seconds: start.elapsed().as_secs() }, report))
+    Ok((Outcome { status: status.code().unwrap_or(-1), seconds: start.elapsed().as_secs(), trailer }, report))
 }
 
 impl Dibs {
@@ -234,5 +257,22 @@ impl Dibs {
         // learn that the caller is gone, and a shared stdin makes that signal meaningless.
         cmd.stdin(Stdio::null());
         Ok(cmd)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_trailer_is_read_from_the_last_job_a_call_printed() {
+        let err = "job 1-1  shared  a:setup  queued 0s  ran 1s  exit 0  by=command\n  log m:/j/1-1/log  (3 lines)  dibs --out 1-1\n\
+                   job 1-2  shared  a  queued 0s  ran 9s  exit 0  by=command  built=nothing\n  log m:/j/1-2/log  (40 lines)  dibs --out 1-2\n";
+        let mut t = None;
+        for l in err.lines() {
+            Trailer::read(l, &mut t);
+        }
+        let t = t.unwrap();
+        assert_eq!((t.job.as_str(), t.built.as_deref(), t.log.as_deref()), ("1-2", Some("nothing"), Some("m:/j/1-2/log")));
     }
 }
