@@ -74,6 +74,7 @@ while read -r n src; do
     done
     if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
         echo "DIBS-SEED ${src##*/}"
+        printf '%s\n' "$WT" > "$TARGET/.dibs-tree"
         [ -s "${DIBS_PKGS:-/nonexistent}" ] && echo "DIBS-SEED-SHARED $n $(wc -l < "$DIBS_PKGS")"
         case "${src##*/}" in
             {repo}-local-*)
@@ -115,6 +116,37 @@ if [ "$rc" = 0 ] && [ -s "$staged" ]; then
     ) 9>"$CARGO_TARGET_DIR/.dibs-packages.lock"
 fi
 exit $rc"#
+    )
+}
+
+/// A build step that claims its target for this tree. Cargo judges a crate fresh when its sources
+/// are older than its last compile, so a tree checked out before another tree built into a shared
+/// target is handed that tree's artifacts unless its sources are dated after them.
+pub fn claiming(run: &str) -> String {
+    format!(
+        r#"(
+    flock 8
+    if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
+        find . -name .git -prune -o -type f -exec touch -c -- {{}} +
+        printf '%s\n' "$PWD" > "$CARGO_TARGET_DIR/.dibs-tree"
+        echo "dibs: this tree did not make the last build in $CARGO_TARGET_DIR, so cargo rebuilds its crates" >&2
+    fi
+) 8>"$CARGO_TARGET_DIR/.dibs-tree.lock"
+{run}"#
+    )
+}
+
+/// A measured step refuses a target another tree has claimed since this recipe built: the binary
+/// there may be that tree's. It is read under the exclusive lock, so nothing builds in between.
+pub fn checked(run: &str) -> String {
+    format!(
+        r#"if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
+    echo DIBS-REFUSED
+    echo "dibs: refused to measure: another tree built into $CARGO_TARGET_DIR after this one did, so the binary there may be that tree's." >&2
+    echo "  Run it again, which rebuilds this tree first, or pass --anyway to measure what is there." >&2
+    exit 78
+fi
+{run}"#
     )
 }
 
@@ -1061,6 +1093,73 @@ mod local_tests {
         assert_eq!(p.seeded.as_deref(), Some("demo"));
         assert!(!p.seeded_sources);
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    // Otherwise the sibling's claim comes with the copy and the first build dates every source,
+    // rebuilding the crates the seed was there to keep.
+    #[test]
+    fn a_seeded_target_is_claimed_for_the_tree_it_was_seeded_for() {
+        let scratch = tmp("seed-claim");
+        std::fs::write(sibling(&scratch).join(".dibs-tree"), "/the/sibling\n").unwrap();
+        sibling_sources(&scratch);
+        let p = parse(&prepare_local(&scratch, "new", None, "reflinks")).unwrap();
+        assert_eq!(std::fs::read_to_string(std::path::Path::new(&p.target).join(".dibs-tree")).unwrap().trim(), p.worktree);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A tree whose one source was written long ago, and the target it builds into.
+    fn tree_and_target(name: &str, claimed_by: Option<&str>) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let scratch = tmp(name);
+        let (wt, target) = (scratch.join("ws/demo/abc"), scratch.join("target/demo"));
+        std::fs::create_dir_all(wt.join("src")).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(wt.join("src/lib.rs"), "fn f() {}\n").unwrap();
+        Command::new("touch").args(["-d", "400 days ago"]).arg(wt.join("src/lib.rs")).status().unwrap();
+        if let Some(c) = claimed_by {
+            let c = if c == "this" { wt.canonicalize().unwrap().display().to_string() } else { c.to_string() };
+            std::fs::write(target.join(".dibs-tree"), c + "\n").unwrap();
+        }
+        (scratch, wt, target)
+    }
+
+    fn in_tree(wt: &std::path::Path, target: &std::path::Path, script: &str) -> (i32, String) {
+        let out = Command::new("bash").arg("-c").arg(script).current_dir(wt).env("CARGO_TARGET_DIR", target).output().unwrap();
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr))
+    }
+
+    #[test]
+    fn a_build_after_another_tree_s_dates_this_tree_s_sources_after_it() {
+        let (scratch, wt, target) = tree_and_target("claim-other", Some("/another/tree"));
+        let (code, out) = in_tree(&wt, &target, &claiming("echo BUILT"));
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("BUILT") && out.contains("did not make the last build"), "{out}");
+        assert!(age(&wt.join("src/lib.rs")) < 3600);
+        let claimed = std::fs::read_to_string(target.join(".dibs-tree")).unwrap();
+        assert_eq!(claimed.trim(), wt.canonicalize().unwrap().display().to_string());
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    // A rerun of one tree compiles nothing and is right to, so nothing is redated for it.
+    #[test]
+    fn a_build_after_the_same_tree_s_leaves_its_sources_alone() {
+        let (scratch, wt, target) = tree_and_target("claim-same", Some("this"));
+        let (code, out) = in_tree(&wt, &target, &claiming("echo BUILT"));
+        assert_eq!(code, 0, "{out}");
+        assert!(!out.contains("did not make the last build"), "{out}");
+        assert!(age(&wt.join("src/lib.rs")) > 86400 * 300);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_measurement_runs_only_where_its_own_tree_made_the_last_build() {
+        for (claimed_by, want) in [(Some("this"), 0), (Some("/another/tree"), 78), (None, 78)] {
+            let (scratch, wt, target) = tree_and_target("check", claimed_by);
+            let (code, out) = in_tree(&wt, &target, &checked("echo MEASURED"));
+            assert_eq!(code, want, "{claimed_by:?}: {out}");
+            assert_eq!(out.contains("MEASURED"), want == 0, "{claimed_by:?}: {out}");
+            assert_eq!(out.lines().any(|l| l == "DIBS-REFUSED"), want == 78, "{claimed_by:?}: {out}");
+            let _ = std::fs::remove_dir_all(&scratch);
+        }
     }
 
     #[test]

@@ -146,6 +146,15 @@ its URL was spelled two ways, is sent from each. Dependencies are then reused, a
 rebuild because the sync gives every file the current time. Only a filesystem with reflinks,
 such as XFS or btrfs, gets the copy, since a full copy per tree would fill the disk.
 
+Commits of a fetched repo share one target directory, and cargo trusts a source file older than
+its last compile, so a worktree checked out before another commit built there is handed that
+commit's artifacts, with nothing compiled. Each target therefore records which tree made its last
+build, and a build from any other tree first dates its own sources now, which rebuilds its
+workspace crates and nothing else. A measured step after a build checks, under the exclusive
+lock, that its tree still made the last build, and exits 78 if another tree has built there
+since: running it again rebuilds first, and `--anyway` measures what is there. A rerun of one
+tree that compiles nothing is not refused, since that binary is its own.
+
 A git dependency pinned in `Cargo.lock` that the machine lacks is sent from this machine's cargo
 before the build, when this cargo has that commit. A machine holds no credentials, so a private
 repo would otherwise fail the build after it had queued. Files are only added, never replaced.

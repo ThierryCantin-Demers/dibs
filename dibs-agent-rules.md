@@ -111,7 +111,9 @@ spoiled without it.
   the log path. A pipe on your side cannot cut it off, and it carries the real exit.
 - **Read `built=` before the numbers.** `built=nothing` means cargo compiled no crate, so a
   measurement after it measured the previous binary. A shared target directory, a copy that kept
-  mtimes, or a stale worktree all do that.
+  mtimes, or a stale worktree all do that. A recipe guards this itself: its build rebuilds a tree
+  that did not make the target's last build, and its measurement exits 78 if another tree has
+  built there since.
 - A job's stdout is a digest: its first and last 20 lines and a count of the rest. Do not pipe dibs
   through `tail`, `head` or `grep`, which replaces the exit status with the filter's, and do not
   redirect inside the command to keep a log. The whole output stays on the machine for two weeks:
@@ -218,4 +220,7 @@ spoiled without it.
 - **75** it was busy and you passed `--wait`.
 - **76** its batch was cancelled with `dibs --kill <batch-id>`. It was meant to stop: do not run it
   again unless asked.
+- **78** a recipe's measurement was refused: another tree built into its target after this one
+  did, so the binary there may be that tree's. Run it again, which rebuilds first. `--anyway`
+  measures what is there, and is only for when that binary is the one you mean to measure.
 - **124** it overran `--max` and was killed while holding the lock.

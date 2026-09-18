@@ -1928,6 +1928,31 @@ check "shell --max reaches the lock rather than being dropped" \
 check "a shell that would compile under --bench is refused, with the two calls to use instead" \
   "$(RC shell "$S/app@local" --reason 'measure' --bench -- 'cargo bench --bench gemm' 2>&1 | grep -c 'then measure with --bench')" "1"
 
+# Commits of one repo share a target, and cargo trusts a source older than its last compile, so a
+# tree checked out before another tree's build measures that tree's binary unless dibs intervenes.
+mkdir -p "$S/fc" && printf '#!/bin/bash\necho "    Finished release"\n' > "$S/fc/cargo" && chmod +x "$S/fc/cargo"
+printf '%s\n' '' '[bench.gate]' '  [[bench.gate.step]]' '  lock = "shared"' "  run = \"$S/fc/cargo build\"" \
+  '  [[bench.gate.step]]' '  lock = "exclusive"' '  run = "echo measured"' \
+  '' '[bench.stolen]' '  [[bench.stolen.step]]' '  lock = "shared"' "  run = \"$S/fc/cargo build\"" \
+  '  [[bench.stolen.step]]' '  lock = "shared"' '  run = "echo /another/tree > \"$CARGO_TARGET_DIR/.dibs-tree\""' \
+  '  [[bench.stolen.step]]' '  lock = "exclusive"' '  run = "echo measured"' >> "$S/app/.dibs.toml"
+out=$(RC bench "$S/app@main" gate 2>&1); rc=$?
+check "a tree that did not make its target's last build is rebuilt, then measured" \
+  "$rc $(grep -c 'did not make the last build' <<<"$out") $(grep -c '^measured$' <<<"$out")" "0 1 1"
+out=$(RC bench "$S/app@main" gate 2>&1); rc=$?
+check "and a rerun that compiles nothing is measured, and not rebuilt" \
+  "$rc $(grep -c 'did not make the last build' <<<"$out") $(grep -c '^measured$' <<<"$out")" "0 0 1"
+records=$(grep -c '"label":"app/bench/stolen"' "$HOME/.local/state/dibs/runs.jsonl")
+out=$(RC bench "$S/app@main" stolen 2>&1); rc=$?
+check "a measurement is refused when another tree built into its target since" "$rc $(grep -c '^measured$' <<<"$out")" "78 0"
+check "saying why and what to do" \
+  "$(grep -c 'refused to measure: another tree built into' <<<"$out")$(grep -c 'pass --anyway' <<<"$out")" "11"
+check "with dibs named as what ended it" "$(grep -c '  exit 78  by=dibs' <<<"$out")" "1"
+check "and no record, since nothing was measured" \
+  "$(grep -c '"label":"app/bench/stolen"' "$HOME/.local/state/dibs/runs.jsonl")" "$records"
+out=$(RC bench "$S/app@main" stolen --anyway 2>&1); rc=$?
+check "--anyway measures what is there" "$rc $(grep -c '^measured$' <<<"$out")" "0 1"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

@@ -109,6 +109,7 @@
 #
 #   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran    75 busy
 #        76 its batch was cancelled    77 a --with service failed    124 overran --max
+#        78 a recipe's measurement refused: another tree built into its target since
 #
 # --- end of the interface, everything below is why -------------------------------------
 #
@@ -3607,6 +3608,7 @@ if [ -n "$JOBLOG" ]; then
     [ "$STATUS" -eq 124 ] && [ "$MAXHOLD" -gt 0 ] && by=dibs
     [ "$STATUS" -eq 77 ] && [ -n "$WITH_FAIL" ] && by=dibs
     [ "$STATUS" -eq 76 ] && [ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ] && by=dibs
+    [ "$STATUS" -eq 78 ] && grep -qx DIBS-REFUSED "$JOBLOG" 2>/dev/null && by=dibs
     lines=$(wc -l < "$JOBLOG" 2>/dev/null || echo 0)
     # The digest: enough to see how it went, never so much that a caller has to cut it.
     if [ "$STREAM" != 1 ]; then

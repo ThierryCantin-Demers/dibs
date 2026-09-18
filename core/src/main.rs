@@ -67,6 +67,8 @@ dibs batch <file|->                   a list of dibs command lines as one submis
   --reps    run each point this many times, in one batch
   --bench   shell only: the exclusive lock, for a one-off that is a measurement
   --max     seconds the job may hold the lock, when the default is too short for it
+  --anyway  measure even when another tree built into the target after this one did,
+            which is otherwise refused with exit 78
   --dry-run print what would run, take no lock, record nothing
   --verbose with batch, each step's output as it comes, prefixed with the step's name
 
@@ -111,6 +113,8 @@ struct Args {
     /// shell only: the exclusive lock, for a one-off that is a measurement.
     bench: bool,
     max: Option<u64>,
+    /// Measure even when another tree built into the target after this one did.
+    anyway: bool,
     verbose: bool,
 }
 
@@ -130,6 +134,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut reps: u32 = 1;
     let mut bench = false;
     let mut max = None;
+    let mut anyway = false;
     let mut verbose = false;
     let mut it = words.into_iter();
     while let Some(a) = it.next() {
@@ -177,6 +182,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
             "--max" => {
                 max = Some(it.next().and_then(|n| n.parse().ok()).ok_or("--max needs seconds")?);
             }
+            "--anyway" => anyway = true,
             "--dry-run" => dry_run = true,
             "--verbose" | "-v" => verbose = true,
             "-" => positional.push("-".into()),
@@ -232,6 +238,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         reps,
         bench,
         max,
+        anyway,
         verbose,
     })
 }
@@ -500,20 +507,7 @@ fn run() -> Result<ExitCode, String> {
     // One cache per repo, exported rather than left to each recipe to remember. The output
     // needs no file of its own: dibs keeps every job's log under its job id, and a path named
     // after the label would be shared by two runs of one recipe.
-    let run_of = |i: usize| {
-        let run = match worktree::build_signature(&rec.steps[i].run) {
-            Some(_) => worktree::recording(&rec.steps[i].run, &token),
-            None => rec.steps[i].run.clone(),
-        };
-        // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop
-        // in the step as well as the first word of it.
-        let exports: String = rec.steps[i]
-            .env
-            .iter()
-            .map(|(k, v)| format!("export {k}={}; ", sh(v)))
-            .collect();
-        format!("{exports}{run}")
-    };
+    let run_of = |i: usize| step_command(rec, i, &token, args.anyway);
     let mut announce = |text: &str| announce_prepared(text);
 
     let mut steps = Vec::new();
@@ -589,7 +583,11 @@ fn run() -> Result<ExitCode, String> {
             env: &env,
             max: args.max,
         };
-        let out = backend.run(&req, &cd)?;
+        let (out, report) = backend.run_reporting(&req, &cd, &mut |_| {})?;
+        // The machine has said why; a refusal is not a run, so it leaves no record.
+        if report.lines().any(|l| l == "DIBS-REFUSED") {
+            return Ok(ExitCode::from(78));
+        }
         steps.push(provenance::StepRecord { lock: step_lock(step.lock), status: out.status, seconds: out.seconds });
         if out.status != 0 {
             failed = Some(out.status);
@@ -687,6 +685,9 @@ fn sweep_text(args: &Args, points: &[BTreeMap<String, String>]) -> String {
             }
             if let Some(m) = args.max {
                 line += &format!(" --max {m}");
+            }
+            if args.anyway {
+                line += " --anyway";
             }
             if let Some(d) = &args.device {
                 line += &format!(" --device {d}");
@@ -812,7 +813,11 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
             env: &[],
             max: None,
         };
-        let out = backend.run(&req, &in_tree(build))?;
+        let build = match worktree::build_signature(build) {
+            Some(_) => worktree::claiming(build),
+            None => build.clone(),
+        };
+        let out = backend.run(&req, &in_tree(&build))?;
         if out.status != 0 {
             return Ok(ExitCode::from(out.status.clamp(1, 255) as u8));
         }
@@ -837,6 +842,26 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
     }
     cmd.arg("--").arg(command);
     Err(format!("could not run {}: {}", backend.program, exec(cmd)))
+}
+
+/// What step `i` runs in its tree. A build claims the target for this tree, and a measurement
+/// after one refuses a target some other tree has built into since, unless told `anyway`.
+fn step_command(rec: &recipe::Recipe, i: usize, token: &str, anyway: bool) -> String {
+    let step = &rec.steps[i];
+    let run = match (worktree::build_signature(&step.run), step.lock) {
+        (Some(_), Lock::Shared) => worktree::claiming(&worktree::recording(&step.run, token)),
+        (Some(_), Lock::Exclusive) => worktree::recording(&step.run, token),
+        (None, _) => step.run.clone(),
+    };
+    let built = rec.steps[..i].iter().any(|s| s.lock == Lock::Shared && worktree::build_signature(&s.run).is_some());
+    let run = match step.lock == Lock::Exclusive && built && !anyway {
+        true => worktree::checked(&run),
+        false => run,
+    };
+    // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop in the
+    // step as well as the first word of it.
+    let exports: String = step.env.iter().map(|(k, v)| format!("export {k}={}; ", sh(v))).collect();
+    format!("{exports}{run}")
 }
 
 /// The script that prepares the tree on the machine, and the git databases it may need sent.
@@ -1283,13 +1308,13 @@ mod tests {
     #[test]
     fn a_swept_run_is_a_batch_of_ordinary_calls() {
         let args = swept(&[
-            "bench", "app@local", "r", "--device", "gpu0", "--sweep", "samples=10,30", "--reps", "2",
+            "bench", "app@local", "r", "--device", "gpu0", "--sweep", "samples=10,30", "--reps", "2", "--anyway",
         ]);
         let text = sweep_text(&args, &sweep_points(&args));
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 4, "two values, twice each");
-        assert_eq!(lines[0], "[samples-10.r1] dibs bench app@local r --device gpu0 --samples 10");
-        assert_eq!(lines[3], "[samples-30.r2] dibs bench app@local r --device gpu0 --samples 30");
+        assert_eq!(lines[0], "[samples-10.r1] dibs bench app@local r --anyway --device gpu0 --samples 10");
+        assert_eq!(lines[3], "[samples-30.r2] dibs bench app@local r --anyway --device gpu0 --samples 30");
     }
 
     #[test]
@@ -1320,6 +1345,21 @@ mod tests {
             shell_reason: None,
             params: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn a_build_claims_its_target_and_the_measurement_after_it_checks_the_claim() {
+        let rec = resolved(vec![step(Lock::Shared, "cargo build --release"), step(Lock::Exclusive, "cargo bench")]).rec;
+        assert_eq!(step_command(&rec, 0, "t", false), worktree::claiming(&worktree::recording("cargo build --release", "t")));
+        assert_eq!(step_command(&rec, 1, "t", false), worktree::checked(&worktree::recording("cargo bench", "t")));
+        assert_eq!(step_command(&rec, 1, "t", true), worktree::recording("cargo bench", "t"));
+    }
+
+    // Nothing was built into the target, so whatever claimed it last says nothing about this run.
+    #[test]
+    fn a_measurement_after_no_build_is_not_checked() {
+        let rec = resolved(vec![step(Lock::Shared, "make data"), step(Lock::Exclusive, "./bench.sh")]).rec;
+        assert_eq!(step_command(&rec, 1, "t", false), "./bench.sh");
     }
 
     #[test]
