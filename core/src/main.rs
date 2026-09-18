@@ -337,6 +337,7 @@ fn run() -> Result<ExitCode, String> {
             label: "raw".into(),
             verb: "raw",
             repo: String::new(),
+            variant: None,
             recipe: String::new(),
             fingerprint: String::new(),
             isolation: "machine".into(),
@@ -477,16 +478,18 @@ fn run() -> Result<ExitCode, String> {
     // Both paths then claim the repo's build cache for the machine they chose, and a
     // measurement's claim is the one that sticks because it is the one that could not move.
     // Without that, a build ranked onto one machine leaves the benchmark on another to compile
-    // inside its own exclusive lock, which is what splitting build from measure prevents.
+    // inside its own exclusive lock, which is what splitting build from measure prevents. A
+    // pinned call claims nothing: the machines report the caches it leaves.
     let mut backend = Dibs::default();
     backend.machine = if std::env::var("DIBS_ROUTE").as_deref() == Ok("1")
+        && !pinned()
         && rec.steps.iter().all(|s| s.lock == Lock::Shared)
     {
         Dibs::routed(&backend.program, affinity_get(&repo_name).as_deref(), Some(&repo_name))
     } else {
         Dibs::which(&backend.program)
     };
-    if let Some(m) = &backend.machine {
+    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
         affinity_set(&repo_name, m);
     }
     for (i, step) in rec.steps.iter().enumerate().filter(|(_, s)| s.lock == Lock::Exclusive) {
@@ -643,6 +646,7 @@ fn run() -> Result<ExitCode, String> {
     let record = provenance::Run {
         label,
         repo: repo_name.clone(),
+        variant: worktree::variant(&dir, &repo_name),
         // shell borrows Build's machinery but is not a build, and a record that says
         // otherwise is a record that misleads whoever reads it later.
         verb: if shell_reason.is_some() { "shell" } else { verb.as_str() },
@@ -804,7 +808,7 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
 
     let mut backend = Dibs::default();
     backend.machine = Dibs::which(&backend.program);
-    if let Some(m) = &backend.machine {
+    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
         affinity_set(&repo_name, m);
     }
     let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
@@ -1281,27 +1285,58 @@ fn affinity_path() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".local/state/dibs/affinity"))
 }
 
+/// The machine deletes a target directory unused this long, so a memo of one is kept no longer.
+const AFFINITY_SECS: u64 = 5 * 86400;
+
+/// Lines older than the cache they name, and lines without a time, are not read.
+fn affinity_live(text: &str, now: u64) -> impl Iterator<Item = (&str, &str, u64)> {
+    text.lines().filter_map(move |l| {
+        let mut f = l.split('\t');
+        let (repo, machine, used) = (f.next()?, f.next()?, f.next()?.trim().parse::<u64>().ok()?);
+        (now.saturating_sub(used) < AFFINITY_SECS).then_some((repo, machine, used))
+    })
+}
+
+fn affinity_lookup(text: &str, repo: &str, now: u64) -> Option<String> {
+    affinity_live(text, now).find(|(r, ..)| *r == repo).map(|(_, m, _)| m.to_string())
+}
+
+fn affinity_update(text: &str, repo: &str, machine: &str, now: u64) -> String {
+    let mut lines: Vec<String> = affinity_live(text, now)
+        .filter(|(r, ..)| *r != repo)
+        .map(|(r, m, t)| format!("{r}\t{m}\t{t}"))
+        .collect();
+    lines.push(format!("{repo}\t{machine}\t{now}"));
+    lines.join("\n") + "\n"
+}
+
 fn affinity_get(repo: &str) -> Option<String> {
-    let text = std::fs::read_to_string(affinity_path()?).ok()?;
-    text.lines()
-        .filter_map(|l| l.split_once('\t'))
-        .find(|(r, _)| *r == repo)
-        .map(|(_, m)| m.trim().to_string())
+    affinity_lookup(&std::fs::read_to_string(affinity_path()?).ok()?, repo, now_secs())
 }
 
 fn affinity_set(repo: &str, machine: &str) {
     let Some(p) = affinity_path() else { return };
-    let mut kept: Vec<String> = std::fs::read_to_string(&p)
-        .unwrap_or_default()
-        .lines()
-        .filter(|l| l.split_once('\t').map(|(r, _)| r != repo).unwrap_or(false))
-        .map(str::to_string)
-        .collect();
-    kept.push(format!("{repo}\t{machine}"));
+    let text = affinity_update(&std::fs::read_to_string(&p).unwrap_or_default(), repo, machine, now_secs());
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&p, kept.join("\n") + "\n");
+    let tmp = p.with_extension(std::process::id().to_string());
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, &p);
+    }
+}
+
+/// `--on` reaches here as DIBS_ON. A call sent to a named machine is not ranked, and says
+/// nothing about where the repo's cache belongs.
+fn pinned() -> bool {
+    std::env::var("DIBS_ON").is_ok_and(|m| !m.is_empty())
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// The batch a call is a step of, as the batch driver told it.
@@ -1320,10 +1355,7 @@ fn runs_path() -> Result<PathBuf, String> {
 }
 
 fn write_record(run: &provenance::Run) -> Result<(), String> {
-    let when = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let when = now_secs();
     let path = runs_path()?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -1352,6 +1384,19 @@ mod tests {
 
     fn step(lock: Lock, run: &str) -> Step {
         Step { lock, run: run.into(), env: BTreeMap::new() }
+    }
+
+    #[test]
+    fn affinity_is_one_machine_per_repo_and_expires_with_the_cache() {
+        let day = 86400;
+        let text = affinity_update("cubek\tmultigpu\n", "cubek", "desktop", 10 * day);
+        let text = affinity_update(&text, "burn", "multigpu", 12 * day);
+        assert_eq!(text.lines().count(), 2, "the untimed line is dropped: {text}");
+        assert_eq!(affinity_lookup(&text, "cubek", 14 * day).as_deref(), Some("desktop"));
+        assert_eq!(affinity_lookup(&text, "cubek", 15 * day), None);
+        assert_eq!(affinity_lookup(&text, "burn", 15 * day).as_deref(), Some("multigpu"));
+        let text = affinity_update(&text, "burn", "desktop", 16 * day);
+        assert_eq!(text, format!("burn\tdesktop\t{}\n", 16 * day));
     }
 
     fn swept(words: &[&str]) -> Args {
@@ -1537,6 +1582,7 @@ mod tests {
             label: "cubecl/bench/throughput-all@gpu:rtx2060".into(),
             verb: "bench",
             repo: "r".into(),
+            variant: None,
             recipe: "throughput-all".into(),
             fingerprint: "abc".into(),
             isolation: "machine".into(),
@@ -1578,6 +1624,7 @@ mod tests {
             label: "r/\"x\\y\nz".into(),
             verb: "bench",
             repo: "r".into(),
+            variant: None,
             recipe: "x".into(),
             fingerprint: "abc".into(),
             isolation: "machine".into(),
@@ -1609,6 +1656,7 @@ mod tests {
             label: "r/x".into(),
             verb: "bench",
             repo: "r".into(),
+            variant: None,
             recipe: "x".into(),
             fingerprint: "abc".into(),
             isolation: "machine".into(),

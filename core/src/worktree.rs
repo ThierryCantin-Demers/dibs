@@ -541,6 +541,8 @@ mod tests {
         assert_eq!(identity(&main), "cubek");
         assert_eq!(identity(&main.join("inner")), "inner");
         assert_eq!(identity(&home.join("loose")), "loose");
+        assert_eq!(variant(&home.join("topk-branch"), "cubek").as_deref(), Some("topk-branch"));
+        assert_eq!(variant(&main, "cubek"), None);
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -798,6 +800,13 @@ pub fn identity(dir: &std::path::Path) -> String {
         folder(&common).map(|n| n.trim_end_matches(".git").to_string())
     };
     named.filter(|n| !n.is_empty()).unwrap_or(fallback)
+}
+
+/// The folder a worktree sits in, which says which line of work a run came from. Only for the
+/// record: the label, the recipes and the caches all go by `identity`.
+pub fn variant(dir: &std::path::Path, identity: &str) -> Option<String> {
+    let folder = dir.file_name()?.to_str()?;
+    (folder != identity).then(|| folder.to_string())
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {

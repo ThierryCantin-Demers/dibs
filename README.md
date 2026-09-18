@@ -197,7 +197,8 @@ Every recipe run appends a line to `~/.local/state/dibs/runs.jsonl`, or `$DIBS_R
 repo and the commit of every repo it built, the values, the machine and card, the procedure and
 its fingerprint, the batch it was a step of, and for each step its lock, exit, seconds, job,
 `built=` and log. A measured step first reads the machine's state into it (CPU governor, kernel,
-NVIDIA driver), and the run ends `ok` or `failed`.
+NVIDIA driver), and the run ends `ok` or `failed`. A run from a git worktree keeps its repo's
+label and records the worktree's folder as `variant`, which `dibs runs` prints as `from <folder>`.
 
 `dibs runs [label]` lists them newest first with the date, machine, label, the measured step's time
 and lock, and the commits. A failed run is listed only with `--all`. Runs that differ in nothing
@@ -311,7 +312,9 @@ whoever dispatched, so a headless box running the agents is not discounted for i
 reports which repos it has actually built, by a marker cargo writes rather than by the target
 directory existing, since preparing a worktree creates that directory whether or not anything
 is built in it. A recorded preference in `~/.local/state/dibs/affinity` breaks ties, and a
-benchmark's claim is the one that sticks, because a benchmark is the run that cannot move.
+benchmark's claim is the one that sticks, because a benchmark is the run that cannot move. Only a
+recipe run that dibs placed writes it, never one sent with `--on` or `DIBS_ON`, and it is
+forgotten after five days, when the machine collects the target directory it named.
 
 Being busy is not a reason to look elsewhere, and this is the part worth understanding: nothing
 built on one machine can be used on another, because there is no way to move artifacts between

@@ -67,6 +67,8 @@ pub struct Run {
     pub verb: &'static str,
     /// The repo's identity, which the label only starts with.
     pub repo: String,
+    /// The worktree it came from, when that is not the repo's own checkout.
+    pub variant: Option<String>,
     pub recipe: String,
     pub fingerprint: String,
     pub isolation: String,
@@ -128,6 +130,9 @@ impl Run {
         let _ = write!(s, ",\"label\":{}", q(&self.label));
         if !self.repo.is_empty() {
             let _ = write!(s, ",\"repo\":{}", q(&self.repo));
+        }
+        if let Some(v) = &self.variant {
+            let _ = write!(s, ",\"variant\":{}", q(v));
         }
         let _ = write!(s, ",\"recipe\":{}", q(&self.recipe));
         let _ = write!(s, ",\"fingerprint\":{}", q(&self.fingerprint));
@@ -271,6 +276,7 @@ mod tests {
             label: "r/bench/x".into(),
             verb: "bench",
             repo: "r".into(),
+            variant: Some("topk-packed".into()),
             recipe: "x".into(),
             fingerprint: "f".into(),
             isolation: "machine".into(),
@@ -292,6 +298,7 @@ mod tests {
         };
         let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).unwrap();
         assert_eq!(v["steps"][0]["built"], "nothing");
+        assert_eq!(v["variant"], "topk-packed");
         assert_eq!(v["steps"][1]["job"], "1-2");
         assert_eq!(v["steps"][1]["log"], "m:/jobs/1-2/log");
         assert!(v["steps"][1].get("built").is_none());

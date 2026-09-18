@@ -16,6 +16,7 @@ pub struct Record {
     pub when: u64,
     pub verb: String,
     pub label: String,
+    pub variant: Option<String>,
     pub fingerprint: String,
     pub machine: Option<String>,
     pub params: Vec<(String, String)>,
@@ -57,6 +58,7 @@ fn parse_line(line: &str) -> Option<Record> {
         when: v.get("t")?.as_u64()?,
         verb: text("verb")?,
         label: text("label")?,
+        variant: text("variant"),
         fingerprint: text("fingerprint").unwrap_or_default(),
         machine: text("machine"),
         params: v.get("params").map(pairs).unwrap_or_default(),
@@ -173,6 +175,7 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
             None => (r.seconds, "shared"),
         };
         let extra = [
+            r.variant.as_ref().map(|v| format!("from {v}")),
             (!r.params.is_empty()).then(|| words(&r.params, "=")),
             r.seeded.as_ref().map(|s| format!("seeded from {s}")),
             r.anyway.then(|| "measured with --anyway".to_string()),
@@ -396,6 +399,15 @@ mod tests {
         let out = report(&recs, None, 10, false);
         assert!(out.contains("governor=performance: 3 runs, median 11s, 10s to 14s"), "{out}");
         assert!(out.contains("governor=powersave: 2 runs, median 30s, 30s to 31s"), "{out}");
+    }
+
+    #[test]
+    fn a_worktree_s_run_names_it_and_still_repeats_the_repo_s() {
+        let mut from_worktree = v2(2, "f", "cargo bench", 12, "performance", "ok");
+        from_worktree.variant = Some("topk-packed".into());
+        let out = report(&[v2(1, "f", "cargo bench", 10, "performance", "ok"), from_worktree], None, 10, false);
+        assert_eq!(out.matches("from topk-packed").count(), 1, "{out}");
+        assert!(out.contains(": 2 runs, median 11s"), "{out}");
     }
 
     #[test]

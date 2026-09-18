@@ -2048,6 +2048,21 @@ check "and the next run another" "$(grep -c "^measure sees $v1\$" <<<"$two")" "0
 check "which the record carries" \
   "$(grep '"label":"app/bench/fresh"' "$HOME/.local/state/dibs/runs.jsonl" | grep -c "\"fresh\":{\"STORE\":\"$v1\"}")" "1"
 
+# A worktree is a line of work on its repo, not a repo of its own: only the record names it.
+git -C "$S/app" worktree add -q "$S/app-topk" 2>/dev/null
+cp "$S/app/.dibs.toml" "$S/app-topk/"
+RC build "$S/app-topk@local" p >/dev/null 2>&1
+check "a worktree's run records its repo and the tree it came from" \
+  "$(grep '"label":"app/build/p"' "$HOME/.local/state/dibs/runs.jsonl" | tail -n 1 | grep -c '"repo":"app","variant":"app-topk"')" "1"
+check "and dibs runs says so" "$(RC runs app/build/p 2>/dev/null | grep -c ' from app-topk')" "1"
+rm -f "$HOME/.local/state/dibs/affinity"
+DIBS_HOST=lap RC build "$S/app@local" p >/dev/null 2>&1
+check "an unpinned run says which machine has the repo's cache, and since when" \
+  "$(grep -cE '^app	lap	[0-9]+$' "$HOME/.local/state/dibs/affinity" 2>/dev/null)" "1"
+rm -f "$HOME/.local/state/dibs/affinity"
+DIBS_ON=lap RC build "$S/app@local" p >/dev/null 2>&1; rc=$?
+check "a pinned one does not" "$rc $(ls "$HOME/.local/state/dibs" | grep -c '^affinity')" "0 0"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
