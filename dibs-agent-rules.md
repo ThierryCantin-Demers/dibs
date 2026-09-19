@@ -202,6 +202,9 @@ spoiled without it.
   all are built first, then the measurements alternate A B B A. Never hand-write the arms, their
   target directories or the alternation. The run ends with each arm's jobs: read the numbers with
   `dibs out <job>`.
+- **Build against an unpushed dependency with `--pin`**: `dibs test cubek@local cuda --pin
+  cubecl@local` builds cubek against your cubecl tree, through a `[patch]` dibs writes and then
+  checks cargo used. Never sync two trees by hand or `sed` a `Cargo.toml` on the machine.
 - A recipe's `artifacts` come back by themselves: each step keeps the files it wrote, the run
   fetches them, and `--artifacts <dir>` puts them in a directory at their paths. Do not add a step
   that copies results into `$DIBS_SCRATCH/out` for a `--sync` afterwards. `dibs --fetch <job>

@@ -153,6 +153,24 @@ Two things in a recipe are refused when it loads, because both produce a number 
   tolerates neighbours. The message shows the two-step form: build with `--no-run` under the
   shared lock, measure under the exclusive one.
 
+## Building against another repo's tree
+
+    dibs test cubek@local cuda --pin cubecl@local
+
+burn, cubecl and cubek take each other by git revision, so a change to cubecl reaches cubek only
+once it is pushed and the revision bumped. `--pin <repo>@<ref>` sends that repo's tree as well,
+your checkout for `@local` or a fetched ref otherwise, and points cargo at it with a `[patch]`
+for every crate of it the lockfile takes from git or crates.io. It is repeatable, and a crate one
+pinned repo takes from another is covered too.
+
+The patch goes in `.cargo/config.toml` in the directory above the tree, where cargo reads it
+after the tree's own, so the tree stays exactly what was sent. A pinned build still gets a tree
+and a target directory of their own, since resolving the patch rewrites the lockfile. After each
+build, dibs checks the lockfile: if cargo still takes a pinned crate from where it came before,
+most often because the pinned version does not meet the requirement, the step fails with exit 3
+rather than measuring the pushed code. The record carries the pinned tree's revision beside the
+repo's own, and `--dry-run` says what each pin replaces.
+
 ## Getting files back
 
 A recipe names the files it wants back:

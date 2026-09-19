@@ -39,6 +39,7 @@ SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # A home of its own, so every default dibs keeps under ~ or the XDG directories (scratch,
 # state, config, the machine inventory, the recipe layer) resolves inside $S, including any
 # default added later. The real ones are neither read nor written.
+REAL_HOME=$HOME
 export HOME=$S/home XDG_CONFIG_HOME=$S/home/.config XDG_STATE_HOME=$S/home/.local/state \
        XDG_CACHE_HOME=$S/home/.cache XDG_RUNTIME_DIR=$S/runtime
 mkdir -p "$HOME/.cargo/bin" "$DIBS_SCRATCH" "$XDG_RUNTIME_DIR"
@@ -2146,6 +2147,47 @@ RC bench "$S/app@local" art --reps 2 --artifacts "$S/got3" >/dev/null 2>&1
 check "reps come back apart, and the build's once" \
   "$(cd "$S/got3" && find . -type f | sort | paste -sd' ')" "./r1/results/new.json ./r2/results/new.json ./target/crit/g/est.json"
 check "a pattern the shell would split is refused" "$(RC bench "$S/app@local" badart >/dev/null 2>&1; echo $?)" "2"
+
+# A pin builds one repo against another's tree, unpushed changes included, with a real cargo:
+# what is being checked is that cargo reads the patch dibs puts above the tree.
+# The toolchain's own cargo, ahead of any wrapper on PATH: a wrapper that gates or reroutes builds
+# expects the real HOME and the real session, and hangs or misroutes under the ones above.
+export RUSTUP_HOME=${RUSTUP_HOME:-$REAL_HOME/.rustup}
+TC=$PATH
+[ -x "$REAL_HOME/.cargo/bin/cargo" ] && TC=$REAL_HOME/.cargo/bin:$PATH
+PRC() { PATH=$S/bbin:$TC DIBS_CORE=$BCORE "$T" "$@"; }
+git init -q --bare "$S/lib.git"
+git clone -q "$S/lib.git" "$S/lib" 2>/dev/null
+( cd "$S/lib" && git checkout -q -b main && mkdir src &&
+  printf '[package]\nname = "lib"\nversion = "0.1.0"\nedition = "2021"\n' > Cargo.toml &&
+  printf 'pub fn say() -> &%sstatic str { "pushed" }\n' "'" > src/lib.rs && printf 'target\n' > .gitignore &&
+  git add -A && git -c user.email=t@t -c user.name=t commit -qm lib && git push -q origin main 2>/dev/null )
+mkdir -p "$S/consumer/bin/src"
+( cd "$S/consumer" && git init -q && printf 'target\n' > .gitignore &&
+  printf '[workspace]\nmembers = ["bin"]\nresolver = "2"\n' > Cargo.toml &&
+  printf '[package]\nname = "bin"\nversion = "0.1.0"\nedition = "2021"\n[dependencies]\nlib = { git = "file://%s/lib.git", branch = "main", version = "0.1" }\n' "$S" > bin/Cargo.toml &&
+  printf 'fn main() { println!("{}", lib::say()); }\n' > bin/src/main.rs &&
+  PATH=$TC cargo generate-lockfile -q 2>/dev/null && git add -A && git -c user.email=t@t -c user.name=t commit -qm consumer )
+printf '%s\n' '[build.say]' '  [[build.say.step]]' '  lock = "shared"' '  run = "cargo build -q && $CARGO_TARGET_DIR/debug/bin"' > "$S/consumer/.dibs.toml"
+sed -i 's/"pushed"/"unpushed"/' "$S/lib/src/lib.rs"
+out=$(PRC build "$S/consumer@local" say 2>&1); rc=$?
+check "without a pin, the build takes the pushed revision" "$rc $(grep -c '^pushed$' <<<"$out")" "0 1"
+out=$(PRC build "$S/consumer@local" say --pin "$S/lib@local" 2>&1); rc=$?
+check "with one, it builds against the tree here, unpushed changes included" "$rc $(grep -c '^unpushed$' <<<"$out")" "0 1"
+nest=$(ls -d "$DIBS_SCRATCH"/ws/consumer/pin-* 2>/dev/null | head -n 1)
+check "through a patch above the tree, which stays what was sent" \
+  "$(grep -c "^lib = { path = \"$DIBS_SCRATCH/ws/lib/local-" "$nest/.cargo/config.toml" 2>/dev/null) $(cat "$nest"/local-*/Cargo.toml | grep -c patch)" "1 0"
+check "and the record names the pinned tree's revision" \
+  "$(grep '"label":"consumer/build/say"' "$HOME/.local/state/dibs/runs.jsonl" | tail -n 1 | grep -c '"revisions":{"consumer":"local:[^"]*","lib":"local:')" "1"
+check "a dry run says what a pin replaces" \
+  "$(PRC build "$S/consumer@local" say --pin "$S/lib@local" --dry-run 2>/dev/null | grep -c "^            patches file://$S/lib.git: lib$")" "1"
+sed -i 's/^version = "0.1.0"/version = "0.2.0"/' "$S/lib/Cargo.toml"
+out=$(PRC build "$S/consumer@local" say --pin "$S/lib@local" 2>&1); rc=$?
+check "a pin whose version the requirement refuses fails rather than building the pushed code" \
+  "$rc $(grep -c 'the pin did not take' <<<"$out") $(grep -c "^  lib from git+file://" <<<"$out")" "3 1 1"
+check "pinning the repo being built is refused" "$(PRC build "$S/consumer@local" say --pin "$S/consumer@local" >/dev/null 2>&1; echo $?)" "2"
+check "and so is a pin its lockfile has no use for" \
+  "$(PRC build "$S/consumer@local" say --pin "$S/app@local" 2>&1 | grep -c 'nothing')" "1"
 
 echo
 echo "passed $pass, failed $fail"
