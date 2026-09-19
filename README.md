@@ -153,6 +153,23 @@ Two things in a recipe are refused when it loads, because both produce a number 
   tolerates neighbours. The message shows the two-step form: build with `--no-run` under the
   shared lock, measure under the exclusive one.
 
+## Getting files back
+
+A recipe names the files it wants back:
+
+    [bench.breakdown]
+    artifacts = ["benchmarks/baselines/*.json", "$CARGO_TARGET_DIR/criterion/**/estimates.json"]
+
+Each step copies the matching files it wrote into its job directory on the machine, at their path
+in the tree, or under `target/` for one under `$CARGO_TARGET_DIR`. A file older than the step is
+skipped, since trees are reused and a file an earlier run left would come back looking current.
+The run then fetches every job's files and keeps them beside the job's log, in
+`~/.local/state/dibs/jobs/<job>/artifacts`, and `--artifacts <dir>` copies them into a directory
+at their paths, with `<arm>/` and `r<rep>/` added where a comparison or reps would otherwise write
+one path twice. `dibs --fetch <job> [dir]` does the same by hand. Fetching takes no lock, like
+`dibs out`, so a job's files are capped at 64MB; more than that is a `dibs --sync` under the
+shared lock.
+
 ## A cache of its own each run
 
 cubecl keeps autotune winners, compiled kernels and throughput numbers in one store, under

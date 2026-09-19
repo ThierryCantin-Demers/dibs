@@ -32,7 +32,7 @@
 #   --ready '<command>'          or a command that exits 0 once it does. --ready-within bounds
 #                                the wait (300s). A service that exits early, or is never
 #                                ready, stops the call with exit 77 and its log is shown.
-#   dibs status, dibs out [job] the same as --status and --out
+#   dibs status, dibs out [job], dibs fetch <job> [dir]   the same as --status, --out, --fetch
 #   --device <alias>             run on one named card. Two runs naming one alias are two
 #                                runs on the same silicon, which is what makes their numbers
 #                                comparable. `dibs --machines -v` lists the aliases. `cpu`
@@ -91,6 +91,11 @@
 #                                running job made itself. The first read of a finished job
 #                                keeps its whole log in ~/.local/state/dibs/jobs, which
 #                                answers later reads even once the machine is gone.
+#   dibs --fetch <job> [dir]    the files a recipe's job kept, the ones its `artifacts` name
+#                                and it wrote itself. Kept beside the job's log in
+#                                ~/.local/state/dibs/jobs/<job>/artifacts, and copied into dir
+#                                at their paths when one is given. Takes no lock, so a job's
+#                                are capped at 64MB. A recipe run fetches its own.
 #   dibs --kill <batch-id>      stop a whole batch: at its driver when that runs here, else on
 #                                every machine, which also refuses the batch's later steps
 #   dibs --kill <pid>           stop a holder that is wedged (also takes no lock). Refuses a
@@ -642,6 +647,8 @@ MAXHOLD=""
 VERBOSE=0
 KILLPID=""
 OUTPID=""
+FETCHJOB=""
+FETCHTO=""
 OUT_N=${DIBS_OUT_LINES:-40}
 FORCE=0
 ANYONE=0
@@ -819,6 +826,10 @@ while [ $# -gt 0 ]; do
                       if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9-]/}" ]; then
                           OUTPID=$1; shift
                       fi ;;
+        --fetch)      MODE=fetch; FETCHJOB=${2:-}; shift; [ $# -gt 0 ] && shift
+                      if [ $# -gt 0 ] && [ -n "$1" ] && [ "${1#-}" = "$1" ]; then
+                          FETCHTO=$1; shift
+                      fi ;;
         --kill)       MODE=kill; KILLPID=${2:-}; shift 2 ;;
         --force)      FORCE=1; shift ;;
         --anyone)     ANYONE=1; shift ;;
@@ -842,6 +853,10 @@ while [ $# -gt 0 ]; do
                 out)    [ "$MODE" = shared ] || break; MODE=out; shift
                         if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9-]/}" ]; then
                             OUTPID=$1; shift
+                        fi ;;
+                fetch)  [ "$MODE" = shared ] || break; MODE=fetch; FETCHJOB=${2:-}; shift; [ $# -gt 0 ] && shift
+                        if [ $# -gt 0 ] && [ -n "$1" ] && [ "${1#-}" = "$1" ]; then
+                            FETCHTO=$1; shift
                         fi ;;
                 build|test|bench|list|runs|gaps|shell|raw|batch|with)
                     # The recipe layer takes its own flags, after the verb. --on is the one that
@@ -1285,6 +1300,11 @@ case "$MODE" in
         [ $# -eq 0 ] || { echo "--check takes only a host" >&2; exit 2; }
         LABEL=check
         [ "${DIBS_EMIT_ENTRY:-0}" = 1 ] && LABEL=check-write ;;
+    fetch)
+        [ $# -eq 0 ] || { echo "--fetch takes a job id and, optionally, a directory to copy into" >&2; exit 2; }
+        [ -n "$FETCHJOB" ] && [ -z "${FETCHJOB//[0-9-]/}" ] ||
+            { echo "--fetch needs a job id, the one after 'job' in the trailer" >&2; exit 2; }
+        LABEL=$FETCHJOB ;;
     out)
         [ $# -eq 0 ] || { echo "--out takes only a pid or a job id" >&2; exit 2; }
         # A dot because the label is sanitized down to [A-Za-z0-9._-] before it ships.
@@ -1436,6 +1456,36 @@ if [ "$MODE" = out ] && [[ ${OUTPID:-} == *-* ]]; then
         out_kept "$KEPT/$OUTPID"
         exit 0
     fi
+fi
+
+# Kept beside the job's log, so a later fetch, and a fetch from after the machine is gone, reads
+# them here.
+if [ "$MODE" = fetch ] && [ "${DIBS_FETCH_RAW:-0}" != 1 ]; then
+    kept=$KEPT/$FETCHJOB/artifacts
+    if [ ! -d "$kept" ]; then
+        raw=$(mktemp "${TMPDIR:-/tmp}/dibs-fetch.XXXXXX") || exit 1
+        DIBS_FETCH_RAW=1 "$0" "${ORIG_ARGS[@]}" > "$raw"; status=$?
+        if [ "$(head -n 1 "$raw")" != DIBS-FETCH ]; then
+            cat "$raw"; rm -f "$raw"; exit "$([ "$status" = 0 ] && echo 1 || echo "$status")"
+        fi
+        rm -rf "$kept.part"
+        if ! { mkdir -p "$kept.part" && sed 1d "$raw" | base64 -d | tar -C "$kept.part" -xf - &&
+               mv -T "$kept.part" "$kept"; }; then
+            rm -rf "$kept.part" "$raw"
+            echo "dibs: the files of job $FETCHJOB arrived but could not be unpacked into $kept" >&2
+            exit 1
+        fi
+        rm -f "$raw"
+    fi
+    n=$(find "$kept" -type f | wc -l)
+    echo "dibs: $n file(s) from job $FETCHJOB, kept in $kept"
+    find "$kept" -type f -printf '  %P\n' | sort | head -n 20
+    [ "$n" -le 20 ] || echo "  and $((n - 20)) more"
+    if [ -n "$FETCHTO" ]; then
+        mkdir -p "$FETCHTO" && cp -a "$kept"/. "$FETCHTO"/ || exit 1
+        echo "dibs: copied into $FETCHTO"
+    fi
+    exit 0
 fi
 
 # A build that runs for half an hour has gone wrong; a benchmark legitimately might not.
@@ -3290,6 +3340,20 @@ case "$MODE" in
             if [ "$target" = all ]; then echo "Nothing is running."
             else echo "Nothing holding the lock with pid $target." >&2; exit 1; fi
         }
+        exit 0 ;;
+    fetch)
+        # No lock, like out, so what it sends is capped.
+        d=${DIBS_SCRATCH:-$HOME/.cache/dibs}/jobs/$LABEL
+        [ -d "$d" ] || { echo "no job $LABEL under ${DIBS_SCRATCH:-$HOME/.cache/dibs}/jobs" >&2; exit 1; }
+        [ -d "$d/artifacts" ] || { echo "job $LABEL kept no files: its recipe names no artifacts, or it wrote none of them" >&2; exit 3; }
+        size=$(du -sb "$d/artifacts" | cut -f1)
+        if [ "$size" -gt 67108864 ]; then
+            echo "job $LABEL kept $size bytes, more than a fetch without a lock takes. Copy them under the shared lock:" >&2
+            echo "  dibs --sync -a :$d/artifacts/ ./" >&2
+            exit 2
+        fi
+        echo DIBS-FETCH
+        tar -C "$d/artifacts" -cf - . | base64
         exit 0 ;;
     kill|kill-force)
         # Takes no lock. The whole point is to work when the lock is what is broken.

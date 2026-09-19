@@ -202,6 +202,10 @@ spoiled without it.
   all are built first, then the measurements alternate A B B A. Never hand-write the arms, their
   target directories or the alternation. The run ends with each arm's jobs: read the numbers with
   `dibs out <job>`.
+- A recipe's `artifacts` come back by themselves: each step keeps the files it wrote, the run
+  fetches them, and `--artifacts <dir>` puts them in a directory at their paths. Do not add a step
+  that copies results into `$DIBS_SCRATCH/out` for a `--sync` afterwards. `dibs --fetch <job>
+  [dir]` fetches one job's again.
 - `dibs shell` takes `--bench` when the one-off is a measurement, and `--max <seconds>` when it
   would otherwise be killed at the default cap.
 - `@local` in place of a ref sends your working tree, uncommitted changes included, following the

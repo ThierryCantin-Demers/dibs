@@ -96,6 +96,10 @@ pub struct Recipe {
     /// value rather than a directory, since that is what a tool's knob takes.
     #[serde(default)]
     pub fresh: Vec<String>,
+    /// Files a step writes that the caller wants back, relative to the tree or under
+    /// `$CARGO_TARGET_DIR/`. Each step keeps those it wrote itself, never one an earlier run left.
+    #[serde(default)]
+    pub artifacts: Vec<String>,
     #[serde(default, rename = "step")]
     pub steps: Vec<Step>,
 }
@@ -358,6 +362,7 @@ impl Recipe {
             st.run = fill(&st.run);
             st.env = st.env.iter().map(|(k, v)| (k.clone(), fill(v))).collect();
         }
+        rec.artifacts = rec.artifacts.iter().map(|a| fill(a)).collect();
         rec
     }
 
@@ -368,6 +373,21 @@ impl Recipe {
             && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
         if let Some(v) = self.fresh.iter().find(|v| !variable(v)) {
             return Err(format!("recipe '{name}': fresh lists variables to give each run its own value, and '{v}' is not a variable name"));
+        }
+        // Expanded unquoted on the machine so that * and ** match, which leaves no room for
+        // anything the shell would read as more than a path.
+        let pattern = |a: &str| {
+            let rest = a.strip_prefix("$CARGO_TARGET_DIR/").unwrap_or(a);
+            !rest.is_empty()
+                && !rest.starts_with('/')
+                && !rest.split('/').any(|c| c == "..")
+                && rest.chars().all(|c| c.is_ascii_alphanumeric() || "/._-*?[]+=,@".contains(c))
+        };
+        if let Some(a) = self.artifacts.iter().find(|a| !pattern(a)) {
+            return Err(format!(
+                "recipe '{name}': artifact '{a}' has to be a path pattern inside the tree, or under $CARGO_TARGET_DIR/,\n             \
+                 made of letters, digits and / . _ - * ? [ ] + = , @"
+            ));
         }
         for st in &self.steps {
             // CARGO_TARGET_DIR is redirected per tree, so a relative target/ names a directory

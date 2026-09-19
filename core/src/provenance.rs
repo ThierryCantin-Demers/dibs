@@ -25,6 +25,8 @@ pub struct StepRecord {
     /// Which arm of a comparison, and which rep, the step belonged to.
     pub arm: Option<String>,
     pub rep: Option<u32>,
+    /// How many files it kept for the caller.
+    pub artifacts: Option<u32>,
 }
 
 impl StepRecord {
@@ -39,6 +41,7 @@ impl StepRecord {
             log: t.and_then(|t| t.log.clone()),
             arm: None,
             rep: None,
+            artifacts: None,
         }
     }
 
@@ -273,6 +276,9 @@ impl Run {
             if let Some(r) = st.rep {
                 let _ = write!(s, ",\"rep\":{r}");
             }
+            if let Some(n) = st.artifacts {
+                let _ = write!(s, ",\"artifacts\":{n}");
+            }
             for (key, value) in [("job", &st.job), ("built", &st.built), ("log", &st.log)] {
                 if let Some(v) = value {
                     let _ = write!(s, ",\"{key}\":{}", q(v));
@@ -334,6 +340,7 @@ mod tests {
             log: Some(format!("m:/jobs/{job}/log")),
             arm: None,
             rep: None,
+            artifacts: None,
         };
         let run = Run {
             label: "r/bench/x".into(),

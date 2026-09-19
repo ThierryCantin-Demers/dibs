@@ -11,6 +11,7 @@
 //! their own scratch paths, and one filled a shared quota. And the rule to build under the
 //! shared lock was prose, so 17% of all exclusive time was spent compiling.
 
+mod artifacts;
 mod batch;
 mod gitdeps;
 mod provenance;
@@ -73,6 +74,9 @@ dibs batch <file|->                   a list of dibs command lines as one submis
             on commas, so --sweep is how a sweep is asked for and --<name> always means
             one value.
   --reps    measure this many times. The build runs once, and the record holds each rep
+  --artifacts <dir>  copy the files the recipe's `artifacts` name into dir, at their paths
+            in the tree, under <arm>/r<rep>/ when there are several. They are fetched and
+            kept beside each job's log either way
   --bench   shell only: the exclusive lock, for a one-off that is a measurement
   --max     seconds the job may hold the lock, when the default is too short for it
   --anyway  measure even when another tree built into the target after this one did,
@@ -121,6 +125,8 @@ struct Args {
     /// splitting one would make `--problems a,b` mean two runs of one problem each.
     sweep: Vec<(String, Vec<String>)>,
     reps: u32,
+    /// Where the files a recipe keeps are copied once fetched.
+    artifacts_to: Option<String>,
     /// shell only: the exclusive lock, for a one-off that is a measurement.
     bench: bool,
     max: Option<u64>,
@@ -147,6 +153,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut params: BTreeMap<String, String> = BTreeMap::new();
     let mut sweep: Vec<(String, Vec<String>)> = Vec::new();
     let mut reps: u32 = 1;
+    let mut artifacts_to = None;
     let mut bench = false;
     let mut max = None;
     let mut anyway = false;
@@ -195,6 +202,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
                     .filter(|n| *n > 0)
                     .ok_or("--reps needs a count")?;
             }
+            "--artifacts" => artifacts_to = Some(it.next().ok_or("--artifacts needs a directory")?),
             "--bench" | "-b" => bench = true,
             "--max" => {
                 max = Some(it.next().and_then(|n| n.parse().ok()).ok_or("--max needs seconds")?);
@@ -255,6 +263,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         params,
         sweep,
         reps,
+        artifacts_to,
         bench,
         max,
         anyway,
@@ -639,6 +648,13 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
         for v in &rec.fresh {
             println!("fresh       {v}, a value of its own each run");
         }
+        if !rec.artifacts.is_empty() {
+            println!("artifacts   {}", rec.artifacts.join(" "));
+            println!("            {}", match &args.artifacts_to {
+                Some(d) => format!("copied into {d}"),
+                None => "kept beside each job's log; --artifacts <dir> copies them out".to_string(),
+            });
+        }
         for (i, s) in rec.steps.iter().enumerate() {
             println!("step {}      [{:?}] {}", i + 1, s.lock, s.run);
             for (k, v) in &s.env {
@@ -809,8 +825,9 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
             _ => format!("{}-r{}", t.token, rep.unwrap_or(1)),
         };
         let run = step_command(rec, step, &t.token, &fresh, args.anyway);
-        let record = |out: &resource::Outcome| {
-            provenance::StepRecord::of(step_lock(lock), out)
+        let record = |out: &resource::Outcome, report: &str| provenance::StepRecord {
+            artifacts: artifacts::kept(report),
+            ..provenance::StepRecord::of(step_lock(lock), out)
                 .tagged(compared.then(|| arms[arm].name.clone()), rep.filter(|_| args.reps > 1))
         };
         if fold {
@@ -823,7 +840,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
             t.prepared = Some(worktree::parse(&text)?);
             send_missing_gitdbs(&backend, &text, &t.gitdbs);
             if text.contains("DIBS-READY") {
-                steps.push(record(&out));
+                steps.push(record(&out, &text));
                 if out.status != 0 {
                     failed = Some(out.status);
                 }
@@ -844,11 +861,12 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
         if !read.is_empty() {
             state = read;
         }
-        steps.push(record(&out));
+        steps.push(record(&out, &report));
         if out.status != 0 {
             failed = Some(out.status);
         }
     }
+    fetch_artifacts(&backend, &steps, args.artifacts_to.as_deref(), compared);
 
     let prepared = |a: usize| trees[a].prepared.as_ref();
     if compared || args.reps > 1 {
@@ -916,6 +934,36 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
         Some(c) => ExitCode::from(c.clamp(1, 255) as u8),
         None => ExitCode::SUCCESS,
     })
+}
+
+/// Every job that kept files has them fetched, into `to` when given: under the job's arm and rep
+/// when a comparison or reps would otherwise write one path twice.
+fn fetch_artifacts(backend: &Dibs, steps: &[provenance::StepRecord], to: Option<&str>, compared: bool) {
+    for s in steps.iter().filter(|s| s.artifacts.is_some_and(|n| n > 0)) {
+        let Some(job) = &s.job else { continue };
+        let mut cmd = std::process::Command::new(&backend.program);
+        if let Some(m) = &backend.machine {
+            cmd.arg("--on").arg(m);
+        }
+        cmd.arg("--fetch").arg(job);
+        if let Some(dir) = to {
+            let mut dest = PathBuf::from(dir);
+            if let Some(arm) = s.arm.as_deref().filter(|_| compared) {
+                dest.push(arm);
+            }
+            if let Some(r) = s.rep {
+                dest.push(format!("r{r}"));
+            }
+            cmd.arg(dest);
+        }
+        // Its report goes where every other dibs: line does, apart from the jobs' own output.
+        let out = cmd.env("DIBS_FROM_RUN", "1").stdin(std::process::Stdio::null()).stderr(std::process::Stdio::inherit()).output();
+        match out {
+            Ok(o) if o.status.success() => eprint!("{}", String::from_utf8_lossy(&o.stdout)),
+            Ok(o) => eprintln!("dibs: could not fetch what job {job} kept (exit {}); dibs --fetch {job} tries again", o.status.code().unwrap_or(-1)),
+            Err(e) => eprintln!("dibs: could not fetch what job {job} kept: {e}"),
+        }
+    }
 }
 
 /// Each arm's measured seconds per rep, and the jobs whose logs hold its numbers. The seconds
@@ -1001,6 +1049,9 @@ fn sweep_text(args: &Args, points: &[BTreeMap<String, String>]) -> String {
         }
         if args.reps > 1 {
             line += &format!(" --reps {}", args.reps);
+        }
+        if let Some(d) = &args.artifacts_to {
+            line += &format!(" --artifacts {}", sh(&format!("{d}/{}", point_name(args, p))));
         }
         if args.anyway {
             line += " --anyway";
@@ -1186,7 +1237,7 @@ fn step_command(rec: &recipe::Recipe, i: usize, token: &str, fresh: &str, anyway
         .chain(&step.env)
         .map(|(k, v)| format!("export {k}={}; ", sh(v)))
         .collect();
-    format!("{exports}{run}")
+    artifacts::collecting(&format!("{exports}{run}"), &rec.artifacts)
 }
 
 /// One value per run for each of the recipe's `fresh` variables, the same in every step of it.
@@ -1292,6 +1343,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         isolation: recipe::Isolation::Machine,
         params: BTreeMap::new(),
         fresh: Vec::new(),
+        artifacts: Vec::new(),
         steps: vec![recipe::Step {
             lock: if args.bench { Lock::Exclusive } else { Lock::Shared },
             run: args.command.clone().unwrap_or_default(),
@@ -1729,7 +1781,7 @@ mod tests {
     }
 
     fn resolved(steps: Vec<Step>) -> Resolved {
-        let rec = Recipe { source: recipe::Source::Local, needs: None, isolation: Isolation::Machine, params: BTreeMap::new(), fresh: Vec::new(), steps };
+        let rec = Recipe { source: recipe::Source::Local, needs: None, isolation: Isolation::Machine, params: BTreeMap::new(), fresh: Vec::new(), artifacts: Vec::new(), steps };
         let step_labels = label_steps("app/bench/r", &rec.steps);
         Resolved {
             dir: PathBuf::from("."),
@@ -1870,6 +1922,7 @@ mod tests {
             isolation: Isolation::Machine,
             params: BTreeMap::new(),
             fresh: Vec::new(),
+            artifacts: Vec::new(),
             steps: vec![step(Lock::Shared, "cargo build")],
         };
         let same = Recipe {
@@ -1878,6 +1931,7 @@ mod tests {
             isolation: Isolation::Machine,
             params: BTreeMap::new(),
             fresh: Vec::new(),
+            artifacts: Vec::new(),
             steps: vec![step(Lock::Shared, "cargo build")],
         };
         let changed_command = Recipe {
@@ -1886,6 +1940,7 @@ mod tests {
             isolation: Isolation::Machine,
             params: BTreeMap::new(),
             fresh: Vec::new(),
+            artifacts: Vec::new(),
             steps: vec![step(Lock::Shared, "cargo build --release")],
         };
         let changed_lock = Recipe {
@@ -1894,6 +1949,7 @@ mod tests {
             isolation: Isolation::Machine,
             params: BTreeMap::new(),
             fresh: Vec::new(),
+            artifacts: Vec::new(),
             steps: vec![step(Lock::Exclusive, "cargo build")],
         };
         assert_eq!(a.fingerprint(), same.fingerprint());
@@ -2018,7 +2074,7 @@ mod tests {
             new_series: false,
             fresh: Vec::new(),
             state: Vec::new(),
-            steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3, job: None, built: None, log: None, arm: None, rep: None }],
+            steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3, job: None, built: None, log: None, arm: None, rep: None, artifacts: None }],
         };
         let line = run.to_json(42);
         assert!(!line.contains('\n'), "a record has to stay one line");

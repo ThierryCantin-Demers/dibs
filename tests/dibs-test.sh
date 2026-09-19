@@ -2118,6 +2118,35 @@ check "a tip with nothing its base lacks is refused" \
   "$(RC bench "$S/app-topk@origin/main..$new_main" ab 2>&1 | grep -c 'nothing to compare')" "1"
 check "and with runs against one tree only" "$(RC with "$S/app@main..local" servers -- true 2>&1 | grep -c 'takes one ref')" "1"
 
+# A recipe names the files it wants back. Each step keeps those it wrote itself in its job
+# directory, and the run fetches them, so nothing is left on the machine to be copied by hand.
+mkdir -p "$S/app/results" && echo stale > "$S/app/results/old.json"
+printf '%s\n' '' '[bench.art]' 'artifacts = ["results/*.json", "$CARGO_TARGET_DIR/crit/**/est.json"]' \
+  '  [[bench.art.step]]' '  lock = "shared"' '  run = "mkdir -p $CARGO_TARGET_DIR/crit/g && echo e > $CARGO_TARGET_DIR/crit/g/est.json"' \
+  '  [[bench.art.step]]' '  lock = "exclusive"' '  run = "echo measured > results/new.json"' \
+  '' '[bench.badart]' 'artifacts = ["results/a b.json"]' '  [[bench.badart.step]]' '  lock = "exclusive"' '  run = "true"' >> "$S/app/.dibs.toml"
+out=$(RC bench "$S/app@local" art --artifacts "$S/got" 2>&1); rc=$?
+check "the files a run wrote come back into the directory named, at their paths" \
+  "$rc $(cat "$S/got/results/new.json" 2>/dev/null) $(cat "$S/got/target/crit/g/est.json" 2>/dev/null)" "0 measured e"
+check "and none an earlier run left, even one sent with the tree" "$(ls "$S/got/results")" "new.json"
+check "saying where each job's are kept" "$(grep -c "^dibs: 1 file(s) from job [0-9-]*, kept in $HOME/.local/state/dibs/jobs/[0-9-]*/artifacts$" <<<"$out")" "2"
+rec=$(grep '"label":"app/bench/art"' "$HOME/.local/state/dibs/runs.jsonl" | tail -n 1)
+check "and the record counts what each step kept" "$(grep -o '"artifacts":1' <<<"$rec" | wc -l)" "2"
+job=$(grep -o '"artifacts":1,"job":"[0-9-]*"' <<<"$rec" | tail -n 1 | sed 's/.*"job":"//; s/"$//')
+rm -rf "$HOME/.local/state/dibs/jobs/$job"
+out=$(RC --fetch "$job" "$S/got2" 2>&1); rc=$?
+check "dibs --fetch brings a job's files back from the machine" "$rc $(cat "$S/got2/results/new.json" 2>/dev/null)" "0 measured"
+check "and keeps them for the next time" "$(ls "$HOME/.local/state/dibs/jobs/$job/artifacts/results")" "new.json"
+build_job=$(grep -o '"job":"[0-9-]*"' <<<"$rec" | head -n 1 | sed 's/.*"job":"//; s/"$//')
+out=$(RC bench "$S/app@local" gate 2>&1)
+gate_job=$(grep '"label":"app/bench/gate"' "$HOME/.local/state/dibs/runs.jsonl" | tail -n 1 | grep -o '"job":"[0-9-]*"' | tail -n 1 | sed 's/.*"job":"//; s/"$//')
+out=$(RC --fetch "$gate_job" 2>&1); rc=$?
+check "a job that kept nothing says so" "$rc $(grep -c 'kept no files' <<<"$out")" "3 1"
+RC bench "$S/app@local" art --reps 2 --artifacts "$S/got3" >/dev/null 2>&1
+check "reps come back apart, and the build's once" \
+  "$(cd "$S/got3" && find . -type f | sort | paste -sd' ')" "./r1/results/new.json ./r2/results/new.json ./target/crit/g/est.json"
+check "a pattern the shell would split is refused" "$(RC bench "$S/app@local" badart >/dev/null 2>&1; echo $?)" "2"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
