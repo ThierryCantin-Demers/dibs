@@ -297,6 +297,15 @@ recorded are grouped with their median and range, which is the noise a differenc
 and another governor or driver makes another group rather than a wider one. A label whose
 procedure changed under the same values is called out with the step that changed.
 
+A label's finished runs are also what every estimate is built from: how much longer a holder has,
+when a queued caller starts, whether a shared job is quick enough to go around a queued benchmark,
+and the default cap, which becomes twice the 90th percentile where a label's history runs longer
+than its mode's default. A recipe files each duration under the fingerprint of the procedure it
+ran as well as under the label, so one recipe measured on two backends, or a suite that gained a
+step, is not predicted from runs that did different work. With nothing recorded under that
+fingerprint the label answers, exactly as it did before, so a sharper key never leaves a job
+without an estimate.
+
 ## What got in the way
 
 `dibs --friction '<one line>'` records a problem: a flag that is missing, a message that misled, a

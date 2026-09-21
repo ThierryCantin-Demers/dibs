@@ -826,7 +826,14 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
     // build, which loses the cache isolation, the recorded revision and the lock split all at
     // once, and the two wrong numbers that produced were both in the part that got rewritten.
     let own_batch = batch::batch_id();
-    let env_of = |k: usize| batch::recipe_env(&own_batch, &calls, k);
+    // What the wrapper files this job's duration under, beside the label. The fingerprint is of
+    // the bound recipe, so it already tells one backend from another and a procedure from the
+    // one it replaced: two runs sharing it are the same work, and no others are.
+    let env_of = |k: usize| {
+        let mut env = batch::recipe_env(&own_batch, &calls, k);
+        env.push(("DIBS_FINGERPRINT", fingerprint.clone()));
+        env
+    };
     let mut announce = |text: &str| announce_prepared(text);
 
     // The pinned trees go first: the patch names where they landed.

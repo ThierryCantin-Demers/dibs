@@ -1087,6 +1087,21 @@ check "a label whose history runs long gets a cap from it, said when it starts" 
   "$($T --label long-suite 'true' 2>&1 >/dev/null | grep -c 'may hold the lock for 50m00s rather than 30m00s')" "1"
 check "unless the caller chose one" "$($T --max 60 --label long-suite 'true' 2>&1 >/dev/null | grep -c 'may hold')" "0"
 check "and a label that fits the default hears nothing" "$($T --label overran 'true' 2>&1 >/dev/null | grep -c 'may hold')" "0"
+# One recipe on two backends is one label and two costs, and a cap taken from the cheap one kills
+# the dear one at 124. The recipe layer names the procedure it is about to run, values and all.
+DIBS_FINGERPRINT=aaaa1111 $T --label two-shapes 'true' >/dev/null 2>&1
+check "a run files its duration under the procedure as well as the label" \
+  "$(awk -F'\t' '$2=="two-shapes" {print $5}' "$DIBS_HISTORY" | tail -1)" "aaaa1111"
+for i in 1 2 3; do printf 'shared\ttwo-shapes\t1500\tx\taaaa1111\n' >> "$DIBS_HISTORY"; done
+for i in 1 2 3; do printf 'shared\ttwo-shapes\t2\tx\tbbbb2222\n' >> "$DIBS_HISTORY"; done
+check "the cap comes from the same procedure" \
+  "$(DIBS_FINGERPRINT=aaaa1111 $T --label two-shapes 'true' 2>&1 >/dev/null | grep -c 'may hold the lock for 50m00s')" "1"
+check "and the cheap one is not given the dear one's cap" \
+  "$(DIBS_FINGERPRINT=bbbb2222 $T --label two-shapes 'true' 2>&1 >/dev/null | grep -c 'may hold')" "0"
+# A sharper key with a fallback can only help: a procedure that has never run is estimated from
+# the label exactly as it was before any of this existed.
+check "a procedure with no history of its own falls back to the label" \
+  "$(DIBS_FINGERPRINT=cccc3333 $T --label long-suite 'true' 2>&1 >/dev/null | grep -c 'may hold the lock for 50m00s')" "1"
 gone
 
 # setsid, because an orphan is the remains of a session that has gone: held from this shell

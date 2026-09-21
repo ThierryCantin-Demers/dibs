@@ -1848,6 +1848,7 @@ LEASE=${20:-0}; case "$LEASE" in ''|*[!0-9]*) LEASE=0 ;; esac
 PORT_NAME=(); PORT_NUM=()
 [ -n "${22:-}" ] && read -r -a PORT_NAME <<< "${22}"
 MAXFROM=${23:-given}
+FINGERPRINT=${24:-}
 # --with: a line saying how long a service may take to be ready, then name|readiness|command, the
 # last two in base64. Not tabs: read collapses a run of them, and an empty readiness is one.
 WITH_NAME=(); WITH_READY=(); WITH_CMD=(); WITH_PID=(); WITH_LOG=(); WITH_END=(); WITH_BAD=(); WITH_UP=0
@@ -2086,9 +2087,9 @@ holder_output() {   # pid; sets OUTPUT_FILE
 # at the same history it computed against last time.
 declare -A EST=()
 EST_SIG=""
-estimate() {   # mode label agent; sets EST_V EST_N EST_SCOPE, 1 when it has nothing to go on
-    local key="$1/$2/${3-}"
-    [ -n "${EST[$key]+set}" ] || EST[$key]=$(estimate_compute "$1" "$2" "${3-}")
+estimate() {   # mode label agent [fingerprint]; sets EST_V EST_N EST_SCOPE, 1 with nothing to go on
+    local key="$1/$2/${3-}/${4-}"
+    [ -n "${EST[$key]+set}" ] || EST[$key]=$(estimate_compute "$1" "$2" "${3-}" "${4-}")
     [ -n "${EST[$key]}" ] || return 1
     read -r EST_LO EST_V EST_HI EST_N EST_SCOPE <<< "${EST[$key]}"
 }
@@ -2113,10 +2114,20 @@ est_wide() { [ "$EST_N" -ge 4 ] && [ "$EST_HI" -gt $(( (EST_LO + 1) * 3 )) ]; }
 # one particular run files its duration where nothing will ever look it up again. What that
 # agent's jobs usually take is a poorer answer than what this job usually takes, and a far
 # better one than what every job on the machine usually takes.
-estimate_compute() {   # mode label agent
+estimate_compute() {   # mode label agent fingerprint
     [ -s "$HIST" ] || return 1
-    local vals scope=this
-    vals=$(awk -F'\t' -v m="$1" -v l="$2" '$1==m && $2==l {print $3}' "$HIST")
+    local vals="" scope=this
+    # The sharpest key first, where the caller knows it: the same procedure with the same values,
+    # which is what this job is about to do. One recipe measured on two backends is one label and
+    # two costs, and a median across both predicts neither; a step added to a suite is the same
+    # again. Both change the fingerprint, and neither should change the label.
+    #
+    # It falls back to the label the moment the narrow key is empty, so a procedure that has never
+    # run is estimated exactly as it was before this existed, and nothing splinters.
+    [ -n "${4-}" ] &&
+        vals=$(awk -F'\t' -v m="$1" -v l="$2" -v f="$4" '$1==m && $2==l && $5==f {print $3}' "$HIST")
+    [ -n "$vals" ] ||
+        vals=$(awk -F'\t' -v m="$1" -v l="$2" '$1==m && $2==l {print $3}' "$HIST")
     if [ -z "$vals" ] && [ -n "${3-}" ]; then
         vals=$(awk -F'\t' -v m="$1" -v a="$3" '$1==m && $4==a {print $3}' "$HIST")
         scope=agent
@@ -3838,14 +3849,16 @@ fi
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
 [ -n "$BATCH" ] && printf '%s\n' "$BATCH" > "$DIR/batch.$$"
 log_event arrived
-# A cap nobody chose follows the label's own history, so work that always runs long is not killed
-# at its mode's default, and the caller hears the cap now rather than as exit 124.
+# A cap nobody chose follows this job's own history, so work that always runs long is not killed
+# at its mode's default, and the caller hears the cap now rather than as exit 124. Its own, down
+# to the procedure where the recipe layer named one: a cap taken from a run of the same label that
+# does a quarter of the work is how a legitimate run is killed at 124.
 if [ "$MAXFROM" = default ] && [ "$HOLD" = 0 ] && [ "$MAXHOLD" -gt 0 ] && { [ "$MODE" = bench ] || [ "$MODE" = shared ]; } &&
-    estimate "$MODE" "$LABEL" "$AGENT" && [ "$EST_SCOPE" = this ] && [ "$EST_N" -ge 3 ] &&
+    estimate "$MODE" "$LABEL" "$AGENT" "$FINGERPRINT" && [ "$EST_SCOPE" = this ] && [ "$EST_N" -ge 3 ] &&
     [ $(( EST_HI * 2 )) -gt "$MAXHOLD" ]; then
     dur_ CAP_WAS "$MAXHOLD"; dur_ CAP_P90 "$EST_HI"
     MAXHOLD=$(( EST_HI * 2 )); dur_ CAP_NOW "$MAXHOLD"
-    echo "dibs: 90% of this label's $EST_N runs took up to $CAP_P90, so it may hold the lock for $CAP_NOW rather than $CAP_WAS. --max sets it." >&2
+    echo "dibs: 90% of $EST_N runs of this took up to $CAP_P90, so it may hold the lock for $CAP_NOW rather than $CAP_WAS. --max sets it." >&2
 fi
 # An end line even when the job is torn down, so the log never just stops mid-story.
 # Nothing can be written if it is SIGKILLed, which is itself worth knowing when reading it.
@@ -3924,7 +3937,7 @@ may_bypass() {
         [ $(( NOW - st )) -lt "${DIBS_PATIENCE:-60}" ] || return 1
     done
     [ "$queued" = 1 ] || return 1
-    estimate "$MODE" "$LABEL" "$AGENT" || return 1
+    estimate "$MODE" "$LABEL" "$AGENT" "$FINGERPRINT" || return 1
     [ "$EST_SCOPE" = this ] || return 1   # what its agent usually takes is not what it takes
     [ "$EST_V" -le "${DIBS_QUICK:-10}" ]
 }
@@ -4155,7 +4168,7 @@ fi
 # to do belong in it. A benchmark that failed in a second, or was killed for overrunning,
 # is not a typical duration: recording it teaches every later caller the wrong number.
 if [ "$STATUS" -eq 0 ]; then
-    printf '%s\t%s\t%s\t%s\n' "$MODE" "$LABEL" "$(( $(date +%s) - ACQUIRED ))" "$AGENT" >> "$HIST"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$MODE" "$LABEL" "$(( $(date +%s) - ACQUIRED ))" "$AGENT" "$FINGERPRINT" >> "$HIST"
     if [ "$(wc -l < "$HIST")" -gt 1000 ]; then
         tail -500 "$HIST" > "$HIST.tmp" && mv "$HIST.tmp" "$HIST"
     fi
@@ -4185,6 +4198,11 @@ case "$MODE" in
         [ -n "${DIBS_BATCH:-}" ] && BATCHB64=$(printf '%s\t%s\n%s\n' "$DIBS_BATCH" "${DIBS_BATCH_STEP:-}" \
             "${DIBS_BATCH_PLAN:-}" | head -n 200 | base64 | tr -d '\n') ;;
 esac
+# Set by the recipe layer: the fingerprint of the procedure it is about to run, with its values
+# already substituted in. The machine files the duration under it as well as under the label, so
+# what predicts this job is what this job actually does. Sanitised because it reaches an awk
+# field and a tab-separated file, and shortened because it is read by people in the history.
+FINGERPRINT=$(printf %s "${DIBS_FINGERPRINT:-}" | tr -cd 'A-Za-z0-9._-' | cut -c1-16)
 WITHB64=""
 if [ "${#WITH_NAME[@]}" -gt 0 ]; then
     WITHB64=$({ printf '%s\n' "$READY_WITHIN"
@@ -4411,11 +4429,11 @@ if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
         SCRIPT=$(mktemp "${TMPDIR:-/tmp}/dibs-hold-script.XXXXXX") || exit 70
         remote_script > "$SCRIPT"
         hold_here() {
-            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 0 "$WITHB64" "${PORT_NAME[*]}" "$MAXFROM" <&7 7<&-
+            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 0 "$WITHB64" "${PORT_NAME[*]}" "$MAXFROM" "$FINGERPRINT" <&7 7<&-
         }
         hold_run hold_here
     else
-        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 0 0 "$WITHB64" "${PORT_NAME[*]}" "$MAXFROM"
+        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 0 0 "$WITHB64" "${PORT_NAME[*]}" "$MAXFROM" "$FINGERPRINT"
     fi
     STATUS=$?
     [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
@@ -4491,7 +4509,7 @@ else
             -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
             "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
              exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
-             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE' '$WITHB64' '${PORT_NAME[*]}' '$MAXFROM'
+             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE' '$WITHB64' '${PORT_NAME[*]}' '$MAXFROM' '$FINGERPRINT'
 exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec <&7 6>&- 7<&-; relay) 6>&- 7<&-
     }
     if [ "$HOLD" = 1 ]; then hold_run to_machine; else to_machine; fi
