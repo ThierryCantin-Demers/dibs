@@ -255,6 +255,33 @@ every repo on the machine. A worktree goes after `DIBS_KEEP_DAYS` (14) unused. A
 goes after `DIBS_TARGET_KEEP_DAYS` (5): disk is what runs out first on a machine, and a
 compilation cache makes refilling one cheap.
 
+## What is filling the machine
+
+`dibs --gc` lists what is under the machine's scratch directory, each worktree and build cache
+with its size and when it was last used, and the job directories and leftover temporary files
+counted together. It then removes what is past the clock above, and says how much that was.
+
+`--dry-run` removes nothing and marks what would go. `--days <n>` treats anything unused for n
+days as past its clock, for worktrees and caches alike, which is the knob when a machine is full
+now. Anything under scratch that dibs did not put there is listed with its size and never
+touched: a directory somebody wrote by hand may be the only copy of what they are working on.
+
+It takes the shared lock, because deleting gigabytes is as much IO as writing them, so it queues
+behind a measurement rather than competing with one, and it is recorded like any other job.
+
+## A lock with nothing behind it
+
+The lock is held by the workload's own process, so it goes when that process does. A process that
+outlives the caller that started it, which is what a killed shell or a crashed ssh can leave,
+holds the lock with no holder record to show for it: `dibs status` calls that an orphan and names
+what it is, and a caller that arrives meanwhile is told it is queueing behind one rather than
+behind a job.
+
+`dibs --release` reclaims it. There is nothing to unlink, the lock being a descriptor, so it ends
+the process holding it, having read the lock twice a moment apart first: a client takes the lock
+for an instant to test it, and killing a passer-by would be worse than the wedge. It prints what
+it stopped, and `dibs --log` keeps it.
+
 ## What was measured
 
 Every recipe run appends a line to `~/.local/state/dibs/runs.jsonl`, or `$DIBS_RUNS`: the label, the
@@ -434,9 +461,10 @@ keys on vendor and model, which names both halves of a matched pair. Set togethe
 reorders last and wins, which sends both aliases of a pair to one card while each looks pinned.
 So `DRI_PRIME` always, and the model selector only where the model names one card.
 
-Both Vulkan variables reorder rather than filter, unlike the CUDA one. The default device is
-the one that was named, which is what almost all code asks for, but a job that enumerates and
-picks an index itself can still reach another card.
+Where the model names one card, the layer also hides the others, so a job that enumerates and
+takes an index of its own still lands on the card that was named: the guarantee the CUDA
+variable gives. A matched pair cannot have it, the selector having no way to name one of the
+two, so there `DRI_PRIME` reorders and the other card stays visible.
 
 **One label, one series.** A label is the key a measurement's history is filed under, so two
 runs of it are meant to be two samples of one thing. They are not if they ran on different

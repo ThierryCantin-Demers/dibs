@@ -584,6 +584,49 @@ check "DIBS_SCRATCH is what the job gets" \
 check "and DIBS_SCRATCH still works" \
   "$(DIBS_SCRATCH=$S/scr2 $T --label scr 'echo $DIBS_SCRATCH' 2>/dev/null | tail -1)" "$S/scr2"
 
+echo "sweeping the scratch"
+# A scratch of its own: a sweep is judged by what it removed, and a directory another case is
+# still using would make this a different test every run.
+G=$S/gcscratch; rm -rf "$G"
+mkdir -p "$G/ws/demo/stale" "$G/ws/demo/fresh" "$G/target/demo" "$G/target/demo-arm1" \
+         "$G/jobs/20260101-1" "$G/tmp/left" "$G/byhand"
+head -c 300000 /dev/urandom > "$G/target/demo-arm1/blob"
+touch -d '30 days ago' "$G/ws/demo/stale/.dibs-used" "$G/jobs/20260101-1" "$G/tmp/left"
+touch -d '9 days ago' "$G/target/demo-arm1/.dibs-used"
+touch "$G/ws/demo/fresh/.dibs-used" "$G/target/demo/.dibs-used"
+out=$(DIBS_SCRATCH=$G $T --gc --dry-run 2>&1)
+check "a dry run names what is past its clock" "$(grep -c 'ws/demo/stale .* would remove' <<<"$out")" "1"
+check "and removes nothing" "$([ -d "$G/ws/demo/stale" ] && echo there)" "there"
+# Five days for a cache against fourteen for a tree: a cache is refilled by a compiler.
+check "a cache is judged by its own shorter clock" "$(grep -c 'target/demo-arm1 .* would remove' <<<"$out")" "1"
+check "and one used today is left out of it" "$(grep -c 'target/demo  .* would remove' <<<"$out")" "0"
+check "what dibs did not put there is listed" "$(grep -c 'byhand' <<<"$out")" "1"
+out=$(DIBS_SCRATCH=$G $T --gc 2>&1)
+check "the sweep removes a stale worktree" "$([ -d "$G/ws/demo/stale" ] || echo gone)" "gone"
+check "and keeps one in use" "$([ -d "$G/ws/demo/fresh" ] && echo there)" "there"
+check "and removes a stale cache" "$([ -d "$G/target/demo-arm1" ] || echo gone)" "gone"
+check "and keeps the one built into today" "$([ -d "$G/target/demo" ] && echo there)" "there"
+# A directory somebody wrote by hand may be the only copy of what they are working on, and the
+# machine is shared: listing it is as far as this goes.
+check "and never what it did not make" "$([ -d "$G/byhand" ] && echo there)" "there"
+check "it says how much came back" "$(grep -c 'reclaimed ' <<<"$out")" "1"
+check "and it is a job like any other" "$(grep -c ' gc  dibs-gc ' <<<"$out")" "1"
+touch -d '3 days ago' "$G/ws/demo/fresh/.dibs-used"
+check "--days lowers every clock to it" \
+  "$(DIBS_SCRATCH=$G $T --gc --days 2 --dry-run 2>&1 | grep -c 'ws/demo/fresh .* would remove')" "1"
+$T --gc 'echo no' >/dev/null 2>&1
+check "--gc takes no command" "$?" "2"
+$T --dry-run 'echo no' >/dev/null 2>&1
+check "and --dry-run belongs to it" "$?" "2"
+$T --gc --days x >/dev/null 2>&1
+check "--days takes a number" "$?" "2"
+# Deleting gigabytes is as much IO as writing them, which is the whole reason it takes a lock.
+fifo gcb
+$T --bench --label gc-bench "$(hold gcb)" >/dev/null 2>&1 & GCB=$!; held
+DIBS_SCRATCH=$G $T --gc --wait 1 >/dev/null 2>&1
+check "a sweep waits for a benchmark rather than running beside it" "$?" "75"
+free gcb; wait $GCB 2>/dev/null; gone
+
 echo "inventory"
 export DIBS_MACHINES=$S/machines.toml
 cat > "$DIBS_MACHINES" <<'TOML'
@@ -1090,6 +1133,30 @@ check "and it says what is holding it" "$(grep -cE 'holding it:|reports holding 
 check "and names only it, not the dibs answering" \
   "$(awk '/holding it:/{f=1;next} /Stop it with/{f=0} f' <<<"$out" | grep -c .)" "1"
 check "back to idle once released" "$($T --status | grep -c 'dibs: idle')" "1"
+echo "an orphaned lock is reclaimed, not only named"
+fifo orh; fifo ori
+setsid bash -c 'exec 8>"$1/rw"; flock -x 8; printf "up\n" > "$2"; read -r _ < "$3"' \
+    _ "$DIBS_LOCK_DIR" "$S/f-orh" "$S/f-ori" &
+sync_ orh
+# The wait ahead of a caller is not a queue but a wedge: nothing releases a lock whose holder
+# has no session left to end, so the line it reads before settling in has to say so.
+out=$($T --wait 1 --label behind-orphan 'echo no' 2>&1); rc=$?
+check "a caller behind one is told what it is waiting for" "$(grep -c 'held by an orphan' <<<"$out")" "1"
+check "and gives up rather than queueing into it" "$rc" "75"
+out=$($T --release 2>&1)
+check "--release reclaims it" "$(grep -c 'Reclaiming it' <<<"$out")" "1"
+check "the machine is usable again" "$($T --status | grep -c 'dibs: idle')" "1"
+check "and what was reclaimed is in the log" "$(grep -c reclaimed "$DIBS_LOG")" "1"
+# The failure this must never have: a holder whose record was misread is a running command, and
+# ending it would spoil the measurement it is in the middle of.
+echo "a live holder is not an orphan"
+fifo rl
+$T --label release-safe "$(hold rl)" >/dev/null 2>&1 & RL=$!; held
+out=$($T --release 2>&1)
+check "--release leaves a recorded holder alone" "$(grep -c Reclaiming <<<"$out")" "0"
+check "and it is still holding" "$(holders)" "1"
+free rl; wait $RL 2>/dev/null; gone
+
 # A queued client prints the status itself, and it is holding the lock descriptor while it
 # does, so every child of the pipeline that asks inherits it and fuser reports them all.
 # None of them holds anything: two are already dead by the time they are looked up, and the
@@ -1232,6 +1299,14 @@ check "so both spellings key one series, not two" \
 check "and is used where the model names one card" \
   "$($T --on rig --device gpu:lone --label dev 'printf %s "$MESA_VK_DEVICE_SELECT"' 2>/dev/null | tail -1)" \
   "8086:b080"
+# There the layer can hide the other cards, which is what a job picking an index of its own
+# needs, and CUDA already had. An identical pair cannot: the selector cannot name one of two.
+check "and it hides the rest, where it can name one card" \
+  "$($T --on rig --device gpu:lone --label dev 'printf %s "${MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE:-unset}"' 2>/dev/null | tail -1)" \
+  "1"
+check "but never for one of a pair, where it would pick the wrong half" \
+  "$($T --on rig --device gpu:twin.03 --label dev 'printf %s "${MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE:-unset}"' 2>/dev/null | tail -1)" \
+  "unset"
 
 # --on records the machine's name; DIBS_HOST names it by its ssh string and leaves that name
 # empty, because a host string is not an inventory name. The alias was then looked up in the

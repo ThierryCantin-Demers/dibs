@@ -100,7 +100,16 @@
 #                                every machine, which also refuses the batch's later steps
 #   dibs --kill <pid>           stop a holder that is wedged (also takes no lock). Refuses a
 #                                job that is someone else's until you add --anyone.
-#   dibs --release              drop metadata left by processes that are already dead
+#   dibs --release              drop metadata left by processes that are already dead, and
+#                                reclaim the lock when an orphan holds it: a process that
+#                                outlived its caller holds it with no record to show for it,
+#                                and nothing on the machine can run until it goes
+#   dibs --gc                   what is filling the machine's scratch, and reclaim it:
+#                                worktrees and job logs nobody has used for 14 days, build
+#                                caches for 5. It takes the shared lock, since deleting
+#                                gigabytes is as much IO as writing them. --dry-run removes
+#                                nothing, --days <n> lowers every clock to n days, and what
+#                                dibs did not put under scratch is listed but never touched.
 #   dibs --log [n]              the last n arrivals and outcomes, killings included
 #
 # A shared job quick enough to be gone before a queued benchmark could have started anyway
@@ -652,6 +661,8 @@ FETCHTO=""
 OUT_N=${DIBS_OUT_LINES:-40}
 FORCE=0
 ANYONE=0
+DRY=0
+GC_DAYS=""
 LOG_N=40
 WATCH_N=5
 JSON=0
@@ -783,6 +794,9 @@ while [ $# -gt 0 ]; do
         -v|--verbose) VERBOSE=1; shift ;;
         --json)       JSON=1; shift ;;
         --release)    MODE=release; shift ;;
+        --gc)         MODE=gc; shift ;;
+        --dry-run)    DRY=1; shift ;;
+        --days)       GC_DAYS=${2:-}; shift 2 ;;
         --log)        MODE=log; shift
                       if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9]/}" ]; then
                           LOG_N=$1; shift
@@ -850,6 +864,7 @@ while [ $# -gt 0 ]; do
             case "$1" in
                 run)    [ "$MODE" = shared ] || [ "$MODE" = bench ] || break; shift ;;
                 status) [ "$MODE" = shared ] || break; MODE=status; shift ;;
+                gc)     [ "$MODE" = shared ] || break; MODE=gc; shift ;;
                 out)    [ "$MODE" = shared ] || break; MODE=out; shift
                         if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9-]/}" ]; then
                             OUTPID=$1; shift
@@ -1410,6 +1425,13 @@ case "$MODE" in
         [ -n "$LABEL" ] || LABEL=${DIBS_SYNC_LABEL:-sync}
         ;;
     status|release|abi|jobs) [ $# -eq 0 ] || { echo "$MODE takes no command" >&2; exit 2; } ;;
+    gc)
+        [ $# -eq 0 ] || { echo "--gc takes no command: it sweeps what is under the machine's scratch" >&2; exit 2; }
+        case "${GC_DAYS:-0}" in (*[!0-9]*) echo "--days takes a number of days" >&2; exit 2 ;; esac
+        # The listing is the whole output, and a digest would cut out the middle, which is
+        # where the space went.
+        STREAM=1
+        [ -n "$LABEL" ] || LABEL=dibs-gc ;;
     job|cancel)
         [ -n "$JOBID" ] || { echo "--$MODE needs an id from --jobs" >&2; exit 2; }
         [ $# -eq 0 ] || { echo "--$MODE takes only an id" >&2; exit 2; }
@@ -1428,6 +1450,11 @@ case "$MODE" in
         LABEL=$JOBID ;;
     *)              [ $# -gt 0 ] || { echo "no command given" >&2; usage 2; } ;;
 esac
+
+if [ "$MODE" != gc ]; then
+    [ "$DRY" = 1 ] && { echo "dibs: --dry-run belongs to --gc. A recipe run takes it after its verb." >&2; exit 2; }
+    [ -n "$GC_DAYS" ] && { echo "dibs: --days belongs to --gc." >&2; exit 2; }
+fi
 
 # The first read of a finished job's log keeps the whole of it here, and later reads are served
 # from that copy, so a log someone needed stays readable when its machine is asleep, gone or
@@ -1511,6 +1538,9 @@ if [ "$MODE" != rsh ]; then
     fi
 fi
 HOLD_CMD=("$@")
+# A gc call carries its knobs where a command would go, and the machine turns them into the
+# sweep: scratch is its directory, and the clocks are its own environment's to default.
+[ "$MODE" = gc ] && COMMAND="${GC_DAYS:-default} $DRY"
 [ -n "$LABEL" ] || LABEL=$(basename "$(pwd)")
 LABEL=${LABEL//[^A-Za-z0-9._-]/_}
 
@@ -2232,10 +2262,13 @@ queue_sorted() {
 
 # Openers are not holders. A lock descriptor is inherited, and this can run inside a client
 # that holds one, so the whole invocation asking the question shows up as openers: the client,
-# the script it ships, and the children of the pipeline that calls fuser. None of them is an
-# orphan, and a process group tells them apart, because an orphan is by definition the remains
-# of a session that has gone. Beyond that, a queued client has a record, and a pid that has
-# already exited holds nothing, which is the rule prune follows for the same reason.
+# the script it ships, and the children of the pipeline that calls fuser. Which of them holds
+# the lock is in the descriptor itself, since the kernel reports a file's locks under fdinfo:
+# /proc/locks cannot answer it, naming the flock helper that took the lock and then exited,
+# never the process whose descriptor keeps it. A process group is a second guard, because an
+# orphan is by definition the remains of a session that has gone. Beyond that, a queued client
+# has a record, and a pid that has already exited holds nothing, which is the rule prune
+# follows for the same reason.
 tree_below() {   # pid; its descendants, parents before children, the pid itself excluded
     ps -eo pid=,ppid= | awk -v root="$1" '
         {child[NR]=$1; parent[NR]=$2}
@@ -2400,17 +2433,220 @@ pgid_of() {   # pid; prints its process group, empty if it has gone
     set -- $st
     printf '%s\n' "$3"
 }
-lock_unaccounted() {   # sets ORPH to the pids, OPENERS to whether there were any at all
-    local p mine
+holds_lock() {   # pid inode; whether one of its descriptors is the one carrying the lock
+    local f k rest
+    for f in /proc/"$1"/fdinfo/*; do
+        # A descriptor closed between the glob and the read is gone, not an error worth
+        # printing: stderr goes first, or bash reports the open before the redirect takes.
+        while read -r k rest; do
+            [ "$k" = "lock:" ] || continue
+            case "$rest" in *":$2 "*) return 0 ;; esac
+        done 2>/dev/null < "$f"
+    done
+    return 1
+}
+
+lock_unaccounted() {   # sets ORPH to the pids, OPENERS to whether anything holds the lock
+    local p ino mine
     ORPH="" OPENERS=0
+    ino=$(stat -c %i "$DIR/rw" 2>/dev/null) || return 0
     mine=$(pgid_of $$)
     for p in $( { fuser "$DIR/rw" 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$'; } 8>&- 9>&- ); do
         [ -d "/proc/$p" ] || continue
+        holds_lock "$p" "$ino" || continue
         OPENERS=1
         [ -n "$mine" ] && [ "$(pgid_of "$p")" = "$mine" ] && continue
         [ -e "$DIR/holder.$p" ] || [ -e "$DIR/waiting.$p" ] && continue
         ORPH="$ORPH $p"
     done
+}
+
+# An orphan holds the lock through a descriptor, so there is nothing to unlink: it goes when
+# the process does, and freeing the machine means ending the process. Two readings a moment
+# apart, because a client tests the lock by taking it and lets go at once, and killing a
+# passer-by would be a worse failure than the wedge this repairs.
+reclaim() {
+    local p first="" kept=""
+    exec 7>"$DIR/rw"
+    if flock -n -x 7 2>/dev/null; then flock -u 7; exec 7>&-; return 0; fi
+    exec 7>&-
+    lock_unaccounted
+    [ -n "$ORPH" ] || return 0
+    first=$ORPH
+    sleep 0.2
+    lock_unaccounted
+    for p in $ORPH; do
+        case " $first " in *" $p "*) kept="$kept $p" ;; esac
+    done
+    [ -n "$kept" ] || return 0
+    echo "The lock was held by an orphan, which left no record. Reclaiming it:"
+    for p in $kept; do
+        ps -o pid=,etime=,user=,args= -p "$p" 2>/dev/null | sed 's/^ */  /' | cut -c1-100
+    done
+    CMD_ONE="reclaimed the lock from orphan pid$kept"
+    LABEL=reclaim
+    log_event reclaimed
+    reap $kept
+    for p in $kept; do
+        [ -d "/proc/$p" ] && echo "  pid $p survived; run it again, or kill -9 $p" >&2
+    done
+}
+
+# The sweep runs as the job, on the side that has the directory: what fills a machine is its
+# own worktrees, caches and logs, and the clocks are its environment's to set. Two of them,
+# since a build cache is refilled by a compiler and a worktree is not.
+gc_script() {   # days dry
+    cat <<GCTOP
+KEEP=\${DIBS_KEEP_DAYS:-14}
+TKEEP=\${DIBS_TARGET_KEEP_DAYS:-5}
+DRY=$2
+GCTOP
+    [ "$1" = default ] || printf 'KEEP=%s\nTKEEP=%s\n' "$1" "$1"
+    cat <<'GCEND'
+    S=${DIBS_SCRATCH:-$HOME/.cache/dibs}
+    [ -d "$S" ] || { echo "dibs: nothing at $S to sweep."; exit 0; }
+    now=$(date +%s)
+    total=0 freed=0 would=0
+    declare -A MB
+    # One du for a whole category rather than one per entry: the listing is the point of the
+    # command, and a fork per build cache is the part that made it feel expensive.
+    measure() {   # paths
+        local m d
+        [ $# -gt 0 ] || return 0
+        while read -r m d; do MB[$d]=$m; total=$(( total + m )); done < <(du -sk "$@" 2>/dev/null)
+    }
+    size() {   # kibibytes as the sizes a person acts on
+        local k=${1:-0}
+        if [ "$k" -ge 1048576 ]; then printf '%d.%dG' $(( k / 1048576 )) $(( k % 1048576 * 10 / 1048576 ))
+        elif [ "$k" -ge 1024 ]; then printf '%dM' $(( k / 1024 ))
+        else printf '%dK' "$k"; fi
+    }
+    ago() {
+        local d=$(( (now - ${1:-$now}) / 86400 ))
+        case "$d" in 0) printf today ;; 1) printf yesterday ;; *) printf '%s days ago' "$d" ;; esac
+    }
+    # Biggest first, since the question behind the command is where the disk went, and a tail
+    # nobody would act on is counted rather than printed. What is past its clock is always named,
+    # however small: it is about to go, or would.
+    ROWS=()
+    row() {   # kib past line
+        ROWS+=("$1"$'\t'"$2"$'\t'"$3")
+    }
+    rows_out() {   # heading, printed only if there is anything under it
+        local n=0 rest=0 restk=0 k past line
+        [ "${#ROWS[@]}" -gt 0 ] || return 0
+        echo "$1"
+        while IFS=$'\t' read -r k past line; do
+            if [ "$n" -lt 20 ] || [ "$past" = 1 ]; then printf '%s\n' "$line"; n=$(( n + 1 ))
+            else rest=$(( rest + 1 )); restk=$(( restk + k )); fi
+        done < <(printf '%s\n' "${ROWS[@]}" | sort -rn -k1,1)
+        [ "$rest" -gt 0 ] && printf '    and %s more holding %s, none of it past its clock\n' \
+            "$rest" "$(size "$restk")"
+        ROWS=()
+    }
+    used() {   # the marker dibs leaves when it prepares, else the directory itself
+        local t
+        t=$(stat -c %Y "$1/.dibs-used" 2>/dev/null) || t=$(stat -c %Y "$1" 2>/dev/null) || t=$now
+        printf %s "$t"
+    }
+    echo "dibs --gc on $(hostname -s), under $S"
+
+    # A worktree is git's to remove, and one git has lost is a plain directory. The clone it was
+    # added from keeps a registration either way, which is what the prune below is for.
+    tore_out=""
+    measure "$S"/ws/*/*
+    for d in "$S"/ws/*/*; do
+        [ -d "$d" ] || continue
+        # One with no marker predates the marker, so it is dated rather than deleted.
+        [ -e "$d/.dibs-used" ] || touch "$d/.dibs-used"
+        t=$(used "$d"); verdict=""
+        if [ $(( (now - t) / 86400 )) -gt "$KEEP" ]; then
+            if [ "$DRY" = 1 ]; then verdict="   would remove"; would=$(( would + ${MB[$d]:-0} ))
+            else
+                git -C "$d" worktree remove --force "$d" 2>/dev/null || rm -rf "$d"
+                verdict="   removed"; freed=$(( freed + ${MB[$d]:-0} ))
+                r=${d%/*}; tore_out="$tore_out ${r##*/}"
+            fi
+        fi
+        row "${MB[$d]:-0}" "$([ -n "$verdict" ] && echo 1 || echo 0)" \
+            "$(printf '    %-40s %7s  used %s%s' "${d#"$S"/}" "$(size "${MB[$d]:-0}")" "$(ago "$t")" "$verdict")"
+    done
+    rows_out "  worktrees, removed after ${KEEP} days unused"
+    for r in $(printf '%s\n' $tore_out | sort -u); do
+        git -C "$HOME/prog/$r" worktree prune 2>/dev/null
+    done
+
+    measure "$S"/target/*
+    for d in "$S"/target/*; do
+        [ -d "$d" ] || continue
+        [ -e "$d/.dibs-used" ] || touch "$d/.dibs-used"
+        t=$(used "$d"); verdict=""
+        if [ $(( (now - t) / 86400 )) -gt "$TKEEP" ]; then
+            if [ "$DRY" = 1 ]; then verdict="   would remove"; would=$(( would + ${MB[$d]:-0} ))
+            else rm -rf "$d"; verdict="   removed"; freed=$(( freed + ${MB[$d]:-0} )); fi
+        fi
+        row "${MB[$d]:-0}" "$([ -n "$verdict" ] && echo 1 || echo 0)" \
+            "$(printf '    %-40s %7s  used %s%s' "${d#"$S"/}" "$(size "${MB[$d]:-0}")" "$(ago "$t")" "$verdict")"
+    done
+    rows_out "  build caches, removed after ${TKEEP} days unused"
+
+    # Counted rather than listed, all of them being alike and there being hundreds: the one job
+    # anybody wants is found by its id with dibs out, never by reading this.
+    bulk() {   # clock label paths
+        local clock=$1 what=$2 d t a n=0 m=0 on=0 om=0 oldest=0
+        shift 2
+        measure "$@"
+        for d in "$@"; do
+            [ -e "$d" ] || continue
+            n=$(( n + 1 )); m=$(( m + ${MB[$d]:-0} ))
+            t=$(stat -c %Y "$d" 2>/dev/null) || continue
+            a=$(( (now - t) / 86400 ))
+            [ "$a" -gt "$oldest" ] && oldest=$a
+            [ "$a" -gt "$clock" ] || continue
+            on=$(( on + 1 )); om=$(( om + ${MB[$d]:-0} ))
+            if [ "$DRY" = 1 ]; then would=$(( would + ${MB[$d]:-0} ))
+            else rm -rf "$d" && freed=$(( freed + ${MB[$d]:-0} )); fi
+        done
+        [ "$n" -gt 0 ] || return 0
+        printf '  %s, removed after %s days: %s %s, %s, oldest %s days' \
+            "$what" "$clock" "$n" "$([ "$n" = 1 ] && echo entry || echo entries)" "$(size "$m")" "$oldest"
+        if [ "$on" = 0 ]; then printf ', none past its clock\n'
+        elif [ "$DRY" = 1 ]; then printf ', %s past it holding %s, which would go\n' "$on" "$(size "$om")"
+        else printf ', removed %s holding %s\n' "$on" "$(size "$om")"; fi
+    }
+    bulk "$KEEP" "job logs and artifacts" "$S"/jobs/*
+    bulk "$KEEP" "leftover temporary files" "$S"/tmp/* "$S"/out/*
+
+    # Nothing dibs made, so nothing dibs deletes: a directory somebody wrote by hand may be the
+    # only copy of what they are working on, and a machine is shared. Sized and dated, which is
+    # what makes it possible to go and ask them.
+    other=()
+    for d in "$S"/*; do
+        case "${d##*/}" in ws|target|jobs|tmp|out) continue ;; esac
+        [ -e "$d" ] || continue
+        other+=("$d")
+    done
+    if [ "${#other[@]}" -gt 0 ]; then
+        measure "${other[@]}"
+        for d in "${other[@]}"; do
+            row "${MB[$d]:-0}" 0 "$(printf '    %-40s %7s  written %s' "${d#"$S"/}" \
+                "$(size "${MB[$d]:-0}")" "$(ago "$(stat -c %Y "$d" 2>/dev/null || echo "$now")")")"
+        done
+        rows_out "  not dibs's, never removed by this"
+    fi
+
+    if [ "$DRY" = 1 ]; then
+        printf '  %s of %s is past its clock and would go. Run it without --dry-run.\n' "$(size "$would")" "$(size "$total")"
+    else
+        printf '  reclaimed %s of %s\n' "$(size "$freed")" "$(size "$total")"
+    fi
+    # A cache reflinked from a sibling shares its blocks, and du counts them in both, so the sum
+    # can come out larger than the disk. df is the truth about what is free.
+    fsk=$(df -k "$S" 2>/dev/null | awk 'NR == 2 {print $2}')
+    [ -n "$fsk" ] && [ "$total" -gt "$fsk" ] &&
+        echo "  more than the disk holds, because a cache reflinked from a sibling is counted in both"
+    df -h "$S" 2>/dev/null | awk 'NR == 2 {printf "  %s free of %s on %s\n", $4, $2, $6}'
+GCEND
 }
 
 # One document per line, so a reader can take it a line at a time. Built with printf and
@@ -2498,6 +2734,15 @@ queued_line() {
         [ "$pid" = "$$" ] && { eta=$QE_ETA; break; }
         ahead=$((ahead+1))
     done
+    # Nothing holds it on the record and yet it is taken: the wait ahead is not a queue but a
+    # wedge, and it lasts until the orphan goes. Said here because this is the line the caller
+    # reads before settling in for twenty minutes.
+    if [ "$n" = 0 ]; then
+        lock_unaccounted
+        [ -n "$ORPH" ] && {
+            printf 'dibs: the lock is held by an orphan (pid%s), which left no record, so nothing here can start. Reclaim it with: dibs --release\n' "$ORPH"
+            return 0; }
+    fi
     line="dibs: queued and has not started, behind ${first:-a job starting up}"
     [ "$n" -gt 1 ] && line="$line and $((n-1)) more"
     [ "$ahead" -gt 0 ] && line="$line, with $ahead queued first"
@@ -3419,7 +3664,7 @@ case "$MODE" in
         fi
         [ "$MODE" = kill ] && echo "If it survives that, run: dibs --kill $pid --force"
         exit 0 ;;
-    release) prune; echo "Pruned dead entries."; show
+    release) prune; echo "Pruned dead entries."; reclaim; show
              echo "A live holder is a running command. Stop it with: kill <pid>"; exit 0 ;;
 esac
 
@@ -3487,10 +3732,17 @@ if [ -n "$DEV_PCI" ]; then
             # Never both at once where the model names two cards. The layer sits above every
             # ICD and reorders after DRI_PRIME has, so it wins, and it picks whichever of the
             # pair it likes: setting the two together sent both halves of an identical pair to
-            # the same card while each looked pinned.
+            # the same card while each looked pinned, forced or not.
+            #
+            # Where the model is unique the layer can go further and hide the rest, which is
+            # the guarantee CUDA_VISIBLE_DEVICES gives: a job that enumerates and takes an
+            # index of its own then still lands on the card that was named, rather than only a
+            # job that asks for the default. An identical pair cannot have it, the selector
+            # having no way to name one of the two.
             export DRI_PRIME="pci-$(printf '%s' "$DEV_PCI" | tr ':.' '__')"
             [ -n "$DEV_CHIP" ] && [ "${DEV_TWINS:-1}" = 1 ] &&
-                export MESA_VK_DEVICE_SELECT="$DEV_CHIP" ;;
+                export MESA_VK_DEVICE_SELECT="$DEV_CHIP" \
+                       MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE=1 ;;
     esac
 fi
 
@@ -3543,6 +3795,15 @@ printf -v JOB '%(%Y%m%d%H%M%S)T-%s' "$START" "$$"
 CMD_ONE=$(printf %s "$CMD" | tr '\n\t' '  ' | cut -c1-200)
 [ "${#CMD}" -gt 200 ] && CMD_ONE="$CMD_ONE …"
 [ "$HOLD" = 1 ] && CMD_ONE="held for a command run elsewhere: $CMD_ONE"
+# Deleting gigabytes is as much IO as writing them, so a sweep queues behind a measurement
+# rather than competing with one, and the log carries what it reclaimed like any other job.
+if [ "$MODE" = gc ]; then
+    read -r GC_DAYS GC_DRY <<< "$CMD"
+    CMD=$(gc_script "${GC_DAYS:-default}" "${GC_DRY:-0}")
+    CMD_ONE="dibs --gc"
+    [ "${GC_DAYS:-default}" = default ] || CMD_ONE="$CMD_ONE --days $GC_DAYS"
+    [ "${GC_DRY:-0}" = 0 ] || CMD_ONE="$CMD_ONE --dry-run"
+fi
 # The fifo is also how --status tells a hold, which waits on purpose, from a job that is idle.
 [ "$HOLD" = 1 ] && ! mkfifo "$DIR/hold.$$" && { echo "dibs: could not make $DIR/hold.$$, so nothing is held." >&2; exit 71; }
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
@@ -3883,7 +4144,7 @@ CMDB64=$(printf %s "$COMMAND" | base64 | tr -d '\n')
 AGENTB64=""
 AGENTIDB64=""
 case "$MODE" in
-    shared|bench|peek|rsh|kill|kill-force)
+    shared|bench|peek|rsh|kill|kill-force|gc)
         AGENTB64=$(agent_name | base64 | tr -d '\n')
         AGENTIDB64=$(agent_id | base64 | tr -d '\n') ;;
 esac

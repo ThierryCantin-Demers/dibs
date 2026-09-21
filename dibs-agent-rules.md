@@ -54,6 +54,12 @@ spoiled without it.
 - Scratch on a machine goes under `$DIBS_SCRATCH`, never `/tmp`, which is a small tmpfs shared by
   everyone that one build tree fills for all of us. dibs exports it and points `TMPDIR` into it;
   put build trees, logs and binaries in a subdirectory you name.
+- **A full machine is read with `dibs --gc --dry-run`**, which says what is there, how big it is
+  and when each of it was last used, and deletes nothing. Report that; removing it is the
+  person's call, since a build cache you would reclaim may be the one someone is measuring
+  against tomorrow. Never `rm` anything on a machine yourself.
+- A lock held by an orphan, which `dibs status` says outright, is a wedge and not a queue: nothing
+  will start until it goes, however long you wait. `dibs --release` reclaims it.
 
 ### One submission, one wake
 
@@ -242,6 +248,7 @@ spoiled without it.
   - **69** unreachable: off, asleep, or its network needs a login. Do what does not need the
     machine, and do not retry in a loop.
   - **70** no room: the machine's scratch is full or over quota, so nothing can run there.
+    `dibs --gc --dry-run` says what is filling it, which is what to tell them.
   - **71** the lock directory cannot be written, so **nothing ran**; a sandboxed shell is the usual
     cause. Never point `DIBS_LOCK_DIR` somewhere writable: a lock nobody else uses excludes nobody.
 - **75** it was busy and you passed `--wait`.
