@@ -153,7 +153,7 @@ fn local_offset() -> i64 {
 }
 
 /// `YYYY-MM-DD HH:MM` for seconds since the epoch, by the days-to-civil conversion.
-fn date(t: i64) -> String {
+pub fn date(t: i64) -> String {
     let (days, secs) = (t.div_euclid(86400), t.rem_euclid(86400));
     let z = days + 719468;
     let era = z.div_euclid(146097);

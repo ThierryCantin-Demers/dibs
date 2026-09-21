@@ -297,6 +297,22 @@ recorded are grouped with their median and range, which is the noise a differenc
 and another governor or driver makes another group rather than a wider one. A label whose
 procedure changed under the same values is called out with the step that changed.
 
+## What got in the way
+
+`dibs --friction '<one line>'` records a problem: a flag that is missing, a message that misled, a
+bug, anything an agent had to work around. It is one line, in whoever hit it's own words, kept in
+`~/.local/state/dibs/friction.jsonl` or `$DIBS_FRICTION` with the session that reported it and the
+commit dibs was at.
+
+`dibs gaps` prints those beside the other thing that means the tool did not fit: the reasons
+recorded by `dibs raw --reason` and `dibs shell --reason`, which is what a run that needed no
+recipe says for itself. Both are grouped by what was said, and the count leads, because one report
+is a nuisance somebody worked around and the same one three times is the specification for a fix.
+
+It is deliberately not a bug tracker. A line here costs the agent nothing at the moment it is
+annoyed, which is the only moment it knows, and whether any of it becomes work is read later from
+what recurs.
+
 ## Batches
 
 `dibs batch <file|->` runs a list of dibs command lines as one submission and prints one summary

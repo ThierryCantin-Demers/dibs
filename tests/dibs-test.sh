@@ -1110,6 +1110,16 @@ rm -rf "$S/syncnest"
 check "a destination whose parents do not exist yet is created" \
   "$($T --sync -rlpgo "$S/syncsrc/" ":$S/syncnest/a/b/" >/dev/null 2>&1; cat "$S/syncnest/a/b/f.txt" 2>/dev/null)" "carried"
 
+# shift 2 with one argument left shifts nothing and returns, so the loop reads the same flag
+# again: a typo became a hang that the caller could not interrupt, on --kill of all things.
+echo "a flag whose value is missing is refused, not read for ever"
+for f in --kill --job --cancel --forget --prefer --repo; do
+    timeout 5 "$T" "$f" >/dev/null 2>&1
+    check "$f alone exits rather than hanging" "$?" "2"
+done
+timeout 5 "$T" --gc --days >/dev/null 2>&1
+check "--days alone exits rather than hanging" "$?" "2"
+
 echo "a lock directory it cannot write is refused rather than run around"
 RO=$S/ro-lock; rm -rf "$RO"; mkdir -p "$RO"; chmod a-w "$RO"
 out=$(DIBS_LOCK_DIR=$RO $T --label rocheck 'echo ran-anyway' 2>&1); rc=$?
@@ -2263,6 +2273,23 @@ check "a pin whose version the requirement refuses fails rather than building th
 check "pinning the repo being built is refused" "$(PRC build "$S/consumer@local" say --pin "$S/consumer@local" >/dev/null 2>&1; echo $?)" "2"
 check "and so is a pin its lockfile has no use for" \
   "$(PRC build "$S/consumer@local" say --pin "$S/app@local" 2>&1 | grep -c 'nothing')" "1"
+
+echo "reporting what got in the way"
+# The report people actually write starts with the flag they are complaining about, so the text
+# travels in the environment: every parser between the shell and the file would claim it.
+RC --friction '--stream does nothing inside a batch' >/dev/null 2>&1
+check "a report about a flag keeps the flag" \
+  "$(grep -c '"text":"--stream does nothing inside a batch"' "$HOME/.local/state/dibs/friction.jsonl")" "1"
+check "and names the session, so it can be asked what it was doing" \
+  "$(grep -c '"by":"' "$HOME/.local/state/dibs/friction.jsonl")" "1"
+RC friction 'the trailer says built=nothing but the recipe did build' >/dev/null 2>&1
+RC --friction '--stream does nothing inside a batch.' >/dev/null 2>&1
+out=$(RC gaps 2>&1)
+check "gaps prints it beside what did not fit a recipe" "$(grep -c 'What got in the way' <<<"$out")" "1"
+# One report is a nuisance somebody worked around; the same one three times specifies a fix.
+check "and counts the same thing said twice as twice" "$(grep -c '2x  --stream does nothing' <<<"$out")" "1"
+check "an empty report is refused rather than filed" \
+  "$(RC --friction '   ' >/dev/null 2>&1; echo $?)" "2"
 
 echo
 echo "passed $pass, failed $fail"

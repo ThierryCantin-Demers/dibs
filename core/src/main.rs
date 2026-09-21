@@ -13,6 +13,7 @@
 
 mod artifacts;
 mod batch;
+mod friction;
 mod gitdeps;
 mod pin;
 mod provenance;
@@ -41,7 +42,10 @@ dibs raw --reason <why> -- <cmd>      a command with nothing prepared
 dibs with <repo>[@<ref>] <service> -- <cmd>   run the command here while the repo's servers
                                       run on the machine under its lock, started once they
                                       are ready and stopped when the command ends
-dibs gaps                             what did not fit a recipe, and what recurs
+dibs gaps                             what did not fit a recipe, what got in the way, and
+                                      which of it recurs
+dibs --friction '<one line>'          what got in the way, in your own words, kept where the
+                                      next session reads it: dibs gaps
 dibs batch <file|->                   a list of dibs command lines as one submission, with one
                                       summary at the end. One line per step, optionally
                                       prefixed [name after=a,b cont]. A step without after=
@@ -247,7 +251,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     }
     let verb = positional.remove(0);
     let target = positional.first().cloned().unwrap_or_default();
-    if target.is_empty() && !matches!(verb.as_str(), "runs" | "gaps" | "raw") {
+    if target.is_empty() && !matches!(verb.as_str(), "runs" | "gaps" | "raw" | "friction") {
         return Err("needs a repo".into());
     }
     if verb == "with" && command.is_none() {
@@ -256,7 +260,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     // runs takes a recorded label, not repo@ref, and a label carries its device after an @.
     // Splitting there drops the half that tells two runs of one recipe on different cards apart.
     let (repo, reference) = match target.split_once('@') {
-        Some((r, rev)) if verb != "runs" && verb != "batch" => (r.to_string(), Some(rev.to_string())),
+        Some((r, rev)) if !matches!(verb.as_str(), "runs" | "batch" | "friction") => (r.to_string(), Some(rev.to_string())),
         _ => (target, None),
     };
     Ok(Args {
@@ -330,6 +334,21 @@ fn run() -> Result<ExitCode, String> {
 
     if args.verb == "gaps" {
         print!("{}", runs::gaps(&runs::load(&runs_path()?)?));
+        print!("{}", friction::report(&friction::load(&friction::path()?)));
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    // The text arrives in the environment rather than as an argument: a report about a flag
+    // starts with the flag, and parsing that as one is how the complaint becomes the complaint.
+    if args.verb == "friction" {
+        let env = |k: &str| std::env::var(k).unwrap_or_default();
+        let said = match env("DIBS_FRICTION_TEXT") {
+            t if !t.trim().is_empty() => t,
+            _ => args.repo.clone(),
+        };
+        let note = friction::note(&said, &env("DIBS_FRICTION_BY"), &env("DIBS_FRICTION_AT"), now_secs())?;
+        friction::append(&friction::path()?, &note)?;
+        println!("Recorded. dibs gaps prints it, with everything else that got in the way.");
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -1519,7 +1538,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         None
     })
     .ok_or_else(|| {
-        format!("not a verb: {} (build, test, bench, shell, raw, list, runs or gaps)", args.verb)
+        format!("not a verb: {} (build, test, bench, shell, raw, list, runs, gaps or friction)", args.verb)
     })?;
     let name = if shell_recipe.is_some() { Some("shell") } else { args.recipe.as_deref() }
         .ok_or_else(|| {

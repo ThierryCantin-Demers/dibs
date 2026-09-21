@@ -17,11 +17,10 @@ spoiled without it.
 - `dibs run --bench <command>` for anything timed: **exclusive**. Nothing else runs beside it,
   shared work included, because a compile beside a benchmark spoils it as surely as a second
   benchmark would.
-- **Split building from measuring.** The exclusive lock is for what is being measured and nothing
-  else. A `--bench` that begins with `cargo build`, or that is `cargo bench --no-run`, holds the
-  whole machine for minutes doing work that tolerates neighbours, and everyone queues behind a
-  compile. Build with `dibs run`, then measure with `dibs run --bench`, as two calls, never one
-  `--bench 'build && bench'`.
+- **Split building from measuring.** A `--bench` that begins with `cargo build`, or that is
+  `cargo bench --no-run`, holds the whole machine for minutes doing work that tolerates
+  neighbours. Build with `dibs run`, then measure with `dibs run --bench`, as two calls, never one
+  `--bench 'build && bench'`. A recipe that does it is refused before anything is sent.
 - `dibs --peek <command>` takes no lock and runs beside whatever is being measured, which pays for
   it. Only for what is effectively free: `ps`, `nvidia-smi`, `ls`, `tail`, `cat` of a small file,
   `git status`. Anything that compiles, downloads, copies, searches a tree or reads gigabytes
@@ -237,8 +236,15 @@ spoiled without it.
 - `dibs with <repo>[@<ref>] <service> -- <command>` where a repo declares its servers: the worktree
   is prepared, they are built under the shared lock and started on the machine, and the command
   runs on your side against them, on ports dibs picked. `dibs list <repo>` says which it defines.
-- **If no recipe fits, use `dibs run` and tell the person you work for.** A missing recipe that
-  keeps coming up is the specification for the next one.
+- **If no recipe fits, say so where it is counted**: `dibs raw --reason '<why>'`, or `--reason` on
+  `dibs shell`. `dibs gaps` prints those, and a reason that keeps coming up is the specification
+  for the next recipe.
+- **Anything else that got in the way goes in `dibs --friction '<one line>'`**: a flag that is
+  missing, a message that misled, a refusal you had to work around, a bug. One line, in your own
+  words, at the moment it annoyed you, which is the only moment you know. It is read back by
+  `dibs gaps`, with who reported it and what dibs was at, and the ones that recur are the ones
+  that get fixed. Nothing else records a problem that is not a missing recipe: a complaint made
+  only in your reply reaches one person once.
 
 ### When dibs says no
 

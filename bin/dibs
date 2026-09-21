@@ -110,6 +110,11 @@
 #                                gigabytes is as much IO as writing them. --dry-run removes
 #                                nothing, --days <n> lowers every clock to n days, and what
 #                                dibs did not put under scratch is listed but never touched.
+#   dibs --friction '<line>'    what got in the way: a flag that is missing, a message that
+#                                misled, a bug. One line, kept where the next session reads
+#                                it, and printed by dibs gaps beside the recipes nothing
+#                                fitted. Nothing else records a problem that is not a
+#                                missing recipe.
 #   dibs --log [n]              the last n arrivals and outcomes, killings included
 #
 # A shared job quick enough to be gone before a queued benchmark could have started anyway
@@ -709,6 +714,36 @@ agent_id() {
     fi
 }
 
+# Who is asking. Needed by the queue, by every mode that leaves a record, and by a report
+# of what got in the way.
+agent_name() {
+    # Said outright, which is the only thing that works for a runtime this does not know how
+    # to ask. Every other branch below is a way of guessing what this states.
+    [ -n "${DIBS_AGENT:-}" ] && { printf '%s' "${DIBS_AGENT:0:48}"; return; }
+    local id=${CLAUDE_CODE_HOST_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}} f t=""
+    if [ -z "$id" ]; then
+        # Codex publishes no session id, and its single shell process serves every one of its
+        # sessions at once, so nothing in the environment separates them. Its own index does
+        # carry thread names, and picking the most recently written one was measured against
+        # three live sessions whose last writes were fifty-five seconds apart: it would name
+        # the wrong one exactly when several agents are working, which is when a name is worth
+        # having. So the runtime is all this claims, and DIBS_AGENT is how a session says more.
+        [ "${CODEX_SHELL:-}" = 1 ] && { printf '%s' "a Codex session"; return; }
+        printf '%s' "${USER:-someone} at a shell"; return
+    fi
+    for f in "$HOME/.config/Claude/claude-code-sessions"/*/*/"$id.json"; do
+        [ -r "$f" ] || continue
+        if command -v jq >/dev/null 2>&1; then
+            t=$(jq -r '.title // empty' "$f" 2>/dev/null)
+        else
+            t=$(grep -o '"title":"[^"]*"' "$f" 2>/dev/null | head -1 | cut -d'"' -f4)
+        fi
+        [ -n "$t" ] && break
+    done
+    [ -n "$t" ] || t="session ${id#local_}"
+    printf '%s' "${t:0:48}"
+}
+
 # The recipe layer, installed beside this script rather than on PATH, so that dibs stays the
 # one command anyone types.
 dibs_core() {
@@ -747,6 +782,26 @@ version_notice() {   # [quiet]
         echo "  Flags and output you remember may be wrong now. Read dibs --help, and"
         echo "  $clone/dibs-agent-rules.md for how it is meant to be used."
     } >&2
+}
+
+# A flag whose value is missing must not be left where it is: `shift 2` with one argument
+# left shifts nothing and returns, so the loop reads the same flag again and never ends. That
+# is a hang the caller cannot interrupt, from a typo.
+need() {   # flag value
+    [ -n "$2" ] || { echo "dibs: $1 needs a value." >&2; exit 2; }
+}
+
+# One line about what got in the way, recorded where the next session will read it. The text
+# goes in the environment rather than in the arguments, because a report about a flag starts
+# with that flag and every parser between here and the file would take it as one.
+report_friction() {   # text
+    local core
+    need --friction "$1"
+    core=$(dibs_core) ||
+        { echo "dibs: --friction needs the recipe layer, which is not installed. Run install.sh from the clone." >&2; exit 2; }
+    export DIBS_FRICTION_TEXT=$1 DIBS_FRICTION_BY=$(agent_name) DIBS_FRICTION_AT=$(dibs_version)
+    version_notice
+    exec "$core" friction
 }
 
 ORIG_ARGS=("$@")
@@ -795,8 +850,9 @@ while [ $# -gt 0 ]; do
         --json)       JSON=1; shift ;;
         --release)    MODE=release; shift ;;
         --gc)         MODE=gc; shift ;;
+        --friction)   report_friction "${2:-}" ;;
         --dry-run)    DRY=1; shift ;;
-        --days)       GC_DAYS=${2:-}; shift 2 ;;
+        --days)       need --days "${2:-}"; GC_DAYS=$2; shift 2 ;;
         --log)        MODE=log; shift
                       if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9]/}" ]; then
                           LOG_N=$1; shift
@@ -804,16 +860,16 @@ while [ $# -gt 0 ]; do
         --on)         use_machine "${2:-}"; PINNED=1; HOSTFROM=--on; shift 2 ;;
         --any)        ROUTE=1; shift ;;
         --all)        ALL=1; shift ;;
-        --forget)     MODE=forget; FORGET=${2:-}; shift 2 ;;
-        --prefer)     PREFER=${2:-}; shift 2 ;;
-        --repo)       REPO=${2:-}; shift 2 ;;
+        --forget)     need --forget "${2:-}"; MODE=forget; FORGET=$2; shift 2 ;;
+        --prefer)     need --prefer "${2:-}"; PREFER=$2; shift 2 ;;
+        --repo)       need --repo "${2:-}"; REPO=$2; shift 2 ;;
         --pick)       MODE=pick; shift ;;
         --registry-sync) MODE=registry; shift ;;
         --update)     MODE=update; shift ;;
         --detach)     DETACH=1; shift ;;
         --jobs)       MODE=jobs; shift ;;
-        --job)        MODE=job; JOBID=${2:-}; shift 2 ;;
-        --cancel)     MODE=cancel; JOBID=${2:-}; shift 2 ;;
+        --job)        need --job "${2:-}"; MODE=job; JOBID=$2; shift 2 ;;
+        --cancel)     need --cancel "${2:-}"; MODE=cancel; JOBID=$2; shift 2 ;;
         --abi)        MODE=abi; shift ;;
         --which)      MODE=which; shift ;;
         --machines)   MODE=machines; shift ;;
@@ -844,7 +900,7 @@ while [ $# -gt 0 ]; do
                       if [ $# -gt 0 ] && [ -n "$1" ] && [ "${1#-}" = "$1" ]; then
                           FETCHTO=$1; shift
                       fi ;;
-        --kill)       MODE=kill; KILLPID=${2:-}; shift 2 ;;
+        --kill)       need --kill "${2:-}"; MODE=kill; KILLPID=$2; shift 2 ;;
         --force)      FORCE=1; shift ;;
         --anyone)     ANYONE=1; shift ;;
         --wait)       WAIT=$2; shift 2 ;;
@@ -865,6 +921,7 @@ while [ $# -gt 0 ]; do
                 run)    [ "$MODE" = shared ] || [ "$MODE" = bench ] || break; shift ;;
                 status) [ "$MODE" = shared ] || break; MODE=status; shift ;;
                 gc)     [ "$MODE" = shared ] || break; MODE=gc; shift ;;
+                friction) [ "$MODE" = shared ] || break; report_friction "${2:-}" ;;
                 out)    [ "$MODE" = shared ] || break; MODE=out; shift
                         if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9-]/}" ]; then
                             OUTPID=$1; shift
@@ -1544,34 +1601,6 @@ HOLD_CMD=("$@")
 [ -n "$LABEL" ] || LABEL=$(basename "$(pwd)")
 LABEL=${LABEL//[^A-Za-z0-9._-]/_}
 
-# Who is asking. Needed by the queue below and by every mode that leaves a record.
-agent_name() {
-    # Said outright, which is the only thing that works for a runtime this does not know how
-    # to ask. Every other branch below is a way of guessing what this states.
-    [ -n "${DIBS_AGENT:-}" ] && { printf '%s' "${DIBS_AGENT:0:48}"; return; }
-    local id=${CLAUDE_CODE_HOST_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}} f t=""
-    if [ -z "$id" ]; then
-        # Codex publishes no session id, and its single shell process serves every one of its
-        # sessions at once, so nothing in the environment separates them. Its own index does
-        # carry thread names, and picking the most recently written one was measured against
-        # three live sessions whose last writes were fifty-five seconds apart: it would name
-        # the wrong one exactly when several agents are working, which is when a name is worth
-        # having. So the runtime is all this claims, and DIBS_AGENT is how a session says more.
-        [ "${CODEX_SHELL:-}" = 1 ] && { printf '%s' "a Codex session"; return; }
-        printf '%s' "${USER:-someone} at a shell"; return
-    fi
-    for f in "$HOME/.config/Claude/claude-code-sessions"/*/*/"$id.json"; do
-        [ -r "$f" ] || continue
-        if command -v jq >/dev/null 2>&1; then
-            t=$(jq -r '.title // empty' "$f" 2>/dev/null)
-        else
-            t=$(grep -o '"title":"[^"]*"' "$f" 2>/dev/null | head -1 | cut -d'"' -f4)
-        fi
-        [ -n "$t" ] && break
-    done
-    [ -n "$t" ] || t="session ${id#local_}"
-    printf '%s' "${t:0:48}"
-}
 
 # A label is the key a measurement's history is filed under, so two runs of one label are
 # meant to be two samples of one thing. They are not, if they ran on different silicon: a
