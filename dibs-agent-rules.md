@@ -103,9 +103,12 @@ spoiled without it.
   will not see that until the whole batch is done. Two batches with a look in between is still far
   cheaper than one call per job. When the criterion can be stated up front, put it in the step and
   let a non-zero exit stop the rest.
-- `--on <machine>` binds one call. A step that forgets it goes to the default machine and comes
-  back unreachable, which reads as your machine going down. `export DIBS_ON=<machine>` before
-  `dibs batch` covers every step, including ones added later.
+- **There is no default machine.** `--on <machine>` names one for one call, and
+  `export DIBS_ON=<machine>` before `dibs batch` covers every step, including ones added later. A
+  call that names none is placed when it is shared work, on the machine holding the repo's build
+  cache or else the least busy, and refused otherwise: a benchmark, a peek, a sync, a kill of a
+  pid, a log or a gc names its machine. A batch with a benchmark step that names none is refused
+  before anything runs.
 
 ### Reading what came back
 
@@ -122,15 +125,16 @@ spoiled without it.
 - A job's stdout is a digest: its first and last 20 lines and a count of the rest. Do not pipe dibs
   through `tail`, `head` or `grep`, which replaces the exit status with the filter's, and do not
   redirect inside the command to keep a log. The whole output stays on the machine for two weeks:
-  `dibs out <job>` reads it during the run or after, `dibs out` lists the running jobs, and
+  `dibs --on <machine> out <job>` reads it during the run or after (the trailer prints that line
+  for you, and a log already read needs no machine), `dibs --on <machine> out` lists the running jobs, and
   `--stream` gives the whole stream inline when you need all of it. Reading a finished job's log
   keeps a copy on your side, which still answers once the machine is gone. Say which job ids a run
   produced, so a person can follow it.
 
 ### Status, labels and names
 
-- `dibs status` says who holds a machine, who is queued and roughly how long, and never blocks;
-  `dibs --status --all` covers every machine. For a step of a batch it says which step of how many,
+- `dibs status` says who holds each machine, who is queued and roughly how long, and never blocks;
+  `--on <machine>` narrows it to one. For a step of a batch it says which step of how many,
   what is still to come on that machine, and how long the batch has left there, queue included.
   **Asked how long your work will take, run it rather than guessing.** The later calls of a script
   are invisible to it.
@@ -153,15 +157,14 @@ spoiled without it.
 
 ### Machines
 
-- `dibs --machines` lists the known machines and the default. `dibs --check <host>` says whether a
+- `dibs --machines` lists the known machines. `dibs --check <host>` says whether a
   machine is usable and what is in it; run it before first use and read its warnings, not only its
   exit code, and `--write` records the machine.
 - A machine marked `measure = false` refuses `--bench`. That is not an obstacle to route around: its
   numbers would mean nothing. Send the benchmark to a machine that measures, or run it shared if it
   was never a measurement. Such a machine is still good for builds and tests through `--on`.
-- `dibs --any <command>`, or `DIBS_ROUTE=1`, sends a shared job to the least busy machine, and
-  `dibs --pick -v` shows the ranking. Benchmarks are never routed: their history keys on the
-  machine they ran on.
+- `dibs --pick -v` shows where a shared job naming no machine would be placed, and why.
+  Benchmarks are never placed: their history keys on the machine they ran on.
 - A repo's work sticks to the machine holding its build cache. Do not push a build onto an idle
   machine to finish sooner: the benchmark that needs what it built cannot follow it there, and
   would compile inside its own exclusive lock.

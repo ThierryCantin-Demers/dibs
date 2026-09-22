@@ -23,7 +23,7 @@ mod runs;
 mod worktree;
 
 use recipe::{Lock, Manifest, Verb};
-use resource::{Backend, Dibs, Request};
+use resource::{Backend, Destination, Dibs, Request};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -359,12 +359,9 @@ fn run() -> Result<ExitCode, String> {
             "raw needs --reason. It is recorded, and a reason that keeps recurring is what\n             specifies the next recipe. If this fits a recipe, use the recipe instead.",
         )?;
         let command = args.command.as_deref().ok_or("raw needs -- <command>")?;
-        // Always shared, and nothing is prepared for it, so there is no reason it should not
-        // be ranked like any other shared work.
+        // Always shared, and nothing is prepared for it, so it is placed like any other shared work.
         let mut backend = Dibs::default();
-        if std::env::var("DIBS_ROUTE").as_deref() == Ok("1") {
-            backend.machine = Dibs::routed(&backend.program, None, None);
-        }
+        backend.machine = place(&backend.program, None, None)?;
         let out = backend.run(
             &Request {
                 label: "raw",
@@ -783,7 +780,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
 
     // A recipe with any exclusive step is a measurement, and a measurement goes where it is
     // told: its history keys on the machine, and bindings that would make moving one safe do
-    // not exist yet. So only a wholly shared recipe, which is every build and test, is ranked.
+    // not exist yet. So only a wholly shared recipe, which is every build and test, is placed.
     //
     // Both paths then claim the repo's build cache for the machine they chose, and a
     // measurement's claim is the one that sticks because it is the one that could not move.
@@ -791,13 +788,19 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
     // inside its own exclusive lock, which is what splitting build from measure prevents. A
     // pinned call claims nothing: the machines report the caches it leaves.
     let mut backend = Dibs::default();
-    backend.machine = if std::env::var("DIBS_ROUTE").as_deref() == Ok("1")
-        && !pinned()
-        && rec.steps.iter().all(|s| s.lock == Lock::Shared)
-    {
-        Dibs::routed(&backend.program, affinity_get(&repo_name).as_deref(), Some(&repo_name))
+    backend.machine = if rec.steps.iter().all(|s| s.lock == Lock::Shared) {
+        place(&backend.program, affinity_get(&repo_name).as_deref(), Some(&repo_name))?
     } else {
-        Dibs::which(&backend.program)
+        match Dibs::which(&backend.program) {
+            Destination::Named(m) => Some(m),
+            Destination::Unnamed => None,
+            Destination::Unchosen => {
+                return Err(format!(
+                    "{name} measures, and a measurement names its machine: its series belongs to the machine it\n  \
+                     ran on. Give --on <machine> before the verb, or export DIBS_ON; dibs --machines lists them."
+                ))
+            }
+        }
     };
     if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
         affinity_set(&repo_name, m);
@@ -1297,7 +1300,15 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
     let command = args.command.as_deref().ok_or("with needs a command after --")?;
 
     let mut backend = Dibs::default();
-    backend.machine = Dibs::which(&backend.program);
+    backend.machine = match Dibs::which(&backend.program) {
+        Destination::Named(m) => Some(m),
+        Destination::Unnamed => None,
+        Destination::Unchosen => {
+            return Err("with starts servers on a machine this computer then drives, so it names one: --on <machine>\n  \
+                        before the verb, or export DIBS_ON. dibs --machines lists them."
+                .into())
+        }
+    };
     if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
         affinity_set(&repo_name, m);
     }
@@ -1845,6 +1856,22 @@ fn affinity_set(repo: &str, machine: &str) {
     let tmp = p.with_extension(std::process::id().to_string());
     if std::fs::write(&tmp, text).is_ok() {
         let _ = std::fs::rename(&tmp, &p);
+    }
+}
+
+/// Where shared work goes: the machine the wrapper would use when the call names one or there is
+/// only one to use, and otherwise a placement among them, by build cache and then by load.
+fn place(program: &str, prefer: Option<&str>, repo: Option<&str>) -> Result<Option<String>, String> {
+    match Dibs::which(program) {
+        Destination::Named(m) => Ok(Some(m)),
+        Destination::Unnamed => Ok(None),
+        Destination::Unchosen => Dibs::routed(program, prefer, repo).map(Some).ok_or_else(|| {
+            let why = repo.map(|r| format!(" --repo {r}")).unwrap_or_default();
+            format!(
+                "nowhere to send this: it names no machine, and none could be placed. dibs --pick -v{why}\n  \
+                 says why; --on <machine> before the verb names one."
+            )
+        }),
     }
 }
 

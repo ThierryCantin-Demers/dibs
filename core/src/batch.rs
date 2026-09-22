@@ -317,8 +317,10 @@ fn state_dir() -> PathBuf {
         .join("dibs/batch")
 }
 
-/// Where a step goes, asked of dibs itself so the answer is the one the step will reach.
-fn machine_of(step: &Step) -> String {
+/// Where a step goes, asked of dibs itself so the answer is the one the step will reach. None
+/// when it names no machine and several could take it, which a shared step is placed from and a
+/// measurement is refused over.
+fn machine_of(step: &Step) -> Option<String> {
     let mut cmd = Command::new("dibs");
     if let Some(on) = &step.on {
         cmd.args(["--on", on]);
@@ -327,9 +329,16 @@ fn machine_of(step: &Step) -> String {
     match cmd.output() {
         Ok(o) if o.status.success() => {
             let m = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if m.is_empty() { "?".into() } else { m }
+            Some(if m.is_empty() { "?".into() } else { m })
         }
-        _ => step.on.clone().unwrap_or_else(|| "?".into()),
+        Ok(o) if o.status.code() == Some(2) && step.on.is_none() => None,
+        _ => Some(step.on.clone().unwrap_or_else(|| "?".into())),
+    }
+}
+
+impl Step {
+    fn measures(&self) -> bool {
+        self.lock == "bench" || (self.lock == "recipe" && self.label.as_deref().is_some_and(|l| l.starts_with("bench ")))
     }
 }
 
@@ -426,7 +435,15 @@ pub struct Options {
 
 pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
     let steps = parse(text)?;
-    let machines: Vec<String> = steps.iter().map(machine_of).collect();
+    let named: Vec<Option<String>> = steps.iter().map(machine_of).collect();
+    if let Some((s, _)) = steps.iter().zip(&named).find(|(s, m)| m.is_none() && s.measures()) {
+        return Err(format!(
+            "step {} measures and names no machine, and a measurement is never placed for you. Give it\n  \
+             --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step.",
+            s.name
+        ));
+    }
+    let machines: Vec<String> = named.into_iter().map(|m| m.unwrap_or_else(|| "?".into())).collect();
     let id = batch_id();
     let plan = plan(&steps, &machines);
     if opts.dry_run {

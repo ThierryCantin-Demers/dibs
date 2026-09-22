@@ -42,14 +42,16 @@ intended setup, since it lets one build cache serve everyone.
 `install.sh` links `dibs` into `~/.local/bin`, so pulling the clone updates it. With cargo
 installed it also builds the recipe layer and `dibstop`; without cargo you still get the lock.
 
-Point it at a machine and record what is in it:
+Record each machine, and say where your checkouts live:
 
-    export DIBS_HOST=you@machine        # fish: set -Ux DIBS_HOST you@machine
-    export DIBS_ROOT=$HOME/prog         # where your checkouts live
     dibs --check you@machine --write    # probes it, writes ~/.config/dibs/machines.toml
+    export DIBS_ROOT=$HOME/prog         # fish: set -Ux DIBS_ROOT $HOME/prog
 
-Read what `--check` prints, not only its exit code. Recipes build from a clone at `~/prog/<repo>`
-on the machine, so clone each repo you want to build there once. Then watch the lock work:
+Read what `--check` prints, not only its exit code. With one machine recorded, every call goes
+there. With several there is no default: a call names its machine with `--on`, shared work that
+names none is placed on one, and a benchmark that names none is refused. Recipes build from a
+clone at `~/prog/<repo>` on the machine, so clone each repo you want to build there once. Then
+watch the lock work:
 
     dibs status
     bash dibs-onboard.sh                # takes the lock, queues behind itself, explains

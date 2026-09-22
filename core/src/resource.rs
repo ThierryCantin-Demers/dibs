@@ -90,7 +90,31 @@ impl Default for Dibs {
     }
 }
 
+/// Where a call goes before anything is placed.
+pub enum Destination {
+    Named(String),
+    /// Somewhere with no inventory name: a DIBS_HOST outside the inventory, or this computer.
+    Unnamed,
+    /// Nowhere until a machine is named, because several could take it.
+    Unchosen,
+}
+
 impl Dibs {
+    /// The machine this would go to with no ranking at all. Naming it matters even when there
+    /// was no choice to make: a benchmark cannot be moved, so it is the one that decides where
+    /// its repo's build cache belongs, and the record should say where it ran.
+    pub fn which(program: &str) -> Destination {
+        let Ok(out) = Command::new(program).arg("--which").stdin(Stdio::null()).output() else {
+            return Destination::Unnamed;
+        };
+        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        match out.status.code() {
+            Some(0) if !name.is_empty() => Destination::Named(name),
+            Some(2) => Destination::Unchosen,
+            _ => Destination::Unnamed,
+        }
+    }
+
     /// Asks the wrapper to rank the inventory. Only for recipes that are shared throughout: a
     /// measurement's history keys on the machine it ran on, so moving one silently merges two
     /// distributions under a single label.
@@ -98,18 +122,6 @@ impl Dibs {
     /// `prefer` names the machine already holding this repo's build cache. Without it a build
     /// can land on one machine and the benchmark that needs what it built on another, which
     /// leaves the benchmark to compile inside its own exclusive lock.
-    /// The machine this would go to with no ranking at all. Naming it matters even when there
-    /// was no choice to make: a benchmark cannot be moved, so it is the one that decides where
-    /// its repo's build cache belongs, and the record should say where it ran.
-    pub fn which(program: &str) -> Option<String> {
-        let out = Command::new(program).arg("--which").stdin(Stdio::null()).output().ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        (!name.is_empty()).then_some(name)
-    }
-
     pub fn routed(program: &str, prefer: Option<&str>, repo: Option<&str>) -> Option<String> {
         let mut cmd = Command::new(program);
         cmd.arg("--pick");

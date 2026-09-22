@@ -434,7 +434,7 @@ until [ -s "$S/f-Rready" ] 2>/dev/null; do :; done
 # Matched on the line the status adds, not on the path: the path also appears in the command
 # line, which is the job's own text and not evidence of anything.
 check "the status names the file" "$($T --status | grep -c 'writing .*redirected.log')" "1"
-check "and how to read it" "$($T --status | grep -c 'dibs --out')" "1"
+check "and how to read it, on which machine" "$($T --status | grep -c "dibs --on $(hostname -s) --out")" "1"
 check "the json carries it too" "$($T --status --json | grep -c '"output":')" "1"
 free R; wait 2>/dev/null
 
@@ -443,7 +443,7 @@ free R; wait 2>/dev/null
 fifo T2
 $T --label no-output "printf x > $S/f-T2ready; $(hold T2)" >/dev/null 2>&1 &
 until [ -s "$S/f-T2ready" ] 2>/dev/null; do :; done
-check "a job writing to no file says nothing" "$($T --status | grep -c 'dibs --out')" "0"
+check "a job writing to no file says nothing" "$($T --status | grep -c -- '--out')" "0"
 free T2; wait 2>/dev/null
 
 echo "checking a machine before trusting it"
@@ -560,8 +560,8 @@ check "but not when fetching" "$($T --sync -a :~/b ./a 2>&1 | grep -c 'preservin
 check "nor when times are turned off" "$($T --sync -a --no-times --checksum ./a :~/b 2>&1 | grep -c 'preserving mtimes')" "0"
 # The transport taking the caller's label needs a real channel and is in the live suite.
 check "--which says why it has nothing" \
-  "$(DIBS_MACHINES=$S/no-such-inventory DIBS_HOST= $T --which 2>&1; echo "exit=$?")" "dibs: no machine: no --on, no DIBS_ON, no DIBS_HOST, and no default in $S/no-such-inventory.
-exit=1"
+  "$(DIBS_MACHINES=$S/no-such-inventory DIBS_HOST= DIBS_LOCAL=0 $T --which 2>&1; echo "exit=$?")" "dibs: no machine: no --on, no DIBS_ON, no DIBS_HOST, and no inventory at $S/no-such-inventory.
+exit=2"
 
 echo "unreachable machine"
 out=$(DIBS_LOCAL=0 DIBS_HOSTNAME=nowhere DIBS_HOST=nowhere.invalid \
@@ -650,24 +650,27 @@ hostname = "somewhere-else"
 measure  = false
 TOML
 check "lists every machine" "$($T --machines | wc -l)" "2"
-check "marks the default" "$($T --machines | awk '$1 == "*" {print $2}')" "desk"
+check "marks no machine as a default" "$($T --machines 2>/dev/null | grep -c '^ \*')" "0"
+check "and says a default line is no longer read" "$($T --machines 2>&1 >/dev/null | grep -c 'no longer read')" "1"
 check "says which one refuses measurements" "$($T --machines | grep -c 'no measurements')" "1"
 # A device table's own keys must not answer for the machine's, or a card's name becomes the
 # machine's ssh alias.
 check "a device key does not answer for the machine" \
   "$(DIBS_LOCAL=0 DIBS_HOST= DIBS_CONNECT_TIMEOUT=2 $T --on desk --status 2>&1 |
      grep -c "cannot reach 'dibs@desk'")" "1"
-# Naming the machine is not the same as saying why it was chosen. A step in a script that
-# forgot --on reaches the default and reports it down, and the report is true about a machine
-# nobody meant to use, which is the reading that sends someone to the wrong box.
-check "a caller who named the machine is not lectured about routing" \
+check "a caller who named the machine is not lectured about naming one" \
   "$(DIBS_LOCAL=0 DIBS_HOST= DIBS_CONNECT_TIMEOUT=2 $T --on desk --status 2>&1 |
      grep -c 'Nothing on this call named a machine')" "0"
-out=$(DIBS_LOCAL=0 DIBS_HOST= DIBS_CONNECT_TIMEOUT=2 $T --status 2>&1)
-check "an unnamed one is told it went to the default" \
-  "$(grep -c 'went to the inventory default' <<<"$out")" "1"
-check "and told how to cover a whole script at once" \
-  "$(grep -c 'export DIBS_ON' <<<"$out")" "1"
+# A forgotten --on landing on a default starts a series nobody meant. With several machines a
+# benchmark that names none is refused, saying which there are and how to cover a whole script.
+out=$(DIBS_LOCAL=0 DIBS_HOST= $T --bench --label nameless true 2>&1); rc=$?
+check "a benchmark that names no machine is refused" "$rc" "2"
+check "and it names the machines" "$(grep -c 'Name one of: desk, lap' <<<"$out")" "1"
+check "and says a measurement is never placed" "$(grep -c 'never placed for you' <<<"$out")" "1"
+check "and how to cover a whole script at once" "$(grep -c 'export DIBS_ON' <<<"$out")" "1"
+check "a peek that names none is refused too" "$(DIBS_LOCAL=0 DIBS_HOST= $T --peek true >/dev/null 2>&1; echo $?)" "2"
+check "a status that names none shows every machine" \
+  "$(DIBS_LOCAL=0 DIBS_HOST= DIBS_POLL_TIMEOUT=3 DIBS_CONNECT_TIMEOUT=1 $T --status 2>&1 | grep -cE '^(desk|lap)$')" "2"
 # A CPU has no PCI address to be found by, and being refused for that left a CPU benchmark
 # unable to name what it ran on while being told it had named none of the GPUs, which is advice
 # about a run that was never going to use one.
@@ -687,16 +690,12 @@ check "and the known ones are named" "$(grep -c 'desk' <<<"$out")" "1"
 out=$(DIBS_HOST= $T --on lap --bench true 2>&1); rc=$?
 check "a benchmark is refused where measure is false" "$rc" "2"
 check "and it says why" "$(grep -c 'measure = false' <<<"$out")" "1"
-# Writing an inventory must not move work that was already going somewhere.
-check "DIBS_HOST outranks the file's default" \
-  "$(DIBS_HOST=pinned.invalid DIBS_HOSTNAME=pinned DIBS_CONNECT_TIMEOUT=2 DIBS_LOCAL=0 \
-     $T --status 2>&1 | grep -c 'desk')" "0"
+# DIBS_HOST names the machine of a setup with at most one. Among several it would be a default.
+check "DIBS_HOST does not choose among several" \
+  "$(DIBS_HOST=pinned.invalid DIBS_LOCAL=0 $T --bench true 2>&1 | grep -c 'DIBS_HOST=pinned.invalid does not choose')" "1"
 
-# The default is where an unqualified benchmark goes. Recording a laptop must not take it
-# from a machine that can actually measure, or every --bench starts failing.
+# Recording a machine writes its entry and nothing else.
 cat > "$DIBS_MACHINES" <<'TOML'
-default = "desk"
-
 [machine.desk]
 ssh      = "dibs@desk"
 hostname = "desk"
@@ -713,8 +712,7 @@ check "a known name is resolved, not dialled literally" \
   "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --check desk 2>&1 | grep -c "cannot reach 'dibs@desk'")" "1"
 check "and a name nobody has recorded is still taken literally, so it can onboard one" \
   "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --check brand-new-host 2>&1 | grep -c "cannot reach 'brand-new-host'")" "1"
-check "recording a machine does not steal the default" \
-  "$(awk -F'"' '/^default/ {print $2; exit}' "$DIBS_MACHINES")" "desk"
+check "recording a machine writes no default" "$(grep -c '^default' "$DIBS_MACHINES")" "0"
 check "and the new machine is there too" "$($T --machines | wc -l)" "2"
 # An integrated GPU is on the root complex with no link of its own, and reports width 0
 # against a max of 255. Answering for it divided by zero and took the whole entry with it,
@@ -725,8 +723,6 @@ check "a device with no pcie link of its own does not break the write" \
 # Renaming a machine leaves an entry that can never answer, and until there was a command for
 # it the only fix was editing the file by hand.
 cat > "$DIBS_MACHINES" <<'TOML'
-default = "old"
-
 [machine.old]
 ssh      = "old"
 hostname = "old"
@@ -744,15 +740,13 @@ out=$($T --forget old 2>&1); rc=$?
 check "forgetting a machine succeeds" "$rc" "0"
 check "and it is gone" "$($T --machines | wc -l)" "1"
 check "its device table goes with it" "$(grep -c 'parent is going away' "$DIBS_MACHINES")" "0"
-# A default naming a machine that is gone sends every unpinned call nowhere.
-check "the default is repointed" "$(awk -F'"' '/^default/ {print $2; exit}' "$DIBS_MACHINES")" "new"
+# One machine left is no choice at all, so it is used without being named.
+check "the only machine is used without naming it" "$(DIBS_LOCAL=0 DIBS_HOST= $T --which)" "new"
 check "forgetting one that is not there is refused" "$($T --forget nope >/dev/null 2>&1; echo $?)" "2"
 
 echo "shared registry"
 export DIBS_REGISTRY_CACHE=$S/registry.toml
 cat > "$DIBS_REGISTRY_CACHE" <<'TOML'
-default = "team-box"
-
 [machine.team-box]
 ssh      = "dibs@team-box"
 hostname = "team-box"
@@ -780,22 +774,15 @@ check "your own machines are marked as yours" "$($T --machines | grep -c '\[your
 check "a personal entry overrides the shared one whole" \
   "$(DIBS_LOCAL=0 DIBS_HOST= DIBS_CONNECT_TIMEOUT=2 $T --on contested --status 2>&1 |
      grep -c 'dibs@from-mine')" "1"
-check "the shared default is used when you have none" \
-  "$($T --machines | awk '$1 == "*" {print $2}')" "team-box"
 # The shared list is not yours to edit, and saying so beats appearing to succeed.
 out=$($T --forget team-box 2>&1); rc=$?
 check "a shared machine cannot be forgotten locally" "$rc" "2"
 check "and it says why" "$(grep -c 'shared registry' <<<"$out")" "1"
 check "your own can" "$($T --forget mine >/dev/null 2>&1; echo $?)" "0"
-# A personal default has to beat the shared one, or where your work goes needs everyone to agree.
-printf 'default = "mine2"\n\n[machine.mine2]\nssh = "dibs@mine2"\nhostname = "mine2"\n' > "$DIBS_MACHINES"
-check "a personal default wins" "$($T --machines | awk '$1 == "*" {print $2}')" "mine2"
 unset DIBS_REGISTRY_CACHE
 
 echo "routing"
 cat > "$DIBS_MACHINES" <<TOML
-default = "one"
-
 [machine.one]
 ssh      = "one"
 hostname = "$(hostname -s)"
@@ -832,12 +819,12 @@ check "and it says that is why" \
   "$(DIBS_SELF_PENALTY=10000 $T --pick -v --prefer one 2>&1 >/dev/null | grep -c 'holds the cache')" "1"
 check "a preferred machine that cannot answer is not used" \
   "$(DIBS_SELF_PENALTY=10000 $T --pick --prefer nowhere 2>/dev/null)" "two"
-check "--which names the machine without ranking" "$($T --which)" "one"
+check "--which names nothing when several could be meant" "$(DIBS_LOCAL=0 $T --which 2>/dev/null; echo "exit=$?")" "exit=2"
 # The onboarding script sets DIBS_MACHINE to the host it is introducing you to. If dibs read
 # that as an inventory entry, a new user's very first command would fail with an error about
 # an inventory they do not have.
 check "a name meant for the onboarding script is not read as a pin" \
-  "$(DIBS_MACHINE=some-host-they-were-given $T --which)" "one"
+  "$(DIBS_MACHINE=some-host-they-were-given DIBS_LOCAL=0 $T --which 2>&1 | grep -c 'names none')" "1"
 check "DIBS_ON pins to an inventory machine" "$(DIBS_ON=two $T --which)" "two"
 # Both fake machines here are this one, so they always report the same caches and the case
 # that matters, a busy machine with the cache beating an idle one without it, cannot be built
@@ -876,8 +863,6 @@ check "--repo picks a machine that reports it" \
 # the ranking entirely and would not be there to lose it.
 mkdir -p "$S/fakehome/prog/never-built/.git"
 cat > "$DIBS_MACHINES" <<TOML
-default = "measures"
-
 [machine.measures]
 ssh      = "measures"
 hostname = "$(hostname -s)"
@@ -889,12 +874,9 @@ measure  = false
 TOML
 check "an uncached repo goes to a machine that can measure it" \
   "$(HOME=$S/fakehome DIBS_SELF_PENALTY=100 $T --pick --repo never-built 2>/dev/null)" "measures"
-# An inventory whose default cannot be reached, next to one that can. Without routing the job
-# goes where it was told and fails; with it, the machine that answered is chosen. This is also
-# the only assertion that a machine which did not answer is never picked.
+# A machine that cannot be reached, next to one that can. This is also the only assertion that a
+# machine which did not answer is never picked.
 cat > "$DIBS_MACHINES" <<TOML
-default = "gone"
-
 [machine.here]
 ssh      = "here"
 hostname = "$(hostname -s)"
@@ -904,19 +886,17 @@ ssh      = "nowhere.invalid"
 hostname = "gone"
 TOML
 out=$(DIBS_HOST= DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --label r true 2>&1); rc=$?
-check "without routing a job goes where it was told" "$rc" "69"
-out=$(DIBS_HOST= DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --any --label r true 2>&1); rc=$?
-check "with routing it goes to the machine that answered" "$rc" "0"
+check "a shared job that names no machine is placed on the one that answered" "$rc" "0"
 # A machine dropping out of the ranking silently degrades this to "whichever one answered",
 # which looks exactly like a working ranking.
 check "a machine that did not answer says so" \
   "$(DIBS_HOST= DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --pick -v 2>&1 >/dev/null |
      grep -c 'gone .*no answer')" "1"
 # A recipe prepares a worktree on one machine and then runs against it, so every step of a run
-# has to land on the same machine. It picks once and pins; the wrapper must not pick again.
-out=$(DIBS_HOST= DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 DIBS_FROM_RUN=1 DIBS_ROUTE=1 \
-      $T --label r true 2>&1); rc=$?
-check "a step of a run is never routed on its own" "$rc" "69"
+# has to land on the same machine. It places once and pins; a step arriving without a machine is
+# refused rather than placed on its own.
+out=$(DIBS_HOST= DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 DIBS_FROM_RUN=1 $T --label r true 2>&1); rc=$?
+check "a step of a run is never placed on its own" "$rc" "2"
 
 echo "jobs that outlive their caller"
 export DIBS_QUEUE=box@elsewhere DIBS_QUEUE_LOCAL=1 DIBS_JOBS_DIR=$S/jobs
@@ -1000,7 +980,7 @@ done
 # Its counterpart: a detached job is not ranked across the pool, because --jobs reads one
 # machine and a scattered job is one nobody can find again.
 check "a detached job is not routed away from its queue" \
-  "$(DIBS_ROUTE=1 DIBS_HOST= $T --detach --label routed true | grep -cE '^[0-9]{8}-')" "1"
+  "$(DIBS_HOST= $T --detach --label routed true | grep -cE '^[0-9]{8}-')" "1"
 unset DIBS_QUEUE DIBS_QUEUE_LOCAL DIBS_JOBS_DIR
 
 # A compilation cache runs the compiler inside its own daemon, which is parented to init, so
@@ -1212,8 +1192,6 @@ check "and is not added twice" "$out" "0"
 
 echo "naming a device"
 cat > "$DIBS_MACHINES" <<TOML
-default = "rig"
-
 [machine.rig]
 ssh      = "rig"
 hostname = "$(hostname -s)"
@@ -1360,8 +1338,6 @@ rm -f "$DIBS_SERIES"
 # Two names for this machine, so a label can move between them without a second machine: what
 # the check compares is the name the run was dispatched under, which is what a real move changes.
 cat > "$DIBS_MACHINES" <<TOML
-default = "alpha"
-
 [machine.alpha]
 ssh      = "dibs@alpha"
 hostname = "$(hostname -s)"
@@ -1428,8 +1404,6 @@ check "shared work is not checked at all" \
 
 echo "a transfer goes where it was told"
 cat > "$DIBS_MACHINES" <<TOML
-default = "wrongbox"
-
 [machine.wrongbox]
 ssh      = "dibs@wrongbox"
 hostname = "wrongbox"
@@ -1439,12 +1413,11 @@ ssh      = "dibs@rightbox"
 hostname = "rightbox"
 TOML
 # rsync reaches the machine through a second dibs, and that one parses its own arguments: it
-# never saw --on, resolved the default, and the transfer went to the wrong machine silently
-# and with exit 0. The resolved host rides in the environment, which the child inherits.
+# never saw --on. The resolved machine rides in the environment, which the child inherits.
 check "--sync carries --on to the transport it spawns" \
   "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --on rightbox --sync ./x :~/y 2>&1 |
      grep -q 'dibs@rightbox' && echo reached || echo elsewhere)" "reached"
-check "and does not fall back to the default machine" \
+check "and does not fall back to another machine" \
   "$(DIBS_LOCAL=0 DIBS_CONNECT_TIMEOUT=2 $T --on rightbox --sync ./x :~/y 2>&1 | grep -c 'wrongbox')" "0"
 # Said before the bytes move. A transfer to the wrong machine succeeds, so the only moment it
 # can be caught is before it happens.
@@ -1609,6 +1582,14 @@ check "a dry run runs nothing" "$(B --dry-run "$S/b2" >/dev/null 2>&1; [ -e "$S/
 printf '%s\n' "dibs --label ok 'echo should-not-run > $S/bz'" "cargo build" > "$S/b4"
 check "a line that is not a dibs call is refused" "$(B "$S/b4" >/dev/null 2>&1; echo $?)" "2"
 check "before anything runs" "$([ -e "$S/bz" ] && echo ran || echo nothing)" "nothing"
+# A benchmark step naming no machine would be refused only when its turn came, after the steps
+# ahead of it had run, so the batch is refused before any of them.
+printf '[machine.a]\nssh = "a"\nhostname = "a"\n\n[machine.b]\nssh = "b"\nhostname = "b"\n' > "$S/two-machines.toml"
+printf '%s\n' "[b1] dibs --label before 'echo ran > $S/bnm-ran'" "[b2] dibs --bench --label nameless true" > "$S/b-nameless"
+out=$(DIBS_LOCAL=0 DIBS_MACHINES=$S/two-machines.toml B "$S/b-nameless" 2>&1); rc=$?
+check "a batch with a benchmark step that names no machine is refused" "$rc" "2"
+check "before any step runs" "$([ -e "$S/bnm-ran" ] && echo ran || echo nothing)" "nothing"
+check "naming the step" "$(grep -c 'step b2 measures and names no machine' <<<"$out")" "1"
 # The driver owns its steps: killed outright, it must not leave one holding a lock.
 fifo BH; fifo BU
 printf '%s\n' "[hold] dibs --label batch-hold 'echo up > $S/f-BU; $(hold BH)'" > "$S/b5"
@@ -2038,6 +2019,13 @@ out=$(RC bench "$S/app@local" hot 2>&1); rc=$?
 check "a measured step that would compile is refused" "$rc" "2"
 check "with the two-step form to replace it" \
   "$(grep -c 'run = "cargo bench --bench gemm --no-run"' <<<"$out")" "1"
+# A measurement is never placed: with several machines and none named, it is refused before
+# anything is prepared or built.
+mkdir -p "$S/nm-recipes"
+printf '%s\n' '[bench.measured]' '  [[bench.measured.step]]' '  lock = "exclusive"' '  run = "true"' > "$S/nm-recipes/app.toml"
+out=$(DIBS_LOCAL=0 DIBS_MACHINES=$S/two-machines.toml DIBS_RECIPES=$S/nm-recipes RC bench "$S/app@local" measured 2>&1); rc=$?
+check "a benchmark recipe that names no machine is refused" "$rc" "2"
+check "saying a measurement names its machine" "$(grep -c 'a measurement names its machine' <<<"$out")" "1"
 out=$(RC build "$S/app@local" p --samples 30 --dry-run 2>/dev/null)
 check "a dry run says what the parameters came out as" "$(grep -c '^param       samples = 30$' <<<"$out")" "1"
 check "and what each step will export" "$(grep -c '^            env SAMPLES=30$' <<<"$out")" "1"

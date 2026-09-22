@@ -19,17 +19,18 @@ tells two people the machine is idle at the same time.
 layer under `~/.local/libexec/dibs` and `dibstop` if cargo is present. Pass `--copy` if you would rather have files that do not move
 under you. Without cargo you still have a working lock, just not the interface above it.
 
-Then point it at your machine and record what is in it:
+Then record your machine and say where your checkouts live:
 
-    export DIBS_HOST=you@machine               # fish: set -Ux DIBS_HOST you@machine
-    export DIBS_ROOT=$HOME/prog                # where your checkouts live, for bare repo names
     dibs --check you@machine --write           # probes it, writes ~/.config/dibs/machines.toml
+    export DIBS_ROOT=$HOME/prog                # where your checkouts live, for bare repo names
 
 The entry is named by the machine's own short hostname rather than by the string you dialled,
 so `--on` takes a name and not an ssh address. Run it once per machine, and read what it says
 rather than only its exit code: it reports what the machine can do, and warns about the things
-that are wrong in ways nothing else would tell you. There is no default host, on purpose, so
-nothing goes somewhere you did not choose.
+that are wrong in ways nothing else would tell you. With one machine recorded, every call goes
+there. There is never a default among several, so nothing goes somewhere you did not choose;
+the next section says what happens instead. `DIBS_HOST=you@machine` still names the machine of
+a setup with no inventory at all.
 
 **The one thing the machine does need.** A recipe prepares a git worktree from a clone at
 `~/prog/<repo>` on the machine itself, so each repo you want to build has to be cloned there
@@ -404,26 +405,42 @@ ready = "tcp:cuda"
 
 `dibs --check <host> --write` records what it finds there as an entry in
 `~/.config/dibs/machines.toml`, and `dibs --on <machine>` sends a call to one of them.
+`export DIBS_ON=<machine>` does the same for every call that follows, which is the form a step
+added to a script later cannot forget.
+
+**There is no default machine.** A benchmark's series belongs to the machine it ran on, so a
+default is where a forgotten `--on` starts a series nobody meant, with nothing but a line on
+stderr to show for it. So with several machines, a call that names none is one of three things:
+
+- **Shared work is placed**: on the machine holding the repo's build cache, else the least busy
+  one, as below. A plain `dibs <command>`, a build or test recipe, and `dibs raw` all are.
+- **A status shows every machine**, as `--status --all` does.
+- **Anything else is refused**, with the machines to choose from: a benchmark, a benchmark
+  recipe, a `--hold`, `--with` servers, a peek, a sync, a kill of a pid, a log, a gc, a check.
+  A batch with a benchmark step that names none is refused before any step runs. `dibs out <job>`
+  names the machine too, which the trailer's line does for you, unless the log was already read
+  and kept here.
+
+One machine in the inventory is no choice at all and is used. `DIBS_HOST` names the machine of
+a setup with no inventory, and chooses nothing once there are several.
 
 The inventory has two layers, the way recipes do. Set `DIBS_REGISTRY` to
 `user@host:path` and `dibs --registry-sync` fetches a shared machine list, cached locally and
 refreshed on a clock rather than on every call. Your own file then holds additions and
-overrides: a machine you name yourself wins outright over a shared entry of the same name, and
-your own `default` beats the shared one, so where your work goes never needs anyone else to
-agree. A registry that cannot be reached costs the freshness of a list and never the ability to
+overrides: a machine you name yourself wins outright over a shared entry of the same name. A
+registry that cannot be reached costs the freshness of a list and never the ability to
 dispatch, because the cached copy stays. Without `DIBS_REGISTRY` there is no shared layer and
 nothing changes.
 `dibs --abi --all` says whether a binary built on one machine can run on another, as facts
 rather than a hash: compatibility is directional, so it reports each pair each way.
 
-`dibs --machines` says what is known, `dibs --forget <machine>` drops one and repoints the
-default, and `dibs --status --all` shows every machine at once, which is how you find where a
-job is actually running once work is being ranked. The inventory is not in this repo because it names your
-hosts; only `config/chips.toml`, which is a statement about silicon, ships here.
+`dibs --machines` says what is known, `dibs --forget <machine>` drops one, and `dibs status`
+shows every machine at once, which is how you find where a job is actually running once work is
+being placed. The inventory is not in this repo because it names your hosts; only
+`config/chips.toml`, which is a statement about silicon, ships here.
 
-With more than one machine, `dibs --any <command>` sends a shared job to the least busy one,
-and `DIBS_ROUTE=1` makes that the default. `dibs --pick -v` shows the ranking without running
-anything. Machines are ranked on `/proc/loadavg` rather than on what dibs itself holds, because
+`dibs --pick -v` shows where shared work would be placed, and why, without running anything.
+Machines are ranked on `/proc/loadavg` rather than on what dibs itself holds, because
 on a machine someone is working at, most of the competing load was never started through dibs.
 A machine marked `workstation = true` is discounted further, since a build that takes every
 thread costs whoever works there their editor. That is a property of the machine rather than of

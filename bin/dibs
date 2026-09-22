@@ -57,9 +57,11 @@
 #   dibs --check [host]          is this machine usable, and what is in it. Run it first on a
 #                                machine you have never used. --write records what it found
 #                                as that machine's inventory entry.
-#   dibs --on <machine>         send this call to a named machine from the inventory
-#   dibs --machines             what the inventory knows, and which machine is the default
-#   dibs --forget <machine>     drop a machine from your own inventory, repointing the default
+#   dibs --on <machine>         send this call to a named machine from the inventory. There is
+#                                no default: a call that names none is placed when it is shared
+#                                work, and refused otherwise, a benchmark most of all
+#   dibs --machines             what the inventory knows
+#   dibs --forget <machine>     drop a machine from your own inventory
 #   dibs --registry-sync        fetch the shared machine list named by DIBS_REGISTRY
 #   dibs --update               pull the clone dibs was installed from and reinstall, then
 #                                pull the recipe directory too when it is a git clone
@@ -74,12 +76,12 @@
 #                                Takes its whole process group, so the lock it was waiting
 #                                for or holding is released with it. A holder that is not a
 #                                detached job takes a pid, and --kill, not this.
-#   --all                        with --status: every machine in the inventory, at once
-#   dibs --any <command>        pick the least busy machine for this shared job. DIBS_ROUTE=1
-#                                makes it the default. Never a benchmark: a measurement's
-#                                history keys on the machine it ran on.
-#   dibs --pick                 print the machine routing would choose; -v shows the ranking
-#   dibs --which                print the machine this call would go to, without routing
+#   --all                        with --status: every machine in the inventory, at once, which
+#                                is also what a status naming no machine shows
+#   dibs --pick                 print the machine a shared job naming none would be placed on:
+#                                the one holding the repo's build cache, else the least busy.
+#                                -v shows the ranking. A benchmark is never placed.
+#   dibs --which                print the machine this call names, without placing it
 #   dibs --abi [--all]          what decides whether a binary built on one machine runs on
 #                                another; --all compares every pair and says which way works
 #   --prefer <machine>           with --pick: this machine holds the build cache, so choose it
@@ -124,6 +126,7 @@
 #
 #   --on <machine>     send this call there. DIBS_ON=<machine> does the same for every
 #                      call, which is the form a step added to a script later cannot forget.
+#                      An inventory of one machine, or DIBS_HOST without one, needs neither.
 #   --wait <seconds>   give up rather than queue past this
 #   --max <seconds>    kill the command if it holds the lock longer than this (default 7200
 #                      for --bench and 1800 otherwise, or twice the label's 90th percentile
@@ -217,7 +220,7 @@ TARGET=${DIBS_HOSTNAME:-${HOST##*@}}
 # The inventory names machines and the ssh aliases that reach them, which are yours, so it
 # lives beside the recipe overrides rather than in this repo, which is public.
 #
-# Two layers, the way recipes already have three. A shared registry is what everyone gets
+# Two layers, the way recipes have. A shared registry is what everyone gets
 # without writing anything out, because a workplace where each person hand-lists the same
 # machines has one list per person and no two of them agree. The personal file is then what it
 # should have been all along: additions and overrides, for a machine that is yours alone.
@@ -337,27 +340,14 @@ inv_names() {
     { names_in "$MACHINES"; names_in "$REGISTRY"; } | awk '!seen[$0]++'
 }
 
-default_in() {  # file
-    [ -f "$1" ] || return 0
-    awk '/^[[:space:]]*\[/ { exit }
-         /^[[:space:]]*default[[:space:]]*=/ {
-             v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); gsub(/"/, "", v)
-             sub(/[[:space:]]*#.*$/, "", v); sub(/[[:space:]]+$/, "", v); print v; exit }' "$1"
-}
-
-# A personal default overrides the shared one, so choosing where your own work goes never
-# needs anyone else to agree.
-inv_default() {
-    local d
-    d=$(default_in "$MACHINES")
-    [ -n "$d" ] || d=$(default_in "$REGISTRY")
-    printf '%s\n' "$d"
+inv_count() {
+    inv_names | grep -c .
 }
 
 # The entry for the machine this call is actually going to. --on records its name in MACHINE,
 # but DIBS_HOST names a machine by its ssh string and deliberately leaves MACHINE empty, since
 # a host string is not an inventory name. Anything that has to read the entry needs the name
-# back, and the default machine's entry is not it: that answered every device alias for a card
+# back, and some other machine's entry is not it: that answered every device alias for a card
 # in a different box.
 inv_name_for_host() {
     local n
@@ -389,19 +379,9 @@ inv_without() {  # machine
 inv_write() {  # machine entry
     local n=$1 body=$2 tmp
     mkdir -p "$(dirname "$MACHINES")" || return 1
-    [ -f "$MACHINES" ] || printf 'default = "%s"\n' "$n" > "$MACHINES"
+    touch "$MACHINES" || return 1
     tmp=$(mktemp "$MACHINES.XXXXXX") || return 1
-    { inv_without "$n"; printf '\n%s\n' "$body"; } > "$tmp" && mv "$tmp" "$MACHINES" || return 1
-    # The default is where an unqualified benchmark goes, so a machine that cannot measure
-    # must not hold it while one that can exists: every --bench would fail on a machine
-    # chosen for it by nothing.
-    local d
-    d=$(inv_default)
-    if [ -n "$d" ] && [ "$(inv "$d" measure)" = false ] && [ "$(inv "$n" measure)" != false ]; then
-        tmp=$(mktemp "$MACHINES.XXXXXX") || return 1
-        sed "0,/^default[[:space:]]*=/s|^default[[:space:]]*=.*|default = \"$n\"|" \
-            "$MACHINES" > "$tmp" && mv "$tmp" "$MACHINES"
-    fi
+    { inv_without "$n"; printf '\n%s\n' "$body"; } > "$tmp" && mv "$tmp" "$MACHINES"
 }
 
 # hostname -s so a machine recognises itself and locks locally instead of trying to ssh to
@@ -513,7 +493,9 @@ MACHINE=""
 PINNED=0
 HOSTFROM=""
 MEASURABLE=1
-ROUTE=${DIBS_ROUTE:-0}
+ROUTE=0
+# DIBS_HOST, when an inventory of several machines means it no longer chooses one.
+UNHEEDED=""
 
 # Where a shared job should go. Never a benchmark: duration history and label bindings key on
 # the machine, so routing one would file two machines' numbers under a single label, which is
@@ -994,16 +976,21 @@ fi
 
 registry_fresh
 
-# Precedence: --on, then DIBS_ON, then DIBS_HOST, then the inventory's own default.
+# A call names its machine with --on or DIBS_ON, and nothing names one for it. A benchmark's
+# series belongs to the machine it ran on, so a forgotten --on that lands somewhere by default
+# starts a series nobody meant, with nothing but a line on stderr to show for it. Shared work
+# with no machine is placed below instead, and anything else is refused.
 #
 # DIBS_ON rather than DIBS_MACHINE, which the onboarding script already uses to mean the host
 # it is introducing you to. Two meanings for one name in one tool is how a new user's first
 # command fails with an error about an inventory they have never heard of.
-# DIBS_HOST outranks the file so that writing an inventory never silently moves work that
-# was already going somewhere; the file's default is what a machine with no DIBS_HOST gets.
+# DIBS_HOST is the machine of a setup with at most one, where there is nothing to choose; with
+# several it chooses nothing, since that is the default this does away with.
 if [ "$PINNED" = 0 ]; then
     if [ -n "${DIBS_ON:-}" ]; then
         use_machine "$DIBS_ON"; PINNED=1; HOSTFROM=DIBS_ON
+    elif [ "${DIBS_LOCAL:-0}" != 1 ] && [ "$(inv_count)" -gt 1 ]; then
+        UNHEEDED=$HOST; HOST=""; TARGET=""
     elif [ -n "$HOST" ] && [ -n "$(inv "$HOST" ssh)" ]; then
         # A name the inventory knows is that machine, reached the way every other command
         # reaches it, which is the rule --check already follows. Taken literally it is a
@@ -1016,9 +1003,8 @@ if [ "$PINNED" = 0 ]; then
         # machine stays nameless and measure = false is never read, so a benchmark sent this
         # way ran on a machine that had said not to.
         use_machine "$(inv_by_host "$HOST")"; HOSTFROM=DIBS_HOST
-    elif [ -z "$HOST" ]; then
-        d=$(inv_default)
-        [ -n "$d" ] && { use_machine "$d"; HOSTFROM=default; }
+    elif [ -z "$HOST" ] && [ "$(inv_count)" = 1 ]; then
+        use_machine "$(inv_names | grep . | head -1)"; HOSTFROM=only
     fi
 fi
 
@@ -1039,18 +1025,16 @@ case "$MODE" in
     machines)
         [ -f "$MACHINES" ] || { echo "no inventory at $MACHINES" >&2
                                 echo "Write one with:  dibs --check <host> --write" >&2; exit 2; }
-        def=$(inv_default)
         w=0
         while read -r m; do [ "${#m}" -gt "$w" ] && w=${#m}; done < <(inv_names)
         while read -r m; do
             [ -n "$m" ] || continue
-            mark=" "; [ "$m" = "$def" ] && mark="*"
             note=""; [ "$(inv "$m" measure)" = false ] && note="  (no measurements)"
             layer=""
             if [ -n "$REGISTRY_FROM" ] || [ -f "$REGISTRY" ]; then
                 if [ "$(inv_file "$m")" = "$MACHINES" ]; then layer="  [yours]"; else layer="  [shared]"; fi
             fi
-            printf ' %s %-*s %s%s%s\n' "$mark" "$w" "$m" "$(inv "$m" ssh)" "$note" "$layer"
+            printf '   %-*s %s%s%s\n' "$w" "$m" "$(inv "$m" ssh)" "$note" "$layer"
             # The aliases --device takes. Without a way to read them the flag cannot be used
             # without opening the inventory by hand, so -v is where they live.
             [ "$VERBOSE" = 1 ] || continue
@@ -1061,11 +1045,14 @@ case "$MODE" in
                     "$(l=$(inv_device "$m" "$a" link); [ -n "$l" ] && printf '  %s' "$l")"
             done < <(inv_device_names "$m")
         done < <(inv_names)
+        grep -q '^[[:space:]]*default[[:space:]]*=' "$MACHINES" "$REGISTRY" 2>/dev/null &&
+            echo "  A 'default =' line in the inventory is no longer read: a call names its machine." >&2
         exit 0 ;;
-    # Every machine at once. With routing on, a job is somewhere rather than on the machine,
-    # and asking each in turn is slow enough that nobody does it.
+    # Every machine at once, which is also what a status naming no machine means. With routing,
+    # a job is somewhere rather than on the machine, and asking each in turn is slow enough that
+    # nobody does it.
     status)
-        if [ "$ALL" = 1 ]; then
+        if [ "$ALL" = 1 ] || { [ -z "$HOST" ] && [ "${DIBS_LOCAL:-0}" != 1 ] && [ -f "$MACHINES" ]; }; then
             [ -f "$MACHINES" ] || { echo "no inventory at $MACHINES" >&2; exit 2; }
             jf=""; [ "$JSON" = 1 ] && jf="--json"
             tmp=$(mktemp -d "${TMPDIR:-/tmp}/dibs-all.XXXXXX") || exit 1
@@ -1087,17 +1074,25 @@ case "$MODE" in
             rm -rf "$tmp"
             exit 0
         fi ;;
-    # The machine this call would use, named. Empty when the target came from DIBS_HOST rather
-    # than the inventory, because a name that is not an entry cannot be handed back to --on.
+    # The machine this call would use, named. Exit 1 when it goes somewhere with no inventory name
+    # to hand back to --on: a DIBS_HOST that is not an entry, or this computer under DIBS_LOCAL.
+    # Exit 2 when it goes nowhere until a machine is named, which is what the recipe layer and a
+    # batch refuse a measurement over.
     which)
         if [ -z "$MACHINE" ]; then
             if [ -n "$HOST" ]; then
                 echo "dibs: this call goes to '$HOST' from DIBS_HOST, which is not in the inventory at $MACHINES." >&2
                 echo "  It has no name to give --on. Record it with:  dibs --check $HOST --write" >&2
+                exit 1
+            elif [ "${DIBS_LOCAL:-0}" = 1 ]; then
+                echo "dibs: this call runs on this computer, under DIBS_LOCAL." >&2
+                exit 1
+            elif [ "$(inv_count)" -gt 1 ]; then
+                echo "dibs: no machine: this call names none, and $MACHINES has $(inv_count) to choose from." >&2
             else
-                echo "dibs: no machine: no --on, no DIBS_ON, no DIBS_HOST, and no default in $MACHINES." >&2
+                echo "dibs: no machine: no --on, no DIBS_ON, no DIBS_HOST, and no inventory at $MACHINES." >&2
             fi
-            exit 1
+            exit 2
         fi
         printf '%s\n' "$MACHINE"
         exit 0 ;;
@@ -1175,24 +1170,6 @@ case "$MODE" in
         fi
         tmp=$(mktemp "$MACHINES.XXXXXX") || exit 1
         inv_without "$FORGET" > "$tmp" && mv "$tmp" "$MACHINES" || exit 1
-        # A default naming a machine that is gone sends every unpinned call somewhere that
-        # cannot answer, so it is repointed at something that can rather than left dangling.
-        if [ "$(inv_default)" = "$FORGET" ]; then
-            new=""
-            while read -r m; do
-                [ -n "$m" ] || continue
-                [ "$(inv "$m" measure)" = false ] && continue
-                new=$m; break
-            done < <(inv_names)
-            [ -n "$new" ] || new=$(inv_names | head -1)
-            if [ -n "$new" ]; then
-                tmp=$(mktemp "$MACHINES.XXXXXX") || exit 1
-                sed "0,/^default[[:space:]]*=/s|^default[[:space:]]*=.*|default = \"$new\"|" \
-                    "$MACHINES" > "$tmp" && mv "$tmp" "$MACHINES"
-                echo "forgot $FORGET; the default is now $new"
-                exit 0
-            fi
-        fi
         echo "forgot $FORGET"
         exit 0 ;;
 esac
@@ -1259,24 +1236,61 @@ if [ "$DETACH" = 1 ]; then
     fi
 fi
 
-# Routing is opted into, because turning it on moves work that was going somewhere else and
-# that should be a decision rather than a side effect of writing an inventory.
+# Shared work that names no machine is placed rather than refused: ranked by load, with a repo's
+# work going to the machine that holds its build cache. --any ranks even where DIBS_HOST names one.
 # A detached job is not ranked: it goes to one machine that stays up, and --jobs reads that
 # machine, so scattering the jobs would be scattering the record of them too.
-if [ "$MODE" = pick ] || { [ "$MODE" = shared ] && [ "$PINNED" = 0 ] && [ "$ROUTE" = 1 ] &&
-                           [ "$DETACH" = 0 ] && [ "$HOLD" = 0 ] && [ "${DIBS_FROM_RUN:-0}" != 1 ]; }; then
+if [ "$MODE" = pick ] || { [ "$MODE" = shared ] && [ "$PINNED" = 0 ] &&
+                           { [ "$ROUTE" = 1 ] || { [ -z "$HOST" ] && [ "$(inv_count)" -gt 1 ]; }; } &&
+                           [ "${DIBS_LOCAL:-0}" != 1 ] && [ "$DETACH" = 0 ] && [ "$HOLD" = 0 ] &&
+                           [ "${DIBS_FROM_RUN:-0}" != 1 ]; }; then
     picked=$(pick_machine); ranked=$?
     if [ "$ranked" = 0 ]; then
         [ "$MODE" = pick ] && { printf '%s\n' "$picked"; exit 0; }
         use_machine "$picked"
-    elif [ "$MODE" = pick ] && [ "$ranked" = 2 ]; then
-        echo "dibs: every machine answered, but none has a clone of '$REPO'." >&2
-        echo "  A worktree is prepared from \$HOME/prog/$REPO on the machine itself, so one" >&2
-        echo "  has to be cloned there before any work on $REPO can be sent to it." >&2
+    elif [ "$MODE" = pick ] || [ -z "$HOST" ]; then
+        if [ "$ranked" = 2 ]; then
+            echo "dibs: every machine answered, but none has a clone of '$REPO'." >&2
+            echo "  A worktree is prepared from \$HOME/prog/$REPO on the machine itself, so one" >&2
+            echo "  has to be cloned there before any work on $REPO can be sent to it." >&2
+        else
+            echo "dibs: no machine in $MACHINES answered, so there was nowhere to place this." >&2
+        fi
         exit 69
-    elif [ "$MODE" = pick ]; then
-        echo "dibs: no machine in $MACHINES answered" >&2; exit 69
     fi
+fi
+
+# The first read of a finished job's log keeps the whole of it here, and later reads are served
+# from that copy, so a log someone needed stays readable when its machine is asleep, gone or
+# past its two weeks. A running job's log is not kept: it would stand in for the whole one.
+KEPT=${DIBS_KEPT:-${XDG_STATE_HOME:-$HOME/.local/state}/dibs/jobs}
+
+no_machine() {
+    local names
+    names=$(inv_names | grep . | paste -sd, - | sed 's/,/, /g')
+    if [ -z "$names" ]; then
+        echo "dibs: no machine. Record one with:  dibs --check <host> --write" >&2
+        echo "  Or, for a single machine and no inventory, set DIBS_HOST to it." >&2
+    else
+        echo "dibs: this call names no machine. Name one of: $names" >&2
+        echo "  with --on <machine>, or export DIBS_ON=<machine> to cover every call that follows." >&2
+        [ "$MODE" = bench ] &&
+            echo "  A measurement is never placed for you: its series belongs to the machine it ran on." >&2
+        [ -n "$UNHEEDED" ] &&
+            echo "  DIBS_HOST=$UNHEEDED does not choose one when the inventory has several." >&2
+    fi
+    exit 2
+}
+
+# Detached jobs have a machine of their own, DIBS_QUEUE, and what is already kept here needs none.
+if [ -z "$HOST" ] && [ "${DIBS_LOCAL:-0}" != 1 ] && [ "$DETACH" = 0 ]; then
+    case "$MODE" in
+        jobs|job|cancel) ;;
+        kill)  is_batch_id "$KILLPID" || no_machine ;;
+        out)   [ -n "$OUTPID" ] && [ -f "$KEPT/$OUTPID/log" ] || no_machine ;;
+        fetch) [ -n "$FETCHJOB" ] && [ -d "$KEPT/$FETCHJOB/artifacts" ] || no_machine ;;
+        *)     no_machine ;;
+    esac
 fi
 
 # A device is named from the inventory rather than given as an index, because what makes two
@@ -1454,11 +1468,11 @@ case "$MODE" in
         # whether this copy happens to carry an exec bit is not something to depend on.
         #
         # The transport is a second dibs that parses its own arguments and has never heard of
-        # the --on this one was given, so it resolved the default machine and the transfer
-        # went there: the wrong machine, silently, and exit 0. The resolved host is handed to
-        # it through the environment, which a forked child inherits and an argument would not
-        # survive, since --rsh takes rsync's own host and command after it.
+        # the --on this one was given. The resolved machine is handed to it through the
+        # environment, which a forked child inherits and an argument would not survive, since
+        # --rsh takes rsync's own host and command after it.
         export DIBS_HOST="$HOST" DIBS_HOSTNAME="$TARGET" DIBS_SYNC_LABEL="$LABEL"
+        [ -n "$MACHINE" ] && export DIBS_ON="$MACHINE"
         # Said before the bytes move, because a transfer to the wrong machine is not something
         # you find out about afterwards: it succeeds, exit 0, and the files are somewhere
         # nobody will look. One line on stderr, so it cannot get into rsync's own output.
@@ -1513,10 +1527,6 @@ if [ "$MODE" != gc ]; then
     [ -n "$GC_DAYS" ] && { echo "dibs: --days belongs to --gc." >&2; exit 2; }
 fi
 
-# The first read of a finished job's log keeps the whole of it here, and later reads are served
-# from that copy, so a log someone needed stays readable when its machine is asleep, gone or
-# past its two weeks. A running job's log is not kept: it would stand in for the whole one.
-KEPT=${DIBS_KEPT:-${XDG_STATE_HOME:-$HOME/.local/state}/dibs/jobs}
 out_kept() {   # dir
     cat "$1/head"
     printf '  kept on this computer: %s  (%s bytes, last %s lines)\n' "$1/log" "$(wc -c < "$1/log")" "$OUT_N"
@@ -1620,8 +1630,8 @@ SERIES=${DIBS_SERIES:-${XDG_STATE_HOME:-$HOME/.local/state}/dibs/series}
 SERIES_V='#dibs-series 1'
 series_usable() { [ -f "$SERIES" ] && [ "$(head -1 "$SERIES" 2>/dev/null)" = "$SERIES_V" ]; }
 # Keyed on where the job actually goes, not on what it was called. One machine reached once
-# through an inventory name and once through the default host is one machine, and keying on
-# the name would record it twice.
+# through an inventory name and once through DIBS_HOST is one machine, and keying on the name
+# would record it twice.
 series_here() { printf '%s' "${HOST:-${MACHINE:-${TARGET:-?}}}"; }
 series_name() {
     local n
@@ -1637,8 +1647,8 @@ series_check() {
     series_usable || return 0
     line=$(awk -F'\t' -v l="$LABEL" -v m="$here_m" '$1 == l && $2 == m {print; exit}' "$SERIES") || return 0
     if [ -z "$line" ]; then
-        # A forgotten --on sends a benchmark to the default machine, where it starts a series
-        # of its own without complaint, so the first run anywhere new says where the rest are.
+        # A benchmark sent to the wrong machine, by a DIBS_ON left over from other work, starts
+        # a series of its own without complaint, so the first run anywhere new says where the rest are.
         # The recipe layer asked before it built, so its own steps have been told already.
         [ "${DIBS_FROM_RUN:-0}" = 1 ] && [ "$PREFLIGHT" = 0 ] && return 0
         elsewhere=""
@@ -3130,7 +3140,7 @@ show() {
         # there is then nothing to offer and a line saying so would be noise on every tick.
         holder_output "$pid"
         [ -n "$OUTPUT_FILE" ] && \
-            echo "    ${C_DIM}writing $OUTPUT_FILE$C_OFF   ${C_DIM}(dibs --out $pid)$C_OFF"
+            echo "    ${C_DIM}writing $OUTPUT_FILE$C_OFF   ${C_DIM}(dibs --on $(hostname -s) --out $pid)$C_OFF"
     done
     if [ "$held" -eq 0 ]; then
         exec 7>"$DIR/rw"
@@ -4102,8 +4112,8 @@ if [ -n "$JOBLOG" ]; then
             cat "$JOBLOG"
         else
             head -n "$head" "$JOBLOG"
-            printf '\n... %s lines omitted. The whole log:  dibs --out %s  (%s)\n\n' \
-                "$(( lines - head - tail_ ))" "$JOB" "$JOBLOG"
+            printf '\n... %s lines omitted. The whole log:  dibs --on %s --out %s  (%s)\n\n' \
+                "$(( lines - head - tail_ ))" "$(hostname -s)" "$JOB" "$JOBLOG"
             tail -n "$tail_" "$JOBLOG"
         fi
     fi
@@ -4119,7 +4129,7 @@ if [ -n "$JOBLOG" ]; then
     printf 'job %s  %s  %s  queued %ss  ran %ss  exit %s  by=%s%s\n' \
         "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$built" >&2
     # A hold's command printed where it ran, so the log here has nothing in it.
-    [ "$HOLD" = 1 ] || printf '  log %s:%s  (%s lines)  dibs --out %s\n' "$(hostname -s)" "$JOBLOG" "$lines" "$JOB" >&2
+    [ "$HOLD" = 1 ] || printf '  log %s:%s  (%s lines)  dibs --on %s --out %s\n' "$(hostname -s)" "$JOBLOG" "$lines" "$(hostname -s)" "$JOB" >&2
     for i in "${!PORT_NAME[@]}"; do
         printf '  port %s: %s on %s\n' "${PORT_NAME[$i]}" "${PORT_NUM[$i]:-none free}" "$(hostname -s)" >&2
     done
@@ -4237,14 +4247,13 @@ unreachable() {
               -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" true 2>&1)
     echo "dibs: cannot reach '$HOST' over ssh." >&2
     # Naming the machine is not enough when the caller believes it is talking to a different
-    # one. A step in a script that forgot --on goes to the default and then reports that
-    # machine down, which sends someone to look at a machine nobody was using.
-    case "${HOSTFROM:-default}" in
-        default|DIBS_HOST)
-            [ "${HOSTFROM:-default}" = DIBS_HOST ] &&
-                echo "  Nothing on this call named a machine, so it went to DIBS_HOST." >&2 ||
-                echo "  Nothing on this call named a machine, so it went to the inventory default." >&2
-            echo "  Name one with --on, or export DIBS_ON once to cover every call in a script." >&2 ;;
+    # one. A step in a script that forgot --on went to DIBS_HOST and then reports that machine
+    # down, which sends someone to look at a machine nobody was using.
+    case "$HOSTFROM" in
+        DIBS_HOST) echo "  Nothing on this call named a machine, so it went to DIBS_HOST." >&2
+                   echo "  Name one with --on, or export DIBS_ON once to cover every call in a script." >&2 ;;
+        "")        [ "$PINNED" = 0 ] && [ -n "$MACHINE" ] &&
+                       echo "  Nothing on this call named a machine, and $MACHINE is where it was placed." >&2 ;;
     esac
     case "$why" in
         *"REMOTE HOST IDENTIFICATION HAS CHANGED"*)
@@ -4343,7 +4352,10 @@ hold_tree() {   # pid; it and everything below it
 # and the command is stopped if the lock goes first, since it would then run unlocked.
 HOLD_ENV=()
 hold_run() {   # the command that takes the lock
-    local mark line holder st status pid p
+    local mark line holder st status pid p at reach
+    # A lock taken here is served from here, whichever machine the call named.
+    at=${MACHINE:-${TARGET:-$SELF}} reach=${TARGET:-$SELF}
+    [ "$LOCK_AT" = "$(lower "$SELF")" ] && at=$SELF reach=$SELF
     mark=$(mktemp -u "${TMPDIR:-/tmp}/dibs-hold.XXXXXX")
     mkfifo "$mark" 2>/dev/null ||
         { echo "dibs: --hold could not make a fifo in ${TMPDIR:-/tmp}, so nothing ran." >&2; return 2; }
@@ -4352,7 +4364,7 @@ hold_run() {   # the command that takes the lock
         status=$?
         pid=$(cat "$mark.pid" 2>/dev/null)
         if [ -n "$pid" ] && [ ! -e "$mark.done" ] && kill -0 "$pid" 2>/dev/null; then
-            echo "dibs: the lock on ${MACHINE:-${TARGET:-$SELF}} ended before the command did, so the command was stopped." >&2
+            echo "dibs: the lock on $at ended before the command did, so the command was stopped." >&2
             kill -TERM $(hold_tree "$pid") 2>/dev/null
         fi
         rm -f "$mark.pid"
@@ -4370,14 +4382,14 @@ hold_run() {   # the command that takes the lock
             # Named where the command here has to reach them, which is the machine, not localhost.
             for p in ${line#DIBS-HOLDING }; do
                 HOLD_ENV+=("DIBS_PORT_$(printf %s "${p%%=*}" | tr 'a-z' 'A-Z')=${p#*=}")
-                HOLD_ENV+=("DIBS_SERVICE_$(printf %s "${p%%=*}" | tr 'a-z' 'A-Z')=${TARGET:-$SELF}:${p#*=}")
+                HOLD_ENV+=("DIBS_SERVICE_$(printf %s "${p%%=*}" | tr 'a-z' 'A-Z')=$reach:${p#*=}")
             done ;;
     esac
     if [ "${line%% *}" != DIBS-HOLDING ]; then
         exec 4<&- 6>&-
         wait "$holder"; return
     fi
-    echo "dibs: holding the $MODE lock on ${MACHINE:-${TARGET:-$SELF}}, running here: $COMMAND" >&2
+    echo "dibs: holding the $MODE lock on $at, running here: $COMMAND" >&2
     # Ctrl-C is for the command. Trapped, this carries on and releases the lock with its exit.
     trap : INT
     # The command gets stderr back on 3, while bash's own notice of a stopped command, which
@@ -4440,12 +4452,7 @@ if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
     series_stayed_put
     exit "$STATUS"
 else
-    if [ -z "$HOST" ]; then
-        echo "dibs: no machine. Set DIBS_HOST to the one you were given:" >&2
-        echo "  bash/zsh   export DIBS_HOST=dibs@<machine>" >&2
-        echo "  fish       set -Ux DIBS_HOST dibs@<machine>" >&2
-        exit 2
-    fi
+    [ -n "$HOST" ] || no_machine
     PAYLOAD=$(remote_script | base64 | tr -d '\n')
     # No TTY on purpose. With one, every tool downstream believes it is interactive: git
     # opens its pager and the job blocks forever on a keystroke nobody will type.
