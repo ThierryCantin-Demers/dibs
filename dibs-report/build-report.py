@@ -10,7 +10,7 @@ HERE = pathlib.Path(__file__).parent
 OUT = HERE / "remote-benchmark-lock.html"
 
 FILES = {
-    "DIBS": ROOT / "bin/dibs",
+    "DIBS": [ROOT / "bin/dibs", *sorted((ROOT / "lib").glob("*/*.sh"))],
     "HOOK": DOTFILES / "home/dot_claude/hooks/executable_no-direct-machine-ssh.sh",
     "TEST": ROOT / "tests/dibs-test.sh",
     "LIVE": ROOT / "tests/dibs-live-test.sh",
@@ -162,7 +162,11 @@ page = (HERE / "report-template.html").read_text()
 for key, path in FILES.items():
     # The ssh hook is a Claude hook and lives with whoever's config installs it, so a checkout
     # without one still builds rather than failing on a file that was never this repo's.
-    body = path.read_text().rstrip("\n") if path.exists() else "(not present in this checkout)"
+    paths = path if isinstance(path, list) else [path]
+    body = "\n\n".join(
+        (f"# ==> {p.relative_to(ROOT)} <==\n" if len(paths) > 1 else "") + p.read_text().rstrip("\n")
+        for p in paths if p.exists()
+    ) or "(not present in this checkout)"
     page = page.replace("{{SRC_%s}}" % key, esc(body))
     page = page.replace("{{LINES_%s}}" % key, str(len(body.splitlines())))
 

@@ -533,8 +533,11 @@ lanes than it can drive is worth knowing about before believing a number that mo
 
 ## The two halves
 
-`bin/dibs` is the resource layer and stays bash because it travels over ssh: a machine needs
-nothing installed to be usable, which is what makes adding one cheap.
+`bin/dibs` and `lib/` are the resource layer, and stay bash because half of it travels over
+ssh: `lib/machine/*.sh`, joined in order, is sent with every call, so a machine needs nothing
+installed to be usable, which is what makes adding one cheap. `lib/client/` holds the functions
+that run on your side, and `lib/steps/` the order a call goes through them in: read the
+arguments, choose the machine, refuse what it cannot do, place it, then send it.
 
 `core/` is everything above that, and runs on your side. It exists because an interface
 taking one arbitrary string invites four problems that were measured in the log it replaced.

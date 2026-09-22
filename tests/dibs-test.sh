@@ -1040,7 +1040,7 @@ wait $N2 2>/dev/null; gone
 # The caller's channel closing is how the machine learns it is gone, and the lock is released
 # as soon as the job exits, so anything still running below the job would run unlocked.
 echo "a caller that goes away takes the whole job with it"
-sed -n "/^cat <<'REMOTE'$/,/^REMOTE$/p" "$(readlink -f "$T")" | sed '1d;$d' > "$S/payload"
+cat "$(dirname "$(readlink -f "$T")")"/../lib/machine/*.sh > "$S/payload"
 fifo chan; fifo gcblock; fifo gcready
 printf 'echo $$ > %s/gc.pid\necho up > %s/f-gcready\nread -r _ < %s/f-gcblock\n' "$S" "$S" "$S" > "$S/grand.sh"
 printf 'sh %s/grand.sh\necho mid-done\n' "$S" > "$S/mid.sh"
@@ -1440,7 +1440,7 @@ check "--out reads a finished job by its id" "$(DIBS_SCRATCH=$S/scr $T --out "$J
 check "and says how it ended" "$(DIBS_SCRATCH=$S/scr $T --out "$J" 2>&1 | grep -c 'ran [0-9]*s  exit 4')" "1"
 check "an unknown job is refused" "$(DIBS_SCRATCH=$S/scr $T --out 19700101-1 >/dev/null 2>&1; echo $?)" "1"
 # rsync's transport never reaches the machine from here, so the far half is run as rsync would.
-sed -n "/^cat <<'REMOTE'$/,/^REMOTE$/p" "$(readlink -f "$T")" | sed '1d;$d' > "$S/payload"
+cat "$(dirname "$(readlink -f "$T")")"/../lib/machine/*.sh > "$S/payload"
 DIBS_SCRATCH=$S/scr bash "$S/payload" rsh sync 0 0 0 "$(printf 'echo carried' | base64 -w0)" 1 0 "" 0 "" "" "" "" "" 1 0 5</dev/null > "$S/rsh.out" 2> "$S/rsh.err"; rc=$?
 check "a transfer's far half exits with its command" "$rc" "0"
 check "and carries its stream untouched" "$(cat "$S/rsh.out")" "carried"
@@ -1523,7 +1523,8 @@ check "no cpu samples" "$(count_ cpu)" "0"
 echo "updating itself"
 # A clone with a stub installer and a recipe clone, each behind its origin by one commit.
 U=$S/update; mkdir -p "$U/bin"
-git init -q -b main "$U/origin" && mkdir "$U/origin/bin" && cp "$(readlink -f "$T")" "$U/origin/bin/dibs"
+git init -q -b main "$U/origin" && mkdir "$U/origin/bin" && cp "$(readlink -f "$T")" "$U/origin/bin/dibs" &&
+    cp -r "$(dirname "$(readlink -f "$T")")/../lib" "$U/origin/lib"
 printf 'echo installed >> "%s/installs"\n' "$U" > "$U/origin/install.sh"
 git -C "$U/origin" add -A && git -C "$U/origin" -c user.email=t@t -c user.name=t commit -qm one
 git clone -q "$U/origin" "$U/clone"
@@ -1549,8 +1550,13 @@ PATH=$U/bin:$PATH DIBS_RECIPES=$U/recipes "$U/clone/bin/dibs" --update > /dev/nu
 check "a stale recipe layer is rebuilt even with nothing to pull" "$(wc -l < "$U/installs")" "2"
 PATH=$U/bin:$PATH DIBS_RECIPES=$U/nowhere "$U/clone/bin/dibs" --update > "$U/out3" 2>&1
 check "recipes that are not a clone are left alone quietly" "$(grep -c 'recipes' "$U/out3")" "0"
-cp "$(readlink -f "$T")" "$U/loose"
-check "a copy outside a clone is refused" "$("$U/loose" --update >/dev/null 2>&1; echo $?)" "2"
+# Laid out the way install.sh --copy lays it out, so what is refused is the update, not a missing lib.
+mkdir -p "$U/loose/bin" "$U/loose/libexec/dibs" && cp "$(readlink -f "$T")" "$U/loose/bin/dibs" &&
+    cp -r "$(dirname "$(readlink -f "$T")")/../lib" "$U/loose/libexec/dibs/lib"
+out=$("$U/loose/bin/dibs" --update 2>&1); rc=$?
+check "a copy outside a clone is refused" "$rc" "2"
+check "because it has no clone to pull" "$(grep -c 'not inside a git clone' <<<"$out")" "1"
+check "a copy finds its lib under libexec" "$("$U/loose/bin/dibs" --machines >/dev/null 2>&1; echo $?)" "0"
 
 echo "batch"
 # The driver is in the recipe layer, built from this checkout, and each step is dibs itself.

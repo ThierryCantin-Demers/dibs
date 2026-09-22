@@ -95,7 +95,9 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 
 | | |
 |---|---|
-| `bin/dibs` | the lock. One bash file, shipped over ssh, installs nothing on the far side. |
+| `bin/dibs` | the lock's entry point: the help text, then it loads `lib/`. |
+| `lib/client/`, `lib/steps/` | what runs on your side: functions by topic, and the steps of a call in order. |
+| `lib/machine/` | what runs on the machine, joined into one script and sent over ssh with every call, so nothing is installed there. |
 | `core/` | the recipe layer behind `dibs build`, `test` and `bench`: recipes, labels, worktrees, provenance. |
 | `dibs-tui/` | `dibstop`, a live view of who holds the machines. |
 | `dibs-report/` | builds a single-page handoff report from the sources themselves. |

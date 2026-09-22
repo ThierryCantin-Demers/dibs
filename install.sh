@@ -18,6 +18,12 @@ for f in dibs; do
     if [ "$MODE" = copy ]; then install -m 755 "$HERE/bin/$f" "$BIN/$f"
     else ln -sfn "$HERE/bin/$f" "$BIN/$f"; fi
 done
+# A symlinked dibs finds lib/ in the clone; a copy finds it under libexec beside its bin.
+if [ "$MODE" = copy ]; then
+    LIB=${PREFIX:-$HOME/.local}/libexec/dibs/lib
+    rm -rf "$LIB.new" && mkdir -p "$(dirname "$LIB")" && cp -r "$HERE/lib" "$LIB.new" &&
+        rm -rf "$LIB" && mv "$LIB.new" "$LIB"
+fi
 echo "installed dibs in $BIN"
 
 # The recipe layer goes under libexec, off PATH: dibs build, test and bench reach it, and nothing
