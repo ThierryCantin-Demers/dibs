@@ -51,10 +51,10 @@ Read what `--check` prints, not only its exit code. With one machine recorded, e
 there. With several there is no default: a call names its machine with `--on`, shared work that
 names none is placed on one, and a benchmark that names none is refused. Recipes build from a
 clone at `~/prog/<repo>` on the machine, so clone each repo you want to build there once. Then
-watch the lock work:
+see who holds each machine:
 
-    dibs status
-    bash dibs-onboard.sh                # takes the lock, queues behind itself, explains
+    dibs status                         # once
+    dibstop                             # live, and a way to act on what is holding it
 
 `dibs --update` pulls the clone and your recipes, and reinstalls when something changed.
 
@@ -103,7 +103,6 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 | `docs/guide.md` | the detailed guide. |
 | `dibs-design/` | the plans, the settled decisions and their measurements. |
 | `dibs-agent-rules.md` | the rules your agents follow. |
-| `dibs-onboard.sh` | sets a new person up and shows the lock actually blocking. |
 | `tests/` | the lock protocol, on a scratch directory. Never touches a real machine. |
 
 ## Tests

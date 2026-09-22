@@ -37,10 +37,10 @@ a setup with no inventory at all.
 once. A machine without it is dropped from that repo's routing rather than sent work it cannot
 do, and `dibs --check` lists what it has.
 
-**Check it works, and see the lock actually block:**
+**Check it works:**
 
-    dibs --status                              # who holds it, who is queued
-    bash dibs-onboard.sh                       # takes the lock, queues behind itself, explains
+    dibs status                                # who holds each machine, who is queued
+    dibstop                                    # the same, live
 
 `dibs --help` is the full surface. `dibs-agent-rules.md` is the rules your agents follow, and is
 the shortest useful description of how to use this well. Load it from your clone rather than

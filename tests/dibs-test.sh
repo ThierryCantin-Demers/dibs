@@ -820,11 +820,6 @@ check "and it says that is why" \
 check "a preferred machine that cannot answer is not used" \
   "$(DIBS_SELF_PENALTY=10000 $T --pick --prefer nowhere 2>/dev/null)" "two"
 check "--which names nothing when several could be meant" "$(DIBS_LOCAL=0 $T --which 2>/dev/null; echo "exit=$?")" "exit=2"
-# The onboarding script sets DIBS_MACHINE to the host it is introducing you to. If dibs read
-# that as an inventory entry, a new user's very first command would fail with an error about
-# an inventory they do not have.
-check "a name meant for the onboarding script is not read as a pin" \
-  "$(DIBS_MACHINE=some-host-they-were-given DIBS_LOCAL=0 $T --which 2>&1 | grep -c 'names none')" "1"
 check "DIBS_ON pins to an inventory machine" "$(DIBS_ON=two $T --which)" "two"
 # Both fake machines here are this one, so they always report the same caches and the case
 # that matters, a busy machine with the cache beating an idle one without it, cannot be built

@@ -981,9 +981,6 @@ registry_fresh
 # starts a series nobody meant, with nothing but a line on stderr to show for it. Shared work
 # with no machine is placed below instead, and anything else is refused.
 #
-# DIBS_ON rather than DIBS_MACHINE, which the onboarding script already uses to mean the host
-# it is introducing you to. Two meanings for one name in one tool is how a new user's first
-# command fails with an error about an inventory they have never heard of.
 # DIBS_HOST is the machine of a setup with at most one, where there is nothing to choose; with
 # several it chooses nothing, since that is the default this does away with.
 if [ "$PINNED" = 0 ]; then
