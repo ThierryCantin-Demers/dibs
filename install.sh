@@ -44,10 +44,8 @@ case ":$PATH:" in
 esac
 
 # The machine is not in the script, on purpose: one clone works against any of them.
-if [ -z "${DIBS_HOST:-}" ]; then
+if [ -z "${DIBS_HOST:-}" ] && [ ! -s "${DIBS_MACHINES:-${XDG_CONFIG_HOME:-$HOME/.config}/dibs/machines.toml}" ]; then
     echo
-    echo "Set DIBS_HOST to the machine you were given. There is no default, so every call"
-    echo "fails until you do:"
-    echo "  bash/zsh   echo 'export DIBS_HOST=dibs@<machine>' >> ~/.bashrc"
-    echo "  fish       set -Ux DIBS_HOST dibs@<machine>"
+    echo "Record the machine you were given, and every call can reach it:"
+    echo "  dibs --check dibs@<machine> --write"
 fi
