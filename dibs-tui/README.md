@@ -10,7 +10,7 @@ beside a benchmark.
 
     cargo build --release && cp target/release/dibstop ~/.local/bin/
 
-Run `dibstop [interval]`, default 2 seconds. `?` lists the keys.
+Run `dibstop [interval]`, default 10 seconds. `?` lists the keys.
 
 `dibs` has to be on PATH; this is only a front end for it.
 
