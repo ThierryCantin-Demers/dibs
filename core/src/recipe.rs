@@ -17,16 +17,6 @@ fn default_source() -> Source {
     Source::Repo
 }
 
-/// Compiled in, so there is nothing to install and nothing to keep in sync. Adding a repo
-/// here is a file and a line, and everyone gets it on the next build.
-fn builtin(repo: &str) -> Option<&'static str> {
-    match repo {
-        "cubek" => Some(include_str!("../recipes/cubek.toml")),
-        "cubecl" => Some(include_str!("../recipes/cubecl.toml")),
-        _ => None,
-    }
-}
-
 pub fn local_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("DIBS_RECIPES") {
         return PathBuf::from(d);
@@ -91,8 +81,8 @@ pub struct Recipe {
     pub isolation: Isolation,
     #[serde(default)]
     pub params: BTreeMap<String, Param>,
-    /// Variables given a value unique to each run, such as `CUBECL_ENVIRONMENT`, which names the
-    /// store of autotune results a run would otherwise share with the last run in its tree. A
+    /// Variables given a value unique to each run, such as one naming the store a tool keeps
+    /// autotune results in, which a run would otherwise share with the last run in its tree. A
     /// value rather than a directory, since that is what a tool's knob takes.
     #[serde(default)]
     pub fresh: Vec<String>,
@@ -143,6 +133,34 @@ pub struct Manifest {
     pub test: BTreeMap<String, Recipe>,
     #[serde(default)]
     pub service: BTreeMap<String, Service>,
+    #[serde(default)]
+    pub tree: Option<Tree>,
+}
+
+/// How the repo's trees are set up on a machine, whichever recipe then runs in them.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct Tree {
+    /// Paths a new tree starts without when it is seeded from a sibling, such as a cache a tool
+    /// keeps inside the tree, whose contents would be the sibling's results rather than its own.
+    #[serde(default)]
+    pub fresh: Vec<String>,
+}
+
+impl Tree {
+    /// Each is removed with `rm -rf` inside the new tree, so it has to name something in it.
+    fn check(&self) -> Result<(), String> {
+        for p in &self.fresh {
+            let inside = p.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
+                && p.chars().all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
+            if !inside {
+                return Err(format!(
+                    "[tree] fresh lists paths inside the tree, and '{p}' is not one: relative, with no . or .. \
+                     part, in letters, digits and ._-/"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -173,27 +191,20 @@ impl Verb {
 /// Where a recipe was found, so an override is visible rather than surprising.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// Compiled into the binary. Anyone who has dibs installed has these, with no setup and nothing
-    /// to sync, which is the only arrangement that works for someone who does not share the
-    /// same dotfile manager.
-    Builtin,
     /// `.dibs.toml` in the repo being measured, for a repo that wants to carry its own. Not
     /// a destination recipes graduate to: a shared upstream repo gains nothing from one
     /// person's benchmark procedure, and the run record already carries the procedure itself.
     Repo,
-    /// `~/.config/dibs/recipes/<repo>.toml`. Where a recipe lives while it is still moving:
-    /// these are shared upstream repos, and an experimental file in one costs a pull request
-    /// and gives every other contributor something they do not use.
+    /// `~/.config/dibs/recipes/<repo>.toml`, which can be a clone a team shares. A recipe in a
+    /// shared upstream repo costs a pull request per change and gives every other contributor
+    /// something they do not use.
     Local,
 }
 
 impl Manifest {
-    /// Three layers, each overriding the last: bundled defaults, then whatever the repo
-    /// declares for itself, then local config. Defaults so a new person has working recipes
-    /// the moment they have the binary; the repo above them because a repo that declares its
-    /// own knows better than a default; local above both because it is the override, and it
-    /// is what lets a recipe be iterated on without a pull request against a shared upstream
-    /// repo. The format is identical at every layer, so a recipe moves down as it settles.
+    /// Two layers, the second overriding the first: whatever the repo declares for itself, then
+    /// local config, because that is the override. The format is the same in both, so a recipe
+    /// moves between them unchanged. dibs carries no recipes of its own: it knows no repo.
     pub fn load(dir: &Path, repo: &str) -> Result<Manifest, String> {
         Manifest::load_from(dir, repo, &local_dir())
     }
@@ -204,44 +215,42 @@ impl Manifest {
     /// time and this one failed about one run in five. A comment claiming the test was single
     /// threaded is what kept it that way.
     pub fn load_from(dir: &Path, repo: &str, local_dir: &Path) -> Result<Manifest, String> {
-        let mut m = Manifest::default();
-        let mut found = Vec::new();
-
-        if let Some(text) = builtin(repo) {
-            let parsed: Manifest =
-                toml::from_str(text).map_err(|e| format!("bundled {repo}.toml: {e}"))?;
-            m.absorb(parsed, Source::Builtin);
-            found.push(format!("bundled {repo}.toml"));
-        }
-
-        let in_repo = dir.join(".dibs.toml");
-        if in_repo.exists() {
-            let text = std::fs::read_to_string(&in_repo)
-                .map_err(|e| format!("{}: {e}", in_repo.display()))?;
-            let parsed: Manifest =
-                toml::from_str(&text).map_err(|e| format!("{}: {e}", in_repo.display()))?;
-            m.absorb(parsed, Source::Repo);
-            found.push(in_repo.display().to_string());
-        }
-
-        let local = local_dir.join(format!("{repo}.toml"));
-        if local.exists() {
-            let text = std::fs::read_to_string(&local)
-                .map_err(|e| format!("{}: {e}", local.display()))?;
-            let parsed: Manifest =
-                toml::from_str(&text).map_err(|e| format!("{}: {e}", local.display()))?;
-            m.absorb(parsed, Source::Local);
-            found.push(local.display().to_string());
-        }
-
-        if found.is_empty() {
+        let (m, found) = Manifest::layers(dir, repo, local_dir)?;
+        if !found {
             return Err(format!(
-                "no recipes for {repo}. Nothing bundled, and nothing in {} or {}",
-                in_repo.display(),
-                local.display()
+                "no recipes for {repo}: nothing in {} or {}",
+                dir.join(".dibs.toml").display(),
+                local_dir.join(format!("{repo}.toml")).display()
             ));
         }
         Ok(m)
+    }
+
+    /// For work in a tree that runs no recipe, where a repo declaring nothing is not an error.
+    pub fn load_any(dir: &Path, repo: &str) -> Result<Manifest, String> {
+        Manifest::layers(dir, repo, &local_dir()).map(|(m, _)| m)
+    }
+
+    fn layers(dir: &Path, repo: &str, local_dir: &Path) -> Result<(Manifest, bool), String> {
+        let mut m = Manifest::default();
+        let mut found = false;
+        for (path, src) in [(dir.join(".dibs.toml"), Source::Repo), (local_dir.join(format!("{repo}.toml")), Source::Local)] {
+            if !path.exists() {
+                continue;
+            }
+            let at = |e: String| format!("{}: {e}", path.display());
+            let text = std::fs::read_to_string(&path).map_err(|e| at(e.to_string()))?;
+            let parsed: Manifest = toml::from_str(&text).map_err(|e| at(e.to_string()))?;
+            parsed.tree.as_ref().map(Tree::check).transpose().map_err(at)?;
+            m.absorb(parsed, src);
+            found = true;
+        }
+        Ok((m, found))
+    }
+
+    /// What a new tree of this repo starts without, from whichever layer last said.
+    pub fn tree_fresh(&self) -> &[String] {
+        self.tree.as_ref().map_or(&[], |t| &t.fresh)
     }
 
     fn absorb(&mut self, other: Manifest, src: Source) {
@@ -258,6 +267,9 @@ impl Manifest {
         for (name, mut svc) in other.service {
             svc.source = src;
             self.service.insert(name, svc);
+        }
+        if other.tree.is_some() {
+            self.tree = other.tree;
         }
     }
 
@@ -439,42 +451,6 @@ mod tests {
         std::fs::write(dir.join(name), body).unwrap();
     }
 
-    // The bundled files ship inside the binary, so a typo in one is not a config file the user
-    // can fix: it is a build that parses nothing for that repo.
-    //
-    // And the footgun the cubek header describes is checkable. cubecl's build script counts the
-    // enabled runtimes and silently falls back to wgpu when the count is not exactly one, so a
-    // recipe against those packages that names two backends, or none, measures hardware nobody
-    // chose. Packages that carry their own backend, like cubecl-cuda, select it by package and
-    // are left alone.
-    #[test]
-    fn every_bundled_recipe_parses_and_names_one_backend() {
-        const BACKENDS: [&str; 6] = ["cpu", "cuda", "hip", "metal-native", "wgpu", "vulkan"];
-        for repo in ["cubek", "cubecl"] {
-            let text = super::builtin(repo).expect("a bundled file for this repo");
-            let m: super::Manifest =
-                toml::from_str(text).unwrap_or_else(|e| panic!("{repo}: {e}"));
-            for (verb, named) in [("bench", &m.bench), ("build", &m.build), ("test", &m.test)] {
-                for (name, rec) in named {
-                    for step in &rec.steps {
-                        if !step.run.contains("-p benchmarks") && !step.run.contains("-p throughput")
-                        {
-                            continue;
-                        }
-                        let n = BACKENDS
-                            .iter()
-                            .filter(|b| {
-                                step.run.contains(&format!("--features {b}"))
-                                    || step.run.contains(&format!("--features cubecl/{b}"))
-                            })
-                            .count();
-                        assert_eq!(n, 1, "{repo} {verb}.{name} names {n} backends: {}", step.run);
-                    }
-                }
-            }
-        }
-    }
-
     /// Local wins, because it is the override, and because these are shared upstream repos:
     /// a recipe still moving cannot live in one without costing a pull request.
     #[test]
@@ -600,6 +576,30 @@ run = \"cargo bench --features cubecl/{backend} -- $FILTER\"\n";
             "[[bench.r.step]]\nlock=\"exclusive\"\nrun=\"$CARGO_TARGET_DIR/release/bench\"\n",
         );
         prebuilt.check("r").expect("a binary that was already built compiles nothing");
+    }
+
+    #[test]
+    fn the_last_layer_to_describe_the_tree_decides_what_a_new_one_starts_without() {
+        let tmp = std::env::temp_dir().join(format!("dibs-tree-{}", std::process::id()));
+        let (repo, cfg) = (tmp.join("app"), tmp.join("cfg"));
+        write(&repo, ".dibs.toml", "[tree]\nfresh = [\"cache\"]\n");
+        assert_eq!(Manifest::load_from(&repo, "app", &cfg).unwrap().tree_fresh(), ["cache"]);
+        write(&cfg, "app.toml", "[tree]\nfresh = [\"target/environment\"]\n");
+        assert_eq!(Manifest::load_from(&repo, "app", &cfg).unwrap().tree_fresh(), ["target/environment"]);
+        write(&cfg, "app.toml", "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"make\"\n");
+        assert_eq!(Manifest::load_from(&repo, "app", &cfg).unwrap().tree_fresh(), ["cache"], "a layer that says nothing about it changes nothing");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn a_tree_path_that_could_reach_outside_the_tree_is_refused() {
+        let tmp = std::env::temp_dir().join(format!("dibs-tree-bad-{}", std::process::id()));
+        for bad in ["..", "a/../..", "/etc", ".", "", "a//b", "a/", "a b", "$HOME", "*"] {
+            write(&tmp, ".dibs.toml", &format!("[tree]\nfresh = [{bad:?}]\n"));
+            let e = Manifest::load_from(&tmp, "app", &tmp.join("cfg")).unwrap_err();
+            assert!(e.contains("[tree] fresh"), "{bad:?}: {e}");
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

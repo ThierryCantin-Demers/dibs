@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-dibs <verb> <repo>[@<ref>] <recipe>       run a recipe from the repo's .dibs.toml
+dibs <verb> <repo>[@<ref>] <recipe>       run one of the repo's recipes
                                           @local sends your working tree, unpushed and
                                           uncommitted changes included, and is the only
                                           path for a private repo: the machines carry no
@@ -429,9 +429,8 @@ fn run() -> Result<ExitCode, String> {
                 println!("{}:", v.as_str());
                 for (n, src) in listing {
                     match src {
-                        recipe::Source::Builtin => println!("  {n}"),
                         recipe::Source::Repo => println!("  {n}   (from the repo)"),
-                        recipe::Source::Local => println!("  {n}   (your local config)"),
+                        recipe::Source::Local => println!("  {n}"),
                     }
                     // What it accepts, so the valid invocations can be read off rather than
                     // reconstructed from the recipe file.
@@ -456,11 +455,13 @@ fn run() -> Result<ExitCode, String> {
             println!("service:");
             for (n, src) in services {
                 match src {
-                    recipe::Source::Builtin => println!("  {n}"),
                     recipe::Source::Repo => println!("  {n}   (from the repo)"),
-                    recipe::Source::Local => println!("  {n}   (your local config)"),
+                    recipe::Source::Local => println!("  {n}"),
                 }
             }
+        }
+        if !manifest.tree_fresh().is_empty() {
+            println!("\na new tree starts without: {}", manifest.tree_fresh().join(", "));
         }
         println!("\nlocal recipes: {}", recipe::local_dir().display());
         return Ok(ExitCode::SUCCESS);
@@ -695,7 +696,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
     let resolved = resolve(&args)?;
     let pin_specs = args.pins.iter().map(|p| pin_spec(p).map(|(r, f)| (r.to_string(), f == "local"))).collect::<Result<Vec<_>, _>>()?;
     let calls = jobs_of(&resolved, &sides, args.reps, &pin_specs);
-    let Resolved { dir, repo_name, verb, name, rec, label, step_labels, shell_reason, params } = resolved;
+    let Resolved { dir, repo_name, verb, name, rec, label, step_labels, shell_reason, params, tree_fresh } = resolved;
     let (name, rec) = (name.as_str(), &rec);
     let fingerprint = rec.fingerprint();
     let arms = arms(&sides, &dir)?;
@@ -850,7 +851,8 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
             max: None,
             new_series: false,
         };
-        let (script, gitdbs) = tree_script(&p.dir, &p.repo, &p.reference, p.local.as_ref(), "", &new_token(), 0, None);
+        let fresh = Manifest::load_any(&p.dir, &p.repo)?;
+        let (script, gitdbs) = tree_script(&p.dir, &p.repo, &p.reference, p.local.as_ref(), "", &new_token(), 0, None, fresh.tree_fresh());
         let text = match &p.local {
             Some(l) => {
                 eprintln!("dibs: pinning {} from {} ({})", p.repo, p.dir.display(), if l.dirty { "uncommitted changes included" } else { "clean" });
@@ -901,7 +903,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
             (None, None) => unreachable!(),
         }
         let reference = arm.fetch.as_deref().unwrap_or("local");
-        let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &token, slot, nest.as_ref());
+        let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &token, slot, nest.as_ref(), &tree_fresh);
         slot += usize::from(arm.fetch.is_some());
         trees.push(Tree { token, script, gitdbs, local, prepared: None });
     }
@@ -1312,7 +1314,7 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
         None => eprintln!("dibs: preparing {repo_name}@{reference}"),
     }
     let signature = svc.build.as_deref().and_then(worktree::build_signature).unwrap_or_default();
-    let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &new_token(), 0, None);
+    let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &new_token(), 0, None, manifest.tree_fresh());
     let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
     let setup = Request {
         label: &setup_label,
@@ -1434,13 +1436,14 @@ fn tree_script(
     token: &str,
     slot: usize,
     nest: Option<&worktree::Nest>,
+    fresh: &[String],
 ) -> (String, Vec<gitdeps::Db>) {
     let lock = lockfile(dir, local.is_none().then_some(reference));
     let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock.as_deref().unwrap_or("")));
     let script = worktree::packages_script(lock.as_deref().unwrap_or(""), signature, token)
         + &match local {
-            Some(l) => worktree::setup_local_script(repo_name, &l.key, &l.content, nest),
-            None => worktree::setup_script(repo_name, reference, slot, nest),
+            Some(l) => worktree::setup_local_script(repo_name, &l.key, &l.content, nest, fresh),
+            None => worktree::setup_script(repo_name, reference, slot, nest, fresh),
         }
         + &gitdeps::check_script(&gitdbs);
     (script, gitdbs)
@@ -1503,13 +1506,14 @@ struct Resolved {
     step_labels: Vec<String>,
     shell_reason: Option<String>,
     params: BTreeMap<String, String>,
+    tree_fresh: Vec<String>,
 }
 
 fn resolve(args: &Args) -> Result<Resolved, String> {
     let dir = resolve_repo(&args.repo, &args.root)?;
     let repo_name = worktree::identity(&dir);
     let manifest = if args.verb == "shell" {
-        Manifest::default()
+        Manifest::load_any(&dir, &repo_name)?
     } else {
         Manifest::load(&dir, &repo_name)?
     };
@@ -1598,6 +1602,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         step_labels,
         shell_reason,
         params,
+        tree_fresh: manifest.tree_fresh().to_vec(),
     })
 }
 
@@ -1980,6 +1985,7 @@ mod tests {
             step_labels,
             shell_reason: None,
             params: BTreeMap::new(),
+            tree_fresh: Vec::new(),
         }
     }
 

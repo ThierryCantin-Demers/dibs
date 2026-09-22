@@ -32,16 +32,13 @@ against a cluster, satisfies them without anything above `resource.rs` changing.
 
 ## Where recipes live
 
-Three layers, each overriding the last: bundled in the binary, then a repo's own `.dibs.toml`,
-then `~/.config/dibs/recipes/<repo>.toml`. Bundled so that having the binary is the whole of
-the setup, which is the only arrangement that works for someone who does not share whatever
-dotfile manager the recipes would otherwise sync through. Local config on top because it is the override, and it is where a recipe
-lives while it is still moving.
+Two layers, the second overriding the first: a repo's own `.dibs.toml`, then
+`~/.config/dibs/recipes/<repo>.toml`. None ship with dibs, so it knows no repo. The local
+directory can be a git clone a team shares, which reaches everyone without a dotfile manager, and
+it is on top because it is the override.
 
-A recipe that settles belongs in the repo, unchanged, because that is what makes a run
-recoverable years later: check out the ref and read the recipe that was there. Until then the
-run record carries the procedure itself alongside its fingerprint, so a local recipe is still
-recoverable from the record rather than only identifiable by it.
+The run record carries the procedure itself alongside its fingerprint, so a recipe that lives only
+in local config is still recoverable from the record rather than only identifiable by it.
 
 What neither arrangement is: a spec handed over at invocation time. That is exactly as opaque
 as the `/tmp` script it would replace, and 36 of the 38 exclusive jobs in the old log were that

@@ -79,10 +79,8 @@ while read -r n src; do
         case "${src##*/}" in
             {repo}-local-*)
                 sources=$SCRATCH/ws/{repo}/local-${src##*/{repo}-local-}
-                # cubecl keeps autotune winners and throughput numbers in the tree's target/environment,
-                # and a new tree must start without its sibling's.
                 if [ ! -e "$WT" ] && [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null &&
-                    rm -rf "$WT.seed.$$/target/environment" && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
+                    {fresh} && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
                     echo "DIBS-SEED-SOURCES"
                 fi
                 rm -rf "$WT.seed.$$" ;;
@@ -93,6 +91,15 @@ while read -r n src; do
     [ -d "$TARGET" ] && break
 done <<< "$ranked"
 "#;
+
+/// `fresh` goes into the script as it stands, which `Tree::check` made safe when it was read.
+fn seed(repo: &str, fresh: &[String]) -> String {
+    let dropped = match fresh.is_empty() {
+        true => ":".to_string(),
+        false => format!("rm -rf{}", fresh.iter().map(|p| format!(" \"$WT.seed.$$/{p}\"")).collect::<String>()),
+    };
+    SEED.replace("{repo}", repo).replace("{fresh}", &dropped)
+}
 
 /// The tree's package list waits beside its target directory until a build step succeeds, so a
 /// target is never credited with a lockfile whose build failed or never ran. Named per prepare:
@@ -286,7 +293,7 @@ pub fn packages_script(lock: &str, signature: &str, token: &str) -> String {
 /// `slot` is which of a comparison's fetched arms this is. The first shares the repo's target;
 /// each later one has its own, since the arms' measurements alternate and one target holds only
 /// the binary of whichever arm built last. A pinned tree is `nest`ed, and so is its target.
-pub fn setup_script(repo: &str, reference: &str, slot: usize, nest: Option<&Nest>) -> String {
+pub fn setup_script(repo: &str, reference: &str, slot: usize, nest: Option<&Nest>, fresh: &[String]) -> String {
     let mut suffix = nest.map(|n| format!("-{}", n.name)).unwrap_or_default();
     if slot > 0 {
         suffix += &format!("-arm{slot}");
@@ -295,7 +302,7 @@ pub fn setup_script(repo: &str, reference: &str, slot: usize, nest: Option<&Nest
     // and the first build dates them after it.
     let seed = match suffix.is_empty() {
         true => String::new(),
-        false => format!("if [ ! -d \"$TARGET\" ]; then\n{}rm -f \"$TARGET/.dibs-tree\"\nfi\n", SEED.replace("{repo}", repo)),
+        false => format!("if [ ! -d \"$TARGET\" ]; then\n{}rm -f \"$TARGET/.dibs-tree\"\nfi\n", seed(repo, fresh)),
     };
     let (nested, patch) = match nest {
         Some(n) => (format!("{}/", n.name), n.script(repo)),
@@ -543,7 +550,7 @@ mod tests {
     #[test]
     fn the_generated_scripts_are_valid_shell() {
         use std::io::Write;
-        for script in [setup_script("cubek", "main", 0, None), setup_script("cubek", "main", 1, None), setup_local_script("cubek", "k1", "c1", None)] {
+        for script in [setup_script("cubek", "main", 0, None, &[]), setup_script("cubek", "main", 1, None, &[]), setup_local_script("cubek", "k1", "c1", None, &[])] {
             let mut c = std::process::Command::new("bash")
                 .arg("-n")
                 .stdin(std::process::Stdio::piped())
@@ -560,7 +567,7 @@ mod tests {
     // the ref being wrong and sends people to carry the code over by hand.
     #[test]
     fn a_credentials_failure_names_local_rather_than_the_ref() {
-        let s = setup_script("cubek", "main", 0, None);
+        let s = setup_script("cubek", "main", 0, None, &[]);
         assert!(s.contains("could not read Username"), "the fetch error has to be inspected");
         assert!(s.contains("cubek@local"), "and the way out has to be named");
     }
@@ -583,7 +590,7 @@ mod tests {
 
     #[test]
     fn collection_can_never_remove_the_tree_just_prepared() {
-        let s = setup_script("cubek", "main", 0, None);
+        let s = setup_script("cubek", "main", 0, None, &[]);
         assert!(s.contains(r#"[ "$old" = "$WT" ] && continue"#),
                 "the current tree must be excluded from collection by identity, not by luck");
         assert!(s.contains("-mtime +"), "collection has to be by age, not unconditional");
@@ -637,7 +644,7 @@ mod tests {
 
     fn resolve(home: &std::path::Path, reference: &str) -> (bool, String) {
         let out = std::process::Command::new("bash")
-            .arg("-c").arg(setup_script("demo", reference, 0, None))
+            .arg("-c").arg(setup_script("demo", reference, 0, None, &[]))
             .env("HOME", home)
             .env("DIBS_SCRATCH", home.join("scratch"))
             .output().unwrap();
@@ -666,7 +673,7 @@ mod tests {
         let kids: Vec<_> = (0..8)
             .map(|_| {
                 std::process::Command::new("bash")
-                    .arg("-c").arg(setup_script("demo", &wanted, 0, None))
+                    .arg("-c").arg(setup_script("demo", &wanted, 0, None, &[]))
                     .env("HOME", &home)
                     .env("DIBS_SCRATCH", home.join("scratch"))
                     .stdout(std::process::Stdio::null())
@@ -708,7 +715,7 @@ mod tests {
         let (home, wanted, _) = sandbox("slot");
         let target = |slot| {
             let out = std::process::Command::new("bash")
-                .arg("-c").arg(setup_script("demo", &wanted, slot, None))
+                .arg("-c").arg(setup_script("demo", &wanted, slot, None, &[]))
                 .env("HOME", &home)
                 .env("DIBS_SCRATCH", home.join("scratch"))
                 .output().unwrap();
@@ -717,7 +724,7 @@ mod tests {
         };
         assert!(target(0).ends_with("/target/demo"));
         assert!(target(1).ends_with("/target/demo-arm1"));
-        let s = setup_script("demo", &wanted, 1, None);
+        let s = setup_script("demo", &wanted, 1, None, &[]);
         let seed = s.find("DIBS-SEED ").unwrap();
         assert!(s[seed..].find("rm -f \"$TARGET/.dibs-tree\"").is_some(), "a copied target is not this checkout's build");
         let _ = std::fs::remove_dir_all(&home);
@@ -739,10 +746,10 @@ mod tests {
             parse(&String::from_utf8_lossy(&out.stdout)).unwrap()
         };
         let nested = home.join(format!("scratch/ws/demo/{}", nest.name));
-        let fetched = run(setup_script("demo", &wanted, 0, Some(&nest)));
+        let fetched = run(setup_script("demo", &wanted, 0, Some(&nest), &[]));
         assert_eq!(fetched.worktree, nested.join(&wanted[..12]).display().to_string());
         assert!(fetched.target.ends_with(&format!("/target/demo-{}", nest.name)));
-        let local = run(setup_local_script("demo", "k", "c", Some(&nest)));
+        let local = run(setup_local_script("demo", "k", "c", Some(&nest), &[]));
         assert_eq!(local.worktree, nested.join("local-k").display().to_string());
         assert!(local.target.ends_with(&format!("/target/demo-local-k-{}", nest.name)));
         assert_eq!(std::fs::read_to_string(nested.join(".cargo/config.toml")).unwrap(), nest.config);
@@ -839,7 +846,7 @@ mod tests {
     #[test]
     fn a_target_directory_nobody_has_used_is_collected() {
         let (home, _, _) = sandbox("gc");
-        let left = targets(&home, "45", &setup_script("demo", "local-only", 0, None));
+        let left = targets(&home, "45", &setup_script("demo", "local-only", 0, None, &[]));
         assert!(!left.contains(&"abandoned".to_string()), "left {left:?}");
         assert!(left.contains(&"demo".to_string()), "the one being used must survive");
         let _ = std::fs::remove_dir_all(&home);
@@ -857,7 +864,7 @@ mod tests {
             .arg(stale.join(".dibs-used"))
             .status()
             .unwrap();
-        let left = targets(&home, "5", &setup_local_script("demo", "k", "c", None));
+        let left = targets(&home, "5", &setup_local_script("demo", "k", "c", None, &[]));
         assert!(!left.contains(&"abandoned".to_string()), "left {left:?}");
         assert!(left.contains(&"demo-local-k".to_string()), "the one being used must survive");
         assert!(!stale.exists(), "a stale tree of another repo must be collected");
@@ -870,7 +877,7 @@ mod tests {
         let (home, _, _) = sandbox("ws-unmarked");
         let lost = home.join("scratch/ws/other/local-unmarked");
         std::fs::create_dir_all(&lost).unwrap();
-        targets(&home, "5", &setup_script("demo", "local-only", 0, None));
+        targets(&home, "5", &setup_script("demo", "local-only", 0, None, &[]));
         assert!(lost.join(".dibs-used").exists());
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -880,7 +887,7 @@ mod tests {
     #[test]
     fn a_target_directory_with_no_marker_is_dated_rather_than_deleted() {
         let (home, _, _) = sandbox("unmarked");
-        let left = targets(&home, "45", &setup_script("demo", "local-only", 0, None));
+        let left = targets(&home, "45", &setup_script("demo", "local-only", 0, None, &[]));
         assert!(left.contains(&"unmarked".to_string()), "left {left:?}");
         assert!(home.join("scratch/target/unmarked/.dibs-used").exists());
         let _ = std::fs::remove_dir_all(&home);
@@ -891,7 +898,7 @@ mod tests {
     // rule is structural: this script must never consult it.
     #[test]
     fn resolution_never_goes_through_the_shared_fetch_head() {
-        let s = setup_script("cubek", "main", 0, None);
+        let s = setup_script("cubek", "main", 0, None, &[]);
         // Comments may name it; the code may not use it.
         let code: String = s
             .lines()
@@ -904,7 +911,7 @@ mod tests {
 
     #[test]
     fn the_script_keys_the_tree_by_commit_not_by_ref() {
-        let s = setup_script("cubek", "main", 0, None);
+        let s = setup_script("cubek", "main", 0, None, &[]);
         assert!(s.contains("ws/cubek/$SHORT"), "tree path must be keyed by the resolved commit");
         assert!(s.contains("--detach"), "a tracking worktree would move under a running job");
     }
@@ -1011,7 +1018,7 @@ fn hex(b: &[u8]) -> String {
 /// The same layout a fetched ref gets, without the fetch: the tree arrives by rsync instead.
 /// Everything downstream, the lock split, the recorded revision and the log path, is unchanged,
 /// which is the point. Re-implementing that by hand is what produced two wrong numbers.
-pub fn setup_local_script(repo: &str, key: &str, content: &str, nest: Option<&Nest>) -> String {
+pub fn setup_local_script(repo: &str, key: &str, content: &str, nest: Option<&Nest>, fresh: &[String]) -> String {
     let (nested, suffix, patch) = match nest {
         Some(n) => (format!("{}/", n.name), format!("-{}", n.name), n.script(repo)),
         None => (String::new(), String::new(), String::new()),
@@ -1035,7 +1042,7 @@ echo "DIBS-REV {repo} local:{content}"
 "#,
         gc = GC,
         stage = STAGE,
-        seed = SEED.replace("{repo}", repo)
+        seed = seed(repo, fresh)
     );
     s
 }
@@ -1062,7 +1069,7 @@ mod local_tests {
     #[test]
     fn a_step_after_its_setup_runs_in_the_prepared_tree_with_its_target() {
         let scratch = tmp("ahead-step");
-        let (code, out) = run_ahead(&scratch, &setup_local_script("demo", "k1", "c", None), Then::Step, "echo \"at $PWD with $CARGO_TARGET_DIR\"\n");
+        let (code, out) = run_ahead(&scratch, &setup_local_script("demo", "k1", "c", None, &[]), Then::Step, "echo \"at $PWD with $CARGO_TARGET_DIR\"\n");
         assert_eq!(code, 0, "{out}");
         let wt = scratch.join("ws/demo/local-k1");
         let parsed = parse(&out).unwrap();
@@ -1089,7 +1096,7 @@ mod local_tests {
     #[test]
     fn a_transfer_starts_beside_the_tree_it_names() {
         let scratch = tmp("ahead-transfer");
-        let (code, out) = run_ahead(&scratch, &setup_local_script("demo", "k2", "c", None), Then::Transfer, "echo \"at $PWD\" >&2\n");
+        let (code, out) = run_ahead(&scratch, &setup_local_script("demo", "k2", "c", None, &[]), Then::Transfer, "echo \"at $PWD\" >&2\n");
         assert_eq!(code, 0, "{out}");
         assert!(out.contains(&format!("at {}", scratch.join("ws/demo").display())), "{out}");
     }
@@ -1097,7 +1104,7 @@ mod local_tests {
     #[test]
     fn a_step_waits_while_a_git_dependency_is_missing() {
         let scratch = tmp("ahead-held");
-        let setup = setup_local_script("demo", "k3", "c", None) + "echo 'DIBS-GITMISSING widget-0123456789abcdef deadbeef'\n";
+        let setup = setup_local_script("demo", "k3", "c", None, &[]) + "echo 'DIBS-GITMISSING widget-0123456789abcdef deadbeef'\n";
         let (code, out) = run_ahead(&scratch, &setup, Then::Step, "echo RAN\n");
         assert_eq!(code, 3, "{out}");
         assert!(out.contains("DIBS-HELD") && !out.contains("DIBS-READY") && !out.contains("RAN"), "{out}");
@@ -1132,18 +1139,18 @@ mod local_tests {
         repo(&a);
         repo(&b);
         assert_ne!(local(&a).unwrap().key, local(&b).unwrap().key);
-        assert!(setup_local_script("r", &local(&a).unwrap().key, "x", None)
+        assert!(setup_local_script("r", &local(&a).unwrap().key, "x", None, &[])
             .contains("target/r-local-"));
     }
 
     /// `cp` stands in for the filesystem: the test directory is usually a tmpfs, which has no
     /// reflinks, so a shim decides whether the reflink copy succeeds.
     fn prepare_local(scratch: &std::path::Path, key: &str, hold: Option<&str>, cp: &str) -> String {
-        prepare_local_with(scratch, key, hold, cp, "", "t0")
+        prepare_local_with(scratch, key, hold, cp, "", "t0", &[])
     }
 
-    fn prepare_local_with(scratch: &std::path::Path, key: &str, hold: Option<&str>, cp: &str, lock: &str, token: &str) -> String {
-        let script = packages_script(lock, SIG, token) + &setup_local_script("demo", key, "c", None);
+    fn prepare_local_with(scratch: &std::path::Path, key: &str, hold: Option<&str>, cp: &str, lock: &str, token: &str, fresh: &[String]) -> String {
+        let script = packages_script(lock, SIG, token) + &setup_local_script("demo", key, "c", None, fresh);
         let bin = scratch.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let real = String::from_utf8(Command::new("bash").args(["-c", "type -P cp"]).output().unwrap().stdout).unwrap();
@@ -1277,18 +1284,23 @@ mod local_tests {
     }
 
     #[test]
-    fn a_seeded_tree_does_not_start_with_its_sibling_s_autotune_store() {
-        let scratch = tmp("seed-environment");
-        sibling(&scratch);
-        let store = sibling_sources(&scratch).join("target/environment/default");
-        std::fs::create_dir_all(&store).unwrap();
-        std::fs::write(store.join("autotune"), "winners\n").unwrap();
-        let p = parse(&prepare_local(&scratch, "new", None, "reflinks")).unwrap();
-        assert!(p.seeded_sources);
-        let wt = std::path::Path::new(&p.worktree);
-        assert!(wt.join("src/same.rs").exists() && !wt.join("target/environment").exists());
-        assert!(store.join("autotune").exists(), "the sibling keeps its own");
-        let _ = std::fs::remove_dir_all(&scratch);
+    fn a_seeded_tree_starts_without_exactly_what_its_repo_names() {
+        let seeded = |fresh: &[String]| {
+            let scratch = tmp(&format!("seed-fresh-{}", fresh.len()));
+            sibling(&scratch);
+            let store = sibling_sources(&scratch).join("target/environment/default");
+            std::fs::create_dir_all(&store).unwrap();
+            std::fs::write(store.join("autotune"), "winners\n").unwrap();
+            let p = parse(&prepare_local_with(&scratch, "new", None, "reflinks", "", "t0", fresh)).unwrap();
+            assert!(p.seeded_sources);
+            assert!(store.join("autotune").exists(), "the sibling keeps its own");
+            let wt = std::path::PathBuf::from(&p.worktree);
+            let kept = (wt.join("src/same.rs").exists(), wt.join("target/environment").exists());
+            let _ = std::fs::remove_dir_all(&scratch);
+            kept
+        };
+        assert_eq!(seeded(&["target/environment".to_string()]), (true, false));
+        assert_eq!(seeded(&[]), (true, true), "nothing the repo did not name is dropped");
     }
 
     /// A tree whose one source was written long ago, and the target it builds into.
@@ -1356,7 +1368,7 @@ mod local_tests {
         std::fs::write(newer.join(".dibs-packages"), packages_of(&LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"))).unwrap();
         Command::new("touch").arg("-d").arg("400 days ago").arg(old.join(".dibs-used")).status().unwrap();
         std::fs::write(newer.join(".dibs-used"), "").unwrap();
-        let out = prepare_local_with(&scratch, "new", None, "reflinks", LOCK_A, "t1");
+        let out = prepare_local_with(&scratch, "new", None, "reflinks", LOCK_A, "t1", &[]);
         let p = parse(&out).unwrap();
         assert_eq!(p.seeded.as_deref(), Some("demo-local-old"), "{out}");
         assert_eq!(p.seed_shared, Some((2, 2)));
@@ -1372,7 +1384,7 @@ mod local_tests {
         let newer = scratch.join("target/demo-local-zz-newer");
         std::fs::create_dir_all(newer.join("debug")).unwrap();
         std::fs::write(newer.join(".dibs-used"), "").unwrap();
-        let out = prepare_local_with(&scratch, "new", None, "reflinks", LOCK_A, "t1");
+        let out = prepare_local_with(&scratch, "new", None, "reflinks", LOCK_A, "t1", &[]);
         assert_eq!(parse(&out).unwrap().seeded.as_deref(), Some("demo-local-zz-newer"), "{out}");
         let _ = std::fs::remove_dir_all(&scratch);
     }
@@ -1391,7 +1403,7 @@ mod local_tests {
     #[test]
     fn a_target_is_credited_with_a_lockfile_only_once_a_build_succeeds() {
         let scratch = tmp("record-success");
-        prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A, "t1");
+        prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A, "t1", &[]);
         assert_eq!(record(&scratch, "k"), None, "a prepare alone records nothing");
         step(&scratch, "k", "t1", "false");
         assert_eq!(record(&scratch, "k"), None, "a failed build records nothing");
@@ -1414,8 +1426,8 @@ mod local_tests {
     #[test]
     fn a_build_merges_only_what_its_own_prepare_staged() {
         let scratch = tmp("record-own");
-        prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A, "t1");
-        prepare_local_with(&scratch, "k", None, "no reflinks", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "t2");
+        prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A, "t1", &[]);
+        prepare_local_with(&scratch, "k", None, "no reflinks", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "t2", &[]);
         step(&scratch, "k", "t1", "true");
         assert_eq!(record(&scratch, "k").unwrap(), packages_of(LOCK_A));
         let _ = std::fs::remove_dir_all(&scratch);
@@ -1436,9 +1448,9 @@ mod local_tests {
     #[test]
     fn a_target_remembers_every_lockfile_built_into_it() {
         let scratch = tmp("record");
-        prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A, "t1");
+        prepare_local_with(&scratch, "k", None, "no reflinks", LOCK_A, "t1", &[]);
         step(&scratch, "k", "t1", "true");
-        prepare_local_with(&scratch, "k", None, "no reflinks", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "t2");
+        prepare_local_with(&scratch, "k", None, "no reflinks", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "t2", &[]);
         step(&scratch, "k", "t2", "true");
         assert_eq!(record(&scratch, "k").unwrap().lines().count(), 3);
         let _ = std::fs::remove_dir_all(&scratch);

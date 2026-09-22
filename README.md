@@ -58,10 +58,15 @@ It fast-forwards the clone `dibs` was installed from, lists the commits that arr
 `install.sh` when anything changed or when the installed recipe layer was built from another
 commit. A `--copy` install has no clone to pull and says so.
 
-## Sharing recipes with the people you work with
+## Where recipes come from
 
-The local recipe layer, `~/.config/dibs/recipes`, can be a git clone. Keep it in a private
-repository your team can reach, since recipes name your repos, and everyone clones it into place:
+dibs carries no recipes, so it knows nothing about any repo until you describe one. A repo's
+recipes come from `~/.config/dibs/recipes/<repo>.toml`, and from a `.dibs.toml` in the repo if it
+carries one, the first overriding the second recipe by recipe. `dibs list <repo>` says which each
+came from.
+
+The local directory can be a git clone. Keep it in a private repository your team can reach,
+since recipes name your repos, and everyone clones it into place:
 
     git clone <your-recipes-repo> ~/.config/dibs/recipes
 
@@ -74,26 +79,26 @@ A recipe declares its knobs, so one procedure covers a sweep instead of a copy o
 value. The names are substituted into every command and into what each step exports:
 
 ```toml
-[bench.reduce]
-  [bench.reduce.params]
-  backend = { choices = ["cuda", "vulkan", "cpu"], default = "cuda" }
+[bench.solve]
+  [bench.solve.params]
+  backend = { choices = ["cuda", "vulkan", "cpu"] }
   samples = { default = "10" }
-  problems = { default = "sum_axis2,arg_topk,topk5_" }
+  problems = { default = "small,large" }
 
-  [[bench.reduce.step]]
+  [[bench.solve.step]]
   lock = "shared"
-  run  = "cargo bench --no-run -p benchmarks --bench reduce --features cubecl/{backend}"
+  run  = "cargo bench --no-run --bench solve --features {backend}"
 
-  [[bench.reduce.step]]
+  [[bench.solve.step]]
   lock = "exclusive"
-  env  = { CUBEK_BENCH_SAMPLES = "{samples}", CUBEK_BENCH_PROBLEMS = "{problems}" }
-  run  = "cargo bench -p benchmarks --bench reduce --features cubecl/{backend}"
+  env  = { BENCH_SAMPLES = "{samples}", BENCH_PROBLEMS = "{problems}" }
+  run  = "cargo bench --bench solve --features {backend}"
 ```
 
-    dibs bench cubek@local reduce --backend vulkan --samples 30
+    dibs bench app@local solve --backend vulkan --samples 30
 
 A bare repo name is the checkout you are in when that checkout is the repo, a worktree of it
-included, and otherwise the one under `DIBS_ROOT`: inside a worktree of cubek, `cubek@local` sends
+included, and otherwise the one under `DIBS_ROOT`: inside a worktree of app, `app@local` sends
 that worktree.
 
 `dibs list <repo>` prints what each recipe takes, its default, and its choices where it has any.
@@ -107,7 +112,7 @@ distinguishable in `dibs runs`.
 
 A sweep is one submission:
 
-    dibs bench cubek@local reduce --sweep samples=10,30,100 --reps 2
+    dibs bench app@local solve --backend cuda --sweep samples=10,30,100 --reps 2
 
 `--sweep` is repeatable and the combinations are the cross product. The points become a batch of
 ordinary calls, one per point, run in sequence because they share a worktree and its build cache,
@@ -119,13 +124,13 @@ first exclusive step on, and one record holds every rep. `dibs runs` gives the m
 spread across them. A recipe with no exclusive step repeats whole.
 
 The sweep has its own flag rather than splitting `--samples 10,30`, because a value may contain a
-comma: `--problems sum_axis2,arg_topk` is one value, and `--<name>` always means exactly one.
+comma: `--problems small,large` is one value, and `--<name>` always means exactly one.
 
 ## Comparing code
 
 An A/B is one call:
 
-    dibs bench cubek@main..local reduce --reps 3
+    dibs bench app@main..local solve --backend cuda --reps 3
 
 `A..B` measures B against where it left A, their merge base, so what landed on main since the
 branch left it is not credited to the branch. A local branch behind its upstream would put that
@@ -155,10 +160,10 @@ Two things in a recipe are refused when it loads, because both produce a number 
 
 ## Building against another repo's tree
 
-    dibs test cubek@local cuda --pin cubecl@local
+    dibs test app@local cuda --pin lib@local
 
-burn, cubecl and cubek take each other by git revision, so a change to cubecl reaches cubek only
-once it is pushed and the revision bumped. `--pin <repo>@<ref>` sends that repo's tree as well,
+An app that takes a library by git revision sees a change to it only once the change is pushed
+and the revision bumped. `--pin <repo>@<ref>` sends that repo's tree as well,
 your checkout for `@local` or a fetched ref otherwise, and points cargo at it with a `[patch]`
 for every crate of it the lockfile takes from git or crates.io. It is repeatable, and a crate one
 pinned repo takes from another is covered too.
@@ -190,30 +195,33 @@ shared lock.
 
 ## A cache of its own each run
 
-cubecl keeps autotune winners, compiled kernels and throughput numbers in one store, under
-`target/environment` beside the outermost `Cargo.toml` above where a step runs, whatever
-`CARGO_TARGET_DIR` says. Recipe steps run inside their tree, so each tree has its own. A fetched ref
-gets a tree per commit, so comparing two commits is safe. An `@local` tree is named after the
-checkout's path, so run, edit, run reuses it, and the second run reads the first one's winners and
-throughput numbers.
+Some tools keep state inside the tree they run in, such as autotune results or compiled kernels.
+Recipe steps run inside their tree, so each tree has its own. A fetched ref gets a tree per
+commit, so comparing two commits is safe. An `@local` tree is named after the checkout's path, so
+run, edit, run reuses it, and the second run reads what the first one stored.
 
-    [bench.reduce]
-    fresh = ["CUBECL_ENVIRONMENT"]
+    [bench.solve]
+    fresh = ["SOLVER_CACHE_NAME"]
 
 `fresh` names variables that get a value unique to each run, the same in every step of it, and the
-record carries the value. Each rep and each arm of a run gets one of its own. `CUBECL_ENVIRONMENT` names a store rather than a path, so each run gets a
-store of its own inside its tree, and it goes when the tree does. dibs gives a value, not a
-directory, since a value is what such a knob takes. A new tree seeded from a sibling never takes
-the sibling's `target/environment`.
+record carries the value. Each rep and each arm of a run gets one of its own. It is a value rather
+than a directory, since a value is what such a knob takes: a tool that names its store after it
+keeps one store per run inside the tree, and the store goes when the tree does.
 
-A fresh store is cold, so every run pays for autotune. The benchmark's warmup has to absorb it or
-the first measured iterations include it, and the spread across `--reps` now includes autotune
-picking different kernels. A margin smaller than that spread is not a result. To keep compiled
-kernels warm and turn off only the two caches that can fake a result, give the measured step
-`env = { CUBECL_AUTOTUNE_CACHE = "0", CUBECL_THROUGHPUT_CACHE = "0" }` instead.
+A fresh store is cold, so every run pays to fill it. The benchmark's warmup has to absorb that or
+the first measured iterations include it, and where the store holds autotune results the spread
+across `--reps` now includes autotune picking different kernels. A margin smaller than that spread
+is not a result.
 
-A repo whose cubecl config sets `path = "global"`, or a step run outside any cargo tree, keeps its
-stores in `~/.cache/cubecl`, shared by the whole account, where a store per run is never removed.
+A new `@local` tree is seeded from a sibling's, as the next section describes, which would hand
+it the sibling's store along with its sources. The recipe file says what a new tree of the repo
+starts without:
+
+    [tree]
+    fresh = ["target/environment"]
+
+Each entry is a path inside the tree, and anything that could reach outside it is refused when the
+file loads. `dibs list` shows them.
 
 ## Build caching
 
@@ -400,7 +408,7 @@ ready = "tcp:cuda"
 `dibs --check <host> --write` records what it finds there as an entry in
 `~/.config/dibs/machines.toml`, and `dibs --on <machine>` sends a call to one of them.
 
-The inventory has two layers, the way recipes have three. Set `DIBS_REGISTRY` to
+The inventory has two layers, the way recipes do. Set `DIBS_REGISTRY` to
 `user@host:path` and `dibs --registry-sync` fetches a shared machine list, cached locally and
 refreshed on a clock rather than on every call. Your own file then holds additions and
 overrides: a machine you name yourself wins outright over a shared entry of the same name, and

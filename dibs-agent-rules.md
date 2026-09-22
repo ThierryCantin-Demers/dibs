@@ -141,7 +141,7 @@ spoiled without it.
 - Each job names the agent that started it, so a person can ask that agent what it is doing.
   Claude Code is identified from its session. Any other runtime, Codex included, must
   `export DIBS_AGENT='<the work>'` once per session as its own statement, naming the work rather
-  than the tool: `DIBS_AGENT='cubek reduce sweep'`.
+  than the tool: `DIBS_AGENT='reduce kernel sweep'`.
 - `dibs --kill <pid>` stops a wedged job, refusing someone else's without `--anyone`, and
   `dibs --log [n]` shows what ran, what it cost and what was killed. Both ignore the lock, so a
   stuck machine can still be freed.
@@ -207,9 +207,9 @@ spoiled without it.
   all are built first, then the measurements alternate A B B A. Never hand-write the arms, their
   target directories or the alternation. The run ends with each arm's jobs: read the numbers with
   `dibs out <job>`.
-- **Build against an unpushed dependency with `--pin`**: `dibs test cubek@local cuda --pin
-  cubecl@local` builds cubek against your cubecl tree, through a `[patch]` dibs writes and then
-  checks cargo used. Never sync two trees by hand or `sed` a `Cargo.toml` on the machine.
+- **Build against an unpushed dependency with `--pin`**: `dibs test app@local cuda --pin
+  lib@local` builds app against your lib tree, through a `[patch]` dibs writes and then checks
+  cargo used. Never sync two trees by hand or `sed` a `Cargo.toml` on the machine.
 - A recipe's `artifacts` come back by themselves: each step keeps the files it wrote, the run
   fetches them, and `--artifacts <dir>` puts them in a directory at their paths. Do not add a step
   that copies results into `$DIBS_SCRATCH/out` for a `--sync` afterwards. `dibs --fetch <job>
@@ -220,19 +220,17 @@ spoiled without it.
   repo's ignore rules. It is how to run a branch you have not pushed, and the only way to run a
   private repo, because the machines hold no credentials. Reach for it before carrying code over by
   hand: a bundle, a tarball or a hand-written sync of a tree is this feature done worse.
-- An `@local` tree is reused from run to run, and so is cubecl's autotune store inside it: after
-  run, edit, run, the second run reads the first one's winners. A recipe with
-  `fresh = ["CUBECL_ENVIRONMENT"]` gives each run its own store and pays for autotune every time,
-  so its warmup has to absorb that. A margin smaller than the spread across `--reps` is not a
-  result.
+- An `@local` tree is reused from run to run, and so is any autotune store a tool keeps inside
+  it: after run, edit, run, the second run reads the first one's winners. A recipe whose `fresh`
+  names that store's variable gives each run its own and pays for autotune every time, so its
+  warmup has to absorb that. A margin smaller than the spread across `--reps` is not a result.
 - `dibs runs [label]` is what was measured: when and where, every repo's commit, the values, the
   measured step's time and lock, the spread across repeats of one procedure on the same code, and
   whether the label's recipe changed, since two procedures under one name are two histories. A
   failed run is listed only with `--all`. A record names its jobs, so `dibs out <job>` finds the
   log behind a number.
-- Recipes come in three layers, each overriding the last: bundled with dibs, the repo's
-  `.dibs.toml`, and `~/.config/dibs/recipes/<repo>.toml` for one still being worked out. `dibs list`
-  says which layer each came from.
+- Recipes live in `~/.config/dibs/recipes/<repo>.toml`, over a `.dibs.toml` the repo may carry;
+  dibs ships none. `dibs list` marks the ones that came from the repo.
 - `dibs with <repo>[@<ref>] <service> -- <command>` where a repo declares its servers: the worktree
   is prepared, they are built under the shared lock and started on the machine, and the command
   runs on your side against them, on ports dibs picked. `dibs list <repo>` says which it defines.
