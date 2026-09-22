@@ -1000,7 +1000,7 @@ if [ "$PINNED" = 0 ]; then
         # machine stays nameless and measure = false is never read, so a benchmark sent this
         # way ran on a machine that had said not to.
         use_machine "$(inv_by_host "$HOST")"; HOSTFROM=DIBS_HOST
-    elif [ -z "$HOST" ] && [ "$(inv_count)" = 1 ]; then
+    elif [ -z "$HOST" ] && [ "${DIBS_LOCAL:-0}" != 1 ] && [ "$(inv_count)" = 1 ]; then
         use_machine "$(inv_names | grep . | head -1)"; HOSTFROM=only
     fi
 fi

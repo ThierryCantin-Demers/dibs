@@ -6,6 +6,12 @@
 # builtin-only and tightly bounded, so a regression fails in a second instead of spinning
 # for minutes. Anything needing a real ssh channel lives in dibs-live-test.sh.
 
+# Only what this sets reaches dibs: a DIBS_HOST or DIBS_ON in the shell that ran it would
+# otherwise decide which machine half of these cases mean. DIBS and DIBS_BIN name the dibs
+# under test.
+for v in $(compgen -e | grep '^DIBS_'); do
+    [ "$v" = DIBS_BIN ] || unset "$v"
+done
 export DIBS_LOCAL=1
 S=$(mktemp -d "${TMPDIR:-/tmp}/dibs-test.XXXXXX")
 # Holders block on a fifo under $S, and removing the directory does not release them: they
