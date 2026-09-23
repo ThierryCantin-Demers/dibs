@@ -6,13 +6,14 @@
 //!
 //!     DIBS_LIVE_MACHINE=<machine> DIBS_LIVE_CONFIRM=<machine> cargo test --test live
 //!
-//! The machine has to accept --bench. The tests take turns, whatever the harness's thread count.
+//! The machine has to be another computer, one that accepts --bench. The tests take turns,
+//! whatever the harness's thread count.
 
 #[allow(dead_code)]
 #[path = "../suite/harness.rs"]
 mod harness;
 
-use harness::{Call, Sandbox, Text, DIBS};
+use harness::{hostname, Call, Sandbox, Text, DIBS};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
@@ -41,6 +42,16 @@ impl Live {
         let mut live = Live { name, dir: String::new(), _turn: turn };
         let status = live.dibs(["--status"]).run();
         assert_eq!(status.code, 0, "{} cannot be reached, so nothing ran:\n{}", live.name, status.all());
+        assert_ne!(
+            live.peek("hostname -s"),
+            hostname(),
+            "{} is this computer, where dibs locks locally and no ssh channel is involved, which the local \
+             suite covers. Name another machine.",
+            live.name
+        );
+        let listed = live.dibs(["--machines"]).run().stdout;
+        let refuses = listed.lines().any(|l| l.split_whitespace().next() == Some(live.name.as_str()) && l.contains("no measurements"));
+        assert!(!refuses, "{} refuses --bench (measure = false), which one of these tests needs. Name a machine that measures.", live.name);
         // The test before this one may still be letting go; anyone else's job means no.
         let idle = live.eventually(Duration::from_secs(10), || live.status().contains("dibs: idle"));
         assert!(idle, "{} is in use, so nothing ran:\n{}", live.name, live.status());

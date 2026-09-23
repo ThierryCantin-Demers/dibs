@@ -14,6 +14,18 @@ if [ "$MODE" = gc ]; then
     [ "${GC_DAYS:-default}" = default ] || CMD_ONE="$CMD_ONE --days $GC_DAYS"
     [ "${GC_DRY:-0}" = 0 ] || CMD_ONE="$CMD_ONE --dry-run"
 fi
+# An end line even when the job is torn down, so the log never just stops mid-story.
+# Nothing can be written if it is SIGKILLed, which is itself worth knowing when reading it.
+# Every exit, not just the happy one: while the watch lives it holds the channel open and
+# the caller's ssh cannot return, so giving up on a busy lock would hang the caller.
+# Set before any record is written, or a signal in between leaves one behind.
+WATCHDOG=""
+trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DIR/batch.$$" "$DIR/hold.$$" "$DIR/with.$$" "$0"
+      [ "$WITH_UP" = 1 ] && kill -TERM "${WITH_PID[@]}" 2>/dev/null
+      for p in ${PORT_NUM[*]:-}; do rm -f "$DIR/port.$p"; done
+      [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
+      [ "$LOGGED_END" = 1 ] || log_event aborted' EXIT
+
 # The fifo is also how --status tells a hold, which waits on purpose, from a job that is idle.
 [ "$HOLD" = 1 ] && ! mkfifo "$DIR/hold.$$" && { echo "dibs: could not make $DIR/hold.$$, so nothing is held." >&2; exit 71; }
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
@@ -30,16 +42,6 @@ if [ "$MAXFROM" = default ] && [ "$HOLD" = 0 ] && [ "$MAXHOLD" -gt 0 ] && { [ "$
     MAXHOLD=$(( EST_HI * 2 )); dur_ CAP_NOW "$MAXHOLD"
     echo "dibs: 90% of $EST_N runs of this took up to $CAP_P90, so it may hold the lock for $CAP_NOW rather than $CAP_WAS. --max sets it." >&2
 fi
-# An end line even when the job is torn down, so the log never just stops mid-story.
-# Nothing can be written if it is SIGKILLed, which is itself worth knowing when reading it.
-# Every exit, not just the happy one: while the watch lives it holds the channel open and
-# the caller's ssh cannot return, so giving up on a busy lock would hang the caller.
-trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DIR/batch.$$" "$DIR/hold.$$" "$DIR/with.$$" "$0"
-      [ "$WITH_UP" = 1 ] && kill -TERM "${WITH_PID[@]}" 2>/dev/null
-      for p in ${PORT_NUM[*]:-}; do rm -f "$DIR/port.$p"; done
-      [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
-      [ "$LOGGED_END" = 1 ] || log_event aborted' EXIT
-
 # stdin is the ssh channel, and nothing else reads it, so its EOF is how this side learns
 # the caller is gone. tailscaled's ssh server does not turn a closed channel into a hangup,
 # so waiting for one is not an option.
@@ -54,7 +56,6 @@ trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DI
 exec 5<&0
 WORKFILE=$DIR/work.$$
 MAIN=$$
-WATCHDOG=""
 if [ "$NO_WATCH" != 1 ]; then
 # A caller that is alive says something at least once a lease, and one that sleeps closes nothing,
 # so silence counts as gone.

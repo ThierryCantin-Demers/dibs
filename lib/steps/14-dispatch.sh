@@ -43,10 +43,17 @@ case "$MODE:: ${DIBS_HOLDING:-} " in
         exit 2 ;;
 esac
 
+# A process killed outright takes nothing down with it, so the kernel is asked to signal whatever
+# this starts the moment this process dies, SIGKILL included.
+DIE_WITH_ME=""
+[ "${DIBS_NO_PDEATHSIG:-0}" = 1 ] || command -v setpriv >/dev/null 2>&1 \
+    && DIE_WITH_ME="setpriv --pdeathsig=TERM"
+[ "${DIBS_NO_PDEATHSIG:-0}" = 1 ] && DIE_WITH_ME=""
+
 if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
     # No channel to watch when this runs on the machine itself, and stdin here belongs to
     # whoever called us: watching it would kill the job the moment they redirect from
-    # /dev/null. The caller and the job share a machine, so ordinary process death covers it.
+    # /dev/null. The parent-death signal is what tells the script its caller is gone.
     # bash -s reads the script on its stdin here, so there is no stdin left for a protocol
     # stream to travel on. Nothing is lost: on the machine itself, a copy is a copy.
     case "$MODE" in
@@ -64,7 +71,7 @@ if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
         }
         hold_run hold_here
     else
-        call_script 1 0 0 | bash -s
+        call_script 1 0 0 | $DIE_WITH_ME bash -s
     fi
     STATUS=$?
     [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
@@ -78,8 +85,8 @@ else
     # bash on another, and it is what runs this line. Keep it to syntax they all read the same
     # way: a pipeline, single quotes, no redirection, no $.
     # Killing the caller has to kill the job, and neither half of that is free. An ssh
-    # client whose parent dies keeps running as an orphan with the channel up, so
-    # --pdeathsig has the kernel signal it the moment this process dies, SIGKILL included.
+    # client whose parent dies keeps running as an orphan with the channel up, hence the
+    # parent-death signal on it too.
     # The remote learns of it through EOF on its stdin, and our end must never reach EOF on
     # its own: a fifo this process holds open read-write delivers neither data nor EOF while
     # we live, and closes with us when we do not.
@@ -87,10 +94,6 @@ else
     # The script, the call's values and command inside it, goes down that same stdin ahead of
     # it, read by length on the far side. As arguments they would be one ssh command string,
     # which the kernel caps at 128KB on both ends, and the script alone is most of that.
-    DIE_WITH_ME=""
-    [ "${DIBS_NO_PDEATHSIG:-0}" = 1 ] || command -v setpriv >/dev/null 2>&1 \
-        && DIE_WITH_ME="setpriv --pdeathsig=TERM"
-    [ "${DIBS_NO_PDEATHSIG:-0}" = 1 ] && DIE_WITH_ME=""
     # Without a stdin that never reaches EOF on its own there is nothing to distinguish a
     # dead caller from a live one, and the far side would kill every job the moment it
     # acquired. So a fifo we cannot create disables the watch rather than falling back to

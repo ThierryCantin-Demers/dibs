@@ -416,7 +416,7 @@ fn a_signal_to_a_queued_machine_script_takes_it_out_of_the_queue_at_once() {
     s.queued(1);
     let main: i32 = s.records("waiting")[0][1].parse().unwrap();
     unsafe { libc::kill(main, libc::SIGTERM) };
-    until("the queued job to leave", || s.waiters() == 0);
+    s.until_records("the queued job to leave", || s.waiters() == 0);
     s.wait(queued);
     assert_eq!(s.holders(), 1, "and the benchmark is untouched");
     hold.open();
@@ -448,4 +448,35 @@ fn ctrl_c_on_a_call_here_stops_its_job_and_frees_the_lock() {
 #[test]
 fn ctrl_c_on_a_call_to_another_machine_stops_its_job_there() {
     ctrl_c(true);
+}
+
+#[test]
+fn a_caller_killed_outright_here_takes_its_job_with_it() {
+    // Over ssh the machine sees its channel close. Here there is no channel, and a SIGKILL takes
+    // nothing down with it, so the job held the lock until it ended or ran into --max.
+    let mut s = Sandbox::new();
+    let (up, never) = (s.gate("up"), s.gate("never"));
+    let cmd = format!("echo $$ > {}; {}; {}", s.p("job.pid"), up.signal(), never.hold());
+    let caller = s.spawn(s.dibs(["--label", "killed-here", &cmd]));
+    up.reached();
+    let job: u32 = s.read("job.pid").trim().parse().unwrap();
+    unsafe { libc::kill(caller.pid as i32, libc::SIGKILL) };
+    s.wait(caller);
+    until("the job to stop", || !alive(job));
+    s.gone();
+}
+
+#[test]
+fn a_caller_killed_outright_here_while_queued_leaves_the_queue() {
+    let mut s = Sandbox::new();
+    let hold = s.gate("hold");
+    let bench = s.spawn(s.dibs(["--bench", "--label", "blocker", &hold.hold()]));
+    s.held(1);
+    let caller = s.spawn(s.dibs(["--label", "queued", "true"]));
+    s.queued(1);
+    unsafe { libc::kill(caller.pid as i32, libc::SIGKILL) };
+    s.wait(caller);
+    until("the queued job to leave", || s.waiters() == 0);
+    hold.open();
+    s.wait(bench);
 }

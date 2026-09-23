@@ -258,7 +258,7 @@ impl Sandbox {
     }
 
     /// `until`, failing with what the lock directory held, which is the first thing to know.
-    fn until_records(&self, what: &str, mut cond: impl FnMut() -> bool) {
+    pub fn until_records(&self, what: &str, mut cond: impl FnMut() -> bool) {
         let deadline = Instant::now() + WAIT_LIMIT;
         while !cond() {
             if Instant::now() > deadline {
@@ -444,7 +444,18 @@ enum Sink {
 }
 
 impl Call {
-    pub fn wrap(cmd: Command) -> Call {
+    pub fn wrap(mut cmd: Command) -> Call {
+        // What this process inherited, the cargo wrapper's lock among it, must not reach what the
+        // tests start: a stray process holding that lock stops every cargo on the computer.
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            cmd.pre_exec(|| {
+                for fd in 3..1024 {
+                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                }
+                Ok(())
+            });
+        }
         Call { cmd, stdin: None, sink: Sink::Null, limit: CALL_LIMIT, feed: false, own_group: false }
     }
 
