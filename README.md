@@ -105,10 +105,10 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 | `docs/guide.md` | the detailed guide. |
 | `dibs-design/` | the plans, the settled decisions and their measurements. |
 | `dibs-agent-rules.md` | the rules your agents follow. |
-| `tests/` | the lock protocol, on a scratch directory. Never touches a real machine. |
+| `core/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
+| `tests/` | the live suite, which needs a real machine. |
 
 ## Tests
 
-    bash tests/dibs-test.sh        # the protocol, locally, safe while others are working
+    cd core && cargo test          # everything local, about 10 s, safe while others are working
     bash tests/dibs-live-test.sh   # needs a real machine
-    cd core && cargo test

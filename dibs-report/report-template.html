@@ -814,9 +814,10 @@ footer {
   <h2><span class="num">09</span>Testing, and two traps in it</h2>
   <p>Two suites, split by whether they need the real machine.</p>
   <ul>
-    <li><strong>Local suite, {{LINES_TEST}} lines, 58 assertions, about 15 seconds.</strong> Never
-    leaves the client. Every case runs against a scratch lock directory with the script forced
-    into local mode, so it is safe to run while other people's jobs are on the real machine.</li>
+    <li><strong>Local suite, {{LINES_TEST}} lines of Rust, about 10 seconds.</strong> Never
+    leaves the client. Every test runs in a sandbox of its own, a scratch lock directory and home
+    with the script forced into local mode, so the tests run in parallel and are safe to run while
+    other people's jobs are on the real machine.</li>
     <li><strong>Live suite, {{LINES_LIVE}} lines, 14 assertions, about 6 seconds.</strong> Needs a
     real channel, because "the job dies with its caller" cannot be shown without one. It refuses
     to run unless the machine is idle <em>and</em> the operator passed
@@ -880,7 +881,7 @@ footer {
   </details>
 
   <details>
-    <summary><span>Local test suite <span class="filemeta">bash, {{LINES_TEST}} lines, 58 assertions</span></span></summary>
+    <summary><span>Local test suite <span class="filemeta">Rust, {{LINES_TEST}} lines</span></span></summary>
     <div class="codewrap"><pre><code>{{SRC_TEST}}</code></pre></div>
   </details>
 

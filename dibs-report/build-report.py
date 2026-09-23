@@ -12,7 +12,7 @@ OUT = HERE / "remote-benchmark-lock.html"
 FILES = {
     "DIBS": [ROOT / "bin/dibs", *sorted((ROOT / "lib").glob("*/*.sh"))],
     "HOOK": DOTFILES / "home/dot_claude/hooks/executable_no-direct-machine-ssh.sh",
-    "TEST": ROOT / "tests/dibs-test.sh",
+    "TEST": sorted((ROOT / "core/tests/suite").glob("*.rs")),
     "LIVE": ROOT / "tests/dibs-live-test.sh",
 }
 

@@ -7,7 +7,7 @@
 #
 #   tests/dibs-live-test.sh --machine-is-mine
 #
-# Everything else is covered by dibs-test.sh, which never leaves this machine.
+# Everything else is covered by the suite in core/tests/suite, which never leaves this machine.
 
 T=${DIBS:-${DIBS_BIN:-$HOME/.local/bin/dibs}}
 pass=0; fail=0
