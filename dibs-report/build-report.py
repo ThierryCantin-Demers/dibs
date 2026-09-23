@@ -13,7 +13,7 @@ FILES = {
     "DIBS": [ROOT / "bin/dibs", *sorted((ROOT / "lib").glob("*/*.sh"))],
     "HOOK": DOTFILES / "home/dot_claude/hooks/executable_no-direct-machine-ssh.sh",
     "TEST": sorted((ROOT / "core/tests/suite").glob("*.rs")),
-    "LIVE": ROOT / "tests/dibs-live-test.sh",
+    "LIVE": ROOT / "core/tests/live/main.rs",
 }
 
 SNIPS = {

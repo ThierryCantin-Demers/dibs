@@ -106,9 +106,11 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 | `dibs-design/` | the plans, the settled decisions and their measurements. |
 | `dibs-agent-rules.md` | the rules your agents follow. |
 | `core/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
-| `tests/` | the live suite, which needs a real machine. |
+| `core/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |
 
 ## Tests
 
     cd core && cargo test          # everything local, about 10 s, safe while others are working
-    bash tests/dibs-live-test.sh   # needs a real machine
+
+    # A real, idle machine: takes its lock and kills its own jobs there, so it is named twice.
+    DIBS_LIVE_MACHINE=<machine> DIBS_LIVE_CONFIRM=<machine> cargo test --test live

@@ -157,7 +157,7 @@ impl Sandbox {
         for a in args {
             cmd.arg(a.as_ref());
         }
-        Call { cmd, stdin: None, sink: Sink::Null, limit: CALL_LIMIT, feed: false }
+        Call::wrap(cmd)
     }
 
     pub fn sh(&self, script: &str) -> Call {
@@ -429,6 +429,10 @@ enum Sink {
 }
 
 impl Call {
+    pub fn wrap(cmd: Command) -> Call {
+        Call { cmd, stdin: None, sink: Sink::Null, limit: CALL_LIMIT, feed: false }
+    }
+
     pub fn env(mut self, key: &str, value: impl AsRef<str>) -> Call {
         self.cmd.env(key, value.as_ref());
         self

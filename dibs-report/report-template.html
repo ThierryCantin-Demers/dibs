@@ -818,10 +818,11 @@ footer {
     leaves the client. Every test runs in a sandbox of its own, a scratch lock directory and home
     with the script forced into local mode, so the tests run in parallel and are safe to run while
     other people's jobs are on the real machine.</li>
-    <li><strong>Live suite, {{LINES_LIVE}} lines, 14 assertions, about 6 seconds.</strong> Needs a
-    real channel, because "the job dies with its caller" cannot be shown without one. It refuses
-    to run unless the machine is idle <em>and</em> the operator passed
-    <code>--machine-is-mine</code>, since it takes the exclusive lock and kills things.</li>
+    <li><strong>Live suite, {{LINES_LIVE}} lines of Rust.</strong> Needs a real channel, because
+    "the job dies with its caller" cannot be shown without one. <code>cargo test</code> leaves it
+    out; it runs only as <code>cargo test --test live</code> with the machine named twice, in
+    <code>DIBS_LIVE_MACHINE</code> and <code>DIBS_LIVE_CONFIRM</code>, and refuses a machine that is
+    not idle, since it takes the exclusive lock and kills its own jobs there.</li>
   </ul>
 
   <h4>Trap one: a fixture sized in iterations is only a fixture on the machine it was written on</h4>
@@ -886,7 +887,7 @@ footer {
   </details>
 
   <details>
-    <summary><span>Live test suite <span class="filemeta">bash, {{LINES_LIVE}} lines, 14 assertions</span></span></summary>
+    <summary><span>Live test suite <span class="filemeta">Rust, {{LINES_LIVE}} lines</span></span></summary>
     <div class="codewrap"><pre><code>{{SRC_LIVE}}</code></pre></div>
   </details>
 

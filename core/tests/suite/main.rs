@@ -1,5 +1,5 @@
 //! dibs end to end, on this computer only: every test in a sandbox of its own, run in parallel.
-//! What needs a real ssh channel is in tests/dibs-live-test.sh.
+//! What needs a real ssh channel is in tests/live, which runs only when asked for by name.
 
 mod harness;
 
