@@ -89,12 +89,27 @@ fn a_long_output_is_a_digest_and_stream_is_the_whole() {
 fn the_trailer_counts_what_cargo_compiled() {
     // "Finished" with nothing compiled is the sentence that invalidates the numbers after it.
     let s = Sandbox::new();
-    let built = s.dibs(["--label", "j4", "echo cargo; echo '   Compiling a v1'; echo '   Compiling b v1'; echo '    Finished release'"]).run();
-    assert_eq!(built.stderr.lines_with("built=2"), 1, "the trailer counts what cargo compiled");
-    let nothing = s.dibs(["--label", "j5", "echo cargo; echo '    Finished release'"]).run();
+    let finished = "echo '    Finished `release` profile [optimized] target(s) in 0.24s'";
+    let built = s.dibs(["--label", "j4", &format!("echo '   Compiling a v1'; echo '   Compiling b v1'; {finished}")]).run();
+    assert_eq!(built.stderr.lines_with("built=2"), 1, "the trailer counts what cargo compiled, whatever started it");
+    let nothing = s.dibs(["--label", "j5", finished]).run();
     assert_eq!(nothing.stderr.lines_with("built=nothing"), 1, "and says when it compiled nothing");
     assert_eq!(nothing.stderr.lines_with("integer expected"), 0, "and counting nothing is not an error");
     assert_eq!(nothing.stderr.lines_with("measures the previous binary"), 1, "in words");
+    let other = s.dibs(["--label", "j5b", "echo '    Finished the sweep'"]).run();
+    assert_eq!(other.stderr.lines_with("built="), 0, "a line that only starts like cargo's is not cargo");
+}
+
+#[test]
+fn a_log_read_after_its_files_were_fetched_is_kept_beside_them() {
+    let s = Sandbox::new();
+    let job = job_id(&s.dibs(["--label", "keepfiles", "seq 1 5"]).run().stderr);
+    let files = s.path(&format!("home/.local/state/dibs/jobs/{job}/artifacts"));
+    fs::create_dir_all(&files).unwrap();
+    fs::write(files.join("r.json"), "{}").unwrap();
+    assert_eq!(s.dibs(["out", &job]).run().stdout.lines().last(), Some("  | 5"), "the log is shown");
+    assert_eq!(s.read(&format!("home/.local/state/dibs/jobs/{job}/log")), "1\n2\n3\n4\n5\n", "and kept");
+    assert!(s.exists(&format!("home/.local/state/dibs/jobs/{job}/artifacts/r.json")), "beside the files");
 }
 
 #[test]

@@ -11,7 +11,10 @@ if [ "$MODE" = out ] && [[ ${OUTPID:-} == *-* ]]; then
             sed -n '2,/^DIBS-OUT-LOG$/{/^DIBS-OUT-LOG$/!p}' "$raw" > "$KEPT/$OUTPID.part/head"
             sed '1,/^DIBS-OUT-LOG$/d' "$raw" > "$KEPT/$OUTPID.part/log"
             rm -f "$raw"
-            mv -T "$KEPT/$OUTPID.part" "$KEPT/$OUTPID" 2>/dev/null || rm -rf "$KEPT/$OUTPID.part"
+            # Moved in file by file, since the job's directory may already hold its fetched files.
+            mkdir -p "$KEPT/$OUTPID" && mv -f "$KEPT/$OUTPID.part/head" "$KEPT/$OUTPID/head" &&
+                mv -f "$KEPT/$OUTPID.part/log" "$KEPT/$OUTPID/log"
+            rm -rf "$KEPT/$OUTPID.part"
         fi
         out_kept "$KEPT/$OUTPID"
         exit 0

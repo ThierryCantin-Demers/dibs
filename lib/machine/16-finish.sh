@@ -22,14 +22,13 @@ if [ -n "$JOBLOG" ]; then
         fi
     fi
     # What cargo compiled, when it ran, because "Finished" above a benchmark with nothing
-    # compiled is the sentence that says the numbers are for the previous binary.
+    # compiled is the sentence that says the numbers are for the previous binary. Read from the
+    # log rather than the command, since what runs cargo may be a runner the command starts.
     built=""
-    case "$CMD" in *cargo*)
-        if grep -q '^ *Finished ' "$JOBLOG" 2>/dev/null; then
-            n=$(grep -c '^ *Compiling ' "$JOBLOG" 2>/dev/null); n=${n:-0}
-            [ "$n" -gt 0 ] && built="  built=$n" || built="  built=nothing"
-        fi ;;
-    esac
+    if grep -q '^ *Finished .*target(s) in ' "$JOBLOG" 2>/dev/null; then
+        n=$(grep -c '^ *Compiling ' "$JOBLOG" 2>/dev/null); n=${n:-0}
+        [ "$n" -gt 0 ] && built="  built=$n" || built="  built=nothing"
+    fi
     printf 'job %s  %s  %s  queued %ss  ran %ss  exit %s  by=%s%s\n' \
         "$JOB" "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$built" >&2
     # A hold's command printed where it ran, so the log here has nothing in it.

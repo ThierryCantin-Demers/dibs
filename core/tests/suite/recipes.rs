@@ -34,7 +34,7 @@ fn last_run(s: &Sandbox, label: &str) -> String {
 
 /// A cargo that builds nothing, so a recipe's build and the checks on it are all that run.
 fn fake_cargo(s: &Sandbox) -> String {
-    s.write_exec("fc/cargo", "#!/bin/bash\necho \"    Finished release\"\n");
+    s.write_exec("fc/cargo", "#!/bin/bash\necho \"    Finished \\`release\\` profile [optimized] target(s) in 0.01s\"\n");
     s.p("fc/cargo")
 }
 
