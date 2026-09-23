@@ -1,37 +1,15 @@
 set -uo pipefail
-MODE=$1; LABEL=$2; WAIT=$3; MAXHOLD=$4; VERBOSE=$5; CMDB64=${6:-}; NO_WATCH=${7:-0}; TTY=${8:-0}
-# One argument holds at most 128KB, so the command travels beside the arguments: ahead of the
-# channel on stdin, which has to be read before the watch below takes it, or in a file.
-case "$CMDB64" in
-    stdin:*) CMDB64=$(head -c "${CMDB64#stdin:}") ;;
-    file:*) CMDFILE=${CMDB64#file:}; CMDB64=$(cat "$CMDFILE"); rm -f "$CMDFILE" ;;
-esac
-JSON=${10:-0}
-AGENT=$(printf %s "${9:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
-AGENT_ID=$(printf %s "${11:-}" | base64 -d 2>/dev/null | tr '\n\t' '  ' | cut -c1-48)
-DEV_PCI=${12:-}; DEV_RT=${13:-}; DEV_NAME=${14:-}; DEV_CHIP=${15:-}; DEV_TWINS=${16:-1}
-STREAM=${17:-0}
-BATCH=$(printf %s "${18:-}" | base64 -d 2>/dev/null)
+# The call arrives as assignments ahead of this script, one per variable it reads; set -u makes
+# a missing one an error here rather than an empty value further down.
+: "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$JSON" "$CMD" "$NO_WATCH" "$TTY" "$HOLD" \
+  "$DEV_PCI" "$DEV_RT" "$DEV_NAME" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$MAXFROM" "$FINGERPRINT"
+AGENT=$(printf %s "$AGENT" | tr '\n\t' '  ' | cut -c1-48)
+AGENT_ID=$(printf %s "$AGENT_ID" | tr '\n\t' '  ' | cut -c1-48)
 BATCH_TAG=$(printf '%s\n' "$BATCH" | head -1 | tr '\t' ' ')
-HOLD=${19:-0}
-LEASE=${20:-0}; case "$LEASE" in ''|*[!0-9]*) LEASE=0 ;; esac
-PORT_NAME=(); PORT_NUM=()
-[ -n "${22:-}" ] && read -r -a PORT_NAME <<< "${22}"
-MAXFROM=${23:-given}
-FINGERPRINT=${24:-}
-# --with: a line saying how long a service may take to be ready, then name|readiness|command, the
-# last two in base64. Not tabs: read collapses a run of them, and an empty readiness is one.
-WITH_NAME=(); WITH_READY=(); WITH_CMD=(); WITH_PID=(); WITH_LOG=(); WITH_END=(); WITH_BAD=(); WITH_UP=0
-READY_WITHIN=300
-if [ -n "${21:-}" ]; then
-    { read -r READY_WITHIN
-      while IFS='|' read -r n r c; do
-          WITH_NAME+=("$n")
-          WITH_READY+=("$(printf %s "$r" | base64 -d 2>/dev/null)")
-          WITH_CMD+=("$(printf %s "$c" | base64 -d 2>/dev/null)")
-      done; } < <(printf %s "${21}" | base64 -d 2>/dev/null)
-    case "$READY_WITHIN" in ''|*[!0-9]*) READY_WITHIN=300 ;; esac
-fi
+case "$LEASE" in ''|*[!0-9]*) LEASE=0 ;; esac
+case "$READY_WITHIN" in ''|*[!0-9]*) READY_WITHIN=300 ;; esac
+PORT_NUM=()
+WITH_PID=(); WITH_LOG=(); WITH_END=(); WITH_BAD=(); WITH_UP=0
 [ -n "$AGENT" ] || AGENT=?
 # The caller cannot clean this up: its command line is read by fish, which has no $?.
 # Unlinking a running script is safe; bash keeps the open inode.

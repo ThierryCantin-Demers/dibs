@@ -340,11 +340,25 @@ impl Sandbox {
         until(&format!("a log line matching {re}"), || self.log().lines().any(|l| re.is_match(l)));
     }
 
-    /// The machine script, as it is sent: every part of it, in order.
-    pub fn payload(&self) -> String {
+    /// The machine script as a call sends it: the call's values as assignments, then every part
+    /// of the script in order. The values are an ordinary shared job's, with `values` over them.
+    pub fn machine_script(&self, values: &[(&str, &str)]) -> String {
+        let mut call: Vec<(&str, &str)> = vec![
+            ("MODE", "shared"), ("LABEL", "test"), ("WAIT", ""), ("MAXHOLD", "0"), ("VERBOSE", "0"),
+            ("JSON", "0"), ("CMD", ""), ("NO_WATCH", "0"), ("TTY", "0"), ("HOLD", "0"), ("LEASE", "0"),
+            ("AGENT", ""), ("AGENT_ID", ""), ("BATCH", ""), ("DEV_PCI", ""), ("DEV_RT", ""), ("DEV_NAME", ""),
+            ("DEV_CHIP", ""), ("DEV_TWINS", "1"), ("STREAM", "0"), ("READY_WITHIN", "300"),
+            ("MAXFROM", "given"), ("FINGERPRINT", ""),
+        ];
+        for (k, v) in values {
+            let slot = call.iter_mut().find(|(name, _)| name == k).unwrap_or_else(|| panic!("the machine script reads no {k}"));
+            slot.1 = v;
+        }
+        let mut script: String = call.iter().map(|(k, v)| format!("{k}='{}'\n", v.replace('\'', r"'\''"))).collect();
+        script.push_str("PORT_NAME=()\nWITH_NAME=()\nWITH_READY=()\nWITH_CMD=()\n");
         let mut parts: Vec<_> = fs::read_dir(repo_root().join("lib/machine")).unwrap().flatten().map(|e| e.path()).collect();
         parts.sort();
-        let script: String = parts.iter().map(|p| fs::read_to_string(p).unwrap()).collect();
+        script.extend(parts.iter().map(|p| fs::read_to_string(p).unwrap()));
         let path = self.path("payload");
         fs::write(&path, script).unwrap();
         path.display().to_string()

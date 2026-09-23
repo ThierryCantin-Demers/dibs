@@ -1,37 +1,27 @@
-CMDB64=$(printf %s "$COMMAND" | base64 | tr -d '\n')
-
 # Who is asking, in terms that lead back to a window. Agents are Claude Code sessions, and
 # the desktop keeps each session's title in a file named after it, which is the only name
 # for an agent the user ever sees. Falling back to the id still tells two of them apart.
 # Only the modes that leave a record need it, and it reads a file to find out.
-AGENTB64=""
-AGENTIDB64=""
+CALLER=""
+CALLER_ID=""
 case "$MODE" in
     shared|bench|peek|rsh|kill|kill-force|gc)
-        AGENTB64=$(agent_name | base64 | tr -d '\n')
-        AGENTIDB64=$(agent_id | base64 | tr -d '\n') ;;
+        CALLER=$(agent_name)
+        CALLER_ID=$(agent_id) ;;
 esac
 # Set by `dibs batch` and by the recipe layer: which batch this call is a step of, and what is
 # still to come, one step per line, so the machine's --status can say how long the batch has left.
-BATCHB64=""
+BATCH_PLAN=""
 case "$MODE" in
     shared|bench|peek|rsh)
-        [ -n "${DIBS_BATCH:-}" ] && BATCHB64=$(printf '%s\t%s\n%s\n' "$DIBS_BATCH" "${DIBS_BATCH_STEP:-}" \
-            "${DIBS_BATCH_PLAN:-}" | head -n 200 | base64 | tr -d '\n') ;;
+        [ -n "${DIBS_BATCH:-}" ] && BATCH_PLAN=$(printf '%s\t%s\n%s\n' "$DIBS_BATCH" "${DIBS_BATCH_STEP:-}" \
+            "${DIBS_BATCH_PLAN:-}" | head -n 200) ;;
 esac
 # Set by the recipe layer: the fingerprint of the procedure it is about to run, with its values
 # already substituted in. The machine files the duration under it as well as under the label, so
 # what predicts this job is what this job actually does. Sanitised because it reaches an awk
 # field and a tab-separated file, and shortened because it is read by people in the history.
 FINGERPRINT=$(printf %s "${DIBS_FINGERPRINT:-}" | tr -cd 'A-Za-z0-9._-' | cut -c1-16)
-WITHB64=""
-if [ "${#WITH_NAME[@]}" -gt 0 ]; then
-    WITHB64=$({ printf '%s\n' "$READY_WITHIN"
-                for i in "${!WITH_NAME[@]}"; do
-                    printf '%s|%s|%s\n' "${WITH_NAME[$i]}" "$(printf %s "${WITH_READY[$i]}" | base64 | tr -d '\n')" \
-                        "$(printf %s "${WITH_CMD[$i]}" | base64 | tr -d '\n')"
-                done; } | base64 | tr -d '\n')
-fi
 # Only a terminal wants a redraw. Piped to a file, --watch is a timestamped log instead.
 ISTTY=0; [ -t 1 ] && ISTTY=1
 
@@ -63,20 +53,18 @@ if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
         rsh|sync) echo "dibs: --sync reaches the machine from elsewhere. You are on it: use cp." >&2
                   exit 2 ;;
     esac
-    CMDFILE=$(mktemp "${TMPDIR:-/tmp}/dibs-cmd.XXXXXX") || exit 70
-    printf %s "$CMDB64" > "$CMDFILE"
     if [ "$HOLD" = 1 ]; then
         # A hold is released through the channel, so here too it needs one, and the script
         # comes from a file instead of stdin.
         live_channel || { echo "dibs: --hold could not open a fifo in ${TMPDIR:-/tmp}, so nothing ran." >&2; exit 2; }
         SCRIPT=$(mktemp "${TMPDIR:-/tmp}/dibs-hold-script.XXXXXX") || exit 70
-        remote_script > "$SCRIPT"
+        call_script 0 1 0 > "$SCRIPT"
         hold_here() {
-            bash "$SCRIPT" "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 0 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 1 0 "$WITHB64" "${PORT_NAME[*]}" "$MAXFROM" "$FINGERPRINT" <&7 7<&-
+            bash "$SCRIPT" <&7 7<&-
         }
         hold_run hold_here
     else
-        remote_script | bash -s -- "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "file:$CMDFILE" 1 "$ISTTY" "$AGENTB64" "$JSON" "$AGENTIDB64" "$DEV_PCI" "$DEV_RT" "$DEVICE" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$BATCHB64" 0 0 "$WITHB64" "${PORT_NAME[*]}" "$MAXFROM" "$FINGERPRINT"
+        call_script 1 0 0 | bash -s
     fi
     STATUS=$?
     [ "$MODE" = bench ] && [ "$HOLD" = 0 ] && [ "$STATUS" -eq 0 ] && [ "${DIBS_SERIES_CHECK:-1}" = 1 ] && series_record
@@ -84,7 +72,6 @@ if [ "$LOCK_AT" = "$(lower "$SELF")" ]; then
     exit "$STATUS"
 else
     [ -n "$HOST" ] || no_machine
-    PAYLOAD=$(remote_script | base64 | tr -d '\n')
     # No TTY on purpose. With one, every tool downstream believes it is interactive: git
     # opens its pager and the job blocks forever on a keystroke nobody will type.
     # The login shell on the far side is whatever that machine has, fish on one of these and
@@ -97,9 +84,9 @@ else
     # its own: a fifo this process holds open read-write delivers neither data nor EOF while
     # we live, and closes with us when we do not.
     #
-    # The script and the command go down that same stdin ahead of it, each read by length on
-    # the far side. As arguments they are one ssh command string, which the kernel caps at
-    # 128KB on both ends, and the script alone is most of that.
+    # The script, the call's values and command inside it, goes down that same stdin ahead of
+    # it, read by length on the far side. As arguments they would be one ssh command string,
+    # which the kernel caps at 128KB on both ends, and the script alone is most of that.
     DIE_WITH_ME=""
     [ "${DIBS_NO_PDEATHSIG:-0}" = 1 ] || command -v setpriv >/dev/null 2>&1 \
         && DIE_WITH_ME="setpriv --pdeathsig=TERM"
@@ -139,6 +126,7 @@ else
     # here on purpose, for the remote shell to resolve against its own home.
     REMOTE_DIR=${DIBS_REMOTE_DIR:-'$HOME/.cache/dibs/run'}
     REMOTE_SCRIPT="$REMOTE_DIR/.dibs-payload.$$.$(date +%s).sh"
+    PAYLOAD=$(call_script "$((1 - WATCH))" "$HOLD" "$LEASE" | base64 | tr -d '\n')
     # exec so that a script which could not be written never runs half of itself: the write
     # is the only thing between the && and the shell being replaced, and if it fails the line
     # after it is what runs. Both shells that might read this line treat exec and && alike.
@@ -146,9 +134,8 @@ else
         $DIE_WITH_ME ssh -o BatchMode=yes -o LogLevel=ERROR \
             -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
             "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
-             exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT '$MODE' '$LABEL' '$WAIT' '$MAXHOLD' '$VERBOSE' 'stdin:${#CMDB64}' \
-             '$((1 - WATCH))' '$ISTTY' '$AGENTB64' '$JSON' '$AGENTIDB64' '$DEV_PCI' '$DEV_RT' '$DEVICE' '$DEV_CHIP' '$DEV_TWINS' '$STREAM' '$BATCHB64' '$HOLD' '$LEASE' '$WITHB64' '${PORT_NAME[*]}' '$MAXFROM' '$FINGERPRINT'
-exit 70" < <(printf %s "$PAYLOAD" "$CMDB64"; exec <&7 6>&- 7<&-; relay) 6>&- 7<&-
+             exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT
+exit 70" < <(printf %s "$PAYLOAD"; exec <&7 6>&- 7<&-; relay) 6>&- 7<&-
     }
     if [ "$HOLD" = 1 ]; then hold_run to_machine; else to_machine; fi
     STATUS=$?

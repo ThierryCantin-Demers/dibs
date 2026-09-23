@@ -143,16 +143,16 @@ fn a_caller_that_dies_while_its_job_is_queued_takes_it_out_of_the_queue() {
 fn a_watch_dies_with_the_terminal_that_was_watching() {
     let live = Live::claim();
     let mut s = Sandbox::new();
-    // Counted before and after rather than expected to be one: dibstop or a person may be watching too.
-    let watches = || live.peek("ps -eo args= | grep -c '[.]dibs-payload[^ ]* watch'").parse::<usize>().unwrap_or(0);
-    let before = watches();
     let out = s.path("watch.out");
     let watch = s.spawn(live.dibs(["--watch", "2"]).stdout_to(&out));
+    // The script's name there carries the pid of the dibs that sent it, which picks out this
+    // watch from any dibstop or person watching beside it.
+    let running = format!("pgrep -f '[.]dibs-payload[.]{}[.]' > /dev/null && echo running || echo gone", watch.pid);
     assert!(live.soon(|| std::fs::read_to_string(&out).unwrap_or_default().contains("ctrl-c to stop")), "it draws");
-    assert_eq!(watches(), before + 1, "the loop is running over there");
+    assert_eq!(live.peek(&running), "running", "the loop is running over there");
     kill9(watch.pid);
     s.wait(watch);
-    assert!(live.soon(|| watches() == before), "and it stops when the caller does");
+    assert!(live.soon(|| live.peek(&running) == "gone"), "and it stops when the caller does");
 }
 
 #[test]

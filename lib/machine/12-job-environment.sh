@@ -1,4 +1,3 @@
-CMD=$(printf %s "$CMDB64" | base64 -d)
 # Nothing here has a human behind it. A pager or a credential prompt is a hang.
 export GIT_PAGER=cat PAGER=cat GIT_TERMINAL_PROMPT=0 DEBIAN_FRONTEND=noninteractive
 

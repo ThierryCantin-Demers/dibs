@@ -1,26 +1,30 @@
 use crate::harness::*;
 use std::fs;
-use std::io::Write;
 use std::time::Duration;
 
 fn signal_group(pid: u32, sig: i32) {
     unsafe { libc::kill(-(pid as i32), sig) };
 }
 
-fn base64(text: &str) -> String {
-    let out = std::process::Command::new("base64").arg("-w0").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
-    out.stdin.as_ref().unwrap().write_all(text.as_bytes()).unwrap();
-    String::from_utf8(out.wait_with_output().unwrap().stdout).unwrap()
-}
-
 #[test]
 fn a_command_near_the_argument_limit_reaches_the_machine() {
-    // The script and the command used to travel as one ssh argument, capped at 128KB, which the
-    // script alone nearly filled.
+    // An ssh command line holds at most 128KB and the script alone nearly fills it, so a command
+    // travels inside the script, never beside it as an argument.
     let s = Sandbox::new();
     let big = format!("b='{}'; echo ${{#b}}", "x".repeat(100_000));
     assert_eq!(s.remote(s.dibs(["--label", "transport-big", &big])).run().stdout, "100000\n", "a command near the argument limit reaches the machine");
     assert_eq!(s.dibs(["--label", "transport-big-local", &big]).run().stdout, "100000\n", "and one run here");
+}
+
+#[test]
+fn a_command_arrives_as_written_whatever_it_quotes() {
+    let s = Sandbox::new();
+    let cmd = "printf '%s|' \"it's\" '$HOME' 'a\\b' \"tab\there\" \"$((1 + 1))\"\necho 'second line'";
+    let written = s.command("bash", ["-c", cmd]).run().stdout;
+    assert_eq!(s.dibs(["--label", "quoting", cmd]).run().stdout, written, "here");
+    assert_eq!(s.remote(s.dibs(["--label", "quoting", cmd])).run().stdout, written, "and over the transport");
+    s.remote(s.dibs(["--label", "quoting", "true"])).env("DIBS_AGENT", "it's \"mine\"").run();
+    assert_eq!(s.dibs(["--log", "2"]).run().stdout.lines_with("it's \"mine\""), 2, "and so does who asked");
 }
 
 #[test]
@@ -129,15 +133,12 @@ fn a_caller_that_goes_away_takes_the_whole_job_with_it() {
     // The channel closing is how the machine learns its caller is gone, and the lock is released as
     // soon as the job exits, so anything still running below the job would run unlocked.
     let mut s = Sandbox::new();
-    let payload = s.payload();
     let (ready, block) = (s.gate("ready"), s.gate("block"));
     s.write("grand.sh", &format!("echo $$ > {}\n{}\n{}\n", s.p("grand.pid"), ready.signal(), block.hold()));
     s.write("mid.sh", &format!("sh {}\necho mid-done\n", s.p("grand.sh")));
-    let cmd = base64(&format!("bash {}; echo after", s.p("mid.sh")));
-    let args = ["shared", "gone-caller", "0", "0", "0", &cmd, "0", "0", "", "0", "", "", "", "", "", "1", "0"];
-    let mut argv = vec![payload.as_str()];
-    argv.extend(args);
-    let (job, channel) = s.spawn_fed(s.command("bash", argv));
+    let cmd = format!("bash {}; echo after", s.p("mid.sh"));
+    let script = s.machine_script(&[("LABEL", "gone-caller"), ("CMD", &cmd)]);
+    let (job, channel) = s.spawn_fed(s.command("bash", [script]));
     ready.reached();
     let grandchild: u32 = s.read("grand.pid").trim().parse().unwrap();
     assert!(alive(grandchild), "the job reached its grandchild");
@@ -151,9 +152,8 @@ fn a_caller_that_goes_away_takes_the_whole_job_with_it() {
 fn a_transfers_far_half_carries_its_stream_untouched() {
     // rsync's transport never reaches the machine from here, so the far half is run as rsync would.
     let s = Sandbox::new();
-    let payload = s.payload();
-    let cmd = base64("echo carried");
-    let out = s.command("bash", [payload.as_str(), "rsh", "sync", "0", "0", "0", &cmd, "1", "0", "", "0", "", "", "", "", "", "1", "0", "5"]).run();
+    let script = s.machine_script(&[("MODE", "rsh"), ("LABEL", "sync"), ("CMD", "echo carried"), ("NO_WATCH", "1")]);
+    let out = s.command("bash", [script]).run();
     assert_eq!(out.code, 0, "a transfer's far half exits with its command");
     assert_eq!(out.stdout, "carried\n", "and carries its stream untouched");
     assert_eq!(out.stderr.lines_with("unbound variable"), 0, "with nothing unbound on the way out");

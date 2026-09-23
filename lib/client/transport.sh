@@ -3,6 +3,22 @@ remote_script() {
     cat "$DIBS_LIB"/machine/*.sh
 }
 
+# One call: its values as assignments ahead of the machine's half. They travel inside the script
+# rather than as its arguments, so none of them passes through the login shell on the far side,
+# which is fish on one machine and bash on another.
+call_script() {   # no_watch hold lease
+    local v
+    for v in MODE LABEL WAIT MAXHOLD VERBOSE JSON DEV_PCI DEV_RT DEV_CHIP DEV_TWINS STREAM \
+             READY_WITHIN MAXFROM FINGERPRINT; do
+        printf '%s=%q\n' "$v" "${!v}"
+    done
+    printf 'CMD=%q\nTTY=%q\nAGENT=%q\nAGENT_ID=%q\nDEV_NAME=%q\nBATCH=%q\n' \
+        "$COMMAND" "$ISTTY" "$CALLER" "$CALLER_ID" "$DEVICE" "$BATCH_PLAN"
+    printf 'NO_WATCH=%q\nHOLD=%q\nLEASE=%q\n' "$1" "$2" "$3"
+    declare -p PORT_NAME WITH_NAME WITH_READY WITH_CMD
+    remote_script
+}
+
 # A target whose scratch directory is full takes out every way of looking at why, so this
 # says where to look and how to get working again in the same breath.
 no_room() {

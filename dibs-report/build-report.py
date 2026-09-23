@@ -17,12 +17,13 @@ FILES = {
 }
 
 SNIPS = {
-"SHIP": r"""# Local: the remote half travels on the command line and lands in a temp file.
-PAYLOAD=$(remote_script | base64 | tr -d '\n')
-REMOTE_SCRIPT="/tmp/.dibs-payload.$$.$(date +%s).sh"
+"SHIP": r"""# Local: the call's values, the command among them, are assignments ahead of the remote
+# half, and the whole of it goes down ssh's stdin, read by length on the far side.
+PAYLOAD=$(call_script "$((1 - WATCH))" "$HOLD" "$LEASE" | base64 | tr -d '\n')
+REMOTE_SCRIPT="$REMOTE_DIR/.dibs-payload.$$.$(date +%s).sh"
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" \
-    "printf %s '$PAYLOAD' | base64 -d > '$REMOTE_SCRIPT'; \
-     bash '$REMOTE_SCRIPT' '$MODE' '$LABEL' ..."
+    "mkdir -p $REMOTE_DIR; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && exec bash $REMOTE_SCRIPT" \
+    < <(printf %s "$PAYLOAD"; relay)
 
 # Remote: it unlinks itself immediately. Unlinking a running script is safe, bash keeps
 # the open inode, and the caller cannot clean it up because that command line is read by
