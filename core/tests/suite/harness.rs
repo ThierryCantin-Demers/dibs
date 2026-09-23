@@ -434,6 +434,7 @@ pub struct Call {
     sink: Sink,
     limit: Duration,
     feed: bool,
+    own_group: bool,
 }
 
 enum Sink {
@@ -444,7 +445,7 @@ enum Sink {
 
 impl Call {
     pub fn wrap(cmd: Command) -> Call {
-        Call { cmd, stdin: None, sink: Sink::Null, limit: CALL_LIMIT, feed: false }
+        Call { cmd, stdin: None, sink: Sink::Null, limit: CALL_LIMIT, feed: false, own_group: false }
     }
 
     pub fn env(mut self, key: &str, value: impl AsRef<str>) -> Call {
@@ -536,8 +537,19 @@ impl Call {
         self
     }
 
+    /// Starts it as a terminal starts a foreground command, in a process group of its own, which
+    /// is what Ctrl+C signals as a whole.
+    pub fn own_group(mut self) -> Call {
+        self.own_group = true;
+        self
+    }
+
     fn background(mut self) -> Child {
         self.cmd.stdin(if self.feed { Stdio::piped() } else { Stdio::null() });
+        if self.own_group {
+            use std::os::unix::process::CommandExt;
+            self.cmd.process_group(0);
+        }
         match &self.sink {
             Sink::Null => self.cmd.stdout(Stdio::null()).stderr(Stdio::null()),
             Sink::Stdout(p) => self.cmd.stdout(fs::File::create(p).unwrap()).stderr(Stdio::null()),

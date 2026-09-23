@@ -422,3 +422,30 @@ fn a_signal_to_a_queued_machine_script_takes_it_out_of_the_queue_at_once() {
     hold.open();
     s.wait(bench);
 }
+
+/// Ctrl+C at a terminal: SIGINT to every process in the call's foreground group.
+fn ctrl_c(remote: bool) {
+    let mut s = Sandbox::new();
+    let (up, never) = (s.gate("up"), s.gate("never"));
+    let cmd = format!("echo $$ > {}; {}; {}", s.p("job.pid"), up.signal(), never.hold());
+    let call = s.dibs(["--label", "ctrl-c", &cmd]).own_group();
+    let caller = s.spawn(if remote { s.remote(call) } else { call });
+    up.reached();
+    let job: u32 = s.read("job.pid").trim().parse().unwrap();
+    unsafe { libc::kill(-(caller.pid as i32), libc::SIGINT) };
+    until("the job to stop", || !alive(job));
+    s.wait(caller);
+    s.gone();
+}
+
+#[test]
+fn ctrl_c_on_a_call_here_stops_its_job_and_frees_the_lock() {
+    // A job started in the background of a script ignores SIGINT, so the one thing Ctrl+C reaches
+    // on the job's behalf is the script, which has to stop the job before it lets the lock go.
+    ctrl_c(false);
+}
+
+#[test]
+fn ctrl_c_on_a_call_to_another_machine_stops_its_job_there() {
+    ctrl_c(true);
+}
