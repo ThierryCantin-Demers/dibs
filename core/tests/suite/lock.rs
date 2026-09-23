@@ -386,3 +386,39 @@ fn a_flag_whose_value_is_missing_is_refused_not_read_for_ever() {
     }
     assert_eq!(s.dibs(["--gc", "--days"]).within(Duration::from_secs(5)).code(), 2, "--days alone exits rather than hanging");
 }
+
+#[test]
+fn a_signal_to_the_machine_script_alone_takes_its_job_with_it() {
+    // --kill signals the job's whole tree, but anything else that signals the script itself, a
+    // session going away or a plain kill, released the lock and left the job running unlocked.
+    let mut s = Sandbox::new();
+    let (up, never) = (s.gate("up"), s.gate("never"));
+    let cmd = format!("echo $$ > {}; {}; {}", s.p("job.pid"), up.signal(), never.hold());
+    let caller = s.spawn(s.dibs(["--label", "term-main", &cmd]));
+    up.reached();
+    let main: i32 = s.records("holder")[0][1].parse().unwrap();
+    let job: u32 = s.read("job.pid").trim().parse().unwrap();
+    unsafe { libc::kill(main, libc::SIGTERM) };
+    until("the job to stop", || !alive(job));
+    s.wait(caller);
+    s.gone();
+    assert_eq!(s.dibs(["--bench", "--wait", "5", "--label", "after-term", "true"]).code(), 0, "and the lock is free");
+}
+
+#[test]
+fn a_signal_to_a_queued_machine_script_takes_it_out_of_the_queue_at_once() {
+    // Not when it would finally have been let in: nobody is waiting for it any more.
+    let mut s = Sandbox::new();
+    let hold = s.gate("hold");
+    let bench = s.spawn(s.dibs(["--bench", "--label", "blocker", &hold.hold()]));
+    s.held(1);
+    let queued = s.spawn(s.dibs(["--label", "queued", "true"]));
+    s.queued(1);
+    let main: i32 = s.records("waiting")[0][1].parse().unwrap();
+    unsafe { libc::kill(main, libc::SIGTERM) };
+    until("the queued job to leave", || s.waiters() == 0);
+    s.wait(queued);
+    assert_eq!(s.holders(), 1, "and the benchmark is untouched");
+    hold.open();
+    s.wait(bench);
+}

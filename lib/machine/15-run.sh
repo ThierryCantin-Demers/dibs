@@ -54,6 +54,12 @@ else
     fi
     WORK=$!
     echo "$WORK" >> "$WORKFILE"
+    # --kill signals the whole tree, but a signal to this script alone would release the lock
+    # with the job still running under it. Only from here: set while queueing, a trap would
+    # wait for flock to return, and a job nobody wants would hold its place until let in.
+    trap 'reap "$WORK"; exit 143' TERM
+    trap 'reap "$WORK"; exit 129' HUP
+    trap 'reap "$WORK"; exit 130' INT
     if [ "$HOLD" = 1 ]; then
         # The caller's command needs the ports too, and only this side knows what they are.
         ports=""
