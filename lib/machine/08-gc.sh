@@ -82,19 +82,50 @@ GCTOP
         git -C "$HOME/prog/$r" worktree prune 2>/dev/null
     done
 
+    # A cache seeded from a sibling shares the sibling's blocks, which du counts in both. Where
+    # the filesystem shares blocks, the extent map says which are a cache's alone: what removing
+    # it frees. Shared extents are counted once, by where they sit on the disk.
+    declare -A OWN
+    shared=0
+    share_scan() {   # dirs
+        local d
+        for d in "$@"; do
+            [ -d "$d" ] || continue
+            printf 'DIBS-DIR %s\n' "$d"
+            find "$d" -type f -printf '%i %p\n' 2>/dev/null | sort -u -k1,1 | cut -d' ' -f2- |
+                xargs -r -d '\n' filefrag -v -b1024 2>/dev/null
+        done | awk -F: '
+            /^DIBS-DIR / { if (d != "") print own + 0, d; d = substr($0, 10); own = 0; next }
+            /^ *[0-9]+:/ { if ($NF ~ /shared/) { split($3, p, "."); sh[p[1] + 0] = $4 + 0 } else own += $4 }
+            END { if (d != "") print own + 0, d; for (s in sh) t += sh[s]; print t + 0, "*" }'
+    }
+    tfs=$(stat -f -c %T "$S/target/." 2>/dev/null)
+    before=$total
     measure "$S"/target/*
+    if { [ "$tfs" = xfs ] || [ "$tfs" = btrfs ]; } && command -v filefrag >/dev/null; then
+        while read -r k d; do
+            if [ "$d" = "*" ]; then shared=$k; else OWN[$d]=$k; fi
+        done < <(share_scan "$S"/target/*)
+        together=$shared
+        for d in "${!OWN[@]}"; do together=$(( together + OWN[$d] )); done
+        total=$(( before + together ))
+    fi
     for d in "$S"/target/*; do
         [ -d "$d" ] || continue
         [ -e "$d/.dibs-used" ] || echo swept > "$d/.dibs-used"
-        t=$(used "$d"); verdict=""
+        t=$(used "$d"); verdict=""; k=${OWN[$d]:-${MB[$d]:-0}}
         if [ $(( (now - t) / 86400 )) -gt "$TKEEP" ]; then
-            if [ "$DRY" = 1 ]; then verdict="   would remove"; would=$(( would + ${MB[$d]:-0} ))
-            else rm -rf "$d"; verdict="   removed"; freed=$(( freed + ${MB[$d]:-0} )); fi
+            if [ "$DRY" = 1 ]; then verdict="   would remove"; would=$(( would + k ))
+            else rm -rf "$d"; verdict="   removed"; freed=$(( freed + k )); fi
         fi
-        row "${MB[$d]:-0}" "$([ -n "$verdict" ] && echo 1 || echo 0)" \
-            "$(printf '    %-40s %7s  used %s%s' "${d#"$S"/}" "$(size "${MB[$d]:-0}")" "$(ago "$t")" "$verdict")"
+        own=""; [ -n "${OWN[$d]:-}" ] && own=$(printf '  own %7s' "$(size "${OWN[$d]}")")
+        row "$k" "$([ -n "$verdict" ] && echo 1 || echo 0)" \
+            "$(printf '    %-40s %7s%s  used %s%s' "${d#"$S"/}" "$(size "${MB[$d]:-0}")" "$own" "$(ago "$t")" "$verdict")"
     done
-    rows_out "  build caches, removed after ${TKEEP} days unused"
+    rows_out "  build caches on $(df --output=target "$S/target/." 2>/dev/null | tail -1), removed after ${TKEEP} days unused"
+    [ "${#OWN[@]}" -gt 0 ] &&
+        printf '    together %s on the disk: own is what removing that cache alone frees, and %s is shared among them\n' \
+            "$(size "$together")" "$(size "$shared")"
 
     # Counted rather than listed, all of them being alike and there being hundreds: the one job
     # anybody wants is found by its id with dibs out, never by reading this.
@@ -146,12 +177,8 @@ GCTOP
     else
         printf '  reclaimed %s of %s\n' "$(size "$freed")" "$(size "$total")"
     fi
-    # A cache reflinked from a sibling shares its blocks, and du counts them in both, so the sum
-    # can come out larger than the disk. df is the truth about what is free.
-    fsk=$(df -k "$S" 2>/dev/null | awk 'NR == 2 {print $2}')
-    [ -n "$fsk" ] && [ "$total" -gt "$fsk" ] &&
-        echo "  more than the disk holds, because a cache reflinked from a sibling is counted in both"
-    df -h "$S" 2>/dev/null | awk 'NR == 2 {printf "  %s free of %s on %s\n", $4, $2, $6}'
+    # The build caches are often a disk of their own, linked in under the scratch directory.
+    df -h "$S/." "$S/target/." 2>/dev/null | awk 'NR > 1 && !seen[$6]++ {printf "  %s free of %s on %s\n", $4, $2, $6}'
 GCEND
 }
 

@@ -70,6 +70,30 @@ fn a_sweep_removes_only_what_dibs_made_and_nobody_used() {
 }
 
 #[test]
+fn a_cache_seeded_from_another_is_sized_by_what_is_its_own() {
+    // The caches on a disk of their own that shares blocks, linked in the way a machine keeps them.
+    let s = Sandbox::new();
+    let disk = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("gc-share-{}", std::process::id()));
+    let d = disk.display().to_string();
+    let sh = |c: String| s.command("sh", ["-c", c.as_str()]).code();
+    let made = format!("mkdir -p '{d}/app' '{d}/app-local-1' && head -c 2097152 /dev/urandom > '{d}/app/lib' && head -c 1048576 /dev/urandom > '{d}/app-local-1/new'");
+    assert_eq!(sh(made), 0);
+    if sh(format!("cp --reflink=always '{d}/app/lib' '{d}/app-local-1/lib' && sync -f '{d}/app'")) != 0 {
+        eprintln!("skipped: {d} cannot share blocks");
+        let _ = fs::remove_dir_all(&disk);
+        return;
+    }
+    fs::create_dir_all(s.path("gc")).unwrap();
+    std::os::unix::fs::symlink(&disk, s.path("gc/target")).unwrap();
+    let out = s.dibs(["--gc", "--dry-run"]).env("DIBS_SCRATCH", s.p("gc")).run().all();
+    let _ = fs::remove_dir_all(&disk);
+    assert_eq!(out.lines_matching(r"target/app-local-1 +3M  own +1M  used"), 1, "a seeded cache is sized by its own blocks: {out}");
+    assert_eq!(out.lines_matching(r"target/app +2M  own +0K  used"), 1, "and so is the one it was seeded from: {out}");
+    assert_eq!(out.lines_with("together 3M on the disk"), 1, "the blocks they share count once: {out}");
+    assert_eq!(out.lines_matching("^  .* free of .* on "), 2, "and each disk says what it has free: {out}");
+}
+
+#[test]
 fn gc_takes_its_own_flags_only() {
     let s = Sandbox::new();
     assert_eq!(s.dibs(["--gc", "echo no"]).code(), 2, "--gc takes no command");
