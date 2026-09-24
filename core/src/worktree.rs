@@ -65,7 +65,8 @@ done
 /// filesystem than targets, so they fall back to a plain copy.
 const SEED: &str = r#"ranked=$(for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$SCRATCH/target/{repo}"-local-*/.dibs-used "$SCRATCH/target/{repo}"-arm*/.dibs-used 2>/dev/null); do
     src=${used%/.dibs-used}
-    [ "$src" = "$TARGET" ] && continue
+    # A target set aside or half copied is no sibling, and one set aside may be this tree's own.
+    case $src in "$TARGET"|*.old.*|*.seed.*) continue ;; esac
     n=0 will=0 building=0
     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
         flock -n -s "$lock" true || building=1
@@ -1562,6 +1563,19 @@ mod local_tests {
         let p = parse(&prepare_local_with(&scratch, "behind", Some(&lock.display().to_string()), "reflinks", LOCK_A, "t2", &[])).unwrap();
         assert_eq!(p.reseeded, None, "and so does one a build holds");
         assert!(scratch.join("ws/demo/local-behind/behind.rs").exists());
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_reseed_never_waits_on_its_own_target_set_aside() {
+        let scratch = tmp("reseed-self");
+        let mine = tree(&scratch, "mine", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "mine.rs");
+        std::fs::write(mine.join(".dibs-packages.pending.failed"), packages_of(LOCK_A)).unwrap();
+        let out = local_command(&scratch, "mine", None, "reflinks", LOCK_A, "t1", &[]).env("DIBS_SEED_WAIT", "3").output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success() && !err.contains("waiting"), "{err}");
+        assert_eq!(parse(&String::from_utf8_lossy(&out.stdout)).unwrap().reseeded, None);
+        assert!(mine.join("debug/deps/libmine.rlib").exists(), "it keeps its own");
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
