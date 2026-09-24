@@ -85,7 +85,7 @@ GCTOP
     measure "$S"/target/*
     for d in "$S"/target/*; do
         [ -d "$d" ] || continue
-        [ -e "$d/.dibs-used" ] || touch "$d/.dibs-used"
+        [ -e "$d/.dibs-used" ] || echo swept > "$d/.dibs-used"
         t=$(used "$d"); verdict=""
         if [ $(( (now - t) / 86400 )) -gt "$TKEEP" ]; then
             if [ "$DRY" = 1 ]; then verdict="   would remove"; would=$(( would + ${MB[$d]:-0} ))
