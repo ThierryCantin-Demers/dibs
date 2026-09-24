@@ -1774,6 +1774,7 @@ fn sync_gitdb(backend: &Dibs, from: &Path, to: &str) -> Result<(), String> {
     }
     cmd.arg("--sync")
         .arg("-a")
+        .arg("--no-times")
         .arg("--ignore-existing")
         .arg(format!("{}/", from.display()))
         .arg(format!(":{to}/"))
@@ -1933,6 +1934,23 @@ mod tests {
 
     fn step(lock: Lock, run: &str) -> Step {
         Step { lock, run: run.into(), env: BTreeMap::new() }
+    }
+
+    // --sync warns that kept mtimes may make a build compile nothing, which is about a source
+    // tree and never a git database, so dibs's own send must not set it off.
+    #[test]
+    fn a_git_database_is_sent_without_its_mtimes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("dibs-gitdb-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("dibs");
+        std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > {}/args\n", dir.display())).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let backend = Dibs { program: fake.display().to_string(), machine: None };
+        sync_gitdb(&backend, &dir, "db").unwrap();
+        let args = std::fs::read_to_string(dir.join("args")).unwrap();
+        assert!(args.lines().any(|a| a == "--no-times"), "{args}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
