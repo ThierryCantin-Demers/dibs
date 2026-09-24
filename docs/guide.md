@@ -388,7 +388,10 @@ server produces a failure that reads like the client's own.
 A repo that keeps needing the same servers declares them once, beside its recipes, and
 `dibs with <repo>[@<ref>] <service> -- <command>` prepares the worktree, builds them under the
 shared lock, starts them there and runs the command here against them. `dibs list <repo>` says
-which it defines.
+which it defines. With `--bench` the command is timed: the build still runs under the shared
+lock, then the servers and the command hold the machine alone, and a server whose build cache
+another tree has built into since refuses to start, exiting 78, unless `--anyway` says to time
+what is there.
 
 ```toml
 [service.gpu-servers]

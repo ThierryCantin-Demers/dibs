@@ -39,9 +39,11 @@ dibs runs [label] [--all]             what has run here, and what is comparable.
                                       is listed only with --all
 dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>   a command in a prepared worktree
 dibs raw --reason <why> -- <cmd>      a command with nothing prepared
-dibs with <repo>[@<ref>] <service> -- <cmd>   run the command here while the repo's servers
-                                      run on the machine under its lock, started once they
-                                      are ready and stopped when the command ends
+dibs with <repo>[@<ref>] <service> [--bench] -- <cmd>   run the command here while the
+                                      repo's servers run on the machine under its lock, started
+                                      once they are ready and stopped when the command ends.
+                                      --bench times it: the servers are built under the shared
+                                      lock, then run with the machine held alone
 dibs gaps                             what did not fit a recipe, what got in the way, and
                                       which of it recurs
 dibs --friction '<one line>'          what got in the way, in your own words, kept where the
@@ -1427,14 +1429,20 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
         cmd.arg("--on").arg(m);
     }
     cmd.arg("--hold").arg("--label").arg(&label);
+    if args.bench {
+        cmd.arg("--bench");
+    }
     if let Some(d) = &args.device {
         cmd.arg("--device").arg(d);
     }
     for p in &svc.ports {
         cmd.arg("--port").arg(p);
     }
+    // Timed against a server this call built, a server another tree has built over since is refused.
+    let guarded = args.bench && !args.anyway && svc.build.as_deref().and_then(worktree::build_signature).is_some();
     for serve in &svc.serves {
-        cmd.arg("--with").arg(format!("{}={}", serve.name, in_tree(&serve.run)));
+        let run = if guarded { worktree::checked(&serve.run) } else { serve.run.clone() };
+        cmd.arg("--with").arg(format!("{}={}", serve.name, in_tree(&run)));
         if let Some(ready) = &serve.ready {
             cmd.arg("--ready").arg(ready);
         }

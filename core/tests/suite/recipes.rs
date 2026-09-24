@@ -202,6 +202,29 @@ fn a_repo_runs_a_command_here_against_the_servers_it_declares() {
 }
 
 #[test]
+fn a_timed_client_holds_the_machine_alone_against_the_server_it_built() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    let cargo = fake_cargo(&s);
+    s.write(
+        "app/serve.py",
+        "import os, signal, socket\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\ns.bind((\"0.0.0.0\", int(os.environ[\"DIBS_PORT_API\"])))\ns.listen()\nsignal.pause()\n",
+    );
+    let service = |name: &str, build: &str| {
+        format!("[service.{name}]\nbuild = \"{build}\"\nports = [\"api\"]\n\n[[service.{name}.serve]]\nname = \"api\"\nrun = \"python3 serve.py\"\nready = \"tcp:api\"\n\n")
+    };
+    recipes(&s, &(service("servers", &format!("{cargo} build")) + &service("overbuilt", &format!("{cargo} build && echo /elsewhere > $CARGO_TARGET_DIR/.dibs-tree"))));
+    let out = s.dibs(["with", &format!("{app}@local"), "servers", "--bench", "--", "true"]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(s.log().lines_matching("\tbench\tapp_with_servers\t"), 2, "the servers and the command held the machine alone:\n{}", s.log());
+    assert_eq!(s.log().lines_matching("\tshared\tapp_with_servers_build\t"), 2, "after building under the shared lock");
+    let out = s.dibs(["with", &format!("{app}@local"), "overbuilt", "--bench", "--", "true"]).run();
+    assert_eq!(out.code, 77, "a server another tree has built over since is refused: {}", out.all());
+    let out = s.dibs(["with", &format!("{app}@local"), "overbuilt", "--bench", "--anyway", "--", "true"]).run();
+    assert_eq!(out.code, 0, "unless told to time what is there: {}", out.all());
+}
+
+#[test]
 fn a_recipe_says_what_values_it_takes_and_refuses_the_rest() {
     // One procedure covers a sweep instead of fifteen near-identical copies of it, and the set of
     // valid invocations stays something dibs can print.

@@ -237,6 +237,8 @@ spoiled without it.
 - `dibs with <repo>[@<ref>] <service> -- <command>` where a repo declares its servers: the worktree
   is prepared, they are built under the shared lock and started on the machine, and the command
   runs on your side against them, on ports dibs picked. `dibs list <repo>` says which it defines.
+  To time the command against them, add `--bench`: they are built under the shared lock, then
+  run with the machine held alone, and a server another tree has built over since is refused.
 - **If no recipe fits, say so where it is counted**: `dibs raw --reason '<why>'`, or `--reason` on
   `dibs shell`. `dibs gaps` prints those, and a reason that keeps coming up is the specification
   for the next recipe.
