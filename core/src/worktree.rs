@@ -32,7 +32,12 @@ TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
 for old in "$SCRATCH/target"/*; do
     [ -d "$old" ] || continue
     [ "$old" = "$TARGET" ] && continue
-    if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
+    # A prepare's marker is empty and a sweep's is not, so a target holding only a sweep's marker
+    # was being deleted when a sweep dated it, and is no cache waiting for its first build.
+    if [ -s "$old/.dibs-used" ] && [ -z "$(find "$old" -mindepth 1 -maxdepth 1 ! -name .dibs-used -print -quit 2>/dev/null)" ]; then
+        rm -f "$old/.dibs-used"; rmdir "$old" 2>/dev/null || true; continue
+    fi
+    if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
     rm -rf "$old"
@@ -375,7 +380,7 @@ touch "$WT/.dibs-used"
 # builds serialise on cargo's own lock, which is correct.
 TARGET=$SCRATCH/target/{repo}{suffix}
 {seed}mkdir -p "$TARGET" "$SCRATCH/out"
-touch "$TARGET/.dibs-used"
+: > "$TARGET/.dibs-used"
 
 {stage}{gc}git -C "$SRC" worktree prune
 
@@ -893,6 +898,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    // A target deleted by hand while a job prepared lost its marker partway, and a sweep dated it
+    // again, so the deletion failed on "Directory not empty" and the husk stayed for days. A
+    // target a prepare marked holds only its marker until its first build, and must survive.
+    #[test]
+    fn a_target_a_sweep_dated_while_it_was_deleted_is_removed_and_a_prepared_one_is_not() {
+        let (home, _, _) = sandbox("husk");
+        let t = home.join("scratch/target");
+        for d in ["emptied", "prepared", "demo"] {
+            std::fs::create_dir_all(t.join(d)).unwrap();
+        }
+        std::fs::write(t.join("prepared/.dibs-used"), "").unwrap();
+        std::fs::write(t.join("demo/.dibs-used"), "swept\n").unwrap();
+        let script = setup_script("demo", "local-only", 0, None, &[]);
+        let left = targets(&home, "45", &script);
+        assert_eq!(left, ["demo", "emptied", "prepared", "unmarked"], "the first sweep only dates");
+        assert_eq!(std::fs::read_to_string(t.join("demo/.dibs-used")).unwrap(), "", "a prepare's marker is its own");
+        let left = targets(&home, "45", &script);
+        assert_eq!(left, ["demo", "prepared"], "the second removes what the first dated");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     // One FETCH_HEAD per repository, one clone per machine, and prepares that run concurrently
     // by design. Reading it is a race whose losing outcome is a believable wrong answer, so the
     // rule is structural: this script must never consult it.
@@ -1035,7 +1061,8 @@ mkdir -p "${{WT%/*}}"
 if [ ! -d "$WT" ] && [ ! -d "$TARGET" ]; then
 {seed}fi
 mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
-touch "$WT/.dibs-used" "$TARGET/.dibs-used"
+touch "$WT/.dibs-used"
+: > "$TARGET/.dibs-used"
 {patch}{stage}{gc}echo "DIBS-WT $WT"
 echo "DIBS-TARGET $TARGET"
 echo "DIBS-REV {repo} local:{content}"
