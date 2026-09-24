@@ -12,6 +12,16 @@ fn a_malformed_sync_is_refused_before_anything_is_reached_for() {
 }
 
 #[test]
+fn a_scratch_variable_on_the_machine_side_is_refused_rather_than_sent_literally() {
+    // Sent as is, it failed on the machine and came back as 69, which reads as the machine down.
+    let s = Sandbox::new();
+    for dst in [":$DIBS_SCRATCH/x", ":${DIBS_SCRATCH}/x"] {
+        let out = s.dibs(["--sync", "./x", dst]).run();
+        assert_eq!((out.code, out.all().lines_with("does not expand $DIBS_SCRATCH")), (2, 1), "{dst}");
+    }
+}
+
+#[test]
 fn preserving_mtimes_into_the_machine_is_warned_about() {
     // A build after a sync that kept mtimes compiles nothing.
     let s = Sandbox::new();
