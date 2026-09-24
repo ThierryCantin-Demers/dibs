@@ -1097,42 +1097,154 @@ pub fn local(dir: &std::path::Path) -> Result<Local, String> {
     Ok(Local { key: format!("{:.10}", hex(&k.finalize())), content, dirty })
 }
 
-/// A comparison's base, checked out here to be sent like a local tree, since the machine may not
-/// be able to fetch it: a private repo, or a commit never pushed.
+/// A commit checked out here to be sent like a local tree: one the machine cannot fetch, or the
+/// base of a comparison against the local tree, which is sent like its tip.
 ///
-/// One checkout per repo, in a clone that borrows this checkout's objects, so nothing is copied
-/// but files and no worktree is registered in the checkout. Its machine tree is keyed by the
-/// commit rather than by this path, so two comparisons against different bases never build in
-/// one tree. The lock keeps the checkout on this commit until it has been sent.
-pub struct Base {
+/// A few checkouts per repo, each a clone that borrows this checkout's objects, so nothing is
+/// copied but files and no worktree is registered in the checkout. Its machine tree is keyed by
+/// the commit rather than by the path, so two commits never build in one tree. Each is locked
+/// until it has been sent, which is why a comparison of two such commits takes two.
+pub struct Checkout {
     pub dir: std::path::PathBuf,
     pub sha: String,
     pub key: String,
     pub lock: Option<std::fs::File>,
+    /// Why the machine is not left to fetch it.
+    pub why: Option<&'static str>,
 }
 
-pub fn base(dir: &std::path::Path, identity: &str, sha: &str) -> Result<Base, String> {
+impl Checkout {
+    pub fn local(&self) -> Result<Local, String> {
+        Ok(Local { key: self.key.clone(), ..local(&self.dir)? })
+    }
+}
+
+pub fn checkout(dir: &std::path::Path, identity: &str, sha: &str, why: Option<&'static str>) -> Result<Checkout, String> {
+    checkout_in(&cache_home()?.join("dibs/sent").join(identity), dir, identity, sha, why)
+}
+
+fn checkout_in(root: &std::path::Path, dir: &std::path::Path, identity: &str, sha: &str, why: Option<&'static str>) -> Result<Checkout, String> {
     use sha2::{Digest, Sha256};
-    let cache = std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
-        .ok_or("no HOME to check a comparison's base out under")?;
-    let root = cache.join("dibs/base");
-    std::fs::create_dir_all(&root).map_err(|e| format!("{}: {e}", root.display()))?;
-    let lock_path = root.join(format!("{identity}.lock"));
-    let lock = std::fs::File::create(&lock_path).map_err(|e| format!("{}: {e}", lock_path.display()))?;
-    lock.lock().map_err(|e| format!("{}: {e}", lock_path.display()))?;
-    let checkout = root.join(identity);
+    std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
+    let (slot, lock) = (0u32..)
+        .find_map(|n| {
+            let path = root.join(format!("{n}.lock"));
+            let taken = std::fs::File::create(&path).map_err(std::fs::TryLockError::Error).and_then(|f| f.try_lock().map(|()| f));
+            match taken {
+                Ok(f) => Some(Ok((n.to_string(), f))),
+                Err(std::fs::TryLockError::WouldBlock) => None,
+                Err(std::fs::TryLockError::Error(e)) => Some(Err(format!("{}: {e}", path.display()))),
+            }
+        })
+        .expect("an unbounded range")?;
+    let checkout = root.join(&slot);
     if !checkout.join(".git").exists() {
         let _ = std::fs::remove_dir_all(&checkout);
         let from = dir.to_str().ok_or_else(|| format!("{}: not a path git can take", dir.display()))?;
-        git(&root, &["clone", "--quiet", "--shared", "--no-checkout", from, identity])?;
+        git(root, &["clone", "--quiet", "--shared", "--no-checkout", from, &slot])?;
     }
     git(&checkout, &["checkout", "--quiet", "--detach", "--force", sha])?;
     git(&checkout, &["clean", "-fdxq"])?;
     let mut k = Sha256::new();
     k.update(format!("base\0{identity}\0{sha}"));
-    Ok(Base { dir: checkout, sha: sha.to_string(), key: format!("{:.10}", hex(&k.finalize())), lock: Some(lock) })
+    Ok(Checkout { dir: checkout, sha: sha.to_string(), key: format!("{:.10}", hex(&k.finalize())), lock: Some(lock), why })
+}
+
+fn cache_home() -> Result<std::path::PathBuf, String> {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .ok_or_else(|| "no HOME to keep a cache under".to_string())
+}
+
+/// The commit the machine would fetch for `name`, as near as this checkout knows it: by the
+/// remote-tracking ref, which a local branch of that name may be behind. And the name it was found
+/// under.
+pub fn as_fetched(dir: &std::path::Path, name: &str) -> Option<(String, String)> {
+    let tracking = format!("origin/{name}");
+    let found = [tracking.as_str(), name].into_iter().find_map(|n| commit(dir, n).ok().map(|c| (c, n.to_string())));
+    found
+}
+
+/// Why a machine, which holds no credentials, cannot fetch `sha` from this checkout's origin, or
+/// None when it can. A commit on no branch of origin here is taken as never pushed: sending one
+/// that was costs a transfer, where fetching one that was not fails the run.
+pub fn unfetchable(dir: &std::path::Path, sha: &str) -> Option<&'static str> {
+    let on = git(dir, &["for-each-ref", "--count=1", "--contains", sha, "--format=%(refname)", "refs/remotes/origin/"]);
+    if on.map_or(true, |r| r.trim().is_empty()) {
+        return Some("it was never pushed");
+    }
+    let url = git(dir, &["remote", "get-url", "origin"]).ok()?;
+    private(url.trim()).then_some("its remote needs credentials, which the machines do not hold")
+}
+
+/// A remote that refuses an anonymous read. Remembered for a week, since asking costs a round
+/// trip to the host; a remote that cannot be asked counts as public, which is what it was taken
+/// for before anything asked.
+fn private(url: &str) -> bool {
+    const WEEK: u64 = 7 * 24 * 3600;
+    let Some(url) = anonymous_url(url) else { return false };
+    let Ok(file) = cache_home().map(|c| c.join("dibs/remotes")) else { return false };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let known = std::fs::read_to_string(&file).unwrap_or_default();
+    let seen = known.lines().rev().find_map(|l| {
+        let mut f = l.split('\t');
+        let (u, what, when) = (f.next()?, f.next()?, f.next()?.parse::<u64>().ok()?);
+        (u == url && now.saturating_sub(when) < WEEK).then_some(what == "private")
+    });
+    if let Some(p) = seen {
+        return p;
+    }
+    let Some(p) = refuses_anonymous(&url) else { return false };
+    let mut kept: String = known.lines().filter(|l| l.split('\t').next() != Some(url.as_str())).map(|l| format!("{l}\n")).collect();
+    kept += &format!("{url}\t{}\t{now}\n", if p { "private" } else { "public" });
+    let tmp = file.with_extension(format!("{}", std::process::id()));
+    if file.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok()) && std::fs::write(&tmp, kept).is_ok() {
+        let _ = std::fs::rename(&tmp, &file);
+    }
+    p
+}
+
+/// The https form of a remote, which is how a machine without keys would have to read it.
+fn anonymous_url(url: &str) -> Option<String> {
+    let (host, path) = if let Some(rest) = url.strip_prefix("https://") {
+        rest.split_once('/')?
+    } else if let Some(rest) = url.strip_prefix("ssh://") {
+        let (host, path) = rest.split_once('/')?;
+        (host.split(':').next()?, path)
+    } else if !url.contains("://") && url.contains('@') {
+        url.split_once(':')?
+    } else {
+        return None;
+    };
+    let host = host.rsplit('@').next()?;
+    (!host.is_empty() && !path.is_empty()).then(|| format!("https://{host}/{path}"))
+}
+
+/// Whether the remote refused a read without credentials, or None when it could not be asked.
+fn refuses_anonymous(url: &str) -> Option<bool> {
+    let child = std::process::Command::new("git")
+        .args(["-c", "credential.helper=", "ls-remote", "--exit-code", url, "HEAD"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "true")
+        .env_remove("SSH_ASKPASS")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || tx.send(child.wait_with_output()));
+    let Ok(Ok(out)) = rx.recv_timeout(std::time::Duration::from_secs(15)) else {
+        let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+        return None;
+    };
+    let err = String::from_utf8_lossy(&out.stderr);
+    match out.status.success() {
+        true => Some(false),
+        false => ["Authentication failed", "could not read Username", "Repository not found"].iter().any(|m| err.contains(m)).then_some(true),
+    }
 }
 
 fn hex(b: &[u8]) -> String {
@@ -1576,6 +1688,42 @@ mod local_tests {
         assert!(out.status.success() && !err.contains("waiting"), "{err}");
         assert_eq!(parse(&String::from_utf8_lossy(&out.stdout)).unwrap().reseeded, None);
         assert!(mine.join("debug/deps/libmine.rlib").exists(), "it keeps its own");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_remote_is_asked_over_https_as_a_machine_without_keys_would_read_it() {
+        for (url, https) in [
+            ("https://github.com/o/r.git", Some("https://github.com/o/r.git")),
+            ("https://user@github.com/o/r", Some("https://github.com/o/r")),
+            ("git@github.com:o/r.git", Some("https://github.com/o/r.git")),
+            ("ssh://git@github.com:22/o/r.git", Some("https://github.com/o/r.git")),
+            ("/srv/git/r.git", None),
+            ("file:///srv/git/r.git", None),
+        ] {
+            assert_eq!(anonymous_url(url).as_deref(), https, "{url}");
+        }
+    }
+
+    #[test]
+    fn two_commits_sent_at_once_take_a_checkout_each() {
+        let scratch = tmp("checkouts");
+        let repo = scratch.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let commit_empty = |m: &str| git(&repo, &["-c", "user.email=a@b", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", m]).unwrap();
+        git(&repo, &["init", "-q"]).unwrap();
+        commit_empty("one");
+        commit_empty("two");
+        let (one, two) = (commit(&repo, "HEAD~1").unwrap(), commit(&repo, "HEAD").unwrap());
+        let root = scratch.join("sent/repo");
+        let at = |c: &Checkout| git(&c.dir, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        let a = checkout_in(&root, &repo, "repo", &one, None).unwrap();
+        let b = checkout_in(&root, &repo, "repo", &two, None).unwrap();
+        assert_eq!((at(&a), at(&b)), (one, two.clone()));
+        assert_ne!(a.dir, b.dir, "the first is held until it is sent");
+        let c = checkout_in(&root, &repo, "repo", &two, None).unwrap();
+        assert!(c.dir != a.dir && c.dir != b.dir, "nor is the second");
+        assert_eq!(c.key, b.key, "a commit's tree on the machine is the same whichever checkout sent it");
         let _ = std::fs::remove_dir_all(&scratch);
     }
 

@@ -490,7 +490,8 @@ impl Side {
         }
     }
 
-    /// Sent from here rather than fetched: the tree as it stands, or the base it is measured against.
+    /// Sent from here whatever the remote holds: the tree as it stands, or the base it is measured
+    /// against.
     fn sent(&self) -> bool {
         match self {
             Side::Local => true,
@@ -529,54 +530,87 @@ struct Arm {
     name: String,
     /// What the machine fetches, or None for a tree sent from here.
     fetch: Option<String>,
-    /// How a merge base was found, for a person to check.
+    /// How its commit was found, for a person to check.
     note: Option<String>,
-    /// The base of a range ending in the local tree, sent from a checkout of its own.
-    base: Option<worktree::Base>,
+    /// A commit sent from a checkout of its own rather than fetched.
+    checkout: Option<worktree::Checkout>,
 }
 
 impl Arm {
     /// Where a sent arm is sent from.
     fn dir<'a>(&'a self, checkout: &'a Path) -> &'a Path {
-        self.base.as_ref().map_or(checkout, |b| b.dir.as_path())
+        self.checkout.as_ref().map_or(checkout, |c| c.dir.as_path())
     }
 
     fn local(&self, checkout: &Path) -> Result<worktree::Local, String> {
-        let mut l = worktree::local(self.dir(checkout))?;
-        if let Some(b) = &self.base {
-            l.key = b.key.clone();
+        match &self.checkout {
+            Some(c) => c.local(),
+            None => worktree::local(checkout),
         }
-        Ok(l)
+    }
+
+    fn commit(&self) -> Option<&str> {
+        self.checkout.as_ref().map(|c| c.sha.as_str()).or(self.fetch.as_deref())
     }
 }
 
+/// `, <note>, sent from <from> since <why>`, as much of it as there is, to follow the commit.
+fn sent_from(c: &worktree::Checkout, note: Option<&str>, from: &str) -> String {
+    format!(
+        "{}, sent from {from}{}",
+        note.map(|n| format!(", {n}")).unwrap_or_default(),
+        c.why.map(|w| format!(" since {w}")).unwrap_or_default()
+    )
+}
+
+fn short(sha: &str) -> &str {
+    &sha[..12.min(sha.len())]
+}
+
+/// Each side looked up here. A commit the machine cannot fetch is checked out and sent instead.
 fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
     let here = |r: &str| if r == "local" { "HEAD".to_string() } else { r.to_string() };
-    let arms: Vec<Arm> = sides
-        .iter()
-        .map(|s| {
-            let (fetch, note, base) = match s {
-                Side::Local => (None, None, None),
-                Side::Ref(r) => (Some(r.clone()), None, None),
-                Side::Pinned(r) => (Some(worktree::commit(dir, r)?), None, None),
-                Side::Base(a, b) => {
-                    let (sha, upstream) = worktree::merge_base(dir, &here(a), &here(b))?;
-                    let note = match upstream {
-                        Some(u) => format!("where {b} left {u}, since {a} is behind it"),
-                        None => format!("where {b} left {a}"),
-                    };
-                    match s.sent() {
-                        true => (None, Some(note), Some(worktree::base(dir, repo, &sha)?)),
-                        false => (Some(sha), Some(note), None),
-                    }
+    let mut arms = Vec::with_capacity(sides.len());
+    for s in sides {
+        let name = s.name();
+        let (sha, fetch, note) = match s {
+            Side::Local => {
+                arms.push(Arm { name, fetch: None, note: None, checkout: None });
+                continue;
+            }
+            Side::Ref(r) => match worktree::as_fetched(dir, r) {
+                Some((sha, seen)) => (sha, r.clone(), Some(format!("as {seen} stands here"))),
+                None => {
+                    arms.push(Arm { name, fetch: Some(r.clone()), note: None, checkout: None });
+                    continue;
                 }
-            };
-            Ok(Arm { name: s.name(), fetch, note, base })
-        })
-        .collect::<Result<_, String>>()?;
-    if let [base, Arm { fetch: Some(tip), name, .. }] = &arms[..] {
-        if base.note.is_some() && base.fetch.as_ref() == Some(tip) {
-            return Err(format!("{name} has nothing its base does not, so there is nothing to compare"));
+            },
+            Side::Pinned(r) => {
+                let sha = worktree::commit(dir, r)?;
+                (sha.clone(), sha, None)
+            }
+            Side::Base(a, b) => {
+                let (sha, upstream) = worktree::merge_base(dir, &here(a), &here(b))?;
+                let note = match upstream {
+                    Some(u) => format!("where {b} left {u}, since {a} is behind it"),
+                    None => format!("where {b} left {a}"),
+                };
+                (sha.clone(), sha, Some(note))
+            }
+        };
+        let why = match s.sent() {
+            true => None,
+            false => worktree::unfetchable(dir, &sha),
+        };
+        arms.push(match s.sent() || why.is_some() {
+            true => Arm { name, fetch: None, note, checkout: Some(worktree::checkout(dir, repo, &sha, why)?) },
+            // A ref is fetched by name, so how it stands here says nothing of what the machine takes.
+            false => Arm { name, fetch: Some(fetch), note: note.filter(|_| !matches!(s, Side::Ref(_))), checkout: None },
+        });
+    }
+    if let ([Side::Base(..), _], [base, tip]) = (sides, &arms[..]) {
+        if base.commit().is_some() && base.commit() == tip.commit() {
+            return Err(format!("{} has nothing its base does not, so there is nothing to compare", tip.name));
         }
     }
     Ok(arms)
@@ -645,7 +679,10 @@ struct Pinned {
     repo: String,
     reference: String,
     dir: PathBuf,
+    /// The tree sent, when one is: the one at `dir`, or a checkout of a commit the machine cannot fetch.
     local: Option<worktree::Local>,
+    checkout: Option<worktree::Checkout>,
+    note: Option<String>,
     crates: BTreeMap<String, String>,
     lock: Option<String>,
     /// The sources a `[patch]` has to redirect, and the crates taken from each.
@@ -666,20 +703,21 @@ fn pins_of(args: &Args, repo: &str, dir: &Path, arms: &[Arm]) -> Result<Vec<Pinn
         if pins.iter().any(|q: &Pinned| q.repo == identity) {
             return Err(format!("--pin {p}: {identity} is pinned twice"));
         }
-        let local = (reference == "local").then(|| worktree::local(&pdir)).transpose()?;
-        // The machine fetches the remote's ref, which the remote-tracking one here is closer to
-        // than a local branch that may be behind it.
-        let tracking = format!("origin/{reference}");
-        let seen = match worktree::commit(&pdir, &tracking) {
-            Ok(_) => tracking,
-            Err(_) => reference.to_string(),
+        let (local, checkout, note, crates, lock) = match reference {
+            "local" => (Some(worktree::local(&pdir)?), None, None, pin::local_crates(&pdir)?, lockfile(&pdir, None)),
+            _ => {
+                let (sha, seen) = worktree::as_fetched(&pdir, reference).ok_or_else(|| format!("--pin {p}: no {reference} in {}", pdir.display()))?;
+                let (crates, lock) = (pin::ref_crates(&pdir, &sha)?, lockfile(&pdir, Some(&sha)));
+                match worktree::unfetchable(&pdir, &sha) {
+                    Some(why) => {
+                        let c = worktree::checkout(&pdir, &identity, &sha, Some(why))?;
+                        (Some(c.local()?), Some(c), Some(format!("as {seen} stands here")), crates, lock)
+                    }
+                    None => (None, None, None, crates, lock),
+                }
+            }
         };
-        let crates = match &local {
-            Some(_) => pin::local_crates(&pdir)?,
-            None => pin::ref_crates(&pdir, &seen)?,
-        };
-        let lock = lockfile(&pdir, local.is_none().then_some(seen.as_str()));
-        pins.push(Pinned { repo: identity, reference: reference.to_string(), dir: pdir, local, crates, lock, sources: BTreeMap::new() });
+        pins.push(Pinned { repo: identity, reference: reference.to_string(), dir: pdir, local, checkout, note, crates, lock, sources: BTreeMap::new() });
     }
     let locks: Vec<String> = arms
         .iter()
@@ -703,6 +741,19 @@ fn pins_of(args: &Args, repo: &str, dir: &Path, arms: &[Arm]) -> Result<Vec<Pinn
     Ok(pins)
 }
 
+/// What is about to be prepared, for the person reading along.
+fn preparing(repo: &str, arm: &Arm, local: Option<&worktree::Local>, dir: &Path) -> String {
+    match (&arm.checkout, local) {
+        (Some(c), _) => format!("{repo} at {}{}", short(&c.sha), sent_from(c, arm.note.as_deref(), "this computer")),
+        (None, Some(l)) => format!("{repo} from {} ({})", dir.display(), if l.dirty { "uncommitted changes included" } else { "clean" }),
+        (None, None) => format!(
+            "{repo}@{}{}",
+            arm.fetch.as_deref().unwrap_or_default(),
+            arm.note.as_ref().map(|n| format!(", {n}")).unwrap_or_default()
+        ),
+    }
+}
+
 /// A tree on its way to the machine, and what it became there.
 struct Tree {
     token: String,
@@ -722,16 +773,16 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
 
     let sides = sides(args.reference.as_deref())?;
     let resolved = resolve(&args)?;
-    let pin_specs = args.pins.iter().map(|p| pin_spec(p).map(|(r, f)| (r.to_string(), f == "local"))).collect::<Result<Vec<_>, _>>()?;
-    let calls = jobs_of(&resolved, &sides, args.reps, &pin_specs);
+    let mut arms = arms(&sides, &resolved.dir, &resolved.repo_name)?;
+    let mut pins = pins_of(&args, &resolved.repo_name, &resolved.dir, &arms)?;
+    let local: Vec<bool> = arms.iter().map(|a| a.fetch.is_none()).collect();
+    let pin_specs = args.pins.iter().zip(&pins).map(|(spec, p)| pin_spec(spec).map(|(r, _)| (r.to_string(), p.local.is_some()))).collect::<Result<Vec<_>, _>>()?;
+    let calls = jobs_of(&resolved, &sides, &local, args.reps, &pin_specs);
     let Resolved { dir, repo_name, verb, name, rec, label, step_labels, shell_reason, params, tree_fresh } = resolved;
     let (name, rec) = (name.as_str(), &rec);
     let fingerprint = rec.fingerprint();
-    let mut arms = arms(&sides, &dir, &repo_name)?;
-    let pins = pins_of(&args, &repo_name, &dir, &arms)?;
     let patched: Option<std::collections::BTreeSet<String>> =
         (!pins.is_empty()).then(|| pins.iter().flat_map(|p| p.sources.values().flatten().cloned()).collect());
-    let local: Vec<bool> = arms.iter().map(|a| a.fetch.is_none()).collect();
     let jobs = schedule(&local, &rec.steps, args.reps);
     let compared = arms.len() > 1;
     let order = |jobs: &[Job]| -> String {
@@ -756,8 +807,8 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
         }
         for arm in &arms {
             let head = if compared { format!("arm         {}  ", arm.name) } else { "ref         ".to_string() };
-            match (&arm.fetch, &arm.base) {
-                (None, Some(b)) => println!("{head}{}, {}, sent from {}", b.sha, arm.note.as_deref().unwrap_or_default(), b.dir.display()),
+            match (&arm.fetch, &arm.checkout) {
+                (None, Some(c)) => println!("{head}{}{}", c.sha, sent_from(c, arm.note.as_deref(), &c.dir.display().to_string())),
                 (None, None) => {
                     let l = worktree::local(&dir)?;
                     println!("{head}local {} from {}", l.content, dir.display());
@@ -769,9 +820,10 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
             }
         }
         for p in &pins {
-            match &p.local {
-                Some(l) => println!("pin         {}  local {} from {}", p.repo, l.content, p.dir.display()),
-                None => println!("pin         {}  {}", p.repo, p.reference),
+            match (&p.checkout, &p.local) {
+                (Some(c), _) => println!("pin         {}  {} {}{}", p.repo, p.reference, c.sha, sent_from(c, p.note.as_deref(), &c.dir.display().to_string())),
+                (None, Some(l)) => println!("pin         {}  local {} from {}", p.repo, l.content, p.dir.display()),
+                (None, None) => println!("pin         {}  {}", p.repo, p.reference),
             }
             for (source, names) in &p.sources {
                 println!("            patches {source}: {}", names.iter().cloned().collect::<Vec<_>>().join(" "));
@@ -874,7 +926,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
 
     // The pinned trees go first: the patch names where they landed.
     let mut pinned = Vec::with_capacity(pins.len());
-    for (k, p) in pins.iter().enumerate() {
+    for (k, p) in pins.iter_mut().enumerate() {
         let env = env_of(k);
         let setup = Request {
             label: &calls[k].label,
@@ -887,13 +939,19 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
             new_series: false,
         };
         let fresh = Manifest::load_any(&p.dir, &p.repo)?;
-        let (script, gitdbs) = tree_script(&p.dir, &p.repo, &p.reference, p.local.as_ref(), "", &new_token(), 0, None, fresh.tree_fresh());
+        let lock = p.checkout.as_mut().and_then(|c| c.lock.take());
+        let from = p.checkout.as_ref().map_or(p.dir.as_path(), |c| c.dir.as_path());
+        let (script, gitdbs) = tree_script(from, &p.repo, &p.reference, p.local.as_ref(), "", &new_token(), 0, None, fresh.tree_fresh());
         let text = match &p.local {
             Some(l) => {
-                eprintln!("dibs: pinning {} from {} ({})", p.repo, p.dir.display(), if l.dirty { "uncommitted changes included" } else { "clean" });
-                let (out, text) = sync_prepared(&backend, &p.dir, &script, &l.key, &setup, &mut announce)?;
+                match &p.checkout {
+                    Some(c) => eprintln!("dibs: pinning {}@{} at {}{}", p.repo, p.reference, short(&c.sha), sent_from(c, p.note.as_deref(), "this computer")),
+                    None => eprintln!("dibs: pinning {} from {} ({})", p.repo, p.dir.display(), if l.dirty { "uncommitted changes included" } else { "clean" }),
+                }
+                let (out, text) = sync_prepared(&backend, from, &script, &l.key, &setup, &mut announce)?;
+                drop(lock);
                 if !text.contains("DIBS-READY") || out.status != 0 {
-                    return Err(format!("could not send the pinned {} from {} (exit {})", p.repo, p.dir.display(), out.status));
+                    return Err(format!("could not send the pinned {} from {} (exit {})", p.repo, from.display(), out.status));
                 }
                 text
             }
@@ -928,27 +986,14 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
             Some(_) => None,
         };
         let lead = if compared { format!("  {}: ", arm.name) } else { "dibs: preparing ".to_string() };
-        match (&local, &arm.fetch) {
-            (Some(_), _) if arm.base.is_some() => eprintln!(
-                "{lead}{repo_name} at {}, {}, sent from this computer",
-                arm.base.as_ref().map_or("", |b| &b.sha[..12.min(b.sha.len())]),
-                arm.note.as_deref().unwrap_or_default()
-            ),
-            (Some(l), _) => eprintln!(
-                "{lead}{repo_name} from {} ({})",
-                dir.display(),
-                if l.dirty { "uncommitted changes included" } else { "clean" }
-            ),
-            (None, Some(r)) => eprintln!("{lead}{repo_name}@{r}{}", arm.note.as_ref().map(|n| format!(", {n}")).unwrap_or_default()),
-            (None, None) => unreachable!(),
-        }
+        eprintln!("{lead}{}", preparing(&repo_name, arm, local.as_ref(), &dir));
         let reference = arm.fetch.as_deref().unwrap_or("local");
         let (script, gitdbs) = tree_script(arm.dir(&dir), &repo_name, reference, local.as_ref(), &signature, &token, slot, nest.as_ref(), &tree_fresh);
         slot += usize::from(arm.fetch.is_some());
         trees.push(Tree { token, script, gitdbs, local, prepared: None });
     }
 
-    let mut base_locks: Vec<Option<std::fs::File>> = arms.iter_mut().map(|a| a.base.as_mut().and_then(|b| b.lock.take())).collect();
+    let mut checkout_locks: Vec<Option<std::fs::File>> = arms.iter_mut().map(|a| a.checkout.as_mut().and_then(|c| c.lock.take())).collect();
     let what = |arm: usize| match &arms[arm].fetch {
         Some(r) => format!("{repo_name}@{r}"),
         None => format!("{repo_name} from {}", arms[arm].dir(&dir).display()),
@@ -990,7 +1035,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
                 let t = &mut trees[a];
                 let key = &t.local.as_ref().expect("a sent tree is local").key;
                 let (out, text) = sync_prepared(&backend, arms[a].dir(&dir), &t.script, key, &setup, &mut announce)?;
-                base_locks[a] = None;
+                checkout_locks[a] = None;
                 if !text.contains("DIBS-READY") {
                     return Err(format!("could not prepare {} (exit {})", what(a), out.status));
                 }
@@ -1313,7 +1358,8 @@ fn point_name(args: &Args, p: &BTreeMap<String, String>) -> String {
 /// dashboard, a client, a test suite driving them over the network. It ends by becoming that
 /// dibs call rather than waiting on one, so the command keeps this terminal.
 fn with_service(args: &Args) -> Result<ExitCode, String> {
-    if sides(args.reference.as_deref())?.len() > 1 {
+    let sides = sides(args.reference.as_deref())?;
+    if sides.len() > 1 {
         return Err("with runs against one tree, so it takes one ref".into());
     }
     if !args.pins.is_empty() {
@@ -1353,18 +1399,13 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
     }
     let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
 
-    let reference = args.reference.as_deref().unwrap_or("HEAD");
-    let local = if reference == "local" { Some(worktree::local(&dir)?) } else { None };
-    match &local {
-        Some(l) => eprintln!(
-            "dibs: preparing {repo_name} from {} ({})",
-            dir.display(),
-            if l.dirty { "uncommitted changes included" } else { "clean" }
-        ),
-        None => eprintln!("dibs: preparing {repo_name}@{reference}"),
-    }
+    let mut arm = arms(&sides, &dir, &repo_name)?.remove(0);
+    let local = arm.fetch.is_none().then(|| arm.local(&dir)).transpose()?;
+    eprintln!("dibs: preparing {}", preparing(&repo_name, &arm, local.as_ref(), &dir));
+    let reference = arm.fetch.as_deref().unwrap_or("local");
+    let from = arm.dir(&dir).to_path_buf();
     let signature = svc.build.as_deref().and_then(worktree::build_signature).unwrap_or_default();
-    let (script, gitdbs) = tree_script(&dir, &repo_name, reference, local.as_ref(), &signature, &new_token(), 0, None, manifest.tree_fresh());
+    let (script, gitdbs) = tree_script(&from, &repo_name, reference, local.as_ref(), &signature, &new_token(), 0, None, manifest.tree_fresh());
     let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
     let setup = Request {
         label: &setup_label,
@@ -1379,9 +1420,12 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
     let mut announce = |text: &str| announce_prepared(text);
     let text = match &local {
         Some(l) => {
-            let (out, text) = sync_prepared(&backend, &dir, &script, &l.key, &setup, &mut announce)?;
+            let (out, text) = sync_prepared(&backend, &from, &script, &l.key, &setup, &mut announce)?;
+            if let Some(c) = &mut arm.checkout {
+                c.lock = None;
+            }
             if !text.contains("DIBS-READY") || out.status != 0 {
-                return Err(format!("could not prepare {repo_name} from {} (exit {})", dir.display(), out.status));
+                return Err(format!("could not prepare {repo_name} from {} (exit {})", from.display(), out.status));
             }
             text
         }
@@ -1667,8 +1711,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
 /// a local tree, or the first step when it is shared. Its own job would be a second round trip and
 /// a second place in the queue. An exclusive first step keeps its setup apart, or a fetch would run
 /// inside the hold.
-fn jobs_of(r: &Resolved, sides: &[Side], reps: u32, pins: &[(String, bool)]) -> Vec<batch::Pending> {
-    let local: Vec<bool> = sides.iter().map(Side::sent).collect();
+fn jobs_of(r: &Resolved, sides: &[Side], local: &[bool], reps: u32, pins: &[(String, bool)]) -> Vec<batch::Pending> {
     let of = |arm: usize, rep: Option<u32>| {
         let mut tags = Vec::new();
         if sides.len() > 1 {
@@ -1684,7 +1727,7 @@ fn jobs_of(r: &Resolved, sides: &[Side], reps: u32, pins: &[(String, bool)]) -> 
     };
     let job = |label: String, mode: &'static str, tag: String| batch::Pending { name: format!("{label}{tag}"), mode, label, here: true };
     let pinned = pins.iter().map(|(repo, local)| job(format!("{}:pin", r.label), if *local { "rsh" } else { "shared" }, format!(" ({repo})")));
-    pinned.chain(schedule(&local, &r.rec.steps, reps)
+    pinned.chain(schedule(local, &r.rec.steps, reps)
         .into_iter()
         .map(|j| match j {
             Job::Send(a) => job(format!("{}:send", r.label), "rsh", of(a, None)),
@@ -1713,7 +1756,10 @@ fn recipe_jobs(words: &[String]) -> Option<Vec<batch::Pending>> {
     let args = parse_words(words.get(i..)?.iter().cloned()).ok()?;
     let r = resolve(&args).ok()?;
     let pins = args.pins.iter().map(|p| pin_spec(p).map(|(repo, reference)| (repo.to_string(), reference == "local"))).collect::<Result<Vec<_>, _>>().ok()?;
-    Some(jobs_of(&r, &sides(args.reference.as_deref()).ok()?, args.reps, &pins))
+    // Whether a ref is sent is only known once it is looked up, so a ref is planned as fetched.
+    let sides = sides(args.reference.as_deref()).ok()?;
+    let local: Vec<bool> = sides.iter().map(Side::sent).collect();
+    Some(jobs_of(&r, &sides, &local, args.reps, &pins))
 }
 
 fn run_label(repo: &str, verb: &str, name: Option<&str>, device: Option<&str>) -> String {
@@ -2109,10 +2155,10 @@ mod tests {
     fn a_recipe_s_jobs_are_what_it_will_send_and_run() {
         let names = |jobs: Vec<batch::Pending>| jobs.into_iter().map(|j| format!("{} {}", j.mode, j.label)).collect::<Vec<_>>();
         let build_then_bench = resolved(vec![step(Lock::Shared, "cargo build"), step(Lock::Exclusive, "cargo bench")]);
-        assert_eq!(names(jobs_of(&build_then_bench, &[Side::Local], 1, &[])), ["rsh app/bench/r:send", "shared app/bench/r", "bench app/bench/r"]);
-        assert_eq!(names(jobs_of(&build_then_bench, &[Side::Ref("main".into())], 1, &[])), ["shared app/bench/r", "bench app/bench/r"], "the setup rides with the build");
+        assert_eq!(names(jobs_of(&build_then_bench, &[Side::Local], &[true], 1, &[])), ["rsh app/bench/r:send", "shared app/bench/r", "bench app/bench/r"]);
+        assert_eq!(names(jobs_of(&build_then_bench, &[Side::Ref("main".into())], &[false], 1, &[])), ["shared app/bench/r", "bench app/bench/r"], "the setup rides with the build");
         let bench_only = resolved(vec![step(Lock::Exclusive, "cargo bench")]);
-        assert_eq!(names(jobs_of(&bench_only, &[Side::Ref("main".into())], 1, &[])), ["shared app/bench/r:setup", "bench app/bench/r"], "never inside the hold");
+        assert_eq!(names(jobs_of(&bench_only, &[Side::Ref("main".into())], &[false], 1, &[])), ["shared app/bench/r:setup", "bench app/bench/r"], "never inside the hold");
     }
 
     #[test]
@@ -2157,7 +2203,7 @@ mod tests {
     #[test]
     fn a_comparison_s_jobs_say_which_arm_and_rep_they_are() {
         let r = resolved(vec![step(Lock::Shared, "cargo build"), step(Lock::Exclusive, "cargo bench")]);
-        let names: Vec<String> = jobs_of(&r, &sides(Some("main..local")).unwrap(), 2, &[]).into_iter().map(|j| j.name).collect();
+        let names: Vec<String> = jobs_of(&r, &sides(Some("main..local")).unwrap(), &[true, true], 2, &[]).into_iter().map(|j| j.name).collect();
         assert_eq!(
             names,
             [

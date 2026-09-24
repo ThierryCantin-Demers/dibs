@@ -549,7 +549,7 @@ fn a_comparison_is_one_call_measured_against_where_the_branch_left_main() {
     let dry = bench("stale-main..local", &["--dry-run"]).all();
     assert_eq!(
         (
-            dry.lines_matching(&format!("^arm         base  {new_main}, where local left origin/main, since stale-main is behind it, sent from .*/dibs/base/app$")),
+            dry.lines_matching(&format!("^arm         base  {new_main}, where local left origin/main, since stale-main is behind it, sent from .*/dibs/sent/app/0$")),
             dry.lines_matching("^arm         local  local ")
         ),
         (1, 1),
@@ -598,6 +598,66 @@ fn a_comparison_is_one_call_measured_against_where_the_branch_left_main() {
         (out.code, out.stdout.lines_with("measured main2"), out.stdout.lines_with("measured topk")),
         (0, 1, 1),
         "a base the machine could never fetch is sent from here: {}",
+        out.all()
+    );
+}
+
+/// Remembers a remote as refusing an anonymous read, as asking the host would have found.
+fn private(s: &Sandbox, repo: &str) {
+    let url = format!("https://example.invalid/{repo}.git");
+    s.git(repo, &["remote", "set-url", "origin", &url]);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    s.write("home/.cache/dibs/remotes", &format!("{url}\tprivate\t{now}\n"));
+}
+
+#[test]
+fn a_ref_the_machine_cannot_fetch_is_sent_from_here() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    let cargo = fake_cargo(&s);
+    recipes(
+        &s,
+        &format!(
+            "[bench.ab]\n  [[bench.ab.step]]\n  lock = \"shared\"\n  run = \"{cargo} build\"\n  [[bench.ab.step]]\n  lock = \"exclusive\"\n  run = \"echo measured $(cat a.txt) in ${{CARGO_TARGET_DIR##*/}}\"\n"
+        ),
+    );
+    s.git("app", &["checkout", "-q", "-b", "feature"]);
+    s.write("app/a.txt", "feature\n");
+    s.git("app", &["commit", "-qam", "feature"]);
+    let bench = |refs: &str, extra: &[&str]| {
+        let at = format!("{app}@{refs}");
+        let mut args = vec!["bench", at.as_str(), "ab"];
+        args.extend_from_slice(extra);
+        s.dibs(args).run()
+    };
+    let out = bench("origin/main..feature", &[]);
+    assert_eq!(
+        (out.code, out.stdout.lines_matching("^measured x in app$"), out.stdout.lines_matching("^measured feature in app-local-"), out.all().lines_with("sent from this computer since it was never pushed")),
+        (0, 1, 1, 1),
+        "a tip never pushed is sent, and its base, which was, is fetched: {}",
+        out.all()
+    );
+    private(&s, "app");
+    fs::remove_dir_all(s.path("home/prog/app")).unwrap();
+    let dry = bench("origin/main..feature", &["--dry-run"]).all();
+    assert_eq!(
+        (dry.lines_matching("^arm         base  [0-9a-f]{40}, where feature left origin/main, sent from .*/dibs/sent/app/[01] since its remote needs credentials"), dry.lines_matching("^arm         feature  [0-9a-f]{40}, sent from .*/dibs/sent/app/[01] since it was never pushed$")),
+        (1, 1),
+        "a private repo's base is sent too, each from a checkout of its own:\n{dry}"
+    );
+    let out = bench("origin/main..feature", &[]);
+    let measured: Vec<&str> = out.stdout.lines().filter(|l| l.starts_with("measured ")).collect();
+    assert_eq!(
+        (out.code, measured.iter().filter(|l| l.starts_with("measured x in app-local-")).count(), measured.iter().filter(|l| l.starts_with("measured feature in app-local-")).count()),
+        (0, 1, 1),
+        "and the machine, holding no clone of it, fetches nothing: {}",
+        out.all()
+    );
+    let out = bench("origin/main", &[]);
+    assert_eq!(
+        (out.code, out.stdout.lines_matching("^measured x in app-local-"), out.all().lines_matching("^dibs: preparing app at [0-9a-f]{12}, as origin/main stands here, sent from this computer since its remote needs credentials")),
+        (0, 1, 1),
+        "so is a single ref, as it stands here: {}",
         out.all()
     );
 }
@@ -725,6 +785,18 @@ fn a_pin_builds_against_another_trees_unpushed_changes() {
         "a pin whose version the requirement refuses fails rather than building the pushed code"
     );
     assert_eq!(build(&["--pin", &consumer]).code, 2, "pinning the repo being built is refused");
+    s.git("lib", &["checkout", "-q", "--", "."]);
+    s.write("lib/src/lib.rs", "pub fn say() -> &'static str { \"pushed later\" }\n");
+    s.git("lib", &["commit", "-qam", "later"]);
+    s.git("lib", &["push", "-q", "origin", "main"]);
+    private(&s, "lib");
+    let out = build(&["--pin", &format!("{}@main", s.p("lib"))]);
+    assert_eq!(
+        (out.code, out.all().lines_matching("^pushed later$"), out.all().lines_with("sent from this computer since its remote needs credentials")),
+        (0, 1, 1),
+        "a pinned ref the machine cannot fetch is sent from here: {}",
+        out.all()
+    );
     assert_eq!(build(&["--pin", &format!("{app}@local")]).all().lines_with("nothing"), 1, "and so is a pin its lockfile has no use for");
 }
 

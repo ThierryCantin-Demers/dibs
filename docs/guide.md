@@ -133,7 +133,8 @@ An A/B is one call:
 `A..B` measures B against where it left A, their merge base, so what landed on main since the
 branch left it is not credited to the branch. A local branch behind its upstream would put that
 point too early, so the upstream is asked too and the later answer wins; the output says which.
-Both ends are resolved here, and B is fetched by the commit it resolved to. `a,b,c` compares any
+Both ends are resolved here, and B is fetched by the commit it resolved to, or sent when the
+machine cannot fetch it. `a,b,c` compares any
 list of refs in turn, which is a bisect, and `local` can be any one of them.
 
 Every arm is prepared and built before any is measured, each in a tree and a target directory of
@@ -162,7 +163,7 @@ Two things in a recipe are refused when it loads, because both produce a number 
 
 An app that takes a library by git revision sees a change to it only once the change is pushed
 and the revision bumped. `--pin <repo>@<ref>` sends that repo's tree as well,
-your checkout for `@local` or a fetched ref otherwise, and points cargo at it with a `[patch]`
+your checkout for `@local` or the ref otherwise, and points cargo at it with a `[patch]`
 for every crate of it the lockfile takes from git or crates.io. It is repeatable, and a crate one
 pinned repo takes from another is covered too.
 
@@ -173,6 +174,17 @@ build, dibs checks the lockfile: if cargo still takes a pinned crate from where 
 most often because the pinned version does not meet the requirement, the step fails with exit 3
 rather than measuring the pushed code. The record carries the pinned tree's revision beside the
 repo's own, and `--dry-run` says what each pin replaces.
+
+## Refs the machine cannot fetch
+
+A machine holds no credentials and sees only what was pushed, so every ref is looked up here
+first. A commit on no branch of `origin` here, or any commit of a repo whose remote refuses an
+anonymous read, is checked out in a clone under `~/.cache/dibs/sent` and sent like a local tree,
+into a tree on the machine keyed by the commit. That covers each end of a range, each arm of a
+list, `--pin <repo>@<ref>` and `dibs with`. The base of a range ending in `local` is always sent,
+whatever the remote holds. A ref sent this way is the commit as this checkout last fetched it,
+`origin/<ref>` where there is one, and the output names it. Whether a remote needs credentials is
+asked at most once a week and kept in `~/.cache/dibs/remotes`.
 
 ## Getting files back
 
