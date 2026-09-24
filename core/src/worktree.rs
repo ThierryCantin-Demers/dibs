@@ -1037,6 +1037,44 @@ pub fn local(dir: &std::path::Path) -> Result<Local, String> {
     Ok(Local { key: format!("{:.10}", hex(&k.finalize())), content, dirty })
 }
 
+/// A comparison's base, checked out here to be sent like a local tree, since the machine may not
+/// be able to fetch it: a private repo, or a commit never pushed.
+///
+/// One checkout per repo, in a clone that borrows this checkout's objects, so nothing is copied
+/// but files and no worktree is registered in the checkout. Its machine tree is keyed by the
+/// commit rather than by this path, so two comparisons against different bases never build in
+/// one tree. The lock keeps the checkout on this commit until it has been sent.
+pub struct Base {
+    pub dir: std::path::PathBuf,
+    pub sha: String,
+    pub key: String,
+    pub lock: Option<std::fs::File>,
+}
+
+pub fn base(dir: &std::path::Path, identity: &str, sha: &str) -> Result<Base, String> {
+    use sha2::{Digest, Sha256};
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .ok_or("no HOME to check a comparison's base out under")?;
+    let root = cache.join("dibs/base");
+    std::fs::create_dir_all(&root).map_err(|e| format!("{}: {e}", root.display()))?;
+    let lock_path = root.join(format!("{identity}.lock"));
+    let lock = std::fs::File::create(&lock_path).map_err(|e| format!("{}: {e}", lock_path.display()))?;
+    lock.lock().map_err(|e| format!("{}: {e}", lock_path.display()))?;
+    let checkout = root.join(identity);
+    if !checkout.join(".git").exists() {
+        let _ = std::fs::remove_dir_all(&checkout);
+        let from = dir.to_str().ok_or_else(|| format!("{}: not a path git can take", dir.display()))?;
+        git(&root, &["clone", "--quiet", "--shared", "--no-checkout", from, identity])?;
+    }
+    git(&checkout, &["checkout", "--quiet", "--detach", "--force", sha])?;
+    git(&checkout, &["clean", "-fdxq"])?;
+    let mut k = Sha256::new();
+    k.update(format!("base\0{identity}\0{sha}"));
+    Ok(Base { dir: checkout, sha: sha.to_string(), key: format!("{:.10}", hex(&k.finalize())), lock: Some(lock) })
+}
+
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }

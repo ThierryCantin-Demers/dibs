@@ -526,11 +526,11 @@ fn a_comparison_is_one_call_measured_against_where_the_branch_left_main() {
     let dry = bench("stale-main..local", &["--dry-run"]).all();
     assert_eq!(
         (
-            dry.lines().filter(|l| *l == format!("arm         base  {new_main}, where local left origin/main, since stale-main is behind it")).count(),
+            dry.lines_matching(&format!("^arm         base  {new_main}, where local left origin/main, since stale-main is behind it, sent from .*/dibs/base/app$")),
             dry.lines_matching("^arm         local  local ")
         ),
         (1, 1),
-        "a dry run of a comparison names each arm and where its base came from:\n{dry}"
+        "a dry run of a comparison names each arm, where its base came from, and that it is sent from here:\n{dry}"
     );
     assert_eq!(bench("stale-main..local", &["--reps", "2", "--dry-run"]).all().lines_matching(r"^measured    base local \| local base$"), 1, "and the order they will be measured in");
     let out = bench("stale-main..local", &["--reps", "2"]);
@@ -538,18 +538,19 @@ fn a_comparison_is_one_call_measured_against_where_the_branch_left_main() {
     let order: Vec<&str> = measured.iter().map(|f| f[1]).collect();
     assert_eq!((out.code, order), (0, vec!["main2", "topk", "topk", "main2"]), "main..local measures the tree against where it left main, A B B A");
     let target = |arm: &str| {
-        let mut t: Vec<String> = measured.iter().filter(|f| f[1] == arm).map(|f| regex::Regex::new("-local-.*").unwrap().replace(f[3], "-local").into_owned()).collect();
+        let mut t: Vec<&str> = measured.iter().filter(|f| f[1] == arm).map(|f| f[3]).collect();
         t.dedup();
         t.join(" ")
     };
-    assert_eq!((target("main2"), target("topk")), ("app".into(), "app-local".into()), "each arm from a target directory of its own");
+    let (base, tip) = (target("main2"), target("topk"));
+    assert!(base.starts_with("app-local-") && tip.starts_with("app-local-") && base != tip, "each arm from a target directory of its own: {base} {tip}");
     assert_eq!(out.all().lines_matching(r"^  (base |local)  app@.*  [0-9]+s [0-9]+s  jobs [0-9-]+ [0-9-]+$"), 2, "with a summary naming each arm's jobs");
     let rec = last_run(&s, "app/bench/ab");
     let arms = format!(
-        r#""refs":"stale-main..local","arms":[{{"name":"base","fetched":"{new_main}","revisions":{{"app":"{}"}}}},{{"name":"local","revisions":{{"app":"local:"#,
-        &new_main[..12]
+        r#""refs":"stale-main..local","arms":\[\{{"name":"base","revisions":\{{"app":"local:{}[0-9a-f]*-[0-9a-f]+"\}}\}},\{{"name":"local","revisions":\{{"app":"local:"#,
+        &new_main[..7]
     );
-    assert!(rec.contains(&arms), "one record names both arms and what each resolved to: {rec}");
+    assert_eq!(rec.lines_matching(&arms), 1, "one record names both arms and the commit each was sent at: {rec}");
     assert_eq!(regex::Regex::new(r#""arm":"(base|local)""#).unwrap().find_iter(&rec).count(), 6, "and tags every step with its arm");
     let listed = s.dibs(["runs", "app/bench/ab"]).run().all();
     assert_eq!(
@@ -566,6 +567,16 @@ fn a_comparison_is_one_call_measured_against_where_the_branch_left_main() {
     assert_eq!(bench("main...local", &[]).code, 2, "a range with no base named is refused");
     assert_eq!(bench("local,local", &[]).code, 2, "an arm named twice is refused");
     assert_eq!(bench(&format!("origin/main..{new_main}"), &[]).all().lines_with("nothing to compare"), 1, "a tip with nothing its base lacks is refused");
+    let never_pushed = s.git("app", &["commit-tree", &format!("{new_main}^{{tree}}"), "-p", &new_main, "-m", "never pushed"]);
+    s.git("app", &["branch", "-q", "never-pushed", &never_pushed]);
+    s.git("app-topk", &["reset", "-q", "--soft", &never_pushed]);
+    let out = bench("never-pushed..local", &[]);
+    assert_eq!(
+        (out.code, out.stdout.lines_with("measured main2"), out.stdout.lines_with("measured topk")),
+        (0, 1, 1),
+        "a base the machine could never fetch is sent from here: {}",
+        out.all()
+    );
 }
 
 #[test]
