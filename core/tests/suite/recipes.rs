@@ -468,6 +468,10 @@ fn a_worktree_is_a_line_of_work_on_its_repo_not_a_repo_of_its_own() {
     fs::create_dir_all(s.path("app-topk/crates/x")).unwrap();
     s.dibs(["build", ".@local", "p"]).dir(&s.path("app-topk/crates/x")).env("DIBS_ROOT", s.root.display().to_string()).run();
     assert_eq!(variant(&s), r#""variant":"app-topk""#, "and `.` in a subdirectory of it is that worktree, not the root");
+    fs::create_dir_all(s.path("loose")).unwrap();
+    let out = s.dibs(["shell", ".@local", "--reason", "r", "--", "true"]).dir(&s.path("loose")).env("DIBS_ROOT", s.root.display().to_string()).run();
+    assert_ne!(out.code, 0, "a path in no checkout is refused");
+    assert_eq!(out.all().lines_with("is in no git checkout"), 1, "rather than sending the root: {}", out.all());
 }
 
 #[test]

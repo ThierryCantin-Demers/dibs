@@ -12,13 +12,14 @@ fn a_malformed_sync_is_refused_before_anything_is_reached_for() {
 }
 
 #[test]
-fn a_scratch_variable_on_the_machine_side_is_refused_rather_than_sent_literally() {
+fn a_variable_on_the_machine_side_is_refused_rather_than_sent_literally() {
     // Sent as is, it failed on the machine and came back as 69, which reads as the machine down.
     let s = Sandbox::new();
-    for dst in [":$DIBS_SCRATCH/x", ":${DIBS_SCRATCH}/x"] {
+    for dst in [":$DIBS_SCRATCH/x", ":${DIBS_SCRATCH}/x", ":$HOME/x", ":~/a/$TMPDIR"] {
         let out = s.dibs(["--sync", "./x", dst]).run();
-        assert_eq!((out.code, out.all().lines_with("does not expand $DIBS_SCRATCH")), (2, 1), "{dst}");
+        assert_eq!((out.code, out.all().lines_with("does not expand variables")), (2, 1), "{dst}");
     }
+    assert_eq!(s.dibs(["--sync", "./$x", ":~/x"]).run().all().lines_with("does not expand"), 0, "a $ on this side is the shell's business");
 }
 
 #[test]

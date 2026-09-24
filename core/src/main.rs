@@ -1794,9 +1794,9 @@ fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
     }
     // A path into a subdirectory has no .git of its own, and `.` would otherwise join the root.
     if direct.is_absolute() || direct.starts_with(".") || direct.starts_with("..") {
-        if let Some(top) = worktree::toplevel(&direct) {
-            return Ok(top);
-        }
+        return worktree::toplevel(&direct).ok_or_else(|| {
+            format!("'{repo}' is in no git checkout and has no .dibs.toml, so there is no tree to send")
+        });
     }
     // Inside a worktree of the named repo, `@local` means that tree, and the clone under the
     // root would otherwise be sent in its place without a word.

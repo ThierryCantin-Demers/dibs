@@ -73,10 +73,10 @@ case "$MODE" in
                     echo "dibs: $a is a dibs flag, and after --sync everything is rsync's." >&2
                     echo "  Put it before:  dibs $a ... --sync <opts> <src> <dst>" >&2
                     exit 2 ;;
-                :*'$DIBS_SCRATCH'*|:*'${DIBS_SCRATCH}'*)
+                :*'$'*)
                     # rsync escapes the $, so the machine would take the path literally.
-                    echo "dibs: --sync does not expand \$DIBS_SCRATCH on the machine: $a" >&2
-                    echo "  Name the directory:  :~/.cache/dibs/..." >&2
+                    echo "dibs: --sync does not expand variables on the machine: $a" >&2
+                    echo "  Name the directory: :~/.cache/dibs/... is \$DIBS_SCRATCH, :~/... is \$HOME" >&2
                     exit 2 ;;
                 :*) SYNC+=("$HOST:${a#:}") ;;
                 *)  SYNC+=("$a") ;;
