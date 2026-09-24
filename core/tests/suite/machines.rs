@@ -116,6 +116,42 @@ fn a_cpu_can_be_named_as_a_device() {
     assert_eq!(out.lines().filter(|l| *l == "    cpu").count(), 1, "a name that is neither is still refused, and offered the cpu");
 }
 
+/// A PCI device this computer has, by address and chip, standing in for a card.
+fn any_pci_device() -> Option<(String, String)> {
+    let dev = fs::read_dir("/sys/bus/pci/devices").ok()?.flatten().next()?.path();
+    let read = |f: &str| fs::read_to_string(dev.join(f)).ok().map(|v| v.trim().trim_start_matches("0x").to_string());
+    Some((dev.file_name()?.to_string_lossy().into_owned(), format!("{}:{}", read("vendor")?, read("device")?)))
+}
+
+#[test]
+fn a_card_no_longer_in_its_slot_is_refused_rather_than_run_on_another() {
+    // Vulkan's selectors ignore an address that answers to nothing and hand the job the first card.
+    let Some((pci, chip)) = any_pci_device() else { return };
+    let mut s = Sandbox::new();
+    let card = |alias: &str, pci: &str, chip: &str| {
+        format!("\n  [[machine.here.device]]\n  kind     = \"gpu\"\n  alias    = \"{alias}\"\n  name     = \"a card\"\n  pci      = \"{pci}\"\n  chip     = \"{chip}\"\n  runtimes = [\"vulkan\"]\n")
+    };
+    s.machines(&format!(
+        "[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n{}{}{}",
+        hostname(),
+        card("gpu:there", &pci, &chip),
+        card("gpu:swapped", &pci, "ffff:0000"),
+        card("gpu:gone", "0000:ff:1f.7", &chip)
+    ));
+    let run = |alias: &str| s.dibs(["--on", "here", "--device", alias, "echo ran on $DIBS_DEVICE"]).run();
+    let out = run("gpu:there");
+    assert_eq!((out.code, out.stdout.lines_matching("^ran on gpu:there$")), (0, 1), "the card in its slot runs: {}", out.all());
+    let out = run("gpu:swapped");
+    assert_eq!(
+        (out.code, out.stdout.lines_with("ran on"), out.stderr.lines_with(&format!("recorded as ffff:0000 in {pci}, and that slot now holds {chip}"))),
+        (2, 0, 1),
+        "a slot holding another model is refused: {}",
+        out.all()
+    );
+    let out = run("gpu:gone");
+    assert_eq!((out.code, out.stdout.lines_with("ran on"), out.stderr.lines_with("that slot now holds nothing")), (2, 0, 1), "and so is an empty one: {}", out.all());
+}
+
 #[test]
 fn an_unknown_machine_is_refused_and_the_known_ones_named() {
     let mut s = Sandbox::new();

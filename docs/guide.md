@@ -508,13 +508,16 @@ is neither the caller's to decide nor recorded anywhere.
 them. It works with `dibs run` and with recipes, and `dibs bench ... --dry-run` prints which card it
 would use before anything runs.
 
-What that turns into differs per runtime, and none of it is guessable:
+What that turns into differs per runtime, and none of it is guessable. First, whatever the runtime,
+the slot is read back at launch: one that is empty, or holds another model than the inventory
+recorded, refuses the job with exit 2 and says what the slot holds now, since every selector below
+would otherwise ignore the address and run the job on the first card under the name asked for.
+`dibs --check <machine> --write` records the machine as it is.
 
 `CUDA_VISIBLE_DEVICES` takes an index or a `GPU-<uuid>`, never a bus id. Handed one it does not
 fail, it ignores the value and leaves every card visible, so a job looks pinned and is not. The
-inventory's bus id is resolved to a UUID on the machine at launch, which also means a card that
-has moved slots is followed rather than mistaken for its neighbour. A machine that cannot
-answer for the card refuses the job instead of running it unpinned.
+inventory's bus id is resolved to a UUID on the machine at launch. A machine that cannot answer
+for the card refuses the job instead of running it unpinned.
 
 Vulkan needs two variables that fight each other. `DRI_PRIME` takes a PCI address and is the
 only thing that tells two cards of one model apart, but it is Mesa's and does nothing for the

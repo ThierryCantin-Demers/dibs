@@ -187,7 +187,9 @@ spoiled without it.
 - `dibs bench ... --dry-run` prints which card it would use. On a measurement worth keeping, read
   that line first.
 - Never set `CUDA_VISIBLE_DEVICES` yourself. dibs sets it from the alias, resolved on the machine
-  when the job starts; a bus id there is silently ignored rather than refused.
+  when the job starts; a bus id there is silently ignored rather than refused. A card no longer in
+  the slot its alias recorded is refused with exit 2: tell the person, since
+  `dibs --check <machine> --write` rewrites the inventory everyone measures by.
 
 ### Recipes: use one where a repo has it
 

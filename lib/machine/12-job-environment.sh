@@ -19,12 +19,24 @@ export DIBS_SCRATCH="$SCRATCH" TMPDIR="$SCRATCH/tmp"
 if [ -n "$DEV_PCI" ]; then
     export DIBS_DEVICE="$DEV_NAME" DIBS_DEVICE_PCI="$DEV_PCI"
     export CUDA_DEVICE_ORDER=PCI_BUS_ID
+    # The entry records the card a slot held when the machine was probed. A card pulled or
+    # moved since leaves an address the Vulkan selectors below ignore without a word, and the
+    # job would run on the first card under the name of the one asked for.
+    if [ -d /sys/bus/pci/devices ]; then
+        _slot=/sys/bus/pci/devices/$DEV_PCI
+        _holds=$(cat "$_slot/vendor" "$_slot/device" 2>/dev/null | sed 's/^0x//' | paste -sd: | tr 'A-F' 'a-f')
+        if [ -z "$_holds" ] || { [ -n "$DEV_CHIP" ] && [ "$_holds" != "$(printf %s "$DEV_CHIP" | tr 'A-F' 'a-f')" ]; }; then
+            echo "dibs: asked for $DEV_NAME, recorded as ${DEV_CHIP:-a card} in $DEV_PCI, and that slot now holds ${_holds:-nothing}." >&2
+            echo "  Not running it on another card under that name." >&2
+            echo "  Record what the machine holds now:  dibs --check $(hostname -s) --write" >&2
+            exit 2
+        fi
+    fi
     # CUDA_VISIBLE_DEVICES takes an index or a GPU-<uuid>, and never a bus id. Handed one it
     # does not error: it ignores the value and leaves every device visible, so the job runs
     # on whatever is first and looks pinned. The UUID is what the bus id is translated into
-    # here, and it is resolved on the machine at run time rather than recorded, so that a
-    # card swapped between two slots is followed rather than silently mistaken for its
-    # neighbour. Order-independent too, unlike an index.
+    # here, at run time, from the slot the check above found still holding the recorded card.
+    # Order-independent too, unlike an index.
     case ",$DEV_RT," in
         *,cuda,*)
             _want=${DEV_PCI#*:}      # nvidia-smi pads the domain to eight digits, sysfs to four
