@@ -1792,6 +1792,12 @@ fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
     if direct.join(".dibs.toml").exists() || direct.join(".git").exists() {
         return canon(direct);
     }
+    // A path into a subdirectory has no .git of its own, and `.` would otherwise join the root.
+    if direct.is_absolute() || direct.starts_with(".") || direct.starts_with("..") {
+        if let Some(top) = worktree::toplevel(&direct) {
+            return Ok(top);
+        }
+    }
     // Inside a worktree of the named repo, `@local` means that tree, and the clone under the
     // root would otherwise be sent in its place without a word.
     let here = std::env::current_dir().ok().and_then(|d| worktree::toplevel(&d));

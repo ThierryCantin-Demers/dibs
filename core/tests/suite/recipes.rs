@@ -465,6 +465,9 @@ fn a_worktree_is_a_line_of_work_on_its_repo_not_a_repo_of_its_own() {
     assert_eq!(variant(&s), r#""variant":"app-topk""#, "a bare name inside a worktree of that repo is the worktree, not the clone under the root");
     s.dibs(["build", &format!("{app}@local"), "p"]).dir(&s.path("app-topk")).env("DIBS_ROOT", s.root.display().to_string()).run();
     assert_eq!(variant(&s), "", "while a path is still that path");
+    fs::create_dir_all(s.path("app-topk/crates/x")).unwrap();
+    s.dibs(["build", ".@local", "p"]).dir(&s.path("app-topk/crates/x")).env("DIBS_ROOT", s.root.display().to_string()).run();
+    assert_eq!(variant(&s), r#""variant":"app-topk""#, "and `.` in a subdirectory of it is that worktree, not the root");
 }
 
 #[test]
