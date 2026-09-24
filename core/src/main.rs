@@ -1784,6 +1784,10 @@ fn sync_prepared(
 fn announce_prepared(text: &str) {
     let Ok(prepared) = worktree::parse(text) else { return };
     eprintln!("dibs: {}", prepared.worktree);
+    if let (Some(from), Some(mine), Some((have, of))) = (&prepared.seeded, prepared.reseeded, prepared.seed_shared) {
+        eprintln!("dibs: this tree's target had built {mine} of the {of} groups in its lockfile and {from} has {have}, so the tree now starts from {from}'s");
+        return;
+    }
     if let Some(from) = &prepared.seeded {
         match prepared.seed_shared {
             Some((have, of)) => eprintln!(

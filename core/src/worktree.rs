@@ -56,27 +56,49 @@ done
 /// and compared against another tree's artifacts could pass for fresh. Only a tree that is itself
 /// new: one that outlived its target keeps the times of an earlier sync.
 ///
-/// A sibling a build holds is skipped, since cargo writes artifacts before their fingerprints.
-/// A target is only ever reflinked: a full copy per tree would fill the disk, and a filesystem
+/// A sibling a build holds is skipped, since cargo writes artifacts before their fingerprints,
+/// unless that build will leave it with more of this lockfile than anything idle has: trees moved
+/// to a new dependency at once would otherwise each build it. That one is waited for, up to
+/// DIBS_SEED_WAIT seconds, and taken if it succeeded. `FLOOR`, when set, is the least a sibling
+/// must have built to be taken at all. A target is only ever reflinked: a full copy per tree would fill the disk, and a filesystem
 /// that cannot share blocks gets no seed at all. Sources are small and may live on another
 /// filesystem than targets, so they fall back to a plain copy.
 const SEED: &str = r#"ranked=$(for used in $(ls -t "$SCRATCH/target/{repo}/.dibs-used" "$SCRATCH/target/{repo}"-local-*/.dibs-used "$SCRATCH/target/{repo}"-arm*/.dibs-used 2>/dev/null); do
     src=${used%/.dibs-used}
-    n=0
-    if [ -s "${DIBS_PKGS:-/nonexistent}" ] && [ -f "$src/.dibs-packages" ]; then
-        n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+    [ "$src" = "$TARGET" ] && continue
+    n=0 will=0 building=0
+    for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+        flock -n -s "$lock" true || building=1
+    done
+    if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+        [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+        [ "$building" = 1 ] && will=$(cat "$src/.dibs-packages" "$src"/.dibs-packages.pending.* 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C comm -12 "$DIBS_PKGS" - | wc -l)
     fi
-    echo "$n $src"
+    echo "$(( will > n ? will : n )) $n $building $src"
 done | sort -s -k1,1nr)
-while read -r n src; do
+idle_best=$(awk '$3 == 0 && $2 > m { m = $2 } END { print m + 0 }' <<< "$ranked")
+while read -r rank n building src; do
     [ -n "$src" ] || continue
+    [ "$rank" -ge "${FLOOR:-0}" ] || break
     fds=
     held=0
+    waited=0
     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
         exec {fd}<"$lock"
         fds="$fds $fd"
-        flock -n -s "$fd" || { held=1; break; }
+        flock -n -s "$fd" && continue
+        held=1
+        [ "$rank" -gt "$n" ] && [ "$rank" -gt "$idle_best" ] || break
+        echo "dibs: waiting up to ${DIBS_SEED_WAIT:-900}s for the build in ${src##*/}, which will have $rank of this tree's lockfile groups where anything idle has $idle_best" >&2
+        flock -s -w "${DIBS_SEED_WAIT:-900}" "$fd" || break
+        held=0
+        waited=1
     done
+    if [ "$waited" = 1 ]; then
+        [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+        [ "$n" -ge "$idle_best" ] || held=1
+    fi
+    [ "$n" -ge "${FLOOR:-0}" ] || held=1
     if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
         echo "DIBS-SEED ${src##*/}"
         printf '%s\n' "$WT" > "$TARGET/.dibs-tree"
@@ -95,6 +117,38 @@ while read -r n src; do
     rm -rf "$TARGET.seed.$$"
     [ -d "$TARGET" ] && break
 done <<< "$ranked"
+"#;
+
+/// An existing tree whose target has built clearly less of its lockfile than a sibling has, as
+/// every tree has once a dependency moves, takes that sibling's target and sources as a new tree
+/// would, and the sync after it rewrites what differs. Never while a build holds its target, and
+/// its own stay in place until the copy has landed.
+const RESEED: &str = r#"mine=0
+[ -f "$TARGET/.dibs-packages" ] && mine=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$TARGET/.dibs-packages" | wc -l)
+FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
+own=
+busy=0
+for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+    exec {fd}<"$lock"
+    own="$own $fd"
+    flock -n -x "$fd" || { busy=1; break; }
+done
+if [ "$busy" = 0 ] && mv -T "$TARGET" "$TARGET.old.$$"; then
+    if mv -T "$WT" "$WT.old.$$"; then
+{seed}    fi
+    if [ -d "$TARGET" ]; then
+        echo "DIBS-RESEED $mine"
+        rm -rf "$TARGET.old.$$" "$WT.old.$$"
+    else
+        if [ -d "$WT.old.$$" ]; then
+            rm -rf "$WT"
+            mv -T "$WT.old.$$" "$WT"
+        fi
+        mv -T "$TARGET.old.$$" "$TARGET"
+    fi
+fi
+for fd in $own; do exec {fd}<&-; done
+unset FLOOR
 "#;
 
 /// `fresh` goes into the script as it stands, which `Tree::check` made safe when it was read.
@@ -508,6 +562,8 @@ pub struct Prepared {
     pub seed_shared: Option<(usize, usize)>,
     /// Whether the sibling's sources came too, so unchanged files keep the times they were built at.
     pub seeded_sources: bool,
+    /// How many of its lockfile's groups this tree's own target had, when a sibling's replaced it.
+    pub reseeded: Option<usize>,
 }
 
 /// Reads the markers back out. Anything else the setup printed is left alone, so a fetch that
@@ -519,6 +575,7 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
     let mut seeded = None;
     let mut seed_shared = None;
     let mut seeded_sources = false;
+    let mut reseeded = None;
     for line in out.lines() {
         if let Some(v) = line.strip_prefix("DIBS-WT ") {
             worktree = Some(v.trim().to_string());
@@ -531,6 +588,8 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
             if let (Some(Ok(a)), Some(Ok(b))) = (it.next(), it.next()) {
                 seed_shared = Some((a, b));
             }
+        } else if let Some(v) = line.strip_prefix("DIBS-RESEED ") {
+            reseeded = v.trim().parse().ok();
         } else if let Some(v) = line.strip_prefix("DIBS-SEED ") {
             seeded = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("DIBS-REV ") {
@@ -541,7 +600,7 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
         }
     }
     match (worktree, target) {
-        (Some(worktree), Some(target)) => Ok(Prepared { worktree, target, revisions, seeded, seed_shared, seeded_sources }),
+        (Some(worktree), Some(target)) => Ok(Prepared { worktree, target, revisions, seeded, seed_shared, seeded_sources, reseeded }),
         _ => Err("the worktree setup did not report a path; see its output above".into()),
     }
 }
@@ -1097,7 +1156,8 @@ WT=$SCRATCH/ws/{repo}/{nested}local-{key}
 TARGET=$SCRATCH/target/{repo}-local-{key}{suffix}
 mkdir -p "${{WT%/*}}"
 if [ ! -d "$WT" ] && [ ! -d "$TARGET" ]; then
-{seed}fi
+{seed}elif [ -s "${{DIBS_PKGS:-/nonexistent}}" ] && [ -d "$WT" ] && [ -d "$TARGET" ]; then
+{reseed}fi
 mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
 touch "$WT/.dibs-used"
 : > "$TARGET/.dibs-used"
@@ -1107,7 +1167,8 @@ echo "DIBS-REV {repo} local:{content}"
 "#,
         gc = GC,
         stage = STAGE,
-        seed = seed(repo, fresh)
+        seed = seed(repo, fresh),
+        reseed = RESEED.replace("{seed}", &seed(repo, fresh))
     );
     s
 }
@@ -1215,6 +1276,12 @@ mod local_tests {
     }
 
     fn prepare_local_with(scratch: &std::path::Path, key: &str, hold: Option<&str>, cp: &str, lock: &str, token: &str, fresh: &[String]) -> String {
+        let out = local_command(scratch, key, hold, cp, lock, token, fresh).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    fn local_command(scratch: &std::path::Path, key: &str, hold: Option<&str>, cp: &str, lock: &str, token: &str, fresh: &[String]) -> Command {
         let script = packages_script(lock, SIG, token) + &setup_local_script("demo", key, "c", None, fresh);
         let bin = scratch.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
@@ -1235,9 +1302,8 @@ mod local_tests {
             Some(lock) => cmd.args(["-c", &format!("flock -x {lock} bash -c \"$0\"")]).arg(&script),
             None => cmd.arg("-c").arg(&script),
         };
-        let out = cmd.env("DIBS_SCRATCH", scratch).output().unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stdout).into_owned()
+        cmd.env("DIBS_SCRATCH", scratch);
+        cmd
     }
 
     fn sibling(scratch: &std::path::Path) -> std::path::PathBuf {
@@ -1451,6 +1517,107 @@ mod local_tests {
         std::fs::write(newer.join(".dibs-used"), "").unwrap();
         let out = prepare_local_with(&scratch, "new", None, "reflinks", LOCK_A, "t1", &[]);
         assert_eq!(parse(&out).unwrap().seeded.as_deref(), Some("demo-local-zz-newer"), "{out}");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A tree of this repo with its own sources, its target credited with `lock`.
+    fn tree(scratch: &std::path::Path, key: &str, lock: &str, file: &str) -> std::path::PathBuf {
+        let t = scratch.join(format!("target/demo-local-{key}"));
+        std::fs::create_dir_all(t.join("debug/deps")).unwrap();
+        std::fs::write(t.join(format!("debug/deps/lib{key}.rlib")), "artifact\n").unwrap();
+        std::fs::write(t.join("debug/.cargo-lock"), "").unwrap();
+        std::fs::write(t.join(".dibs-used"), "").unwrap();
+        std::fs::write(t.join(".dibs-packages"), packages_of(lock)).unwrap();
+        let ws = scratch.join(format!("ws/demo/local-{key}"));
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join(file), "source\n").unwrap();
+        t
+    }
+
+    #[test]
+    fn an_existing_tree_far_behind_a_sibling_starts_again_from_it() {
+        let scratch = tmp("reseed");
+        tree(&scratch, "moved", LOCK_A, "theirs.rs");
+        tree(&scratch, "mine", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "mine.rs");
+        let out = prepare_local_with(&scratch, "mine", None, "reflinks", LOCK_A, "t1", &[]);
+        let p = parse(&out).unwrap();
+        assert_eq!((p.reseeded, p.seeded.as_deref(), p.seed_shared), (Some(1), Some("demo-local-moved"), Some((2, 2))), "{out}");
+        let (t, ws) = (scratch.join("target/demo-local-mine"), scratch.join("ws/demo/local-mine"));
+        assert!(t.join("debug/deps/libmoved.rlib").exists() && !t.join("debug/deps/libmine.rlib").exists(), "the target is the sibling's");
+        assert!(ws.join("theirs.rs").exists() && !ws.join("mine.rs").exists(), "and so are the sources, for the sync to rewrite what differs");
+        let left: Vec<_> = std::fs::read_dir(scratch.join("target")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().contains(".old.")).collect();
+        assert!(left.is_empty(), "nothing of the old tree is left behind");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn an_existing_tree_close_to_its_siblings_or_being_built_keeps_its_own() {
+        let scratch = tmp("reseed-not");
+        tree(&scratch, "moved", LOCK_A, "theirs.rs");
+        tree(&scratch, "mine", LOCK_A, "mine.rs");
+        let p = parse(&prepare_local_with(&scratch, "mine", None, "reflinks", LOCK_A, "t1", &[])).unwrap();
+        assert_eq!((p.reseeded, p.seeded), (None, None), "a tree with as much as its siblings keeps its own");
+        tree(&scratch, "behind", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "behind.rs");
+        let lock = scratch.join("target/demo-local-behind/debug/.cargo-lock");
+        let p = parse(&prepare_local_with(&scratch, "behind", Some(&lock.display().to_string()), "reflinks", LOCK_A, "t2", &[])).unwrap();
+        assert_eq!(p.reseeded, None, "and so does one a build holds");
+        assert!(scratch.join("ws/demo/local-behind/behind.rs").exists());
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A child killed with its group when the test ends, however it ends, and holding none of the
+    /// test's descriptors, such as the cargo wrapper's lock.
+    struct Held(std::process::Child);
+
+    impl Held {
+        fn spawn(mut cmd: Command) -> Held {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+            unsafe {
+                cmd.pre_exec(|| {
+                    for fd in 3..1024 {
+                        libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                    }
+                    Ok(())
+                });
+            }
+            Held(cmd.spawn().unwrap())
+        }
+    }
+
+    impl Drop for Held {
+        fn drop(&mut self) {
+            unsafe { libc::kill(-(self.0.id() as i32), libc::SIGKILL) };
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn a_new_tree_waits_for_a_sibling_building_more_of_its_lockfile() {
+        let scratch = tmp("seed-wait");
+        tree(&scratch, "idle", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "idle.rs");
+        let busy = tree(&scratch, "busy", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "busy.rs");
+        std::fs::write(busy.join(".dibs-packages.pending.tb"), packages_of(LOCK_A)).unwrap();
+        let gate = scratch.join("gate");
+        assert!(Command::new("mkfifo").arg(&gate).status().unwrap().success());
+        let mut holder = Command::new("flock");
+        holder.arg("-x").arg(busy.join("debug/.cargo-lock")).args(["sh", "-c", "read -r _ < \"$0\""]).arg(&gate);
+        let mut build = Held::spawn(holder);
+        let (out, err) = (scratch.join("prepare.out"), scratch.join("prepare.err"));
+        let mut cmd = local_command(&scratch, "new", None, "reflinks", LOCK_A, "t1", &[]);
+        cmd.env("DIBS_SEED_WAIT", "60").stdout(std::fs::File::create(&out).unwrap()).stderr(std::fs::File::create(&err).unwrap());
+        let mut prepare = Held::spawn(cmd);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !std::fs::read_to_string(&err).unwrap_or_default().contains("waiting") {
+            assert!(std::time::Instant::now() < deadline, "the prepare never waited: {}", std::fs::read_to_string(&err).unwrap_or_default());
+            std::thread::yield_now();
+        }
+        std::fs::write(busy.join(".dibs-packages"), packages_of(LOCK_A)).unwrap();
+        std::fs::write(&gate, "done\n").unwrap();
+        build.0.wait().unwrap();
+        prepare.0.wait().unwrap();
+        let p = parse(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!((p.seeded.as_deref(), p.seed_shared), (Some("demo-local-busy"), Some((2, 2))), "it takes what that build made rather than building it again");
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
