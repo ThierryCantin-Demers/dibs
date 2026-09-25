@@ -324,6 +324,13 @@ fn shell_takes_bench_and_max() {
     s.dibs(["shell", &local, "--reason", "long one", "--max", "4242", "--", "true"]).run();
     assert_eq!(s.log().lines_with("holding the lock for 4242s"), 0, "shell --max reaches the lock rather than being dropped");
     assert_eq!(s.dibs(["shell", &local, "--reason", "x", "--max", "4242", "--dry-run", "--", "true"]).code(), 0);
+    let out = s.dibs(["shell", &local, "--reason", "x", "--label", "mine", "--", "true"]).run();
+    assert_eq!(
+        (out.code, out.stderr.lines_with("shell takes no --label: its durations are filed under app/shell"), out.stderr.lines_with("recipe takes no parameters")),
+        (2, 1, 0),
+        "a label is refused as the derived thing it is, not as a parameter of a recipe: {}",
+        out.all()
+    );
     assert_eq!(
         s.dibs(["shell", &local, "--reason", "measure", "--bench", "--", "cargo bench --bench gemm"]).run().all().lines_with("then measure with --bench"),
         1,

@@ -1672,9 +1672,6 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
     if rec.steps.is_empty() {
         return Err(format!("recipe '{name}' declares no steps"));
     }
-    let params = rec.values(&args.params).map_err(|e| format!("{name}: {e}"))?;
-    rec = rec.bound(&params);
-    rec.check(name)?;
 
     // Derived, never supplied. A label an agent writes by hand names the run rather than the
     // kind of work, which is why 51 of 80 labels in the old history appeared exactly once and
@@ -1687,6 +1684,21 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         Some(_) => run_label(&repo_name, "shell", None, args.device.as_deref()),
         None => run_label(&repo_name, verb.as_str(), Some(name), args.device.as_deref()),
     };
+    if args.params.contains_key("label") && !rec.params.contains_key("label") {
+        return Err(format!(
+            "{} takes no --label: its durations are filed under {label}, derived so that every run of one piece of\n  \
+             work lands in one history.{}",
+            if shell_recipe.is_some() { "shell".to_string() } else { format!("{} {name}", verb.as_str()) },
+            if shell_recipe.is_some() {
+                " A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so."
+            } else {
+                ""
+            }
+        ));
+    }
+    let params = rec.values(&args.params).map_err(|e| format!("{name}: {e}"))?;
+    rec = rec.bound(&params);
+    rec.check(name)?;
     // The duration history keys on lock and label together, so a recipe's build and its
     // measurement stay apart on their own. Two steps taking the *same* lock would not, and
     // their durations would average into one meaningless number: the bimodal history that
