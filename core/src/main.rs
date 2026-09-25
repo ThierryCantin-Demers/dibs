@@ -128,6 +128,8 @@ struct Args {
     command: Option<String>,
     /// The card to run on, named from the machine's inventory.
     device: Option<String>,
+    /// `--on` given after the verb, where the wrapper does not see it.
+    on: Option<String>,
     /// `--<name> <value>` for whatever the recipe declares. Unknown here rather than refused,
     /// because which names are valid is the recipe's to say, and it says so with the list.
     params: BTreeMap<String, String>,
@@ -163,6 +165,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut reason = None;
     let mut command = None;
     let mut device: Option<String> = None;
+    let mut on = None;
     let mut params: BTreeMap<String, String> = BTreeMap::new();
     let mut sweep: Vec<(String, Vec<String>)> = Vec::new();
     let mut reps: u32 = 1;
@@ -187,6 +190,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
             }
             "--reason" => reason = Some(it.next().ok_or("--reason needs a sentence")?),
             "--device" => device = Some(it.next().ok_or("--device needs an alias")?),
+            "--on" => on = Some(it.next().ok_or("--on needs a machine")?),
             "-h" | "--help" => {
                 print!("{USAGE}");
                 std::process::exit(0);
@@ -275,6 +279,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         reason,
         command,
         device,
+        on,
         params,
         sweep,
         reps,
@@ -324,6 +329,10 @@ fn repo_root() -> PathBuf {
 
 fn run() -> Result<ExitCode, String> {
     let args = parse()?;
+    // Every call this makes is a wrapper call, and the wrapper reads the machine from here.
+    if let Some(m) = &args.on {
+        std::env::set_var("DIBS_ON", m);
+    }
 
     if args.verb == "batch" {
         let text = match args.repo.as_str() {
@@ -881,7 +890,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
             Destination::Unchosen => {
                 return Err(format!(
                     "{name} measures, and a measurement names its machine: its series belongs to the machine it\n  \
-                     ran on. Give --on <machine> before the verb, or export DIBS_ON; dibs --machines lists them."
+                     ran on. Give --on <machine>, or export DIBS_ON; dibs --machines lists them."
                 ))
             }
         }
@@ -889,10 +898,17 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
     if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
         affinity_set(&repo_name, m);
     }
-    for (i, step) in rec.steps.iter().enumerate().filter(|(_, s)| s.lock == Lock::Exclusive) {
+    // A shared recipe is asked too when it names a card, which is otherwise checked by the first
+    // step that carries it, after the tree and its dependencies have been sent.
+    let exclusive: Vec<usize> = (0..rec.steps.len()).filter(|&i| rec.steps[i].lock == Lock::Exclusive).collect();
+    let asked = match exclusive.is_empty() && args.device.is_some() {
+        true => vec![0],
+        false => exclusive,
+    };
+    for i in asked {
         let req = Request {
             label: &step_labels[i],
-            lock: step.lock,
+            lock: rec.steps[i].lock,
             isolation: rec.isolation,
             needs: None,
             device: args.device.as_deref(),
@@ -1389,8 +1405,8 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
         Destination::Named(m) => Some(m),
         Destination::Unnamed => None,
         Destination::Unchosen => {
-            return Err("with starts servers on a machine this computer then drives, so it names one: --on <machine>\n  \
-                        before the verb, or export DIBS_ON. dibs --machines lists them."
+            return Err("with starts servers on a machine this computer then drives, so it names one: --on <machine>,\n  \
+                        or export DIBS_ON. dibs --machines lists them."
                 .into())
         }
     };
@@ -1398,6 +1414,21 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
         affinity_set(&repo_name, m);
     }
     let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
+    if args.device.is_some() {
+        let req = Request {
+            label: &label,
+            lock: Lock::Shared,
+            isolation: recipe::Isolation::Machine,
+            needs: None,
+            device: args.device.as_deref(),
+            env: &[],
+            max: None,
+            new_series: false,
+        };
+        if !backend.preflight(&req)? {
+            return Ok(ExitCode::from(2));
+        }
+    }
 
     let mut arm = arms(&sides, &dir, &repo_name)?.remove(0);
     let local = arm.fetch.is_none().then(|| arm.local(&dir)).transpose()?;
@@ -1983,7 +2014,7 @@ fn place(program: &str, prefer: Option<&str>, repo: Option<&str>) -> Result<Opti
             let why = repo.map(|r| format!(" --repo {r}")).unwrap_or_default();
             format!(
                 "nowhere to send this: it names no machine, and none could be placed. dibs --pick -v{why}\n  \
-                 says why; --on <machine> before the verb names one."
+                 says why; --on <machine> names one."
             )
         }),
     }

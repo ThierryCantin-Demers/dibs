@@ -18,6 +18,11 @@ if [ -n "$DEVICE" ]; then
     [ -z "$DEV_PCI" ] && [ "$DEVICE" = cpu ] && CPU_NAME=$(inv_cpu_name "$dev_m")
     if [ -z "$DEV_PCI" ] && [ -z "$CPU_NAME" ]; then
         echo "dibs: $dev_m has no device called '$DEVICE'." >&2
+        # Not taken as that alias: the name is part of the label, and two spellings of one card
+        # would be two histories of it.
+        if [ -n "$(inv_device "$dev_m" "gpu:$DEVICE" pci)" ]; then
+            echo "  Did you mean gpu:$DEVICE?" >&2
+        fi
         if [ -n "$(inv_device_names "$dev_m")" ]; then
             echo "  it has:" >&2; inv_device_names "$dev_m" | sed 's/^/    /' >&2
             [ -n "$(inv_cpu_name "$dev_m")" ] && echo "    cpu" >&2

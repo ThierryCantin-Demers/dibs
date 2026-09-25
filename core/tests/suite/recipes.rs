@@ -172,7 +172,7 @@ fn a_recipe_waiting_in_a_batch_is_planned_as_the_jobs_it_will_make() {
 fn a_repo_runs_a_command_here_against_the_servers_it_declares() {
     // A client is a command rather than a launch line, a port and a kill, written out again in
     // every script that needs them.
-    let s = Sandbox::new();
+    let mut s = Sandbox::new();
     let app = app(&s);
     s.write(
         "app/serve.py",
@@ -199,6 +199,21 @@ fn a_repo_runs_a_command_here_against_the_servers_it_declares() {
         1,
         "and with runs against one tree only"
     );
+    s.machines(&format!("[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n\n[machine.away]\nssh      = \"away\"\nhostname = \"away\"\n", hostname()));
+    let out = s.dibs(["with", &format!("{app}@local"), "servers", "--on", "here", "--", "python3", &s.p("wclient.py")]).run();
+    assert_eq!((out.code, out.all().lines_with("the client reached")), (0, 1), "--on after the verb names the machine as it does before it: {}", out.all());
+}
+
+#[test]
+fn a_card_it_cannot_name_is_refused_before_anything_is_sent() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    recipes(&s, &format!("{PARAMS}\n[service.servers]\nbuild = \"true\"\n\n[[service.servers.serve]]\nname = \"api\"\nrun = \"true\"\n"));
+    let local = format!("{app}@local");
+    for args in [vec!["build", &local, "p", "--device", "nope"], vec!["with", &local, "servers", "--device", "nope", "--", "true"]] {
+        let out = s.dibs(args.clone()).run();
+        assert_eq!((out.code, out.stderr.lines_with("--device"), arrivals(&s)), (2, 1, 0), "{args:?}: {}", out.all());
+    }
 }
 
 #[test]
