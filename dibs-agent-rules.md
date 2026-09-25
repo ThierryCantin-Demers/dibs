@@ -242,6 +242,8 @@ spoiled without it.
   runs on your side against them, on ports dibs picked. `dibs list <repo>` says which it defines.
   To time the command against them, add `--bench`: they are built under the shared lock, then
   run with the machine held alone, and a server another tree has built over since is refused.
+  `--there` runs the command on the machine instead, in the tree, reaching the servers at
+  `127.0.0.1:$DIBS_PORT_<NAME>`: client and server on one box, with no network between them.
 - **If no recipe fits, say so where it is counted**: `dibs raw --reason '<why>'`, or `--reason` on
   `dibs shell`. `dibs gaps` prints those, and a reason that keeps coming up is the specification
   for the next recipe.

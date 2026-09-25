@@ -39,11 +39,13 @@ dibs runs [label] [--all]             what has run here, and what is comparable.
                                       is listed only with --all
 dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>   a command in a prepared worktree
 dibs raw --reason <why> -- <cmd>      a command with nothing prepared
-dibs with <repo>[@<ref>] <service> [--bench] -- <cmd>   run the command here while the
-                                      repo's servers run on the machine under its lock, started
-                                      once they are ready and stopped when the command ends.
-                                      --bench times it: the servers are built under the shared
-                                      lock, then run with the machine held alone
+dibs with <repo>[@<ref>] <service> [--bench] [--there] -- <cmd>   run the command here while
+                                      the repo's servers run on the machine under its lock,
+                                      started once they are ready and stopped when the command
+                                      ends. --bench times it: the servers are built under the
+                                      shared lock, then run with the machine held alone.
+                                      --there runs the command on the machine instead, in the
+                                      tree beside them, reaching them at 127.0.0.1:$DIBS_PORT_<NAME>
 dibs gaps                             what did not fit a recipe, what got in the way, and
                                       which of it recurs
 dibs --friction '<one line>'          what got in the way, in your own words, kept where the
@@ -147,6 +149,8 @@ struct Args {
     max: Option<u64>,
     /// Measure even when another tree built into the target after this one did.
     anyway: bool,
+    /// with only: the command runs on the machine, in the tree, rather than here.
+    there: bool,
     /// runs only: failed runs too.
     all: bool,
     /// The measurement starts its label's series on this machine again, on another card.
@@ -174,6 +178,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut bench = false;
     let mut max = None;
     let mut anyway = false;
+    let mut there = false;
     let mut all = false;
     let mut new_series = false;
     let mut verbose = false;
@@ -227,6 +232,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
                 max = Some(it.next().and_then(|n| n.parse().ok()).ok_or("--max needs seconds")?);
             }
             "--anyway" => anyway = true,
+            "--there" => there = true,
             "--all" => all = true,
             "--new-series" => new_series = true,
             "--dry-run" => dry_run = true,
@@ -288,6 +294,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         bench,
         max,
         anyway,
+        there,
         all,
         new_series,
         verbose,
@@ -329,6 +336,9 @@ fn repo_root() -> PathBuf {
 
 fn run() -> Result<ExitCode, String> {
     let args = parse()?;
+    if args.there && args.verb != "with" {
+        return Err("--there belongs to with: it runs the command on the machine beside the repo's servers".into());
+    }
     // Every call this makes is a wrapper call, and the wrapper reads the machine from here.
     if let Some(m) = &args.on {
         std::env::set_var("DIBS_ON", m);
@@ -1503,9 +1513,15 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
     if let Some(m) = &backend.machine {
         cmd.arg("--on").arg(m);
     }
-    cmd.arg("--hold").arg("--label").arg(&label);
+    if !args.there {
+        cmd.arg("--hold");
+    }
+    cmd.arg("--label").arg(&label);
     if args.bench {
         cmd.arg("--bench");
+    }
+    if let Some(m) = args.max {
+        cmd.arg("--max").arg(m.to_string());
     }
     if let Some(d) = &args.device {
         cmd.arg("--device").arg(d);
@@ -1522,7 +1538,10 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
             cmd.arg("--ready").arg(ready);
         }
     }
-    cmd.arg("--").arg(command);
+    match args.there {
+        true => cmd.arg("--").arg(in_tree(command)),
+        false => cmd.arg("--").arg(command),
+    };
     Err(format!("could not run {}: {}", backend.program, exec(cmd)))
 }
 

@@ -189,6 +189,14 @@ fn a_repo_runs_a_command_here_against_the_servers_it_declares() {
     assert_eq!(out.code, 0, "exiting with the command's own status");
     assert_eq!(s.log().lines_with("app_with_servers_build"), 2, "after building them under the shared lock");
     assert_eq!(out.all().lines_matching("with api: ready after [0-9]*s, stopped when the command ended"), 1, "and stopping them when it ends");
+    let client = "python3 -c 'import os, socket; socket.create_connection((\"127.0.0.1\", int(os.environ[\"DIBS_PORT_API\"])), timeout=10); print(\"reached from\", os.getcwd())'";
+    let out = s.dibs(["with", &format!("{app}@local"), "servers", "--there", "--", client]).run();
+    assert_eq!(
+        (out.code, out.all().lines_matching(&format!("^reached from {}/ws/app/local-", s.var("DIBS_SCRATCH")))),
+        (0, 1),
+        "--there runs the command on the machine, in the tree beside its servers: {}",
+        out.all()
+    );
     assert_eq!(
         s.dibs(["with", &format!("{app}@local"), "nope", "--", "true"]).run().all().lines_with("It has: servers"),
         1,

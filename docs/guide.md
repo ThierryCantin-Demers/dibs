@@ -403,7 +403,9 @@ shared lock, starts them there and runs the command here against them. `dibs lis
 which it defines. With `--bench` the command is timed: the build still runs under the shared
 lock, then the servers and the command hold the machine alone, and a server whose build cache
 another tree has built into since refuses to start, exiting 78, unless `--anyway` says to time
-what is there.
+what is there. `--there` runs the command on the machine instead, in the tree beside the servers
+with its build cache, reaching them at `127.0.0.1:$DIBS_PORT_<NAME>`: a loopback measurement,
+with no network between the two to pay for.
 
 ```toml
 [service.gpu-servers]
