@@ -403,10 +403,20 @@ impl Recipe {
         }
         for st in &self.steps {
             // CARGO_TARGET_DIR is redirected per tree, so a relative target/ names a directory
-            // the build never writes: the step reads whatever an earlier tree left there.
+            // the build never writes: the step reads whatever an earlier tree left there. Only
+            // cargo's own output counts, since a program may keep its own under target/ too.
+            let triple = |d: &str| d.matches('-').count() >= 2;
             if let Some(t) = st.run.split_whitespace().find(|w| {
                 let w = w.trim_start_matches("./").trim_start_matches(['"', '\'']);
-                w == "target" || w.starts_with("target/")
+                match w.strip_prefix("target/") {
+                    Some(rest) => {
+                        let dir = rest.split(['/', '"', '\'']).next().unwrap_or("");
+                        dir.is_empty()
+                            || triple(dir)
+                            || ["debug", "release", "doc", "tmp", "package", "criterion", "nextest"].contains(&dir)
+                    }
+                    None => w.trim_end_matches(['"', '\'']) == "target",
+                }
             }) {
                 return Err(format!(
                     "recipe '{name}' names {t}, but the build writes to $CARGO_TARGET_DIR, which dibs\n             \
@@ -560,6 +570,11 @@ run = \"cargo bench --features cubecl/{backend} -- $FILTER\"\n";
             "[[bench.r.step]]\nlock=\"shared\"\nrun=\"ls $CARGO_TARGET_DIR/release && ls $R/target-main\"\n",
         );
         fine.check("r").expect("an absolute target directory is the whole point");
+        for run in ["cd target", "ls target/x86_64-unknown-linux-gnu/release", "cat target/criterion/r"] {
+            parse(&format!("[[bench.r.step]]\nlock=\"shared\"\nrun=\"{run}\"\n")).check("r").unwrap_err();
+        }
+        let own = parse("[[bench.r.step]]\nlock=\"shared\"\nrun=\"rm -rf target/guide && ls ./target/guide/model\"\n");
+        own.check("r").expect("a program's own directory under target/ is in the tree");
     }
 
     #[test]
