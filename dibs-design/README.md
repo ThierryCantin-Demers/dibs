@@ -11,3 +11,5 @@
 - **`architecture.md`** — why this is a layer split rather than a rewrite, and what Slurm would
   and would not take over.
 - **`shared-machine.md`** — what it takes for several people to share one machine safely.
+- **`machines.md`**: what each machine should have, a check against what it has, and a window
+  showing the difference. Designed, not built.
