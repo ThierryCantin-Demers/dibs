@@ -24,15 +24,14 @@ inventory already can. A sketch:
 keys = ["keys/alice.pub"]
 
 [machine.box]
-provisioned = { by = "ansible", source = "box-ansible" }   # or { by = "hand", note = "..." }
-account = "box"
+provisioned = { by = "ansible", source = "box-ansible" }   # or { by = "hand" }
 people = ["alice", "bob"]
-paths = [
-  { name = "box.local", via = "mdns" },
-  { name = "box.example.ts.net", via = "tailnet" },
-]
+login = "keys"                        # or "tailscale": Tailscale SSH, and no key involved
+paths = ["box.local", "box.example.ts.net"]
 profiles = ["dibs", "rust", "cuda"]
 ```
+
+Built in phase 1 as `~/.config/dibs/fleet.toml`; `docs/guide.md` has the format as it stands.
 
 - **Profiles** are what a machine needs:
   - `dibs`: bash 5.1 or newer, flock, GNU timeout, rsync, git.
