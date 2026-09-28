@@ -24,7 +24,7 @@ best=$(for b in "$(have bash)" /opt/homebrew/bin/bash /usr/local/bin/bash /bin/b
     [ -n "$b" ] && [ -x "$b" ] && "$b" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"' 2>/dev/null
 done | sort -t. -k1,1n -k2,2n | tail -n 1)
 p bash "version=$best"
-p tools "flock=$(have flock)" "timeout=$(have timeout)" "gtimeout=$(have gtimeout)" "rsync=$(have rsync)" "git=$(have git)"
+p tools "flock=$(have flock)" "timeout=$(have timeout)" "gtimeout=$(have gtimeout)" "rsync=$(rsync --version 2>/dev/null | awk 'NR == 1 && $1 == "rsync" {print $3}')" "git=$(have git)"
 p rust "rustup=$(have rustup)" "toolchains=$(rustup toolchain list 2>/dev/null | awk '{print $1}' | paste -sd, -)"
 vk=no
 { /sbin/ldconfig -p || /usr/sbin/ldconfig -p; } 2>/dev/null | grep -q 'libvulkan\.so\.1' && vk=yes
@@ -622,7 +622,7 @@ mod tests {
     const SEEN: &str = "noise before\n\
         DIBS-PROBE sys user=box host=box os=Linux arch=x86_64\n\
         DIBS-PROBE bash version=5.2\n\
-        DIBS-PROBE tools flock=/usr/bin/flock timeout=/usr/bin/timeout gtimeout= rsync=/usr/bin/rsync git=/usr/bin/git\n\
+        DIBS-PROBE tools flock=/usr/bin/flock timeout=/usr/bin/timeout gtimeout= rsync=3.2.7 git=/usr/bin/git\n\
         DIBS-PROBE rust rustup=/h/.cargo/bin/rustup toolchains=stable-x86_64-unknown-linux-gnu,1.98.1-x86_64-unknown-linux-gnu\n\
         DIBS-PROBE gpu nvidia=610.57.04 nvcc=13.1 vulkan=yes\n\
         DIBS-PROBE account nopasswd=yes groups=box,render,sudo\n\

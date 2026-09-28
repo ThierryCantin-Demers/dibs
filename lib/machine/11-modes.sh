@@ -77,6 +77,12 @@ case "$MODE" in
         missing=""
         for t in flock timeout; do command -v "$t" >/dev/null 2>&1 || missing="$missing $t"; done
         [ -z "$missing" ] && ok "flock and timeout present" || bad "missing, and nothing works without them:$missing"
+        rsync_v=$(rsync --version 2>/dev/null | awk 'NR == 1 && $1 == "rsync" {print $3}')
+        case "$rsync_v" in
+            [3-9]*) ok "rsync $rsync_v, so a tree can be sent here" ;;
+            *) bad "no rsync 3, so a tree sent from another computer cannot arrive"
+               note "openrsync, which macOS ships as rsync, takes too few of its options." ;;
+        esac
         if command -v setpriv >/dev/null 2>&1; then ok "setpriv present, so a job dies with its caller"
         else warn "no setpriv: a job whose caller is killed outright can outlive it"; fi
 
