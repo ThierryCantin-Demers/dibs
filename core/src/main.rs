@@ -1420,9 +1420,6 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
                 .into())
         }
     };
-    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
-        affinity_set(&repo_name, m);
-    }
     let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
     if args.device.is_some() {
         let req = Request {
@@ -1442,6 +1439,35 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
 
     let mut arm = arms(&sides, &dir, &repo_name)?.remove(0);
     let local = arm.fetch.is_none().then(|| arm.local(&dir)).transpose()?;
+    if args.dry_run {
+        println!("label       {label}");
+        println!("machine     {}", backend.machine.as_deref().unwrap_or("the only one"));
+        println!("tree        {}", preparing(&repo_name, &arm, local.as_ref(), &dir));
+        if let Some(d) = &args.device {
+            println!("device      {d}");
+        }
+        if let Some(b) = &svc.build {
+            println!("build       [Shared] {b}");
+        }
+        for serve in &svc.serves {
+            println!("serve       {}: {}", serve.name, serve.run);
+            if let Some(r) = &serve.ready {
+                println!("            ready {r}");
+            }
+        }
+        for p in &svc.ports {
+            println!("port        {p}, as $DIBS_PORT_{}", p.to_uppercase());
+        }
+        println!(
+            "command     [{}] {command}, {}",
+            if args.bench { "Exclusive" } else { "Shared" },
+            if args.there { "on the machine, in the tree" } else { "here" }
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
+        affinity_set(&repo_name, m);
+    }
     eprintln!("dibs: preparing {}", preparing(&repo_name, &arm, local.as_ref(), &dir));
     let reference = arm.fetch.as_deref().unwrap_or("local");
     let from = arm.dir(&dir).to_path_buf();

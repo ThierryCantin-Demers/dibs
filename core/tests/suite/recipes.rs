@@ -184,6 +184,13 @@ fn a_repo_runs_a_command_here_against_the_servers_it_declares() {
     );
     recipes(&s, "[service.servers]\nbuild = \"echo built > built.txt\"\nports = [\"api\"]\n\n[[service.servers.serve]]\nname = \"api\"\nrun = \"python3 serve.py\"\nready = \"tcp:api\"\n");
     assert_eq!(s.dibs(["list", &app]).run().stdout.lines_matching(r"^  servers   \(from the repo\)$"), 1, "a repo says which servers it defines");
+    let out = s.dibs(["with", &format!("{app}@local"), "servers", "--bench", "--there", "--dry-run", "--", "true"]).run();
+    assert_eq!(
+        (out.code, out.stdout.lines_with("serve       api: python3 serve.py"), out.stdout.lines_with("command     [Exclusive] true, on the machine"), arrivals(&s)),
+        (0, 1, 1, 0),
+        "a dry run says what would run and sends nothing: {}",
+        out.all()
+    );
     let out = s.dibs(["with", &format!("{app}@local"), "servers", "--", "python3", &s.p("wclient.py")]).run();
     assert_eq!(out.all().lines_matching("^the client reached [^:]+:[0-9]+$"), 1, "and a command here runs against them, on a port neither side named");
     assert_eq!(out.code, 0, "exiting with the command's own status");
