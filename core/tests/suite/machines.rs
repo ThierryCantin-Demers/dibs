@@ -417,7 +417,7 @@ fn machines_says_what_each_one_lacks_against_what_it_should_have() {
         (
             out.code,
             out.stdout.lines_with("here  set up by hand, probed through dibs"),
-            out.stdout.lines_matching(r"^  NO  keys     a key of nobody listed: SHA256:"),
+            out.stdout.lines_matching(r"^  NO  login    a key of nobody listed: SHA256:"),
             out.stdout.lines_with("NO  paths    name.invalid does not resolve here"),
             out.stdout.lines_with("NO  repos    no clone of app"),
             out.stdout.lines_with("not probed: not in the pool, and no ssh"),

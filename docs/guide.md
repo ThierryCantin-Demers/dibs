@@ -564,6 +564,7 @@ keys = ["keys/alice.pub"]            # relative to this file
 [machine.box]
 provisioned = { by = "ansible", source = "~/prog/box-ansible" }   # or { by = "hand" }
 people = ["alice"]                   # whose keys belong in its authorized_keys
+login = "keys"                       # or "tailscale", for Tailscale SSH
 paths = ["box.local", "box.example.ts.net"]
 profiles = ["dibs", "rust", "cuda", "vulkan", "unprivileged"]      # also "metal"
 repos = ["burn", "cubecl"]           # default: every repo with a recipes file
@@ -574,8 +575,10 @@ Each machine is probed at once, a machine in the pool as a shared job under its 
 most 30 seconds before it is reported busy instead. The report, or `--json`, says per machine:
 
 - **paths:** whether each name resolves here and answers on port 22.
-- **keys:** whether everyone listed has a key there, and any key belonging to nobody listed, or to
-  someone not listed for that machine. Keys are compared by fingerprint.
+- **login:** with keys, whether everyone listed has a key there, and any key belonging to nobody
+  listed, or to someone not listed for that machine, compared by fingerprint. With Tailscale SSH,
+  whether it is on, and any key in `authorized_keys` beside it, which would be a second way in;
+  who may log in is then the tailnet's policy, which the machine cannot say.
 - **repos:** a clone at `~/prog/<repo>` for each.
 - **dibs:** bash 5.1 or newer, flock, GNU timeout, rsync and git.
 - **rust:** rustup, stable, and every toolchain the machine's repos pin in `rust-toolchain`.

@@ -33,6 +33,9 @@ np=no
 sudo -n -l >/dev/null 2>&1 && np=yes
 p account "nopasswd=$np" "groups=$(id -Gn | tr ' ' ,)"
 p keys $(ssh-keygen -lf "$HOME/.ssh/authorized_keys" 2>/dev/null | awk '{print $2}')
+ts=no
+tailscale debug prefs 2>/dev/null | grep -q '"RunSSH": true' && ts=yes
+p login "tailscale_ssh=$ts"
 r=
 for d in "$HOME"/prog/*/; do
     [ -e "$d.git" ] || continue
@@ -78,6 +81,8 @@ struct Machine {
     #[serde(default)]
     people: Vec<String>,
     #[serde(default)]
+    login: Login,
+    #[serde(default)]
     profiles: Vec<Profile>,
     /// Every repo with recipes when absent.
     repos: Option<Vec<String>>,
@@ -97,6 +102,17 @@ enum Provisioner {
     Hand,
 }
 
+/// How a person gets in, which decides where their access is written down.
+#[derive(Deserialize, Clone, Copy, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Login {
+    /// A key in the account's `authorized_keys`.
+    #[default]
+    Keys,
+    /// Tailscale SSH, where the tailnet's policy says who may, and no key is involved.
+    Tailscale,
+}
+
 #[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[serde(rename_all = "lowercase")]
 enum Profile {
@@ -112,7 +128,7 @@ enum Profile {
 #[serde(rename_all = "lowercase")]
 enum Area {
     Paths,
-    Keys,
+    Login,
     Repos,
     Dibs,
     Rust,
@@ -126,7 +142,7 @@ impl Area {
     fn name(self) -> &'static str {
         match self {
             Area::Paths => "paths",
-            Area::Keys => "keys",
+            Area::Login => "login",
             Area::Repos => "repos",
             Area::Dibs => "dibs",
             Area::Rust => "rust",
@@ -242,7 +258,11 @@ impl Machine {
     }
 
     fn check(&self, o: &Observed, cx: &Context) -> Vec<Finding> {
-        let mut out = vec![self.keys(o, cx), self.repo_clones(o, cx)];
+        let login = match self.login {
+            Login::Keys => self.keys(o, cx),
+            Login::Tailscale => self.tailscale(o, cx),
+        };
+        let mut out = vec![login, self.repo_clones(o, cx)];
         out.extend(self.profiles.iter().map(|p| p.check(o, self, cx)));
         out
     }
@@ -257,7 +277,19 @@ impl Machine {
                 Some(_) => {}
             }
         }
-        Finding::new(Area::Keys, missing, self.people.join(", "))
+        Finding::new(Area::Login, missing, format!("keys of {}", self.people.join(", ")))
+    }
+
+    fn tailscale(&self, o: &Observed, cx: &Context) -> Finding {
+        let mut missing = Vec::new();
+        if o.get("login.tailscale_ssh") != "yes" {
+            missing.push("Tailscale SSH is off".to_string());
+        }
+        if !o.keys.is_empty() {
+            let whose: Vec<&str> = o.keys.iter().map(|fp| cx.owners.get(fp).map_or(fp.as_str(), String::as_str)).collect();
+            missing.push(format!("a second way in, keys in authorized_keys: {}", whose.join(", ")));
+        }
+        Finding::new(Area::Login, missing, "by Tailscale SSH, whoever the tailnet's policy lets in".into())
     }
 
     fn repo_clones(&self, o: &Observed, cx: &Context) -> Finding {
@@ -526,6 +558,7 @@ mod tests {
             ssh: None,
             paths: Vec::new(),
             people: vec!["alice".into(), "bob".into()],
+            login: Login::Keys,
             profiles,
             repos: None,
         }
@@ -552,7 +585,7 @@ mod tests {
         assert!(syntax.success());
         let out = Command::new("sh").args(["-c", PROBE]).output().unwrap();
         let o = Observed::parse(&String::from_utf8_lossy(&out.stdout));
-        for key in ["sys.os", "bash.version", "account.nopasswd", "disk.free_kb"] {
+        for key in ["sys.os", "bash.version", "account.nopasswd", "login.tailscale_ssh", "disk.free_kb"] {
             assert!(o.has(key), "{key} missing from:\n{}", String::from_utf8_lossy(&out.stdout));
         }
         assert!(String::from_utf8_lossy(&out.stdout).lines().count() <= 20, "a job's digest keeps its first 20 lines");
@@ -561,8 +594,24 @@ mod tests {
     #[test]
     fn keys_are_matched_by_owner_and_a_stranger_or_an_unlisted_person_is_flagged() {
         let f = machine(vec![]).keys(&Observed::parse(SEEN), &cx());
+        assert_eq!(f.area, Area::Login);
         assert!(!f.ok);
         assert_eq!(f.detail, "no key of bob, carol's key, and carol is not listed here, a key of nobody listed: SHA256:stranger");
+    }
+
+    #[test]
+    fn a_machine_logged_into_by_tailscale_needs_it_on_and_no_keys_beside_it() {
+        let mut m = machine(vec![]);
+        m.login = Login::Tailscale;
+        let without = Observed::parse(&SEEN.replace("DIBS-PROBE keys SHA256:alice SHA256:stranger SHA256:carol", "DIBS-PROBE keys"));
+        assert_eq!(finding(&m.check(&without, &cx()), Area::Login).detail, "Tailscale SSH is off");
+        let on = SEEN.to_string() + "DIBS-PROBE login tailscale_ssh=yes\n";
+        assert_eq!(
+            finding(&m.check(&Observed::parse(&on), &cx()), Area::Login).detail,
+            "a second way in, keys in authorized_keys: alice, carol, SHA256:stranger"
+        );
+        let clean = on.replace("DIBS-PROBE keys SHA256:alice SHA256:stranger SHA256:carol", "DIBS-PROBE keys");
+        assert!(finding(&m.check(&Observed::parse(&clean), &cx()), Area::Login).ok);
     }
 
     #[test]
