@@ -394,3 +394,40 @@ fn shared_work_naming_no_machine_is_placed_on_one_that_answered() {
         "a step of a run is never placed on its own"
     );
 }
+
+#[test]
+fn machines_says_what_each_one_lacks_against_what_it_should_have() {
+    let mut s = Sandbox::new();
+    s.machines(&format!("[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n", hostname()));
+    fs::create_dir_all(s.path("fleet/keys")).unwrap();
+    for k in ["alice", "stranger"] {
+        let at = s.p(&format!("fleet/keys/{k}"));
+        assert_eq!(s.command("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "", "-f", &at]).code(), 0);
+    }
+    s.write("home/.ssh/authorized_keys", &(s.read("fleet/keys/alice.pub") + &s.read("fleet/keys/stranger.pub")));
+    s.write(
+        "fleet/fleet.toml",
+        "[person.alice]\nkeys = [\"keys/alice.pub\"]\n\n\
+         [machine.here]\nprovisioned = { by = \"hand\" }\npeople = [\"alice\"]\npaths = [\"name.invalid\"]\nrepos = [\"app\"]\nprofiles = [\"unprivileged\"]\n\n\
+         [machine.away]\nprovisioned = { by = \"ansible\", source = \"away-ansible\" }\n",
+    );
+    s.set("DIBS_FLEET", s.p("fleet/fleet.toml"));
+    let out = s.dibs(["machines"]).run();
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.lines_with("here  set up by hand, probed through dibs"),
+            out.stdout.lines_matching(r"^  NO  keys     a key of nobody listed: SHA256:"),
+            out.stdout.lines_with("NO  paths    name.invalid does not resolve here"),
+            out.stdout.lines_with("NO  repos    no clone of app"),
+            out.stdout.lines_with("not probed: not in the pool, and no ssh"),
+            out.stdout.lines_with("2 machine(s): 0 as expected, 1 with something missing, 1 not probed"),
+        ),
+        (1, 1, 1, 1, 1, 1, 1),
+        "{}",
+        out.all()
+    );
+    assert_eq!(s.log().lines_matching("\tarrived\t.*\tshared\tmachines-probe\t"), 1, "the machine in the pool is probed under its shared lock:\n{}", s.log());
+    let json: serde_json::Value = serde_json::from_str(&s.dibs(["machines", "--json"]).run().stdout).unwrap();
+    assert_eq!(json.as_array().map(Vec::len), Some(2), "--json is one report per machine");
+}

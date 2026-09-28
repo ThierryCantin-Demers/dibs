@@ -124,7 +124,7 @@ while [ $# -gt 0 ]; do
                         if [ $# -gt 0 ] && [ -n "$1" ] && [ "${1#-}" = "$1" ]; then
                             FETCHTO=$1; shift
                         fi ;;
-                build|test|bench|list|runs|gaps|shell|raw|batch|with)
+                build|test|bench|list|runs|gaps|shell|raw|batch|with|machines)
                     # The recipe layer takes its own flags, after the verb. --on is the one that
                     # can come first, and it travels as DIBS_ON.
                     consumed=$(( ${#ORIG_ARGS[@]} - $# ))

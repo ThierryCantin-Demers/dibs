@@ -551,6 +551,40 @@ read off the endpoint: a card with its own bridge reports the width between its 
 upstream port, which says nothing about the riser above it. A card reaching the host over fewer
 lanes than it can drive is worth knowing about before believing a number that moved data.
 
+## What each machine should have
+
+`--check` says what a machine has. `dibs machines` says what it lacks, against
+`~/.config/dibs/fleet.toml` (or `DIBS_FLEET`), which is yours and names your machines, your people
+and their keys:
+
+```toml
+[person.alice]
+keys = ["keys/alice.pub"]            # relative to this file
+
+[machine.box]
+provisioned = { by = "ansible", source = "~/prog/box-ansible" }   # or { by = "hand" }
+people = ["alice"]                   # whose keys belong in its authorized_keys
+paths = ["box.local", "box.example.ts.net"]
+profiles = ["dibs", "rust", "cuda", "vulkan", "unprivileged"]      # also "metal"
+repos = ["burn", "cubecl"]           # default: every repo with a recipes file
+# ssh = "user@box.local"             # only for a machine not yet in the pool
+```
+
+Each machine is probed at once, a machine in the pool as a shared job under its lock, waiting at
+most 30 seconds before it is reported busy instead. The report, or `--json`, says per machine:
+
+- **paths:** whether each name resolves here and answers on port 22.
+- **keys:** whether everyone listed has a key there, and any key belonging to nobody listed, or to
+  someone not listed for that machine. Keys are compared by fingerprint.
+- **repos:** a clone at `~/prog/<repo>` for each.
+- **dibs:** bash 5.1 or newer, flock, GNU timeout, rsync and git.
+- **rust:** rustup, stable, and every toolchain the machine's repos pin in `rust-toolchain`.
+- **cuda**, **vulkan**, **metal:** the driver and nvcc, the loader, macOS.
+- **unprivileged:** the account has no sudo without a password and is in no group that is root in
+  all but name.
+
+It exits 1 when anything is missing or a machine could not be probed.
+
 ## The two halves
 
 `bin/dibs` and `lib/` are the resource layer, and stay bash because half of it travels over

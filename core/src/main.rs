@@ -13,6 +13,7 @@
 
 mod artifacts;
 mod batch;
+mod fleet;
 mod friction;
 mod gitdeps;
 mod pin;
@@ -50,6 +51,10 @@ dibs gaps                             what did not fit a recipe, what got in the
                                       which of it recurs
 dibs --friction '<one line>'          what got in the way, in your own words, kept where the
                                       next session reads it: dibs gaps
+dibs machines [--json]                each machine in ~/.config/dibs/fleet.toml against what it
+                                      should have: tools, toolchains, GPU stack, repo clones,
+                                      whose keys are there, and whether its names answer here.
+                                      A machine in the pool is probed under its shared lock
 dibs batch <file|->                   a list of dibs command lines as one submission, with one
                                       summary at the end. One line per step, optionally
                                       prefixed [name after=a,b cont]. A step without after=
@@ -151,6 +156,7 @@ struct Args {
     anyway: bool,
     /// with only: the command runs on the machine, in the tree, rather than here.
     there: bool,
+    json: bool,
     /// runs only: failed runs too.
     all: bool,
     /// The measurement starts its label's series on this machine again, on another card.
@@ -179,6 +185,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     let mut max = None;
     let mut anyway = false;
     let mut there = false;
+    let mut json = false;
     let mut all = false;
     let mut new_series = false;
     let mut verbose = false;
@@ -233,6 +240,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
             }
             "--anyway" => anyway = true,
             "--there" => there = true,
+            "--json" => json = true,
             "--all" => all = true,
             "--new-series" => new_series = true,
             "--dry-run" => dry_run = true,
@@ -263,7 +271,7 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     }
     let verb = positional.remove(0);
     let target = positional.first().cloned().unwrap_or_default();
-    if target.is_empty() && !matches!(verb.as_str(), "runs" | "gaps" | "raw" | "friction") {
+    if target.is_empty() && !matches!(verb.as_str(), "runs" | "gaps" | "raw" | "friction" | "machines") {
         return Err("needs a repo".into());
     }
     if verb == "with" && command.is_none() {
@@ -295,10 +303,38 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         max,
         anyway,
         there,
+        json,
         all,
         new_series,
         verbose,
     })
+}
+
+fn inventory_path() -> Option<PathBuf> {
+    std::env::var_os("DIBS_MACHINES").map(PathBuf::from).or_else(|| {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .map(|c| c.join("dibs/machines.toml"))
+    })
+}
+
+/// The machines the inventory names, which are reached only through dibs.
+fn pool() -> std::collections::BTreeSet<String> {
+    let text = inventory_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    let inv: toml::Value = toml::from_str(&text).unwrap_or(toml::Value::Table(Default::default()));
+    inv.get("machine").and_then(toml::Value::as_table).map(|t| t.keys().cloned().collect()).unwrap_or_default()
+}
+
+/// Every repo with a recipes file.
+fn recipe_repos() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(recipe::local_dir()) else { return Vec::new() };
+    let mut repos: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.strip_suffix(".toml").map(str::to_string))
+        .collect();
+    repos.sort();
+    repos
 }
 
 /// Where a bare repo name is looked up. Everyone lays their checkouts out differently, so
@@ -310,13 +346,7 @@ fn repo_root() -> PathBuf {
     // A fresh non-interactive shell has no DIBS_ROOT, since it lives in the user's fish
     // config, so the inventory file may carry it: `root = "/home/me/prog"` at the top level.
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let inv = std::env::var_os("DIBS_MACHINES").map(PathBuf::from).or_else(|| {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home.as_ref().map(|h| h.join(".config")))
-            .map(|c| c.join("dibs/machines.toml"))
-    });
-    if let Some(text) = inv.and_then(|p| std::fs::read_to_string(p).ok()) {
+    if let Some(text) = inventory_path().and_then(|p| std::fs::read_to_string(p).ok()) {
         for line in text.lines().take_while(|l| !l.trim_start().starts_with('[')) {
             if let Some(v) = line.trim().strip_prefix("root") {
                 let v = v.trim_start();
@@ -351,6 +381,10 @@ fn run() -> Result<ExitCode, String> {
         };
         let code = batch::run(&text, &batch::Options { dry_run: args.dry_run, verbose: args.verbose })?;
         return Ok(ExitCode::from(code.clamp(0, 255) as u8));
+    }
+
+    if args.verb == "machines" {
+        return fleet::command(args.json, &args.root, recipe_repos(), &pool());
     }
 
     if args.verb == "gaps" {
