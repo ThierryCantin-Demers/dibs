@@ -129,7 +129,9 @@ else
     # here on purpose, for the remote shell to resolve against its own home.
     REMOTE_DIR=${DIBS_REMOTE_DIR:-'$HOME/.cache/dibs/run'}
     REMOTE_SCRIPT="$REMOTE_DIR/.dibs-payload.$$.$(date +%s).sh"
-    PAYLOAD=$(call_script "$((1 - WATCH))" "$HOLD" "$LEASE" | base64 | tr -d '\n')
+    # Read there a byte per call, since what follows it on stdin is the job's and a buffered
+    # reader such as macOS's head would take some of it; compressed, so that costs little.
+    PAYLOAD=$(call_script "$((1 - WATCH))" "$HOLD" "$LEASE" | gzip -9 | base64 | tr -d '\n')
     # exec so that a script which could not be written never runs half of itself: the write
     # is the only thing between the && and the shell being replaced, and if it fails the line
     # after it is what runs. Both shells that might read this line treat exec and && alike.
@@ -139,7 +141,7 @@ else
         $DIE_WITH_ME ssh -o BatchMode=yes -o LogLevel=ERROR \
             -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" \
-            "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
+            "mkdir -p $REMOTE_DIR 2>/dev/null; dd bs=1 count=${#PAYLOAD} 2>/dev/null | base64 -d | gzip -dc > $REMOTE_SCRIPT && \
              exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT
 exit 70" < <({ printf %s "$PAYLOAD"; exec <&7 6>&- 7<&-; relay; } 2>/dev/null) 6>&- 7<&-
     }
