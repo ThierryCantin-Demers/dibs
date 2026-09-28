@@ -37,6 +37,20 @@ a setup with no inventory at all.
 once. A machine without it is dropped from that repo's routing rather than sent work it cannot
 do, and `dibs --check` lists what it has.
 
+**Which machines.** The half of dibs that runs on a machine assumes bash 5.1 and a GNU userland,
+and reads what differs between operating systems through a small set of functions, which each
+`lib/machine/01-platform-<name>.sh` defines for its own:
+
+- **Linux**, any distribution: bash, flock, GNU coreutils, rsync and git, which most have.
+- **macOS**, with Homebrew's `bash flock coreutils findutils gnu-sed grep gawk rsync`. dibs
+  puts the GNU tools first on the PATH and re-runs itself under Homebrew's bash. It cannot see
+  which process holds a lock, so an orphaned lock there waits for a kill by hand, and it counts
+  no CPU of children already reaped, so a busy job can read as idle. The one GPU is recorded
+  with no slot, and naming it pins nothing.
+
+Another platform is one more file: `00-platform.sh` lists the functions in `PLATFORM_API`, and
+a machine whose platform file lacks one refuses to run rather than half working.
+
 **Check it works:**
 
     dibs status                                # who holds each machine, who is queued

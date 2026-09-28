@@ -59,14 +59,11 @@ pub struct ArmRecord {
     pub seeded: Option<String>,
 }
 
-/// Printed by a measured step before it runs, as `DIBS-STATE key=value ...`. Read from files
-/// rather than tools, since it runs inside the exclusive lock: a governor other than
-/// `performance`, or another driver, makes two runs of one recipe two histories.
+/// Printed by a measured step before it runs, as `DIBS-STATE key=value ...`: what the machine read
+/// of itself as it took the lock, its platform's `machine_state`, since the same recipe on a
+/// machine in another state is another history.
 pub fn stated(run: &str) -> String {
-    format!(
-        r#"echo "DIBS-STATE governor=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort -u | paste -sd+ -) kernel=$(uname -r) nvidia=$(grep -m1 -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' /proc/driver/nvidia/version 2>/dev/null | head -n 1)"
-{run}"#
-    )
+    format!("echo \"DIBS-STATE ${{DIBS_STATE:-}}\"\n{run}")
 }
 
 /// The values a `DIBS-STATE` line carried, empty ones dropped.
@@ -316,7 +313,7 @@ mod tests {
 
     #[test]
     fn a_measured_step_says_what_state_the_machine_was_in_before_it_runs() {
-        let out = std::process::Command::new("bash").arg("-c").arg(stated("echo RAN")).output().unwrap();
+        let out = std::process::Command::new("bash").arg("-c").arg(stated("echo RAN")).env("DIBS_STATE", "kernel=6.8.0 nvidia=").output().unwrap();
         let text = String::from_utf8_lossy(&out.stdout);
         assert!(state_of(&text).iter().any(|(k, v)| k == "kernel" && !v.is_empty()), "{text}");
         assert!(text.find("DIBS-STATE").unwrap() < text.find("RAN").unwrap(), "{text}");

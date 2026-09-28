@@ -90,6 +90,16 @@ pci_chip() {   # pci address; no slots to read here
     return 1
 }
 
+# Without a fan, a Mac's number depends on its power source and on whether it is throttling, and
+# these are what a user can read of either.
+machine_state() {   # key=value pairs for a measurement's record
+    local power thermal
+    power=$(pmset -g ps 2>/dev/null | sed -n "1s/.*'\(.*\) Power'.*/\1/p" | tr 'A-Z' 'a-z')
+    thermal=$(pmset -g therm 2>/dev/null | sed -n 's/.*[Ww]arning [Ll]evel[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
+    printf 'kernel=%s macos=%s power=%s lowpower=%s thermal=%s' "$(uname -r)" "$(sw_vers -productVersion 2>/dev/null)" \
+        "$power" "$(pmset -g 2>/dev/null | awk '/lowpowermode/ {print $2}')" "${thermal:-nominal}"
+}
+
 has_battery() {
     pmset -g batt 2>/dev/null | grep -q InternalBattery
 }

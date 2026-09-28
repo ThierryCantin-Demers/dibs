@@ -171,6 +171,15 @@ pci_chip() {   # pci address; vendor:device of what the slot holds, empty for no
     return 0
 }
 
+# What makes two runs of one recipe incomparable: a governor other than performance, or another
+# kernel or driver. Read from files, since it runs inside the exclusive lock.
+machine_state() {   # key=value pairs for a measurement's record
+    printf 'governor=%s kernel=%s nvidia=%s' \
+        "$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort -u | paste -sd+ -)" \
+        "$(uname -r)" \
+        "$(grep -m1 -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' /proc/driver/nvidia/version 2>/dev/null | head -n 1)"
+}
+
 has_battery() {
     local b
     for b in /sys/class/power_supply/BAT*; do [ -e "$b" ] && return 0; done
