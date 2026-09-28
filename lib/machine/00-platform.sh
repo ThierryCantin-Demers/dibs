@@ -22,4 +22,4 @@ esac
 PLATFORM_API="alive proc_state started_at pgid_of children_of fd_path tree_cpu_ticks
     counts_reaped_children lock_openers holds_flock ports_listening load_x100
     cpu_model os_name abi_facts has_battery pci_chip shared_lock_howto gpu_report gpu_entries
-    machine_state"
+    machine_state stay_awake"

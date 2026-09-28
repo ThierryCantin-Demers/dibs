@@ -133,9 +133,12 @@ else
     # exec so that a script which could not be written never runs half of itself: the write
     # is the only thing between the && and the shell being replaced, and if it fails the line
     # after it is what runs. Both shells that might read this line treat exec and && alike.
+    # A machine that sleeps or leaves the network says nothing, and heartbeats alone would wait
+    # out TCP's retries, a quarter of an hour; this gives up after the machine's own lease.
     to_machine() {
         $DIE_WITH_ME ssh -o BatchMode=yes -o LogLevel=ERROR \
-            -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" \
+            -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" \
             "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
              exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT
 exit 70" < <(printf %s "$PAYLOAD"; exec <&7 6>&- 7<&-; relay) 6>&- 7<&-

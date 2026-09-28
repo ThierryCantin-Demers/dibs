@@ -100,6 +100,12 @@ machine_state() {   # key=value pairs for a measurement's record
         "$power" "$(pmset -g 2>/dev/null | awk '/lowpowermode/ {print $2}')" "${thermal:-nominal}"
 }
 
+# A Mac sleeps when nobody has touched it for a while, however busy it is, and a job it
+# sleeps through is lost with its ssh.
+stay_awake() {   # pid; keeps the machine up until it exits
+    caffeinate -i -w "$1" </dev/null >/dev/null 2>&1 8>&- 9>&- 5<&- &
+}
+
 has_battery() {
     pmset -g batt 2>/dev/null | grep -q InternalBattery
 }

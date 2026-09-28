@@ -11,6 +11,7 @@
 # the job has finished, and the caller is told where. Both streams land in one file, in
 # order, the way a build log is read. Old directories go with the worktrees' own age limit.
 JOBDIR=$SCRATCH/jobs/$JOB
+stay_awake $$
 # Read with the lock held, just before the command, for the record a measurement keeps.
 if [ "$MODE" = bench ]; then
     DIBS_STATE=$(machine_state)

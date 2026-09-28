@@ -180,6 +180,10 @@ machine_state() {   # key=value pairs for a measurement's record
         "$(grep -m1 -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' /proc/driver/nvidia/version 2>/dev/null | head -n 1)"
 }
 
+stay_awake() {   # pid
+    :
+}
+
 has_battery() {
     local b
     for b in /sys/class/power_supply/BAT*; do [ -e "$b" ] && return 0; done
