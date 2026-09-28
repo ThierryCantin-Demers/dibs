@@ -12,8 +12,12 @@ fixes only where nothing else owns the machine.
 
 ## The expected state
 
-Kept in private configuration beside the recipes, never in this repository: it names machines,
-people and keys. A sketch:
+A file of its own in each person's dibs configuration, never in this repository and not in a
+shared recipes repository either: it names machines, people and keys, and some of the machines one
+person reaches are nobody else's business. Not in the inventory itself, whose entries
+`dibs --check --write` rewrites whole, which would erase anything written into one by hand.
+Machines several people share may later take their part from a shared registry, the way the
+inventory already can. A sketch:
 
 ```toml
 [person.alice]
@@ -42,13 +46,16 @@ profiles = ["dibs", "rust", "cuda"]
 
 ## The check
 
-`dibs machines [--json]`: one probe per machine, cheap enough to run as a peek.
+`dibs machines [--json]`: one probe per machine.
 - **What it reads:** tool versions, rustup toolchains, the fingerprints in `authorized_keys`,
   driver versions, clones and their remotes, `sudo -n true`, groups, and disk free.
 - **What it prints:** `key=value` lines, which the recipe layer diffs against the expected state.
-- **Transport:** a machine in the pool is probed through `dibs --peek`. A machine being set up,
-  not yet in the pool, is probed over plain ssh, since nothing is measured there yet. The probe is
-  written for POSIX sh, because it must run before the machine has what dibs needs.
+- **Transport:** a machine in the pool is probed as a shared job, never a peek: even a cheap probe
+  runs beside whatever is being measured, and the shared lock is what keeps it off a benchmark.
+  A probe behind a running benchmark waits, and the window shows it queued rather than stale. A
+  machine being set up, not yet in the pool, is probed over plain ssh, since nothing is measured
+  there yet. The probe is written for POSIX sh, because it must run before the machine has what
+  dibs needs.
 - **Reachability:** every path is tested from here, by resolving the name and connecting to port
   22. A path that needs another network or tailnet is shown as declared and untested.
 - **Unrecognised keys:** a key on a machine that belongs to nobody in the expected state is
@@ -87,8 +94,12 @@ manages what they run on.
 3. Fixes on machines set up by hand, and the playbook commands for the rest.
 4. Offboarding.
 
+## Installing
+
+The window is opt-in: `install.sh` builds it only when asked with a flag, since eframe is a real
+build and most installs are on machines with no display. Once installed, `dibs --update`
+rebuilds it along with the rest, and never adds it where it was not asked for.
+
 ## Open
 
-- Where in the private configuration the expected state lives, and under what name.
-- Whether `install.sh` builds the window by default, since eframe is a real build on a machine
-  with no display.
+- The expected state's file name.
