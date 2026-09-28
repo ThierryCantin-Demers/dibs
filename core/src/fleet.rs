@@ -154,6 +154,34 @@ impl Area {
     }
 }
 
+/// Where one person stands on one machine.
+#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "lowercase")]
+enum Standing {
+    /// Listed, with a key in `authorized_keys`.
+    Key,
+    /// Listed, with no key there.
+    Missing,
+    /// Not listed, with a key there anyway.
+    Unlisted,
+    /// Listed, on a machine the tailnet's policy decides.
+    Tailnet,
+}
+
+/// Who can get in, as far as the machine can say.
+#[derive(Serialize, Default)]
+struct Access {
+    people: BTreeMap<String, Standing>,
+    /// Fingerprints of keys that belong to nobody in fleet.toml.
+    strangers: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct PathCheck {
+    name: String,
+    problem: Option<String>,
+}
+
 #[derive(Serialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 enum Via {
@@ -184,7 +212,15 @@ struct Report {
     via: Via,
     /// Why nothing was read from the machine, when nothing was.
     unprobed: Option<String>,
+    paths: Vec<PathCheck>,
+    access: Access,
     findings: Vec<Finding>,
+}
+
+#[derive(Serialize)]
+struct Overview<'a> {
+    people: Vec<&'a String>,
+    machines: &'a [Report],
 }
 
 impl Report {
@@ -259,7 +295,7 @@ impl Machine {
 
     fn check(&self, o: &Observed, cx: &Context) -> Vec<Finding> {
         let login = match self.login {
-            Login::Keys => self.keys(o, cx),
+            Login::Keys => self.keys(&self.access(o, cx)),
             Login::Tailscale => self.tailscale(o, cx),
         };
         let mut out = vec![login, self.repo_clones(o, cx)];
@@ -267,16 +303,44 @@ impl Machine {
         out
     }
 
-    fn keys(&self, o: &Observed, cx: &Context) -> Finding {
-        let owner_here = |p: &str| o.keys.iter().any(|fp| cx.owners.get(fp).is_some_and(|who| who == p));
-        let mut missing: Vec<String> = self.people.iter().filter(|p| !owner_here(p)).map(|p| format!("no key of {p}")).collect();
+    fn access(&self, o: &Observed, cx: &Context) -> Access {
+        let holds = |p: &str| o.keys.iter().any(|fp| cx.owners.get(fp).is_some_and(|who| who == p));
+        let mut people: BTreeMap<String, Standing> = self
+            .people
+            .iter()
+            .map(|p| {
+                let standing = match (self.login, holds(p)) {
+                    (Login::Tailscale, _) => Standing::Tailnet,
+                    (Login::Keys, true) => Standing::Key,
+                    (Login::Keys, false) => Standing::Missing,
+                };
+                (p.clone(), standing)
+            })
+            .collect();
+        let mut strangers = Vec::new();
         for fp in &o.keys {
             match cx.owners.get(fp) {
-                None => missing.push(format!("a key of nobody listed: {fp}")),
-                Some(who) if !self.people.contains(who) => missing.push(format!("{who}'s key, and {who} is not listed here")),
+                None => strangers.push(fp.clone()),
+                Some(who) if !self.people.contains(who) => {
+                    people.insert(who.clone(), Standing::Unlisted);
+                }
                 Some(_) => {}
             }
         }
+        Access { people, strangers }
+    }
+
+    fn keys(&self, a: &Access) -> Finding {
+        let mut missing: Vec<String> = a
+            .people
+            .iter()
+            .filter_map(|(p, standing)| match standing {
+                Standing::Missing => Some(format!("no key of {p}")),
+                Standing::Unlisted => Some(format!("{p}'s key, and {p} is not listed here")),
+                Standing::Key | Standing::Tailnet => None,
+            })
+            .collect();
+        missing.extend(a.strangers.iter().map(|fp| format!("a key of nobody listed: {fp}")));
         Finding::new(Area::Login, missing, format!("keys of {}", self.people.join(", ")))
     }
 
@@ -464,25 +528,29 @@ fn reach(name: &str) -> Result<(), String> {
     }
 }
 
-fn paths(m: &Machine) -> Finding {
-    let missing = std::thread::scope(|s| {
-        let tried: Vec<_> = m.paths.iter().map(|p| s.spawn(move || reach(p))).collect();
-        tried.into_iter().filter_map(|t| t.join().expect("a reach does not panic").err()).collect()
-    });
-    Finding::new(Area::Paths, missing, m.paths.join(", "))
+fn reach_all(paths: &[String]) -> Vec<PathCheck> {
+    std::thread::scope(|s| {
+        let tried: Vec<_> = paths.iter().map(|p| (p, s.spawn(move || reach(p)))).collect();
+        tried
+            .into_iter()
+            .map(|(p, t)| PathCheck { name: p.clone(), problem: t.join().expect("a reach does not panic").err() })
+            .collect()
+    })
 }
 
 fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Report {
     let (via, observed) = probe(name, m, pool);
-    let mut findings = vec![paths(m)];
-    let unprobed = match observed {
+    let paths = reach_all(&m.paths);
+    let problems = paths.iter().filter_map(|p| p.problem.clone()).collect();
+    let mut findings = vec![Finding::new(Area::Paths, problems, m.paths.join(", "))];
+    let (unprobed, access) = match observed {
         Ok(o) => {
             findings.extend(m.check(&o, cx));
-            None
+            (None, m.access(&o, cx))
         }
-        Err(e) => Some(e),
+        Err(e) => (Some(e), Access::default()),
     };
-    Report { machine: name.to_string(), provisioned: m.provisioned.clone(), via, unprobed, findings }
+    Report { machine: name.to_string(), provisioned: m.provisioned.clone(), via, unprobed, paths, access, findings }
 }
 
 fn render(reports: &[Report]) -> String {
@@ -515,10 +583,17 @@ fn render(reports: &[Report]) -> String {
     s
 }
 
-/// `dibs machines`: every machine in fleet.toml, probed at once.
-pub fn command(json: bool, root: &Path, recipe_repos: Vec<String>, pool: &BTreeSet<String>) -> Result<ExitCode, String> {
+/// `dibs machines [<machine>]`: every machine in fleet.toml, or the one named, probed at once.
+pub fn command(json: bool, only: Option<&str>, root: &Path, recipe_repos: Vec<String>, pool: &BTreeSet<String>) -> Result<ExitCode, String> {
     let path = path()?;
-    let fleet = load(&path)?;
+    let mut fleet = load(&path)?;
+    if let Some(name) = only {
+        if !fleet.machine.contains_key(name) {
+            let have: Vec<&str> = fleet.machine.keys().map(String::as_str).collect();
+            return Err(format!("no machine {name} in {}; it has: {}", path.display(), have.join(", ")));
+        }
+        fleet.machine.retain(|n, _| n == name);
+    }
     let dir = path.parent().unwrap_or(Path::new("."));
     let wanted: BTreeSet<&String> = fleet.machine.values().flat_map(|m| m.repos.iter().flatten()).chain(&recipe_repos).collect();
     let pins = wanted.into_iter().filter_map(|r| pin(&root.join(r)).map(|c| (r.clone(), c))).collect();
@@ -528,7 +603,10 @@ pub fn command(json: bool, root: &Path, recipe_repos: Vec<String>, pool: &BTreeS
         running.into_iter().map(|r| r.join().expect("a probe does not panic")).collect()
     });
     match json {
-        true => println!("{}", serde_json::to_string_pretty(&reports).map_err(|e| e.to_string())?),
+        true => {
+            let overview = Overview { people: fleet.person.keys().collect(), machines: &reports };
+            println!("{}", serde_json::to_string_pretty(&overview).map_err(|e| e.to_string())?)
+        }
         false => print!("{}", render(&reports)),
     }
     Ok(match reports.iter().all(Report::as_expected) {
@@ -593,7 +671,13 @@ mod tests {
 
     #[test]
     fn keys_are_matched_by_owner_and_a_stranger_or_an_unlisted_person_is_flagged() {
-        let f = machine(vec![]).keys(&Observed::parse(SEEN), &cx());
+        let m = machine(vec![]);
+        let a = m.access(&Observed::parse(SEEN), &cx());
+        assert_eq!(
+            (a.people.get("alice"), a.people.get("bob"), a.people.get("carol"), a.strangers.as_slice()),
+            (Some(&Standing::Key), Some(&Standing::Missing), Some(&Standing::Unlisted), ["SHA256:stranger".to_string()].as_slice())
+        );
+        let f = m.keys(&a);
         assert_eq!(f.area, Area::Login);
         assert!(!f.ok);
         assert_eq!(f.detail, "no key of bob, carol's key, and carol is not listed here, a key of nobody listed: SHA256:stranger");

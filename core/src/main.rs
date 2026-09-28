@@ -51,7 +51,7 @@ dibs gaps                             what did not fit a recipe, what got in the
                                       which of it recurs
 dibs --friction '<one line>'          what got in the way, in your own words, kept where the
                                       next session reads it: dibs gaps
-dibs machines [--json]                each machine in ~/.config/dibs/fleet.toml against what it
+dibs machines [<machine>] [--json]    each machine in ~/.config/dibs/fleet.toml against what it
                                       should have: tools, toolchains, GPU stack, repo clones,
                                       whose keys are there, and whether its names answer here.
                                       A machine in the pool is probed under its shared lock
@@ -384,7 +384,8 @@ fn run() -> Result<ExitCode, String> {
     }
 
     if args.verb == "machines" {
-        return fleet::command(args.json, &args.root, recipe_repos(), &pool());
+        let only = (!args.repo.is_empty()).then_some(args.repo.as_str());
+        return fleet::command(args.json, only, &args.root, recipe_repos(), &pool());
     }
 
     if args.verb == "gaps" {

@@ -429,5 +429,12 @@ fn machines_says_what_each_one_lacks_against_what_it_should_have() {
     );
     assert_eq!(s.log().lines_matching("\tarrived\t.*\tshared\tmachines-probe\t"), 1, "the machine in the pool is probed under its shared lock:\n{}", s.log());
     let json: serde_json::Value = serde_json::from_str(&s.dibs(["machines", "--json"]).run().stdout).unwrap();
-    assert_eq!(json.as_array().map(Vec::len), Some(2), "--json is one report per machine");
+    assert_eq!(
+        (json["machines"].as_array().map(Vec::len), json["people"][0].as_str(), json["machines"][1]["access"]["people"]["alice"].as_str()),
+        (Some(2), Some("alice"), Some("key")),
+        "--json is one report per machine, with who stands where: {json}"
+    );
+    let one: serde_json::Value = serde_json::from_str(&s.dibs(["machines", "away", "--json"]).run().stdout).unwrap();
+    assert_eq!(one["machines"].as_array().map(Vec::len), Some(1), "a machine can be probed alone");
+    assert_eq!(s.dibs(["machines", "nowhere"]).run().all().lines_with("it has: away, here"), 1, "and one not in fleet.toml is refused");
 }
