@@ -121,7 +121,8 @@ fn a_job_dies_with_the_caller_that_started_it() {
     let workload = format!("python3 -c 'import signal; signal.pause()' {tag}");
     let caller = s.spawn(live.dibs(["--label", "live-hangup", "--max", "120", &workload]));
     assert!(live.soon(|| live.status().contains("live-hangup")), "it is holding the lock");
-    let find = format!("pgrep -f '^python3 -c import signal.* {tag}$' | head -1");
+    // macOS's python3 is a stub that runs the real one under its full path.
+    let find = format!("pgrep -f '^[^ ]*[Pp]ython[^ ]* -c import signal.* {tag}$' | head -1");
     let mut work = String::new();
     assert!(live.soon(|| { work = live.peek(&find); !work.is_empty() }), "its workload is running over there");
     kill9(caller.pid);
@@ -145,7 +146,10 @@ fn a_caller_that_dies_while_its_job_is_queued_takes_it_out_of_the_queue() {
     s.wait(queued);
     assert!(live.soon(|| !live.status().contains("live-queued")), "killing its caller drops it from the queue");
     assert_eq!(live.peek(&format!("test -e '{marker}' && echo ran || echo never")), "never", "and it never ran");
-    assert_eq!(live.dibs(["--log", "20"]).run().stdout.lines_matching("caller-gone.*live-queued"), 1, "the log says why");
+    // An earlier run's lines can still be among the last 20; this run's holder has only arrived.
+    let log = live.dibs(["--log", "20"]).run().stdout;
+    let this_run: Vec<&str> = log.lines().rev().take_while(|l| !(l.contains("arrived") && l.contains("live-holder"))).collect();
+    assert_eq!(this_run.join("\n").lines_matching("caller-gone.*live-queued"), 1, "the log says why");
     live.peek(&format!("printf 'go\\n' > '{gate}'"));
     assert_eq!(s.wait(holder), 0);
 }
