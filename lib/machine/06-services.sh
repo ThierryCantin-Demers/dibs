@@ -1,13 +1,3 @@
-ports_listening() {
-    if command -v ss >/dev/null 2>&1; then
-        ss -ltn 2>/dev/null | awk 'NR > 1 {n = split($4, a, ":"); print a[n]}'
-    else
-        # 0A is LISTEN. The port is hex, and converting it is bash's job: mawk has no strtonum.
-        awk 'NR > 1 && $4 == "0A" {split($2, a, ":"); print a[2]}' /proc/net/tcp /proc/net/tcp6 2>/dev/null |
-            while read -r x; do printf '%d\n' "$(( 16#$x ))"; done
-    fi
-}
-
 # A port two jobs both chose is the collision this exists to prevent, so the reservation is an
 # exclusive create under the lock directory, and it names the pid holding it so prune can clear it.
 ports_take() {   # 1 when the range has nothing free

@@ -1,4 +1,7 @@
 set -uo pipefail
+for f in $PLATFORM_API; do
+    declare -F "$f" >/dev/null || { echo "dibs: lib/machine/01-platform-$PLATFORM.sh defines no $f" >&2; exit 2; }
+done
 # The call arrives as assignments ahead of this script, one per variable it reads; set -u makes
 # a missing one an error here rather than an empty value further down.
 : "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$JSON" "$CMD" "$NO_WATCH" "$TTY" "$HOLD" \

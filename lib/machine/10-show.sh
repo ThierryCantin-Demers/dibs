@@ -28,7 +28,7 @@ show_json() {
     # bash and the reader wants an integer.
     printf '{"t":%s,"state":"%s","cores":%s,"load":%s' \
         "$NOW" "$st" "$(nproc 2>/dev/null || echo 1)" \
-        "$(awk '{printf "%d", $1 * 100}' /proc/loadavg 2>/dev/null || echo 0)"
+        "$(load_x100)"
     # Which repos this machine has a build cache for. A dispatcher that does not know this
     # picks by load on the first run of a repo and lands somewhere with nothing cached, which
     # is minutes of cold compile chosen over seconds of queueing.

@@ -44,15 +44,6 @@ kill_batch_here() {   # id anyone
 # A pid names one process only while it has the same start time. pid_max comes round in days on a
 # busy machine, so a record left behind by a job that was killed outright, before its own cleanup
 # could run, would otherwise name whoever holds that pid by then.
-started_at() {   # pid; when it started, in seconds since the epoch
-    local rest
-    rest=$(sed 's/.*) //' "/proc/$1/stat" 2>/dev/null) || return 1
-    [ -n "$rest" ] || return 1
-    [ -n "${BTIME:-}" ] || BTIME=$(awk '/^btime/{print $2}' /proc/stat 2>/dev/null)
-    set -- $rest
-    printf '%s' $(( BTIME + ${20} / CLK ))
-}
-
 # A record is written after the process it names started, so one whose process is younger than the
 # record itself is the remains of a job that has ended. Two seconds of slack for the rounding.
 still_the_same() {   # pid record-file
@@ -68,7 +59,7 @@ prune() {
     for f in "$DIR"/port.*; do
         [ -e "$f" ] || continue
         pid=$(cat "$f" 2>/dev/null)
-        { [ -n "$pid" ] && [ -d "/proc/$pid" ]; } || rm -f "$f"
+        { [ -n "$pid" ] && alive "$pid"; } || rm -f "$f"
     done
     for f in "$DIR"/holder.* "$DIR"/waiting.*; do
         [ -e "$f" ] || continue
@@ -78,9 +69,7 @@ prune() {
     for f in "$DIR"/cpu.* "$DIR"/batch.* "$DIR"/hold.* "$DIR"/with.*; do
         [ -e "$f" ] || continue
         pid=${f##*.}
-        # /proc rather than kill -0: signalling another user's process fails with EPERM,
-        # which would prune a live holder's record on a machine with more than one account.
-        [ -d "/proc/$pid" ] || rm -f "$f"
+        alive "$pid" || rm -f "$f"
     done
 }
 
@@ -190,7 +179,7 @@ reap() {   # pids
     for round in $(seq 41); do
         # A zombie has ended, and outside its parent kill -0 would still find it.
         alive=$(for p in "$@"; do
-                    st=$(sed 's/.*) //; s/ .*//' "/proc/$p/stat" 2>/dev/null)
+                    st=$(proc_state "$p")
                     [ -n "$st" ] && [ "$st" != Z ] && echo "$p"
                 done)
         [ -n "$alive" ] || return 0

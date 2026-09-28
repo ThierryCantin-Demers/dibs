@@ -17,7 +17,7 @@ may_bypass() {
         [ -e "$f" ] || continue
         IFS=$'\t' read -r m p st _ < "$f"
         [ "$m" = bench ] || continue
-        [ -d "/proc/$p" ] || continue
+        alive "$p" || continue
         queued=1
         [ $(( NOW - st )) -lt "${DIBS_PATIENCE:-60}" ] || return 1
     done

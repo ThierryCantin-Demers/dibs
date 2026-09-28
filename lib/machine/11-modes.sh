@@ -52,29 +52,11 @@ case "$MODE" in
     abi)
         printf 'kernel %s\n' "$(uname -s)"
         printf 'arch %s\n' "$(uname -m)"
-        # The x86-64 microarchitecture levels, the coarse ordering a binary is built against.
-        # An approximation on purpose: -C target-cpu=native can reach past the level it lands
-        # in, so equal levels make reuse plausible rather than proven.
-        if [ -r /proc/cpuinfo ]; then
-            awk '/^flags/ {
-                for (i = 1; i <= NF; i++) f[$i] = 1
-                lvl = 1
-                if (f["cx16"] && f["lahf_lm"] && f["popcnt"] && f["sse4_1"] && f["sse4_2"] && f["ssse3"]) lvl = 2
-                if (lvl == 2 && f["avx"] && f["avx2"] && f["bmi1"] && f["bmi2"] && f["f16c"] &&
-                    f["fma"] && f["abm"] && f["movbe"] && f["xsave"]) lvl = 3
-                if (lvl == 3 && f["avx512f"] && f["avx512bw"] && f["avx512cd"] && f["avx512dq"] &&
-                    f["avx512vl"]) lvl = 4
-                printf "level %d\n", lvl
-                exit
-            }' /proc/cpuinfo
-        fi
-        # A binary needs the glibc it was built against or newer, so this is an ordering too,
-        # and its direction is most of the answer.
-        ldd --version 2>/dev/null | awk 'NR == 1 { print "glibc " $NF; exit }'
+        abi_facts
         command -v rustc >/dev/null 2>&1 && printf 'rustc %s\n' "$(rustc -V 2>/dev/null | awk '{print $2}')"
         nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null |
             head -1 | awk 'NF { print "nvidia " $1 }'
-        printf 'os %s\n' "$(. /etc/os-release 2>/dev/null && echo "$ID $VERSION_ID" || echo unknown)"
+        printf 'os %s\n' "$(os_name)"
         exit 0 ;;
 
     check)
@@ -98,12 +80,12 @@ case "$MODE" in
         if command -v setpriv >/dev/null 2>&1; then ok "setpriv present, so a job dies with its caller"
         else warn "no setpriv: a job whose caller is killed outright can outlive it"; fi
 
-        # The CPU walk reads these to find work done in children that were already reaped.
-        # Without them a busy job reads as idle and gets reported stuck.
-        if read -r _ 2>/dev/null < /proc/$$/task/$$/children || [ -e /proc/$$/task/$$/children ]; then
-            ok "/proc child lists readable, so idle detection can see reaped children"
+        # Without it a job whose work runs in short-lived children reads as idle and gets
+        # reported stuck.
+        if counts_reaped_children; then
+            ok "the CPU of reaped children is counted, so idle detection sees a job's whole tree"
         else
-            warn "no /proc/<pid>/task/*/children: a working job may be misreported as idle"
+            warn "the CPU of reaped children is not counted here: a working job may be misreported as idle"
         fi
 
         case "$LOCK_SCOPE" in
@@ -115,12 +97,7 @@ case "$MODE" in
                 note "are told the machine is idle. Fine if everyone shares this account, and"
                 note "a wrong answer with nothing to notice it by if they do not."
                 note ""
-                note "Either give everyone this one account, which also lets one build cache"
-                note "serve all of them, or make the lock directory shared. As root, idle:"
-                note "  groupadd -f dibs && gpasswd -a <each-user> dibs"
-                note "  install -d -m 2775 -g dibs $SHARED_DIR"
-                note "  printf 'd $SHARED_DIR 2775 root dibs -\\n' > /etc/tmpfiles.d/dibs.conf"
-                note "The last line recreates it on boot, since that tmpfs is emptied then." ;;
+                shared_lock_howto ;;
         esac
 
         scratch=${DIBS_SCRATCH:-$HOME/.cache/dibs}
@@ -174,112 +151,14 @@ case "$MODE" in
         echo
         echo "  devices"
         cores=$(nproc 2>/dev/null)
-        model=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
+        model=$(cpu_model)
         printf '    cpu   %s, %s threads\n' "${model:-unknown}" "${cores:-?}"
-        # Judged on output, never on the tool being installed or on its exit status. This
-        # laptop has rocm-smi and no AMD GPU: it prints "Driver not initialized" and exits 0,
-        # so asking either question gets a confident yes about hardware that is not there.
-        # What a card actually gets to the host, which is not what its own endpoint
-        # reports. A GPU with an internal bridge chain, as every Navi does, reports the
-        # x16 between its die and its own upstream port; the x1 riser above that is a
-        # hop further up and is the one that decides every transfer. So: the narrowest
-        # link on the path to the root, against what the card itself can do.
-        #
-        # Judged on width rather than speed, and the speed recorded is the link's
-        # ceiling rather than what it is doing now. An NVIDIA card idles its link a
-        # generation or two down and trains up under load, so "current" is a reading
-        # of how busy the machine was when probed, and recording it would make two
-        # probes of one unchanged machine disagree.
-        pcie_path() {  # bus; prints "width_to_host width_of_card speed_at_narrowest"
-            local d=$1 w sp spn mw="" msp="" msn="" cap
-            cap=$(cat "/sys/bus/pci/devices/$d/max_link_width" 2>/dev/null)
-            while [ -n "$d" ] && [ -e "/sys/bus/pci/devices/$d" ]; do
-                w=$(cat "/sys/bus/pci/devices/$d/current_link_width" 2>/dev/null)
-                sp=$(cat "/sys/bus/pci/devices/$d/max_link_speed" 2>/dev/null)
-                [ -n "$w" ] && { [ -z "$mw" ] || [ "$w" -lt "$mw" ] 2>/dev/null; } && mw=$w
-                # Tracked separately from the width, and over the whole path: the hop that
-                # narrows the link is not always the hop that slows it. A Navi card's own
-                # bridge is gen4 while the root port it hangs off is gen3, so taking the
-                # speed from wherever the width happened to drop reports the card's
-                # internal ceiling as if it were the one to the host.
-                spn=${sp%%.*}
-                if [ -n "$spn" ] && { [ -z "$msn" ] || [ "$spn" -lt "$msn" ] 2>/dev/null; }; then
-                    # Space squeezed out: the caller word-splits this, and "8.0 GT/s"
-                    # would arrive as two fields and be dropped as a malformed answer.
-                    msn=$spn; msp=${sp% PCIe}; msp=${msp// /}
-                fi
-                d=$(basename "$(readlink -f "/sys/bus/pci/devices/$d/.." 2>/dev/null)")
-                case $d in 0000:*) ;; *) break ;; esac
-            done
-            # An integrated GPU sits on the root complex with no link of its own and
-            # says so as width 0 and a max of 255, the "not implemented" value. Nothing
-            # here applies to it, and answering anyway divides by zero in the caller.
-            [ "${mw:-0}" -ge 1 ] 2>/dev/null || return 0
-            [ "${cap:-0}" -ge 1 ] 2>/dev/null && [ "$cap" -le 32 ] 2>/dev/null || return 0
-            printf '%s %s %s\n' "$mw" "$cap" "${msp:-unknown}"
-        }
-
-        found=0
-        nv=$(nvidia-smi --query-gpu=name,pci.bus_id,memory.total,compute_cap \
-             --format=csv,noheader,nounits 2>/dev/null)
-        if [ -n "$nv" ]; then
-            found=1
-            printf '%s\n' "$nv" | while IFS=, read -r name busid mem cc; do
-                printf '    gpu   %s  %s  %s MiB  sm%s\n' "$(echo $name)" "$(echo $busid)" "$(echo $mem)" "$(echo $cc)"
-            done
-        fi
-        amd=$(rocm-smi --showproductname --csv 2>/dev/null | awk -F, 'NR>1 && NF>1 {print $2}')
-        # rocm-smi is packaged on its own and reads the kernel driver, so it lists cards on a
-        # machine with no HIP at all. What decides whether ROCm is a runtime here is the
-        # runtime library, not the management tool.
-        hip=0
-        { command -v rocminfo >/dev/null 2>&1 ||
-          ldconfig -p 2>/dev/null | grep -q libamdhip64; } && hip=1
-        if [ -n "$amd" ]; then
-            found=1
-            if [ "$hip" = 1 ]; then
-                printf '%s\n' "$amd" | sed 's/^/    gpu   /;s/$/  (rocm)/'
-            else
-                printf '%s\n' "$amd" | sed 's/^/    gpu   /;s/$/  (no rocm runtime)/'
-                warn "rocm-smi sees these cards but nothing here can run HIP on them:"
-                note "no rocminfo and no libamdhip64. They are Vulkan-only until the ROCm"
-                note "runtime is installed, so a rocm label would have nowhere to go."
-            fi
-        fi
-        # Reported for every card whatever vendor tool found it, because a narrowed link
-        # is invisible to all of them: the card enumerates, works, and is simply slow.
-        for lw in /sys/bus/pci/devices/*/current_link_width; do
-            [ -e "$lw" ] || continue
-            d=${lw%/current_link_width}
-            case $(cat "$d/class" 2>/dev/null) in 0x030*) ;; *) continue ;; esac
-            set -- $(pcie_path "${d##*/}")
-            [ $# -eq 3 ] || continue
-            [ "$1" -lt "$2" ] 2>/dev/null || continue
-            warn "${d##*/} reaches the host over x$1, and the card can do x$2"
-            note "Host transfers cost $(( $2 / $1 ))x what the card allows, so a benchmark"
-            note "that moves data is measuring the riser or the slot it is in."
-        done
-
-        if [ "$found" = 0 ]; then
-            if command -v lspci >/dev/null 2>&1; then
-                lspci -nn 2>/dev/null | grep -Ei 'vga|3d controller' | sed 's/^/    gpu?  /' | head -8
-                note "seen by lspci only: no vendor tool here can talk to them, so nothing"
-                note "can be probed and no GPU work can be routed to this machine yet."
-            else
-                warn "no nvidia-smi, no rocm-smi, no lspci: cannot tell what is in this machine"
-            fi
-        fi
+        gpu_report
 
         # Emitted from what was just detected, because a hand-written bus id is how an
         # inventory goes quietly stale. @NAME@ and @SSH@ are the client's to fill: a machine
         # cannot know the alias that reaches it.
         if [ "$LABEL" = check-write ]; then
-            have_vk=0; command -v vulkaninfo >/dev/null 2>&1 && have_vk=1
-            # A chip id that appears twice is two cards of one model, and the slug it makes
-            # then names neither of them.
-            dup=$(lspci -nn 2>/dev/null |
-                  grep -Ei 'vga compatible controller|3d controller|display controller' |
-                  grep -oE '\[[0-9a-f]{4}:[0-9a-f]{4}\]' | sort | uniq -d | tr -d '[]')
             echo
             echo "--8<-- dibs inventory --8<--"
             printf '[machine.@NAME@]\n'
@@ -289,65 +168,15 @@ case "$MODE" in
             # A battery means a laptop, and a laptop throttles, shares one memory pool
             # between CPU and iGPU, and moves. Absence of a GPU says nothing about this:
             # a CPU benchmark box is a machine worth measuring on.
-            for b in /sys/class/power_supply/BAT*; do
-                [ -e "$b" ] || continue
+            if has_battery; then
                 printf 'measure  = false        # runs on a battery, so it throttles and moves\n'
                 printf 'workstation = true      # someone works here; drop this if it is headless\n'
-                break
-            done
+            fi
             printf '\n  [[machine.@NAME@.device]]\n'
             printf '  kind  = "cpu"\n'
             printf '  name  = "%s"\n' "${model:-unknown}"
             printf '  cores = %s\n' "${cores:-0}"
-            lspci -nn 2>/dev/null | grep -Ei 'vga compatible controller|3d controller|display controller' |
-            while read -r line; do
-                bus=${line%% *}
-                case "$bus" in *:*:*) ;; *) bus="0000:$bus" ;; esac
-                ids=$(printf '%s\n' "$line" | grep -oE '\[[0-9a-f]{4}:[0-9a-f]{4}\]' | tail -1 | tr -d '[]')
-                [ -n "$ids" ] || continue
-                desc=$(printf '%s\n' "$line" | sed 's/^[^]]*]: //; s/ \[[0-9a-f]\{4\}:[0-9a-f]\{4\}\].*$//')
-                short=$(printf '%s\n' "$desc" | sed -n 's/.*\[\(.*\)\].*/\1/p')
-                [ -n "$short" ] || short=$desc
-                # nvidia-smi names the card better than lspci does, when it can see it,
-                # and whether it can see it is also what decides CUDA below.
-                seen=""
-                if [ -n "$nv" ]; then
-                    seen=$(printf '%s\n' "$nv" | awk -F, -v b="$bus" \
-                        'tolower($2) ~ tolower(b) {gsub(/^ +| +$/,"",$1); print $1; exit}')
-                    [ -n "$seen" ] && short=$seen
-                fi
-                # What can reach this card, not what the machine has installed somewhere: an
-                # AMD card in a machine with CUDA does not gain CUDA from it, and no runtime
-                # reaches a card the kernel has no driver bound to.
-                drv=""
-                [ -L "/sys/bus/pci/devices/$bus/driver" ] &&
-                    drv=$(basename "$(readlink "/sys/bus/pci/devices/$bus/driver")")
-                rt=""
-                case "${ids%%:*}" in
-                    10de) [ -n "$seen" ] && rt='"cuda"' ;;
-                    1002) [ "$hip" = 1 ] && [ -n "$amd" ] && rt='"rocm"' ;;
-                esac
-                [ "$have_vk" = 1 ] && [ -n "$drv" ] && rt="${rt:+$rt, }\"vulkan\""
-                slug=$(printf '%s\n' "$short" | tr 'A-Z' 'a-z' |
-                       sed 's/nvidia//g; s/geforce//g; s/corporation//g; s/advanced micro devices//g;
-                            s/radeon//g; s/intel//g; s/ arc / /g' | tr -cd 'a-z0-9')
-                printf '\n  [[machine.@NAME@.device]]\n'
-                printf '  kind     = "gpu"\n'
-                slug=${slug:-$(printf '%s' "$bus" | tr -cd 'a-z0-9')}
-                case " $dup " in *" $ids "*) slug="$slug.$(printf '%s' "${bus#*:}" | cut -d: -f1)" ;; esac
-                printf '  alias    = "gpu:%s"\n' "$slug"
-                printf '  name     = "%s"\n' "$short"
-                printf '  pci      = "%s"\n' "$bus"
-                printf '  chip     = "%s"\n' "$ids"
-                # What the card is actually plugged into. A mining rig puts cards on x1
-                # risers, and a card on one is a card whose every host transfer runs at a
-                # sixteenth of what its neighbour gets: a benchmark there measures the
-                # riser. Width, not speed, is what is judged on below, because a link
-                # downshifts its speed when idle and a single reading catches that.
-                set -- $(pcie_path "$bus")
-                [ $# -eq 3 ] && printf '  link     = "x%s of x%s at %s"\n' "$1" "$2" "$3"
-                printf '  runtimes = [%s]\n' "$rt"
-            done
+            gpu_entries
             echo "--8<-- end --8<--"
         fi
 
@@ -407,7 +236,7 @@ case "$MODE" in
             echo "  from $agent"
             # The root's own stdout is the channel it was launched down, not something the
             # job chose. Anything different from that is a redirect the job made itself.
-            root=$(readlink "/proc/$pid/fd/1" 2>/dev/null)
+            root=$(fd_path "$pid" 1)
             files=$(fd_targets "$pid" "$root")
             sink=$(ls -d "${DIBS_SCRATCH:-$HOME/.cache/dibs}"/jobs/*-"$pid"/log 2>/dev/null | head -1)
             if [ -z "$files" ] && [ -n "$sink" ]; then

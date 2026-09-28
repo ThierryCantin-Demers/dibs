@@ -16,7 +16,10 @@ if [ -n "$DEVICE" ]; then
     # the GPUs, which is true and is advice about a run that was never going to use one.
     CPU_NAME=""
     [ -z "$DEV_PCI" ] && [ "$DEVICE" = cpu ] && CPU_NAME=$(inv_cpu_name "$dev_m")
-    if [ -z "$DEV_PCI" ] && [ -z "$CPU_NAME" ]; then
+    # A machine's only GPU has no slot to be told apart by, as on a Mac, and naming it pins nothing.
+    SOLE=""
+    [ -z "$DEV_PCI" ] && [ -z "$CPU_NAME" ] && SOLE=$(inv_device "$dev_m" "$DEVICE" name)
+    if [ -z "$DEV_PCI" ] && [ -z "$CPU_NAME" ] && [ -z "$SOLE" ]; then
         echo "dibs: $dev_m has no device called '$DEVICE'." >&2
         # Not taken as that alias: the name is part of the label, and two spellings of one card
         # would be two histories of it.

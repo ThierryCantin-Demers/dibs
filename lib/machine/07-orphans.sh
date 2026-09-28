@@ -1,31 +1,11 @@
-pgid_of() {   # pid; prints its process group, empty if it has gone
-    local st
-    st=$(< "/proc/$1/stat") 2>/dev/null || return 1
-    st=${st#*) }             # the command is parenthesised and may contain spaces
-    set -- $st
-    printf '%s\n' "$3"
-}
-holds_lock() {   # pid inode; whether one of its descriptors is the one carrying the lock
-    local f k rest
-    for f in /proc/"$1"/fdinfo/*; do
-        # A descriptor closed between the glob and the read is gone, not an error worth
-        # printing: stderr goes first, or bash reports the open before the redirect takes.
-        while read -r k rest; do
-            [ "$k" = "lock:" ] || continue
-            case "$rest" in *":$2 "*) return 0 ;; esac
-        done 2>/dev/null < "$f"
-    done
-    return 1
-}
-
 lock_unaccounted() {   # sets ORPH to the pids, OPENERS to whether anything holds the lock
     local p ino mine
     ORPH="" OPENERS=0
     ino=$(stat -c %i "$DIR/rw" 2>/dev/null) || return 0
     mine=$(pgid_of $$)
-    for p in $( { fuser "$DIR/rw" 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$'; } 8>&- 9>&- ); do
-        [ -d "/proc/$p" ] || continue
-        holds_lock "$p" "$ino" || continue
+    for p in $( { lock_openers "$DIR/rw"; } 8>&- 9>&- ); do
+        alive "$p" || continue
+        holds_flock "$p" "$ino" || continue
         OPENERS=1
         [ -n "$mine" ] && [ "$(pgid_of "$p")" = "$mine" ] && continue
         [ -e "$DIR/holder.$p" ] || [ -e "$DIR/waiting.$p" ] && continue
@@ -60,7 +40,7 @@ reclaim() {
     log_event reclaimed
     reap $kept
     for p in $kept; do
-        [ -d "/proc/$p" ] && echo "  pid $p survived; run it again, or kill -9 $p" >&2
+        alive "$p" && echo "  pid $p survived; run it again, or kill -9 $p" >&2
     done
 }
 

@@ -22,9 +22,7 @@ if [ -n "$DEV_PCI" ]; then
     # The entry records the card a slot held when the machine was probed. A card pulled or
     # moved since leaves an address the Vulkan selectors below ignore without a word, and the
     # job would run on the first card under the name of the one asked for.
-    if [ -d /sys/bus/pci/devices ]; then
-        _slot=/sys/bus/pci/devices/$DEV_PCI
-        _holds=$(cat "$_slot/vendor" "$_slot/device" 2>/dev/null | sed 's/^0x//' | paste -sd: | tr 'A-F' 'a-f')
+    if _holds=$(pci_chip "$DEV_PCI"); then
         if [ -z "$_holds" ] || { [ -n "$DEV_CHIP" ] && [ "$_holds" != "$(printf %s "$DEV_CHIP" | tr 'A-F' 'a-f')" ]; }; then
             echo "dibs: asked for $DEV_NAME, recorded as ${DEV_CHIP:-a card} in $DEV_PCI, and that slot now holds ${_holds:-nothing}." >&2
             echo "  Not running it on another card under that name." >&2

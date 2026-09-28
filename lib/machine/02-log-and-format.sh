@@ -55,16 +55,5 @@ age_() { now; dur_ "$1" $(( NOW - $2 )); }
 dur() { local d; dur_ d "$1"; printf '%s' "$d"; }
 age() { local d; age_ d "$1"; printf '%s' "$d"; }
 
-# CPU seconds burned by a holder and everything under it, including children it has
-# already reaped. That last part is the whole difficulty: a supervisor that spawns a
-# benchmark, waits for it, and spawns the next one owns almost no CPU itself at any given
-# instant, and ps TIME only reports the living. Reading utime+stime+cutime+cstime out of
-# /proc counts the work its finished children did, which is where a sweep's time lives.
-#
-# The kernel lists a process's children, so the walk descends the holder's own tree instead
-# of reading every process on the machine, and every step of it is a shell builtin. That is
-# the difference between a --watch tick costing a benchmark nothing and costing it a
-# machine-wide /proc scan and thirty forks, five times a minute.
+# Clock ticks per second, the unit tree_cpu_ticks counts in.
 CLK=$(getconf CLK_TCK 2>/dev/null || echo 100)
-HAVE_CHILDREN=0
-[ "${DIBS_NO_CHILDREN:-0}" = 1 ] || { [ -r "/proc/$$/task/$$/children" ] && HAVE_CHILDREN=1; }
