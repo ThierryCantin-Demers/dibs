@@ -17,7 +17,8 @@ tells two people the machine is idle at the same time.
 
 `install.sh` symlinks `bin/dibs` into `~/.local/bin` so a pull updates it, and builds the recipe
 layer under `~/.local/libexec/dibs` and `dibstop` if cargo is present. Pass `--copy` if you would rather have files that do not move
-under you. Without cargo you still have a working lock, just not the interface above it.
+under you, and `--machines` for `dibs-machines`, a desktop window on what each machine has against
+what it should. Without cargo you still have a working lock, just not the interface above it.
 
 Then record your machine and say where your checkouts live:
 

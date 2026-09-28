@@ -2,16 +2,26 @@
 # Put dibs on this machine. Run it from the clone; run it again after a pull if you want
 # the recipe layer rebuilt. dibs --update does both.
 #
-#   ./install.sh
+#   ./install.sh [--copy] [--machines]
 #
 # Symlinks rather than copies, so a pull updates the tool without a second step. Pass --copy
-# if you would rather have files that do not move under you.
+# if you would rather have files that do not move under you. --machines adds dibs-machines,
+# the desktop window on your machines.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BIN=${PREFIX:-$HOME/.local}/bin
 MODE=symlink
-[ "${1:-}" = --copy ] && MODE=copy
+WINDOW=0
+for a in "$@"; do
+    case "$a" in
+        --copy) MODE=copy ;;
+        --machines) WINDOW=1 ;;
+        *) echo "install.sh: unknown option $a; it takes --copy and --machines" >&2; exit 2 ;;
+    esac
+done
+# dibs --update passes nothing, so a window installed once is rebuilt from then on.
+[ -x "$BIN/dibs-machines" ] && WINDOW=1
 
 mkdir -p "$BIN"
 for f in dibs; do
@@ -37,6 +47,10 @@ if command -v cargo >/dev/null 2>&1; then
     echo "installed the recipe layer $(git -C "$HERE" rev-parse --short HEAD 2>/dev/null) in $CORE/bin"
     cargo install --quiet --path "$HERE/dibs-tui" --root "${PREFIX:-$HOME/.local}" --force
     echo "installed dibstop in $BIN"
+    if [ "$WINDOW" = 1 ]; then
+        cargo install --quiet --path "$HERE/dibs-machines" --root "${PREFIX:-$HOME/.local}" --force
+        echo "installed dibs-machines in $BIN"
+    fi
 else
     echo "no cargo, so the recipe layer and dibstop were not built. Install Rust and run this again, or ask" >&2
     echo "whoever owns the machine for a prebuilt dibs-core to drop in ${PREFIX:-$HOME/.local}/libexec/dibs/bin." >&2

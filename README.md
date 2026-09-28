@@ -40,7 +40,8 @@ intended setup, since it lets one build cache serve everyone.
     cd dibs && ./install.sh
 
 `install.sh` links `dibs` into `~/.local/bin`, so pulling the clone updates it. With cargo
-installed it also builds the recipe layer and `dibstop`; without cargo you still get the lock.
+installed it also builds the recipe layer and `dibstop`, and with `--machines` the
+`dibs-machines` window; without cargo you still get the lock.
 
 Record each machine, and say where your checkouts live:
 
