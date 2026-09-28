@@ -77,10 +77,15 @@ unreachable() {
             diagnosed=1
             echo "  The name '${HOST##*@}' does not resolve from here. A .local name needs mDNS" >&2
             echo "  and the same network; anything else needs DNS." >&2 ;;
-        *"Network is unreachable"*|*"No route to host"*)
+        *"Network is unreachable"*)
             diagnosed=1
             echo "  This side has no route to it: the problem is your own network or VPN, not the" >&2
             echo "  machine. Nothing about it can be known from here until that is back." >&2 ;;
+        # Also what a machine on this very network gives when it does not answer for its address.
+        *"No route to host"*)
+            diagnosed=1
+            echo "  Nothing answered at its address: it is asleep, off, or no longer at that address." >&2
+            echo "  A laptop asleep on its lid or battery looks exactly like this." >&2 ;;
     esac
     # Only when ssh's own answer explained nothing, and only for a machine tailscale actually
     # carries: what it says about a machine reached over the LAN is not evidence either way.

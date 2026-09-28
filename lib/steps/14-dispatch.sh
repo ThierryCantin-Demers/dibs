@@ -141,7 +141,7 @@ else
             -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" \
             "mkdir -p $REMOTE_DIR 2>/dev/null; head -c ${#PAYLOAD} | base64 -d > $REMOTE_SCRIPT && \
              exec bash ${DIBS_TRACE:+-x} $REMOTE_SCRIPT
-exit 70" < <(printf %s "$PAYLOAD"; exec <&7 6>&- 7<&-; relay) 6>&- 7<&-
+exit 70" < <({ printf %s "$PAYLOAD"; exec <&7 6>&- 7<&-; relay; } 2>/dev/null) 6>&- 7<&-
     }
     if [ "$HOLD" = 1 ]; then hold_run to_machine; else to_machine; fi
     STATUS=$?
