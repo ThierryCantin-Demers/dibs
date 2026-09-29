@@ -240,7 +240,11 @@ fn a_card_it_cannot_name_is_refused_before_anything_is_sent() {
     let app = app(&s);
     recipes(&s, &format!("{PARAMS}\n[service.servers]\nbuild = \"true\"\n\n[[service.servers.serve]]\nname = \"api\"\nrun = \"true\"\n"));
     let local = format!("{app}@local");
-    for args in [vec!["build", &local, "p", "--device", "nope"], vec!["with", &local, "servers", "--device", "nope", "--", "true"]] {
+    for args in [
+        vec!["build", &local, "p", "--device", "nope"],
+        vec!["build", &local, "p", "--device", "nope", "--dry-run"],
+        vec!["with", &local, "servers", "--device", "nope", "--", "true"],
+    ] {
         let out = s.dibs(args.clone()).run();
         assert_eq!((out.code, out.stderr.lines_with("--device"), arrivals(&s)), (2, 1, 0), "{args:?}: {}", out.all());
     }

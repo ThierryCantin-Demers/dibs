@@ -881,6 +881,14 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
     };
 
     if args.dry_run {
+        // Asked what the real run asks before it builds, so a card or a series it would refuse
+        // is refused here, where someone reads the device line before measuring.
+        if rec.steps.iter().any(|s| s.lock == Lock::Exclusive) || args.device.is_some() {
+            let backend = Dibs { machine: destination(rec, &repo_name, name)?, ..Dibs::default() };
+            if refused_before_building(&backend, rec, &step_labels, &args)? {
+                return Ok(ExitCode::from(EXIT_REFUSED));
+            }
+        }
         println!("label       {label}");
         println!("recipe      {name}  ({fingerprint})");
         println!("isolation   {:?}", rec.isolation);
@@ -944,55 +952,17 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    // A recipe with any exclusive step is a measurement, and a measurement goes where it is
-    // told: its history keys on the machine, and bindings that would make moving one safe do
-    // not exist yet. So only a wholly shared recipe, which is every build and test, is placed.
-    //
-    // Both paths then claim the repo's build cache for the machine they chose, and a
-    // measurement's claim is the one that sticks because it is the one that could not move.
-    // Without that, a build ranked onto one machine leaves the benchmark on another to compile
-    // inside its own exclusive lock, which is what splitting build from measure prevents. A
-    // pinned call claims nothing: the machines report the caches it leaves.
-    let mut backend = Dibs::default();
-    backend.machine = if rec.steps.iter().all(|s| s.lock == Lock::Shared) {
-        place(&backend.program, affinity_get(&repo_name).as_deref(), Some(&repo_name))?
-    } else {
-        match Dibs::which(&backend.program) {
-            Destination::Named(m) => Some(m),
-            Destination::Unnamed => None,
-            Destination::Unchosen => {
-                return Err(format!(
-                    "{name} measures, and a measurement names its machine: its series belongs to the machine it\n  \
-                     ran on. Give --on <machine>, or export DIBS_ON; dibs --machines lists them."
-                )
-                .into())
-            }
-        }
-    };
+    // Both paths claim the repo's build cache for the machine they chose, and a measurement's
+    // claim is the one that sticks because it is the one that could not move. Without that, a
+    // build ranked onto one machine leaves the benchmark on another to compile inside its own
+    // exclusive lock, which is what splitting build from measure prevents. A pinned call claims
+    // nothing: the machines report the caches it leaves.
+    let backend = Dibs { machine: destination(rec, &repo_name, name)?, ..Dibs::default() };
     if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
         affinity_set(&repo_name, m);
     }
-    // A shared recipe is asked too when it names a card, which is otherwise checked by the first
-    // step that carries it, after the tree and its dependencies have been sent.
-    let exclusive: Vec<usize> = (0..rec.steps.len()).filter(|&i| rec.steps[i].lock == Lock::Exclusive).collect();
-    let asked = match exclusive.is_empty() && args.device.is_some() {
-        true => vec![0],
-        false => exclusive,
-    };
-    for i in asked {
-        let req = Request {
-            label: &step_labels[i],
-            lock: rec.steps[i].lock,
-            isolation: rec.isolation,
-            needs: None,
-            device: args.device.as_deref(),
-            env: &[],
-            max: None,
-            new_series: args.new_series,
-        };
-        if !backend.preflight(&req)? {
-            return Ok(ExitCode::from(2));
-        }
+    if refused_before_building(&backend, rec, &step_labels, &args)? {
+        return Ok(ExitCode::from(EXIT_REFUSED));
     }
 
     // The worktree comes first and takes the shared lock, because a fetch and a checkout are
@@ -1367,6 +1337,52 @@ fn sweep_points(args: &Args) -> Vec<BTreeMap<String, String>> {
 
 /// A sweep is a batch of ordinary calls, which is what makes it one wake and one summary rather
 /// than one per point. They run in sequence because they share a worktree and its build cache.
+/// A recipe with any exclusive step is a measurement, and a measurement goes where it is told:
+/// its history keys on the machine, and bindings that would make moving one safe do not exist
+/// yet. So only a wholly shared recipe, which is every build and test, is placed.
+fn destination(rec: &recipe::Recipe, repo_name: &str, name: &str) -> Result<Option<String>, Failure> {
+    let program = Dibs::default().program;
+    if rec.steps.iter().all(|s| s.lock == Lock::Shared) {
+        return Ok(place(&program, affinity_get(repo_name).as_deref(), Some(repo_name))?);
+    }
+    match Dibs::which(&program) {
+        Destination::Named(m) => Ok(Some(m)),
+        Destination::Unnamed => Ok(None),
+        Destination::Unchosen => Err(format!(
+            "{name} measures, and a measurement names its machine: its series belongs to the machine it\n  \
+             ran on. Give --on <machine>, or export DIBS_ON; dibs --machines lists them."
+        )
+        .into()),
+    }
+}
+
+/// Whether the wrapper refuses a measured step, or the first step when a card is named, on what it
+/// decides without the machine. A shared recipe's card is otherwise checked by the first step that
+/// carries it, after the tree and its dependencies have been sent.
+fn refused_before_building(backend: &Dibs, rec: &recipe::Recipe, step_labels: &[String], args: &Args) -> Result<bool, Failure> {
+    let exclusive: Vec<usize> = (0..rec.steps.len()).filter(|&i| rec.steps[i].lock == Lock::Exclusive).collect();
+    let asked = match exclusive.is_empty() && args.device.is_some() {
+        true => vec![0],
+        false => exclusive,
+    };
+    for i in asked {
+        let req = Request {
+            label: &step_labels[i],
+            lock: rec.steps[i].lock,
+            isolation: rec.isolation,
+            needs: None,
+            device: args.device.as_deref(),
+            env: &[],
+            max: None,
+            new_series: args.new_series,
+        };
+        if !backend.preflight(&req)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn sweep_run(args: &Args, points: &[BTreeMap<String, String>]) -> Result<ExitCode, Failure> {
     // Every point is checked before any of them is queued: a value the recipe refuses should be
     // found now, not two measurements into a sweep that is already holding the machine.
