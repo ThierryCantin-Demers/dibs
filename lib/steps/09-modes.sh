@@ -139,7 +139,27 @@ case "$MODE" in
         # nobody will look. One line on stderr, so it cannot get into rsync's own output.
         printf 'dibs: syncing with %s%s\n' "$HOST" \
             "$([ -n "$MACHINE" ] && [ "$MACHINE" != "$HOST" ] && printf ' (%s)' "$MACHINE")" >&2
-        exec rsync -e "bash $SELFPATH --rsh" "${SYNC[@]}"
+        # rsync collects its transport's exit without waiting for it, and the transport's pipe
+        # closes a moment before it has exited, so a machine it could not reach can come back
+        # as rsync's own stream error, 12, rather than as 69. The transport leaves its exit here.
+        DIBS_RSH_EXIT=$(mktemp "${TMPDIR:-/tmp}/dibs-rsh.XXXXXX") || exit 2
+        export DIBS_RSH_EXIT
+        exec 3<&0
+        rsync -e "bash $SELFPATH --rsh" "${SYNC[@]}" <&3 3<&- &
+        rsync_pid=$!
+        exec 3<&-
+        trap 'kill -TERM "$rsync_pid" 2>/dev/null' TERM INT HUP
+        wait "$rsync_pid"
+        st=$?
+        # A trapped signal ends the first wait early; the second has rsync's own answer.
+        [ "$st" -gt 128 ] && { wait "$rsync_pid"; st=$?; }
+        rsh=$(cat "$DIBS_RSH_EXIT" 2>/dev/null)
+        rm -f "$DIBS_RSH_EXIT"
+        case "$st:$rsh" in
+            0:*) ;;
+            *:6[4-9]|*:7[0-8]) st=$rsh ;;
+        esac
+        exit "$st"
         fi
         ;;
     rsh)
@@ -147,6 +167,7 @@ case "$MODE" in
         # Joined with spaces and not requoted, exactly as ssh would, since rsync has already
         # quoted what needs it and expects the far shell to expand the rest.
         [ $# -ge 2 ] || { echo "--rsh is rsync's transport, not for calling directly" >&2; exit 2; }
+        [ -n "${DIBS_RSH_EXIT:-}" ] && trap 'echo $? > "$DIBS_RSH_EXIT"' EXIT
         [ "$1" = "-l" ] && shift 2 # a user, when rsync was given one; the ssh config owns that
         shift                      # the host, which we already know
         BEFORE=$(sync_before) || exit 2
