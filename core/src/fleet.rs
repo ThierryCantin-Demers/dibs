@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn a_pin_is_read_from_either_toolchain_file() {
-        let dir = std::env::temp_dir().join(format!("dibs-pin-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dibs-fleet-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(pin(&dir), None);
         std::fs::write(dir.join("rust-toolchain"), "1.80.0\n").unwrap();
