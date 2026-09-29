@@ -9,10 +9,14 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const LABEL: &str = "dibs-friction";
 const FORWARD_READY: Duration = Duration::from_secs(30);
+const STOPPED: &str = "DIBS-FORWARD-STOPPED";
+/// A forwarder that lives less than this, this many times running, is not coming back.
+const SHORT_LIVED: Duration = Duration::from_secs(60);
+const SHORT_LIVES: u32 = 3;
 const LISTED: &str = "200";
 
 /// Opt-in per person, since a report says what they were doing: without it, friction stays on
@@ -201,9 +205,23 @@ fn on_event(event: &str, body: &Value, woken: &mut Keys, mine: &Keys) -> Vec<Str
     }
 }
 
-/// One webhook delivery: its event name and payload, answered so the forwarder moves on.
-fn delivery(stream: TcpStream) -> Option<(String, Value)> {
+/// What reached the listener: a webhook, or word from the forwarder's reader that it stopped,
+/// since a forwarder that dies otherwise leaves the wait listening to nothing, for good.
+enum Arrival {
+    Delivery(String, Value),
+    Stopped(String),
+}
+
+/// A webhook is answered, so the forwarder moves on.
+fn arrival(stream: TcpStream) -> Option<Arrival> {
     let mut reader = BufReader::new(stream.try_clone().ok()?);
+    let mut first = String::new();
+    reader.read_line(&mut first).ok()?;
+    if first.trim_end() == STOPPED {
+        let mut said = String::new();
+        let _ = reader.read_to_string(&mut said);
+        return Some(Arrival::Stopped(said));
+    }
     let (mut event, mut length) = (String::new(), 0usize);
     loop {
         let mut line = String::new();
@@ -225,7 +243,7 @@ fn delivery(stream: TcpStream) -> Option<(String, Value)> {
     let mut body = vec![0; length];
     reader.read_exact(&mut body).ok()?;
     let _ = (&stream).write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-    Some((event, serde_json::from_slice(&body).ok()?))
+    Some(Arrival::Delivery(event, serde_json::from_slice(&body).ok()?))
 }
 
 /// `gh webhook forward`, which relays the repo's webhooks over its own connection to GitHub, so
@@ -251,6 +269,9 @@ impl Forward {
                 }
                 said.push_str(&line);
                 said.push('\n');
+            }
+            if let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) {
+                let _ = write!(s, "{STOPPED}\n{said}");
             }
             let _ = tx.send(Err(said));
         });
@@ -290,21 +311,35 @@ pub fn wait(repo: &str) -> Result<Vec<String>, String> {
     woken.save()?;
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("no local port to listen on: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let _forward = Forward::start(repo, port)?;
-    let news = catch_up(repo, &mut woken, &mine)?;
-    if !news.is_empty() {
-        woken.save()?;
-        return Ok(news);
-    }
-    for stream in listener.incoming() {
-        let Some((event, body)) = stream.ok().and_then(delivery) else { continue };
-        let news = on_event(&event, &body, &mut woken, &mine);
+    let mut short = 0;
+    loop {
+        let started = Instant::now();
+        let forward = Forward::start(repo, port)?;
+        let news = catch_up(repo, &mut woken, &mine)?;
         if !news.is_empty() {
             woken.save()?;
             return Ok(news);
         }
+        let said = loop {
+            match listener.incoming().next().and_then(Result::ok).and_then(arrival) {
+                Some(Arrival::Stopped(said)) => break said,
+                Some(Arrival::Delivery(event, body)) => {
+                    let news = on_event(&event, &body, &mut woken, &mine);
+                    if !news.is_empty() {
+                        woken.save()?;
+                        return Ok(news);
+                    }
+                }
+                None => {}
+            }
+        };
+        drop(forward);
+        short = if started.elapsed() < SHORT_LIVED { short + 1 } else { 0 };
+        if short >= SHORT_LIVES {
+            return Err(format!("gh webhook forward keeps stopping as soon as it starts:\n{}", said.trim()));
+        }
+        eprintln!("dibs: gh webhook forward stopped, so it is started again. It said: {}", said.trim().lines().last().unwrap_or("nothing"));
     }
-    Err("stopped listening for reports".into())
 }
 
 /// Posted from here, so a wait does not wake on its own answer.

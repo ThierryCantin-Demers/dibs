@@ -21,6 +21,7 @@ case "$1 $2" in
     "webhook forward")
         while [ $# -gt 0 ]; do [ "$1" = --url ] && url=$2; shift; done
         echo "Forwarding Webhook events from GitHub..." >&2
+        if [ -e "$d/stop-once" ]; then rm "$d/stop-once"; echo "error: the websocket closed" >&2; exit 1; fi
         curl -s -X POST -H "X-GitHub-Event: issue_comment" --data @"$d/event.json" "$url" >/dev/null
         mkfifo "$d/hold.$$"; read -r _ < "$d/hold.$$" ;;
 esac
@@ -104,4 +105,19 @@ fn an_answer_posted_from_here_is_its_own() {
     assert_eq!(gh_log(&s).lines_with("issue comment 5 -R o/r --body fixed in abc"), 1, "{}", gh_log(&s));
     assert_eq!(gh_log(&s).lines_with("issue close 5 -R o/r"), 1);
     assert_eq!(s.read("home/.local/state/dibs/reports-mine").lines_with("issuecomment-99"), 1, "so a wait never wakes on it");
+}
+
+#[test]
+fn a_forwarder_that_stops_is_started_again_rather_than_listened_past() {
+    let s = Sandbox::new();
+    fake_gh(&s, "PRIVATE");
+    s.write("home/.local/state/dibs/reports-woken", "#5\n");
+    s.write("ghd/stop-once", "");
+    s.write(
+        "ghd/event.json",
+        r#"{"action":"created","issue":{"number":5,"labels":[{"name":"dibs-friction"}]},"comment":{"html_url":"https://github.com/o/r/issues/5#issuecomment-2","user":{"login":"sam"},"body":"again"}}"#,
+    );
+    let out = s.dibs(["--friction", "--wait"]).env("DIBS_REPORTS", "o/r").run();
+    assert_eq!((out.code, out.stdout.lines_with("comment on #5 from sam: again")), (0, 1), "{}", out.all());
+    assert_eq!(out.stderr.lines_with("started again. It said: error: the websocket closed"), 1, "{}", out.all());
 }
