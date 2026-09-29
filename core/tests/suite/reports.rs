@@ -64,10 +64,10 @@ fn an_answer_reaches_the_session_that_reported_it_once() {
     s.write("home/.local/state/dibs/friction.jsonl", "{\"t\":1,\"text\":\"x\",\"by\":\"me\",\"dibs\":\"a\",\"issue\":7}\n");
     s.write(
         "ghd/issues.json",
-        r#"[{"number":7,"state":"OPEN","comments":[{"url":"https://github.com/o/r/issues/7#issuecomment-3","author":{"login":"thierry"},"body":"fixed in abc, run dibs --update\nmore"}]}]"#,
+        r#"[{"number":7,"state":"OPEN","comments":[{"url":"https://github.com/o/r/issues/7#issuecomment-3","author":{"login":"maintainer"},"body":"fixed in abc, run dibs --update\nmore"}]}]"#,
     );
     let call = |who: &str| s.dibs(["--label", "l", "true"]).no_session().env("DIBS_AGENT", who).env("DIBS_REPORTS", "o/r").run();
-    let answered = "your report #7 was answered by thierry: fixed in abc, run dibs --update";
+    let answered = "your report #7 was answered by maintainer: fixed in abc, run dibs --update";
     assert_eq!(call("other").stderr.lines_with(answered), 0, "not to a session that did not report it");
     std::fs::remove_file(s.path("home/.local/state/dibs/reports-asked")).unwrap();
     assert_eq!(call("me").stderr.lines_with(answered), 1);
