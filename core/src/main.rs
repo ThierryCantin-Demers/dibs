@@ -222,10 +222,13 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         match a.as_str() {
             "--" => {
                 let rest: Vec<String> = it.by_ref().collect();
-                if rest.is_empty() {
-                    return Err("-- needs a command after it".into());
-                }
-                command = Some(rest.join(" "));
+                // One word is a shell string, as ssh and the wrapper take it. Several are each
+                // quoted, so a word with spaces, such as the script given to bash -c, stays one.
+                command = Some(match rest.as_slice() {
+                    [] => return Err("-- needs a command after it".into()),
+                    [one] => one.clone(),
+                    words => words.iter().map(|w| sh(w)).collect::<Vec<_>>().join(" "),
+                });
                 break;
             }
             "--reason" => reason = Some(it.next().ok_or("--reason needs a sentence")?),
@@ -2270,6 +2273,16 @@ mod tests {
         assert_eq!(lines.len(), 2, "one call per value, each repeating its own measurement");
         assert_eq!(lines[0], "[samples-10] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 10");
         assert_eq!(lines[1], "[samples-30] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 30");
+    }
+
+    #[test]
+    fn several_words_after_the_separator_stay_several_words() {
+        let parsed = |words: &[&str]| parse_words(words.iter().map(|w| w.to_string())).unwrap().command;
+        assert_eq!(
+            parsed(&["with", "app@local", "srv", "--", "bash", "-c", "exec client ws://$DIBS_SERVICE_WS"]).as_deref(),
+            Some("bash -c 'exec client ws://$DIBS_SERVICE_WS'")
+        );
+        assert_eq!(parsed(&["shell", "app@local", "--reason", "r", "--", "echo a; echo $B"]).as_deref(), Some("echo a; echo $B"), "one word is a shell string");
     }
 
     #[test]
