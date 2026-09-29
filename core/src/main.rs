@@ -402,7 +402,8 @@ fn run() -> Result<ExitCode, Failure> {
     }
     // Every call this makes is a wrapper call, and the wrapper reads the machine from here.
     if let Some(m) = &args.on {
-        std::env::set_var("DIBS_ON", m);
+        // SAFETY: nothing has started a thread yet; every thread this spawns comes after.
+        unsafe { std::env::set_var("DIBS_ON", m) };
     }
 
     if args.verb == "batch" {
