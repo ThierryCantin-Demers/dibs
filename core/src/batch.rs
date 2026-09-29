@@ -238,6 +238,16 @@ fn describe(words: &[String]) -> Result<Step, String> {
                     "build" | "test" | "bench" | "shell" | "raw" => {
                         lock = "recipe";
                         label = Some(words[i..].iter().take(3).filter(|x| !x.starts_with('-')).cloned().collect::<Vec<_>>().join(" "));
+                        // The recipe layer takes these after the verb as well as before it.
+                        let mut rest = words[i + 1..].iter();
+                        while let Some(w) = rest.next() {
+                            match w.as_str() {
+                                "--on" => on = rest.next().cloned(),
+                                "--device" => device = rest.next().cloned(),
+                                "--" => break,
+                                _ => {}
+                            }
+                        }
                         break;
                     }
                     _ => {}
@@ -700,6 +710,8 @@ mod tests {
         assert_eq!(one("dibs run --bench 'x'").lock, "bench");
         let r = one("dibs bench cubek@local reduce --device gpu:0");
         assert_eq!((r.lock, r.label.as_deref()), ("recipe", Some("bench cubek@local reduce")));
+        let r = one("dibs bench cubek@a,b gemv --on m --backend cpu --device gpu:0 -- --on x");
+        assert_eq!((r.on.as_deref(), r.device.as_deref()), (Some("m"), Some("gpu:0")), "read after the recipe too, up to its command");
     }
 
     #[test]
