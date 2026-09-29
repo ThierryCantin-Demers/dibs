@@ -110,6 +110,21 @@ fn a_local_recipe_runs_in_the_tree_it_sent() {
 }
 
 #[test]
+fn a_recipe_on_a_machine_it_cannot_reach_exits_69() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    let out = s
+        .dibs(["shell", &format!("{app}@local"), "--reason", "test", "--", "true"])
+        .env("DIBS_LOCAL", "0")
+        .env("DIBS_CONNECT_TIMEOUT", "2")
+        .env("DIBS_HOSTNAME", "nowhere")
+        .env("DIBS_HOST", "nowhere.invalid")
+        .run();
+    assert_eq!(out.code, 69, "as the call that could not reach it did: {}", out.stderr);
+    assert_eq!(out.stderr.lines_with("could not prepare"), 1, "{}", out.stderr);
+}
+
+#[test]
 fn a_recipe_at_a_ref_runs_in_one_job() {
     let s = Sandbox::new();
     let app = app(&s);

@@ -115,9 +115,37 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("dibs: {e}");
-            ExitCode::from(2)
+            eprintln!("dibs: {}", e.message);
+            ExitCode::from(e.code)
         }
+    }
+}
+
+const EXIT_REFUSED: u8 = 2;
+
+/// What stopped a run, and the exit it ends with. A dibs call that failed passes its own exit on,
+/// so an unreachable machine reads as 69 to whoever ran this rather than as a refusal.
+struct Failure {
+    message: String,
+    code: u8,
+}
+
+impl Failure {
+    fn passing(status: i32, message: String) -> Failure {
+        let code = u8::try_from(status).ok().filter(|c| *c != 0).unwrap_or(EXIT_REFUSED);
+        Failure { message, code }
+    }
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Failure {
+        Failure { message, code: EXIT_REFUSED }
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(message: &str) -> Failure {
+        message.to_string().into()
     }
 }
 
@@ -364,7 +392,7 @@ fn repo_root() -> PathBuf {
     PathBuf::from(".")
 }
 
-fn run() -> Result<ExitCode, String> {
+fn run() -> Result<ExitCode, Failure> {
     let args = parse()?;
     if args.there && args.verb != "with" {
         return Err("--there belongs to with: it runs the command on the machine beside the repo's servers".into());
@@ -385,7 +413,7 @@ fn run() -> Result<ExitCode, String> {
 
     if args.verb == "machines" {
         let only = (!args.repo.is_empty()).then_some(args.repo.as_str());
-        return fleet::command(args.json, only, &args.root, recipe_repos(), &pool());
+        return Ok(fleet::command(args.json, only, &args.root, recipe_repos(), &pool())?);
     }
 
     if args.verb == "gaps" {
@@ -817,7 +845,7 @@ struct Tree {
     prepared: Option<worktree::Prepared>,
 }
 
-fn run_recipe(args: Args) -> Result<ExitCode, String> {
+fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
     let points = sweep_points(&args);
     if points.len() > 1 {
         return sweep_run(&args, &points);
@@ -936,7 +964,8 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
                 return Err(format!(
                     "{name} measures, and a measurement names its machine: its series belongs to the machine it\n  \
                      ran on. Give --on <machine>, or export DIBS_ON; dibs --machines lists them."
-                ))
+                )
+                .into())
             }
         }
     };
@@ -1012,7 +1041,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
                 let (out, text) = sync_prepared(&backend, from, &script, &l.key, &setup, &mut announce)?;
                 drop(lock);
                 if !text.contains("DIBS-READY") || out.status != 0 {
-                    return Err(format!("could not send the pinned {} from {} (exit {})", p.repo, from.display(), out.status));
+                    return Err(Failure::passing(out.status, format!("could not send the pinned {} from {} (exit {})", p.repo, from.display(), out.status)));
                 }
                 text
             }
@@ -1020,7 +1049,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
                 eprintln!("dibs: pinning {}@{}", p.repo, p.reference);
                 let (out, text) = backend.run_capture(&setup, &script)?;
                 if out.status != 0 {
-                    return Err(format!("could not prepare the pinned {}@{} (exit {})", p.repo, p.reference, out.status));
+                    return Err(Failure::passing(out.status, format!("could not prepare the pinned {}@{} (exit {})", p.repo, p.reference, out.status)));
                 }
                 text
             }
@@ -1098,10 +1127,10 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
                 let (out, text) = sync_prepared(&backend, arms[a].dir(&dir), &t.script, key, &setup, &mut announce)?;
                 checkout_locks[a] = None;
                 if !text.contains("DIBS-READY") {
-                    return Err(format!("could not prepare {} (exit {})", what(a), out.status));
+                    return Err(Failure::passing(out.status, format!("could not prepare {} (exit {})", what(a), out.status)));
                 }
                 if out.status != 0 {
-                    return Err(format!("sending {} failed (exit {})", arms[a].dir(&dir).display(), out.status));
+                    return Err(Failure::passing(out.status, format!("sending {} failed (exit {})", arms[a].dir(&dir).display(), out.status)));
                 }
                 t.prepared = Some(worktree::parse(&text)?);
                 send_missing_gitdbs(&backend, &text, &t.gitdbs);
@@ -1111,7 +1140,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
                 let t = &mut trees[a];
                 let (out, text) = backend.run_capture(&setup, &t.script)?;
                 if out.status != 0 {
-                    return Err(format!("could not prepare {} (exit {})", what(a), out.status));
+                    return Err(Failure::passing(out.status, format!("could not prepare {} (exit {})", what(a), out.status)));
                 }
                 announce(&text);
                 t.prepared = Some(worktree::parse(&text)?);
@@ -1154,7 +1183,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, String> {
             let command = worktree::ahead(&t.script, worktree::Then::Step, &rec.steps[step].run) + &format!("{{ {run}; }}");
             let (out, text) = backend.run_reporting(&req, &command, &mut announce)?;
             if !text.contains("DIBS-READY") && !text.contains("DIBS-HELD") {
-                return Err(format!("could not prepare {} (exit {})", what(arm), out.status));
+                return Err(Failure::passing(out.status, format!("could not prepare {} (exit {})", what(arm), out.status)));
             }
             t.prepared = Some(worktree::parse(&text)?);
             send_missing_gitdbs(&backend, &text, &t.gitdbs);
@@ -1338,7 +1367,7 @@ fn sweep_points(args: &Args) -> Vec<BTreeMap<String, String>> {
 
 /// A sweep is a batch of ordinary calls, which is what makes it one wake and one summary rather
 /// than one per point. They run in sequence because they share a worktree and its build cache.
-fn sweep_run(args: &Args, points: &[BTreeMap<String, String>]) -> Result<ExitCode, String> {
+fn sweep_run(args: &Args, points: &[BTreeMap<String, String>]) -> Result<ExitCode, Failure> {
     // Every point is checked before any of them is queued: a value the recipe refuses should be
     // found now, not two measurements into a sweep that is already holding the machine.
     sides(args.reference.as_deref())?;
@@ -1418,7 +1447,7 @@ fn point_name(args: &Args, p: &BTreeMap<String, String>) -> String {
 /// A repo's servers, running on the machine under one lock while the command runs here: a
 /// dashboard, a client, a test suite driving them over the network. It ends by becoming that
 /// dibs call rather than waiting on one, so the command keeps this terminal.
-fn with_service(args: &Args) -> Result<ExitCode, String> {
+fn with_service(args: &Args) -> Result<ExitCode, Failure> {
     let sides = sides(args.reference.as_deref())?;
     if sides.len() > 1 {
         return Err("with runs against one tree, so it takes one ref".into());
@@ -1441,7 +1470,7 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
         }
     })?;
     if svc.serves.is_empty() {
-        return Err(format!("service '{name}' starts nothing: it needs a [[service.{name}.serve]] with a run"));
+        return Err(format!("service '{name}' starts nothing: it needs a [[service.{name}.serve]] with a run").into());
     }
     let command = args.command.as_deref().ok_or("with needs a command after --")?;
 
@@ -1527,14 +1556,14 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
                 c.lock = None;
             }
             if !text.contains("DIBS-READY") || out.status != 0 {
-                return Err(format!("could not prepare {repo_name} from {} (exit {})", from.display(), out.status));
+                return Err(Failure::passing(out.status, format!("could not prepare {repo_name} from {} (exit {})", from.display(), out.status)));
             }
             text
         }
         None => {
             let (out, text) = backend.run_capture(&setup, &script)?;
             if out.status != 0 {
-                return Err(format!("could not prepare {repo_name}@{reference} (exit {})", out.status));
+                return Err(Failure::passing(out.status, format!("could not prepare {repo_name}@{reference} (exit {})", out.status)));
             }
             announce(&text);
             text
@@ -1603,7 +1632,7 @@ fn with_service(args: &Args) -> Result<ExitCode, String> {
         true => cmd.arg("--").arg(in_tree(command)),
         false => cmd.arg("--").arg(command),
     };
-    Err(format!("could not run {}: {}", backend.program, exec(cmd)))
+    Err(format!("could not run {}: {}", backend.program, exec(cmd)).into())
 }
 
 /// What step `i` runs in its tree. A build claims the target for this tree, and a measurement
