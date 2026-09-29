@@ -15,11 +15,13 @@ pub struct Note {
     pub text: String,
     pub by: String,
     pub version: String,
+    /// Where it was filed, when DIBS_REPORTS names a repo to file it in.
+    pub issue: Option<u64>,
 }
 
 /// Beside the run records, and moved by a variable of its own: it answers for the same work, and
-/// where it should live is the user's to decide, a repo they share with someone being one place
-/// a complaint about their tooling does not belong.
+/// where it should live is the user's to decide. Sharing it is theirs to choose too, with
+/// DIBS_REPORTS, and never a default.
 pub fn path() -> Result<PathBuf, String> {
     match std::env::var_os("DIBS_FRICTION") {
         Some(p) => Ok(PathBuf::from(p)),
@@ -43,6 +45,7 @@ pub fn note(text: &str, by: &str, version: &str, when: u64) -> Result<Note, Stri
         text: text.chars().take(280).collect(),
         by: by.chars().take(48).collect(),
         version: version.chars().take(40).collect(),
+        issue: None,
     })
 }
 
@@ -52,12 +55,15 @@ pub fn append(path: &Path, n: &Note) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    let line = serde_json::json!({
+    let mut line = serde_json::json!({
         "t": n.when,
         "text": n.text,
         "by": n.by,
         "dibs": n.version,
     });
+    if let Some(i) = n.issue {
+        line["issue"] = i.into();
+    }
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -78,6 +84,7 @@ pub fn load(path: &Path) -> Vec<Note> {
                 text,
                 by: s("by"),
                 version: s("dibs"),
+                issue: v.get("issue").and_then(Value::as_u64),
             })
         })
         .collect()

@@ -116,7 +116,11 @@
 #                                misled, a bug. One line, kept where the next session reads
 #                                it, and printed by dibs gaps beside the recipes nothing
 #                                fitted. Nothing else records a problem that is not a
-#                                missing recipe.
+#                                missing recipe. With DIBS_REPORTS=<owner>/<repo>, also
+#                                filed there as an issue, and its answers shown later.
+#   dibs --friction --wait      returns when a report or a comment lands in DIBS_REPORTS
+#   dibs --friction --reply <n> '<answer>' [--close]
+#                                answers report n there
 #   dibs --log [n]              the last n arrivals and outcomes, killings included
 #
 # A shared job quick enough to be gone before a queued benchmark could have started anyway

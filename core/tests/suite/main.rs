@@ -12,6 +12,7 @@ mod lock;
 mod machines;
 mod output;
 mod recipes;
+mod reports;
 mod sandbox;
 mod scratch;
 mod services;

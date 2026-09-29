@@ -85,12 +85,30 @@ version_notice() {   # [quiet]
 # One line about what got in the way, recorded where the next session will read it. The text
 # goes in the environment rather than in the arguments, because a report about a flag starts
 # with that flag and every parser between here and the file would take it as one.
-report_friction() {   # text
+report_friction() {   # text | --wait | --reply <issue> <answer> [--close]
     local core
-    need --friction "$1"
+    need --friction "${1:-}"
     core=$(dibs_core) ||
         { echo "dibs: --friction needs the recipe layer, which is not installed. Run install.sh from the clone." >&2; exit 2; }
-    export DIBS_FRICTION_TEXT=$1 DIBS_FRICTION_BY=$(agent_name) DIBS_FRICTION_AT=$(dibs_version)
+    export DIBS_FRICTION_BY=$(agent_name) DIBS_FRICTION_AT=$(dibs_version)
+    case "$1" in
+        --wait) exec "$core" friction --wait ;;
+        --reply) export DIBS_FRICTION_TEXT=${3:-}
+                 exec "$core" friction --reply "${2:-}" "${@:4}" ;;
+    esac
+    export DIBS_FRICTION_TEXT=$1
     version_notice
     exec "$core" friction
+}
+
+# Answers to this session's reports, from the repo DIBS_REPORTS files them in. Asked at most
+# every few minutes, so a call pays for it rarely; the recipe layer asks only for a session that
+# has filed something.
+report_replies() {
+    [ -n "${DIBS_REPORTS:-}" ] || return 0
+    local stamp=${XDG_STATE_HOME:-$HOME/.local/state}/dibs/reports-asked core
+    [ -n "$(find "$stamp" -mmin -"${DIBS_REPORTS_EVERY:-5}" 2>/dev/null)" ] && return 0
+    core=$(dibs_core) || return 0
+    mkdir -p "$(dirname "$stamp")" 2>/dev/null && touch "$stamp" 2>/dev/null
+    DIBS_FRICTION_BY=$(agent_name) bounded 15 "$core" friction --replies </dev/null >&2 || true
 }

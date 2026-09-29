@@ -346,6 +346,19 @@ bug, anything an agent had to work around. It is one line, in whoever hit it's o
 `~/.local/state/dibs/friction.jsonl` or `$DIBS_FRICTION` with the session that reported it and the
 commit dibs was at.
 
+A team can send those reports to whoever maintains dibs. With `DIBS_REPORTS=<owner>/<repo>` set,
+naming a private repo that person can read, each report is also filed there as an issue labelled
+`dibs-friction`, through `gh`, and a public repo is refused because a report carries paths and
+commands. It is per person: without the variable, nothing leaves the machine. An answer posted on
+the issue is printed on the stderr of a later dibs call from the session that filed it, which
+checks at most every `$DIBS_REPORTS_EVERY` minutes (5).
+
+The maintainer's side: `dibs --friction --wait` returns when a report or a comment lands, having
+read first whatever landed while nothing was listening, so a session can run it in the background
+and be woken by it. It listens through `gh webhook forward` (`gh extension install cli/gh-webhook`,
+admin on the repo), with no public endpoint. `dibs --friction --reply <n> '<answer>' [--close]`
+answers one, and a wait never wakes on its own answer.
+
 `dibs gaps` prints those beside the other thing that means the tool did not fit: the reasons
 recorded by `dibs raw --reason` and `dibs shell --reason`, which is what a run that needed no
 recipe says for itself. Both are grouped by what was said, and the count leads, because one report

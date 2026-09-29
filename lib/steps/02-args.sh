@@ -44,7 +44,7 @@ while [ $# -gt 0 ]; do
         --json)       JSON=1; shift ;;
         --release)    MODE=release; shift ;;
         --gc)         MODE=gc; shift ;;
-        --friction)   report_friction "${2:-}" ;;
+        --friction)   report_friction "${@:2}" ;;
         --dry-run)    DRY=1; shift ;;
         --days)       need --days "${2:-}"; GC_DAYS=$2; shift 2 ;;
         --log)        MODE=log; shift
@@ -115,7 +115,7 @@ while [ $# -gt 0 ]; do
                 run)    [ "$MODE" = shared ] || [ "$MODE" = bench ] || break; shift ;;
                 status) [ "$MODE" = shared ] || break; MODE=status; shift ;;
                 gc)     [ "$MODE" = shared ] || break; MODE=gc; shift ;;
-                friction) [ "$MODE" = shared ] || break; report_friction "${2:-}" ;;
+                friction) [ "$MODE" = shared ] || break; report_friction "${@:2}" ;;
                 out)    [ "$MODE" = shared ] || break; MODE=out; shift
                         if [ $# -gt 0 ] && [ -n "$1" ] && [ -z "${1//[0-9-]/}" ]; then
                             OUTPID=$1; shift

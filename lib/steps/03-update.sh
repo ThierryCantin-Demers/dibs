@@ -1,5 +1,6 @@
 if [ "$MODE" != update ]; then
     version_notice
+    report_replies
 else
     self=$(readlink -f "$0")
     clone=$(cd "$(dirname "$self")/.." && pwd)

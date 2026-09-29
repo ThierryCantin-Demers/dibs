@@ -19,6 +19,7 @@ mod gitdeps;
 mod pin;
 mod provenance;
 mod recipe;
+mod reports;
 mod resource;
 mod runs;
 mod worktree;
@@ -396,6 +397,10 @@ fn repo_root() -> PathBuf {
 }
 
 fn run() -> Result<ExitCode, Failure> {
+    let words: Vec<String> = std::env::args().skip(1).collect();
+    if words.first().map(String::as_str) == Some("friction") {
+        return friction_verb(&words[1..]);
+    }
     let args = parse()?;
     if args.there && args.verb != "with" {
         return Err("--there belongs to with: it runs the command on the machine beside the repo's servers".into());
@@ -423,20 +428,6 @@ fn run() -> Result<ExitCode, Failure> {
     if args.verb == "gaps" {
         print!("{}", runs::gaps(&runs::load(&runs_path()?)?));
         print!("{}", friction::report(&friction::load(&friction::path()?)));
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    // The text arrives in the environment rather than as an argument: a report about a flag
-    // starts with the flag, and parsing that as one is how the complaint becomes the complaint.
-    if args.verb == "friction" {
-        let env = |k: &str| std::env::var(k).unwrap_or_default();
-        let said = match env("DIBS_FRICTION_TEXT") {
-            t if !t.trim().is_empty() => t,
-            _ => args.repo.clone(),
-        };
-        let note = friction::note(&said, &env("DIBS_FRICTION_BY"), &env("DIBS_FRICTION_AT"), now_secs())?;
-        friction::append(&friction::path()?, &note)?;
-        println!("Recorded. dibs gaps prints it, with everything else that got in the way.");
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -1385,6 +1376,59 @@ fn refused_before_building(backend: &Dibs, rec: &recipe::Recipe, step_labels: &[
         }
     }
     Ok(false)
+}
+
+/// The text arrives in the environment rather than as an argument: a report about a flag starts
+/// with the flag, and parsing that as one is how the complaint becomes the complaint.
+fn friction_verb(words: &[String]) -> Result<ExitCode, Failure> {
+    let env = |k: &str| std::env::var(k).unwrap_or_default();
+    let reports_repo = || reports::repo().ok_or("DIBS_REPORTS names no <owner>/<repo> to take reports from");
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    match words.as_slice() {
+        ["--wait"] => {
+            for news in reports::wait(&reports_repo()?)? {
+                println!("{news}");
+            }
+        }
+        ["--reply", issue, rest @ ..] => {
+            let n: u64 = issue.trim_start_matches('#').parse().map_err(|_| format!("--reply needs an issue number, not {issue}"))?;
+            let close = match rest {
+                [] => false,
+                ["--close"] => true,
+                _ => return Err("--reply <issue> '<answer>' takes only --close after it".into()),
+            };
+            let text = env("DIBS_FRICTION_TEXT");
+            if text.trim().is_empty() {
+                return Err("--reply needs the answer to post".into());
+            }
+            println!("{}", reports::reply(&reports_repo()?, n, &text, close)?);
+        }
+        ["--replies"] => {
+            if let Some(repo) = reports::repo() {
+                for r in reports::replies(&repo, &friction::load(&friction::path()?), &env("DIBS_FRICTION_BY"))? {
+                    eprintln!("{r}");
+                }
+            }
+        }
+        _ => {
+            let said = match env("DIBS_FRICTION_TEXT") {
+                t if !t.trim().is_empty() => t,
+                _ => words.join(" "),
+            };
+            let mut note = friction::note(&said, &env("DIBS_FRICTION_BY"), &env("DIBS_FRICTION_AT"), now_secs())?;
+            let filed = reports::repo().map(|repo| (reports::file(&repo, &note), repo));
+            if let Some((Ok(n), _)) = &filed {
+                note.issue = Some(*n);
+            }
+            friction::append(&friction::path()?, &note)?;
+            match filed {
+                None => println!("Recorded. dibs gaps prints it, with everything else that got in the way."),
+                Some((Ok(n), repo)) => println!("Recorded, and filed as {repo}#{n}. An answer there shows on a later dibs call."),
+                Some((Err(e), repo)) => println!("Recorded here, but not filed in {repo}: {e}"),
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn sweep_run(args: &Args, points: &[BTreeMap<String, String>]) -> Result<ExitCode, Failure> {
