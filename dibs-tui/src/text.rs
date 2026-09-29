@@ -41,3 +41,24 @@ pub fn dur(s: i64) -> String {
         format!("{s}s")
     }
 }
+
+/// A control character drawn into a cell reaches the terminal as itself: a carriage return,
+/// which ssh ends its messages with, moves the cursor, and the screen is garbled where ratatui
+/// believes it drew text, so nothing ever redraws it.
+pub fn plain(s: &str) -> String {
+    s.chars()
+        .map(|c| if c == '\t' { ' ' } else { c })
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_that_moves_the_cursor_reaches_the_screen() {
+        assert_eq!(plain("ssh: connect to host m port 22: No route to host\r"), "ssh: connect to host m port 22: No route to host");
+        assert_eq!(plain("a\tb\x1b[31mc\u{7}"), "a b[31mc");
+    }
+}

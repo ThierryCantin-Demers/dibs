@@ -84,5 +84,6 @@ fn run(
         while let Ok(msg) = rx.try_recv() {
             app.receive(msg);
         }
+        app.retry_ended(&tx);
     }
 }

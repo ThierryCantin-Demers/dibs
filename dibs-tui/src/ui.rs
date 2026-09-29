@@ -9,7 +9,7 @@ use ratatui::{
 use crate::{
     app::{App, Overlay, PendingKill},
     item::Item,
-    text::{agent_hue, cores, dur, fit},
+    text::{agent_hue, cores, dur, fit, plain},
 };
 
 const DIM: Style = Style::new().fg(Color::DarkGray);
@@ -113,17 +113,21 @@ fn header(app: &App) -> Line<'static> {
             }
         }
     }
-    if let Some(t) = app.refreshed {
-        let age = t.elapsed().as_secs();
-        let late = ages.iter().any(|a| behind(*a, app.interval));
-        head.push(Span::styled(
-            format!("   updated {age}s ago, every {}s", app.interval),
-            if late {
-                Style::new().fg(Color::Yellow)
-            } else {
-                DIM
-            },
-        ));
+    let every = format!("every {}s", app.interval);
+    match app.refreshed {
+        Some(t) => {
+            let age = t.elapsed().as_secs();
+            let late = ages.iter().any(|a| behind(*a, app.interval));
+            head.push(Span::styled(
+                format!("   updated {age}s ago, {every}"),
+                if late {
+                    Style::new().fg(Color::Yellow)
+                } else {
+                    DIM
+                },
+            ));
+        }
+        None => head.push(Span::styled(format!("   {every}"), DIM)),
     }
     if let Some(b) = &app.busy {
         head.push(Span::styled(
@@ -328,15 +332,25 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
     Paragraph::new(lines).wrap(Wrap { trim: false })
 }
 
-/// With no job selected, the pane says what the feeds have complained about.
+/// With no job selected, the pane says what the feeds have complained about, each under the
+/// machine it came from.
 fn troubles(app: &App) -> Paragraph<'static> {
-    let text = app
+    let width = app.views.keys().map(|m| m.chars().count()).max().unwrap_or(0);
+    let lines: Vec<Line> = app
         .views
-        .values()
-        .filter_map(|v| v.trouble.clone())
-        .collect::<Vec<_>>()
-        .join("\n");
-    Paragraph::new(Span::styled(text, Style::new().fg(Color::Yellow)))
+        .iter()
+        .filter_map(|(m, v)| v.trouble.as_ref().map(|t| (m, t)))
+        .flat_map(|(m, t)| {
+            t.lines().enumerate().map(move |(i, l)| {
+                let name = if i == 0 { m.as_str() } else { "" };
+                Line::from(vec![
+                    Span::styled(format!("{name:width$}  "), DIM),
+                    Span::styled(plain(l), Style::new().fg(Color::Yellow)),
+                ])
+            })
+        })
+        .collect();
+    Paragraph::new(lines).wrap(Wrap { trim: false })
 }
 
 fn footer(app: &App) -> Paragraph<'static> {

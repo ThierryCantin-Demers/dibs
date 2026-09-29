@@ -1,7 +1,11 @@
 //! What the screen shows and what the keys act on: one view per machine, the selection, and
 //! whatever is open over the table.
 
-use std::{collections::BTreeMap, sync::mpsc::Sender, time::Instant};
+use std::{
+    collections::BTreeMap,
+    sync::mpsc::Sender,
+    time::{Duration, Instant},
+};
 
 use crate::{
     action::Action,
@@ -12,6 +16,9 @@ use crate::{
 
 const MIN_INTERVAL: u64 = 1;
 const MAX_INTERVAL: u64 = 60;
+
+/// How long a feed that ended waits before it is started again.
+const RETRY_ENDED: Duration = Duration::from_secs(30);
 
 pub fn interval(secs: u64) -> u64 {
     secs.clamp(MIN_INTERVAL, MAX_INTERVAL)
@@ -48,6 +55,8 @@ pub struct View {
     pub seen_at: Option<Instant>,
     pub trouble: Option<String>,
     pub dead: Option<String>,
+    /// When a feed that ended is started again; none while one is running.
+    pub retry_at: Option<Instant>,
 }
 
 pub struct App {
@@ -195,6 +204,7 @@ impl App {
                 v.status = Some(status);
                 v.seen_at = Some(now);
                 v.dead = None;
+                v.trouble = None;
                 self.busy = None;
                 self.close_round(now);
             }
@@ -210,14 +220,33 @@ impl App {
                 machine,
                 why,
             } if generation == self.generation => {
-                self.views.entry(machine).or_default().dead = Some(why);
-                self.close_round(Instant::now());
+                let now = Instant::now();
+                let v = self.views.entry(machine).or_default();
+                v.dead = Some(why);
+                v.retry_at = Some(now + RETRY_ENDED);
+                self.close_round(now);
             }
             Msg::State { .. } | Msg::Trouble { .. } | Msg::Ended { .. } => {}
             Msg::Action { title, body } => {
                 self.busy = None;
                 self.overlay = Some(Overlay::new(title, body));
             }
+        }
+    }
+
+    /// A machine asleep or off the network comes back without restarting this. It keeps showing
+    /// as down until the new feed reports, so a retry that fails again changes nothing on screen.
+    pub fn retry_ended(&mut self, tx: &Sender<Msg>) {
+        let now = Instant::now();
+        for (m, v) in self.views.iter_mut().filter(|(_, v)| v.retry_at.is_some_and(|t| t <= now)) {
+            self.feeds.retain(|f| f.machine != *m);
+            v.retry_at = match Feed::spawn(tx.clone(), m.clone(), self.interval, self.generation) {
+                Ok(feed) => {
+                    self.feeds.push(feed);
+                    None
+                }
+                Err(_) => Some(now + RETRY_ENDED),
+            };
         }
     }
 
@@ -255,6 +284,7 @@ mod tests {
             seen_at: seen,
             trouble: None,
             dead: dead.then(|| "gone".to_string()),
+            retry_at: None,
         }
     }
 
