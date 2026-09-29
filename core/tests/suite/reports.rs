@@ -103,8 +103,8 @@ fn an_answer_posted_from_here_is_its_own() {
     let out = s.dibs(["--friction", "--reply", "5", "fixed in abc", "--close"]).env("DIBS_REPORTS", "o/r").run();
     assert_eq!((out.code, out.stdout.lines_with("issues/5#issuecomment-99")), (0, 1), "{}", out.all());
     assert_eq!(gh_log(&s).lines_with("issue comment 5 -R o/r --body fixed in abc"), 1, "{}", gh_log(&s));
+    assert_eq!(gh_log(&s).lines_with("<!-- dibs --friction --reply -->"), 1, "marked, so a wait never wakes on it");
     assert_eq!(gh_log(&s).lines_with("issue close 5 -R o/r"), 1);
-    assert_eq!(s.read("home/.local/state/dibs/reports-mine").lines_with("issuecomment-99"), 1, "so a wait never wakes on it");
 }
 
 #[test]
