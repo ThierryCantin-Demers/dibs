@@ -223,8 +223,9 @@ spoiled without it.
   would otherwise be killed at the default cap.
 - `@local` in place of a ref sends your working tree, uncommitted changes included, following the
   repo's ignore rules. A ref the machine cannot fetch, because it was never pushed or the repo is
-  private (the machines hold no credentials), is checked out here and sent the same way, so
-  `@main..feature` and `--pin lib@main` work without a push. Reach for these before carrying code
+  private (the machines hold no credentials), is checked out here and sent the same way, and so
+  is a branch with commits its origin lacks, so `@main..feature` and `--pin lib@main` work without
+  a push. Reach for these before carrying code
   over by hand: a bundle, a tarball or a hand-written sync of a tree is this feature done worse.
 - An `@local` tree is reused from run to run, and so is any autotune store a tool keeps inside
   it: after run, edit, run, the second run reads the first one's winners. A recipe whose `fresh`

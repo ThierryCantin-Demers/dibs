@@ -1157,13 +1157,18 @@ fn cache_home() -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| "no HOME to keep a cache under".to_string())
 }
 
-/// The commit the machine would fetch for `name`, as near as this checkout knows it: by the
-/// remote-tracking ref, which a local branch of that name may be behind. And the name it was found
-/// under.
-pub fn as_fetched(dir: &std::path::Path, name: &str) -> Option<(String, String)> {
+/// The commit `name` means here, the name it was found under, and why it must be sent rather than
+/// fetched by name. That is the remote-tracking ref, which a local branch of that name may be
+/// behind, unless the local branch has commits origin lacks: fetching it would take origin's.
+pub fn as_fetched(dir: &std::path::Path, name: &str) -> Option<(String, String, Option<&'static str>)> {
     let tracking = format!("origin/{name}");
-    let found = [tracking.as_str(), name].into_iter().find_map(|n| commit(dir, n).ok().map(|c| (c, n.to_string())));
-    found
+    let Ok(pushed) = commit(dir, &tracking) else {
+        return commit(dir, name).ok().map(|c| (c, name.to_string(), None));
+    };
+    match commit(dir, &format!("refs/heads/{name}")) {
+        Ok(own) if git(dir, &["merge-base", "--is-ancestor", &own, &pushed]).is_err() => Some((own, name.to_string(), Some("origin's branch lacks it"))),
+        _ => Some((pushed, tracking, None)),
+    }
 }
 
 /// Why a machine, which holds no credentials, cannot fetch `sha` from this checkout's origin, or

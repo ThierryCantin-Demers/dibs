@@ -693,6 +693,18 @@ fn a_ref_the_machine_cannot_fetch_is_sent_from_here() {
         "a tip never pushed is sent, and its base, which was, is fetched: {}",
         out.all()
     );
+    s.git("app", &["checkout", "-q", "-b", "ahead", "origin/main"]);
+    s.git("app", &["push", "-q", "origin", "ahead"]);
+    s.write("app/a.txt", "ahead\n");
+    s.git("app", &["commit", "-qam", "ahead"]);
+    s.git("app", &["checkout", "-q", "feature"]);
+    let out = bench("ahead", &[]);
+    assert_eq!(
+        (out.code, out.stdout.lines_matching("^measured ahead in app-local-"), out.all().lines_with("as ahead stands here, sent from this computer since origin's branch lacks it")),
+        (0, 1, 1),
+        "a branch ahead of its origin is sent as it stands here, not fetched as pushed: {}",
+        out.all()
+    );
     private(&s, "app");
     fs::remove_dir_all(s.path("home/prog/app")).unwrap();
     let dry = bench("origin/main..feature", &["--dry-run"]).all();

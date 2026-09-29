@@ -197,9 +197,10 @@ first. A commit on no branch of `origin` here, or any commit of a repo whose rem
 anonymous read, is checked out in a clone under `~/.cache/dibs/sent` and sent like a local tree,
 into a tree on the machine keyed by the commit. That covers each end of a range, each arm of a
 list, `--pin <repo>@<ref>` and `dibs with`. The base of a range ending in `local` is always sent,
-whatever the remote holds. A ref sent this way is the commit as this checkout last fetched it,
-`origin/<ref>` where there is one, and the output names it. Whether a remote needs credentials is
-asked at most once a week and kept in `~/.cache/dibs/remotes`.
+whatever the remote holds. A ref is the commit as this checkout last fetched it, `origin/<ref>`
+where there is one, unless the local branch of that name has commits `origin/<ref>` lacks: then it
+is that branch as it stands here, and it is sent. The output names which. Whether a remote needs
+credentials is asked at most once a week and kept in `~/.cache/dibs/remotes`.
 
 ## Getting files back
 

@@ -650,13 +650,13 @@ fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
     let mut arms = Vec::with_capacity(sides.len());
     for s in sides {
         let name = s.name();
-        let (sha, fetch, note) = match s {
+        let (sha, fetch, note, ahead) = match s {
             Side::Local => {
                 arms.push(Arm { name, fetch: None, note: None, checkout: None });
                 continue;
             }
             Side::Ref(r) => match worktree::as_fetched(dir, r) {
-                Some((sha, seen)) => (sha, r.clone(), Some(format!("as {seen} stands here"))),
+                Some((sha, seen, ahead)) => (sha, r.clone(), Some(format!("as {seen} stands here")), ahead),
                 None => {
                     arms.push(Arm { name, fetch: Some(r.clone()), note: None, checkout: None });
                     continue;
@@ -664,7 +664,7 @@ fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
             },
             Side::Pinned(r) => {
                 let sha = worktree::commit(dir, r)?;
-                (sha.clone(), sha, None)
+                (sha.clone(), sha, None, None)
             }
             Side::Base(a, b) => {
                 let (sha, upstream) = worktree::merge_base(dir, &here(a), &here(b))?;
@@ -672,12 +672,12 @@ fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
                     Some(u) => format!("where {b} left {u}, since {a} is behind it"),
                     None => format!("where {b} left {a}"),
                 };
-                (sha.clone(), sha, Some(note))
+                (sha.clone(), sha, Some(note), None)
             }
         };
         let why = match s.sent() {
             true => None,
-            false => worktree::unfetchable(dir, &sha),
+            false => ahead.or_else(|| worktree::unfetchable(dir, &sha)),
         };
         arms.push(match s.sent() || why.is_some() {
             true => Arm { name, fetch: None, note, checkout: Some(worktree::checkout(dir, repo, &sha, why)?) },
@@ -783,9 +783,9 @@ fn pins_of(args: &Args, repo: &str, dir: &Path, arms: &[Arm]) -> Result<Vec<Pinn
         let (local, checkout, note, crates, lock) = match reference {
             "local" => (Some(worktree::local(&pdir)?), None, None, pin::local_crates(&pdir)?, lockfile(&pdir, None)),
             _ => {
-                let (sha, seen) = worktree::as_fetched(&pdir, reference).ok_or_else(|| format!("--pin {p}: no {reference} in {}", pdir.display()))?;
+                let (sha, seen, ahead) = worktree::as_fetched(&pdir, reference).ok_or_else(|| format!("--pin {p}: no {reference} in {}", pdir.display()))?;
                 let (crates, lock) = (pin::ref_crates(&pdir, &sha)?, lockfile(&pdir, Some(&sha)));
-                match worktree::unfetchable(&pdir, &sha) {
+                match ahead.or_else(|| worktree::unfetchable(&pdir, &sha)) {
                     Some(why) => {
                         let c = worktree::checkout(&pdir, &identity, &sha, Some(why))?;
                         (Some(c.local()?), Some(c), Some(format!("as {seen} stands here")), crates, lock)
