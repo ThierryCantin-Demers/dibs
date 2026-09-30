@@ -73,7 +73,7 @@ ACQUIRED=$(date +%s)
 # arrival time over would have --status report a job as running for the time it spent
 # queued, and every number drawn from that elapsed, the ETA, the stuck check and the idle
 # check, would be measuring a stretch the job spent doing nothing because it was waiting.
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$ACQUIRED" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$ACQUIRED" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" "$FINGERPRINT" > "$DIR/waiting.$$"
 mv "$DIR/waiting.$$" "$DIR/holder.$$"
 [ "$WAITED" -ge 5 ] && echo "dibs: acquired the $MODE lock after $(dur "$WAITED")" >&2
 

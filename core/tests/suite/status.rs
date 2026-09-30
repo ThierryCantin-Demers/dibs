@@ -211,6 +211,21 @@ fn an_overrun_is_measured_against_the_same_job_not_its_mode() {
 }
 
 #[test]
+fn a_run_with_other_values_is_not_accused_by_their_history() {
+    let s = Sandbox::new();
+    s.set_history("bench\tsweep\t20\ta\tsmall\nbench\tsweep\t20\ta\tsmall\nbench\tsweep\t20\ta\tsmall\n");
+    let (pid, then) = (live_pid(), (now() - 600).to_string());
+    let holder = |fp: &str| s.record("holder", pid, &["bench", &pid.to_string(), &then, "sweep", "a", "id", "-", "the big one", fp]);
+    holder("big");
+    let status = s.status();
+    assert_eq!(status.lines_with("STUCK"), 0, "a run of the label with smaller values does not accuse it:\n{status}");
+    assert_eq!(status.lines_with("nothing with these values; with others: usually 20s over 3 runs"), 1, "{status}");
+    assert_eq!(s.status_json()["holders"][0]["est_other_values"], true, "and the json says whose history it is");
+    holder("small");
+    assert_eq!(s.status().lines_with("STUCK"), 1, "a run with the same values does");
+}
+
+#[test]
 fn a_median_of_zero_accuses_nobody() {
     // Durations are whole seconds, so anything under one records as zero, and "3x its usual 0s"
     // was every run of a quick job.

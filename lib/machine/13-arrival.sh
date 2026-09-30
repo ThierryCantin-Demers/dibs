@@ -28,7 +28,7 @@ trap 'rm -f "$DIR/waiting.$$" "$DIR/holder.$$" "$DIR/work.$$" "$DIR/cpu.$$" "$DI
 
 # The fifo is also how --status tells a hold, which waits on purpose, from a job that is idle.
 [ "$HOLD" = 1 ] && ! mkfifo "$DIR/hold.$$" && { echo "dibs: could not make $DIR/hold.$$, so nothing is held." >&2; exit 71; }
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" > "$DIR/waiting.$$"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MODE" "$$" "$START" "$LABEL" "$AGENT" "$AGENT_ID" "${DEV_NAME:--}" "$CMD_ONE" "$FINGERPRINT" > "$DIR/waiting.$$"
 [ -n "$BATCH" ] && printf '%s\n' "$BATCH" > "$DIR/batch.$$"
 log_event arrived
 # A cap nobody chose follows this job's own history, so work that always runs long is not killed

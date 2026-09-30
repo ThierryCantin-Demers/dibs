@@ -235,7 +235,7 @@ case "$MODE" in
         found=0
         for f in "$DIR"/holder.*; do
             [ -e "$f" ] || continue
-            IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
+            IFS=$'\t' read -r mode pid start label agent who dev cmd fp < "$f"
             [ "$target" = all ] || [ "$target" = "$pid" ] || continue
             found=1
             echo "$mode  $label  pid $pid  ($(age "$start"))"
@@ -290,7 +290,7 @@ case "$MODE" in
             [ "${f##*.}" = "$target" ] && found=$f
         done
         [ -n "$found" ] || { echo "Nothing holding or queued with pid $target." >&2; show >&2; exit 1; }
-        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$found"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd fp < "$found"
         if ! still_the_same "$pid" "$found"; then
             rm -f "$found"
             echo "dibs: $mode $label ended without clearing its record, and pid $pid belongs to" >&2

@@ -58,7 +58,7 @@ show_json() {
     printf ',"holders":['
     for f in "$DIR"/holder.*; do
         [ -e "$f" ] || continue
-        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd fp < "$f"
         elapsed=$(( NOW - start ))
         cpu_used "$pid"
         holder_output "$pid"
@@ -68,7 +68,7 @@ show_json() {
         printf '%s{"mode":"%s","pid":%s,"label":%s,"agent":%s,"device":%s,"cmd":%s,"started":%s,"elapsed":%s,"cpu":%s' \
             "$sep" "$mode" "$pid" "$jl" "$ja" "$jd" "$jc" "$start" "$elapsed" "$CPU_USED"
         jleft=-1
-        if estimate "$mode" "$label" "$agent"; then
+        if estimate "$mode" "$label" "$agent" "$fp"; then
             remaining_of "$elapsed"
             [ "$REM" -gt "$free" ] && free=$REM
             jleft=$REM
@@ -76,6 +76,7 @@ show_json() {
             printf ',"est":%s,"est_lo":%s,"est_hi":%s,"est_n":%s,"est_scope":"%s"' \
                 "$EST_V" "$EST_LO" "$EST_HI" "$EST_N" "$EST_SCOPE"
             est_wide && printf ',"est_wide":true'
+            [ "$EST_OTHER" = 1 ] && printf ',"est_other_values":true'
             [ "$REM" -ge 0 ] && printf ',"remaining":%s,"remaining_kind":"%s"' "$REM" "$REM_KIND"
             overrunning "$elapsed" && printf ',"overrun":true'
         else
@@ -95,7 +96,7 @@ show_json() {
     queue_eta_start "$free" "$eta_known"
     for f in "${QF[@]}"; do
         [ -e "$f" ] || continue
-        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd fp < "$f"
         i=$((i+1))
         jstr jl "$label"; jstr ja "$agent"; jstr jc "$cmd"; jstr jd "$dev"
         printf '%s{"position":%s,"mode":"%s","pid":%s,"label":%s,"agent":%s,"device":%s,"cmd":%s,"arrived":%s,"waiting":%s' \
@@ -128,7 +129,7 @@ show() {
 
     for f in "$DIR"/holder.*; do
         [ -e "$f" ] || continue
-        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd fp < "$f"
         [ "$dev" = - ] && dev=
         if [ "$held" -eq 0 ]; then
             [ "$mode" = bench ] && echo "${C_BUSY}dibs: BUSY, benchmark in progress${C_OFF}$qnote" \
@@ -157,7 +158,7 @@ show() {
             continue
         fi
         jleft=-1
-        if estimate "$mode" "$label" "$agent"; then
+        if estimate "$mode" "$label" "$agent" "$fp"; then
             remaining_of "$elapsed"
             [ "$REM" -gt "$free" ] && free=$REM
             jleft=$REM
@@ -185,6 +186,7 @@ show() {
             # says "usually 5m00s" or "anywhere from 0s to 4m39s".
             [ "$EST_SCOPE" = agent ] && usual="nothing on this one; this agent's other $mode jobs: $usual"
             [ "$EST_SCOPE" = mode ] && usual="nothing on this one; every $mode job on the machine: $usual"
+            [ "$EST_OTHER" = 1 ] && [ "$EST_SCOPE" = this ] && usual="nothing with these values; with others: $usual"
             if overrunning "$elapsed"; then
                 dur_ uh "$EST_HI"
                 echo "  $MC$mode$C_OFF  $AC$label$C_OFF  $C_B$el$C_OFF  ${C_DIM}pid $pid$C_OFF   ${C_WARN}[STUCK? its slowest run was $uh, this is over twice that]$C_OFF"
@@ -246,7 +248,7 @@ show() {
     queue_eta_start "$free" "$eta_known"
     for f in "${QF[@]}"; do
         [ -e "$f" ] || continue
-        IFS=$'\t' read -r mode pid start label agent who dev cmd < "$f"
+        IFS=$'\t' read -r mode pid start label agent who dev cmd fp < "$f"
         [ "$dev" = - ] && dev=
         i=$((i+1))
         age_ wa "$start"

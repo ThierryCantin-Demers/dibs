@@ -166,6 +166,14 @@ impl Verdict {
             dur(e)
         };
         let (note, long) = match h.est_scope.as_deref().unwrap_or("this") {
+            "this" if h.est_other_values => (
+                format!("other values: {usual} over {n} runs"),
+                format!(
+                    "Nothing recorded with these values. Runs of this label with others take \
+                     {usual} across {n} runs, which may be a fraction of this one's work or a \
+                     multiple of it."
+                ),
+            ),
             "this" => (
                 format!("usually {usual} over {n} runs"),
                 format!("This job usually takes {usual}, measured over {n} previous runs."),

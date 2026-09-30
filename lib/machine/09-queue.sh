@@ -14,7 +14,7 @@ jstr() {   # var value
 # label whose runs range twenty seconds to twelve minutes has no business calling a two
 # minute run stuck.
 overrunning() {   # elapsed
-    [ "$EST_SCOPE" = this ] && [ "$EST_HI" -gt 0 ] && [ "$1" -gt $(( EST_HI * 2 )) ]
+    [ "$EST_SCOPE" = this ] && [ "$EST_OTHER" = 0 ] && [ "$EST_HI" -gt 0 ] && [ "$1" -gt $(( EST_HI * 2 )) ]
 }
 
 # Past the median the job is in the tail, and the tail still has a shape. Surrendering there

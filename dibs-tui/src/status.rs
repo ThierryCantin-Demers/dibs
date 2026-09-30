@@ -29,6 +29,8 @@ pub struct Holder {
     pub est: Option<i64>,
     pub est_n: Option<i64>,
     pub est_scope: Option<String>,
+    #[serde(default)]
+    pub est_other_values: bool,
     pub remaining: Option<i64>,
     pub overrun: Option<bool>,
     pub idle_for: Option<i64>,
