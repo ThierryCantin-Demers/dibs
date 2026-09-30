@@ -68,7 +68,7 @@ impl View {
             .as_deref()
             .filter(|t| t.contains("Permission denied ("))?;
         Some(match t.contains("It accepts your key") {
-            true => "passphrase",
+            true => "key locked",
             false => "no key",
         })
     }
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(with(refused), Some("no key"));
         assert_eq!(
             with(&format!("{refused}\n  It accepts your key /k/id, which needs its passphrase")),
-            Some("passphrase")
+            Some("key locked")
         );
         assert_eq!(
             with("ssh: Could not resolve hostname host: Name or service not known"),
