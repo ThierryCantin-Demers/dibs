@@ -24,6 +24,11 @@ const MACHINE_WIDTH: usize = 15;
 const LABEL_WIDTH: usize = 18;
 const DEVICE_WIDTH: usize = 16;
 const AGENT_WIDTH: usize = 20;
+const WHAT_WIDTH: usize = 9;
+const MODE_WIDTH: usize = 6;
+const TIME_WIDTH: usize = 7;
+const CORES_WIDTH: usize = 7;
+const NOTE_MIN_WIDTH: usize = 24;
 
 /// Percent of the screen an overlay takes, across and down.
 const OVERLAY_SIZE: (u16, u16) = (86, 84);
@@ -154,12 +159,18 @@ fn jobs_table(f: &mut Frame, app: &mut App, rows: &[Item], area: Rect) {
 
     let multi = app.multi();
     let any_device = rows.iter().any(|it| it.device.is_some());
+    let w = Widths::new(
+        rows,
+        area.width.saturating_sub(2) as usize,
+        multi,
+        any_device,
+    );
     let mut trows: Vec<Row> = rows
         .iter()
         .enumerate()
         .skip(app.top)
         .take(body_h.max(1))
-        .map(|(i, it)| job_row(it, i == app.sel, multi, any_device))
+        .map(|(i, it)| job_row(it, i == app.sel, &w))
         .collect();
     if trows.is_empty() {
         trows.push(Row::new(vec![Span::styled(
@@ -168,23 +179,24 @@ fn jobs_table(f: &mut Frame, app: &mut App, rows: &[Item], area: Rect) {
         )]));
     }
 
-    let mut columns = vec![("", Constraint::Length(1))];
+    let len = |n: usize| Constraint::Length(n as u16);
+    let mut columns = vec![("", len(1))];
     if multi {
-        columns.push(("MACHINE", Constraint::Length(MACHINE_WIDTH as u16 + 1)));
+        columns.push(("MACHINE", len(w.machine + 1)));
     }
     columns.extend([
-        ("WHAT", Constraint::Length(9)),
-        ("MODE", Constraint::Length(6)),
-        ("LABEL", Constraint::Length(LABEL_WIDTH as u16)),
+        ("WHAT", len(WHAT_WIDTH)),
+        ("MODE", len(MODE_WIDTH)),
+        ("LABEL", len(w.label)),
     ]);
     if any_device {
-        columns.push(("DEVICE", Constraint::Length(DEVICE_WIDTH as u16 + 1)));
+        columns.push(("DEVICE", len(w.device + 1)));
     }
     columns.extend([
-        ("AGENT", Constraint::Length(AGENT_WIDTH as u16)),
-        ("TIME", Constraint::Length(7)),
-        ("CORES", Constraint::Length(7)),
-        ("NOTE", Constraint::Min(24)),
+        ("AGENT", len(w.agent)),
+        ("TIME", len(TIME_WIDTH)),
+        ("CORES", len(CORES_WIDTH)),
+        ("NOTE", Constraint::Min(NOTE_MIN_WIDTH as u16)),
     ]);
     let (heads, widths): (Vec<&str>, Vec<Constraint>) = columns.into_iter().unzip();
 
@@ -194,7 +206,76 @@ fn jobs_table(f: &mut Frame, app: &mut App, rows: &[Item], area: Rect) {
     f.render_widget(table, area);
 }
 
-fn job_row(it: &Item, selected: bool, multi: bool, any_device: bool) -> Row<'static> {
+/// The columns whose text varies: never narrower than their defaults, and wider while the note
+/// keeps its minimum, so a long label or agent is not cut beside space nothing uses.
+struct Widths {
+    multi: bool,
+    any_device: bool,
+    machine: usize,
+    label: usize,
+    device: usize,
+    agent: usize,
+}
+
+impl Widths {
+    fn new(rows: &[Item], inner: usize, multi: bool, any_device: bool) -> Widths {
+        let longest = |len: fn(&Item) -> usize| rows.iter().map(len).max().unwrap_or(0);
+        let mut w = Widths {
+            multi,
+            any_device,
+            machine: MACHINE_WIDTH,
+            label: LABEL_WIDTH,
+            device: DEVICE_WIDTH,
+            agent: AGENT_WIDTH,
+        };
+        let shown = |on: bool, width: usize| if on { width + 1 } else { 0 };
+        // A space between each two of the eight columns always shown, one more for each optional
+        // column, and the machine and device columns carry a space of their own.
+        let taken = 1
+            + WHAT_WIDTH
+            + MODE_WIDTH
+            + TIME_WIDTH
+            + CORES_WIDTH
+            + NOTE_MIN_WIDTH
+            + 7
+            + w.label
+            + w.agent
+            + shown(multi, w.machine + 1)
+            + shown(any_device, w.device + 1);
+        let mut spare = inner.saturating_sub(taken);
+        let mut grow = [
+            (
+                multi,
+                &mut w.machine,
+                longest(|it| it.machine.chars().count()),
+            ),
+            (true, &mut w.label, longest(|it| it.label.chars().count())),
+            (
+                any_device,
+                &mut w.device,
+                longest(|it| it.device.as_deref().map_or(0, |d| d.chars().count())),
+            ),
+            (true, &mut w.agent, longest(|it| it.agent.chars().count())),
+        ];
+        // One character at a time, round the columns, so a long label and a long agent share
+        // what room there is rather than the first taking all of it.
+        while spare > 0 {
+            let before = spare;
+            for (on, have, want) in grow.iter_mut() {
+                if spare > 0 && *on && **have < *want {
+                    **have += 1;
+                    spare -= 1;
+                }
+            }
+            if spare == before {
+                break;
+            }
+        }
+        w
+    }
+}
+
+fn job_row(it: &Item, selected: bool, w: &Widths) -> Row<'static> {
     let hue = agent_hue(&it.agent);
     let base = match selected {
         true => Style::new().bg(SELECTED_BG).add_modifier(Modifier::BOLD),
@@ -209,27 +290,24 @@ fn job_row(it: &Item, selected: bool, multi: bool, any_device: bool) -> Row<'sta
         false => base.fg(Color::Cyan),
     };
     let mut cells = vec![Span::styled(if selected { "▸" } else { " " }, base.fg(hue))];
-    if multi {
-        cells.push(Span::styled(
-            fit(&it.machine, MACHINE_WIDTH),
-            base.patch(DIM),
-        ));
+    if w.multi {
+        cells.push(Span::styled(fit(&it.machine, w.machine), base.patch(DIM)));
     }
     cells.extend([
         Span::styled(it.slot.clone(), slot_style),
         Span::styled(it.mode.clone(), mode_style(&it.mode, base)),
-        Span::styled(fit(&it.label, LABEL_WIDTH), base.fg(hue)),
+        Span::styled(fit(&it.label, w.label), base.fg(hue)),
     ]);
-    if any_device {
+    if w.any_device {
         // An unpinned job among pinned ones is the thing worth seeing, so it reads as a
         // dash rather than as blank space.
         cells.push(match &it.device {
-            Some(d) => Span::styled(fit(d, DEVICE_WIDTH), base.fg(Color::Magenta)),
-            None => Span::styled(fit("-", DEVICE_WIDTH), base.patch(DIM)),
+            Some(d) => Span::styled(fit(d, w.device), base.fg(Color::Magenta)),
+            None => Span::styled(fit("-", w.device), base.patch(DIM)),
         });
     }
     cells.extend([
-        Span::styled(fit(&it.agent, AGENT_WIDTH), base.fg(hue)),
+        Span::styled(fit(&it.agent, w.agent), base.fg(hue)),
         Span::styled(dur(it.time), base.add_modifier(Modifier::BOLD)),
         Span::styled(
             it.rate.map(cores).unwrap_or_else(|| "-".into()),
@@ -440,4 +518,44 @@ fn centred(area: Rect, (pct_x, pct_y): (u16, u16)) -> Rect {
 
 fn behind(age: u64, interval: u64) -> bool {
     age > interval * LATE_INTERVALS + LATE_SLACK_SECS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::status::Status;
+
+    #[test]
+    fn a_long_label_and_agent_widen_as_far_as_the_screen_allows() {
+        let label = "gemv-rows-with-a-long-label";
+        let agent = "cubecl-cpu load_width detection";
+        let s: Status = serde_json::from_str(&format!(
+            r#"{{"state":"shared","holders":[{{"mode":"shared","pid":7,"label":"{label}","agent":"{agent}","cmd":"c","elapsed":3,"cpu":1}}],"queue":[]}}"#
+        ))
+        .unwrap();
+        let rows = Item::all("m", &s);
+        let wide = Widths::new(&rows, 200, false, false);
+        assert_eq!((wide.label, wide.agent), (label.len(), agent.len()));
+        let narrow = Widths::new(&rows, 80, false, false);
+        assert_eq!(
+            (narrow.label, narrow.agent),
+            (LABEL_WIDTH, AGENT_WIDTH),
+            "never narrower than the defaults"
+        );
+        let exact = 1
+            + WHAT_WIDTH
+            + MODE_WIDTH
+            + TIME_WIDTH
+            + CORES_WIDTH
+            + NOTE_MIN_WIDTH
+            + 7
+            + LABEL_WIDTH
+            + AGENT_WIDTH;
+        let some = Widths::new(&rows, exact + 5, false, false);
+        assert_eq!(
+            (some.label, some.agent),
+            (LABEL_WIDTH + 3, AGENT_WIDTH + 2),
+            "the room is shared between them"
+        );
+    }
 }
