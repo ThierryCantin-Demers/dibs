@@ -89,6 +89,13 @@ impl Item {
     }
 }
 
+fn runs(n: i64) -> String {
+    match n {
+        1 => "1 run".into(),
+        n => format!("{n} runs"),
+    }
+}
+
 /// The feed writes `-` for a job that named no card.
 fn pinned(device: &Option<String>) -> Option<String> {
     device.clone().filter(|d| d != "-" && !d.is_empty())
@@ -132,10 +139,10 @@ impl Verdict {
                 note: format!("3x its usual {}", dur(h.est.unwrap_or(0))),
                 long: format!(
                     "It has been running {}, more than three times the {} this same job usually \
-                     takes over {} runs.",
+                     takes over {}.",
                     dur(h.elapsed),
                     dur(h.est.unwrap_or(0)),
-                    h.est_n.unwrap_or(0)
+                    runs(h.est_n.unwrap_or(0))
                 ),
                 alarm: true,
             };
@@ -154,24 +161,30 @@ impl Verdict {
         } else {
             dur(e)
         };
+        let runs = runs(n);
         let (note, long) = match h.est_scope.as_deref().unwrap_or("this") {
             "this" if h.est_other_values => (
-                format!("other values: {usual} over {n} runs"),
+                format!("other values: {usual} over {runs}"),
                 format!(
                     "Nothing recorded with these values. Runs of this label with others take \
-                     {usual} across {n} runs, which may be a fraction of this one's work or a \
+                     {usual} across {runs}, which may be a fraction of this one's work or a \
                      multiple of it."
                 ),
             ),
+            // One sample is a fact about one run, not a habit.
+            "this" if n == 1 => (
+                format!("ran once, in {usual}"),
+                format!("This job has run once before, in {usual}."),
+            ),
             "this" => (
-                format!("usually {usual} over {n} runs"),
-                format!("This job usually takes {usual}, measured over {n} previous runs."),
+                format!("usually {usual} over {runs}"),
+                format!("This job usually takes {usual}, measured over {runs}."),
             ),
             "agent" => (
-                format!("this agent: {usual} over {n} runs"),
+                format!("this agent: {usual} over {runs}"),
                 format!(
                     "Nothing recorded under this label. This agent's other {} jobs take {usual} \
-                     across {n} runs, which is the closest thing to an estimate there is.",
+                     across {runs}, which is the closest thing to an estimate there is.",
                     h.mode
                 ),
             ),
@@ -232,5 +245,16 @@ mod tests {
             Some("2/5 >10m20s")
         );
         assert!(v[1].batch.is_none(), "a job outside a batch has no step");
+    }
+
+    #[test]
+    fn one_run_is_not_called_usual() {
+        let s: Status = serde_json::from_str(
+            r#"{"state":"shared","holders":[{"mode":"shared","pid":7,"label":"b","agent":"a","cmd":"c","elapsed":3,"cpu":1,"est":116,"est_n":1,"est_scope":"this"},{"mode":"shared","pid":8,"label":"c","agent":"a","cmd":"c","elapsed":3,"cpu":1,"est":116,"est_n":1,"est_scope":"agent"}],"queue":[]}"#,
+        )
+        .unwrap();
+        let v = Item::all("m", &s);
+        assert_eq!(v[0].note, "ran once, in 1m56s");
+        assert_eq!(v[1].note, "this agent: 1m56s over 1 run");
     }
 }
