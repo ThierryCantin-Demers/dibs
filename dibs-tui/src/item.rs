@@ -37,7 +37,6 @@ impl Item {
             .iter()
             .map(|h| Item::holding(machine, h))
             .chain(s.queue.iter().map(|q| Item::queued(machine, q)))
-            .map(Item::with_batch_step)
             .collect()
     }
 
@@ -87,16 +86,6 @@ impl Item {
             output: None, // it has no processes yet, so nothing to write with
             batch: q.batch.clone(),
         }
-    }
-
-    fn with_batch_step(mut self) -> Item {
-        if let Some(b) = &self.batch {
-            self.note = match b.left_text() {
-                Some(l) => format!("{} · step {}/{}, {l} left", self.note, b.k, b.n),
-                None => format!("{} · step {}/{}", self.note, b.k, b.n),
-            };
-        }
-        self
     }
 }
 
@@ -237,13 +226,11 @@ mod tests {
         )
         .unwrap();
         let v = Item::all("m", &s);
+        assert_eq!(v[0].note, "usually 10s over 3 runs");
         assert_eq!(
-            v[0].note,
-            "usually 10s over 3 runs · step 2/5, over 10m20s left"
+            v[0].batch.as_ref().map(Batch::progress).as_deref(),
+            Some("2/5, over 10m20s left")
         );
-        assert_eq!(
-            v[1].note, "starts in ~7s",
-            "a job outside a batch is unchanged"
-        );
+        assert!(v[1].batch.is_none(), "a job outside a batch has no step");
     }
 }

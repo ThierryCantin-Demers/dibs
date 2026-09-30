@@ -67,6 +67,14 @@ impl Batch {
             false => format!("~{}", dur(l)),
         })
     }
+
+    /// Which step of how many, and how long the batch has left on this machine.
+    pub fn progress(&self) -> String {
+        match self.left_text() {
+            Some(l) => format!("{}/{}, {l} left", self.k, self.n),
+            None => format!("{}/{}", self.k, self.n),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
