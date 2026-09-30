@@ -83,10 +83,10 @@ fn header(app: &App) -> Line<'static> {
         }
         match (&v.dead, &v.status) {
             (Some(d), _) => head.push(Span::styled(
-                if multi {
-                    "down".to_string()
-                } else {
-                    format!("feed down: {d}")
+                match (multi, v.refused_login()) {
+                    (_, true) => "auth required".to_string(),
+                    (true, false) => "down".to_string(),
+                    (false, false) => format!("feed down: {d}"),
                 },
                 Style::new().fg(Color::Red),
             )),

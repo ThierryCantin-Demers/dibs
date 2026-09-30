@@ -59,6 +59,16 @@ pub struct View {
     pub retry_at: Option<Instant>,
 }
 
+impl View {
+    /// ssh's refusal of the login, which lists the methods it tried; a remote file's "Permission
+    /// denied" does not. The machine answered, so waiting will not bring it back.
+    pub fn refused_login(&self) -> bool {
+        self.trouble
+            .as_deref()
+            .is_some_and(|t| t.contains("Permission denied ("))
+    }
+}
+
 pub struct App {
     pub views: BTreeMap<String, View>,
     pub sel: usize,
@@ -316,5 +326,19 @@ mod tests {
         );
         app.views.insert("c".into(), view(None, true));
         assert!(app.round_over(), "one that has ended cannot report at all");
+    }
+
+    #[test]
+    fn a_refused_login_is_told_from_a_machine_that_did_not_answer() {
+        let with = |t: &str| View {
+            trouble: Some(t.to_string()),
+            ..view(None, true)
+        };
+        assert!(with("m@host: Permission denied (publickey,password).").refused_login());
+        assert!(
+            !with("ssh: Could not resolve hostname host: Name or service not known")
+                .refused_login()
+        );
+        assert!(!with("cat: /x: Permission denied").refused_login());
     }
 }
