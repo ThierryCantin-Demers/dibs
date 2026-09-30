@@ -34,10 +34,6 @@ const NOTE_MIN_WIDTH: usize = 24;
 const OVERLAY_SIZE: (u16, u16) = (86, 84);
 const CONFIRM_SIZE: (u16, u16) = (56, 22);
 
-/// A feed this many intervals late, plus some slack, is called out as behind.
-const LATE_INTERVALS: u64 = 3;
-const LATE_SLACK_SECS: u64 = 2;
-
 pub fn draw(f: &mut Frame, app: &mut App) {
     let rows = app.rows();
     let in_batch = rows.get(app.sel).is_some_and(|it| it.batch.is_some());
@@ -78,7 +74,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 fn header(app: &App) -> Line<'static> {
     let mut head: Vec<Span> = Vec::new();
     let multi = app.multi();
-    let mut ages: Vec<u64> = Vec::new();
+    let mut late = false;
     for (name, v) in &app.views {
         if !head.is_empty() {
             head.push(Span::styled("   ", DIM));
@@ -107,12 +103,11 @@ fn header(app: &App) -> Line<'static> {
             }
             (None, None) => head.push(Span::styled("connecting…", DIM)),
         }
-        if let Some(t) = v.seen_at {
-            let age = t.elapsed().as_secs();
-            ages.push(age);
-            if multi && behind(age, app.interval) {
+        if let Some(t) = v.seen_at.filter(|t| app.behind(*t)) {
+            late = true;
+            if multi {
                 head.push(Span::styled(
-                    format!(" {age}s behind"),
+                    format!(" {}s behind", t.elapsed().as_secs()),
                     Style::new().fg(Color::Yellow),
                 ));
             }
@@ -122,7 +117,6 @@ fn header(app: &App) -> Line<'static> {
     match app.refreshed {
         Some(t) => {
             let age = t.elapsed().as_secs();
-            let late = ages.iter().any(|a| behind(*a, app.interval));
             head.push(Span::styled(
                 format!("   updated {age}s ago, {every}"),
                 if late {
@@ -435,7 +429,12 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
 /// With no job selected, the pane says what the feeds have complained about, each under the
 /// machine it came from.
 fn troubles(app: &App) -> Paragraph<'static> {
-    let width = app.views.keys().map(|m| m.chars().count()).max().unwrap_or(0);
+    let width = app
+        .views
+        .keys()
+        .map(|m| m.chars().count())
+        .max()
+        .unwrap_or(0);
     let lines: Vec<Line> = app
         .views
         .iter()
@@ -536,10 +535,6 @@ fn centred(area: Rect, (pct_x, pct_y): (u16, u16)) -> Rect {
         width: w,
         height: h,
     }
-}
-
-fn behind(age: u64, interval: u64) -> bool {
-    age > interval * LATE_INTERVALS + LATE_SLACK_SECS
 }
 
 #[cfg(test)]

@@ -20,6 +20,10 @@ const MAX_INTERVAL: u64 = 60;
 /// How long a feed that ended waits before it is started again.
 const RETRY_ENDED: Duration = Duration::from_secs(30);
 
+/// A feed this many intervals late, plus some slack, is called out as behind.
+const LATE_INTERVALS: u64 = 3;
+const LATE_SLACK_SECS: u64 = 2;
+
 pub fn interval(secs: u64) -> u64 {
     secs.clamp(MIN_INTERVAL, MAX_INTERVAL)
 }
@@ -275,15 +279,25 @@ impl App {
     /// Every feed that can still report has reported since the round began. The header dates the
     /// screen by that, because it is the one moment all of it was current: the newest feed resets
     /// the number several times an interval with several machines, and the oldest walks up and
-    /// down as they drift apart. A feed that has stopped reporting holds the round open, which is
-    /// the staleness worth seeing.
+    /// down as they drift apart. A feed that has stopped reporting holds the round open until it
+    /// is marked behind, which says so for that machine alone: one asleep would otherwise freeze
+    /// the date of every other.
     fn round_over(&self) -> bool {
         self.views
             .values()
             // After the round began, not at the moment it did: the feed whose report ended the
             // last round is the one that starts this one, and counting it twice leaves the round
             // needing only the others, which ends it early and by a different amount each time.
-            .all(|v| v.dead.is_some() || v.seen_at.is_some_and(|t| t > self.round_from))
+            .all(|v| {
+                v.dead.is_some()
+                    || v.seen_at
+                        .is_some_and(|t| t > self.round_from || self.behind(t))
+            })
+    }
+
+    /// Reported last more than a few intervals ago.
+    pub fn behind(&self, seen: Instant) -> bool {
+        seen.elapsed().as_secs() > self.interval * LATE_INTERVALS + LATE_SLACK_SECS
     }
 }
 
@@ -331,6 +345,14 @@ mod tests {
         );
         app.views.insert("c".into(), view(None, true));
         assert!(app.round_over(), "one that has ended cannot report at all");
+        app.views.insert(
+            "c".into(),
+            view(Some(app.round_from - Duration::from_secs(60)), false),
+        );
+        assert!(
+            app.round_over(),
+            "nor does one already marked behind hold it"
+        );
     }
 
     #[test]
