@@ -68,7 +68,17 @@ unreachable() {
         *"Permission denied"*)
             diagnosed=1
             echo "  It answered and refused the login, so it is up and this is about keys." >&2
-            echo "  Check your key is in that account's authorized_keys." >&2 ;;
+            # ssh offers a key's public half before it needs the private one, so a machine that
+            # takes a key says so even when the key is locked and cannot sign.
+            key=$(bounded "${DIBS_CONNECT_TIMEOUT:-10}" ssh -v -o BatchMode=yes \
+                      -o ConnectTimeout="${DIBS_CONNECT_TIMEOUT:-10}" "$HOST" true 2>&1 |
+                  sed -n 's/^debug1: Server accepts key: \([^ ]*\).*/\1/p' | head -1)
+            if [ -n "$key" ]; then
+                echo "  It accepts your key $key, which needs its passphrase, and no ssh agent holds it." >&2
+                echo "  Load it once:  ssh-add $key" >&2
+            else
+                echo "  It accepted none of your keys: check yours is in that account's authorized_keys." >&2
+            fi ;;
         *"Connection refused"*)
             diagnosed=1
             echo "  It answered and nothing is listening on the ssh port, so the machine is up" >&2

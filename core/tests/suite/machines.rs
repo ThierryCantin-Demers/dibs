@@ -38,6 +38,26 @@ fn an_unreachable_machine_fails_fast_and_says_why() {
 }
 
 #[test]
+fn a_refused_login_says_whether_the_machine_took_the_key() {
+    let s = Sandbox::new();
+    s.write_exec(
+        "refuses/ssh",
+        "#!/bin/bash\nfor a; do [ \"$a\" = -v ] && [ -n \"$ACCEPTS\" ] && echo 'debug1: Server accepts key: /keys/id_ed25519 ED25519 SHA256:x explicit' >&2; done\necho 'm@desk: Permission denied (publickey).' >&2\nexit 255\n",
+    );
+    let path = format!("{}:{}", s.p("refuses"), s.var("PATH"));
+    let call = |accepts: &str| away(s.dibs(["--status"])).env("DIBS_HOST", "m@desk").env("PATH", &path).env("ACCEPTS", accepts).run();
+    let locked = call("1");
+    assert_eq!(
+        (locked.code, locked.all().lines_with("It accepts your key /keys/id_ed25519"), locked.all().lines_with("ssh-add /keys/id_ed25519")),
+        (69, 1, 1),
+        "a key the machine takes but no agent holds is named, with how to load it: {}",
+        locked.all()
+    );
+    let refused = call("");
+    assert_eq!((refused.code, refused.all().lines_with("accepted none of your keys")), (69, 1), "{}", refused.all());
+}
+
+#[test]
 fn which_says_why_it_has_nothing() {
     let s = Sandbox::new();
     let inventory = s.p("no-such-inventory");

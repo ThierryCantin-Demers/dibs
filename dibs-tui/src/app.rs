@@ -62,10 +62,15 @@ pub struct View {
 impl View {
     /// ssh's refusal of the login, which lists the methods it tried; a remote file's "Permission
     /// denied" does not. The machine answered, so waiting will not bring it back.
-    pub fn refused_login(&self) -> bool {
-        self.trouble
+    pub fn refusal(&self) -> Option<&'static str> {
+        let t = self
+            .trouble
             .as_deref()
-            .is_some_and(|t| t.contains("Permission denied ("))
+            .filter(|t| t.contains("Permission denied ("))?;
+        Some(match t.contains("It accepts your key") {
+            true => "passphrase",
+            false => "no key",
+        })
     }
 }
 
@@ -330,15 +335,23 @@ mod tests {
 
     #[test]
     fn a_refused_login_is_told_from_a_machine_that_did_not_answer() {
-        let with = |t: &str| View {
-            trouble: Some(t.to_string()),
-            ..view(None, true)
+        let with = |t: &str| {
+            View {
+                trouble: Some(t.to_string()),
+                ..view(None, true)
+            }
+            .refusal()
         };
-        assert!(with("m@host: Permission denied (publickey,password).").refused_login());
-        assert!(
-            !with("ssh: Could not resolve hostname host: Name or service not known")
-                .refused_login()
+        let refused = "m@host: Permission denied (publickey,password).";
+        assert_eq!(with(refused), Some("no key"));
+        assert_eq!(
+            with(&format!("{refused}\n  It accepts your key /k/id, which needs its passphrase")),
+            Some("passphrase")
         );
-        assert!(!with("cat: /x: Permission denied").refused_login());
+        assert_eq!(
+            with("ssh: Could not resolve hostname host: Name or service not known"),
+            None
+        );
+        assert_eq!(with("cat: /x: Permission denied"), None);
     }
 }
