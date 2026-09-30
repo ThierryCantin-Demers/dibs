@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(v[0].note, "usually 10s over 3 runs");
         assert_eq!(
             v[0].batch.as_ref().map(Batch::progress).as_deref(),
-            Some("2/5, over 10m20s left")
+            Some("2/5 >10m20s")
         );
         assert!(v[1].batch.is_none(), "a job outside a batch has no step");
     }

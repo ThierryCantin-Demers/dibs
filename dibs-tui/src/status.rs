@@ -68,11 +68,13 @@ impl Batch {
         })
     }
 
-    /// Which step of how many, and how long the batch has left on this machine.
+    /// Which step of how many, and how long the batch has left on this machine: `>` where that
+    /// is a floor, `~` where it is an estimate.
     pub fn progress(&self) -> String {
-        match self.left_text() {
-            Some(l) => format!("{}/{}, {l} left", self.k, self.n),
-            None => format!("{}/{}", self.k, self.n),
+        match (self.left, self.left_partial) {
+            (Some(l), true) => format!("{}/{} >{}", self.k, self.n, dur(l)),
+            (Some(l), false) => format!("{}/{} ~{}", self.k, self.n, dur(l)),
+            (None, _) => format!("{}/{}", self.k, self.n),
         }
     }
 }
