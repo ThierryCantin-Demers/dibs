@@ -1,6 +1,4 @@
-//! Outputs pinned word for word. Each snapshot is a text file under `snapshots/`, and
-//! `UPDATE_SNAPSHOTS=1 cargo test` rewrites the ones that differ, which is how a deliberate change
-//! to what dibs prints is accepted.
+//! Outputs pinned word for word; `UPDATE_SNAPSHOTS=<name>,<name>` or `=all` accepts a change.
 
 use crate::harness::{CORE, DIBS, Output, Sandbox, hostname, repo_root};
 use regex::Regex;
@@ -15,8 +13,10 @@ fn snapshot_path(name: &str) -> PathBuf {
     Path::new(SNAPSHOTS).join(format!("{name}.txt"))
 }
 
-fn updating() -> bool {
-    std::env::var_os("UPDATE_SNAPSHOTS").is_some_and(|v| v == "1")
+/// Whether `UPDATE_SNAPSHOTS` names this snapshot, or says `all`.
+fn accepting(name: &str) -> bool {
+    std::env::var("UPDATE_SNAPSHOTS")
+        .is_ok_and(|v| v.split(',').any(|n| n.trim() == name || n.trim() == "all"))
 }
 
 /// Fails unless `text` is the snapshot called `name`.
@@ -26,18 +26,18 @@ pub fn snapshot(name: &str, text: &str) {
     if want.as_deref() == Some(text) {
         return;
     }
-    if updating() {
+    if accepting(name) {
         fs::create_dir_all(SNAPSHOTS).unwrap();
         fs::write(&path, text).unwrap();
         return;
     }
     match want {
         None => panic!(
-            "no snapshot {}; UPDATE_SNAPSHOTS=1 cargo test writes it from this:\n{text}",
+            "no snapshot {}; UPDATE_SNAPSHOTS={name} cargo test writes it from this:\n{text}",
             path.display()
         ),
         Some(want) => panic!(
-            "{name} differs from its snapshot, - as kept and + as printed now. UPDATE_SNAPSHOTS=1 cargo test accepts it.\n{}",
+            "{name} differs from its snapshot, - as kept and + as printed now. UPDATE_SNAPSHOTS={name} cargo test accepts it.\n{}",
             diff(&want, text)
         ),
     }
