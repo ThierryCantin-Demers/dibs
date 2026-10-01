@@ -9,6 +9,7 @@
 //! on the machine under the shared lock, because it is a fetch and a checkout: work that
 //! tolerates neighbours perfectly and must never hold the exclusive lock.
 
+use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 
 /// Collection runs on every prepare, fetched or local, and sweeps every repo's trees and targets
@@ -321,7 +322,6 @@ pub fn build_signature(run: &str) -> Option<String> {
 /// Registry packages share 64 lines, one per bucket of their contents, because the whole script
 /// travels in one command-line argument and a line per package does not fit in it.
 pub fn packages_script(lock: &str, signature: &str, token: &str) -> String {
-    use sha2::{Digest, Sha256};
     let short = |text: &str| {
         format!(
             "{:.12}",
@@ -503,7 +503,6 @@ pub struct Nest {
 
 impl Nest {
     pub fn new(config: String) -> Nest {
-        use sha2::{Digest, Sha256};
         Nest {
             name: format!("pin-{:.10}", hex(&Sha256::digest(config.as_bytes()))),
             config,
@@ -694,13 +693,13 @@ pub fn parse(out: &str) -> Result<Prepared, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
 
     // The setup script is shell living inside a Rust format string, where an unbalanced quote
     // or a brace that needed doubling compiles cleanly and fails on the machine, mid-run,
     // holding a lock.
     #[test]
     fn the_generated_scripts_are_valid_shell() {
-        use std::io::Write;
         for script in [
             setup_script("cubek", "main", 0, None, &[]),
             setup_script("cubek", "main", 1, None, &[]),
@@ -1347,7 +1346,6 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
 }
 
 pub fn local(dir: &std::path::Path) -> Result<Local, String> {
-    use sha2::{Digest, Sha256};
     let head = git(dir, &["rev-parse", "--short", "HEAD"])?
         .trim()
         .to_string();
@@ -1428,7 +1426,6 @@ fn checkout_in(
     sha: &str,
     why: Option<&'static str>,
 ) -> Result<Checkout, String> {
-    use sha2::{Digest, Sha256};
     std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
     let (slot, lock) = (0u32..)
         .find_map(|n| {
@@ -1673,6 +1670,7 @@ echo "DIBS-REV {repo} local:{content}"
 #[cfg(test)]
 mod local_tests {
     use super::*;
+    use std::os::unix::process::CommandExt;
     use std::process::Command;
 
     fn run_ahead(scratch: &std::path::Path, setup: &str, then: Then, after: &str) -> (i32, String) {
@@ -2427,7 +2425,6 @@ mod local_tests {
 
     impl Held {
         fn spawn(mut cmd: Command) -> Held {
-            use std::os::unix::process::CommandExt;
             cmd.process_group(0);
             unsafe {
                 cmd.pre_exec(|| {

@@ -37,7 +37,7 @@ pub fn kept(report: &str) -> Option<u32> {
     report
         .lines()
         .filter_map(|l| l.strip_prefix("DIBS-ARTIFACTS "))
-        .last()
+        .next_back()
         .and_then(|n| n.trim().parse().ok())
 }
 

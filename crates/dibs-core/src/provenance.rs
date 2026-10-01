@@ -71,7 +71,7 @@ pub fn state_of(report: &str) -> Vec<(String, String)> {
     report
         .lines()
         .filter_map(|l| l.strip_prefix("DIBS-STATE "))
-        .last()
+        .next_back()
         .into_iter()
         .flat_map(|l| l.split_whitespace())
         .filter_map(|kv| kv.split_once('='))

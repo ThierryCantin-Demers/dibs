@@ -243,6 +243,17 @@ fn short(run: &str) -> String {
     }
 }
 
+/// What two measured runs share when they differ in nothing dibs can see.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct SameCode<'a> {
+    label: &'a str,
+    fingerprint: &'a str,
+    machine: &'a str,
+    revisions: String,
+    params: String,
+    state: String,
+}
+
 pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -> String {
     let mut out = String::new();
     let picked: Vec<&Record> = records
@@ -352,18 +363,17 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
     // Runs that differ in nothing dibs can see: the spread among them is the noise any
     // difference elsewhere has to beat. State is part of the key, so two governors are two lines.
     // A comparison's arms are set against each other in its own record instead.
-    let mut repeated: BTreeMap<(&str, &str, &str, String, String, String), Vec<u64>> =
-        BTreeMap::new();
+    let mut repeated: BTreeMap<SameCode, Vec<u64>> = BTreeMap::new();
     for r in picked.iter().filter(|r| !r.failed && r.arms.is_empty()) {
         if r.measured.is_some() {
-            let key = (
-                r.label.as_str(),
-                r.fingerprint.as_str(),
-                r.machine.as_deref().unwrap_or("-"),
-                words(&r.revisions, "@"),
-                words(&r.params, "="),
-                words(&r.state, "="),
-            );
+            let key = SameCode {
+                label: r.label.as_str(),
+                fingerprint: r.fingerprint.as_str(),
+                machine: r.machine.as_deref().unwrap_or("-"),
+                revisions: words(&r.revisions, "@"),
+                params: words(&r.params, "="),
+                state: words(&r.state, "="),
+            };
             repeated
                 .entry(key)
                 .or_default()
@@ -373,7 +383,18 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
     let repeated: Vec<_> = repeated.into_iter().filter(|(_, v)| v.len() > 1).collect();
     if !repeated.is_empty() {
         out.push_str("\nrepeated on the same code, measured step only:\n");
-        for ((label, _, machine, revs, params, state), secs) in repeated {
+        for (
+            SameCode {
+                label,
+                machine,
+                revisions: revs,
+                params,
+                state,
+                ..
+            },
+            secs,
+        ) in repeated
+        {
             let n = secs.len();
             let Some((m, lo, hi)) = median(secs) else {
                 continue;

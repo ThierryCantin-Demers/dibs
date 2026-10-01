@@ -104,16 +104,23 @@ pub fn sources(
     Ok(out)
 }
 
+/// A pinned tree as the machine holds it: where it was prepared, the crates in it by directory,
+/// and which of them the lockfile takes from each source.
+pub struct PinnedTree {
+    pub worktree: String,
+    pub crates: BTreeMap<String, String>,
+    pub sources: BTreeMap<String, BTreeSet<String>>,
+}
+
 /// The config that points each patched crate at its directory in a tree on the machine.
-pub fn config(
-    pins: &[(
-        String,
-        BTreeMap<String, String>,
-        BTreeMap<String, BTreeSet<String>>,
-    )],
-) -> String {
+pub fn config(pins: &[PinnedTree]) -> String {
     let mut tables: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    for (tree, crates, sources) in pins {
+    for PinnedTree {
+        worktree: tree,
+        crates,
+        sources,
+    } in pins
+    {
         for (key, names) in sources {
             for n in names {
                 let dir = crates.get(n).map(String::as_str).unwrap_or_default();
@@ -253,7 +260,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             ["cubecl", "cubecl-core"],
             "cubecl-cpp is not in the graph, so a patch for it would only warn"
         );
-        let text = config(&[("/m/ws/cubecl/local-k".into(), cubecl(), s)]);
+        let text = config(&[PinnedTree {
+            worktree: "/m/ws/cubecl/local-k".into(),
+            crates: cubecl(),
+            sources: s,
+        }]);
         assert_eq!(
             text,
             "[patch.\"https://github.com/tracel-ai/cubecl\"]\ncubecl = { path = \"/m/ws/cubecl/local-k/crates/cubecl\" }\ncubecl-core = { path = \"/m/ws/cubecl/local-k/crates/cubecl-core\" }\n"
@@ -270,8 +281,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         );
         let s = sources(LOCK, &serde).unwrap();
         assert!(
-            config(&[("/t".into(), serde, s)])
-                .starts_with("[patch.crates-io]\nserde = { path = \"/t\" }")
+            config(&[PinnedTree {
+                worktree: "/t".into(),
+                crates: serde,
+                sources: s
+            }])
+            .starts_with("[patch.crates-io]\nserde = { path = \"/t\" }")
         );
     }
 

@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -652,7 +653,6 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                 ]);
                 c
             } else {
-                use std::os::unix::process::CommandExt;
                 let mut c = Command::new("bash");
                 c.args(["-c", WATCHED, "step", &step.line]).process_group(0);
                 c

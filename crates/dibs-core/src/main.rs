@@ -27,6 +27,8 @@ mod worktree;
 use recipe::{Lock, Manifest, Verb};
 use resource::{Backend, Destination, Dibs, Request};
 use std::collections::BTreeMap;
+use std::io::Write as _;
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -804,13 +806,14 @@ fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
             },
         });
     }
-    if let ([Side::Base(..), _], [base, tip]) = (sides, &arms[..]) {
-        if base.commit().is_some() && base.commit() == tip.commit() {
-            return Err(format!(
-                "{} has nothing its base does not, so there is nothing to compare",
-                tip.name
-            ));
-        }
+    if let ([Side::Base(..), _], [base, tip]) = (sides, &arms[..])
+        && base.commit().is_some()
+        && base.commit() == tip.commit()
+    {
+        return Err(format!(
+            "{} has nothing its base does not, so there is nothing to compare",
+            tip.name
+        ));
     }
     Ok(arms)
 }
@@ -1252,17 +1255,18 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
             .checkout
             .as_ref()
             .map_or(p.dir.as_path(), |c| c.dir.as_path());
-        let (script, gitdbs) = tree_script(
-            from,
-            &p.repo,
-            &p.reference,
-            p.local.as_ref(),
-            "",
-            &new_token(),
-            0,
-            None,
-            fresh.tree_fresh(),
-        );
+        let TreeScript { script, gitdbs } = TreeSpec {
+            dir: from,
+            repo_name: &p.repo,
+            reference: &p.reference,
+            local: p.local.as_ref(),
+            signature: "",
+            token: &new_token(),
+            slot: 0,
+            nest: None,
+            fresh: fresh.tree_fresh(),
+        }
+        .script();
         let text = match &p.local {
             Some(l) => {
                 match &p.checkout {
@@ -1323,7 +1327,11 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
             &pins
                 .iter()
                 .zip(&pinned)
-                .map(|(p, t)| (t.worktree.clone(), p.crates.clone(), p.sources.clone()))
+                .map(|(p, t)| pin::PinnedTree {
+                    worktree: t.worktree.clone(),
+                    crates: p.crates.clone(),
+                    sources: p.sources.clone(),
+                })
                 .collect::<Vec<_>>(),
         ))
     });
@@ -1355,17 +1363,18 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
         };
         eprintln!("{lead}{}", preparing(&repo_name, arm, local.as_ref(), &dir));
         let reference = arm.fetch.as_deref().unwrap_or("local");
-        let (script, gitdbs) = tree_script(
-            arm.dir(&dir),
-            &repo_name,
+        let TreeScript { script, gitdbs } = TreeSpec {
+            dir: arm.dir(&dir),
+            repo_name: &repo_name,
             reference,
-            local.as_ref(),
-            &signature,
-            &token,
+            local: local.as_ref(),
+            signature: &signature,
+            token: &token,
             slot,
-            nest.as_ref(),
-            &tree_fresh,
-        );
+            nest: nest.as_ref(),
+            fresh: &tree_fresh,
+        }
+        .script();
         slot += usize::from(arm.fetch.is_some());
         trees.push(Tree {
             token,
@@ -2115,17 +2124,18 @@ fn with_service(args: &Args) -> Result<ExitCode, Failure> {
         .as_deref()
         .and_then(worktree::build_signature)
         .unwrap_or_default();
-    let (script, gitdbs) = tree_script(
-        &from,
-        &repo_name,
+    let TreeScript { script, gitdbs } = TreeSpec {
+        dir: &from,
+        repo_name: &repo_name,
         reference,
-        local.as_ref(),
-        &signature,
-        &new_token(),
-        0,
-        None,
-        manifest.tree_fresh(),
-    );
+        local: local.as_ref(),
+        signature: &signature,
+        token: &new_token(),
+        slot: 0,
+        nest: None,
+        fresh: manifest.tree_fresh(),
+    }
+    .script();
     let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
     let setup = Request {
         label: &setup_label,
@@ -2289,30 +2299,42 @@ fn fresh_values(rec: &recipe::Recipe, token: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The script that prepares the tree on the machine, and the git databases it may need sent.
-fn tree_script(
-    dir: &Path,
-    repo_name: &str,
-    reference: &str,
-    local: Option<&worktree::Local>,
-    signature: &str,
-    token: &str,
+/// What the machine needs to know to prepare one tree.
+struct TreeSpec<'a> {
+    dir: &'a Path,
+    repo_name: &'a str,
+    reference: &'a str,
+    local: Option<&'a worktree::Local>,
+    signature: &'a str,
+    token: &'a str,
     slot: usize,
-    nest: Option<&worktree::Nest>,
-    fresh: &[String],
-) -> (String, Vec<gitdeps::Db>) {
-    let lock = lockfile(dir, local.is_none().then_some(reference));
-    let gitdbs = gitdeps::local(
-        &gitdeps::cargo_home(),
-        &gitdeps::pinned(lock.as_deref().unwrap_or("")),
-    );
-    let script = worktree::packages_script(lock.as_deref().unwrap_or(""), signature, token)
-        + &match local {
-            Some(l) => worktree::setup_local_script(repo_name, &l.key, &l.content, nest, fresh),
-            None => worktree::setup_script(repo_name, reference, slot, nest, fresh),
-        }
-        + &gitdeps::check_script(&gitdbs);
-    (script, gitdbs)
+    nest: Option<&'a worktree::Nest>,
+    fresh: &'a [String],
+}
+
+/// The script that prepares a tree on the machine, and the git databases it may need sent.
+struct TreeScript {
+    script: String,
+    gitdbs: Vec<gitdeps::Db>,
+}
+
+impl TreeSpec<'_> {
+    fn script(&self) -> TreeScript {
+        let lock = lockfile(self.dir, self.local.is_none().then_some(self.reference));
+        let gitdbs = gitdeps::local(
+            &gitdeps::cargo_home(),
+            &gitdeps::pinned(lock.as_deref().unwrap_or("")),
+        );
+        let (repo, nest, fresh) = (self.repo_name, self.nest, self.fresh);
+        let script =
+            worktree::packages_script(lock.as_deref().unwrap_or(""), self.signature, self.token)
+                + &match self.local {
+                    Some(l) => worktree::setup_local_script(repo, &l.key, &l.content, nest, fresh),
+                    None => worktree::setup_script(repo, self.reference, self.slot, nest, fresh),
+                }
+                + &gitdeps::check_script(&gitdbs);
+        TreeScript { script, gitdbs }
+    }
 }
 
 /// The lockfile of the tree here, or of a ref in its history.
@@ -2361,7 +2383,6 @@ fn send_missing_gitdbs(backend: &Dibs, text: &str, gitdbs: &[gitdeps::Db]) {
 /// Becomes the command, so it keeps this terminal: prompts, Ctrl-C and the exit status are the
 /// command's own rather than something relayed.
 fn exec(mut cmd: std::process::Command) -> std::io::Error {
-    use std::os::unix::process::CommandExt;
     cmd.exec()
 }
 
@@ -2893,7 +2914,6 @@ fn write_record(run: &provenance::Run) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    use std::io::Write;
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -2917,6 +2937,7 @@ fn sh(s: &str) -> String {
 mod tests {
     use super::*;
     use recipe::{Isolation, Recipe, Step};
+    use std::os::unix::fs::PermissionsExt;
 
     fn step(lock: Lock, run: &str) -> Step {
         Step {
@@ -2930,7 +2951,6 @@ mod tests {
     // tree and never a git database, so dibs's own send must not set it off.
     #[test]
     fn a_git_database_is_sent_without_its_mtimes() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("dibs-gitdb-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let fake = dir.join("dibs");

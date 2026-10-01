@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -544,10 +545,10 @@ impl Drop for Sandbox {
             let Ok(pid) = e.file_name().to_string_lossy().parse::<i32>() else {
                 continue;
             };
-            if let Ok(env) = fs::read(e.path().join("environ")) {
-                if env.split(|b| *b == 0).any(|v| v == home.as_slice()) {
-                    unsafe { libc::kill(pid, libc::SIGKILL) };
-                }
+            if let Ok(env) = fs::read(e.path().join("environ"))
+                && env.split(|b| *b == 0).any(|v| v == home.as_slice())
+            {
+                unsafe { libc::kill(pid, libc::SIGKILL) };
             }
         }
         let _ = Command::new("pkill")
@@ -588,7 +589,6 @@ impl Call {
         // What this process inherited, the cargo wrapper's lock among it, must not reach what the
         // tests start: a stray process holding that lock stops every cargo on the computer.
         unsafe {
-            use std::os::unix::process::CommandExt;
             cmd.pre_exec(|| {
                 for fd in 3..1024 {
                     libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
@@ -653,7 +653,6 @@ impl Call {
         // everything it started; process groups are otherwise part of what dibs reads.
         let bounded = self.limit < CALL_LIMIT;
         if bounded {
-            use std::os::unix::process::CommandExt;
             self.cmd.process_group(0);
         }
         let what = format!("{:?}", self.cmd);
@@ -722,7 +721,6 @@ impl Call {
             Stdio::null()
         });
         if self.own_group {
-            use std::os::unix::process::CommandExt;
             self.cmd.process_group(0);
         }
         match &self.sink {
@@ -775,7 +773,6 @@ impl Drain {
 }
 
 fn exit_code(st: std::process::ExitStatus) -> i32 {
-    use std::os::unix::process::ExitStatusExt;
     st.code().unwrap_or_else(|| 128 + st.signal().unwrap_or(0))
 }
 

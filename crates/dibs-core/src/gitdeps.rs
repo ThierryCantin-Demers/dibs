@@ -117,10 +117,10 @@ pub fn missing<'a>(setup_output: &str, dbs: &'a [Db]) -> (Option<String>, Vec<&'
             gitdb = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("DIBS-GITMISSING ") {
             let mut it = v.split_whitespace();
-            if let (Some(n), Some(c)) = (it.next(), it.next()) {
-                if let Some(db) = dbs.iter().find(|d| d.name == n && d.commit == c) {
-                    out.push(db);
-                }
+            if let (Some(n), Some(c)) = (it.next(), it.next())
+                && let Some(db) = dbs.iter().find(|d| d.name == n && d.commit == c)
+            {
+                out.push(db);
             }
         }
     }

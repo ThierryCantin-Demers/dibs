@@ -475,26 +475,25 @@ impl Recipe {
             .steps
             .iter()
             .find(|st| st.lock == Lock::Exclusive && cargo(st))
+            && !built_first
         {
-            if !built_first {
-                // shell has no steps to split, so it is told the two calls instead.
-                return Err(match name {
-                    "shell" => format!(
-                        "a command that compiles cannot take the exclusive lock, which holds the whole\n             \
+            // shell has no steps to split, so it is told the two calls instead.
+            return Err(match name {
+                "shell" => format!(
+                    "a command that compiles cannot take the exclusive lock, which holds the whole\n             \
                          machine for work that tolerates neighbours. Build it first without --bench:\n               \
                          dibs shell <repo>@<ref> --reason <why> -- '{} --no-run'\n             \
                          then measure with --bench.",
-                        st.run
-                    ),
-                    _ => format!(
-                        "recipe '{name}' compiles under the exclusive lock, which holds the whole machine\n             \
+                    st.run
+                ),
+                _ => format!(
+                    "recipe '{name}' compiles under the exclusive lock, which holds the whole machine\n             \
                          for work that tolerates neighbours. Split it in two:\n               \
                          [[step]] lock = \"shared\"     run = \"{} --no-run\"\n               \
                          [[step]] lock = \"exclusive\"  run = \"{}\"",
-                        st.run, st.run
-                    ),
-                });
-            }
+                    st.run, st.run
+                ),
+            });
         }
         Ok(())
     }
