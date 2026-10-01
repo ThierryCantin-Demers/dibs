@@ -99,19 +99,20 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 | `bin/dibs` | the lock's entry point: the help text, then it loads `lib/`. |
 | `lib/client/`, `lib/steps/` | what runs on your side: functions by topic, and the steps of a call in order. |
 | `lib/machine/` | what runs on the machine, joined into one script and sent over ssh with every call, so nothing is installed there. |
-| `core/` | the recipe layer behind `dibs build`, `test` and `bench`: recipes, labels, worktrees, provenance. |
-| `dibs-tui/` | `dibstop`, a live view of who holds the machines. |
+| `crates/dibs-core/` | the recipe layer behind `dibs build`, `test` and `bench`: recipes, labels, worktrees, provenance. |
+| `crates/dibstop/` | `dibstop`, a live view of who holds the machines. |
+| `crates/dibs-machines/` | `dibs-machines`, a desktop window on what each machine has against what it should. |
 | `dibs-report/` | builds a single-page handoff report from the sources themselves. |
 | `config/chips.toml` | what to assume about a chip when no runtime can probe it. |
 | `docs/guide.md` | the detailed guide. |
 | `dibs-design/` | the plans, the settled decisions and their measurements. |
 | `dibs-agent-rules.md` | the rules your agents follow. |
-| `core/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
-| `core/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |
+| `crates/dibs-core/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
+| `crates/dibs-core/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |
 
 ## Tests
 
-    cd core && cargo test          # everything local, about 10 s, safe while others are working
+    cargo test                     # everything local, about 15 s, safe while others are working
 
     # A real, idle machine: takes its lock and kills its own jobs there, so it is named twice.
     DIBS_LIVE_MACHINE=<machine> DIBS_LIVE_CONFIRM=<machine> cargo test --test live

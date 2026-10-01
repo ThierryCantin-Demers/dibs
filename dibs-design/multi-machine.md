@@ -494,7 +494,7 @@ Each phase is useful on its own and none requires the next.
    appending rebuilds exactly the mixed history the check exists to prevent. The record is
    stamped, because what a machine is keyed by has changed once already and a key change turns
    every existing record into an apparent move.
-7. **The viewer.** `dibs-tui` grows a machine column and a device column. **The machine half
+7. **The viewer.** `dibstop` grows a machine column and a device column. **The machine half
    is done**: one feed per machine, per-machine state in the header so that "the feed is down"
    and "it is idle" stay different answers, and `--kill`, `--out` and `--peek` routed back to
    the machine the selected row is on. The column hides itself when there is one machine, so

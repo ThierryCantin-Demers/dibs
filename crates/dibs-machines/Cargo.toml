@@ -1,0 +1,17 @@
+[package]
+name = "dibs-machines"
+version.workspace = true
+edition.workspace = true
+description = "A window on dibs machines: what each machine lacks against what it should have"
+
+[[bin]]
+name = "dibs-machines"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

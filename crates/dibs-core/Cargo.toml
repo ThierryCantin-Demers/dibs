@@ -1,0 +1,23 @@
+[package]
+name = "dibs-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+libc.workspace = true
+regex.workspace = true
+
+# Against a real machine, taking its lock: never part of a plain `cargo test`.
+[[test]]
+name = "live"
+path = "tests/live/main.rs"
+test = false
+
+[lints]
+workspace = true

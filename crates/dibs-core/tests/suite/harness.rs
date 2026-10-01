@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub const DIBS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../bin/dibs");
+pub const DIBS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../bin/dibs");
 pub const CORE: &str = env!("CARGO_BIN_EXE_dibs-core");
 
 const CALL_LIMIT: Duration = Duration::from_secs(120);
@@ -22,7 +22,7 @@ const WAIT_LIMIT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(5);
 
 pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap().to_path_buf()
 }
 
 pub fn hostname() -> &'static str {

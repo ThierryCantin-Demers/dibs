@@ -630,7 +630,7 @@ installed to be usable, which is what makes adding one cheap. `lib/client/` hold
 that run on your side, and `lib/steps/` the order a call goes through them in: read the
 arguments, choose the machine, refuse what it cannot do, place it, then send it.
 
-`core/` is everything above that, and runs on your side. It exists because an interface
+`crates/dibs-core/` is everything above that, and runs on your side. It exists because an interface
 taking one arbitrary string invites four problems that were measured in the log it replaced.
 Labels were unstable, so estimates could not work. Two jobs in 179 redirected their output, so
 watching one almost never worked. Agents chose their own scratch paths, and one filled a shared
