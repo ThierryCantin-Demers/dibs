@@ -13,7 +13,7 @@
 #[path = "../suite/harness.rs"]
 mod harness;
 
-use harness::{hostname, Call, Sandbox, Text, DIBS};
+use harness::{Call, DIBS, Sandbox, Text, hostname};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
@@ -39,9 +39,19 @@ impl Live {
         let name = std::env::var("DIBS_LIVE_MACHINE").unwrap_or_default();
         let confirm = std::env::var("DIBS_LIVE_CONFIRM").unwrap_or_default();
         assert!(!name.is_empty() && name == confirm, "{REFUSAL}");
-        let mut live = Live { name, dir: String::new(), _turn: turn };
+        let mut live = Live {
+            name,
+            dir: String::new(),
+            _turn: turn,
+        };
         let status = live.dibs(["--status"]).run();
-        assert_eq!(status.code, 0, "{} cannot be reached, so nothing ran:\n{}", live.name, status.all());
+        assert_eq!(
+            status.code,
+            0,
+            "{} cannot be reached, so nothing ran:\n{}",
+            live.name,
+            status.all()
+        );
         assert_ne!(
             live.peek("hostname -s"),
             hostname(),
@@ -50,13 +60,34 @@ impl Live {
             live.name
         );
         let listed = live.dibs(["--machines"]).run().stdout;
-        let refuses = listed.lines().any(|l| l.split_whitespace().next() == Some(live.name.as_str()) && l.contains("no measurements"));
-        assert!(!refuses, "{} refuses --bench (measure = false), which one of these tests needs. Name a machine that measures.", live.name);
+        let refuses = listed.lines().any(|l| {
+            l.split_whitespace().next() == Some(live.name.as_str()) && l.contains("no measurements")
+        });
+        assert!(
+            !refuses,
+            "{} refuses --bench (measure = false), which one of these tests needs. Name a machine that measures.",
+            live.name
+        );
         // The test before this one may still be letting go; anyone else's job means no.
-        let idle = live.eventually(Duration::from_secs(10), || live.status().contains("dibs: idle"));
-        assert!(idle, "{} is in use, so nothing ran:\n{}", live.name, live.status());
-        live.dir = live.peek(&format!("d=\"$DIBS_SCRATCH/tmp/dibs-live-{}\"; mkdir -p \"$d\" && echo \"$d\"", std::process::id()));
-        assert!(live.dir.starts_with('/'), "no directory of its own on {}: {:?}", live.name, live.dir);
+        let idle = live.eventually(Duration::from_secs(10), || {
+            live.status().contains("dibs: idle")
+        });
+        assert!(
+            idle,
+            "{} is in use, so nothing ran:\n{}",
+            live.name,
+            live.status()
+        );
+        live.dir = live.peek(&format!(
+            "d=\"$DIBS_SCRATCH/tmp/dibs-live-{}\"; mkdir -p \"$d\" && echo \"$d\"",
+            std::process::id()
+        ));
+        assert!(
+            live.dir.starts_with('/'),
+            "no directory of its own on {}: {:?}",
+            live.name,
+            live.dir
+        );
         live
     }
 
@@ -67,12 +98,18 @@ impl Live {
     {
         let mut cmd = Command::new(DIBS);
         cmd.args(args.into_iter().map(|a| a.as_ref().to_string()));
-        cmd.env("DIBS_ON", &self.name).env_remove("DIBS_LOCAL").env_remove("DIBS_HOST");
+        cmd.env("DIBS_ON", &self.name)
+            .env_remove("DIBS_LOCAL")
+            .env_remove("DIBS_HOST");
         Call::wrap(cmd)
     }
 
     fn peek(&self, script: &str) -> String {
-        self.dibs(["--peek", script]).run().stdout.trim().to_string()
+        self.dibs(["--peek", script])
+            .run()
+            .stdout
+            .trim()
+            .to_string()
     }
 
     fn status(&self) -> String {
@@ -120,16 +157,31 @@ fn a_job_dies_with_the_caller_that_started_it() {
     // Blocks without using a CPU, and carries a tag that names only this run's process.
     let workload = format!("python3 -c 'import signal; signal.pause()' {tag}");
     let caller = s.spawn(live.dibs(["--label", "live-hangup", "--max", "120", &workload]));
-    assert!(live.soon(|| live.status().contains("live-hangup")), "it is holding the lock");
+    assert!(
+        live.soon(|| live.status().contains("live-hangup")),
+        "it is holding the lock"
+    );
     // macOS's python3 is a stub that runs the real one under its full path.
     let find = format!("pgrep -f '^[^ ]*[Pp]ython[^ ]* -c import signal.* {tag}$' | head -1");
     let mut work = String::new();
-    assert!(live.soon(|| { work = live.peek(&find); !work.is_empty() }), "its workload is running over there");
+    assert!(
+        live.soon(|| {
+            work = live.peek(&find);
+            !work.is_empty()
+        }),
+        "its workload is running over there"
+    );
     kill9(caller.pid);
     s.wait(caller);
     let alive = format!("ps -p {work} > /dev/null && echo alive || echo gone");
-    assert!(live.soon(|| live.peek(&alive) == "gone"), "the workload died with it");
-    assert!(live.soon(|| live.status().contains("dibs: idle")), "the lock came back");
+    assert!(
+        live.soon(|| live.peek(&alive) == "gone"),
+        "the workload died with it"
+    );
+    assert!(
+        live.soon(|| live.status().contains("dibs: idle")),
+        "the lock came back"
+    );
 }
 
 #[test]
@@ -138,18 +190,48 @@ fn a_caller_that_dies_while_its_job_is_queued_takes_it_out_of_the_queue() {
     let mut s = Sandbox::new();
     let (gate, marker) = (format!("{}/gate", live.dir), format!("{}/marker", live.dir));
     live.peek(&format!("mkfifo '{gate}'"));
-    let holder = s.spawn(live.dibs(["--bench", "--max", "60", "--label", "live-holder", &format!("read -r _ < '{gate}'")]));
-    assert!(live.soon(|| live.status().contains("live-holder")), "a benchmark holds the machine");
+    let holder = s.spawn(live.dibs([
+        "--bench",
+        "--max",
+        "60",
+        "--label",
+        "live-holder",
+        &format!("read -r _ < '{gate}'"),
+    ]));
+    assert!(
+        live.soon(|| live.status().contains("live-holder")),
+        "a benchmark holds the machine"
+    );
     let queued = s.spawn(live.dibs(["--label", "live-queued", &format!("echo ran > '{marker}'")]));
-    assert!(live.soon(|| live.status().contains("live-queued")), "it is queued behind the benchmark");
+    assert!(
+        live.soon(|| live.status().contains("live-queued")),
+        "it is queued behind the benchmark"
+    );
     kill9(queued.pid);
     s.wait(queued);
-    assert!(live.soon(|| !live.status().contains("live-queued")), "killing its caller drops it from the queue");
-    assert_eq!(live.peek(&format!("test -e '{marker}' && echo ran || echo never")), "never", "and it never ran");
+    assert!(
+        live.soon(|| !live.status().contains("live-queued")),
+        "killing its caller drops it from the queue"
+    );
+    assert_eq!(
+        live.peek(&format!("test -e '{marker}' && echo ran || echo never")),
+        "never",
+        "and it never ran"
+    );
     // An earlier run's lines can still be among the last 20; this run's holder has only arrived.
     let log = live.dibs(["--log", "20"]).run().stdout;
-    let this_run: Vec<&str> = log.lines().rev().take_while(|l| !(l.contains("arrived") && l.contains("live-holder"))).collect();
-    assert_eq!(this_run.join("\n").lines_matching("caller-gone.*live-queued"), 1, "the log says why");
+    let this_run: Vec<&str> = log
+        .lines()
+        .rev()
+        .take_while(|l| !(l.contains("arrived") && l.contains("live-holder")))
+        .collect();
+    assert_eq!(
+        this_run
+            .join("\n")
+            .lines_matching("caller-gone.*live-queued"),
+        1,
+        "the log says why"
+    );
     live.peek(&format!("printf 'go\\n' > '{gate}'"));
     assert_eq!(s.wait(holder), 0);
 }
@@ -162,12 +244,27 @@ fn a_watch_dies_with_the_terminal_that_was_watching() {
     let watch = s.spawn(live.dibs(["--watch", "2"]).stdout_to(&out));
     // The script's name there carries the pid of the dibs that sent it, which picks out this
     // watch from any dibstop or person watching beside it.
-    let running = format!("pgrep -f '[.]dibs-payload[.]{}[.]' > /dev/null && echo running || echo gone", watch.pid);
-    assert!(live.soon(|| std::fs::read_to_string(&out).unwrap_or_default().contains("ctrl-c to stop")), "it draws");
-    assert_eq!(live.peek(&running), "running", "the loop is running over there");
+    let running = format!(
+        "pgrep -f '[.]dibs-payload[.]{}[.]' > /dev/null && echo running || echo gone",
+        watch.pid
+    );
+    assert!(
+        live.soon(|| std::fs::read_to_string(&out)
+            .unwrap_or_default()
+            .contains("ctrl-c to stop")),
+        "it draws"
+    );
+    assert_eq!(
+        live.peek(&running),
+        "running",
+        "the loop is running over there"
+    );
     kill9(watch.pid);
     s.wait(watch);
-    assert!(live.soon(|| live.peek(&running) == "gone"), "and it stops when the caller does");
+    assert!(
+        live.soon(|| live.peek(&running) == "gone"),
+        "and it stops when the caller does"
+    );
 }
 
 #[test]
@@ -187,25 +284,59 @@ fn rsync_reaches_the_machine_through_the_lock() {
     std::fs::write(s.path("sync/b.bin"), &blob).unwrap();
     let (here, there) = (format!("{}/", s.p("sync")), format!(":{}/sync/", live.dir));
     live.dibs(["--sync", "-a", &here, &there]).run();
-    assert_eq!(live.peek(&format!("cat '{}/sync/a.txt'", live.dir)), "one", "a tree lands over there");
+    assert_eq!(
+        live.peek(&format!("cat '{}/sync/a.txt'", live.dir)),
+        "one",
+        "a tree lands over there"
+    );
     live.peek(&format!("touch '{}/sync/stale'", live.dir));
     live.dibs(["--sync", "-a", "--delete", &here, &there]).run();
-    assert_eq!(live.peek(&format!("ls '{}/sync'", live.dir)).split_whitespace().collect::<Vec<_>>(), ["a.txt", "b.bin"], "--delete takes away what is no longer here");
-    live.dibs(["--sync", "-a", &there, &format!("{}/", s.p("back"))]).run();
     assert_eq!(
-        (s.read("back/a.txt"), std::fs::read(s.path("back/b.bin")).ok()),
+        live.peek(&format!("ls '{}/sync'", live.dir))
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        ["a.txt", "b.bin"],
+        "--delete takes away what is no longer here"
+    );
+    live.dibs(["--sync", "-a", &there, &format!("{}/", s.p("back"))])
+        .run();
+    assert_eq!(
+        (
+            s.read("back/a.txt"),
+            std::fs::read(s.path("back/b.bin")).ok()
+        ),
         ("one\n".to_string(), Some(blob)),
         "and the whole tree comes back byte for byte"
     );
-    assert!(live.dibs(["--log", "30"]).run().stdout.lines_with(" sync ") >= 1, "it was a job like any other");
+    assert!(
+        live.dibs(["--log", "30"]).run().stdout.lines_with(" sync ") >= 1,
+        "it was a job like any other"
+    );
 }
 
 #[test]
 fn the_ordinary_paths_work_over_ssh() {
     let live = Live::claim();
-    assert_eq!(live.dibs(["--label", "live-run", "echo hello-over-ssh"]).run().stdout, "hello-over-ssh\n", "a run returns its output");
+    assert_eq!(
+        live.dibs(["--label", "live-run", "echo hello-over-ssh"])
+            .run()
+            .stdout,
+        "hello-over-ssh\n",
+        "a run returns its output"
+    );
     assert_eq!(live.peek("echo peeked"), "peeked", "--peek needs no lock");
     // With a terminal, every tool downstream thinks it is interactive and git opens its pager.
-    assert_eq!(live.peek("[ -t 0 ] || [ -t 1 ] && echo tty || echo no-tty"), "no-tty", "no tty, so nothing pages");
-    assert_eq!(live.dibs(["--log", "20"]).run().stdout.lines_with("live-run"), 2, "the log recorded the run");
+    assert_eq!(
+        live.peek("[ -t 0 ] || [ -t 1 ] && echo tty || echo no-tty"),
+        "no-tty",
+        "no tty, so nothing pages"
+    );
+    assert_eq!(
+        live.dibs(["--log", "20"])
+            .run()
+            .stdout
+            .lines_with("live-run"),
+        2,
+        "the log recorded the run"
+    );
 }

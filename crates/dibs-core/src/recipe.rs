@@ -151,7 +151,8 @@ impl Tree {
     fn check(&self) -> Result<(), String> {
         for p in &self.fresh {
             let inside = p.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
-                && p.chars().all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
             if !inside {
                 return Err(format!(
                     "[tree] fresh lists paths inside the tree, and '{p}' is not one: relative, with no . or .. \
@@ -234,14 +235,22 @@ impl Manifest {
     fn layers(dir: &Path, repo: &str, local_dir: &Path) -> Result<(Manifest, bool), String> {
         let mut m = Manifest::default();
         let mut found = false;
-        for (path, src) in [(dir.join(".dibs.toml"), Source::Repo), (local_dir.join(format!("{repo}.toml")), Source::Local)] {
+        for (path, src) in [
+            (dir.join(".dibs.toml"), Source::Repo),
+            (local_dir.join(format!("{repo}.toml")), Source::Local),
+        ] {
             if !path.exists() {
                 continue;
             }
             let at = |e: String| format!("{}: {e}", path.display());
             let text = std::fs::read_to_string(&path).map_err(|e| at(e.to_string()))?;
             let parsed: Manifest = toml::from_str(&text).map_err(|e| at(e.to_string()))?;
-            parsed.tree.as_ref().map(Tree::check).transpose().map_err(at)?;
+            parsed
+                .tree
+                .as_ref()
+                .map(Tree::check)
+                .transpose()
+                .map_err(at)?;
             m.absorb(parsed, src);
             found = true;
         }
@@ -278,7 +287,10 @@ impl Manifest {
     }
 
     pub fn service_listing(&self) -> Vec<(&str, Source)> {
-        self.service.iter().map(|(k, v)| (k.as_str(), v.source)).collect()
+        self.service
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.source))
+            .collect()
     }
 
     pub fn recipe(&self, verb: Verb, name: &str) -> Option<&Recipe> {
@@ -296,7 +308,10 @@ impl Manifest {
     }
 
     pub fn listing(&self, verb: Verb) -> Vec<(&str, Source)> {
-        self.table(verb).iter().map(|(k, v)| (k.as_str(), v.source)).collect()
+        self.table(verb)
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.source))
+            .collect()
     }
 
     fn table(&self, verb: Verb) -> &BTreeMap<String, Recipe> {
@@ -336,12 +351,20 @@ impl Recipe {
 
     /// The value of every parameter for one invocation: what was asked for, checked against
     /// what is declared, over the defaults.
-    pub fn values(&self, given: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+    pub fn values(
+        &self,
+        given: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, String> {
         if let Some(unknown) = given.keys().find(|k| !self.params.contains_key(*k)) {
             let have: Vec<&str> = self.params.keys().map(|s| s.as_str()).collect();
             return Err(match have.is_empty() {
-                true => format!("this recipe takes no parameters, so --{unknown} means nothing to it"),
-                false => format!("no parameter '{unknown}'; this recipe takes: {}", have.join(", ")),
+                true => {
+                    format!("this recipe takes no parameters, so --{unknown} means nothing to it")
+                }
+                false => format!(
+                    "no parameter '{unknown}'; this recipe takes: {}",
+                    have.join(", ")
+                ),
             });
         }
         let mut out = BTreeMap::new();
@@ -351,7 +374,10 @@ impl Recipe {
                 None => return Err(format!("--{name} has no default, so it has to be given")),
             };
             if !p.choices.is_empty() && !p.choices.contains(&v) {
-                return Err(format!("--{name} {v} is not one of: {}", p.choices.join(", ")));
+                return Err(format!(
+                    "--{name} {v} is not one of: {}",
+                    p.choices.join(", ")
+                ));
             }
             out.insert(name.clone(), v);
         }
@@ -381,10 +407,14 @@ impl Recipe {
     /// The two ways a recipe invalidates its own measurement, refused before anything is paid
     /// for rather than found in the numbers afterwards.
     pub fn check(&self, name: &str) -> Result<(), String> {
-        let variable = |v: &str| v.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
-            && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let variable = |v: &str| {
+            v.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        };
         if let Some(v) = self.fresh.iter().find(|v| !variable(v)) {
-            return Err(format!("recipe '{name}': fresh lists variables to give each run its own value, and '{v}' is not a variable name"));
+            return Err(format!(
+                "recipe '{name}': fresh lists variables to give each run its own value, and '{v}' is not a variable name"
+            ));
         }
         // Expanded unquoted on the machine so that * and ** match, which leaves no room for
         // anything the shell would read as more than a path.
@@ -393,7 +423,9 @@ impl Recipe {
             !rest.is_empty()
                 && !rest.starts_with('/')
                 && !rest.split('/').any(|c| c == "..")
-                && rest.chars().all(|c| c.is_ascii_alphanumeric() || "/._-*?[]+=,@".contains(c))
+                && rest
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "/._-*?[]+=,@".contains(c))
         };
         if let Some(a) = self.artifacts.iter().find(|a| !pattern(a)) {
             return Err(format!(
@@ -413,7 +445,16 @@ impl Recipe {
                         let dir = rest.split(['/', '"', '\'']).next().unwrap_or("");
                         dir.is_empty()
                             || triple(dir)
-                            || ["debug", "release", "doc", "tmp", "package", "criterion", "nextest"].contains(&dir)
+                            || [
+                                "debug",
+                                "release",
+                                "doc",
+                                "tmp",
+                                "package",
+                                "criterion",
+                                "nextest",
+                            ]
+                            .contains(&dir)
                     }
                     None => w.trim_end_matches(['"', '\'']) == "target",
                 }
@@ -425,8 +466,16 @@ impl Recipe {
             }
         }
         let cargo = |st: &Step| st.run.split_whitespace().any(|w| w == "cargo");
-        let built_first = self.steps.iter().take_while(|st| st.lock == Lock::Shared).any(cargo);
-        if let Some(st) = self.steps.iter().find(|st| st.lock == Lock::Exclusive && cargo(st)) {
+        let built_first = self
+            .steps
+            .iter()
+            .take_while(|st| st.lock == Lock::Shared)
+            .any(cargo);
+        if let Some(st) = self
+            .steps
+            .iter()
+            .find(|st| st.lock == Lock::Exclusive && cargo(st))
+        {
             if !built_first {
                 // shell has no steps to split, so it is told the two calls instead.
                 return Err(match name {
@@ -451,7 +500,6 @@ impl Recipe {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,12 +516,24 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("dibs-recipe-{}", std::process::id()));
         let repo = tmp.join("cubek");
         let cfg = tmp.join("cfg");
-        write(&repo, ".dibs.toml", "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"from repo\"\n");
-        write(&cfg, "cubek.toml", "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"from local\"\n");
+        write(
+            &repo,
+            ".dibs.toml",
+            "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"from repo\"\n",
+        );
+        write(
+            &cfg,
+            "cubek.toml",
+            "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"from local\"\n",
+        );
         let m = Manifest::load_from(&repo, "cubek", &cfg).unwrap();
         let r = m.recipe(Verb::Build, "x").unwrap();
         assert_eq!(r.steps[0].run, "from local");
-        assert_eq!(r.source, Source::Local, "an override has to be visible as one");
+        assert_eq!(
+            r.source,
+            Source::Local,
+            "an override has to be visible as one"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -494,8 +554,14 @@ mod tests {
         assert_eq!(svc.build.as_deref(), Some("cargo build -p server"));
         assert_eq!(svc.ports, ["cuda", "vulkan"]);
         assert_eq!(svc.serves.len(), 2);
-        assert_eq!((svc.serves[0].name.as_str(), svc.serves[0].ready.as_deref()), ("cuda", Some("tcp:cuda")));
-        assert_eq!(svc.serves[1].ready, None, "a server may say nothing about being ready");
+        assert_eq!(
+            (svc.serves[0].name.as_str(), svc.serves[0].ready.as_deref()),
+            ("cuda", Some("tcp:cuda"))
+        );
+        assert_eq!(
+            svc.serves[1].ready, None,
+            "a server may say nothing about being ready"
+        );
         assert_eq!(svc.source, Source::Repo);
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -508,11 +574,23 @@ mod tests {
     #[test]
     fn a_fresh_variable_changes_the_procedure_and_has_to_be_a_variable() {
         let plain = parse("[bench.r]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n");
-        let fresh = parse("[bench.r]\nfresh = [\"CUBECL_ENVIRONMENT\"]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n");
+        let fresh = parse(
+            "[bench.r]\nfresh = [\"CUBECL_ENVIRONMENT\"]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n",
+        );
         assert_eq!(fresh.fresh, ["CUBECL_ENVIRONMENT"]);
-        assert_ne!(plain.fingerprint(), fresh.fingerprint(), "a cold cache and a warm one are two procedures");
-        let bad = parse("[bench.r]\nfresh = [\"A B\"]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n");
-        assert!(bad.check("r").unwrap_err().contains("'A B' is not a variable name"));
+        assert_ne!(
+            plain.fingerprint(),
+            fresh.fingerprint(),
+            "a cold cache and a warm one are two procedures"
+        );
+        let bad = parse(
+            "[bench.r]\nfresh = [\"A B\"]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n",
+        );
+        assert!(
+            bad.check("r")
+                .unwrap_err()
+                .contains("'A B' is not a variable name")
+        );
     }
 
     const SWEEP: &str = "\
@@ -532,65 +610,111 @@ run = \"cargo bench --features cubecl/{backend} -- $FILTER\"\n";
     fn a_parameter_falls_back_to_its_default_and_is_checked_against_its_choices() {
         let r = parse(SWEEP);
         let given = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
-            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
         };
         let v = r.values(&given(&[("size", "64")])).unwrap();
         assert_eq!(v["backend"], "cuda");
         assert_eq!(v["samples"], "10");
 
-        let e = r.values(&given(&[("backend", "metal"), ("size", "64")])).unwrap_err();
-        assert!(e.contains("cuda, vulkan"), "a refusal has to say what is allowed: {e}");
-        let e = r.values(&given(&[("backends", "cuda"), ("size", "64")])).unwrap_err();
-        assert!(e.contains("backend, samples, size"), "and which names exist: {e}");
+        let e = r
+            .values(&given(&[("backend", "metal"), ("size", "64")]))
+            .unwrap_err();
+        assert!(
+            e.contains("cuda, vulkan"),
+            "a refusal has to say what is allowed: {e}"
+        );
+        let e = r
+            .values(&given(&[("backends", "cuda"), ("size", "64")]))
+            .unwrap_err();
+        assert!(
+            e.contains("backend, samples, size"),
+            "and which names exist: {e}"
+        );
         let e = r.values(&given(&[])).unwrap_err();
-        assert!(e.contains("--size"), "a parameter with no default cannot be left out: {e}");
+        assert!(
+            e.contains("--size"),
+            "a parameter with no default cannot be left out: {e}"
+        );
     }
 
     #[test]
     fn binding_fills_the_declared_names_and_leaves_the_shell_alone() {
         let r = parse(SWEEP);
-        let given: BTreeMap<String, String> =
-            [("backend", "vulkan"), ("size", "64")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let given: BTreeMap<String, String> = [("backend", "vulkan"), ("size", "64")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         let b = r.bound(&r.values(&given).unwrap());
         assert_eq!(b.steps[0].run, "cargo build --features cubecl/vulkan");
         assert_eq!(b.steps[1].env["SAMPLES"], "10");
-        assert_eq!(b.steps[1].env["SHAPE"], "64x64", "a name can appear twice in one value");
-        assert!(b.steps[1].run.ends_with("-- $FILTER"), "the command is shell, not a template");
-        assert_ne!(r.fingerprint(), b.fingerprint(), "what ran is what has to be identified");
+        assert_eq!(
+            b.steps[1].env["SHAPE"], "64x64",
+            "a name can appear twice in one value"
+        );
+        assert!(
+            b.steps[1].run.ends_with("-- $FILTER"),
+            "the command is shell, not a template"
+        );
+        assert_ne!(
+            r.fingerprint(),
+            b.fingerprint(),
+            "what ran is what has to be identified"
+        );
     }
 
     #[test]
     fn a_step_cannot_name_the_target_directory_it_does_not_write_to() {
-        let r = parse(
-            "[[bench.r.step]]\nlock=\"shared\"\nrun=\"ls target/release/bench\"\n",
-        );
+        let r = parse("[[bench.r.step]]\nlock=\"shared\"\nrun=\"ls target/release/bench\"\n");
         let e = r.check("r").unwrap_err();
         assert!(e.contains("CARGO_TARGET_DIR"), "{e}");
         let fine = parse(
             "[[bench.r.step]]\nlock=\"shared\"\nrun=\"ls $CARGO_TARGET_DIR/release && ls $R/target-main\"\n",
         );
-        fine.check("r").expect("an absolute target directory is the whole point");
-        for run in ["cd target", "ls target/x86_64-unknown-linux-gnu/release", "cat target/criterion/r"] {
-            parse(&format!("[[bench.r.step]]\nlock=\"shared\"\nrun=\"{run}\"\n")).check("r").unwrap_err();
+        fine.check("r")
+            .expect("an absolute target directory is the whole point");
+        for run in [
+            "cd target",
+            "ls target/x86_64-unknown-linux-gnu/release",
+            "cat target/criterion/r",
+        ] {
+            parse(&format!(
+                "[[bench.r.step]]\nlock=\"shared\"\nrun=\"{run}\"\n"
+            ))
+            .check("r")
+            .unwrap_err();
         }
-        let own = parse("[[bench.r.step]]\nlock=\"shared\"\nrun=\"rm -rf target/guide && ls ./target/guide/model\"\n");
-        own.check("r").expect("a program's own directory under target/ is in the tree");
+        let own = parse(
+            "[[bench.r.step]]\nlock=\"shared\"\nrun=\"rm -rf target/guide && ls ./target/guide/model\"\n",
+        );
+        own.check("r")
+            .expect("a program's own directory under target/ is in the tree");
     }
 
     #[test]
     fn a_measurement_that_would_compile_under_the_exclusive_lock_is_refused() {
-        let alone = parse("[[bench.r.step]]\nlock=\"exclusive\"\nrun=\"cargo bench --bench gemm\"\n");
+        let alone =
+            parse("[[bench.r.step]]\nlock=\"exclusive\"\nrun=\"cargo bench --bench gemm\"\n");
         let e = alone.check("r").unwrap_err();
-        assert!(e.contains("--no-run"), "the message has to show the two-step form: {e}");
+        assert!(
+            e.contains("--no-run"),
+            "the message has to show the two-step form: {e}"
+        );
         let split = parse(
             "[[bench.r.step]]\nlock=\"shared\"\nrun=\"cargo bench --no-run\"\n\
              [[bench.r.step]]\nlock=\"exclusive\"\nrun=\"cargo bench --bench gemm\"\n",
         );
-        split.check("r").expect("built shared then measured exclusive is the shape being asked for");
+        split
+            .check("r")
+            .expect("built shared then measured exclusive is the shape being asked for");
         let prebuilt = parse(
             "[[bench.r.step]]\nlock=\"exclusive\"\nrun=\"$CARGO_TARGET_DIR/release/bench\"\n",
         );
-        prebuilt.check("r").expect("a binary that was already built compiles nothing");
+        prebuilt
+            .check("r")
+            .expect("a binary that was already built compiles nothing");
     }
 
     #[test]
@@ -598,18 +722,44 @@ run = \"cargo bench --features cubecl/{backend} -- $FILTER\"\n";
         let tmp = std::env::temp_dir().join(format!("dibs-tree-{}", std::process::id()));
         let (repo, cfg) = (tmp.join("app"), tmp.join("cfg"));
         write(&repo, ".dibs.toml", "[tree]\nfresh = [\"cache\"]\n");
-        assert_eq!(Manifest::load_from(&repo, "app", &cfg).unwrap().tree_fresh(), ["cache"]);
-        write(&cfg, "app.toml", "[tree]\nfresh = [\"target/environment\"]\n");
-        assert_eq!(Manifest::load_from(&repo, "app", &cfg).unwrap().tree_fresh(), ["target/environment"]);
-        write(&cfg, "app.toml", "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"make\"\n");
-        assert_eq!(Manifest::load_from(&repo, "app", &cfg).unwrap().tree_fresh(), ["cache"], "a layer that says nothing about it changes nothing");
+        assert_eq!(
+            Manifest::load_from(&repo, "app", &cfg)
+                .unwrap()
+                .tree_fresh(),
+            ["cache"]
+        );
+        write(
+            &cfg,
+            "app.toml",
+            "[tree]\nfresh = [\"target/environment\"]\n",
+        );
+        assert_eq!(
+            Manifest::load_from(&repo, "app", &cfg)
+                .unwrap()
+                .tree_fresh(),
+            ["target/environment"]
+        );
+        write(
+            &cfg,
+            "app.toml",
+            "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"make\"\n",
+        );
+        assert_eq!(
+            Manifest::load_from(&repo, "app", &cfg)
+                .unwrap()
+                .tree_fresh(),
+            ["cache"],
+            "a layer that says nothing about it changes nothing"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn a_tree_path_that_could_reach_outside_the_tree_is_refused() {
         let tmp = std::env::temp_dir().join(format!("dibs-tree-bad-{}", std::process::id()));
-        for bad in ["..", "a/../..", "/etc", ".", "", "a//b", "a/", "a b", "$HOME", "*"] {
+        for bad in [
+            "..", "a/../..", "/etc", ".", "", "a//b", "a/", "a b", "$HOME", "*",
+        ] {
             write(&tmp, ".dibs.toml", &format!("[tree]\nfresh = [{bad:?}]\n"));
             let e = Manifest::load_from(&tmp, "app", &tmp.join("cfg")).unwrap_err();
             assert!(e.contains("[tree] fresh"), "{bad:?}: {e}");
@@ -622,7 +772,10 @@ run = \"cargo bench --features cubecl/{backend} -- $FILTER\"\n";
         let tmp = std::env::temp_dir().join(format!("dibs-none-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let e = Manifest::load_from(&tmp, "nothing", &tmp.join("empty")).unwrap_err();
-        assert!(e.contains("nothing in"), "an error has to say where it looked: {e}");
+        assert!(
+            e.contains("nothing in"),
+            "an error has to say where it looked: {e}"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

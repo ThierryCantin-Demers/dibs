@@ -32,7 +32,10 @@ pub fn snapshot(name: &str, text: &str) {
         return;
     }
     match want {
-        None => panic!("no snapshot {}; UPDATE_SNAPSHOTS=1 cargo test writes it from this:\n{text}", path.display()),
+        None => panic!(
+            "no snapshot {}; UPDATE_SNAPSHOTS=1 cargo test writes it from this:\n{text}",
+            path.display()
+        ),
         Some(want) => panic!(
             "{name} differs from its snapshot, - as kept and + as printed now. UPDATE_SNAPSHOTS=1 cargo test accepts it.\n{}",
             diff(&want, text)
@@ -46,7 +49,11 @@ fn diff(want: &str, got: &str) -> String {
     let mut common = vec![vec![0usize; b.len() + 1]; a.len() + 1];
     for i in (0..a.len()).rev() {
         for j in (0..b.len()).rev() {
-            common[i][j] = if a[i] == b[j] { common[i + 1][j + 1] + 1 } else { common[i + 1][j].max(common[i][j + 1]) };
+            common[i][j] = if a[i] == b[j] {
+                common[i + 1][j + 1] + 1
+            } else {
+                common[i + 1][j].max(common[i][j + 1])
+            };
         }
     }
     let mut lines: Vec<(char, &str)> = Vec::new();
@@ -64,7 +71,11 @@ fn diff(want: &str, got: &str) -> String {
             i += 1;
         }
     }
-    let near = |k: usize| lines[k.saturating_sub(CONTEXT)..(k + CONTEXT + 1).min(lines.len())].iter().any(|(m, _)| *m != ' ');
+    let near = |k: usize| {
+        lines[k.saturating_sub(CONTEXT)..(k + CONTEXT + 1).min(lines.len())]
+            .iter()
+            .any(|(m, _)| *m != ' ')
+    };
     let mut out = String::new();
     let mut skipped = false;
     for (k, (mark, line)) in lines.iter().enumerate() {
@@ -114,7 +125,9 @@ impl Normal {
         {
             n = n.literal(&real.display().to_string(), "<root>");
         }
-        n = n.literal(&s.root.display().to_string(), "<root>").literal(&repo_root().display().to_string(), "<repo>");
+        n = n
+            .literal(&s.root.display().to_string(), "<root>")
+            .literal(&repo_root().display().to_string(), "<repo>");
         if let Some(name) = s.root.file_name() {
             n = n.literal(&name.to_string_lossy(), "<root-name>");
         }
@@ -127,7 +140,10 @@ impl Normal {
 
     /// Every match of `re`, with `$1` and the like in `with` naming its groups.
     pub fn rule(mut self, re: &str, with: &str) -> Normal {
-        self.rules.push((Regex::new(re).unwrap_or_else(|e| panic!("{re}: {e}")), with.to_string()));
+        self.rules.push((
+            Regex::new(re).unwrap_or_else(|e| panic!("{re}: {e}")),
+            with.to_string(),
+        ));
         self
     }
 
@@ -144,7 +160,10 @@ impl Normal {
         if text.is_empty() {
             return self;
         }
-        let re = format!(r"(^|[^A-Za-z0-9_-]){}($|[^A-Za-z0-9_-])", regex::escape(text));
+        let re = format!(
+            r"(^|[^A-Za-z0-9_-]){}($|[^A-Za-z0-9_-])",
+            regex::escape(text)
+        );
         self.rule(&re, &format!("${{1}}{}${{2}}", with.replace('$', "$$")))
     }
 
@@ -155,14 +174,23 @@ impl Normal {
             .rule(r"(exit [0-9]+), [0-9hms]+ ago\.", "$1, <dur> ago.")
             .rule(r"(acquired the [a-z]+ lock after) [0-9hms]+", "$1 <dur>")
             .rule(r"(that --peek took) [0-9hms]+", "$1 <dur>")
-            .rule(r"(held|It has been running|holding the lock for) [0-9]+[hms][0-9hms]*", "$1 <dur>")
+            .rule(
+                r"(held|It has been running|holding the lock for) [0-9]+[hms][0-9hms]*",
+                "$1 <dur>",
+            )
     }
 
     /// `pid N`, `--kill N` and the other places a running process is named.
     pub fn pids(self) -> Normal {
         self.rule(r"\bpid ?[0-9]+\b", "pid <pid>")
-            .rule(r"(--kill|--out|kill -9|SIGTERM to|SIGKILL to) [0-9]+\b", "$1 <pid>")
-            .rule(r"\b(holder|waiting|cpu|batch|hold|with|work)\.[0-9]+\b", "$1.<pid>")
+            .rule(
+                r"(--kill|--out|kill -9|SIGTERM to|SIGKILL to) [0-9]+\b",
+                "$1 <pid>",
+            )
+            .rule(
+                r"\b(holder|waiting|cpu|batch|hold|with|work)\.[0-9]+\b",
+                "$1.<pid>",
+            )
     }
 
     pub fn apply(&self, text: &str) -> String {
@@ -199,7 +227,11 @@ fn shown(code: i32, stdout: &str, stderr: &str) -> String {
 
 /// Arguments as a shell would need them typed, for a section's title.
 pub fn typed(args: &[&str]) -> String {
-    let plain = |a: &str| !a.is_empty() && a.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:=@,%+".contains(c));
+    let plain = |a: &str| {
+        !a.is_empty()
+            && a.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_./:=@,%+".contains(c))
+    };
     let doubled = |a: &str| !a.contains(['"', '$', '`', '\\', '!']);
     args.iter()
         .map(|a| match (plain(a), a.contains('\''), doubled(a)) {

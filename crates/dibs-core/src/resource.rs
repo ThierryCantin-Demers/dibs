@@ -50,8 +50,14 @@ impl Trailer {
         if let Some(rest) = line.strip_prefix("job ") {
             let mut words = rest.split_whitespace();
             if let Some(job) = words.next() {
-                let built = words.find_map(|w| w.strip_prefix("built=")).map(str::to_string);
-                *into = Some(Trailer { job: job.to_string(), built, log: None });
+                let built = words
+                    .find_map(|w| w.strip_prefix("built="))
+                    .map(str::to_string);
+                *into = Some(Trailer {
+                    job: job.to_string(),
+                    built,
+                    log: None,
+                });
             }
         } else if let (Some(rest), Some(t)) = (line.strip_prefix("  log "), into.as_mut()) {
             t.log = rest.split_whitespace().next().map(str::to_string);
@@ -67,7 +73,12 @@ pub trait Backend {
     fn run_capture(&self, req: &Request, command: &str) -> Result<(Outcome, String), String>;
     /// Output streams as `run`'s does, except the report of a setup run ahead of the command,
     /// which is collected and handed to `on_report` before anything after it is shown.
-    fn run_reporting(&self, req: &Request, command: &str, on_report: &mut dyn FnMut(&str)) -> Result<(Outcome, String), String>;
+    fn run_reporting(
+        &self,
+        req: &Request,
+        command: &str,
+        on_report: &mut dyn FnMut(&str),
+    ) -> Result<(Outcome, String), String>;
     fn name(&self) -> &'static str;
 }
 
@@ -86,7 +97,10 @@ pub struct Dibs {
 
 impl Default for Dibs {
     fn default() -> Self {
-        Dibs { program: "dibs".into(), machine: None }
+        Dibs {
+            program: "dibs".into(),
+            machine: None,
+        }
     }
 }
 
@@ -104,7 +118,11 @@ impl Dibs {
     /// was no choice to make: a benchmark cannot be moved, so it is the one that decides where
     /// its repo's build cache belongs, and the record should say where it ran.
     pub fn which(program: &str) -> Destination {
-        let Ok(out) = Command::new(program).arg("--which").stdin(Stdio::null()).output() else {
+        let Ok(out) = Command::new(program)
+            .arg("--which")
+            .stdin(Stdio::null())
+            .output()
+        else {
             return Destination::Unnamed;
         };
         let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -149,7 +167,7 @@ impl Backend for Dibs {
 
     fn run_capture(&self, req: &Request, command: &str) -> Result<(Outcome, String), String> {
         let mut cmd = self.build(req, command)?;
-        cmd.stderr(Stdio::inherit());   // or a failing fetch says only "exit 3"
+        cmd.stderr(Stdio::inherit()); // or a failing fetch says only "exit 3"
         let start = std::time::Instant::now();
         let out = cmd
             .output()
@@ -164,7 +182,12 @@ impl Backend for Dibs {
         ))
     }
 
-    fn run_reporting(&self, req: &Request, command: &str, on_report: &mut dyn FnMut(&str)) -> Result<(Outcome, String), String> {
+    fn run_reporting(
+        &self,
+        req: &Request,
+        command: &str,
+        on_report: &mut dyn FnMut(&str),
+    ) -> Result<(Outcome, String), String> {
         reporting(self.build(req, command)?, on_report)
     }
 
@@ -176,7 +199,10 @@ impl Backend for Dibs {
 /// Runs `cmd` passing its output through, except the `DIBS-` lines of a setup's report. Both
 /// streams are read: a transfer reports on stderr because rsync owns stdout, and the same
 /// transfer run on the machine itself is an ordinary job whose streams arrive merged.
-pub fn reporting(mut cmd: Command, on_report: &mut dyn FnMut(&str)) -> Result<(Outcome, String), String> {
+pub fn reporting(
+    mut cmd: Command,
+    on_report: &mut dyn FnMut(&str),
+) -> Result<(Outcome, String), String> {
     let start = Instant::now();
     let mut child = cmd
         .stdout(Stdio::piped())
@@ -184,8 +210,14 @@ pub fn reporting(mut cmd: Command, on_report: &mut dyn FnMut(&str)) -> Result<(O
         .spawn()
         .map_err(|e| format!("could not run {:?}: {e}", cmd.get_program()))?;
     let (tx, rx) = mpsc::channel::<(bool, Vec<u8>)>();
-    let out = child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>);
-    let err = child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>);
+    let out = child
+        .stdout
+        .take()
+        .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>);
+    let err = child
+        .stderr
+        .take()
+        .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>);
     let readers: Vec<_> = [(false, out), (true, err)]
         .into_iter()
         .filter_map(|(is_err, r)| r.map(|r| (is_err, r)))
@@ -233,7 +265,14 @@ pub fn reporting(mut cmd: Command, on_report: &mut dyn FnMut(&str)) -> Result<(O
         let _ = r.join();
     }
     let status = child.wait().map_err(|e| e.to_string())?;
-    Ok((Outcome { status: status.code().unwrap_or(-1), seconds: start.elapsed().as_secs(), trailer }, report))
+    Ok((
+        Outcome {
+            status: status.code().unwrap_or(-1),
+            seconds: start.elapsed().as_secs(),
+            trailer,
+        },
+        report,
+    ))
 }
 
 impl Dibs {
@@ -242,7 +281,9 @@ impl Dibs {
     pub fn preflight(&self, req: &Request) -> Result<bool, String> {
         let mut cmd = self.flags(req)?;
         cmd.arg("--preflight").arg("true").stdin(Stdio::null());
-        let status = cmd.status().map_err(|e| format!("could not run {}: {e}", self.program))?;
+        let status = cmd
+            .status()
+            .map_err(|e| format!("could not run {}: {e}", self.program))?;
         Ok(status.success())
     }
 
@@ -257,9 +298,11 @@ impl Dibs {
 
     fn flags(&self, req: &Request) -> Result<Command, String> {
         if req.isolation == Isolation::Device {
-            return Err("per-device isolation needs a backend that knows what is in the machine; \
+            return Err(
+                "per-device isolation needs a backend that knows what is in the machine; \
                         this one locks the whole machine or nothing"
-                .into());
+                    .into(),
+            );
         }
         if let Some(n) = req.needs {
             return Err(format!(
@@ -304,18 +347,50 @@ mod tests {
             Trailer::read(l, &mut t);
         }
         let t = t.unwrap();
-        assert_eq!((t.job.as_str(), t.built.as_deref(), t.log.as_deref()), ("1-2", Some("nothing"), Some("m:/j/1-2/log")));
+        assert_eq!(
+            (t.job.as_str(), t.built.as_deref(), t.log.as_deref()),
+            ("1-2", Some("nothing"), Some("m:/j/1-2/log"))
+        );
     }
 
     fn request(lock: Lock, new_series: bool) -> Request<'static> {
-        Request { label: "a/bench/x", lock, isolation: Isolation::Machine, needs: None, device: None, env: &[], max: None, new_series }
+        Request {
+            label: "a/bench/x",
+            lock,
+            isolation: Isolation::Machine,
+            needs: None,
+            device: None,
+            env: &[],
+            max: None,
+            new_series,
+        }
     }
 
     #[test]
     fn a_new_series_reaches_the_measurement_and_nothing_else() {
-        let d = Dibs { program: "dibs".into(), machine: Some("m".into()) };
-        let args = |req: &Request| d.build(req, "cmd").unwrap().get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
-        assert_eq!(args(&request(Lock::Exclusive, true)), ["--on", "m", "--bench", "--new-series", "--label", "a/bench/x", "cmd"]);
+        let d = Dibs {
+            program: "dibs".into(),
+            machine: Some("m".into()),
+        };
+        let args = |req: &Request| {
+            d.build(req, "cmd")
+                .unwrap()
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            args(&request(Lock::Exclusive, true)),
+            [
+                "--on",
+                "m",
+                "--bench",
+                "--new-series",
+                "--label",
+                "a/bench/x",
+                "cmd"
+            ]
+        );
         assert!(!args(&request(Lock::Shared, true)).contains(&"--new-series".to_string()));
         assert!(!args(&request(Lock::Exclusive, false)).contains(&"--new-series".to_string()));
     }

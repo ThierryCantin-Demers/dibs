@@ -266,7 +266,11 @@ impl Run {
             if i > 0 {
                 s.push(',');
             }
-            let _ = write!(s, "{{\"lock\":\"{}\",\"status\":{},\"seconds\":{}", st.lock, st.status, st.seconds);
+            let _ = write!(
+                s,
+                "{{\"lock\":\"{}\",\"status\":{},\"seconds\":{}",
+                st.lock, st.status, st.seconds
+            );
             if let Some(a) = &st.arm {
                 let _ = write!(s, ",\"arm\":{}", q(a));
             }
@@ -313,17 +317,36 @@ mod tests {
 
     #[test]
     fn a_measured_step_says_what_state_the_machine_was_in_before_it_runs() {
-        let out = std::process::Command::new("bash").arg("-c").arg(stated("echo RAN")).env("DIBS_STATE", "kernel=6.8.0 nvidia=").output().unwrap();
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(stated("echo RAN"))
+            .env("DIBS_STATE", "kernel=6.8.0 nvidia=")
+            .output()
+            .unwrap();
         let text = String::from_utf8_lossy(&out.stdout);
-        assert!(state_of(&text).iter().any(|(k, v)| k == "kernel" && !v.is_empty()), "{text}");
-        assert!(text.find("DIBS-STATE").unwrap() < text.find("RAN").unwrap(), "{text}");
+        assert!(
+            state_of(&text)
+                .iter()
+                .any(|(k, v)| k == "kernel" && !v.is_empty()),
+            "{text}"
+        );
+        assert!(
+            text.find("DIBS-STATE").unwrap() < text.find("RAN").unwrap(),
+            "{text}"
+        );
     }
 
     // A machine with no NVIDIA driver has no version for it, which is not a version called "".
     #[test]
     fn a_value_the_machine_did_not_have_is_left_out() {
         let state = state_of("noise\nDIBS-STATE governor=performance kernel=6.8.0 nvidia=\n");
-        assert_eq!(state, [("governor".to_string(), "performance".to_string()), ("kernel".into(), "6.8.0".into())]);
+        assert_eq!(
+            state,
+            [
+                ("governor".to_string(), "performance".to_string()),
+                ("kernel".into(), "6.8.0".into())
+            ]
+        );
     }
 
     #[test]
@@ -364,7 +387,10 @@ mod tests {
             new_series: false,
             fresh: vec![("CUBECL_ENVIRONMENT".into(), "dibs-1".into())],
             state: vec![("governor".into(), "performance".into())],
-            steps: vec![step("shared", 0, "1-1", Some("nothing")), step("exclusive", 3, "1-2", None)],
+            steps: vec![
+                step("shared", 0, "1-1", Some("nothing")),
+                step("exclusive", 3, "1-2", None),
+            ],
         };
         let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).unwrap();
         assert_eq!(v["steps"][0]["built"], "nothing");
@@ -372,7 +398,10 @@ mod tests {
         assert_eq!(v["steps"][1]["job"], "1-2");
         assert_eq!(v["steps"][1]["log"], "m:/jobs/1-2/log");
         assert!(v["steps"][1].get("built").is_none());
-        assert_eq!((&v["repo"], &v["batch"], &v["anyway"]), (&"r".into(), &"20260918-1".into(), &true.into()));
+        assert_eq!(
+            (&v["repo"], &v["batch"], &v["anyway"]),
+            (&"r".into(), &"20260918-1".into(), &true.into())
+        );
         assert_eq!(v["state"]["governor"], "performance");
         assert_eq!(v["fresh"]["CUBECL_ENVIRONMENT"], "dibs-1");
         assert_eq!(v["outcome"], "failed");
@@ -380,7 +409,11 @@ mod tests {
 
     #[test]
     fn a_comparison_names_its_arms_and_tags_each_step() {
-        let out = crate::resource::Outcome { status: 0, seconds: 4, trailer: None };
+        let out = crate::resource::Outcome {
+            status: 0,
+            seconds: 4,
+            trailer: None,
+        };
         let run = Run {
             label: "r/bench/x".into(),
             verb: "bench",
@@ -400,8 +433,18 @@ mod tests {
             seeded: None,
             refs: Some("main..local".into()),
             arms: vec![
-                ArmRecord { name: "base".into(), fetched: Some("abc".into()), revisions: vec![("r".into(), "abc".into())], seeded: None },
-                ArmRecord { name: "local".into(), fetched: None, revisions: vec![("r".into(), "local:d".into())], seeded: Some("r-local-1".into()) },
+                ArmRecord {
+                    name: "base".into(),
+                    fetched: Some("abc".into()),
+                    revisions: vec![("r".into(), "abc".into())],
+                    seeded: None,
+                },
+                ArmRecord {
+                    name: "local".into(),
+                    fetched: None,
+                    revisions: vec![("r".into(), "local:d".into())],
+                    seeded: Some("r-local-1".into()),
+                },
             ],
             reps: 2,
             batch: None,
@@ -414,9 +457,15 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).unwrap();
         assert_eq!(v["refs"], "main..local");
         assert_eq!(v["arms"][0]["fetched"], "abc");
-        assert!(v["arms"][1].get("fetched").is_none(), "the local tree was sent, not fetched");
+        assert!(
+            v["arms"][1].get("fetched").is_none(),
+            "the local tree was sent, not fetched"
+        );
         assert_eq!(v["arms"][1]["revisions"]["r"], "local:d");
         assert_eq!(v["arms"][1]["seeded"], "r-local-1");
-        assert_eq!((&v["reps"], &v["steps"][0]["arm"], &v["steps"][0]["rep"]), (&2.into(), &"local".into(), &2.into()));
+        assert_eq!(
+            (&v["reps"], &v["steps"][0]["arm"], &v["steps"][0]["rep"]),
+            (&2.into(), &"local".into(), &2.into())
+        );
     }
 }

@@ -36,7 +36,9 @@ const EXIT_UNAVAILABLE: i32 = 69;
 fn main() -> std::io::Result<()> {
     let arg = std::env::args().nth(1);
     if matches!(arg.as_deref(), Some("-h" | "--help")) {
-        println!("dibstop [seconds]   live view of the machine's lock, redrawing every {DEFAULT_INTERVAL}s by default");
+        println!(
+            "dibstop [seconds]   live view of the machine's lock, redrawing every {DEFAULT_INTERVAL}s by default"
+        );
         println!("{}", input::HELP);
         return Ok(());
     }

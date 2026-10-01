@@ -22,7 +22,11 @@ const WAIT_LIMIT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(5);
 
 pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap().to_path_buf()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .to_path_buf()
 }
 
 pub fn hostname() -> &'static str {
@@ -34,7 +38,10 @@ pub fn hostname() -> &'static str {
 }
 
 pub fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 /// A pid that stays alive for the whole test, for records that prune would drop otherwise.
@@ -65,7 +72,15 @@ impl Sandbox {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let _ = fs::remove_dir_all(&root);
-        for dir in ["lockdir", "scratch", "runtime", "tmp", "bin", "nossh", "home/.cargo/bin"] {
+        for dir in [
+            "lockdir",
+            "scratch",
+            "runtime",
+            "tmp",
+            "bin",
+            "nossh",
+            "home/.cargo/bin",
+        ] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
         std::os::unix::fs::symlink(DIBS, root.join("bin/dibs")).unwrap();
@@ -81,7 +96,12 @@ impl Sandbox {
 
         let at = |p: &str| root.join(p).display().to_string();
         let mut env = BTreeMap::new();
-        let path = format!("{}:{}:{}", at("bin"), at("nossh"), std::env::var("PATH").unwrap_or_default());
+        let path = format!(
+            "{}:{}:{}",
+            at("bin"),
+            at("nossh"),
+            std::env::var("PATH").unwrap_or_default()
+        );
         for (k, v) in [
             ("PATH", path),
             ("HOME", at("home")),
@@ -110,7 +130,11 @@ impl Sandbox {
                 env.insert(k.to_string(), v);
             }
         }
-        Sandbox { root, env, children: Vec::new() }
+        Sandbox {
+            root,
+            env,
+            children: Vec::new(),
+        }
     }
 
     pub fn path(&self, rel: &str) -> PathBuf {
@@ -176,7 +200,13 @@ impl Sandbox {
         let args: Vec<String> = args.into_iter().map(|a| a.as_ref().to_string()).collect();
         match self.command("sh", ["-c", "command -v setsid"]).run().code {
             0 => self.command("setsid", args),
-            _ => self.command("perl", ["-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV or die"].into_iter().map(String::from).chain(args)),
+            _ => self.command(
+                "perl",
+                ["-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV or die"]
+                    .into_iter()
+                    .map(String::from)
+                    .chain(args),
+            ),
         }
     }
 
@@ -186,7 +216,8 @@ impl Sandbox {
 
     pub fn status_json(&self) -> serde_json::Value {
         let out = self.dibs(["--status", "--json"]).run();
-        serde_json::from_str(&out.stdout).unwrap_or_else(|e| panic!("--status --json: {e}\n{}", out.stdout))
+        serde_json::from_str(&out.stdout)
+            .unwrap_or_else(|e| panic!("--status --json: {e}\n{}", out.stdout))
     }
 
     /// Starts a call in the background, owned by the sandbox and killed with it.
@@ -218,7 +249,11 @@ impl Sandbox {
 
     /// Waits for a job started with `spawn` and returns its exit status.
     pub fn wait(&mut self, job: Job) -> i32 {
-        let i = self.children.iter().position(|c| c.pid == job.pid).expect("not a job of this sandbox");
+        let i = self
+            .children
+            .iter()
+            .position(|c| c.pid == job.pid)
+            .expect("not a job of this sandbox");
         let child = self.children.remove(i);
         let deadline = Instant::now() + CALL_LIMIT;
         loop {
@@ -238,14 +273,23 @@ impl Sandbox {
         let path = self.path(&format!("f-{name}"));
         let _ = fs::remove_file(&path);
         let c = std::ffi::CString::new(path.display().to_string()).unwrap();
-        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
+        assert_eq!(
+            unsafe { libc::mkfifo(c.as_ptr(), 0o600) },
+            0,
+            "mkfifo {}",
+            path.display()
+        );
         Gate { path }
     }
 
     pub fn count(&self, kind: &str) -> usize {
         let prefix = format!("{kind}.");
         fs::read_dir(self.lockdir())
-            .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with(&prefix)).count())
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+                    .count()
+            })
             .unwrap_or(0)
     }
 
@@ -279,9 +323,28 @@ impl Sandbox {
         while !cond() {
             if Instant::now() > deadline {
                 let records: Vec<String> = fs::read_dir(self.lockdir())
-                    .map(|d| d.flatten().map(|e| format!("{}: {}", e.file_name().to_string_lossy(), fs::read_to_string(e.path()).unwrap_or_default().trim_end())).collect())
+                    .map(|d| {
+                        d.flatten()
+                            .map(|e| {
+                                format!(
+                                    "{}: {}",
+                                    e.file_name().to_string_lossy(),
+                                    fs::read_to_string(e.path()).unwrap_or_default().trim_end()
+                                )
+                            })
+                            .collect()
+                    })
                     .unwrap_or_default();
-                panic!("timed out waiting for {what}; the lock directory holds:\n{}\nand the log ends:\n{}", records.join("\n"), self.log().lines().rev().take(6).collect::<Vec<_>>().join("\n"));
+                panic!(
+                    "timed out waiting for {what}; the lock directory holds:\n{}\nand the log ends:\n{}",
+                    records.join("\n"),
+                    self.log()
+                        .lines()
+                        .rev()
+                        .take(6)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
             }
             thread::sleep(POLL);
         }
@@ -289,7 +352,11 @@ impl Sandbox {
 
     /// Writes a lock record by hand, tab-separated, as a job would have.
     pub fn record(&self, kind: &str, pid: u32, fields: &[&str]) {
-        fs::write(self.lockdir().join(format!("{kind}.{pid}")), format!("{}\n", fields.join("\t"))).unwrap();
+        fs::write(
+            self.lockdir().join(format!("{kind}.{pid}")),
+            format!("{}\n", fields.join("\t")),
+        )
+        .unwrap();
     }
 
     /// The fields of every record of one kind, in no particular order.
@@ -299,7 +366,14 @@ impl Sandbox {
         for e in fs::read_dir(self.lockdir()).unwrap().flatten() {
             if e.file_name().to_string_lossy().starts_with(&prefix) {
                 let text = fs::read_to_string(e.path()).unwrap_or_default();
-                out.push(text.lines().next().unwrap_or("").split('\t').map(str::to_string).collect());
+                out.push(
+                    text.lines()
+                        .next()
+                        .unwrap_or("")
+                        .split('\t')
+                        .map(str::to_string)
+                        .collect(),
+                );
             }
         }
         out
@@ -314,7 +388,10 @@ impl Sandbox {
             .filter(|l| l.contains(&needle))
             .find_map(|l| {
                 let words: Vec<_> = l.split_whitespace().collect();
-                words.iter().position(|w| *w == "pid").and_then(|i| words.get(i + 1)?.parse().ok())
+                words
+                    .iter()
+                    .position(|w| *w == "pid")
+                    .and_then(|i| words.get(i + 1)?.parse().ok())
             })
             .unwrap_or_else(|| panic!("no pid for {label} in:\n{status}"))
     }
@@ -353,26 +430,56 @@ impl Sandbox {
     /// Waits for a line the log has not had yet, as a job's end is only visible there.
     pub fn log_line(&self, re: &str) {
         let re = Regex::new(re).unwrap();
-        until(&format!("a log line matching {re}"), || self.log().lines().any(|l| re.is_match(l)));
+        until(&format!("a log line matching {re}"), || {
+            self.log().lines().any(|l| re.is_match(l))
+        });
     }
 
     /// The machine script as a call sends it: the call's values as assignments, then every part
     /// of the script in order. The values are an ordinary shared job's, with `values` over them.
     pub fn machine_script(&self, values: &[(&str, &str)]) -> String {
         let mut call: Vec<(&str, &str)> = vec![
-            ("MODE", "shared"), ("LABEL", "test"), ("WAIT", ""), ("MAXHOLD", "0"), ("VERBOSE", "0"),
-            ("JSON", "0"), ("CMD", ""), ("NO_WATCH", "0"), ("TTY", "0"), ("HOLD", "0"), ("LEASE", "0"),
-            ("AGENT", ""), ("AGENT_ID", ""), ("BATCH", ""), ("DEV_PCI", ""), ("DEV_RT", ""), ("DEV_NAME", ""),
-            ("DEV_CHIP", ""), ("DEV_TWINS", "1"), ("STREAM", "0"), ("READY_WITHIN", "300"),
-            ("MAXFROM", "given"), ("FINGERPRINT", ""),
+            ("MODE", "shared"),
+            ("LABEL", "test"),
+            ("WAIT", ""),
+            ("MAXHOLD", "0"),
+            ("VERBOSE", "0"),
+            ("JSON", "0"),
+            ("CMD", ""),
+            ("NO_WATCH", "0"),
+            ("TTY", "0"),
+            ("HOLD", "0"),
+            ("LEASE", "0"),
+            ("AGENT", ""),
+            ("AGENT_ID", ""),
+            ("BATCH", ""),
+            ("DEV_PCI", ""),
+            ("DEV_RT", ""),
+            ("DEV_NAME", ""),
+            ("DEV_CHIP", ""),
+            ("DEV_TWINS", "1"),
+            ("STREAM", "0"),
+            ("READY_WITHIN", "300"),
+            ("MAXFROM", "given"),
+            ("FINGERPRINT", ""),
         ];
         for (k, v) in values {
-            let slot = call.iter_mut().find(|(name, _)| name == k).unwrap_or_else(|| panic!("the machine script reads no {k}"));
+            let slot = call
+                .iter_mut()
+                .find(|(name, _)| name == k)
+                .unwrap_or_else(|| panic!("the machine script reads no {k}"));
             slot.1 = v;
         }
-        let mut script: String = call.iter().map(|(k, v)| format!("{k}='{}'\n", v.replace('\'', r"'\''"))).collect();
+        let mut script: String = call
+            .iter()
+            .map(|(k, v)| format!("{k}='{}'\n", v.replace('\'', r"'\''")))
+            .collect();
         script.push_str("PORT_NAME=()\nWITH_NAME=()\nWITH_READY=()\nWITH_CMD=()\n");
-        let mut parts: Vec<_> = fs::read_dir(repo_root().join("lib/machine")).unwrap().flatten().map(|e| e.path()).collect();
+        let mut parts: Vec<_> = fs::read_dir(repo_root().join("lib/machine"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
         parts.sort();
         script.extend(parts.iter().map(|p| fs::read_to_string(p).unwrap()));
         let path = self.path("payload");
@@ -397,16 +504,24 @@ impl Sandbox {
              wait $far\n",
         );
         fs::create_dir_all(self.path("remote-run")).unwrap();
-        call.env("PATH", format!("{}:{}", self.p("fakessh"), self.var("PATH")))
-            .env("DIBS_LOCAL", "0")
-            .env("DIBS_HOST", "fake-remote")
-            .env("DIBS_HOSTNAME", "laptop-here")
-            .env("DIBS_REMOTE_DIR", self.p("remote-run"))
+        call.env(
+            "PATH",
+            format!("{}:{}", self.p("fakessh"), self.var("PATH")),
+        )
+        .env("DIBS_LOCAL", "0")
+        .env("DIBS_HOST", "fake-remote")
+        .env("DIBS_HOSTNAME", "laptop-here")
+        .env("DIBS_REMOTE_DIR", self.p("remote-run"))
     }
 
     pub fn git(&self, dir: &str, args: &[&str]) -> String {
         let out = self
-            .command("git", ["-c", "user.email=t@t", "-c", "user.name=t"].iter().chain(args))
+            .command(
+                "git",
+                ["-c", "user.email=t@t", "-c", "user.name=t"]
+                    .iter()
+                    .chain(args),
+            )
             .dir(&self.path(dir))
             .run();
         assert_eq!(out.code, 0, "git {args:?} in {dir}: {}", out.stderr);
@@ -426,16 +541,24 @@ impl Drop for Sandbox {
         // them. Everything started here inherited this home, which no other sandbox has.
         let home = format!("HOME={}/home", self.root.display()).into_bytes();
         for e in fs::read_dir("/proc").into_iter().flatten().flatten() {
-            let Ok(pid) = e.file_name().to_string_lossy().parse::<i32>() else { continue };
+            let Ok(pid) = e.file_name().to_string_lossy().parse::<i32>() else {
+                continue;
+            };
             if let Ok(env) = fs::read(e.path().join("environ")) {
                 if env.split(|b| *b == 0).any(|v| v == home.as_slice()) {
                     unsafe { libc::kill(pid, libc::SIGKILL) };
                 }
             }
         }
-        let _ = Command::new("pkill").arg("-f").arg(format!("{}/", self.root.display())).status();
+        let _ = Command::new("pkill")
+            .arg("-f")
+            .arg(format!("{}/", self.root.display()))
+            .status();
         if !thread::panicking() || std::env::var_os("DIBS_SUITE_KEEP").is_none() {
-            let _ = Command::new("chmod").args(["-R", "u+w"]).arg(&self.root).status();
+            let _ = Command::new("chmod")
+                .args(["-R", "u+w"])
+                .arg(&self.root)
+                .status();
             let _ = fs::remove_dir_all(&self.root);
         }
     }
@@ -473,7 +596,14 @@ impl Call {
                 Ok(())
             });
         }
-        Call { cmd, stdin: None, sink: Sink::Null, limit: CALL_LIMIT, feed: false, own_group: false }
+        Call {
+            cmd,
+            stdin: None,
+            sink: Sink::Null,
+            limit: CALL_LIMIT,
+            feed: false,
+            own_group: false,
+        }
     }
 
     pub fn env(mut self, key: &str, value: impl AsRef<str>) -> Call {
@@ -488,7 +618,8 @@ impl Call {
 
     /// A caller with no session: a person at a shell, or a runtime that publishes none.
     pub fn no_session(self) -> Call {
-        self.env_remove("CLAUDE_CODE_HOST_SESSION_ID").env_remove("CLAUDE_CODE_SESSION_ID")
+        self.env_remove("CLAUDE_CODE_HOST_SESSION_ID")
+            .env_remove("CLAUDE_CODE_SESSION_ID")
     }
 
     pub fn session(self, id: &str) -> Call {
@@ -513,7 +644,11 @@ impl Call {
 
     pub fn run(mut self) -> Output {
         self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        self.cmd.stdin(if self.stdin.is_some() { Stdio::piped() } else { Stdio::null() });
+        self.cmd.stdin(if self.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         // A group of its own only where the call may be cut short, so that cutting it takes
         // everything it started; process groups are otherwise part of what dibs reads.
         let bounded = self.limit < CALL_LIMIT;
@@ -542,11 +677,19 @@ impl Call {
                 }
                 let _ = child.kill();
                 let _ = child.wait();
-                return Output { code: 124, stdout: out.take(), stderr: err.take() };
+                return Output {
+                    code: 124,
+                    stdout: out.take(),
+                    stderr: err.take(),
+                };
             }
             thread::sleep(POLL);
         };
-        Output { code: exit_code(status), stdout: out.take(), stderr: err.take() }
+        Output {
+            code: exit_code(status),
+            stdout: out.take(),
+            stderr: err.take(),
+        }
     }
 
     /// The exit status alone, with the output thrown away.
@@ -573,15 +716,25 @@ impl Call {
     }
 
     fn background(mut self) -> Child {
-        self.cmd.stdin(if self.feed { Stdio::piped() } else { Stdio::null() });
+        self.cmd.stdin(if self.feed {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         if self.own_group {
             use std::os::unix::process::CommandExt;
             self.cmd.process_group(0);
         }
         match &self.sink {
             Sink::Null => self.cmd.stdout(Stdio::null()).stderr(Stdio::null()),
-            Sink::Stdout(p) => self.cmd.stdout(fs::File::create(p).unwrap()).stderr(Stdio::null()),
-            Sink::Both(o, e) => self.cmd.stdout(fs::File::create(o).unwrap()).stderr(fs::File::create(e).unwrap()),
+            Sink::Stdout(p) => self
+                .cmd
+                .stdout(fs::File::create(p).unwrap())
+                .stderr(Stdio::null()),
+            Sink::Both(o, e) => self
+                .cmd
+                .stdout(fs::File::create(o).unwrap())
+                .stderr(fs::File::create(e).unwrap()),
         };
         self.cmd.spawn().unwrap()
     }
@@ -664,7 +817,11 @@ impl Gate {
     pub fn open(&self) {
         let deadline = Instant::now() + WAIT_LIMIT;
         loop {
-            match OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK).open(&self.path) {
+            match OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&self.path)
+            {
                 Ok(mut f) => {
                     let _ = f.write_all(b"go\n");
                     return;
@@ -677,14 +834,22 @@ impl Gate {
 
     /// Blocks until something writes to it.
     pub fn reached(&self) {
-        let mut f = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(&self.path).unwrap();
+        let mut f = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&self.path)
+            .unwrap();
         let deadline = Instant::now() + WAIT_LIMIT;
         let mut buf = [0u8; 64];
         loop {
             if matches!(f.read(&mut buf), Ok(n) if n > 0) {
                 return;
             }
-            assert!(Instant::now() < deadline, "nothing reached {}", self.path.display());
+            assert!(
+                Instant::now() < deadline,
+                "nothing reached {}",
+                self.path.display()
+            );
             thread::sleep(POLL);
         }
     }
@@ -724,7 +889,8 @@ impl<T: AsRef<str>> Text for T {
 /// The first group of `re` on the first line it matches.
 pub fn capture(text: &str, re: &str) -> Option<String> {
     let re = Regex::new(re).unwrap();
-    text.lines().find_map(|l| re.captures(l).map(|c| c[1].to_string()))
+    text.lines()
+        .find_map(|l| re.captures(l).map(|c| c[1].to_string()))
 }
 
 /// The lines from the first holding `from` through the next holding `to`, as `sed -n '/from/,/to/p'`.
@@ -755,5 +921,11 @@ pub fn write_exec(path: &Path, text: &str) {
 }
 
 pub fn append(path: &Path, text: &str) {
-    OpenOptions::new().create(true).append(true).open(path).unwrap().write_all(text.as_bytes()).unwrap();
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap()
+        .write_all(text.as_bytes())
+        .unwrap();
 }

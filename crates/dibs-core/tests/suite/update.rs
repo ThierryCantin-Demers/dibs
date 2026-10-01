@@ -12,8 +12,19 @@ fn clones(s: &Sandbox) -> Clones {
     s.git(".", &["init", "-q", "-b", "main", "update/origin"]);
     fs::create_dir_all(s.path("update/origin/bin")).unwrap();
     fs::copy(DIBS, s.path("update/origin/bin/dibs")).unwrap();
-    s.command("cp", ["-r", &repo_root().join("lib").display().to_string(), &s.p("update/origin/lib")]).run();
-    s.write("update/origin/install.sh", &format!("echo installed >> {}\n", s.p("update/installs")));
+    s.command(
+        "cp",
+        [
+            "-r",
+            &repo_root().join("lib").display().to_string(),
+            &s.p("update/origin/lib"),
+        ],
+    )
+    .run();
+    s.write(
+        "update/origin/install.sh",
+        &format!("echo installed >> {}\n", s.p("update/installs")),
+    );
     s.git("update/origin", &["add", "-A"]);
     s.git("update/origin", &["commit", "-qm", "one"]);
     s.git(".", &["clone", "-q", "update/origin", "update/clone"]);
@@ -37,7 +48,10 @@ fn commit(s: &Sandbox, repo: &str, name: &str) {
 
 /// The recipe layer as installed, reporting the commit it was built from.
 fn installed_core(s: &Sandbox, head: &str) {
-    s.write_exec("update/bin/dibs-core", &format!("#!/bin/sh\necho \"dibs-core 0.1.0 ({head})\"\n"));
+    s.write_exec(
+        "update/bin/dibs-core",
+        &format!("#!/bin/sh\necho \"dibs-core 0.1.0 ({head})\"\n"),
+    );
 }
 
 fn update(s: &Sandbox, recipes: &str) -> Output {
@@ -55,21 +69,49 @@ fn an_update_pulls_reinstalls_and_says_what_arrived() {
     let c = clones(&s);
     let out = update(&s, "update/recipes");
     assert_eq!(out.code, 0, "an update succeeds: {}", out.all());
-    assert_eq!(s.git("update/clone", &["rev-parse", "--short", "HEAD"]), c.head, "it fast-forwards its own clone");
-    assert_eq!(out.all().lines_matching("^  [0-9a-f]* two$"), 1, "and names what arrived");
-    assert_eq!(s.read("update/installs").lines().count(), 1, "and reinstalls");
+    assert_eq!(
+        s.git("update/clone", &["rev-parse", "--short", "HEAD"]),
+        c.head,
+        "it fast-forwards its own clone"
+    );
+    assert_eq!(
+        out.all().lines_matching("^  [0-9a-f]* two$"),
+        1,
+        "and names what arrived"
+    );
+    assert_eq!(
+        s.read("update/installs").lines().count(),
+        1,
+        "and reinstalls"
+    );
     assert_eq!(
         s.git("update/recipes", &["rev-parse", "HEAD"]),
         s.git("update/rorigin", &["rev-parse", "HEAD"]),
         "and pulls the recipes"
     );
     let again = update(&s, "update/recipes");
-    assert_eq!(s.read("update/installs").lines().count(), 1, "a current install is not rebuilt");
-    assert_eq!(again.all().lines_with("already current"), 2, "and says it is current");
+    assert_eq!(
+        s.read("update/installs").lines().count(),
+        1,
+        "a current install is not rebuilt"
+    );
+    assert_eq!(
+        again.all().lines_with("already current"),
+        2,
+        "and says it is current"
+    );
     installed_core(&s, "0000000");
     update(&s, "update/recipes");
-    assert_eq!(s.read("update/installs").lines().count(), 2, "a stale recipe layer is rebuilt even with nothing to pull");
-    assert_eq!(update(&s, "update/nowhere").all().lines_with("recipes"), 0, "recipes that are not a clone are left alone quietly");
+    assert_eq!(
+        s.read("update/installs").lines().count(),
+        2,
+        "a stale recipe layer is rebuilt even with nothing to pull"
+    );
+    assert_eq!(
+        update(&s, "update/nowhere").all().lines_with("recipes"),
+        0,
+        "recipes that are not a clone are left alone quietly"
+    );
 }
 
 #[test]
@@ -81,12 +123,28 @@ fn a_copy_outside_a_clone_is_refused_but_still_runs() {
     fs::create_dir_all(s.path("loose/bin")).unwrap();
     fs::create_dir_all(s.path("loose/libexec/dibs")).unwrap();
     fs::copy(DIBS, s.path("loose/bin/dibs")).unwrap();
-    s.command("cp", ["-r", &repo_root().join("lib").display().to_string(), &s.p("loose/libexec/dibs/lib")]).run();
+    s.command(
+        "cp",
+        [
+            "-r",
+            &repo_root().join("lib").display().to_string(),
+            &s.p("loose/libexec/dibs/lib"),
+        ],
+    )
+    .run();
     let copy = s.p("loose/bin/dibs");
     let out = s.command(&copy, ["--update"]).run();
     assert_eq!(out.code, 2, "a copy outside a clone is refused");
-    assert_eq!(out.all().lines_with("not inside a git clone"), 1, "because it has no clone to pull");
-    assert_eq!(s.command(&copy, ["--machines"]).code(), 0, "a copy finds its lib under libexec");
+    assert_eq!(
+        out.all().lines_with("not inside a git clone"),
+        1,
+        "because it has no clone to pull"
+    );
+    assert_eq!(
+        s.command(&copy, ["--machines"]).code(),
+        0,
+        "a copy finds its lib under libexec"
+    );
 }
 
 #[test]
@@ -109,18 +167,46 @@ fn a_session_is_told_once_when_dibs_changed_under_it() {
         commit(&s, "update/origin", name);
         s.git("update/clone", &["pull", "-q", "--ff-only"]);
     };
-    assert_eq!(as_session("v1", &["--status"]).lines_with("dibs changed"), 0, "a first call says nothing");
+    assert_eq!(
+        as_session("v1", &["--status"]).lines_with("dibs changed"),
+        0,
+        "a first call says nothing"
+    );
     pulled("three");
     let told = as_session("v1", &["--status"]);
-    assert_eq!(told.lines_with("dibs changed since this session last ran it: "), 1, "the next call after a change says so");
-    assert_eq!(told.lines_matching("^  [0-9a-f]* three$"), 1, "and lists what changed");
-    assert_eq!(as_session("v1", &["--status"]).lines_with("dibs changed"), 0, "once");
-    assert_eq!(as_session("v2", &["--status"]).lines_with("dibs changed"), 0, "a session that never saw the old one is not told");
+    assert_eq!(
+        told.lines_with("dibs changed since this session last ran it: "),
+        1,
+        "the next call after a change says so"
+    );
+    assert_eq!(
+        told.lines_matching("^  [0-9a-f]* three$"),
+        1,
+        "and lists what changed"
+    );
+    assert_eq!(
+        as_session("v1", &["--status"]).lines_with("dibs changed"),
+        0,
+        "once"
+    );
+    assert_eq!(
+        as_session("v2", &["--status"]).lines_with("dibs changed"),
+        0,
+        "a session that never saw the old one is not told"
+    );
     pulled("four");
-    assert_eq!(as_session("v1", &["list", "x"]).lines_with("dibs changed"), 1, "a recipe verb is told too");
+    assert_eq!(
+        as_session("v1", &["list", "x"]).lines_with("dibs changed"),
+        1,
+        "a recipe verb is told too"
+    );
     commit(&s, "update/origin", "five");
     as_session("v1", &["--update"]);
-    assert_eq!(as_session("v1", &["--status"]).lines_with("dibs changed"), 0, "an update it ran itself is not reported again");
+    assert_eq!(
+        as_session("v1", &["--status"]).lines_with("dibs changed"),
+        0,
+        "an update it ran itself is not reported again"
+    );
 }
 
 #[test]
@@ -141,14 +227,29 @@ fn what_an_update_and_the_change_notice_print() {
     s.write_exec("fakecore", "#!/bin/sh\necho \"core $*\"\n");
     let mut t = Transcript::default();
     as_session(&["--status"]);
-    t.section("dibs --update  (one commit behind, and the recipes one behind theirs)", &n.output(&update(&s, "update/recipes")));
-    t.section("dibs --status  (in a session that last ran it before that update)", &n.output(&as_session(&["--status"])));
+    t.section(
+        "dibs --update  (one commit behind, and the recipes one behind theirs)",
+        &n.output(&update(&s, "update/recipes")),
+    );
+    t.section(
+        "dibs --status  (in a session that last ran it before that update)",
+        &n.output(&as_session(&["--status"])),
+    );
     for i in 0..12 {
         commit(&s, "update/origin", &format!("more-{i:02}"));
     }
     s.git("update/clone", &["pull", "-q", "--ff-only"]);
-    t.section("dibs --status  (after twelve more commits arrived)", &n.output(&as_session(&["--status"])));
-    t.section("dibs --update  (with nothing to pull)", &n.output(&update(&s, "update/recipes")));
-    t.section("dibs --update  (with recipes that are not a clone)", &n.output(&update(&s, "update")));
+    t.section(
+        "dibs --status  (after twelve more commits arrived)",
+        &n.output(&as_session(&["--status"])),
+    );
+    t.section(
+        "dibs --update  (with nothing to pull)",
+        &n.output(&update(&s, "update/recipes")),
+    );
+    t.section(
+        "dibs --update  (with recipes that are not a clone)",
+        &n.output(&update(&s, "update")),
+    );
     snapshot("update", t.text());
 }

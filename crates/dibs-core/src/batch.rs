@@ -51,7 +51,9 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
         let at = |e: String| format!("line {first_line}: {e}");
         let (attrs, command) = match line.strip_prefix('[') {
             Some(rest) => {
-                let (a, c) = rest.split_once(']').ok_or_else(|| at("an attribute list is not closed with ]".into()))?;
+                let (a, c) = rest
+                    .split_once(']')
+                    .ok_or_else(|| at("an attribute list is not closed with ]".into()))?;
                 (a.trim(), c.trim())
             }
             None => ("", line),
@@ -63,11 +65,18 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
             if attr == "cont" {
                 cont = true;
             } else if let Some(v) = attr.strip_prefix("after=") {
-                after = Some(v.split(',').filter(|s| !s.is_empty()).map(str::to_string).collect::<Vec<_>>());
+                after = Some(
+                    v.split(',')
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>(),
+                );
             } else if !attr.contains('=') && name.is_none() {
                 name = Some(attr.to_string());
             } else {
-                return Err(at(format!("unknown attribute '{attr}': a step takes a name, after=a,b and cont")));
+                return Err(at(format!(
+                    "unknown attribute '{attr}': a step takes a name, after=a,b and cont"
+                )));
             }
         }
         let words = split_words(command).map_err(at)?;
@@ -83,11 +92,24 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
         }
         // A step says what it waits for, or waits for the one before it: sequential unless
         // told otherwise, so a list written top to bottom runs top to bottom.
-        let after = after.unwrap_or_else(|| steps.last().map(|p| vec![p.name.clone()]).unwrap_or_default());
-        steps.push(Step { name, line: command.to_string(), after, cont, ..s });
+        let after = after.unwrap_or_else(|| {
+            steps
+                .last()
+                .map(|p| vec![p.name.clone()])
+                .unwrap_or_default()
+        });
+        steps.push(Step {
+            name,
+            line: command.to_string(),
+            after,
+            cont,
+            ..s
+        });
     }
     if !joined.trim().is_empty() {
-        return Err(format!("line {first_line}: the last line ends in a backslash"));
+        return Err(format!(
+            "line {first_line}: the last line ends in a backslash"
+        ));
     }
     if steps.is_empty() {
         return Err("the batch has no steps".into());
@@ -96,7 +118,10 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
     for s in &steps {
         for a in &s.after {
             if !names.contains(a.as_str()) {
-                return Err(format!("step '{}' waits for '{a}', and no step has that name", s.name));
+                return Err(format!(
+                    "step '{}' waits for '{a}', and no step has that name",
+                    s.name
+                ));
             }
         }
     }
@@ -106,11 +131,16 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
 
 /// Fails on a cycle, naming a step in it.
 fn order(steps: &[Step]) -> Result<Vec<usize>, String> {
-    let index: HashMap<&str, usize> = steps.iter().enumerate().map(|(i, s)| (s.name.as_str(), i)).collect();
+    let index: HashMap<&str, usize> = steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.name.as_str(), i))
+        .collect();
     let mut done = vec![false; steps.len()];
     let mut out = Vec::new();
     while out.len() < steps.len() {
-        let next = (0..steps.len()).find(|&i| !done[i] && steps[i].after.iter().all(|a| done[index[a.as_str()]]));
+        let next = (0..steps.len())
+            .find(|&i| !done[i] && steps[i].after.iter().all(|a| done[index[a.as_str()]]));
         match next {
             Some(i) => {
                 done[i] = true;
@@ -118,7 +148,10 @@ fn order(steps: &[Step]) -> Result<Vec<usize>, String> {
             }
             None => {
                 let stuck = (0..steps.len()).find(|&i| !done[i]).unwrap();
-                return Err(format!("step '{}' waits on itself through after=", steps[stuck].name));
+                return Err(format!(
+                    "step '{}' waits on itself through after=",
+                    steps[stuck].name
+                ));
             }
         }
     }
@@ -172,10 +205,12 @@ pub fn split_words(line: &str) -> Result<Vec<String>, String> {
             ';' | '&' | '|' | '<' | '>' | '(' | ')' | '`' => {
                 return Err(format!(
                     "'{c}' outside quotes makes this more than one dibs call. Quote the command you are sending"
-                ))
+                ));
             }
             '$' if chars.peek() == Some(&'(') => {
-                return Err("$( outside quotes runs a command here, not on the machine. Quote it".into())
+                return Err(
+                    "$( outside quotes runs a command here, not on the machine. Quote it".into(),
+                );
             }
             c if c.is_whitespace() => {
                 if in_word {
@@ -227,7 +262,9 @@ fn describe(words: &[String]) -> Result<Step, String> {
                 lock = "sync";
                 break;
             }
-            "--detach" => return Err("a batch step cannot --detach: the driver owns its steps".into()),
+            "--detach" => {
+                return Err("a batch step cannot --detach: the driver owns its steps".into());
+            }
             "--watch" => return Err("a batch step cannot --watch: it never finishes".into()),
             "--" => break,
             _ if w.starts_with('-') => {}
@@ -237,7 +274,15 @@ fn describe(words: &[String]) -> Result<Step, String> {
                     "batch" => return Err("a batch step cannot be a batch".into()),
                     "build" | "test" | "bench" | "shell" | "raw" => {
                         lock = "recipe";
-                        label = Some(words[i..].iter().take(3).filter(|x| !x.starts_with('-')).cloned().collect::<Vec<_>>().join(" "));
+                        label = Some(
+                            words[i..]
+                                .iter()
+                                .take(3)
+                                .filter(|x| !x.starts_with('-'))
+                                .cloned()
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        );
                         // The recipe layer takes these after the verb as well as before it.
                         let mut rest = words[i + 1..].iter();
                         while let Some(w) = rest.next() {
@@ -257,7 +302,16 @@ fn describe(words: &[String]) -> Result<Step, String> {
         }
         i += 1;
     }
-    Ok(Step { name: String::new(), line: String::new(), after: Vec::new(), cont: false, on, lock, label, device })
+    Ok(Step {
+        name: String::new(),
+        line: String::new(),
+        after: Vec::new(),
+        cont: false,
+        on,
+        lock,
+        label,
+        device,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -275,7 +329,11 @@ pub fn ready(steps: &[Step], machines: &[String], states: &[State], stopped: boo
     if stopped {
         return Vec::new();
     }
-    let index: HashMap<&str, usize> = steps.iter().enumerate().map(|(i, s)| (s.name.as_str(), i)).collect();
+    let index: HashMap<&str, usize> = steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.name.as_str(), i))
+        .collect();
     let mut busy: HashSet<&str> = states
         .iter()
         .enumerate()
@@ -287,7 +345,10 @@ pub fn ready(steps: &[Step], machines: &[String], states: &[State], stopped: boo
         if states[i] != State::Waiting || busy.contains(machines[i].as_str()) {
             continue;
         }
-        if s.after.iter().all(|a| matches!(states[index[a.as_str()]], State::Done { .. })) {
+        if s.after
+            .iter()
+            .all(|a| matches!(states[index[a.as_str()]], State::Done { .. }))
+        {
             busy.insert(machines[i].as_str());
             out.push(i);
         }
@@ -305,8 +366,14 @@ pub fn jobs(stderr: &str) -> Vec<String> {
         .filter_map(|r| {
             let mut words = r.split_whitespace();
             let id = words.next()?;
-            let verdict: Vec<&str> = words.filter(|w| *w == "by=dibs" || w.starts_with("built=")).collect();
-            Some(if verdict.is_empty() { id.to_string() } else { format!("{id} {}", verdict.join(" ")) })
+            let verdict: Vec<&str> = words
+                .filter(|w| *w == "by=dibs" || w.starts_with("built="))
+                .collect();
+            Some(if verdict.is_empty() {
+                id.to_string()
+            } else {
+                format!("{id} {}", verdict.join(" "))
+            })
         })
         .collect()
 }
@@ -323,7 +390,9 @@ fn state_dir() -> PathBuf {
     std::env::var_os("XDG_STATE_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"))
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state")
+        })
         .join("dibs/batch")
 }
 
@@ -335,7 +404,9 @@ fn machine_of(step: &Step) -> Option<String> {
     if let Some(on) = &step.on {
         cmd.args(["--on", on]);
     }
-    cmd.arg("--which").stdin(Stdio::null()).stderr(Stdio::null());
+    cmd.arg("--which")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
     match cmd.output() {
         Ok(o) if o.status.success() => {
             let m = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -348,7 +419,12 @@ fn machine_of(step: &Step) -> Option<String> {
 
 impl Step {
     fn measures(&self) -> bool {
-        self.lock == "bench" || (self.lock == "recipe" && self.label.as_deref().is_some_and(|l| l.starts_with("bench ")))
+        self.lock == "bench"
+            || (self.lock == "recipe"
+                && self
+                    .label
+                    .as_deref()
+                    .is_some_and(|l| l.starts_with("bench ")))
     }
 }
 
@@ -363,10 +439,17 @@ pub fn batch_id() -> String {
 }
 
 fn collect_old(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     let keep = std::time::Duration::from_secs(14 * 86400);
     for e in entries.flatten() {
-        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > keep);
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > keep);
         if old {
             let _ = std::fs::remove_dir_all(e.path());
         }
@@ -387,29 +470,54 @@ pub struct Pending {
 
 /// What a step of a batch is started with. `DIBS_BATCH_PLAN` is `k<TAB>n` and then one pending
 /// step per line; dibs sends it with the job and the machine keeps it beside the holder.
-pub fn step_env(id: &str, step: &str, k: usize, n: usize, pending: &[Pending]) -> Vec<(&'static str, String)> {
+pub fn step_env(
+    id: &str,
+    step: &str,
+    k: usize,
+    n: usize,
+    pending: &[Pending],
+) -> Vec<(&'static str, String)> {
     let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
     let mut plan = format!("{k}\t{n}\n");
     for p in pending {
-        plan.push_str(&format!("{}\t{}\t{}\t{}\n", clean(&p.name), p.mode, history_key(&p.label), u8::from(p.here)));
+        plan.push_str(&format!(
+            "{}\t{}\t{}\t{}\n",
+            clean(&p.name),
+            p.mode,
+            history_key(&p.label),
+            u8::from(p.here)
+        ));
     }
-    vec![("DIBS_BATCH", clean(id)), ("DIBS_BATCH_STEP", clean(step)), ("DIBS_BATCH_PLAN", plan)]
+    vec![
+        ("DIBS_BATCH", clean(id)),
+        ("DIBS_BATCH_STEP", clean(step)),
+        ("DIBS_BATCH_PLAN", plan),
+    ]
 }
 
 /// The plan each of a recipe's jobs carries. Inside a batch the recipe is one of its steps, so
 /// the recipe's jobs still to come go ahead of the batch's own.
 pub fn recipe_env(own_id: &str, calls: &[Pending], k: usize) -> Vec<(&'static str, String)> {
     let var = |n: &str| std::env::var(n).unwrap_or_default();
-    let outer = Some(var("DIBS_BATCH")).filter(|v| !v.is_empty()).map(|id| (id, var("DIBS_BATCH_STEP"), var("DIBS_BATCH_PLAN")));
+    let outer = Some(var("DIBS_BATCH"))
+        .filter(|v| !v.is_empty())
+        .map(|id| (id, var("DIBS_BATCH_STEP"), var("DIBS_BATCH_PLAN")));
     nested_env(outer, own_id, calls, k)
 }
 
-fn nested_env(outer: Option<(String, String, String)>, own_id: &str, calls: &[Pending], k: usize) -> Vec<(&'static str, String)> {
+fn nested_env(
+    outer: Option<(String, String, String)>,
+    own_id: &str,
+    calls: &[Pending],
+    k: usize,
+) -> Vec<(&'static str, String)> {
     let pending = &calls[k + 1..];
     match outer {
         Some((id, outer_step, outer)) => {
             let (head, rest) = outer.split_once('\n').unwrap_or((outer.as_str(), ""));
-            let mut nums = head.split('\t').map(|x| x.trim().parse::<usize>().unwrap_or(0));
+            let mut nums = head
+                .split('\t')
+                .map(|x| x.trim().parse::<usize>().unwrap_or(0));
             let (bk, bn) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0));
             let step = format!("{outer_step}: {}", calls[k].name);
             let mut env = step_env(&id, &step, bk, bn, pending);
@@ -428,14 +536,31 @@ fn pending_of(step: &Step, here: bool, cwd: &str) -> Pending {
     let (mode, default) = match step.lock {
         "sync" => ("rsh", "sync".to_string()),
         "recipe" => ("recipe", String::new()),
-        other => (other, cwd.rsplit('/').next().unwrap_or_default().to_string()),
+        other => (
+            other,
+            cwd.rsplit('/').next().unwrap_or_default().to_string(),
+        ),
     };
-    Pending { name: step.name.clone(), mode, label: step.label.clone().unwrap_or(default), here }
+    Pending {
+        name: step.name.clone(),
+        mode,
+        label: step.label.clone().unwrap_or(default),
+        here,
+    }
 }
 
 /// dibs files a label with everything but `[A-Za-z0-9._-]` replaced.
 fn history_key(label: &str) -> String {
-    label.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect()
+    label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "._-".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 pub struct Options {
@@ -446,14 +571,21 @@ pub struct Options {
 pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
     let steps = parse(text)?;
     let named: Vec<Option<String>> = steps.iter().map(machine_of).collect();
-    if let Some((s, _)) = steps.iter().zip(&named).find(|(s, m)| m.is_none() && s.measures()) {
+    if let Some((s, _)) = steps
+        .iter()
+        .zip(&named)
+        .find(|(s, m)| m.is_none() && s.measures())
+    {
         return Err(format!(
             "step {} measures and names no machine, and a measurement is never placed for you. Give it\n  \
              --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step.",
             s.name
         ));
     }
-    let machines: Vec<String> = named.into_iter().map(|m| m.unwrap_or_else(|| "?".into())).collect();
+    let machines: Vec<String> = named
+        .into_iter()
+        .map(|m| m.unwrap_or_else(|| "?".into()))
+        .collect();
     let id = batch_id();
     let plan = plan(&steps, &machines);
     if opts.dry_run {
@@ -467,13 +599,27 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
     if let Ok(owner) = std::env::var("DIBS_BATCH_OWNER") {
         let _ = std::fs::write(dir.join("owner"), owner);
     }
-    eprint!("dibs: batch {id}, {} steps. You are told when it ends; there is nothing to watch.\n{plan}", steps.len());
+    eprint!(
+        "dibs: batch {id}, {} steps. You are told when it ends; there is nothing to watch.\n{plan}",
+        steps.len()
+    );
 
-    let owned = std::env::var("DIBS_NO_PDEATHSIG").as_deref() != Ok("1") && has("setsid") && has("setpriv");
-    let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
+    let owned =
+        std::env::var("DIBS_NO_PDEATHSIG").as_deref() != Ok("1") && has("setsid") && has("setpriv");
+    let cwd = std::env::current_dir()
+        .map(|d| d.display().to_string())
+        .unwrap_or_default();
     let recipes: Vec<Option<Vec<Pending>>> = steps
         .iter()
-        .map(|s| if s.lock == "recipe" { split_words(&s.line).ok().and_then(|w| crate::recipe_jobs(&w)) } else { None })
+        .map(|s| {
+            if s.lock == "recipe" {
+                split_words(&s.line)
+                    .ok()
+                    .and_then(|w| crate::recipe_jobs(&w))
+            } else {
+                None
+            }
+        })
         .collect();
     let started = Instant::now();
     let mut states = vec![State::Waiting; steps.len()];
@@ -488,10 +634,22 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
         }
         for i in starting {
             let step = steps[i].clone();
-            let (out, err) = (dir.join(format!("{}.out", step.name)), dir.join(format!("{}.err", step.name)));
+            let (out, err) = (
+                dir.join(format!("{}.out", step.name)),
+                dir.join(format!("{}.err", step.name)),
+            );
             let mut cmd = if owned {
                 let mut c = Command::new("setsid");
-                c.args(["setpriv", "--pdeathsig", "TERM", "bash", "-c", GROUP, "step", &step.line]);
+                c.args([
+                    "setpriv",
+                    "--pdeathsig",
+                    "TERM",
+                    "bash",
+                    "-c",
+                    GROUP,
+                    "step",
+                    &step.line,
+                ]);
                 c
             } else {
                 use std::os::unix::process::CommandExt;
@@ -504,7 +662,14 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                 .flat_map(|j| {
                     let here = machines[j] == machines[i];
                     match &recipes[j] {
-                        Some(jobs) => jobs.iter().map(|p| Pending { name: format!("{}: {}", steps[j].name, p.name), here, ..p.clone() }).collect(),
+                        Some(jobs) => jobs
+                            .iter()
+                            .map(|p| Pending {
+                                name: format!("{}: {}", steps[j].name, p.name),
+                                here,
+                                ..p.clone()
+                            })
+                            .collect(),
                         None => vec![pending_of(&steps[j], here, &cwd)],
                     }
                 })
@@ -520,8 +685,16 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                 Ok(mut child) => {
                     running.insert(i, child.id());
                     std::thread::spawn(move || {
-                        let o = copy(child.stdout.take(), out, verbose.then(|| format!("{} ", step.name)));
-                        let e = copy(child.stderr.take(), err, verbose.then(|| format!("{} ", step.name)));
+                        let o = copy(
+                            child.stdout.take(),
+                            out,
+                            verbose.then(|| format!("{} ", step.name)),
+                        );
+                        let e = copy(
+                            child.stderr.take(),
+                            err,
+                            verbose.then(|| format!("{} ", step.name)),
+                        );
                         // No code means a signal ended it, which the summary shows as killed.
                         let status = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
                         let _ = (o.join(), e.join());
@@ -551,7 +724,13 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
         };
         running.remove(&i);
         states[i] = State::Done { exit, seconds };
-        if exit == CANCELLED && cancelled.is_none() && was_cancelled(&std::fs::read_to_string(dir.join(format!("{}.err", steps[i].name))).unwrap_or_default()) {
+        if exit == CANCELLED
+            && cancelled.is_none()
+            && was_cancelled(
+                &std::fs::read_to_string(dir.join(format!("{}.err", steps[i].name)))
+                    .unwrap_or_default(),
+            )
+        {
             cancelled = Some(format!("with dibs --kill on {}", machines[i]));
             running.values().for_each(|&pid| stop(pid));
         }
@@ -564,12 +743,23 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
             *s = State::NotRun;
         }
     }
-    let report = summary(&id, &steps, &machines, &states, &dir, started.elapsed().as_secs(), cancelled.as_deref());
+    let report = summary(
+        &id,
+        &steps,
+        &machines,
+        &states,
+        &dir,
+        started.elapsed().as_secs(),
+        cancelled.as_deref(),
+    );
     let _ = std::fs::write(dir.join("summary"), &report);
     print!("{report}");
     Ok(if cancelled.is_some() {
         CANCELLED
-    } else if states.iter().all(|s| matches!(s, State::Done { exit: 0, .. })) {
+    } else if states
+        .iter()
+        .all(|s| matches!(s, State::Done { exit: 0, .. }))
+    {
         0
     } else {
         1
@@ -578,17 +768,27 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
 
 /// A command may exit 76 of its own accord, so only dibs saying so makes it a cancellation.
 fn was_cancelled(stderr: &str) -> bool {
-    stderr.contains("was cancelled with dibs --kill") || stderr.lines().any(|l| l.starts_with("job ") && l.contains("  exit 76  by=dibs"))
+    stderr.contains("was cancelled with dibs --kill")
+        || stderr
+            .lines()
+            .any(|l| l.starts_with("job ") && l.contains("  exit 76  by=dibs"))
 }
 
 /// A step is its own process group, so the signal reaches the dibs call under it and that call's
 /// death reaches the machine, which stops the job and releases its lock.
 fn stop(pid: u32) {
-    let _ = Command::new("kill").args(["-TERM", "--", &format!("-{pid}")]).status();
+    let _ = Command::new("kill")
+        .args(["-TERM", "--", &format!("-{pid}")])
+        .status();
 }
 
 fn has(tool: &str) -> bool {
-    Command::new(tool).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
+    Command::new(tool)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
 }
 
 /// A step that outlives its driver holds a lock nobody is waiting for. The kernel signals this
@@ -610,9 +810,15 @@ fi
 kill $w 2>/dev/null
 exit $st"#;
 
-fn copy(from: Option<impl std::io::Read + Send + 'static>, to: PathBuf, echo: Option<String>) -> std::thread::JoinHandle<()> {
+fn copy(
+    from: Option<impl std::io::Read + Send + 'static>,
+    to: PathBuf,
+    echo: Option<String>,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let (Some(from), Ok(mut file)) = (from, std::fs::File::create(&to)) else { return };
+        let (Some(from), Ok(mut file)) = (from, std::fs::File::create(&to)) else {
+            return;
+        };
         for line in BufReader::new(from).lines().map_while(Result::ok) {
             let _ = writeln!(file, "{line}");
             if let Some(prefix) = &echo {
@@ -627,7 +833,11 @@ fn plan(steps: &[Step], machines: &[String]) -> String {
     let m = machines.iter().map(String::len).max().unwrap_or(7).max(7);
     let mut s = String::new();
     for (i, st) in steps.iter().enumerate() {
-        let after = if st.after.is_empty() { "-".to_string() } else { st.after.join(",") };
+        let after = if st.after.is_empty() {
+            "-".to_string()
+        } else {
+            st.after.join(",")
+        };
         s.push_str(&format!(
             "  {:w$}  {:m$}  {:6}  after {}{}\n",
             st.name,
@@ -640,8 +850,19 @@ fn plan(steps: &[Step], machines: &[String]) -> String {
     s
 }
 
-pub fn summary(id: &str, steps: &[Step], machines: &[String], states: &[State], dir: &Path, seconds: u64, cancelled: Option<&str>) -> String {
-    let failed = states.iter().filter(|s| matches!(s, State::Done { exit, .. } if *exit != 0)).count();
+pub fn summary(
+    id: &str,
+    steps: &[Step],
+    machines: &[String],
+    states: &[State],
+    dir: &Path,
+    seconds: u64,
+    cancelled: Option<&str>,
+) -> String {
+    let failed = states
+        .iter()
+        .filter(|s| matches!(s, State::Done { exit, .. } if *exit != 0))
+        .count();
     let not_run = states.iter().filter(|s| **s == State::NotRun).count();
     let mut out = format!("batch {id}  {} steps", steps.len());
     if let Some(how) = cancelled {
@@ -656,7 +877,10 @@ pub fn summary(id: &str, steps: &[Step], machines: &[String], states: &[State], 
     out.push_str(&format!(", {}\n", duration(seconds)));
     let w = steps.iter().map(|s| s.name.len()).max().unwrap_or(4).max(4);
     let m = machines.iter().map(String::len).max().unwrap_or(7).max(7);
-    out.push_str(&format!("{:w$}  {:m$}  {:6}  {:>7}  {:>6}  jobs\n", "name", "machine", "lock", "wall", "exit"));
+    out.push_str(&format!(
+        "{:w$}  {:m$}  {:6}  {:>7}  {:>6}  jobs\n",
+        "name", "machine", "lock", "wall", "exit"
+    ));
     for (i, st) in steps.iter().enumerate() {
         let err = std::fs::read_to_string(dir.join(format!("{}.err", st.name))).unwrap_or_default();
         let (wall, exit) = match &states[i] {
@@ -691,8 +915,14 @@ mod tests {
 
     #[test]
     fn a_list_runs_top_to_bottom_unless_a_step_says_what_it_waits_for() {
-        let s = parse("dibs --label a 'true'\n\ndibs --label b 'true'\n# a comment\n[c after=] dibs x\n").unwrap();
-        assert_eq!(s.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["1", "2", "c"]);
+        let s = parse(
+            "dibs --label a 'true'\n\ndibs --label b 'true'\n# a comment\n[c after=] dibs x\n",
+        )
+        .unwrap();
+        assert_eq!(
+            s.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(),
+            ["1", "2", "c"]
+        );
         assert_eq!(s[0].after, Vec::<String>::new());
         assert_eq!(s[1].after, ["1"]);
         assert!(s[2].after.is_empty());
@@ -704,15 +934,29 @@ mod tests {
         assert_eq!(s[1].name, "m1");
         assert_eq!(s[1].after, ["build"]);
         assert!(s[1].cont);
-        assert_eq!((s[1].on.as_deref(), s[1].lock, s[1].device.as_deref(), s[1].label.as_deref()), (Some("a"), "bench", Some("gpu:x"), Some("m")));
-        assert_eq!(s[1].line, "dibs --bench --on a --device gpu:x --label m 'cargo bench'");
+        assert_eq!(
+            (
+                s[1].on.as_deref(),
+                s[1].lock,
+                s[1].device.as_deref(),
+                s[1].label.as_deref()
+            ),
+            (Some("a"), "bench", Some("gpu:x"), Some("m"))
+        );
+        assert_eq!(
+            s[1].line,
+            "dibs --bench --on a --device gpu:x --label m 'cargo bench'"
+        );
     }
 
     #[test]
     fn a_step_continued_over_lines_is_one_step() {
         let s = parse("[m] dibs --bench --label x \\\n    'cargo bench'\n").unwrap();
         assert_eq!(s.len(), 1);
-        assert_eq!(split_words(&s[0].line).unwrap(), ["dibs", "--bench", "--label", "x", "cargo bench"]);
+        assert_eq!(
+            split_words(&s[0].line).unwrap(),
+            ["dibs", "--bench", "--label", "x", "cargo bench"]
+        );
     }
 
     #[test]
@@ -722,9 +966,16 @@ mod tests {
         assert_eq!(one("dibs --peek 'ls'").lock, "peek");
         assert_eq!(one("dibs run --bench 'x'").lock, "bench");
         let r = one("dibs bench cubek@local reduce --device gpu:0");
-        assert_eq!((r.lock, r.label.as_deref()), ("recipe", Some("bench cubek@local reduce")));
+        assert_eq!(
+            (r.lock, r.label.as_deref()),
+            ("recipe", Some("bench cubek@local reduce"))
+        );
         let r = one("dibs bench cubek@a,b gemv --on m --backend cpu --device gpu:0 -- --on x");
-        assert_eq!((r.on.as_deref(), r.device.as_deref()), (Some("m"), Some("gpu:0")), "read after the recipe too, up to its command");
+        assert_eq!(
+            (r.on.as_deref(), r.device.as_deref()),
+            (Some("m"), Some("gpu:0")),
+            "read after the recipe too, up to its command"
+        );
     }
 
     #[test]
@@ -743,94 +994,232 @@ mod tests {
             let e = parse(line).unwrap_err();
             assert!(e.contains(why), "{line}: {e}");
         }
-        assert!(parse("dibs 'a && b; c | d'").is_ok(), "operators inside quotes belong to the remote command");
+        assert!(
+            parse("dibs 'a && b; c | d'").is_ok(),
+            "operators inside quotes belong to the remote command"
+        );
     }
 
     #[test]
     fn names_and_dependencies_must_make_sense() {
-        assert!(parse("[a] dibs x\n[a] dibs y").unwrap_err().contains("second step is named"));
-        assert!(parse("[a after=zz] dibs x").unwrap_err().contains("no step has that name"));
-        assert!(parse("[a after=b] dibs x\n[b after=a] dibs y").unwrap_err().contains("waits on itself"));
-        assert!(parse("# only a comment\n").unwrap_err().contains("no steps"));
+        assert!(
+            parse("[a] dibs x\n[a] dibs y")
+                .unwrap_err()
+                .contains("second step is named")
+        );
+        assert!(
+            parse("[a after=zz] dibs x")
+                .unwrap_err()
+                .contains("no step has that name")
+        );
+        assert!(
+            parse("[a after=b] dibs x\n[b after=a] dibs y")
+                .unwrap_err()
+                .contains("waits on itself")
+        );
+        assert!(
+            parse("# only a comment\n")
+                .unwrap_err()
+                .contains("no steps")
+        );
     }
 
     fn st(n: &str, after: &[&str]) -> Step {
-        Step { name: n.into(), line: String::new(), after: after.iter().map(|s| s.to_string()).collect(), cont: false, on: None, lock: "shared", label: None, device: None }
+        Step {
+            name: n.into(),
+            line: String::new(),
+            after: after.iter().map(|s| s.to_string()).collect(),
+            cont: false,
+            on: None,
+            lock: "shared",
+            label: None,
+            device: None,
+        }
     }
 
     #[test]
     fn independent_steps_overlap_only_on_different_machines() {
-        let steps = [st("build", &[]), st("m1", &["build"]), st("m2", &["build"]), st("m3", &["build"])];
+        let steps = [
+            st("build", &[]),
+            st("m1", &["build"]),
+            st("m2", &["build"]),
+            st("m3", &["build"]),
+        ];
         let machines: Vec<String> = ["x", "x", "y", "x"].iter().map(|s| s.to_string()).collect();
         let mut states = vec![State::Waiting; 4];
-        assert_eq!(names(&ready(&steps, &machines, &states, false), &steps), ["build"]);
+        assert_eq!(
+            names(&ready(&steps, &machines, &states, false), &steps),
+            ["build"]
+        );
         states[0] = State::Running;
         assert!(ready(&steps, &machines, &states, false).is_empty());
-        states[0] = State::Done { exit: 0, seconds: 1 };
-        assert_eq!(names(&ready(&steps, &machines, &states, false), &steps), ["m1", "m2"], "m3 waits for x to be free");
+        states[0] = State::Done {
+            exit: 0,
+            seconds: 1,
+        };
+        assert_eq!(
+            names(&ready(&steps, &machines, &states, false), &steps),
+            ["m1", "m2"],
+            "m3 waits for x to be free"
+        );
         states[1] = State::Running;
         states[2] = State::Running;
         assert!(ready(&steps, &machines, &states, false).is_empty());
-        states[1] = State::Done { exit: 0, seconds: 1 };
-        assert_eq!(names(&ready(&steps, &machines, &states, false), &steps), ["m3"]);
-        assert!(ready(&steps, &machines, &states, true).is_empty(), "a stopped batch starts nothing");
+        states[1] = State::Done {
+            exit: 0,
+            seconds: 1,
+        };
+        assert_eq!(
+            names(&ready(&steps, &machines, &states, false), &steps),
+            ["m3"]
+        );
+        assert!(
+            ready(&steps, &machines, &states, true).is_empty(),
+            "a stopped batch starts nothing"
+        );
     }
 
     #[test]
     fn a_failed_step_still_releases_what_waits_on_it_when_the_batch_goes_on() {
         let steps = [st("a", &[]), st("b", &["a"])];
         let machines = vec!["x".to_string(), "x".to_string()];
-        let states = vec![State::Done { exit: 1, seconds: 0 }, State::Waiting];
-        assert_eq!(names(&ready(&steps, &machines, &states, false), &steps), ["b"]);
+        let states = vec![
+            State::Done {
+                exit: 1,
+                seconds: 0,
+            },
+            State::Waiting,
+        ];
+        assert_eq!(
+            names(&ready(&steps, &machines, &states, false), &steps),
+            ["b"]
+        );
     }
 
     fn call(name: &str, mode: &'static str) -> Pending {
-        Pending { name: name.into(), mode, label: format!("{name}/x"), here: true }
+        Pending {
+            name: name.into(),
+            mode,
+            label: format!("{name}/x"),
+            here: true,
+        }
     }
 
     #[test]
     fn a_step_carries_what_is_still_to_come_under_the_keys_its_history_is_filed_by() {
-        let env = step_env("b1", "build", 1, 3, &[call("bench", "bench"), Pending { here: false, ..call("home", "rsh") }]);
-        let get = |k: &str| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone()).unwrap();
+        let env = step_env(
+            "b1",
+            "build",
+            1,
+            3,
+            &[
+                call("bench", "bench"),
+                Pending {
+                    here: false,
+                    ..call("home", "rsh")
+                },
+            ],
+        );
+        let get = |k: &str| {
+            env.iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
         assert_eq!(get("DIBS_BATCH"), "b1");
         assert_eq!(get("DIBS_BATCH_STEP"), "build");
-        assert_eq!(get("DIBS_BATCH_PLAN"), "1\t3\nbench\tbench\tbench_x\t1\nhome\trsh\thome_x\t0\n");
+        assert_eq!(
+            get("DIBS_BATCH_PLAN"),
+            "1\t3\nbench\tbench\tbench_x\t1\nhome\trsh\thome_x\t0\n"
+        );
     }
 
     #[test]
     fn a_recipe_alone_is_its_own_batch_and_inside_one_goes_ahead_of_the_rest() {
-        let calls = [call("send", "rsh"), call("build", "shared"), call("bench", "bench")];
+        let calls = [
+            call("send", "rsh"),
+            call("build", "shared"),
+            call("bench", "bench"),
+        ];
         let alone = nested_env(None, "own", &calls, 1);
         assert_eq!(alone[0].1, "own");
         assert_eq!(alone[2].1, "2\t3\nbench\tbench\tbench_x\t1\n");
-        assert!(nested_env(None, "own", &calls[..1], 0).is_empty(), "one job is not a batch");
-        let outer = Some(("b9".to_string(), "arm-a".to_string(), "2\t4\narm-b\trecipe\t\t1\n".to_string()));
+        assert!(
+            nested_env(None, "own", &calls[..1], 0).is_empty(),
+            "one job is not a batch"
+        );
+        let outer = Some((
+            "b9".to_string(),
+            "arm-a".to_string(),
+            "2\t4\narm-b\trecipe\t\t1\n".to_string(),
+        ));
         let inside = nested_env(outer, "own", &calls, 1);
         assert_eq!(inside[0].1, "b9");
         assert_eq!(inside[1].1, "arm-a: build");
-        assert_eq!(inside[2].1, "2\t4\nbench\tbench\tbench_x\t1\narm-b\trecipe\t\t1\n");
+        assert_eq!(
+            inside[2].1,
+            "2\t4\nbench\tbench\tbench_x\t1\narm-b\trecipe\t\t1\n"
+        );
     }
 
     #[test]
     fn a_step_ended_by_a_signal_reads_as_killed_rather_than_as_an_exit_code() {
         let steps = parse("[a] dibs run true\n[b] dibs run true\n").unwrap();
         let machines = vec!["m".to_string(), "m".to_string()];
-        let states = [State::Done { exit: -1, seconds: 6 }, State::Done { exit: 3, seconds: 1 }];
-        let out = summary("1", &steps, &machines, &states, Path::new("/nonexistent"), 7, None);
-        assert!(out.lines().any(|l| l.starts_with("a ") && l.contains(" killed")), "{out}");
-        assert!(out.lines().any(|l| l.starts_with("b ") && l.contains(" 3 ")), "{out}");
+        let states = [
+            State::Done {
+                exit: -1,
+                seconds: 6,
+            },
+            State::Done {
+                exit: 3,
+                seconds: 1,
+            },
+        ];
+        let out = summary(
+            "1",
+            &steps,
+            &machines,
+            &states,
+            Path::new("/nonexistent"),
+            7,
+            None,
+        );
+        assert!(
+            out.lines()
+                .any(|l| l.starts_with("a ") && l.contains(" killed")),
+            "{out}"
+        );
+        assert!(
+            out.lines()
+                .any(|l| l.starts_with("b ") && l.contains(" 3 ")),
+            "{out}"
+        );
     }
 
     #[test]
     fn only_dibs_saying_so_makes_exit_76_a_cancellation() {
-        assert!(was_cancelled("dibs: batch 1 was cancelled with dibs --kill, so this step does not run.\n"));
-        assert!(was_cancelled("job 20260917-9  bench  x  queued 0s  ran 4s  exit 76  by=dibs\n"));
-        assert!(!was_cancelled("job 20260917-9  shared  x  queued 0s  ran 1s  exit 76  by=command\n"));
+        assert!(was_cancelled(
+            "dibs: batch 1 was cancelled with dibs --kill, so this step does not run.\n"
+        ));
+        assert!(was_cancelled(
+            "job 20260917-9  bench  x  queued 0s  ran 4s  exit 76  by=dibs\n"
+        ));
+        assert!(!was_cancelled(
+            "job 20260917-9  shared  x  queued 0s  ran 1s  exit 76  by=command\n"
+        ));
     }
 
     #[test]
     fn the_job_ids_come_from_the_trailers() {
         let err = "dibs: step 1/2\njob 20260916-1  shared  a:setup  queued 0s  ran 1s  exit 0  by=command\n  log m:/x\njob 20260916-2  bench  a  queued 3s  ran 9s  exit 0  by=command  built=nothing\njob 20260916-3  shared  a  queued 0s  ran 0s  exit 69  by=dibs\n";
-        assert_eq!(jobs(err), ["20260916-1", "20260916-2 built=nothing", "20260916-3 by=dibs"]);
+        assert_eq!(
+            jobs(err),
+            [
+                "20260916-1",
+                "20260916-2 built=nothing",
+                "20260916-3 by=dibs"
+            ]
+        );
     }
 }

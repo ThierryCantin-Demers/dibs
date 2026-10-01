@@ -199,8 +199,16 @@ struct Finding {
 impl Finding {
     fn new(area: Area, missing: Vec<String>, present: String) -> Finding {
         match missing.is_empty() {
-            true => Finding { area, ok: true, detail: present },
-            false => Finding { area, ok: false, detail: missing.join(", ") },
+            true => Finding {
+                area,
+                ok: true,
+                detail: present,
+            },
+            false => Finding {
+                area,
+                ok: false,
+                detail: missing.join(", "),
+            },
         }
     }
 }
@@ -242,7 +250,9 @@ impl Observed {
         let mut o = Observed::default();
         for rest in text.lines().filter_map(|l| l.strip_prefix("DIBS-PROBE ")) {
             let mut words = rest.split_whitespace();
-            let Some(section) = words.next() else { continue };
+            let Some(section) = words.next() else {
+                continue;
+            };
             for w in words {
                 match (section, w.split_once('=')) {
                     ("keys", _) => {
@@ -275,7 +285,10 @@ impl Observed {
     }
 
     fn toolchains(&self) -> Vec<&str> {
-        self.get("rust.toolchains").split(',').filter(|t| !t.is_empty()).collect()
+        self.get("rust.toolchains")
+            .split(',')
+            .filter(|t| !t.is_empty())
+            .collect()
     }
 }
 
@@ -304,7 +317,11 @@ impl Machine {
     }
 
     fn access(&self, o: &Observed, cx: &Context) -> Access {
-        let holds = |p: &str| o.keys.iter().any(|fp| cx.owners.get(fp).is_some_and(|who| who == p));
+        let holds = |p: &str| {
+            o.keys
+                .iter()
+                .any(|fp| cx.owners.get(fp).is_some_and(|who| who == p))
+        };
         let mut people: BTreeMap<String, Standing> = self
             .people
             .iter()
@@ -340,8 +357,16 @@ impl Machine {
                 Standing::Key | Standing::Tailnet => None,
             })
             .collect();
-        missing.extend(a.strangers.iter().map(|fp| format!("a key of nobody listed: {fp}")));
-        Finding::new(Area::Login, missing, format!("keys of {}", self.people.join(", ")))
+        missing.extend(
+            a.strangers
+                .iter()
+                .map(|fp| format!("a key of nobody listed: {fp}")),
+        );
+        Finding::new(
+            Area::Login,
+            missing,
+            format!("keys of {}", self.people.join(", ")),
+        )
     }
 
     fn tailscale(&self, o: &Observed, cx: &Context) -> Finding {
@@ -350,15 +375,30 @@ impl Machine {
             missing.push("Tailscale SSH is off".to_string());
         }
         if !o.keys.is_empty() {
-            let whose: Vec<&str> = o.keys.iter().map(|fp| cx.owners.get(fp).map_or(fp.as_str(), String::as_str)).collect();
-            missing.push(format!("a second way in, keys in authorized_keys: {}", whose.join(", ")));
+            let whose: Vec<&str> = o
+                .keys
+                .iter()
+                .map(|fp| cx.owners.get(fp).map_or(fp.as_str(), String::as_str))
+                .collect();
+            missing.push(format!(
+                "a second way in, keys in authorized_keys: {}",
+                whose.join(", ")
+            ));
         }
-        Finding::new(Area::Login, missing, "by Tailscale SSH, whoever the tailnet's policy lets in".into())
+        Finding::new(
+            Area::Login,
+            missing,
+            "by Tailscale SSH, whoever the tailnet's policy lets in".into(),
+        )
     }
 
     fn repo_clones(&self, o: &Observed, cx: &Context) -> Finding {
         let wanted = self.repos(cx);
-        let missing = wanted.iter().filter(|r| !o.repos.contains_key(*r)).map(|r| format!("no clone of {r}")).collect();
+        let missing = wanted
+            .iter()
+            .filter(|r| !o.repos.contains_key(*r))
+            .map(|r| format!("no clone of {r}"))
+            .collect();
         Finding::new(Area::Repos, missing, wanted.join(", "))
     }
 }
@@ -367,16 +407,27 @@ impl Profile {
     fn check(self, o: &Observed, m: &Machine, cx: &Context) -> Finding {
         match self {
             Profile::Dibs => {
-                let mut missing: Vec<String> = ["flock", "rsync", "git"].iter().filter(|t| !o.has(&format!("tools.{t}"))).map(|t| t.to_string()).collect();
+                let mut missing: Vec<String> = ["flock", "rsync", "git"]
+                    .iter()
+                    .filter(|t| !o.has(&format!("tools.{t}")))
+                    .map(|t| t.to_string())
+                    .collect();
                 if !o.has("tools.timeout") && !o.has("tools.gtimeout") {
                     missing.push("GNU timeout".into());
                 }
                 match o.bash() {
                     Some(v) if v >= BASH_NEEDED => {}
-                    Some((major, minor)) => missing.push(format!("bash {major}.{minor}, needs {}.{}", BASH_NEEDED.0, BASH_NEEDED.1)),
+                    Some((major, minor)) => missing.push(format!(
+                        "bash {major}.{minor}, needs {}.{}",
+                        BASH_NEEDED.0, BASH_NEEDED.1
+                    )),
                     None => missing.push("bash".into()),
                 }
-                Finding::new(Area::Dibs, missing, format!("bash {}", o.get("bash.version")))
+                Finding::new(
+                    Area::Dibs,
+                    missing,
+                    format!("bash {}", o.get("bash.version")),
+                )
             }
             Profile::Rust => {
                 if !o.has("rust.rustup") {
@@ -384,11 +435,26 @@ impl Profile {
                 }
                 let have = o.toolchains();
                 let needed: BTreeSet<&str> = std::iter::once("stable")
-                    .chain(m.repos(cx).iter().filter_map(|r| cx.pins.get(r).map(String::as_str)))
+                    .chain(
+                        m.repos(cx)
+                            .iter()
+                            .filter_map(|r| cx.pins.get(r).map(String::as_str)),
+                    )
                     .collect();
-                let installed = |c: &str| have.iter().any(|t| *t == c || t.starts_with(&format!("{c}-")));
-                let missing = needed.iter().filter(|c| !installed(c)).map(|c| format!("no {c} toolchain")).collect();
-                Finding::new(Area::Rust, missing, needed.into_iter().collect::<Vec<_>>().join(", "))
+                let installed = |c: &str| {
+                    have.iter()
+                        .any(|t| *t == c || t.starts_with(&format!("{c}-")))
+                };
+                let missing = needed
+                    .iter()
+                    .filter(|c| !installed(c))
+                    .map(|c| format!("no {c} toolchain"))
+                    .collect();
+                Finding::new(
+                    Area::Rust,
+                    missing,
+                    needed.into_iter().collect::<Vec<_>>().join(", "),
+                )
             }
             Profile::Cuda => {
                 let mut missing = Vec::new();
@@ -398,14 +464,24 @@ impl Profile {
                 if !o.has("gpu.nvcc") {
                     missing.push("no nvcc".into());
                 }
-                Finding::new(Area::Cuda, missing, format!("driver {}, nvcc {}", o.get("gpu.nvidia"), o.get("gpu.nvcc")))
+                Finding::new(
+                    Area::Cuda,
+                    missing,
+                    format!("driver {}, nvcc {}", o.get("gpu.nvidia"), o.get("gpu.nvcc")),
+                )
             }
             Profile::Vulkan => {
-                let missing = (o.get("gpu.vulkan") != "yes").then(|| "no Vulkan loader".to_string()).into_iter().collect();
+                let missing = (o.get("gpu.vulkan") != "yes")
+                    .then(|| "no Vulkan loader".to_string())
+                    .into_iter()
+                    .collect();
                 Finding::new(Area::Vulkan, missing, "loader present".into())
             }
             Profile::Metal => {
-                let missing = (o.get("sys.os") != "Darwin").then(|| format!("{} has no Metal", o.get("sys.os"))).into_iter().collect();
+                let missing = (o.get("sys.os") != "Darwin")
+                    .then(|| format!("{} has no Metal", o.get("sys.os")))
+                    .into_iter()
+                    .collect();
                 Finding::new(Area::Metal, missing, "macOS".into())
             }
             Profile::Unprivileged => {
@@ -413,11 +489,19 @@ impl Profile {
                 if o.get("account.nopasswd") == "yes" {
                     missing.push("sudo without a password".to_string());
                 }
-                let groups: Vec<&str> = o.get("account.groups").split(',').filter(|g| PRIVILEGED_GROUPS.contains(g)).collect();
+                let groups: Vec<&str> = o
+                    .get("account.groups")
+                    .split(',')
+                    .filter(|g| PRIVILEGED_GROUPS.contains(g))
+                    .collect();
                 if !groups.is_empty() {
                     missing.push(format!("in {}", groups.join(", ")));
                 }
-                Finding::new(Area::Account, missing, format!("{}, no root", o.get("sys.user")))
+                Finding::new(
+                    Area::Account,
+                    missing,
+                    format!("{}, no root", o.get("sys.user")),
+                )
             }
         }
     }
@@ -446,7 +530,10 @@ fn load(path: &Path) -> Result<Fleet, String> {
     let fleet: Fleet = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     for (name, m) in &fleet.machine {
         if let Some(p) = m.people.iter().find(|p| !fleet.person.contains_key(*p)) {
-            return Err(format!("{}: machine {name} lists {p}, who has no [person.{p}]", path.display()));
+            return Err(format!(
+                "{}: machine {name} lists {p}, who has no [person.{p}]",
+                path.display()
+            ));
         }
     }
     Ok(fleet)
@@ -458,11 +545,18 @@ fn owners(fleet: &Fleet, dir: &Path) -> Result<BTreeMap<String, String>, String>
     for (who, person) in &fleet.person {
         for key in &person.keys {
             let file = dir.join(key);
-            let listed = Command::new("ssh-keygen").arg("-lf").arg(&file).output().map_err(|e| format!("ssh-keygen: {e}"))?;
+            let listed = Command::new("ssh-keygen")
+                .arg("-lf")
+                .arg(&file)
+                .output()
+                .map_err(|e| format!("ssh-keygen: {e}"))?;
             if !listed.status.success() {
                 return Err(format!("{}: not a public key ({who})", file.display()));
             }
-            for fp in String::from_utf8_lossy(&listed.stdout).lines().filter_map(|l| l.split_whitespace().nth(1)) {
+            for fp in String::from_utf8_lossy(&listed.stdout)
+                .lines()
+                .filter_map(|l| l.split_whitespace().nth(1))
+            {
                 out.insert(fp.to_string(), who.clone());
             }
         }
@@ -473,10 +567,19 @@ fn owners(fleet: &Fleet, dir: &Path) -> Result<BTreeMap<String, String>, String>
 fn pin(checkout: &Path) -> Option<String> {
     if let Ok(text) = std::fs::read_to_string(checkout.join("rust-toolchain.toml")) {
         let v: toml::Value = toml::from_str(&text).ok()?;
-        return v.get("toolchain")?.get("channel")?.as_str().map(str::to_string);
+        return v
+            .get("toolchain")?
+            .get("channel")?
+            .as_str()
+            .map(str::to_string);
     }
     let legacy = std::fs::read_to_string(checkout.join("rust-toolchain")).ok()?;
-    legacy.lines().next().map(str::trim).filter(|c| !c.is_empty()).map(str::to_string)
+    legacy
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
 }
 
 fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> (Via, Result<Observed, String>) {
@@ -498,31 +601,59 @@ fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> (Via, Result<Obser
         Ok(o) => o,
         Err(e) => return (via, Err(e.to_string())),
     };
-    let said = || String::from_utf8_lossy(&out.stderr).lines().rfind(|l| !l.trim().is_empty()).unwrap_or_default().trim().to_string();
+    let said = || {
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .rfind(|l| !l.trim().is_empty())
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
     let observed = match out.status.code() {
         Some(0) => Ok(Observed::parse(&String::from_utf8_lossy(&out.stdout))),
         Some(EXIT_BUSY) => Err("busy: a benchmark holds it, so it was not probed".into()),
         Some(EXIT_UNREACHABLE) | Some(SSH_UNREACHABLE) => Err(format!("unreachable: {}", said())),
-        code => Err(format!("the probe failed (exit {}): {}", code.unwrap_or(-1), said())),
+        code => Err(format!(
+            "the probe failed (exit {}): {}",
+            code.unwrap_or(-1),
+            said()
+        )),
     };
     (via, observed)
 }
 
 fn over_ssh(target: &str) -> std::io::Result<std::process::Output> {
     let mut child = Command::new("ssh")
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "sh -s"])
+        .args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            target,
+            "sh -s",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    child.stdin.take().expect("piped").write_all(PROBE.as_bytes())?;
+    child
+        .stdin
+        .take()
+        .expect("piped")
+        .write_all(PROBE.as_bytes())?;
     child.wait_with_output()
 }
 
 /// From here: the name resolves, and something answers on the ssh port.
 fn reach(name: &str) -> Result<(), String> {
-    let addrs: Vec<_> = (name, 22).to_socket_addrs().map_err(|_| format!("{name} does not resolve here"))?.collect();
-    match addrs.iter().any(|a| TcpStream::connect_timeout(a, Duration::from_secs(3)).is_ok()) {
+    let addrs: Vec<_> = (name, 22)
+        .to_socket_addrs()
+        .map_err(|_| format!("{name} does not resolve here"))?
+        .collect();
+    match addrs
+        .iter()
+        .any(|a| TcpStream::connect_timeout(a, Duration::from_secs(3)).is_ok())
+    {
         true => Ok(()),
         false => Err(format!("{name} resolves, and nothing answers on port 22")),
     }
@@ -530,10 +661,16 @@ fn reach(name: &str) -> Result<(), String> {
 
 fn reach_all(paths: &[String]) -> Vec<PathCheck> {
     std::thread::scope(|s| {
-        let tried: Vec<_> = paths.iter().map(|p| (p, s.spawn(move || reach(p)))).collect();
+        let tried: Vec<_> = paths
+            .iter()
+            .map(|p| (p, s.spawn(move || reach(p))))
+            .collect();
         tried
             .into_iter()
-            .map(|(p, t)| PathCheck { name: p.clone(), problem: t.join().expect("a reach does not panic").err() })
+            .map(|(p, t)| PathCheck {
+                name: p.clone(),
+                problem: t.join().expect("a reach does not panic").err(),
+            })
             .collect()
     })
 }
@@ -550,7 +687,15 @@ fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Rep
         }
         Err(e) => (Some(e), Access::default()),
     };
-    Report { machine: name.to_string(), provisioned: m.provisioned.clone(), via, unprobed, paths, access, findings }
+    Report {
+        machine: name.to_string(),
+        provisioned: m.provisioned.clone(),
+        via,
+        unprobed,
+        paths,
+        access,
+        findings,
+    }
 }
 
 fn render(reports: &[Report]) -> String {
@@ -560,14 +705,24 @@ fn render(reports: &[Report]) -> String {
             Provisioner::Ansible => "ansible",
             Provisioner::Hand => "hand",
         };
-        let source = r.provisioned.source.as_ref().map(|x| format!(" ({x})")).unwrap_or_default();
+        let source = r
+            .provisioned
+            .source
+            .as_ref()
+            .map(|x| format!(" ({x})"))
+            .unwrap_or_default();
         let via = match r.via {
             Via::Dibs => "through dibs",
             Via::Ssh => "over ssh",
         };
         s += &format!("{}  set up by {by}{source}, probed {via}\n", r.machine);
         for f in &r.findings {
-            s += &format!("  {}  {:<8} {}\n", if f.ok { "ok" } else { "NO" }, f.area.name(), f.detail);
+            s += &format!(
+                "  {}  {:<8} {}\n",
+                if f.ok { "ok" } else { "NO" },
+                f.area.name(),
+                f.detail
+            );
         }
         if let Some(why) = &r.unprobed {
             s += &format!("  --  not probed: {why}\n");
@@ -584,28 +739,63 @@ fn render(reports: &[Report]) -> String {
 }
 
 /// `dibs machines [<machine>]`: every machine in fleet.toml, or the one named, probed at once.
-pub fn command(json: bool, only: Option<&str>, root: &Path, recipe_repos: Vec<String>, pool: &BTreeSet<String>) -> Result<ExitCode, String> {
+pub fn command(
+    json: bool,
+    only: Option<&str>,
+    root: &Path,
+    recipe_repos: Vec<String>,
+    pool: &BTreeSet<String>,
+) -> Result<ExitCode, String> {
     let path = path()?;
     let mut fleet = load(&path)?;
     if let Some(name) = only {
         if !fleet.machine.contains_key(name) {
             let have: Vec<&str> = fleet.machine.keys().map(String::as_str).collect();
-            return Err(format!("no machine {name} in {}; it has: {}", path.display(), have.join(", ")));
+            return Err(format!(
+                "no machine {name} in {}; it has: {}",
+                path.display(),
+                have.join(", ")
+            ));
         }
         fleet.machine.retain(|n, _| n == name);
     }
     let dir = path.parent().unwrap_or(Path::new("."));
-    let wanted: BTreeSet<&String> = fleet.machine.values().flat_map(|m| m.repos.iter().flatten()).chain(&recipe_repos).collect();
-    let pins = wanted.into_iter().filter_map(|r| pin(&root.join(r)).map(|c| (r.clone(), c))).collect();
-    let cx = Context { owners: owners(&fleet, dir)?, pins, recipe_repos };
+    let wanted: BTreeSet<&String> = fleet
+        .machine
+        .values()
+        .flat_map(|m| m.repos.iter().flatten())
+        .chain(&recipe_repos)
+        .collect();
+    let pins = wanted
+        .into_iter()
+        .filter_map(|r| pin(&root.join(r)).map(|c| (r.clone(), c)))
+        .collect();
+    let cx = Context {
+        owners: owners(&fleet, dir)?,
+        pins,
+        recipe_repos,
+    };
     let reports: Vec<Report> = std::thread::scope(|s| {
-        let running: Vec<_> = fleet.machine.iter().map(|(name, m)| s.spawn(|| report(name, m, &cx, pool))).collect();
-        running.into_iter().map(|r| r.join().expect("a probe does not panic")).collect()
+        let running: Vec<_> = fleet
+            .machine
+            .iter()
+            .map(|(name, m)| s.spawn(|| report(name, m, &cx, pool)))
+            .collect();
+        running
+            .into_iter()
+            .map(|r| r.join().expect("a probe does not panic"))
+            .collect()
     });
     match json {
         true => {
-            let overview = Overview { people: fleet.person.keys().collect(), machines: &reports };
-            println!("{}", serde_json::to_string_pretty(&overview).map_err(|e| e.to_string())?)
+            let overview = Overview {
+                people: fleet.person.keys().collect(),
+                machines: &reports,
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&overview).map_err(|e| e.to_string())?
+            )
         }
         false => print!("{}", render(&reports)),
     }
@@ -632,7 +822,10 @@ mod tests {
 
     fn machine(profiles: Vec<Profile>) -> Machine {
         Machine {
-            provisioned: Provisioned { by: Provisioner::Hand, source: None },
+            provisioned: Provisioned {
+                by: Provisioner::Hand,
+                source: None,
+            },
             ssh: None,
             paths: Vec::new(),
             people: vec!["alice".into(), "bob".into()],
@@ -644,11 +837,20 @@ mod tests {
 
     fn cx() -> Context {
         Context {
-            owners: [("SHA256:alice", "alice"), ("SHA256:bob", "bob"), ("SHA256:carol", "carol")]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
-            pins: [("app".to_string(), "1.98.1".to_string()), ("old".to_string(), "1.80.0".to_string())].into_iter().collect(),
+            owners: [
+                ("SHA256:alice", "alice"),
+                ("SHA256:bob", "bob"),
+                ("SHA256:carol", "carol"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+            pins: [
+                ("app".to_string(), "1.98.1".to_string()),
+                ("old".to_string(), "1.80.0".to_string()),
+            ]
+            .into_iter()
+            .collect(),
             recipe_repos: vec!["burn".into(), "cubecl".into(), "app".into()],
         }
     }
@@ -659,14 +861,30 @@ mod tests {
 
     #[test]
     fn the_probe_is_posix_sh_and_reports_every_section() {
-        let syntax = Command::new("sh").args(["-n", "-c", PROBE]).status().unwrap();
+        let syntax = Command::new("sh")
+            .args(["-n", "-c", PROBE])
+            .status()
+            .unwrap();
         assert!(syntax.success());
         let out = Command::new("sh").args(["-c", PROBE]).output().unwrap();
         let o = Observed::parse(&String::from_utf8_lossy(&out.stdout));
-        for key in ["sys.os", "bash.version", "account.nopasswd", "login.tailscale_ssh", "disk.free_kb"] {
-            assert!(o.has(key), "{key} missing from:\n{}", String::from_utf8_lossy(&out.stdout));
+        for key in [
+            "sys.os",
+            "bash.version",
+            "account.nopasswd",
+            "login.tailscale_ssh",
+            "disk.free_kb",
+        ] {
+            assert!(
+                o.has(key),
+                "{key} missing from:\n{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
         }
-        assert!(String::from_utf8_lossy(&out.stdout).lines().count() <= 20, "a job's digest keeps its first 20 lines");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).lines().count() <= 20,
+            "a job's digest keeps its first 20 lines"
+        );
     }
 
     #[test]
@@ -674,27 +892,49 @@ mod tests {
         let m = machine(vec![]);
         let a = m.access(&Observed::parse(SEEN), &cx());
         assert_eq!(
-            (a.people.get("alice"), a.people.get("bob"), a.people.get("carol"), a.strangers.as_slice()),
-            (Some(&Standing::Key), Some(&Standing::Missing), Some(&Standing::Unlisted), ["SHA256:stranger".to_string()].as_slice())
+            (
+                a.people.get("alice"),
+                a.people.get("bob"),
+                a.people.get("carol"),
+                a.strangers.as_slice()
+            ),
+            (
+                Some(&Standing::Key),
+                Some(&Standing::Missing),
+                Some(&Standing::Unlisted),
+                ["SHA256:stranger".to_string()].as_slice()
+            )
         );
         let f = m.keys(&a);
         assert_eq!(f.area, Area::Login);
         assert!(!f.ok);
-        assert_eq!(f.detail, "no key of bob, carol's key, and carol is not listed here, a key of nobody listed: SHA256:stranger");
+        assert_eq!(
+            f.detail,
+            "no key of bob, carol's key, and carol is not listed here, a key of nobody listed: SHA256:stranger"
+        );
     }
 
     #[test]
     fn a_machine_logged_into_by_tailscale_needs_it_on_and_no_keys_beside_it() {
         let mut m = machine(vec![]);
         m.login = Login::Tailscale;
-        let without = Observed::parse(&SEEN.replace("DIBS-PROBE keys SHA256:alice SHA256:stranger SHA256:carol", "DIBS-PROBE keys"));
-        assert_eq!(finding(&m.check(&without, &cx()), Area::Login).detail, "Tailscale SSH is off");
+        let without = Observed::parse(&SEEN.replace(
+            "DIBS-PROBE keys SHA256:alice SHA256:stranger SHA256:carol",
+            "DIBS-PROBE keys",
+        ));
+        assert_eq!(
+            finding(&m.check(&without, &cx()), Area::Login).detail,
+            "Tailscale SSH is off"
+        );
         let on = SEEN.to_string() + "DIBS-PROBE login tailscale_ssh=yes\n";
         assert_eq!(
             finding(&m.check(&Observed::parse(&on), &cx()), Area::Login).detail,
             "a second way in, keys in authorized_keys: alice, carol, SHA256:stranger"
         );
-        let clean = on.replace("DIBS-PROBE keys SHA256:alice SHA256:stranger SHA256:carol", "DIBS-PROBE keys");
+        let clean = on.replace(
+            "DIBS-PROBE keys SHA256:alice SHA256:stranger SHA256:carol",
+            "DIBS-PROBE keys",
+        );
         assert!(finding(&m.check(&Observed::parse(&clean), &cx()), Area::Login).ok);
     }
 
@@ -702,23 +942,42 @@ mod tests {
     fn toolchains_come_from_the_pins_of_the_repos_a_machine_needs() {
         let o = Observed::parse(SEEN);
         let mut m = machine(vec![Profile::Rust]);
-        assert!(m.check(&o, &cx()).iter().any(|f| f.area == Area::Rust && f.ok), "stable and app's pin are there");
+        assert!(
+            m.check(&o, &cx())
+                .iter()
+                .any(|f| f.area == Area::Rust && f.ok),
+            "stable and app's pin are there"
+        );
         m.repos = Some(vec!["old".into()]);
-        assert_eq!(finding(&m.check(&o, &cx()), Area::Rust).detail, "no 1.80.0 toolchain");
+        assert_eq!(
+            finding(&m.check(&o, &cx()), Area::Rust).detail,
+            "no 1.80.0 toolchain"
+        );
     }
 
     #[test]
     fn a_missing_clone_and_privileges_are_found() {
-        let fs = machine(vec![Profile::Unprivileged, Profile::Dibs, Profile::Cuda]).check(&Observed::parse(SEEN), &cx());
+        let fs = machine(vec![Profile::Unprivileged, Profile::Dibs, Profile::Cuda])
+            .check(&Observed::parse(SEEN), &cx());
         assert_eq!(finding(&fs, Area::Repos).detail, "no clone of app");
-        assert_eq!(finding(&fs, Area::Account).detail, "sudo without a password, in sudo");
+        assert_eq!(
+            finding(&fs, Area::Account).detail,
+            "sudo without a password, in sudo"
+        );
         assert!(finding(&fs, Area::Dibs).ok && finding(&fs, Area::Cuda).ok);
     }
 
     #[test]
     fn an_old_bash_and_a_missing_timeout_fail_the_dibs_profile() {
-        let o = Observed::parse(&SEEN.replace("version=5.2", "version=3.2").replace("timeout=/usr/bin/timeout", "timeout="));
-        assert_eq!(finding(&machine(vec![Profile::Dibs]).check(&o, &cx()), Area::Dibs).detail, "GNU timeout, bash 3.2, needs 5.1");
+        let o = Observed::parse(
+            &SEEN
+                .replace("version=5.2", "version=3.2")
+                .replace("timeout=/usr/bin/timeout", "timeout="),
+        );
+        assert_eq!(
+            finding(&machine(vec![Profile::Dibs]).check(&o, &cx()), Area::Dibs).detail,
+            "GNU timeout, bash 3.2, needs 5.1"
+        );
     }
 
     #[test]
@@ -728,7 +987,11 @@ mod tests {
         assert_eq!(pin(&dir), None);
         std::fs::write(dir.join("rust-toolchain"), "1.80.0\n").unwrap();
         assert_eq!(pin(&dir).as_deref(), Some("1.80.0"));
-        std::fs::write(dir.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"1.98.1\"\n").unwrap();
+        std::fs::write(
+            dir.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.98.1\"\n",
+        )
+        .unwrap();
         assert_eq!(pin(&dir).as_deref(), Some("1.98.1"));
         let _ = std::fs::remove_dir_all(&dir);
     }

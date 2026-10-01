@@ -19,9 +19,13 @@ pub struct Db {
 pub fn pinned(lock: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for line in lock.lines() {
-        let Some(src) = line.trim().strip_prefix("source = \"git+") else { continue };
+        let Some(src) = line.trim().strip_prefix("source = \"git+") else {
+            continue;
+        };
         let src = src.trim_end_matches('"');
-        let Some((url, commit)) = src.rsplit_once('#') else { continue };
+        let Some((url, commit)) = src.rsplit_once('#') else {
+            continue;
+        };
         let url = url.split('?').next().unwrap_or(url);
         let name = url.trim_end_matches('/').rsplit('/').next().unwrap_or("");
         let name = name.trim_end_matches(".git").to_string();
@@ -39,7 +43,9 @@ pub fn pinned(lock: &str) -> Vec<(String, String)> {
 pub fn cargo_home() -> PathBuf {
     std::env::var_os("CARGO_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cargo"))
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cargo")
+        })
 }
 
 /// The pinned commits this checkout's cargo can supply. Cargo names a cache directory after the
@@ -47,7 +53,9 @@ pub fn cargo_home() -> PathBuf {
 /// way. One URL spelled two ways gets two directories, and the commit may be in either, so every
 /// directory holding it is offered rather than the first: the machine reads exactly one of them.
 pub fn local(cargo_home: &Path, pins: &[(String, String)]) -> Vec<Db> {
-    let Ok(entries) = std::fs::read_dir(cargo_home.join("git/db")) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(cargo_home.join("git/db")) else {
+        return Vec::new();
+    };
     let dirs: Vec<(String, PathBuf)> = entries
         .filter_map(|e| e.ok())
         .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
@@ -57,7 +65,9 @@ pub fn local(cargo_home: &Path, pins: &[(String, String)]) -> Vec<Db> {
         let prefix = format!("{}-", repo.to_lowercase());
         for (name, path) in &dirs {
             let hash = name.to_lowercase();
-            let Some(rest) = hash.strip_prefix(&prefix) else { continue };
+            let Some(rest) = hash.strip_prefix(&prefix) else {
+                continue;
+            };
             if rest.len() != 16 || !rest.chars().all(|c| c.is_ascii_hexdigit()) {
                 continue;
             }
@@ -69,7 +79,11 @@ pub fn local(cargo_home: &Path, pins: &[(String, String)]) -> Vec<Db> {
                 .status()
                 .is_ok_and(|s| s.success());
             if has {
-                out.push(Db { name: name.clone(), path: path.clone(), commit: commit.clone() });
+                out.push(Db {
+                    name: name.clone(),
+                    path: path.clone(),
+                    commit: commit.clone(),
+                });
             }
         }
     }
@@ -82,7 +96,8 @@ pub fn check_script(dbs: &[Db]) -> String {
     if dbs.is_empty() {
         return String::new();
     }
-    let mut s = String::from("GITDB=${CARGO_HOME:-$HOME/.cargo}/git/db\necho \"DIBS-GITDB $GITDB\"\n");
+    let mut s =
+        String::from("GITDB=${CARGO_HOME:-$HOME/.cargo}/git/db\necho \"DIBS-GITDB $GITDB\"\n");
     for db in dbs {
         s.push_str(&format!(
             "git -C \"$GITDB/{n}\" cat-file -e '{c}^{{commit}}' 2>/dev/null || echo 'DIBS-GITMISSING {n} {c}'\n",
@@ -142,15 +157,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         assert_eq!(
             pinned(LOCK),
             vec![
-                ("widget".into(), "2d1aeb21c0ccfe271f12d1209724c6012a133134".into()),
-                ("gadget".into(), "0123456789abcdef0123456789abcdef01234567".into()),
+                (
+                    "widget".into(),
+                    "2d1aeb21c0ccfe271f12d1209724c6012a133134".into()
+                ),
+                (
+                    "gadget".into(),
+                    "0123456789abcdef0123456789abcdef01234567".into()
+                ),
             ]
         );
     }
 
     fn sh(dir: &Path, cmd: &str) -> String {
-        let o = Command::new("bash").args(["-c", cmd]).current_dir(dir).output().unwrap();
-        assert!(o.status.success(), "{cmd}: {}", String::from_utf8_lossy(&o.stderr));
+        let o = Command::new("bash")
+            .args(["-c", cmd])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            o.status.success(),
+            "{cmd}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
         String::from_utf8_lossy(&o.stdout).trim().to_string()
     }
 
@@ -160,17 +189,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         let _ = std::fs::remove_dir_all(&root);
         let work = root.join("work");
         std::fs::create_dir_all(&work).unwrap();
-        sh(&work, "git init -q && git -c user.email=a@b -c user.name=t commit -q --allow-empty -m one");
+        sh(
+            &work,
+            "git init -q && git -c user.email=a@b -c user.name=t commit -q --allow-empty -m one",
+        );
         let commit = sh(&work, "git rev-parse HEAD");
         std::fs::create_dir_all(root.join("cargo/git/db")).unwrap();
-        sh(&root, "git clone -q --bare work cargo/git/db/widget-0123456789abcdef");
+        sh(
+            &root,
+            "git clone -q --bare work cargo/git/db/widget-0123456789abcdef",
+        );
         (root, commit)
     }
 
     #[test]
     fn only_commits_this_cargo_holds_are_offered() {
         let (root, commit) = home("local");
-        let pins = vec![("widget".to_string(), commit.clone()), ("widget".to_string(), "f".repeat(40))];
+        let pins = vec![
+            ("widget".to_string(), commit.clone()),
+            ("widget".to_string(), "f".repeat(40)),
+        ];
         let dbs = local(&root.join("cargo"), &pins);
         assert_eq!(dbs.len(), 1);
         assert_eq!(dbs[0].name, "widget-0123456789abcdef");
@@ -182,19 +220,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     #[test]
     fn every_directory_holding_the_commit_is_offered() {
         let (root, commit) = home("spellings");
-        sh(&root, "git clone -q --bare work cargo/git/db/widget-fedcba9876543210");
+        sh(
+            &root,
+            "git clone -q --bare work cargo/git/db/widget-fedcba9876543210",
+        );
         let dbs = local(&root.join("cargo"), &[("widget".to_string(), commit)]);
         let mut names: Vec<&str> = dbs.iter().map(|d| d.name.as_str()).collect();
         names.sort();
-        assert_eq!(names, vec!["widget-0123456789abcdef", "widget-fedcba9876543210"]);
+        assert_eq!(
+            names,
+            vec!["widget-0123456789abcdef", "widget-fedcba9876543210"]
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn the_machine_reports_only_what_it_lacks() {
         let (root, commit) = home("remote");
-        let dbs = local(&root.join("cargo"), &[("widget".to_string(), commit.clone())]);
-        let absent = Db { name: "other-0123456789abcdef".into(), path: root.clone(), commit: "e".repeat(40) };
+        let dbs = local(
+            &root.join("cargo"),
+            &[("widget".to_string(), commit.clone())],
+        );
+        let absent = Db {
+            name: "other-0123456789abcdef".into(),
+            path: root.clone(),
+            commit: "e".repeat(40),
+        };
         let all = vec![dbs[0].clone(), absent.clone()];
         let script = format!("set -eu\n{}", check_script(&all));
         let out = Command::new("bash")
@@ -202,10 +253,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             .env("CARGO_HOME", root.join("cargo"))
             .output()
             .unwrap();
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         let text = String::from_utf8_lossy(&out.stdout);
         let (gitdb, gone) = missing(&text, &all);
-        assert_eq!(gitdb.as_deref(), Some(root.join("cargo/git/db").to_str().unwrap()));
+        assert_eq!(
+            gitdb.as_deref(),
+            Some(root.join("cargo/git/db").to_str().unwrap())
+        );
         assert_eq!(gone, vec![&absent]);
         let _ = std::fs::remove_dir_all(&root);
     }

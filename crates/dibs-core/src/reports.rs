@@ -58,9 +58,19 @@ fn number(url: &str) -> Option<u64> {
 
 /// A public repo is refused: a report carries the paths, repos and commands of whoever filed it.
 pub fn file(repo: &str, n: &Note) -> Result<u64, String> {
-    let visibility = gh(&["repo", "view", repo, "--json", "visibility", "--jq", ".visibility"])?;
+    let visibility = gh(&[
+        "repo",
+        "view",
+        repo,
+        "--json",
+        "visibility",
+        "--jq",
+        ".visibility",
+    ])?;
     if visibility == "PUBLIC" {
-        return Err(format!("{repo} is public, and a report carries the paths and commands of whoever filed it"));
+        return Err(format!(
+            "{repo} is public, and a report carries the paths and commands of whoever filed it"
+        ));
     }
     let title: String = n.text.chars().take(100).collect();
     let body = format!(
@@ -70,10 +80,22 @@ pub fn file(repo: &str, n: &Note) -> Result<u64, String> {
         n.version,
         host()
     );
-    let create = ["issue", "create", "-R", repo, "--title", &title, "--body", &body, "--label", LABEL];
+    let create = [
+        "issue", "create", "-R", repo, "--title", &title, "--body", &body, "--label", LABEL,
+    ];
     let url = match gh(&create) {
         Err(e) if e.contains(LABEL) => {
-            gh(&["label", "create", LABEL, "-R", repo, "--color", "d4c5f9", "--description", "filed by dibs --friction"])?;
+            gh(&[
+                "label",
+                "create",
+                LABEL,
+                "-R",
+                repo,
+                "--color",
+                "d4c5f9",
+                "--description",
+                "filed by dibs --friction",
+            ])?;
             gh(&create)?
         }
         other => other?,
@@ -93,12 +115,19 @@ impl Keys {
     fn load(name: &str) -> Result<Keys, String> {
         let dir = match std::env::var_os("XDG_STATE_HOME") {
             Some(d) => PathBuf::from(d),
-            None => PathBuf::from(std::env::var_os("HOME").ok_or("no HOME to keep reports' state in")?).join(".local/state"),
+            None => {
+                PathBuf::from(std::env::var_os("HOME").ok_or("no HOME to keep reports' state in")?)
+                    .join(".local/state")
+            }
         };
         let path = dir.join("dibs").join(name);
         let text = std::fs::read_to_string(&path);
         let fresh = text.is_err();
-        let set = text.unwrap_or_default().lines().map(str::to_string).collect();
+        let set = text
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect();
         Ok(Keys { path, set, fresh })
     }
 
@@ -116,7 +145,12 @@ impl Keys {
 }
 
 fn first_line(body: &Value) -> String {
-    let line = body.as_str().unwrap_or_default().lines().find(|l| !l.trim().is_empty()).unwrap_or_default();
+    let line = body
+        .as_str()
+        .unwrap_or_default()
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_default();
     line.chars().take(200).collect()
 }
 
@@ -125,27 +159,51 @@ fn login(v: &Value) -> &str {
 }
 
 fn listed(repo: &str) -> Result<Vec<Value>, String> {
-    let text = gh(&["issue", "list", "-R", repo, "--label", LABEL, "--state", "all", "--limit", LISTED, "--json", "number,title,url,state,author,comments"])?;
-    let v: Value = serde_json::from_str(&text).map_err(|e| format!("gh issue list printed something unreadable: {e}"))?;
+    let text = gh(&[
+        "issue",
+        "list",
+        "-R",
+        repo,
+        "--label",
+        LABEL,
+        "--state",
+        "all",
+        "--limit",
+        LISTED,
+        "--json",
+        "number,title,url,state,author,comments",
+    ])?;
+    let v: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("gh issue list printed something unreadable: {e}"))?;
     Ok(v.as_array().cloned().unwrap_or_default())
 }
 
 /// Answers to the reports this session filed, each said once.
 pub fn replies(repo: &str, notes: &[Note], by: &str) -> Result<Vec<String>, String> {
-    let filed: BTreeSet<u64> = notes.iter().filter(|n| n.by == by).filter_map(|n| n.issue).collect();
+    let filed: BTreeSet<u64> = notes
+        .iter()
+        .filter(|n| n.by == by)
+        .filter_map(|n| n.issue)
+        .collect();
     if filed.is_empty() {
         return Ok(Vec::new());
     }
     let mut shown = Keys::load("reports-shown")?;
     let mut out = Vec::new();
     for issue in listed(repo)? {
-        let Some(n) = issue["number"].as_u64().filter(|n| filed.contains(n)) else { continue };
+        let Some(n) = issue["number"].as_u64().filter(|n| filed.contains(n)) else {
+            continue;
+        };
         for c in issue["comments"].as_array().into_iter().flatten() {
             let url = c["url"].as_str().unwrap_or_default();
             if url.is_empty() || !shown.insert(url) {
                 continue;
             }
-            out.push(format!("dibs: your report #{n} was answered by {}: {}\n  {url}", login(&c["author"]), first_line(&c["body"])));
+            out.push(format!(
+                "dibs: your report #{n} was answered by {}: {}\n  {url}",
+                login(&c["author"]),
+                first_line(&c["body"])
+            ));
         }
     }
     shown.save()?;
@@ -177,7 +235,11 @@ fn catch_up(repo: &str, woken: &mut Keys) -> Result<Vec<String>, String> {
             if url.is_empty() || answered_here(&c["body"]) || !woken.insert(url) || first {
                 continue;
             }
-            out.push(format!("comment on #{n} from {}: {}\n  {url}", login(&c["author"]), first_line(&c["body"])));
+            out.push(format!(
+                "comment on #{n} from {}: {}\n  {url}",
+                login(&c["author"]),
+                first_line(&c["body"])
+            ));
         }
     }
     woken.fresh = false;
@@ -185,7 +247,11 @@ fn catch_up(repo: &str, woken: &mut Keys) -> Result<Vec<String>, String> {
 }
 
 fn labelled(issue: &Value) -> bool {
-    issue["labels"].as_array().into_iter().flatten().any(|l| l["name"].as_str() == Some(LABEL))
+    issue["labels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|l| l["name"].as_str() == Some(LABEL))
 }
 
 fn on_event(event: &str, body: &Value, woken: &mut Keys) -> Vec<String> {
@@ -207,7 +273,11 @@ fn on_event(event: &str, body: &Value, woken: &mut Keys) -> Vec<String> {
             if url.is_empty() || answered_here(&c["body"]) || !woken.insert(url) {
                 return Vec::new();
             }
-            vec![format!("comment on #{n} from {}: {}\n  {url}", login(&c["user"]), first_line(&c["body"]))]
+            vec![format!(
+                "comment on #{n} from {}: {}\n  {url}",
+                login(&c["user"]),
+                first_line(&c["body"])
+            )]
         }
         _ => Vec::new(),
     }
@@ -250,8 +320,12 @@ fn arrival(stream: TcpStream) -> Option<Arrival> {
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body).ok()?;
-    let _ = (&stream).write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-    Some(Arrival::Delivery(event, serde_json::from_slice(&body).ok()?))
+    let _ =
+        (&stream).write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    Some(Arrival::Delivery(
+        event,
+        serde_json::from_slice(&body).ok()?,
+    ))
 }
 
 /// `gh webhook forward`, which relays the repo's webhooks over its own connection to GitHub, so
@@ -261,13 +335,25 @@ struct Forward(Child);
 impl Forward {
     fn start(repo: &str, port: u16) -> Result<Forward, String> {
         let mut child = Command::new("gh")
-            .args(["webhook", "forward", "--repo", repo, "--events", "issues,issue_comment", "--url", &format!("http://127.0.0.1:{port}/")])
+            .args([
+                "webhook",
+                "forward",
+                "--repo",
+                repo,
+                "--events",
+                "issues,issue_comment",
+                "--url",
+                &format!("http://127.0.0.1:{port}/"),
+            ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("could not run gh webhook forward: {e}"))?;
-        let stderr = child.stderr.take().ok_or("gh webhook forward has no stderr")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or("gh webhook forward has no stderr")?;
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let mut said = String::new();
@@ -293,7 +379,10 @@ impl Forward {
             )),
             Err(_) => {
                 let _ = forward.0.kill();
-                Err(format!("gh webhook forward did not start listening within {}s", FORWARD_READY.as_secs()))
+                Err(format!(
+                    "gh webhook forward did not start listening within {}s",
+                    FORWARD_READY.as_secs()
+                ))
             }
         }
     }
@@ -316,7 +405,8 @@ pub fn wait(repo: &str) -> Result<Vec<String>, String> {
         return Ok(news);
     }
     woken.save()?;
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("no local port to listen on: {e}"))?;
+    let listener =
+        TcpListener::bind("127.0.0.1:0").map_err(|e| format!("no local port to listen on: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let mut short = 0;
     loop {
@@ -328,7 +418,12 @@ pub fn wait(repo: &str) -> Result<Vec<String>, String> {
             return Ok(news);
         }
         let said = loop {
-            match listener.incoming().next().and_then(Result::ok).and_then(arrival) {
+            match listener
+                .incoming()
+                .next()
+                .and_then(Result::ok)
+                .and_then(arrival)
+            {
                 Some(Arrival::Stopped(said)) => break said,
                 Some(Arrival::Delivery(event, body)) => {
                     let news = on_event(&event, &body, &mut woken);
@@ -341,17 +436,35 @@ pub fn wait(repo: &str) -> Result<Vec<String>, String> {
             }
         };
         drop(forward);
-        short = if started.elapsed() < SHORT_LIVED { short + 1 } else { 0 };
+        short = if started.elapsed() < SHORT_LIVED {
+            short + 1
+        } else {
+            0
+        };
         if short >= SHORT_LIVES {
-            return Err(format!("gh webhook forward keeps stopping as soon as it starts:\n{}", said.trim()));
+            return Err(format!(
+                "gh webhook forward keeps stopping as soon as it starts:\n{}",
+                said.trim()
+            ));
         }
-        eprintln!("dibs: gh webhook forward stopped, so it is started again. It said: {}", said.trim().lines().last().unwrap_or("nothing"));
+        eprintln!(
+            "dibs: gh webhook forward stopped, so it is started again. It said: {}",
+            said.trim().lines().last().unwrap_or("nothing")
+        );
     }
 }
 
 pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, String> {
     let n = issue.to_string();
-    let url = gh(&["issue", "comment", &n, "-R", repo, "--body", &format!("{text}\n\n{ANSWER}")])?;
+    let url = gh(&[
+        "issue",
+        "comment",
+        &n,
+        "-R",
+        repo,
+        "--body",
+        &format!("{text}\n\n{ANSWER}"),
+    ])?;
     if close {
         gh(&["issue", "close", &n, "-R", repo])?;
     }
@@ -363,39 +476,95 @@ mod tests {
     use super::*;
 
     fn keys() -> Keys {
-        Keys { path: PathBuf::new(), set: BTreeSet::new(), fresh: false }
+        Keys {
+            path: PathBuf::new(),
+            set: BTreeSet::new(),
+            fresh: false,
+        }
     }
 
     #[test]
     fn a_comment_wakes_once_and_never_on_an_answer_posted_from_here() {
-        let body = |u: &str, text: &str| serde_json::json!({
-            "action": "created",
-            "issue": { "number": 3, "labels": [{ "name": LABEL }] },
-            "comment": { "html_url": u, "user": { "login": "someone" }, "body": text },
-        });
+        let body = |u: &str, text: &str| {
+            serde_json::json!({
+                "action": "created",
+                "issue": { "number": 3, "labels": [{ "name": LABEL }] },
+                "comment": { "html_url": u, "user": { "login": "someone" }, "body": text },
+            })
+        };
         let url = "https://github.com/o/r/issues/3#issuecomment-9";
         let mut woken = keys();
-        assert_eq!(on_event("issue_comment", &body(url, "still broken\nmore"), &mut woken), vec![format!("comment on #3 from someone: still broken\n  {url}")]);
-        assert!(on_event("issue_comment", &body(url, "still broken"), &mut woken).is_empty(), "once");
+        assert_eq!(
+            on_event(
+                "issue_comment",
+                &body(url, "still broken\nmore"),
+                &mut woken
+            ),
+            vec![format!("comment on #3 from someone: still broken\n  {url}")]
+        );
+        assert!(
+            on_event("issue_comment", &body(url, "still broken"), &mut woken).is_empty(),
+            "once"
+        );
         let answer = format!("fixed in abc\n\n{ANSWER}");
-        assert!(on_event("issue_comment", &body("https://github.com/o/r/issues/3#issuecomment-10", &answer), &mut woken).is_empty(), "not its own");
+        assert!(
+            on_event(
+                "issue_comment",
+                &body("https://github.com/o/r/issues/3#issuecomment-10", &answer),
+                &mut woken
+            )
+            .is_empty(),
+            "not its own"
+        );
     }
 
     #[test]
     fn only_a_labelled_issue_opening_is_a_report() {
-        let opened = |labels: Value, action: &str| serde_json::json!({
-            "action": action,
-            "issue": { "number": 5, "labels": labels, "title": "t", "html_url": "u", "user": { "login": "someone" } },
-        });
+        let opened = |labels: Value, action: &str| {
+            serde_json::json!({
+                "action": action,
+                "issue": { "number": 5, "labels": labels, "title": "t", "html_url": "u", "user": { "login": "someone" } },
+            })
+        };
         let mut woken = keys();
-        assert!(on_event("issues", &opened(serde_json::json!([]), "opened"), &mut woken).is_empty(), "unlabelled");
-        assert!(on_event("issues", &opened(serde_json::json!([{ "name": LABEL }]), "closed"), &mut woken).is_empty(), "closing");
-        assert_eq!(on_event("issues", &opened(serde_json::json!([{ "name": LABEL }]), "opened"), &mut woken).len(), 1);
+        assert!(
+            on_event(
+                "issues",
+                &opened(serde_json::json!([]), "opened"),
+                &mut woken
+            )
+            .is_empty(),
+            "unlabelled"
+        );
+        assert!(
+            on_event(
+                "issues",
+                &opened(serde_json::json!([{ "name": LABEL }]), "closed"),
+                &mut woken
+            )
+            .is_empty(),
+            "closing"
+        );
+        assert_eq!(
+            on_event(
+                "issues",
+                &opened(serde_json::json!([{ "name": LABEL }]), "opened"),
+                &mut woken
+            )
+            .len(),
+            1
+        );
     }
 
     #[test]
     fn a_repo_is_owner_and_name() {
-        for (v, ok) in [("o/r", true), ("r", false), ("o/r/x", false), ("/r", false), ("o/", false)] {
+        for (v, ok) in [
+            ("o/r", true),
+            ("r", false),
+            ("o/r/x", false),
+            ("/r", false),
+            ("o/", false),
+        ] {
             assert_eq!(is_repo(v), ok, "{v}");
         }
     }

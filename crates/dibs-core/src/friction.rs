@@ -77,7 +77,12 @@ pub fn load(path: &Path) -> Vec<Note> {
     text.lines()
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .filter_map(|v| {
-            let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+            let s = |k: &str| {
+                v.get(k)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
             let text = s("text");
             (!text.is_empty()).then(|| Note {
                 when: v.get("t").and_then(Value::as_u64).unwrap_or_default(),
@@ -124,8 +129,16 @@ pub fn report(notes: &[Note]) -> String {
     let mut out = String::from("\nWhat got in the way:\n\n");
     for (n, first, last) in &ordered {
         out.push_str(&format!("  {n:>3}x  {}\n", last.text));
-        let by = if last.by.is_empty() { String::new() } else { format!(" by {}", last.by) };
-        let at = if last.version.is_empty() { String::new() } else { format!(", dibs {}", last.version) };
+        let by = if last.by.is_empty() {
+            String::new()
+        } else {
+            format!(" by {}", last.by)
+        };
+        let at = if last.version.is_empty() {
+            String::new()
+        } else {
+            format!(", dibs {}", last.version)
+        };
         let (was, now) = (runs::date(first.when as i64), runs::date(last.when as i64));
         if *n > 1 && was != now {
             out.push_str(&format!("       first {was}, last {now}{by}{at}\n"));
@@ -136,7 +149,9 @@ pub fn report(notes: &[Note]) -> String {
     let repeated = ordered.iter().filter(|(n, _, _)| *n > 1).count();
     match repeated {
         0 => {}
-        1 => out.push_str("\nOne of these has been hit more than once, which is where a fix pays.\n"),
+        1 => {
+            out.push_str("\nOne of these has been hit more than once, which is where a fix pays.\n")
+        }
         n => out.push_str(&format!(
             "\n{n} of these have been hit more than once, which is where a fix pays.\n"
         )),
@@ -150,7 +165,13 @@ mod tests {
 
     #[test]
     fn a_report_is_one_line_however_it_was_typed() {
-        let n = note("  the trailer says built=nothing\n  but it did build  ", "a", "abc", 10).unwrap();
+        let n = note(
+            "  the trailer says built=nothing\n  but it did build  ",
+            "a",
+            "abc",
+            10,
+        )
+        .unwrap();
         assert_eq!(n.text, "the trailer says built=nothing but it did build");
         assert!(note("   ", "a", "abc", 10).is_err());
     }
@@ -163,11 +184,23 @@ mod tests {
             note("--stream does nothing in a batch.", "three", "bbb", 300).unwrap(),
         ];
         let out = report(&notes);
-        assert!(out.contains("    2x  --stream does nothing in a batch."), "{out}");
-        assert!(out.contains("by three, dibs bbb"), "the session to ask is the last one: {out}");
-        assert!(out.contains("first 1970-01-01 00:01, last 1970-01-01 00:05"), "{out}");
+        assert!(
+            out.contains("    2x  --stream does nothing in a batch."),
+            "{out}"
+        );
+        assert!(
+            out.contains("by three, dibs bbb"),
+            "the session to ask is the last one: {out}"
+        );
+        assert!(
+            out.contains("first 1970-01-01 00:01, last 1970-01-01 00:05"),
+            "{out}"
+        );
         assert!(out.contains("    1x  Nothing else"), "{out}");
-        assert!(out.find("2x").unwrap() < out.find("1x").unwrap(), "recurring first: {out}");
+        assert!(
+            out.find("2x").unwrap() < out.find("1x").unwrap(),
+            "recurring first: {out}"
+        );
     }
 
     #[test]

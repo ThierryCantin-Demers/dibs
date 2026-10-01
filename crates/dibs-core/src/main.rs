@@ -133,14 +133,20 @@ struct Failure {
 
 impl Failure {
     fn passing(status: i32, message: String) -> Failure {
-        let code = u8::try_from(status).ok().filter(|c| *c != 0).unwrap_or(EXIT_REFUSED);
+        let code = u8::try_from(status)
+            .ok()
+            .filter(|c| *c != 0)
+            .unwrap_or(EXIT_REFUSED);
         Failure { message, code }
     }
 }
 
 impl From<String> for Failure {
     fn from(message: String) -> Failure {
-        Failure { message, code: EXIT_REFUSED }
+        Failure {
+            message,
+            code: EXIT_REFUSED,
+        }
     }
 }
 
@@ -252,10 +258,13 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
             "--root" => root = PathBuf::from(it.next().ok_or("--root needs a path")?),
             "--sweep" => {
                 let s = it.next().ok_or("--sweep needs <name>=<value,value,...>")?;
-                let (name, values) = s.split_once('=').ok_or_else(|| {
-                    format!("--sweep takes <name>=<value,value,...>, not {s}")
-                })?;
-                sweep.push((name.to_string(), values.split(',').map(str::to_string).collect()));
+                let (name, values) = s
+                    .split_once('=')
+                    .ok_or_else(|| format!("--sweep takes <name>=<value,value,...>, not {s}"))?;
+                sweep.push((
+                    name.to_string(),
+                    values.split(',').map(str::to_string).collect(),
+                ));
             }
             "--reps" => {
                 reps = it
@@ -268,7 +277,11 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
             "--pin" => pins.push(it.next().ok_or("--pin needs <repo>@<ref>")?),
             "--bench" | "-b" => bench = true,
             "--max" => {
-                max = Some(it.next().and_then(|n| n.parse().ok()).ok_or("--max needs seconds")?);
+                max = Some(
+                    it.next()
+                        .and_then(|n| n.parse().ok())
+                        .ok_or("--max needs seconds")?,
+                );
             }
             "--anyway" => anyway = true,
             "--there" => there = true,
@@ -303,7 +316,12 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     }
     let verb = positional.remove(0);
     let target = positional.first().cloned().unwrap_or_default();
-    if target.is_empty() && !matches!(verb.as_str(), "runs" | "gaps" | "raw" | "friction" | "machines") {
+    if target.is_empty()
+        && !matches!(
+            verb.as_str(),
+            "runs" | "gaps" | "raw" | "friction" | "machines"
+        )
+    {
         return Err("needs a repo".into());
     }
     if verb == "with" && command.is_none() {
@@ -312,7 +330,9 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
     // runs takes a recorded label, not repo@ref, and a label carries its device after an @.
     // Splitting there drops the half that tells two runs of one recipe on different cards apart.
     let (repo, reference) = match target.split_once('@') {
-        Some((r, rev)) if !matches!(verb.as_str(), "runs" | "batch" | "friction") => (r.to_string(), Some(rev.to_string())),
+        Some((r, rev)) if !matches!(verb.as_str(), "runs" | "batch" | "friction") => {
+            (r.to_string(), Some(rev.to_string()))
+        }
         _ => (target, None),
     };
     Ok(Args {
@@ -343,27 +363,41 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
 }
 
 fn inventory_path() -> Option<PathBuf> {
-    std::env::var_os("DIBS_MACHINES").map(PathBuf::from).or_else(|| {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .map(|c| c.join("dibs/machines.toml"))
-    })
+    std::env::var_os("DIBS_MACHINES")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+                .map(|c| c.join("dibs/machines.toml"))
+        })
 }
 
 /// The machines the inventory names, which are reached only through dibs.
 fn pool() -> std::collections::BTreeSet<String> {
-    let text = inventory_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    let text = inventory_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
     let inv: toml::Value = toml::from_str(&text).unwrap_or(toml::Value::Table(Default::default()));
-    inv.get("machine").and_then(toml::Value::as_table).map(|t| t.keys().cloned().collect()).unwrap_or_default()
+    inv.get("machine")
+        .and_then(toml::Value::as_table)
+        .map(|t| t.keys().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// Every repo with a recipes file.
 fn recipe_repos() -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(recipe::local_dir()) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(recipe::local_dir()) else {
+        return Vec::new();
+    };
     let mut repos: Vec<String> = entries
         .flatten()
-        .filter_map(|e| e.file_name().to_str()?.strip_suffix(".toml").map(str::to_string))
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()?
+                .strip_suffix(".toml")
+                .map(str::to_string)
+        })
         .collect();
     repos.sort();
     repos
@@ -379,7 +413,10 @@ fn repo_root() -> PathBuf {
     // config, so the inventory file may carry it: `root = "/home/me/prog"` at the top level.
     let home = std::env::var_os("HOME").map(PathBuf::from);
     if let Some(text) = inventory_path().and_then(|p| std::fs::read_to_string(p).ok()) {
-        for line in text.lines().take_while(|l| !l.trim_start().starts_with('[')) {
+        for line in text
+            .lines()
+            .take_while(|l| !l.trim_start().starts_with('['))
+        {
             if let Some(v) = line.trim().strip_prefix("root") {
                 let v = v.trim_start();
                 if let Some(v) = v.strip_prefix('=') {
@@ -403,7 +440,10 @@ fn run() -> Result<ExitCode, Failure> {
     }
     let args = parse()?;
     if args.there && args.verb != "with" {
-        return Err("--there belongs to with: it runs the command on the machine beside the repo's servers".into());
+        return Err(
+            "--there belongs to with: it runs the command on the machine beside the repo's servers"
+                .into(),
+        );
     }
     // Every call this makes is a wrapper call, and the wrapper reads the machine from here.
     if let Some(m) = &args.on {
@@ -413,16 +453,29 @@ fn run() -> Result<ExitCode, Failure> {
 
     if args.verb == "batch" {
         let text = match args.repo.as_str() {
-            "-" => std::io::read_to_string(std::io::stdin()).map_err(|e| format!("reading the batch from stdin: {e}"))?,
+            "-" => std::io::read_to_string(std::io::stdin())
+                .map_err(|e| format!("reading the batch from stdin: {e}"))?,
             path => std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?,
         };
-        let code = batch::run(&text, &batch::Options { dry_run: args.dry_run, verbose: args.verbose })?;
+        let code = batch::run(
+            &text,
+            &batch::Options {
+                dry_run: args.dry_run,
+                verbose: args.verbose,
+            },
+        )?;
         return Ok(ExitCode::from(code.clamp(0, 255) as u8));
     }
 
     if args.verb == "machines" {
         let only = (!args.repo.is_empty()).then_some(args.repo.as_str());
-        return Ok(fleet::command(args.json, only, &args.root, recipe_repos(), &pool())?);
+        return Ok(fleet::command(
+            args.json,
+            only,
+            &args.root,
+            recipe_repos(),
+            &pool(),
+        )?);
     }
 
     if args.verb == "gaps" {
@@ -486,7 +539,11 @@ fn run() -> Result<ExitCode, Failure> {
 
     // Reads only what this machine recorded, so it needs no repo and no connection.
     if args.verb == "runs" {
-        let label = if args.repo.is_empty() { None } else { Some(args.repo.as_str()) };
+        let label = if args.repo.is_empty() {
+            None
+        } else {
+            Some(args.repo.as_str())
+        };
         let records = runs::load(&runs_path()?)?;
         print!("{}", runs::report(&records, label, 30, args.all));
         return Ok(ExitCode::SUCCESS);
@@ -510,7 +567,12 @@ fn run() -> Result<ExitCode, Failure> {
                     }
                     // What it accepts, so the valid invocations can be read off rather than
                     // reconstructed from the recipe file.
-                    for (p, spec) in manifest.recipe(v, n).map(|r| &r.params).into_iter().flatten() {
+                    for (p, spec) in manifest
+                        .recipe(v, n)
+                        .map(|r| &r.params)
+                        .into_iter()
+                        .flatten()
+                    {
                         let choices = match spec.choices.is_empty() {
                             true => String::new(),
                             false => format!("  one of {}", spec.choices.join(", ")),
@@ -537,7 +599,10 @@ fn run() -> Result<ExitCode, Failure> {
             }
         }
         if !manifest.tree_fresh().is_empty() {
-            println!("\na new tree starts without: {}", manifest.tree_fresh().join(", "));
+            println!(
+                "\na new tree starts without: {}",
+                manifest.tree_fresh().join(", ")
+            );
         }
         println!("\nlocal recipes: {}", recipe::local_dir().display());
         return Ok(ExitCode::SUCCESS);
@@ -580,23 +645,43 @@ impl Side {
 
 /// One tree, `A..B`, or `a,b,c`.
 fn sides(reference: Option<&str>) -> Result<Vec<Side>, String> {
-    let one = |r: &str| if r == "local" { Side::Local } else { Side::Ref(r.to_string()) };
-    let Some(r) = reference else { return Ok(vec![Side::Ref("HEAD".into())]) };
+    let one = |r: &str| {
+        if r == "local" {
+            Side::Local
+        } else {
+            Side::Ref(r.to_string())
+        }
+    };
+    let Some(r) = reference else {
+        return Ok(vec![Side::Ref("HEAD".into())]);
+    };
     if r.contains("...") {
-        return Err(format!("{r}: A...B is not a comparison dibs makes. A..B measures B against where it left A"));
+        return Err(format!(
+            "{r}: A...B is not a comparison dibs makes. A..B measures B against where it left A"
+        ));
     }
     if let Some((a, b)) = r.split_once("..") {
         if a.is_empty() || b.is_empty() || b.contains("..") || r.contains(',') {
-            return Err(format!("{r}: a range names both ends, as main..local. Several arms in turn are a,b,c"));
+            return Err(format!(
+                "{r}: a range names both ends, as main..local. Several arms in turn are a,b,c"
+            ));
         }
-        let tip = if b == "local" { Side::Local } else { Side::Pinned(b.to_string()) };
+        let tip = if b == "local" {
+            Side::Local
+        } else {
+            Side::Pinned(b.to_string())
+        };
         return Ok(vec![Side::Base(a.into(), b.into()), tip]);
     }
     let list: Vec<Side> = r.split(',').map(one).collect();
     if list.iter().any(|s| s.name().is_empty()) {
         return Err(format!("{r}: an empty arm"));
     }
-    if let Some(twice) = list.iter().enumerate().find(|(i, s)| list[..*i].contains(s)) {
+    if let Some(twice) = list
+        .iter()
+        .enumerate()
+        .find(|(i, s)| list[..*i].contains(s))
+    {
         return Err(format!("{r}: {} is named twice", twice.1.name()));
     }
     Ok(list)
@@ -627,7 +712,10 @@ impl Arm {
     }
 
     fn commit(&self) -> Option<&str> {
-        self.checkout.as_ref().map(|c| c.sha.as_str()).or(self.fetch.as_deref())
+        self.checkout
+            .as_ref()
+            .map(|c| c.sha.as_str())
+            .or(self.fetch.as_deref())
     }
 }
 
@@ -646,19 +734,40 @@ fn short(sha: &str) -> &str {
 
 /// Each side looked up here. A commit the machine cannot fetch is checked out and sent instead.
 fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
-    let here = |r: &str| if r == "local" { "HEAD".to_string() } else { r.to_string() };
+    let here = |r: &str| {
+        if r == "local" {
+            "HEAD".to_string()
+        } else {
+            r.to_string()
+        }
+    };
     let mut arms = Vec::with_capacity(sides.len());
     for s in sides {
         let name = s.name();
         let (sha, fetch, note, ahead) = match s {
             Side::Local => {
-                arms.push(Arm { name, fetch: None, note: None, checkout: None });
+                arms.push(Arm {
+                    name,
+                    fetch: None,
+                    note: None,
+                    checkout: None,
+                });
                 continue;
             }
             Side::Ref(r) => match worktree::as_fetched(dir, r) {
-                Some((sha, seen, ahead)) => (sha, r.clone(), Some(format!("as {seen} stands here")), ahead),
+                Some((sha, seen, ahead)) => (
+                    sha,
+                    r.clone(),
+                    Some(format!("as {seen} stands here")),
+                    ahead,
+                ),
                 None => {
-                    arms.push(Arm { name, fetch: Some(r.clone()), note: None, checkout: None });
+                    arms.push(Arm {
+                        name,
+                        fetch: Some(r.clone()),
+                        note: None,
+                        checkout: None,
+                    });
                     continue;
                 }
             },
@@ -680,14 +789,27 @@ fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
             false => ahead.or_else(|| worktree::unfetchable(dir, &sha)),
         };
         arms.push(match s.sent() || why.is_some() {
-            true => Arm { name, fetch: None, note, checkout: Some(worktree::checkout(dir, repo, &sha, why)?) },
+            true => Arm {
+                name,
+                fetch: None,
+                note,
+                checkout: Some(worktree::checkout(dir, repo, &sha, why)?),
+            },
             // A ref is fetched by name, so how it stands here says nothing of what the machine takes.
-            false => Arm { name, fetch: Some(fetch), note: note.filter(|_| !matches!(s, Side::Ref(_))), checkout: None },
+            false => Arm {
+                name,
+                fetch: Some(fetch),
+                note: note.filter(|_| !matches!(s, Side::Ref(_))),
+                checkout: None,
+            },
         });
     }
     if let ([Side::Base(..), _], [base, tip]) = (sides, &arms[..]) {
         if base.commit().is_some() && base.commit() == tip.commit() {
-            return Err(format!("{} has nothing its base does not, so there is nothing to compare", tip.name));
+            return Err(format!(
+                "{} has nothing its base does not, so there is nothing to compare",
+                tip.name
+            ));
         }
     }
     Ok(arms)
@@ -702,14 +824,22 @@ enum Job {
     Setup(usize),
     /// A step of an arm, carrying the arm's setup at its head when `setup`. `rep` is None for
     /// the steps that run once, ahead of what is repeated.
-    Step { arm: usize, step: usize, rep: Option<u32>, setup: bool },
+    Step {
+        arm: usize,
+        step: usize,
+        rep: Option<u32>,
+        setup: bool,
+    },
 }
 
 /// Every arm is built before any is measured, then each rep measures them all, the order reversed
 /// every other rep: A B B A cancels a drift linear in time, such as a card warming up, which
 /// A B A B credits to B. Without an exclusive step the whole recipe repeats.
 fn schedule(local: &[bool], steps: &[recipe::Step], reps: u32) -> Vec<Job> {
-    let first = steps.iter().position(|s| s.lock == Lock::Exclusive).unwrap_or(0);
+    let first = steps
+        .iter()
+        .position(|s| s.lock == Lock::Exclusive)
+        .unwrap_or(0);
     let mut ready = vec![false; local.len()];
     let mut jobs = Vec::new();
     let mut visit = |arm: usize, step: usize, rep: Option<u32>| {
@@ -720,7 +850,12 @@ fn schedule(local: &[bool], steps: &[recipe::Step], reps: u32) -> Vec<Job> {
             (true, false) if !fold => jobs.push(Job::Setup(arm)),
             _ => {}
         }
-        jobs.push(Job::Step { arm, step, rep, setup: fold });
+        jobs.push(Job::Step {
+            arm,
+            step,
+            rep,
+            setup: fold,
+        });
     };
     for arm in 0..local.len() {
         for step in 0..first {
@@ -744,10 +879,17 @@ fn schedule(local: &[bool], steps: &[recipe::Step], reps: u32) -> Vec<Job> {
 /// `<repo>@<ref>`, both halves named.
 fn pin_spec(p: &str) -> Result<(&str, &str), String> {
     match p.split_once('@') {
-        Some((repo, reference)) if !repo.is_empty() && !reference.is_empty() && !reference.contains("..") && !reference.contains(',') => {
+        Some((repo, reference))
+            if !repo.is_empty()
+                && !reference.is_empty()
+                && !reference.contains("..")
+                && !reference.contains(',') =>
+        {
             Ok((repo, reference))
         }
-        _ => Err(format!("--pin {p}: a pin is one tree, <repo>@local or <repo>@<ref>")),
+        _ => Err(format!(
+            "--pin {p}: a pin is one tree, <repo>@local or <repo>@<ref>"
+        )),
     }
 }
 
@@ -775,26 +917,51 @@ fn pins_of(args: &Args, repo: &str, dir: &Path, arms: &[Arm]) -> Result<Vec<Pinn
         let pdir = resolve_repo(name, &args.root)?;
         let identity = worktree::identity(&pdir);
         if identity == repo {
-            return Err(format!("--pin {p}: that is the repo being built; name its tree with {repo}@<ref> instead"));
+            return Err(format!(
+                "--pin {p}: that is the repo being built; name its tree with {repo}@<ref> instead"
+            ));
         }
         if pins.iter().any(|q: &Pinned| q.repo == identity) {
             return Err(format!("--pin {p}: {identity} is pinned twice"));
         }
         let (local, checkout, note, crates, lock) = match reference {
-            "local" => (Some(worktree::local(&pdir)?), None, None, pin::local_crates(&pdir)?, lockfile(&pdir, None)),
+            "local" => (
+                Some(worktree::local(&pdir)?),
+                None,
+                None,
+                pin::local_crates(&pdir)?,
+                lockfile(&pdir, None),
+            ),
             _ => {
-                let (sha, seen, ahead) = worktree::as_fetched(&pdir, reference).ok_or_else(|| format!("--pin {p}: no {reference} in {}", pdir.display()))?;
+                let (sha, seen, ahead) = worktree::as_fetched(&pdir, reference)
+                    .ok_or_else(|| format!("--pin {p}: no {reference} in {}", pdir.display()))?;
                 let (crates, lock) = (pin::ref_crates(&pdir, &sha)?, lockfile(&pdir, Some(&sha)));
                 match ahead.or_else(|| worktree::unfetchable(&pdir, &sha)) {
                     Some(why) => {
                         let c = worktree::checkout(&pdir, &identity, &sha, Some(why))?;
-                        (Some(c.local()?), Some(c), Some(format!("as {seen} stands here")), crates, lock)
+                        (
+                            Some(c.local()?),
+                            Some(c),
+                            Some(format!("as {seen} stands here")),
+                            crates,
+                            lock,
+                        )
                     }
                     None => (None, None, None, crates, lock),
                 }
             }
         };
-        pins.push(Pinned { repo: identity, reference: reference.to_string(), dir: pdir, local, checkout, note, crates, lock, sources: BTreeMap::new() });
+        pins.push(Pinned {
+            repo: identity,
+            reference: reference.to_string(),
+            dir: pdir,
+            local,
+            checkout,
+            note,
+            crates,
+            lock,
+            sources: BTreeMap::new(),
+        });
     }
     let locks: Vec<String> = arms
         .iter()
@@ -821,12 +988,27 @@ fn pins_of(args: &Args, repo: &str, dir: &Path, arms: &[Arm]) -> Result<Vec<Pinn
 /// What is about to be prepared, for the person reading along.
 fn preparing(repo: &str, arm: &Arm, local: Option<&worktree::Local>, dir: &Path) -> String {
     match (&arm.checkout, local) {
-        (Some(c), _) => format!("{repo} at {}{}", short(&c.sha), sent_from(c, arm.note.as_deref(), "this computer")),
-        (None, Some(l)) => format!("{repo} from {} ({})", dir.display(), if l.dirty { "uncommitted changes included" } else { "clean" }),
+        (Some(c), _) => format!(
+            "{repo} at {}{}",
+            short(&c.sha),
+            sent_from(c, arm.note.as_deref(), "this computer")
+        ),
+        (None, Some(l)) => format!(
+            "{repo} from {} ({})",
+            dir.display(),
+            if l.dirty {
+                "uncommitted changes included"
+            } else {
+                "clean"
+            }
+        ),
         (None, None) => format!(
             "{repo}@{}{}",
             arm.fetch.as_deref().unwrap_or_default(),
-            arm.note.as_ref().map(|n| format!(", {n}")).unwrap_or_default()
+            arm.note
+                .as_ref()
+                .map(|n| format!(", {n}"))
+                .unwrap_or_default()
         ),
     }
 }
@@ -846,40 +1028,71 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
         return sweep_run(&args, &points);
     }
     // One point is the ordinary call with its values filled in, not a batch of one.
-    let args = Args { params: points.into_iter().next().unwrap_or_default(), ..args };
+    let args = Args {
+        params: points.into_iter().next().unwrap_or_default(),
+        ..args
+    };
 
     let sides = sides(args.reference.as_deref())?;
     let resolved = resolve(&args)?;
     let mut arms = arms(&sides, &resolved.dir, &resolved.repo_name)?;
     let mut pins = pins_of(&args, &resolved.repo_name, &resolved.dir, &arms)?;
     let local: Vec<bool> = arms.iter().map(|a| a.fetch.is_none()).collect();
-    let pin_specs = args.pins.iter().zip(&pins).map(|(spec, p)| pin_spec(spec).map(|(r, _)| (r.to_string(), p.local.is_some()))).collect::<Result<Vec<_>, _>>()?;
+    let pin_specs = args
+        .pins
+        .iter()
+        .zip(&pins)
+        .map(|(spec, p)| pin_spec(spec).map(|(r, _)| (r.to_string(), p.local.is_some())))
+        .collect::<Result<Vec<_>, _>>()?;
     let calls = jobs_of(&resolved, &sides, &local, args.reps, &pin_specs);
-    let Resolved { dir, repo_name, verb, name, rec, label, step_labels, shell_reason, params, tree_fresh } = resolved;
+    let Resolved {
+        dir,
+        repo_name,
+        verb,
+        name,
+        rec,
+        label,
+        step_labels,
+        shell_reason,
+        params,
+        tree_fresh,
+    } = resolved;
     let (name, rec) = (name.as_str(), &rec);
     let fingerprint = rec.fingerprint();
-    let patched: Option<std::collections::BTreeSet<String>> =
-        (!pins.is_empty()).then(|| pins.iter().flat_map(|p| p.sources.values().flatten().cloned()).collect());
+    let patched: Option<std::collections::BTreeSet<String>> = (!pins.is_empty()).then(|| {
+        pins.iter()
+            .flat_map(|p| p.sources.values().flatten().cloned())
+            .collect()
+    });
     let jobs = schedule(&local, &rec.steps, args.reps);
     let compared = arms.len() > 1;
     let order = |jobs: &[Job]| -> String {
         let mut reps: BTreeMap<u32, Vec<&str>> = BTreeMap::new();
         for j in jobs {
-            if let Job::Step { arm, rep: Some(r), .. } = j {
+            if let Job::Step {
+                arm, rep: Some(r), ..
+            } = j
+            {
                 let names = reps.entry(*r).or_default();
                 if names.last() != Some(&arms[*arm].name.as_str()) {
                     names.push(&arms[*arm].name);
                 }
             }
         }
-        reps.values().map(|n| n.join(" ")).collect::<Vec<_>>().join(" | ")
+        reps.values()
+            .map(|n| n.join(" "))
+            .collect::<Vec<_>>()
+            .join(" | ")
     };
 
     if args.dry_run {
         // Asked what the real run asks before it builds, so a card or a series it would refuse
         // is refused here, where someone reads the device line before measuring.
         if rec.steps.iter().any(|s| s.lock == Lock::Exclusive) || args.device.is_some() {
-            let backend = Dibs { machine: destination(rec, &repo_name, name)?, ..Dibs::default() };
+            let backend = Dibs {
+                machine: destination(rec, &repo_name, name)?,
+                ..Dibs::default()
+            };
             if refused_before_building(&backend, rec, &step_labels, &args)? {
                 return Ok(ExitCode::from(EXIT_REFUSED));
             }
@@ -891,27 +1104,60 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
             println!("needs       {n}");
         }
         for arm in &arms {
-            let head = if compared { format!("arm         {}  ", arm.name) } else { "ref         ".to_string() };
+            let head = if compared {
+                format!("arm         {}  ", arm.name)
+            } else {
+                "ref         ".to_string()
+            };
             match (&arm.fetch, &arm.checkout) {
-                (None, Some(c)) => println!("{head}{}{}", c.sha, sent_from(c, arm.note.as_deref(), &c.dir.display().to_string())),
+                (None, Some(c)) => println!(
+                    "{head}{}{}",
+                    c.sha,
+                    sent_from(c, arm.note.as_deref(), &c.dir.display().to_string())
+                ),
                 (None, None) => {
                     let l = worktree::local(&dir)?;
                     println!("{head}local {} from {}", l.content, dir.display());
-                    println!("            {}", if l.dirty {
-                        "uncommitted changes are included and are in that hash"
-                    } else { "clean, so this is the commit as it stands" });
+                    println!(
+                        "            {}",
+                        if l.dirty {
+                            "uncommitted changes are included and are in that hash"
+                        } else {
+                            "clean, so this is the commit as it stands"
+                        }
+                    );
                 }
-                (Some(r), _) => println!("{head}{r}{}", arm.note.as_ref().map(|n| format!(", {n}")).unwrap_or_default()),
+                (Some(r), _) => println!(
+                    "{head}{r}{}",
+                    arm.note
+                        .as_ref()
+                        .map(|n| format!(", {n}"))
+                        .unwrap_or_default()
+                ),
             }
         }
         for p in &pins {
             match (&p.checkout, &p.local) {
-                (Some(c), _) => println!("pin         {}  {} {}{}", p.repo, p.reference, c.sha, sent_from(c, p.note.as_deref(), &c.dir.display().to_string())),
-                (None, Some(l)) => println!("pin         {}  local {} from {}", p.repo, l.content, p.dir.display()),
+                (Some(c), _) => println!(
+                    "pin         {}  {} {}{}",
+                    p.repo,
+                    p.reference,
+                    c.sha,
+                    sent_from(c, p.note.as_deref(), &c.dir.display().to_string())
+                ),
+                (None, Some(l)) => println!(
+                    "pin         {}  local {} from {}",
+                    p.repo,
+                    l.content,
+                    p.dir.display()
+                ),
                 (None, None) => println!("pin         {}  {}", p.repo, p.reference),
             }
             for (source, names) in &p.sources {
-                println!("            patches {source}: {}", names.iter().cloned().collect::<Vec<_>>().join(" "));
+                println!(
+                    "            patches {source}: {}",
+                    names.iter().cloned().collect::<Vec<_>>().join(" ")
+                );
             }
         }
         if compared || args.reps > 1 {
@@ -932,10 +1178,14 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
         }
         if !rec.artifacts.is_empty() {
             println!("artifacts   {}", rec.artifacts.join(" "));
-            println!("            {}", match &args.artifacts_to {
-                Some(d) => format!("copied into {d}"),
-                None => "kept beside each job's log; --artifacts <dir> copies them out".to_string(),
-            });
+            println!(
+                "            {}",
+                match &args.artifacts_to {
+                    Some(d) => format!("copied into {d}"),
+                    None =>
+                        "kept beside each job's log; --artifacts <dir> copies them out".to_string(),
+                }
+            );
         }
         for (i, s) in rec.steps.iter().enumerate() {
             println!("step {}      [{:?}] {}", i + 1, s.lock, s.run);
@@ -952,7 +1202,10 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
     // build ranked onto one machine leaves the benchmark on another to compile inside its own
     // exclusive lock, which is what splitting build from measure prevents. A pinned call claims
     // nothing: the machines report the caches it leaves.
-    let backend = Dibs { machine: destination(rec, &repo_name, name)?, ..Dibs::default() };
+    let backend = Dibs {
+        machine: destination(rec, &repo_name, name)?,
+        ..Dibs::default()
+    };
     if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
         affinity_set(&repo_name, m);
     }
@@ -995,18 +1248,55 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
         };
         let fresh = Manifest::load_any(&p.dir, &p.repo)?;
         let lock = p.checkout.as_mut().and_then(|c| c.lock.take());
-        let from = p.checkout.as_ref().map_or(p.dir.as_path(), |c| c.dir.as_path());
-        let (script, gitdbs) = tree_script(from, &p.repo, &p.reference, p.local.as_ref(), "", &new_token(), 0, None, fresh.tree_fresh());
+        let from = p
+            .checkout
+            .as_ref()
+            .map_or(p.dir.as_path(), |c| c.dir.as_path());
+        let (script, gitdbs) = tree_script(
+            from,
+            &p.repo,
+            &p.reference,
+            p.local.as_ref(),
+            "",
+            &new_token(),
+            0,
+            None,
+            fresh.tree_fresh(),
+        );
         let text = match &p.local {
             Some(l) => {
                 match &p.checkout {
-                    Some(c) => eprintln!("dibs: pinning {}@{} at {}{}", p.repo, p.reference, short(&c.sha), sent_from(c, p.note.as_deref(), "this computer")),
-                    None => eprintln!("dibs: pinning {} from {} ({})", p.repo, p.dir.display(), if l.dirty { "uncommitted changes included" } else { "clean" }),
+                    Some(c) => eprintln!(
+                        "dibs: pinning {}@{} at {}{}",
+                        p.repo,
+                        p.reference,
+                        short(&c.sha),
+                        sent_from(c, p.note.as_deref(), "this computer")
+                    ),
+                    None => eprintln!(
+                        "dibs: pinning {} from {} ({})",
+                        p.repo,
+                        p.dir.display(),
+                        if l.dirty {
+                            "uncommitted changes included"
+                        } else {
+                            "clean"
+                        }
+                    ),
                 }
-                let (out, text) = sync_prepared(&backend, from, &script, &l.key, &setup, &mut announce)?;
+                let (out, text) =
+                    sync_prepared(&backend, from, &script, &l.key, &setup, &mut announce)?;
                 drop(lock);
                 if !text.contains("DIBS-READY") || out.status != 0 {
-                    return Err(Failure::passing(out.status, format!("could not send the pinned {} from {} (exit {})", p.repo, from.display(), out.status)));
+                    return Err(Failure::passing(
+                        out.status,
+                        format!(
+                            "could not send the pinned {} from {} (exit {})",
+                            p.repo,
+                            from.display(),
+                            out.status
+                        ),
+                    ));
                 }
                 text
             }
@@ -1014,7 +1304,13 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
                 eprintln!("dibs: pinning {}@{}", p.repo, p.reference);
                 let (out, text) = backend.run_capture(&setup, &script)?;
                 if out.status != 0 {
-                    return Err(Failure::passing(out.status, format!("could not prepare the pinned {}@{} (exit {})", p.repo, p.reference, out.status)));
+                    return Err(Failure::passing(
+                        out.status,
+                        format!(
+                            "could not prepare the pinned {}@{} (exit {})",
+                            p.repo, p.reference, out.status
+                        ),
+                    ));
                 }
                 text
             }
@@ -1024,15 +1320,27 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
     }
     let nest = (!pins.is_empty()).then(|| {
         worktree::Nest::new(pin::config(
-            &pins.iter().zip(&pinned).map(|(p, t)| (t.worktree.clone(), p.crates.clone(), p.sources.clone())).collect::<Vec<_>>(),
+            &pins
+                .iter()
+                .zip(&pinned)
+                .map(|(p, t)| (t.worktree.clone(), p.crates.clone(), p.sources.clone()))
+                .collect::<Vec<_>>(),
         ))
     });
 
-    let signature = rec.steps.iter().find_map(|st| worktree::build_signature(&st.run)).unwrap_or_default();
+    let signature = rec
+        .steps
+        .iter()
+        .find_map(|st| worktree::build_signature(&st.run))
+        .unwrap_or_default();
     let mut slot = 0;
     let mut trees = Vec::with_capacity(arms.len());
     if compared {
-        eprintln!("dibs: comparing {} arms of {repo_name}, measured {}", arms.len(), order(&jobs));
+        eprintln!(
+            "dibs: comparing {} arms of {repo_name}, measured {}",
+            arms.len(),
+            order(&jobs)
+        );
     }
     for arm in &arms {
         let token = new_token();
@@ -1040,15 +1348,38 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
             None => Some(arm.local(&dir)?),
             Some(_) => None,
         };
-        let lead = if compared { format!("  {}: ", arm.name) } else { "dibs: preparing ".to_string() };
+        let lead = if compared {
+            format!("  {}: ", arm.name)
+        } else {
+            "dibs: preparing ".to_string()
+        };
         eprintln!("{lead}{}", preparing(&repo_name, arm, local.as_ref(), &dir));
         let reference = arm.fetch.as_deref().unwrap_or("local");
-        let (script, gitdbs) = tree_script(arm.dir(&dir), &repo_name, reference, local.as_ref(), &signature, &token, slot, nest.as_ref(), &tree_fresh);
+        let (script, gitdbs) = tree_script(
+            arm.dir(&dir),
+            &repo_name,
+            reference,
+            local.as_ref(),
+            &signature,
+            &token,
+            slot,
+            nest.as_ref(),
+            &tree_fresh,
+        );
         slot += usize::from(arm.fetch.is_some());
-        trees.push(Tree { token, script, gitdbs, local, prepared: None });
+        trees.push(Tree {
+            token,
+            script,
+            gitdbs,
+            local,
+            prepared: None,
+        });
     }
 
-    let mut checkout_locks: Vec<Option<std::fs::File>> = arms.iter_mut().map(|a| a.checkout.as_mut().and_then(|c| c.lock.take())).collect();
+    let mut checkout_locks: Vec<Option<std::fs::File>> = arms
+        .iter_mut()
+        .map(|a| a.checkout.as_mut().and_then(|c| c.lock.take()))
+        .collect();
     let what = |arm: usize| match &arms[arm].fetch {
         Some(r) => format!("{repo_name}@{r}"),
         None => format!("{repo_name} from {}", arms[arm].dir(&dir).display()),
@@ -1058,17 +1389,21 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
         if compared {
             t += &format!("{}: ", arms[arm].name);
         }
-        t
-            + &match rep.filter(|_| args.reps > 1) {
-                Some(r) => format!("rep {r}/{}, ", args.reps),
-                None => String::new(),
-            }
+        t + &match rep.filter(|_| args.reps > 1) {
+            Some(r) => format!("rep {r}/{}, ", args.reps),
+            None => String::new(),
+        }
     };
 
     let mut steps = Vec::new();
     let mut failed = None;
     let mut state = Vec::new();
-    for (k, job) in jobs.iter().copied().enumerate().map(|(i, j)| (i + pins.len(), j)) {
+    for (k, job) in jobs
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, j)| (i + pins.len(), j))
+    {
         if failed.is_some() {
             break;
         }
@@ -1089,13 +1424,30 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
             Job::Send(a) => {
                 let t = &mut trees[a];
                 let key = &t.local.as_ref().expect("a sent tree is local").key;
-                let (out, text) = sync_prepared(&backend, arms[a].dir(&dir), &t.script, key, &setup, &mut announce)?;
+                let (out, text) = sync_prepared(
+                    &backend,
+                    arms[a].dir(&dir),
+                    &t.script,
+                    key,
+                    &setup,
+                    &mut announce,
+                )?;
                 checkout_locks[a] = None;
                 if !text.contains("DIBS-READY") {
-                    return Err(Failure::passing(out.status, format!("could not prepare {} (exit {})", what(a), out.status)));
+                    return Err(Failure::passing(
+                        out.status,
+                        format!("could not prepare {} (exit {})", what(a), out.status),
+                    ));
                 }
                 if out.status != 0 {
-                    return Err(Failure::passing(out.status, format!("sending {} failed (exit {})", arms[a].dir(&dir).display(), out.status)));
+                    return Err(Failure::passing(
+                        out.status,
+                        format!(
+                            "sending {} failed (exit {})",
+                            arms[a].dir(&dir).display(),
+                            out.status
+                        ),
+                    ));
                 }
                 t.prepared = Some(worktree::parse(&text)?);
                 send_missing_gitdbs(&backend, &text, &t.gitdbs);
@@ -1105,14 +1457,22 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
                 let t = &mut trees[a];
                 let (out, text) = backend.run_capture(&setup, &t.script)?;
                 if out.status != 0 {
-                    return Err(Failure::passing(out.status, format!("could not prepare {} (exit {})", what(a), out.status)));
+                    return Err(Failure::passing(
+                        out.status,
+                        format!("could not prepare {} (exit {})", what(a), out.status),
+                    ));
                 }
                 announce(&text);
                 t.prepared = Some(worktree::parse(&text)?);
                 send_missing_gitdbs(&backend, &text, &t.gitdbs);
                 continue;
             }
-            Job::Step { arm, step, rep, setup } => (arm, step, rep, setup),
+            Job::Step {
+                arm,
+                step,
+                rep,
+                setup,
+            } => (arm, step, rep, setup),
         };
         let lock = rec.steps[step].lock;
         let req = Request {
@@ -1140,15 +1500,26 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
         };
         let record = |out: &resource::Outcome, report: &str| provenance::StepRecord {
             artifacts: artifacts::kept(report),
-            ..provenance::StepRecord::of(step_lock(lock), out)
-                .tagged(compared.then(|| arms[arm].name.clone()), rep.filter(|_| args.reps > 1))
+            ..provenance::StepRecord::of(step_lock(lock), out).tagged(
+                compared.then(|| arms[arm].name.clone()),
+                rep.filter(|_| args.reps > 1),
+            )
         };
         if fold {
-            eprintln!("dibs: {}step {}/{} [{lock:?}], with the setup ahead of it", tag(arm, rep), step + 1, rec.steps.len());
-            let command = worktree::ahead(&t.script, worktree::Then::Step, &rec.steps[step].run) + &format!("{{ {run}; }}");
+            eprintln!(
+                "dibs: {}step {}/{} [{lock:?}], with the setup ahead of it",
+                tag(arm, rep),
+                step + 1,
+                rec.steps.len()
+            );
+            let command = worktree::ahead(&t.script, worktree::Then::Step, &rec.steps[step].run)
+                + &format!("{{ {run}; }}");
             let (out, text) = backend.run_reporting(&req, &command, &mut announce)?;
             if !text.contains("DIBS-READY") && !text.contains("DIBS-HELD") {
-                return Err(Failure::passing(out.status, format!("could not prepare {} (exit {})", what(arm), out.status)));
+                return Err(Failure::passing(
+                    out.status,
+                    format!("could not prepare {} (exit {})", what(arm), out.status),
+                ));
             }
             t.prepared = Some(worktree::parse(&text)?);
             send_missing_gitdbs(&backend, &text, &t.gitdbs);
@@ -1160,9 +1531,21 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
                 continue;
             }
         }
-        let p = t.prepared.as_ref().expect("an arm is prepared before its steps run");
-        let cd = format!("cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}", sh(&p.worktree), sh(&p.target));
-        eprintln!("dibs: {}step {}/{} [{lock:?}]", tag(arm, rep), step + 1, rec.steps.len());
+        let p = t
+            .prepared
+            .as_ref()
+            .expect("an arm is prepared before its steps run");
+        let cd = format!(
+            "cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}",
+            sh(&p.worktree),
+            sh(&p.target)
+        );
+        eprintln!(
+            "dibs: {}step {}/{} [{lock:?}]",
+            tag(arm, rep),
+            step + 1,
+            rec.steps.len()
+        );
         // The step says which lock it wants, where it can be reviewed, instead of a compile
         // being invisible inside a script that holds the machine exclusively.
         let (out, report) = backend.run_reporting(&req, &cd, &mut |_| {})?;
@@ -1181,10 +1564,16 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
     }
     fetch_artifacts(&backend, &steps, args.artifacts_to.as_deref(), compared);
 
-    let pinned_revisions: Vec<(String, String)> = pinned.iter().flat_map(|p| p.revisions.clone()).collect();
+    let pinned_revisions: Vec<(String, String)> =
+        pinned.iter().flat_map(|p| p.revisions.clone()).collect();
     let prepared = |a: usize| trees[a].prepared.as_ref();
     let revisions_of = |a: usize| -> Vec<(String, String)> {
-        prepared(a).map(|p| p.revisions.clone()).unwrap_or_default().into_iter().chain(pinned_revisions.iter().cloned()).collect()
+        prepared(a)
+            .map(|p| p.revisions.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(pinned_revisions.iter().cloned())
+            .collect()
     };
     if compared || args.reps > 1 {
         eprint!("{}", measured_summary(&arms, &steps, &revisions_of));
@@ -1195,7 +1584,11 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
         variant: worktree::variant(&dir, &repo_name),
         // shell borrows Build's machinery but is not a build, and a record that says
         // otherwise is a record that misleads whoever reads it later.
-        verb: if shell_reason.is_some() { "shell" } else { verb.as_str() },
+        verb: if shell_reason.is_some() {
+            "shell"
+        } else {
+            verb.as_str()
+        },
         recipe: name.to_string(),
         fingerprint,
         isolation: format!("{:?}", rec.isolation).to_lowercase(),
@@ -1207,9 +1600,15 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
             // With what it exported, since a recipe in local config cannot be recovered by
             // checking out a ref and an environment variable changes what was measured.
             .map(|st| {
-                let exports: String =
-                    st.env.iter().map(|(k, v)| format!("export {k}={}; ", sh(v))).collect();
-                (format!("{:?}", st.lock).to_lowercase(), format!("{exports}{}", st.run))
+                let exports: String = st
+                    .env
+                    .iter()
+                    .map(|(k, v)| format!("export {k}={}; ", sh(v)))
+                    .collect();
+                (
+                    format!("{:?}", st.lock).to_lowercase(),
+                    format!("{exports}{}", st.run),
+                )
             })
             .collect(),
         params,
@@ -1222,7 +1621,9 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
             false => revisions_of(0),
             true => Vec::new(),
         },
-        seeded: prepared(0).filter(|_| !compared).and_then(|p| p.seeded.clone()),
+        seeded: prepared(0)
+            .filter(|_| !compared)
+            .and_then(|p| p.seeded.clone()),
         refs: compared.then(|| args.reference.clone()).flatten(),
         arms: match compared {
             false => Vec::new(),
@@ -1255,7 +1656,12 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
 
 /// Every job that kept files has them fetched, into `to` when given: under the job's arm and rep
 /// when a comparison or reps would otherwise write one path twice.
-fn fetch_artifacts(backend: &Dibs, steps: &[provenance::StepRecord], to: Option<&str>, compared: bool) {
+fn fetch_artifacts(
+    backend: &Dibs,
+    steps: &[provenance::StepRecord],
+    to: Option<&str>,
+    compared: bool,
+) {
     for s in steps.iter().filter(|s| s.artifacts.is_some_and(|n| n > 0)) {
         let Some(job) = &s.job else { continue };
         let mut cmd = std::process::Command::new(&backend.program);
@@ -1274,10 +1680,17 @@ fn fetch_artifacts(backend: &Dibs, steps: &[provenance::StepRecord], to: Option<
             cmd.arg(dest);
         }
         // Its report goes where every other dibs: line does, apart from the jobs' own output.
-        let out = cmd.env("DIBS_FROM_RUN", "1").stdin(std::process::Stdio::null()).stderr(std::process::Stdio::inherit()).output();
+        let out = cmd
+            .env("DIBS_FROM_RUN", "1")
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .output();
         match out {
             Ok(o) if o.status.success() => eprint!("{}", String::from_utf8_lossy(&o.stdout)),
-            Ok(o) => eprintln!("dibs: could not fetch what job {job} kept (exit {}); dibs --fetch {job} tries again", o.status.code().unwrap_or(-1)),
+            Ok(o) => eprintln!(
+                "dibs: could not fetch what job {job} kept (exit {}); dibs --fetch {job} tries again",
+                o.status.code().unwrap_or(-1)
+            ),
             Err(e) => eprintln!("dibs: could not fetch what job {job} kept: {e}"),
         }
     }
@@ -1285,13 +1698,22 @@ fn fetch_artifacts(backend: &Dibs, steps: &[provenance::StepRecord], to: Option<
 
 /// Each arm's measured seconds per rep, and the jobs whose logs hold its numbers. The seconds
 /// are the steps' wall time, which is only a first look: the recipe's own output is the result.
-fn measured_summary(arms: &[Arm], steps: &[provenance::StepRecord], revisions: &dyn Fn(usize) -> Vec<(String, String)>) -> String {
+fn measured_summary(
+    arms: &[Arm],
+    steps: &[provenance::StepRecord],
+    revisions: &dyn Fn(usize) -> Vec<(String, String)>,
+) -> String {
     let width = arms.iter().map(|a| a.name.len()).max().unwrap_or(0);
-    let mut out = String::from("dibs: measured, each rep's exclusive seconds and the jobs with its output:\n");
+    let mut out = String::from(
+        "dibs: measured, each rep's exclusive seconds and the jobs with its output:\n",
+    );
     for (a, arm) in arms.iter().enumerate() {
         let mine: Vec<&provenance::StepRecord> = steps
             .iter()
-            .filter(|s| s.lock == "exclusive" && (arms.len() == 1 || s.arm.as_deref() == Some(arm.name.as_str())))
+            .filter(|s| {
+                s.lock == "exclusive"
+                    && (arms.len() == 1 || s.arm.as_deref() == Some(arm.name.as_str()))
+            })
             .collect();
         let mut per_rep: BTreeMap<u32, u64> = BTreeMap::new();
         for s in &mine {
@@ -1299,13 +1721,24 @@ fn measured_summary(arms: &[Arm], steps: &[provenance::StepRecord], revisions: &
         }
         let secs: Vec<String> = per_rep.values().map(|s| format!("{s}s")).collect();
         let jobs: Vec<&str> = mine.iter().filter_map(|s| s.job.as_deref()).collect();
-        let revs: Vec<String> = revisions(a).iter().map(|(r, sha)| format!("{r}@{sha}")).collect();
+        let revs: Vec<String> = revisions(a)
+            .iter()
+            .map(|(r, sha)| format!("{r}@{sha}"))
+            .collect();
         out += &format!(
             "  {:<width$}  {}  {}  jobs {}\n",
             arm.name,
             revs.join(" "),
-            if secs.is_empty() { "nothing measured".to_string() } else { secs.join(" ") },
-            if jobs.is_empty() { "-".to_string() } else { jobs.join(" ") }
+            if secs.is_empty() {
+                "nothing measured".to_string()
+            } else {
+                secs.join(" ")
+            },
+            if jobs.is_empty() {
+                "-".to_string()
+            } else {
+                jobs.join(" ")
+            }
         );
     }
     out
@@ -1335,10 +1768,18 @@ fn sweep_points(args: &Args) -> Vec<BTreeMap<String, String>> {
 /// A recipe with any exclusive step is a measurement, and a measurement goes where it is told:
 /// its history keys on the machine, and bindings that would make moving one safe do not exist
 /// yet. So only a wholly shared recipe, which is every build and test, is placed.
-fn destination(rec: &recipe::Recipe, repo_name: &str, name: &str) -> Result<Option<String>, Failure> {
+fn destination(
+    rec: &recipe::Recipe,
+    repo_name: &str,
+    name: &str,
+) -> Result<Option<String>, Failure> {
     let program = Dibs::default().program;
     if rec.steps.iter().all(|s| s.lock == Lock::Shared) {
-        return Ok(place(&program, affinity_get(repo_name).as_deref(), Some(repo_name))?);
+        return Ok(place(
+            &program,
+            affinity_get(repo_name).as_deref(),
+            Some(repo_name),
+        )?);
     }
     match Dibs::which(&program) {
         Destination::Named(m) => Ok(Some(m)),
@@ -1354,8 +1795,15 @@ fn destination(rec: &recipe::Recipe, repo_name: &str, name: &str) -> Result<Opti
 /// Whether the wrapper refuses a measured step, or the first step when a card is named, on what it
 /// decides without the machine. A shared recipe's card is otherwise checked by the first step that
 /// carries it, after the tree and its dependencies have been sent.
-fn refused_before_building(backend: &Dibs, rec: &recipe::Recipe, step_labels: &[String], args: &Args) -> Result<bool, Failure> {
-    let exclusive: Vec<usize> = (0..rec.steps.len()).filter(|&i| rec.steps[i].lock == Lock::Exclusive).collect();
+fn refused_before_building(
+    backend: &Dibs,
+    rec: &recipe::Recipe,
+    step_labels: &[String],
+    args: &Args,
+) -> Result<bool, Failure> {
+    let exclusive: Vec<usize> = (0..rec.steps.len())
+        .filter(|&i| rec.steps[i].lock == Lock::Exclusive)
+        .collect();
     let asked = match exclusive.is_empty() && args.device.is_some() {
         true => vec![0],
         false => exclusive,
@@ -1382,7 +1830,8 @@ fn refused_before_building(backend: &Dibs, rec: &recipe::Recipe, step_labels: &[
 /// with the flag, and parsing that as one is how the complaint becomes the complaint.
 fn friction_verb(words: &[String]) -> Result<ExitCode, Failure> {
     let env = |k: &str| std::env::var(k).unwrap_or_default();
-    let reports_repo = || reports::repo().ok_or("DIBS_REPORTS names no <owner>/<repo> to take reports from");
+    let reports_repo =
+        || reports::repo().ok_or("DIBS_REPORTS names no <owner>/<repo> to take reports from");
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
     match words.as_slice() {
         ["--wait"] => {
@@ -1391,7 +1840,10 @@ fn friction_verb(words: &[String]) -> Result<ExitCode, Failure> {
             }
         }
         ["--reply", issue, rest @ ..] => {
-            let n: u64 = issue.trim_start_matches('#').parse().map_err(|_| format!("--reply needs an issue number, not {issue}"))?;
+            let n: u64 = issue
+                .trim_start_matches('#')
+                .parse()
+                .map_err(|_| format!("--reply needs an issue number, not {issue}"))?;
             let close = match rest {
                 [] => false,
                 ["--close"] => true,
@@ -1405,7 +1857,11 @@ fn friction_verb(words: &[String]) -> Result<ExitCode, Failure> {
         }
         ["--replies"] => {
             if let Some(repo) = reports::repo() {
-                for r in reports::replies(&repo, &friction::load(&friction::path()?), &env("DIBS_FRICTION_BY"))? {
+                for r in reports::replies(
+                    &repo,
+                    &friction::load(&friction::path()?),
+                    &env("DIBS_FRICTION_BY"),
+                )? {
                     eprintln!("{r}");
                 }
             }
@@ -1415,15 +1871,24 @@ fn friction_verb(words: &[String]) -> Result<ExitCode, Failure> {
                 t if !t.trim().is_empty() => t,
                 _ => words.join(" "),
             };
-            let mut note = friction::note(&said, &env("DIBS_FRICTION_BY"), &env("DIBS_FRICTION_AT"), now_secs())?;
+            let mut note = friction::note(
+                &said,
+                &env("DIBS_FRICTION_BY"),
+                &env("DIBS_FRICTION_AT"),
+                now_secs(),
+            )?;
             let filed = reports::repo().map(|repo| (reports::file(&repo, &note), repo));
             if let Some((Ok(n), _)) = &filed {
                 note.issue = Some(*n);
             }
             friction::append(&friction::path()?, &note)?;
             match filed {
-                None => println!("Recorded. dibs gaps prints it, with everything else that got in the way."),
-                Some((Ok(n), repo)) => println!("Recorded, and filed as {repo}#{n}. An answer there shows on a later dibs call."),
+                None => println!(
+                    "Recorded. dibs gaps prints it, with everything else that got in the way."
+                ),
+                Some((Ok(n), repo)) => println!(
+                    "Recorded, and filed as {repo}#{n}. An answer there shows on a later dibs call."
+                ),
                 Some((Err(e), repo)) => println!("Recorded here, but not filed in {repo}: {e}"),
             }
         }
@@ -1436,11 +1901,22 @@ fn sweep_run(args: &Args, points: &[BTreeMap<String, String>]) -> Result<ExitCod
     // found now, not two measurements into a sweep that is already holding the machine.
     sides(args.reference.as_deref())?;
     for p in points {
-        let probe = Args { params: p.clone(), sweep: Vec::new(), reps: 1, ..args.clone() };
+        let probe = Args {
+            params: p.clone(),
+            sweep: Vec::new(),
+            reps: 1,
+            ..args.clone()
+        };
         resolve(&probe)?;
     }
     let text = sweep_text(args, points);
-    let code = batch::run(&text, &batch::Options { dry_run: args.dry_run, verbose: args.verbose })?;
+    let code = batch::run(
+        &text,
+        &batch::Options {
+            dry_run: args.dry_run,
+            verbose: args.verbose,
+        },
+    )?;
     Ok(ExitCode::from(code.clamp(0, 255) as u8))
 }
 
@@ -1467,7 +1943,10 @@ fn sweep_text(args: &Args, points: &[BTreeMap<String, String>]) -> String {
             line += &format!(" --reps {}", args.reps);
         }
         if let Some(d) = &args.artifacts_to {
-            line += &format!(" --artifacts {}", sh(&format!("{d}/{}", point_name(args, p))));
+            line += &format!(
+                " --artifacts {}",
+                sh(&format!("{d}/{}", point_name(args, p)))
+            );
         }
         for pin in &args.pins {
             line += &format!(" --pin {}", sh(pin));
@@ -1498,7 +1977,15 @@ fn sweep_text(args: &Args, points: &[BTreeMap<String, String>]) -> String {
 /// What the summary calls one point: the values that make it that point.
 fn point_name(args: &Args, p: &BTreeMap<String, String>) -> String {
     let slug = |v: &str| {
-        v.chars().map(|c| if c.is_ascii_alphanumeric() || "_.-".contains(c) { c } else { '_' }).collect::<String>()
+        v.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || "_.-".contains(c) {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
     };
     let parts: Vec<String> = args
         .sweep
@@ -1522,21 +2009,32 @@ fn with_service(args: &Args) -> Result<ExitCode, Failure> {
     let dir = resolve_repo(&args.repo, &args.root)?;
     let repo_name = worktree::identity(&dir);
     let manifest = Manifest::load(&dir, &repo_name)?;
-    let name = args
-        .recipe
-        .as_deref()
-        .ok_or_else(|| format!("with needs a service: dibs with {} <service> -- <command>", args.repo))?;
+    let name = args.recipe.as_deref().ok_or_else(|| {
+        format!(
+            "with needs a service: dibs with {} <service> -- <command>",
+            args.repo
+        )
+    })?;
     let svc = manifest.service(name).ok_or_else(|| {
         let have: Vec<&str> = manifest.service_listing().iter().map(|(n, _)| *n).collect();
         match have.is_empty() {
             true => format!("{repo_name} defines no services, so there is nothing to run against"),
-            false => format!("no service '{name}' for {repo_name}. It has: {}", have.join(", ")),
+            false => format!(
+                "no service '{name}' for {repo_name}. It has: {}",
+                have.join(", ")
+            ),
         }
     })?;
     if svc.serves.is_empty() {
-        return Err(format!("service '{name}' starts nothing: it needs a [[service.{name}.serve]] with a run").into());
+        return Err(format!(
+            "service '{name}' starts nothing: it needs a [[service.{name}.serve]] with a run"
+        )
+        .into());
     }
-    let command = args.command.as_deref().ok_or("with needs a command after --")?;
+    let command = args
+        .command
+        .as_deref()
+        .ok_or("with needs a command after --")?;
 
     let mut backend = Dibs::default();
     backend.machine = match Dibs::which(&backend.program) {
@@ -1569,8 +2067,14 @@ fn with_service(args: &Args) -> Result<ExitCode, Failure> {
     let local = arm.fetch.is_none().then(|| arm.local(&dir)).transpose()?;
     if args.dry_run {
         println!("label       {label}");
-        println!("machine     {}", backend.machine.as_deref().unwrap_or("the only one"));
-        println!("tree        {}", preparing(&repo_name, &arm, local.as_ref(), &dir));
+        println!(
+            "machine     {}",
+            backend.machine.as_deref().unwrap_or("the only one")
+        );
+        println!(
+            "tree        {}",
+            preparing(&repo_name, &arm, local.as_ref(), &dir)
+        );
         if let Some(d) = &args.device {
             println!("device      {d}");
         }
@@ -1589,18 +2093,39 @@ fn with_service(args: &Args) -> Result<ExitCode, Failure> {
         println!(
             "command     [{}] {command}, {}",
             if args.bench { "Exclusive" } else { "Shared" },
-            if args.there { "on the machine, in the tree" } else { "here" }
+            if args.there {
+                "on the machine, in the tree"
+            } else {
+                "here"
+            }
         );
         return Ok(ExitCode::SUCCESS);
     }
     if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
         affinity_set(&repo_name, m);
     }
-    eprintln!("dibs: preparing {}", preparing(&repo_name, &arm, local.as_ref(), &dir));
+    eprintln!(
+        "dibs: preparing {}",
+        preparing(&repo_name, &arm, local.as_ref(), &dir)
+    );
     let reference = arm.fetch.as_deref().unwrap_or("local");
     let from = arm.dir(&dir).to_path_buf();
-    let signature = svc.build.as_deref().and_then(worktree::build_signature).unwrap_or_default();
-    let (script, gitdbs) = tree_script(&from, &repo_name, reference, local.as_ref(), &signature, &new_token(), 0, None, manifest.tree_fresh());
+    let signature = svc
+        .build
+        .as_deref()
+        .and_then(worktree::build_signature)
+        .unwrap_or_default();
+    let (script, gitdbs) = tree_script(
+        &from,
+        &repo_name,
+        reference,
+        local.as_ref(),
+        &signature,
+        &new_token(),
+        0,
+        None,
+        manifest.tree_fresh(),
+    );
     let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
     let setup = Request {
         label: &setup_label,
@@ -1615,19 +2140,33 @@ fn with_service(args: &Args) -> Result<ExitCode, Failure> {
     let mut announce = |text: &str| announce_prepared(text);
     let text = match &local {
         Some(l) => {
-            let (out, text) = sync_prepared(&backend, &from, &script, &l.key, &setup, &mut announce)?;
+            let (out, text) =
+                sync_prepared(&backend, &from, &script, &l.key, &setup, &mut announce)?;
             if let Some(c) = &mut arm.checkout {
                 c.lock = None;
             }
             if !text.contains("DIBS-READY") || out.status != 0 {
-                return Err(Failure::passing(out.status, format!("could not prepare {repo_name} from {} (exit {})", from.display(), out.status)));
+                return Err(Failure::passing(
+                    out.status,
+                    format!(
+                        "could not prepare {repo_name} from {} (exit {})",
+                        from.display(),
+                        out.status
+                    ),
+                ));
             }
             text
         }
         None => {
             let (out, text) = backend.run_capture(&setup, &script)?;
             if out.status != 0 {
-                return Err(Failure::passing(out.status, format!("could not prepare {repo_name}@{reference} (exit {})", out.status)));
+                return Err(Failure::passing(
+                    out.status,
+                    format!(
+                        "could not prepare {repo_name}@{reference} (exit {})",
+                        out.status
+                    ),
+                ));
             }
             announce(&text);
             text
@@ -1638,7 +2177,11 @@ fn with_service(args: &Args) -> Result<ExitCode, Failure> {
 
     // In the tree, with the repo's build cache, exactly as a recipe step runs.
     let in_tree = |run: &str| {
-        format!("cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}", sh(&prepared.worktree), sh(&prepared.target))
+        format!(
+            "cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}",
+            sh(&prepared.worktree),
+            sh(&prepared.target)
+        )
     };
     if let Some(build) = &svc.build {
         eprintln!("dibs: building {name}");
@@ -1684,10 +2227,21 @@ fn with_service(args: &Args) -> Result<ExitCode, Failure> {
         cmd.arg("--port").arg(p);
     }
     // Timed against a server this call built, a server another tree has built over since is refused.
-    let guarded = args.bench && !args.anyway && svc.build.as_deref().and_then(worktree::build_signature).is_some();
+    let guarded = args.bench
+        && !args.anyway
+        && svc
+            .build
+            .as_deref()
+            .and_then(worktree::build_signature)
+            .is_some();
     for serve in &svc.serves {
-        let run = if guarded { worktree::checked(&serve.run) } else { serve.run.clone() };
-        cmd.arg("--with").arg(format!("{}={}", serve.name, in_tree(&run)));
+        let run = if guarded {
+            worktree::checked(&serve.run)
+        } else {
+            serve.run.clone()
+        };
+        cmd.arg("--with")
+            .arg(format!("{}={}", serve.name, in_tree(&run)));
         if let Some(ready) = &serve.ready {
             cmd.arg("--ready").arg(ready);
         }
@@ -1709,7 +2263,9 @@ fn step_command(rec: &recipe::Recipe, i: usize, token: &str, fresh: &str, anyway
         (Some(_), Lock::Exclusive) => worktree::recording(&step.run, token),
         (None, _) => step.run.clone(),
     };
-    let built = rec.steps[..i].iter().any(|s| s.lock == Lock::Shared && worktree::build_signature(&s.run).is_some());
+    let built = rec.steps[..i]
+        .iter()
+        .any(|s| s.lock == Lock::Shared && worktree::build_signature(&s.run).is_some());
     let run = match step.lock {
         Lock::Exclusive if built && !anyway => worktree::checked(&provenance::stated(&run)),
         Lock::Exclusive => provenance::stated(&run),
@@ -1727,7 +2283,10 @@ fn step_command(rec: &recipe::Recipe, i: usize, token: &str, fresh: &str, anyway
 
 /// One value per run for each of the recipe's `fresh` variables, the same in every step of it.
 fn fresh_values(rec: &recipe::Recipe, token: &str) -> BTreeMap<String, String> {
-    rec.fresh.iter().map(|v| (v.clone(), format!("dibs-{token}"))).collect()
+    rec.fresh
+        .iter()
+        .map(|v| (v.clone(), format!("dibs-{token}")))
+        .collect()
 }
 
 /// The script that prepares the tree on the machine, and the git databases it may need sent.
@@ -1743,7 +2302,10 @@ fn tree_script(
     fresh: &[String],
 ) -> (String, Vec<gitdeps::Db>) {
     let lock = lockfile(dir, local.is_none().then_some(reference));
-    let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock.as_deref().unwrap_or("")));
+    let gitdbs = gitdeps::local(
+        &gitdeps::cargo_home(),
+        &gitdeps::pinned(lock.as_deref().unwrap_or("")),
+    );
     let script = worktree::packages_script(lock.as_deref().unwrap_or(""), signature, token)
         + &match local {
             Some(l) => worktree::setup_local_script(repo_name, &l.key, &l.content, nest, fresh),
@@ -1774,12 +2336,17 @@ fn new_token() -> String {
     format!(
         "{}-{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
     )
 }
 
 fn send_missing_gitdbs(backend: &Dibs, text: &str, gitdbs: &[gitdeps::Db]) {
-    let (Some(remote), gone) = gitdeps::missing(text, gitdbs) else { return };
+    let (Some(remote), gone) = gitdeps::missing(text, gitdbs) else {
+        return;
+    };
     for db in gone {
         eprintln!(
             "dibs: sending {} at {:.8}, which the machine does not have and may not be able to fetch",
@@ -1822,7 +2389,6 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         Manifest::load(&dir, &repo_name)?
     };
 
-
     let shell_reason = if args.verb == "shell" {
         Some(args.reason.clone().ok_or(
             "shell needs --reason. Most of what gets run is neither a build nor a benchmark,\n             and knowing what those were is how the next recipe gets written.",
@@ -1838,7 +2404,11 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         fresh: Vec::new(),
         artifacts: Vec::new(),
         steps: vec![recipe::Step {
-            lock: if args.bench { Lock::Exclusive } else { Lock::Shared },
+            lock: if args.bench {
+                Lock::Exclusive
+            } else {
+                Lock::Shared
+            },
             run: args.command.clone().unwrap_or_default(),
             env: BTreeMap::new(),
         }],
@@ -1847,32 +2417,50 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         return Err("shell needs -- <command>".into());
     }
 
-    let verb = Verb::parse(&args.verb).or(if args.verb == "shell" {
-        Some(Verb::Build)
-    } else {
-        None
-    })
-    .ok_or_else(|| {
-        format!("not a verb: {} (build, test, bench, shell, raw, list, runs, gaps or friction)", args.verb)
-    })?;
-    let name = if shell_recipe.is_some() { Some("shell") } else { args.recipe.as_deref() }
+    let verb = Verb::parse(&args.verb)
+        .or(if args.verb == "shell" {
+            Some(Verb::Build)
+        } else {
+            None
+        })
         .ok_or_else(|| {
+            format!(
+                "not a verb: {} (build, test, bench, shell, raw, list, runs, gaps or friction)",
+                args.verb
+            )
+        })?;
+    let name = if shell_recipe.is_some() {
+        Some("shell")
+    } else {
+        args.recipe.as_deref()
+    }
+    .ok_or_else(|| {
         let have = manifest.names(verb);
         if have.is_empty() {
             format!("{} defines no {} recipes", dir.display(), verb.as_str())
         } else {
-            format!("needs a recipe name; {} has: {}", dir.display(), have.join(", "))
+            format!(
+                "needs a recipe name; {} has: {}",
+                dir.display(),
+                have.join(", ")
+            )
         }
-        })?;
-    let mut rec = shell_recipe.clone().map(Ok).unwrap_or_else(|| manifest.recipe(verb, name).cloned().ok_or_else(|| {
-        let have = manifest.names(verb);
-        format!(
-            "no {} recipe called '{name}'; {} has: {}",
-            verb.as_str(),
-            dir.display(),
-            if have.is_empty() { "none".into() } else { have.join(", ") }
-        )
-    }))?;
+    })?;
+    let mut rec = shell_recipe.clone().map(Ok).unwrap_or_else(|| {
+        manifest.recipe(verb, name).cloned().ok_or_else(|| {
+            let have = manifest.names(verb);
+            format!(
+                "no {} recipe called '{name}'; {} has: {}",
+                verb.as_str(),
+                dir.display(),
+                if have.is_empty() {
+                    "none".into()
+                } else {
+                    have.join(", ")
+                }
+            )
+        })
+    })?;
     if rec.steps.is_empty() {
         return Err(format!("recipe '{name}' declares no steps"));
     }
@@ -1886,13 +2474,22 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
     // the other. Shell has no recipe name to carry.
     let label = match &shell_recipe {
         Some(_) => run_label(&repo_name, "shell", None, args.device.as_deref()),
-        None => run_label(&repo_name, verb.as_str(), Some(name), args.device.as_deref()),
+        None => run_label(
+            &repo_name,
+            verb.as_str(),
+            Some(name),
+            args.device.as_deref(),
+        ),
     };
     if args.params.contains_key("label") && !rec.params.contains_key("label") {
         return Err(format!(
             "{} takes no --label: its durations are filed under {label}, derived so that every run of one piece of\n  \
              work lands in one history.{}",
-            if shell_recipe.is_some() { "shell".to_string() } else { format!("{} {name}", verb.as_str()) },
+            if shell_recipe.is_some() {
+                "shell".to_string()
+            } else {
+                format!("{} {name}", verb.as_str())
+            },
             if shell_recipe.is_some() {
                 " A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so."
             } else {
@@ -1900,7 +2497,9 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
             }
         ));
     }
-    let params = rec.values(&args.params).map_err(|e| format!("{name}: {e}"))?;
+    let params = rec
+        .values(&args.params)
+        .map_err(|e| format!("{name}: {e}"))?;
     rec = rec.bound(&params);
     rec.check(name)?;
     // The duration history keys on lock and label together, so a recipe's build and its
@@ -1927,7 +2526,13 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
 /// a local tree, or the first step when it is shared. Its own job would be a second round trip and
 /// a second place in the queue. An exclusive first step keeps its setup apart, or a fetch would run
 /// inside the hold.
-fn jobs_of(r: &Resolved, sides: &[Side], local: &[bool], reps: u32, pins: &[(String, bool)]) -> Vec<batch::Pending> {
+fn jobs_of(
+    r: &Resolved,
+    sides: &[Side],
+    local: &[bool],
+    reps: u32,
+    pins: &[(String, bool)],
+) -> Vec<batch::Pending> {
     let of = |arm: usize, rep: Option<u32>| {
         let mut tags = Vec::new();
         if sides.len() > 1 {
@@ -1941,28 +2546,45 @@ fn jobs_of(r: &Resolved, sides: &[Side], local: &[bool], reps: u32, pins: &[(Str
             false => format!(" ({})", tags.join(" ")),
         }
     };
-    let job = |label: String, mode: &'static str, tag: String| batch::Pending { name: format!("{label}{tag}"), mode, label, here: true };
-    let pinned = pins.iter().map(|(repo, local)| job(format!("{}:pin", r.label), if *local { "rsh" } else { "shared" }, format!(" ({repo})")));
-    pinned.chain(schedule(local, &r.rec.steps, reps)
-        .into_iter()
-        .map(|j| match j {
-            Job::Send(a) => job(format!("{}:send", r.label), "rsh", of(a, None)),
-            Job::Setup(a) => job(format!("{}:setup", r.label), "shared", of(a, None)),
-            Job::Step { arm, step, rep, .. } => {
-                let mode = match r.rec.steps[step].lock {
-                    Lock::Shared => "shared",
-                    Lock::Exclusive => "bench",
-                };
-                job(r.step_labels[step].clone(), mode, of(arm, rep))
-            }
-        }))
+    let job = |label: String, mode: &'static str, tag: String| batch::Pending {
+        name: format!("{label}{tag}"),
+        mode,
+        label,
+        here: true,
+    };
+    let pinned = pins.iter().map(|(repo, local)| {
+        job(
+            format!("{}:pin", r.label),
+            if *local { "rsh" } else { "shared" },
+            format!(" ({repo})"),
+        )
+    });
+    pinned
+        .chain(
+            schedule(local, &r.rec.steps, reps)
+                .into_iter()
+                .map(|j| match j {
+                    Job::Send(a) => job(format!("{}:send", r.label), "rsh", of(a, None)),
+                    Job::Setup(a) => job(format!("{}:setup", r.label), "shared", of(a, None)),
+                    Job::Step { arm, step, rep, .. } => {
+                        let mode = match r.rec.steps[step].lock {
+                            Lock::Shared => "shared",
+                            Lock::Exclusive => "bench",
+                        };
+                        job(r.step_labels[step].clone(), mode, of(arm, rep))
+                    }
+                }),
+        )
         .collect()
 }
 
 /// The jobs a recipe line in a batch will make, so the batch's plan can estimate them. None
 /// when the line does not resolve here, which leaves that step without an estimate.
 fn recipe_jobs(words: &[String]) -> Option<Vec<batch::Pending>> {
-    if words.iter().any(|w| matches!(w.as_str(), "-h" | "--help" | "--version")) {
+    if words
+        .iter()
+        .any(|w| matches!(w.as_str(), "-h" | "--help" | "--version"))
+    {
         return None;
     }
     let mut i = 1;
@@ -1971,7 +2593,12 @@ fn recipe_jobs(words: &[String]) -> Option<Vec<batch::Pending>> {
     }
     let args = parse_words(words.get(i..)?.iter().cloned()).ok()?;
     let r = resolve(&args).ok()?;
-    let pins = args.pins.iter().map(|p| pin_spec(p).map(|(repo, reference)| (repo.to_string(), reference == "local"))).collect::<Result<Vec<_>, _>>().ok()?;
+    let pins = args
+        .pins
+        .iter()
+        .map(|p| pin_spec(p).map(|(repo, reference)| (repo.to_string(), reference == "local")))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
     // Whether a ref is sent is only known once it is looked up, so a ref is planned as fetched.
     let sides = sides(args.reference.as_deref()).ok()?;
     let local: Vec<bool> = sides.iter().map(Side::sent).collect();
@@ -2030,8 +2657,15 @@ fn sync_prepared(
     on_report: &mut dyn FnMut(&str),
 ) -> Result<(resource::Outcome, String), String> {
     let before = std::env::temp_dir().join(format!("dibs-before.{}.{key}", std::process::id()));
-    std::fs::write(&before, worktree::ahead(setup, worktree::Then::Transfer, &format!("prepare, then receive {}", from.display())))
-        .map_err(|e| format!("{}: {e}", before.display()))?;
+    std::fs::write(
+        &before,
+        worktree::ahead(
+            setup,
+            worktree::Then::Transfer,
+            &format!("prepare, then receive {}", from.display()),
+        ),
+    )
+    .map_err(|e| format!("{}: {e}", before.display()))?;
     let mut cmd = std::process::Command::new(&backend.program);
     if let Some(m) = &backend.machine {
         cmd.arg("--on").arg(m);
@@ -2052,19 +2686,31 @@ fn sync_prepared(
 }
 
 fn announce_prepared(text: &str) {
-    let Ok(prepared) = worktree::parse(text) else { return };
+    let Ok(prepared) = worktree::parse(text) else {
+        return;
+    };
     eprintln!("dibs: {}", prepared.worktree);
-    if let (Some(from), Some(mine), Some((have, of))) = (&prepared.seeded, prepared.reseeded, prepared.seed_shared) {
-        eprintln!("dibs: this tree's target had built {mine} of the {of} groups in its lockfile and {from} has {have}, so the tree now starts from {from}'s");
+    if let (Some(from), Some(mine), Some((have, of))) =
+        (&prepared.seeded, prepared.reseeded, prepared.seed_shared)
+    {
+        eprintln!(
+            "dibs: this tree's target had built {mine} of the {of} groups in its lockfile and {from} has {have}, so the tree now starts from {from}'s"
+        );
         return;
     }
     if let Some(from) = &prepared.seeded {
         match prepared.seed_shared {
             Some((have, of)) => eprintln!(
                 "dibs: target directory copied from {from}, whose builds match {have} of the {of} groups in this tree's lockfile{}",
-                if prepared.seeded_sources { ", with its sources so unchanged crates stay built" } else { "" }
+                if prepared.seeded_sources {
+                    ", with its sources so unchanged crates stay built"
+                } else {
+                    ""
+                }
             ),
-            None => eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds"),
+            None => eprintln!(
+                "dibs: target directory copied from {from}, so only what differs rebuilds"
+            ),
         }
     }
 }
@@ -2106,12 +2752,16 @@ fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
     // A path into a subdirectory has no .git of its own, and `.` would otherwise join the root.
     if direct.is_absolute() || direct.starts_with(".") || direct.starts_with("..") {
         return worktree::toplevel(&direct).ok_or_else(|| {
-            format!("'{repo}' is in no git checkout and has no .dibs.toml, so there is no tree to send")
+            format!(
+                "'{repo}' is in no git checkout and has no .dibs.toml, so there is no tree to send"
+            )
         });
     }
     // Inside a worktree of the named repo, `@local` means that tree, and the clone under the
     // root would otherwise be sent in its place without a word.
-    let here = std::env::current_dir().ok().and_then(|d| worktree::toplevel(&d));
+    let here = std::env::current_dir()
+        .ok()
+        .and_then(|d| worktree::toplevel(&d));
     if let Some(here) = here.filter(|h| !repo.contains('/') && worktree::identity(h) == repo) {
         return Ok(here);
     }
@@ -2126,7 +2776,8 @@ fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
 }
 
 fn canon(p: PathBuf) -> Result<PathBuf, String> {
-    p.canonicalize().map_err(|e| format!("{}: {e}", p.display()))
+    p.canonicalize()
+        .map_err(|e| format!("{}: {e}", p.display()))
 }
 
 /// Which machine holds a repo's build cache. Kept beside the run record, on this side, since
@@ -2149,7 +2800,9 @@ fn affinity_live(text: &str, now: u64) -> impl Iterator<Item = (&str, &str, u64)
 }
 
 fn affinity_lookup(text: &str, repo: &str, now: u64) -> Option<String> {
-    affinity_live(text, now).find(|(r, ..)| *r == repo).map(|(_, m, _)| m.to_string())
+    affinity_live(text, now)
+        .find(|(r, ..)| *r == repo)
+        .map(|(_, m, _)| m.to_string())
 }
 
 fn affinity_update(text: &str, repo: &str, machine: &str, now: u64) -> String {
@@ -2162,12 +2815,21 @@ fn affinity_update(text: &str, repo: &str, machine: &str, now: u64) -> String {
 }
 
 fn affinity_get(repo: &str) -> Option<String> {
-    affinity_lookup(&std::fs::read_to_string(affinity_path()?).ok()?, repo, now_secs())
+    affinity_lookup(
+        &std::fs::read_to_string(affinity_path()?).ok()?,
+        repo,
+        now_secs(),
+    )
 }
 
 fn affinity_set(repo: &str, machine: &str) {
     let Some(p) = affinity_path() else { return };
-    let text = affinity_update(&std::fs::read_to_string(&p).unwrap_or_default(), repo, machine, now_secs());
+    let text = affinity_update(
+        &std::fs::read_to_string(&p).unwrap_or_default(),
+        repo,
+        machine,
+        now_secs(),
+    );
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -2179,7 +2841,11 @@ fn affinity_set(repo: &str, machine: &str) {
 
 /// Where shared work goes: the machine the wrapper would use when the call names one or there is
 /// only one to use, and otherwise a placement among them, by build cache and then by load.
-fn place(program: &str, prefer: Option<&str>, repo: Option<&str>) -> Result<Option<String>, String> {
+fn place(
+    program: &str,
+    prefer: Option<&str>,
+    repo: Option<&str>,
+) -> Result<Option<String>, String> {
     match Dibs::which(program) {
         Destination::Named(m) => Ok(Some(m)),
         Destination::Unnamed => Ok(None),
@@ -2237,7 +2903,10 @@ fn write_record(run: &provenance::Run) -> Result<(), String> {
 }
 
 fn sh(s: &str) -> String {
-    if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || "/._-@".contains(c)) {
+    if !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || "/._-@".contains(c))
+    {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', r"'\''"))
@@ -2250,7 +2919,11 @@ mod tests {
     use recipe::{Isolation, Recipe, Step};
 
     fn step(lock: Lock, run: &str) -> Step {
-        Step { lock, run: run.into(), env: BTreeMap::new() }
+        Step {
+            lock,
+            run: run.into(),
+            env: BTreeMap::new(),
+        }
     }
 
     // --sync warns that kept mtimes may make a build compile nothing, which is about a source
@@ -2261,9 +2934,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("dibs-gitdb-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let fake = dir.join("dibs");
-        std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > {}/args\n", dir.display())).unwrap();
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > {}/args\n",
+                dir.display()
+            ),
+        )
+        .unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let backend = Dibs { program: fake.display().to_string(), machine: None };
+        let backend = Dibs {
+            program: fake.display().to_string(),
+            machine: None,
+        };
         sync_gitdb(&backend, &dir, "db").unwrap();
         let args = std::fs::read_to_string(dir.join("args")).unwrap();
         assert!(args.lines().any(|a| a == "--no-times"), "{args}");
@@ -2275,10 +2958,20 @@ mod tests {
         let day = 86400;
         let text = affinity_update("cubek\tbox-a\n", "cubek", "box-b", 10 * day);
         let text = affinity_update(&text, "burn", "box-a", 12 * day);
-        assert_eq!(text.lines().count(), 2, "the untimed line is dropped: {text}");
-        assert_eq!(affinity_lookup(&text, "cubek", 14 * day).as_deref(), Some("box-b"));
+        assert_eq!(
+            text.lines().count(),
+            2,
+            "the untimed line is dropped: {text}"
+        );
+        assert_eq!(
+            affinity_lookup(&text, "cubek", 14 * day).as_deref(),
+            Some("box-b")
+        );
         assert_eq!(affinity_lookup(&text, "cubek", 15 * day), None);
-        assert_eq!(affinity_lookup(&text, "burn", 15 * day).as_deref(), Some("box-a"));
+        assert_eq!(
+            affinity_lookup(&text, "burn", 15 * day).as_deref(),
+            Some("box-a")
+        );
         let text = affinity_update(&text, "burn", "box-b", 16 * day);
         assert_eq!(text, format!("burn\tbox-b\t{}\n", 16 * day));
     }
@@ -2290,18 +2983,38 @@ mod tests {
     #[test]
     fn a_sweep_is_every_combination_over_the_values_already_given() {
         let args = swept(&[
-            "bench", "app@local", "r", "--backend", "cuda", "--sweep", "size=64,128", "--sweep",
+            "bench",
+            "app@local",
+            "r",
+            "--backend",
+            "cuda",
+            "--sweep",
+            "size=64,128",
+            "--sweep",
             "layout=rc,cr",
         ]);
         let points = sweep_points(&args);
-        let shape: Vec<String> =
-            points.iter().map(|p| format!("{} {} {}", p["backend"], p["size"], p["layout"])).collect();
-        assert_eq!(shape, ["cuda 64 rc", "cuda 64 cr", "cuda 128 rc", "cuda 128 cr"]);
+        let shape: Vec<String> = points
+            .iter()
+            .map(|p| format!("{} {} {}", p["backend"], p["size"], p["layout"]))
+            .collect();
+        assert_eq!(
+            shape,
+            ["cuda 64 rc", "cuda 64 cr", "cuda 128 rc", "cuda 128 cr"]
+        );
     }
 
     #[test]
     fn a_value_with_a_comma_in_it_is_one_value() {
-        let args = swept(&["bench", "app@local", "r", "--problems", "topk1,topk2", "--sweep", "samples=10,30"]);
+        let args = swept(&[
+            "bench",
+            "app@local",
+            "r",
+            "--problems",
+            "topk1,topk2",
+            "--sweep",
+            "samples=10,30",
+        ]);
         let points = sweep_points(&args);
         assert_eq!(points.len(), 2, "only the sweep multiplies the runs");
         assert_eq!(points[0]["problems"], "topk1,topk2");
@@ -2310,31 +3023,86 @@ mod tests {
     #[test]
     fn a_swept_run_is_a_batch_of_ordinary_calls() {
         let args = swept(&[
-            "bench", "app@local", "r", "--device", "gpu0", "--sweep", "samples=10,30", "--reps", "2", "--anyway",
+            "bench",
+            "app@local",
+            "r",
+            "--device",
+            "gpu0",
+            "--sweep",
+            "samples=10,30",
+            "--reps",
+            "2",
+            "--anyway",
             "--new-series",
         ]);
         let text = sweep_text(&args, &sweep_points(&args));
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 2, "one call per value, each repeating its own measurement");
-        assert_eq!(lines[0], "[samples-10] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 10");
-        assert_eq!(lines[1], "[samples-30] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 30");
+        assert_eq!(
+            lines.len(),
+            2,
+            "one call per value, each repeating its own measurement"
+        );
+        assert_eq!(
+            lines[0],
+            "[samples-10] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 10"
+        );
+        assert_eq!(
+            lines[1],
+            "[samples-30] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 30"
+        );
     }
 
     #[test]
     fn several_words_after_the_separator_stay_several_words() {
-        let parsed = |words: &[&str]| parse_words(words.iter().map(|w| w.to_string())).unwrap().command;
+        let parsed = |words: &[&str]| {
+            parse_words(words.iter().map(|w| w.to_string()))
+                .unwrap()
+                .command
+        };
         assert_eq!(
-            parsed(&["with", "app@local", "srv", "--", "bash", "-c", "exec client ws://$DIBS_SERVICE_WS"]).as_deref(),
+            parsed(&[
+                "with",
+                "app@local",
+                "srv",
+                "--",
+                "bash",
+                "-c",
+                "exec client ws://$DIBS_SERVICE_WS"
+            ])
+            .as_deref(),
             Some("bash -c 'exec client ws://$DIBS_SERVICE_WS'")
         );
-        assert_eq!(parsed(&["shell", "app@local", "--reason", "r", "--", "echo a; echo $B"]).as_deref(), Some("echo a; echo $B"), "one word is a shell string");
+        assert_eq!(
+            parsed(&[
+                "shell",
+                "app@local",
+                "--reason",
+                "r",
+                "--",
+                "echo a; echo $B"
+            ])
+            .as_deref(),
+            Some("echo a; echo $B"),
+            "one word is a shell string"
+        );
     }
 
     #[test]
     fn a_swept_shell_carries_its_reason_its_lock_and_its_command_quoted() {
         let args = swept(&[
-            "shell", "app@main..local", "--reason", "why not", "--bench", "--max", "60", "--reps", "2",
-            "--sweep", "n=1,2", "--", "echo a; echo b",
+            "shell",
+            "app@main..local",
+            "--reason",
+            "why not",
+            "--bench",
+            "--max",
+            "60",
+            "--reps",
+            "2",
+            "--sweep",
+            "n=1,2",
+            "--",
+            "echo a; echo b",
         ]);
         let text = sweep_text(&args, &sweep_points(&args));
         assert_eq!(
@@ -2345,7 +3113,15 @@ mod tests {
     }
 
     fn resolved(steps: Vec<Step>) -> Resolved {
-        let rec = Recipe { source: recipe::Source::Local, needs: None, isolation: Isolation::Machine, params: BTreeMap::new(), fresh: Vec::new(), artifacts: Vec::new(), steps };
+        let rec = Recipe {
+            source: recipe::Source::Local,
+            needs: None,
+            isolation: Isolation::Machine,
+            params: BTreeMap::new(),
+            fresh: Vec::new(),
+            artifacts: Vec::new(),
+            steps,
+        };
         let step_labels = label_steps("app/bench/r", &rec.steps);
         Resolved {
             dir: PathBuf::from("."),
@@ -2363,28 +3139,79 @@ mod tests {
 
     #[test]
     fn a_build_claims_its_target_and_the_measurement_after_it_checks_the_claim() {
-        let rec = resolved(vec![step(Lock::Shared, "cargo build --release"), step(Lock::Exclusive, "cargo bench")]).rec;
-        assert_eq!(step_command(&rec, 0, "t", "t", false), worktree::claiming(&worktree::recording("cargo build --release", "t")));
+        let rec = resolved(vec![
+            step(Lock::Shared, "cargo build --release"),
+            step(Lock::Exclusive, "cargo bench"),
+        ])
+        .rec;
+        assert_eq!(
+            step_command(&rec, 0, "t", "t", false),
+            worktree::claiming(&worktree::recording("cargo build --release", "t"))
+        );
         let measured = provenance::stated(&worktree::recording("cargo bench", "t"));
-        assert_eq!(step_command(&rec, 1, "t", "t", false), worktree::checked(&measured));
+        assert_eq!(
+            step_command(&rec, 1, "t", "t", false),
+            worktree::checked(&measured)
+        );
         assert_eq!(step_command(&rec, 1, "t", "t", true), measured);
     }
 
     // Nothing was built into the target, so whatever claimed it last says nothing about this run.
     #[test]
     fn a_measurement_after_no_build_is_not_checked() {
-        let rec = resolved(vec![step(Lock::Shared, "make data"), step(Lock::Exclusive, "./bench.sh")]).rec;
-        assert_eq!(step_command(&rec, 1, "t", "t", false), provenance::stated("./bench.sh"));
+        let rec = resolved(vec![
+            step(Lock::Shared, "make data"),
+            step(Lock::Exclusive, "./bench.sh"),
+        ])
+        .rec;
+        assert_eq!(
+            step_command(&rec, 1, "t", "t", false),
+            provenance::stated("./bench.sh")
+        );
     }
 
     #[test]
     fn a_recipe_s_jobs_are_what_it_will_send_and_run() {
-        let names = |jobs: Vec<batch::Pending>| jobs.into_iter().map(|j| format!("{} {}", j.mode, j.label)).collect::<Vec<_>>();
-        let build_then_bench = resolved(vec![step(Lock::Shared, "cargo build"), step(Lock::Exclusive, "cargo bench")]);
-        assert_eq!(names(jobs_of(&build_then_bench, &[Side::Local], &[true], 1, &[])), ["rsh app/bench/r:send", "shared app/bench/r", "bench app/bench/r"]);
-        assert_eq!(names(jobs_of(&build_then_bench, &[Side::Ref("main".into())], &[false], 1, &[])), ["shared app/bench/r", "bench app/bench/r"], "the setup rides with the build");
+        let names = |jobs: Vec<batch::Pending>| {
+            jobs.into_iter()
+                .map(|j| format!("{} {}", j.mode, j.label))
+                .collect::<Vec<_>>()
+        };
+        let build_then_bench = resolved(vec![
+            step(Lock::Shared, "cargo build"),
+            step(Lock::Exclusive, "cargo bench"),
+        ]);
+        assert_eq!(
+            names(jobs_of(&build_then_bench, &[Side::Local], &[true], 1, &[])),
+            [
+                "rsh app/bench/r:send",
+                "shared app/bench/r",
+                "bench app/bench/r"
+            ]
+        );
+        assert_eq!(
+            names(jobs_of(
+                &build_then_bench,
+                &[Side::Ref("main".into())],
+                &[false],
+                1,
+                &[]
+            )),
+            ["shared app/bench/r", "bench app/bench/r"],
+            "the setup rides with the build"
+        );
         let bench_only = resolved(vec![step(Lock::Exclusive, "cargo bench")]);
-        assert_eq!(names(jobs_of(&bench_only, &[Side::Ref("main".into())], &[false], 1, &[])), ["shared app/bench/r:setup", "bench app/bench/r"], "never inside the hold");
+        assert_eq!(
+            names(jobs_of(
+                &bench_only,
+                &[Side::Ref("main".into())],
+                &[false],
+                1,
+                &[]
+            )),
+            ["shared app/bench/r:setup", "bench app/bench/r"],
+            "never inside the hold"
+        );
     }
 
     #[test]
@@ -2392,18 +3219,47 @@ mod tests {
         let r = |s: &str| Side::Ref(s.into());
         assert_eq!(sides(None).unwrap(), [r("HEAD")]);
         assert_eq!(sides(Some("local")).unwrap(), [Side::Local]);
-        assert_eq!(sides(Some("main..local")).unwrap(), [Side::Base("main".into(), "local".into()), Side::Local]);
-        assert_eq!(sides(Some("main..perf/x")).unwrap(), [Side::Base("main".into(), "perf/x".into()), Side::Pinned("perf/x".into())]);
-        assert_eq!(sides(Some("a1,b2,local")).unwrap(), [r("a1"), r("b2"), Side::Local]);
-        for bad in ["main...local", "..local", "main..", "a..b..c", "a..b,c", "a,,b", "a,a", "local,local"] {
+        assert_eq!(
+            sides(Some("main..local")).unwrap(),
+            [Side::Base("main".into(), "local".into()), Side::Local]
+        );
+        assert_eq!(
+            sides(Some("main..perf/x")).unwrap(),
+            [
+                Side::Base("main".into(), "perf/x".into()),
+                Side::Pinned("perf/x".into())
+            ]
+        );
+        assert_eq!(
+            sides(Some("a1,b2,local")).unwrap(),
+            [r("a1"), r("b2"), Side::Local]
+        );
+        for bad in [
+            "main...local",
+            "..local",
+            "main..",
+            "a..b..c",
+            "a..b,c",
+            "a,,b",
+            "a,a",
+            "local,local",
+        ] {
             assert!(sides(Some(bad)).is_err(), "{bad}");
         }
     }
 
     #[test]
     fn every_arm_is_built_before_any_is_measured_and_the_order_turns_each_rep() {
-        let build_then_bench = [step(Lock::Shared, "cargo build"), step(Lock::Exclusive, "cargo bench")];
-        let s = |arm, step, rep, setup| Job::Step { arm, step, rep, setup };
+        let build_then_bench = [
+            step(Lock::Shared, "cargo build"),
+            step(Lock::Exclusive, "cargo bench"),
+        ];
+        let s = |arm, step, rep, setup| Job::Step {
+            arm,
+            step,
+            rep,
+            setup,
+        };
         assert_eq!(
             schedule(&[false, true], &build_then_bench, 2),
             [
@@ -2419,17 +3275,37 @@ mod tests {
         let bench_only = [step(Lock::Exclusive, "./bench")];
         assert_eq!(
             schedule(&[false], &bench_only, 2),
-            [Job::Setup(0), s(0, 0, Some(1), false), s(0, 0, Some(2), false)],
+            [
+                Job::Setup(0),
+                s(0, 0, Some(1), false),
+                s(0, 0, Some(2), false)
+            ],
             "a tree is set up where its first step needs it, never inside the hold"
         );
         let test = [step(Lock::Shared, "cargo test")];
-        assert_eq!(schedule(&[false], &test, 2), [s(0, 0, Some(1), true), s(0, 0, Some(2), false)], "nothing exclusive, so all of it repeats");
+        assert_eq!(
+            schedule(&[false], &test, 2),
+            [s(0, 0, Some(1), true), s(0, 0, Some(2), false)],
+            "nothing exclusive, so all of it repeats"
+        );
     }
 
     #[test]
     fn a_comparison_s_jobs_say_which_arm_and_rep_they_are() {
-        let r = resolved(vec![step(Lock::Shared, "cargo build"), step(Lock::Exclusive, "cargo bench")]);
-        let names: Vec<String> = jobs_of(&r, &sides(Some("main..local")).unwrap(), &[true, true], 2, &[]).into_iter().map(|j| j.name).collect();
+        let r = resolved(vec![
+            step(Lock::Shared, "cargo build"),
+            step(Lock::Exclusive, "cargo bench"),
+        ]);
+        let names: Vec<String> = jobs_of(
+            &r,
+            &sides(Some("main..local")).unwrap(),
+            &[true, true],
+            2,
+            &[],
+        )
+        .into_iter()
+        .map(|j| j.name)
+        .collect();
         assert_eq!(
             names,
             [
@@ -2472,12 +3348,22 @@ mod tests {
     // Both steps of one run see one store, and the next run another.
     #[test]
     fn a_fresh_variable_has_one_value_per_run_in_every_step() {
-        let mut rec = resolved(vec![step(Lock::Shared, "make"), step(Lock::Exclusive, "./bench")]).rec;
+        let mut rec = resolved(vec![
+            step(Lock::Shared, "make"),
+            step(Lock::Exclusive, "./bench"),
+        ])
+        .rec;
         rec.fresh = vec!["CUBECL_ENVIRONMENT".into()];
         for i in 0..2 {
-            assert!(step_command(&rec, i, "t1", "t1", false).starts_with("export CUBECL_ENVIRONMENT=dibs-t1; "));
+            assert!(
+                step_command(&rec, i, "t1", "t1", false)
+                    .starts_with("export CUBECL_ENVIRONMENT=dibs-t1; ")
+            );
         }
-        assert!(step_command(&rec, 1, "t2", "t2", false).starts_with("export CUBECL_ENVIRONMENT=dibs-t2; "));
+        assert!(
+            step_command(&rec, 1, "t2", "t2", false)
+                .starts_with("export CUBECL_ENVIRONMENT=dibs-t2; ")
+        );
     }
 
     #[test]
@@ -2640,7 +3526,17 @@ mod tests {
             new_series: false,
             fresh: Vec::new(),
             state: Vec::new(),
-            steps: vec![provenance::StepRecord { lock: "shared", status: 0, seconds: 3, job: None, built: None, log: None, arm: None, rep: None, artifacts: None }],
+            steps: vec![provenance::StepRecord {
+                lock: "shared",
+                status: 0,
+                seconds: 3,
+                job: None,
+                built: None,
+                log: None,
+                arm: None,
+                rep: None,
+                artifacts: None,
+            }],
         };
         let line = run.to_json(42);
         assert!(!line.contains('\n'), "a record has to stay one line");

@@ -131,15 +131,28 @@ pub struct Finding {
 /// still a report, so its output is read whatever the status.
 pub fn probe(only: Option<&str>) -> Result<Overview, String> {
     let mut cmd = Command::new("dibs");
-    cmd.arg("machines").args(only).arg("--json").stdin(Stdio::null());
-    let out = cmd.output().map_err(|e| format!("could not run dibs: {e}"))?;
+    cmd.arg("machines")
+        .args(only)
+        .arg("--json")
+        .stdin(Stdio::null());
+    let out = cmd
+        .output()
+        .map_err(|e| format!("could not run dibs: {e}"))?;
     if out.stdout.iter().all(u8::is_ascii_whitespace) {
         let said = String::from_utf8_lossy(&out.stderr);
-        let last = said.lines().rfind(|l| l.starts_with("dibs: ")).unwrap_or("dibs: it printed no report");
-        return Err(format!("dibs machines: {}", last.trim_start_matches("dibs: ")));
+        let last = said
+            .lines()
+            .rfind(|l| l.starts_with("dibs: "))
+            .unwrap_or("dibs: it printed no report");
+        return Err(format!(
+            "dibs machines: {}",
+            last.trim_start_matches("dibs: ")
+        ));
     }
     // A report in a shape this window does not know is an installed dibs older or newer than it.
-    serde_json::from_slice(&out.stdout).map_err(|e| format!("dibs machines printed a report this window cannot read ({e}); run dibs --update"))
+    serde_json::from_slice(&out.stdout).map_err(|e| {
+        format!("dibs machines printed a report this window cannot read ({e}); run dibs --update")
+    })
 }
 
 #[cfg(test)]
@@ -164,10 +177,23 @@ mod tests {
         let o: Overview = serde_json::from_str(SAID).unwrap();
         let b = o.machine("box").unwrap();
         assert_eq!(
-            (b.provisioned.describe(), b.access.people.get("bob").copied(), b.finding("login").map(|f| f.ok), b.finding("cuda").is_none()),
-            ("ansible (box-ansible)".to_string(), Some(Standing::Missing), Some(false), true)
+            (
+                b.provisioned.describe(),
+                b.access.people.get("bob").copied(),
+                b.finding("login").map(|f| f.ok),
+                b.finding("cuda").is_none()
+            ),
+            (
+                "ansible (box-ansible)".to_string(),
+                Some(Standing::Missing),
+                Some(false),
+                true
+            )
         );
-        assert_eq!(o.machine("mac").unwrap().unprobed.as_deref(), Some("unreachable: asleep"));
+        assert_eq!(
+            o.machine("mac").unwrap().unprobed.as_deref(),
+            Some("unreachable: asleep")
+        );
     }
 
     #[test]
@@ -177,6 +203,13 @@ mod tests {
         fresh.machines.retain(|m| m.machine == "mac");
         fresh.machines[0].unprobed = None;
         o.merge(fresh);
-        assert_eq!((o.machines.len(), o.machine("mac").unwrap().unprobed.is_none(), o.machine("box").unwrap().paths.len()), (2, true, 1));
+        assert_eq!(
+            (
+                o.machines.len(),
+                o.machine("mac").unwrap().unprobed.is_none(),
+                o.machine("box").unwrap().paths.len()
+            ),
+            (2, true, 1)
+        );
     }
 }

@@ -58,7 +58,10 @@ mod tests {
 
     #[test]
     fn nothing_that_moves_the_cursor_reaches_the_screen() {
-        assert_eq!(plain("ssh: connect to host m port 22: No route to host\r"), "ssh: connect to host m port 22: No route to host");
+        assert_eq!(
+            plain("ssh: connect to host m port 22: No route to host\r"),
+            "ssh: connect to host m port 22: No route to host"
+        );
         assert_eq!(plain("a\tb\x1b[31mc\u{7}"), "a b[31mc");
     }
 }

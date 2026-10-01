@@ -34,7 +34,11 @@ exit $__dibs_rc"#,
 
 /// How many files a step kept, from its report.
 pub fn kept(report: &str) -> Option<u32> {
-    report.lines().filter_map(|l| l.strip_prefix("DIBS-ARTIFACTS ")).last().and_then(|n| n.trim().parse().ok())
+    report
+        .lines()
+        .filter_map(|l| l.strip_prefix("DIBS-ARTIFACTS "))
+        .last()
+        .and_then(|n| n.trim().parse().ok())
 }
 
 #[cfg(test)]
@@ -46,14 +50,30 @@ mod tests {
     fn a_step_keeps_the_files_it_wrote_and_none_an_earlier_run_left() {
         let root = std::env::temp_dir().join(format!("dibs-art-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let (tree, target, job) = (root.join("tree"), root.join("target"), root.join("scratch/jobs/j1"));
-        for d in [tree.join("results"), target.join("criterion/gemm"), job.clone()] {
+        let (tree, target, job) = (
+            root.join("tree"),
+            root.join("target"),
+            root.join("scratch/jobs/j1"),
+        );
+        for d in [
+            tree.join("results"),
+            target.join("criterion/gemm"),
+            job.clone(),
+        ] {
             std::fs::create_dir_all(d).unwrap();
         }
         std::fs::write(tree.join("results/old.json"), "old").unwrap();
-        Command::new("touch").arg("-d").arg("1 hour ago").arg(tree.join("results/old.json")).status().unwrap();
+        Command::new("touch")
+            .arg("-d")
+            .arg("1 hour ago")
+            .arg(tree.join("results/old.json"))
+            .status()
+            .unwrap();
         std::fs::write(job.join("cmd"), "x").unwrap();
-        let patterns = vec!["results/*.json".to_string(), "$CARGO_TARGET_DIR/criterion/**/estimates.json".to_string()];
+        let patterns = vec![
+            "results/*.json".to_string(),
+            "$CARGO_TARGET_DIR/criterion/**/estimates.json".to_string(),
+        ];
         let run = "echo new > results/new.json; echo e > $CARGO_TARGET_DIR/criterion/gemm/estimates.json; exit 4";
         let out = Command::new("bash")
             .arg("-c")
@@ -69,8 +89,15 @@ mod tests {
         assert_eq!(kept(&text), Some(2), "{text}");
         let kept_dir = job.join("artifacts");
         assert!(kept_dir.join("results/new.json").exists());
-        assert!(kept_dir.join("target/criterion/gemm/estimates.json").exists());
-        assert!(!kept_dir.join("results/old.json").exists(), "left by an earlier run");
+        assert!(
+            kept_dir
+                .join("target/criterion/gemm/estimates.json")
+                .exists()
+        );
+        assert!(
+            !kept_dir.join("results/old.json").exists(),
+            "left by an earlier run"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

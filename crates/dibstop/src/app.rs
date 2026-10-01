@@ -257,7 +257,11 @@ impl App {
     /// as down until the new feed reports, so a retry that fails again changes nothing on screen.
     pub fn retry_ended(&mut self, tx: &Sender<Msg>) {
         let now = Instant::now();
-        for (m, v) in self.views.iter_mut().filter(|(_, v)| v.retry_at.is_some_and(|t| t <= now)) {
+        for (m, v) in self
+            .views
+            .iter_mut()
+            .filter(|(_, v)| v.retry_at.is_some_and(|t| t <= now))
+        {
             self.feeds.retain(|f| f.machine != *m);
             v.retry_at = match Feed::spawn(tx.clone(), m.clone(), self.interval, self.generation) {
                 Ok(feed) => {
@@ -367,7 +371,9 @@ mod tests {
         let refused = "m@host: Permission denied (publickey,password).";
         assert_eq!(with(refused), Some("no key"));
         assert_eq!(
-            with(&format!("{refused}\n  It accepts your key /k/id, which needs its passphrase")),
+            with(&format!(
+                "{refused}\n  It accepts your key /k/id, which needs its passphrase"
+            )),
             Some("key locked")
         );
         assert_eq!(

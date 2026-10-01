@@ -10,15 +10,23 @@ use std::{
 };
 
 /// The machines grid's columns, in the order `dibs machines` reports them.
-const AREAS: [&str; 9] = ["paths", "login", "repos", "dibs", "rust", "cuda", "vulkan", "metal", "account"];
+const AREAS: [&str; 9] = [
+    "paths", "login", "repos", "dibs", "rust", "cuda", "vulkan", "metal", "account",
+];
 const GOOD: Color32 = Color32::from_rgb(90, 180, 100);
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("dibs machines").with_inner_size([1000.0, 560.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_title("dibs machines")
+            .with_inner_size([1000.0, 560.0]),
         ..Default::default()
     };
-    eframe::run_native("dibs-machines", options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))))
+    eframe::run_native(
+        "dibs-machines",
+        options,
+        Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),
+    )
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -73,7 +81,9 @@ impl App {
     }
 
     fn collect(&mut self) {
-        let Some(result) = self.probing.as_ref().and_then(|p| p.done.try_recv().ok()) else { return };
+        let Some(result) = self.probing.as_ref().and_then(|p| p.done.try_recv().ok()) else {
+            return;
+        };
         let only = self.probing.take().and_then(|p| p.only);
         match (result, only) {
             (Ok(fresh), Some(_)) => self.overview.merge(fresh),
@@ -92,13 +102,19 @@ impl App {
             ui.selectable_value(&mut self.tab, Tab::Machines, "Machines");
             ui.selectable_value(&mut self.tab, Tab::People, "People");
             ui.separator();
-            if ui.add_enabled(self.probing.is_none(), egui::Button::new("Probe all")).clicked() {
+            if ui
+                .add_enabled(self.probing.is_none(), egui::Button::new("Probe all"))
+                .clicked()
+            {
                 self.probe(ui.ctx(), None);
             }
             match (&self.probing, self.probed_at) {
                 (Some(p), _) => {
                     ui.spinner();
-                    ui.label(format!("probing {}", p.only.as_deref().unwrap_or("every machine")));
+                    ui.label(format!(
+                        "probing {}",
+                        p.only.as_deref().unwrap_or("every machine")
+                    ));
                 }
                 (None, Some(at)) => {
                     ui.weak(format!("probed {} ago", ago(at.elapsed())));
@@ -113,75 +129,100 @@ impl App {
     }
 
     fn machines(&mut self, ui: &mut Ui) {
-        egui::Grid::new("machines").striped(true).spacing([18.0, 8.0]).show(ui, |ui| {
-            ui.strong("machine");
-            ui.strong("set up by");
-            for area in AREAS {
-                ui.strong(area);
-            }
-            ui.end_row();
-            for r in &self.overview.machines {
-                let chosen = self.selected.as_deref() == Some(r.machine.as_str());
-                if ui.selectable_label(chosen, &r.machine).clicked() {
-                    self.selected = (!chosen).then(|| r.machine.clone());
-                }
-                ui.label(r.provisioned.describe());
+        egui::Grid::new("machines")
+            .striped(true)
+            .spacing([18.0, 8.0])
+            .show(ui, |ui| {
+                ui.strong("machine");
+                ui.strong("set up by");
                 for area in AREAS {
-                    area_cell(ui, r, area);
+                    ui.strong(area);
                 }
                 ui.end_row();
-            }
-        });
+                for r in &self.overview.machines {
+                    let chosen = self.selected.as_deref() == Some(r.machine.as_str());
+                    if ui.selectable_label(chosen, &r.machine).clicked() {
+                        self.selected = (!chosen).then(|| r.machine.clone());
+                    }
+                    ui.label(r.provisioned.describe());
+                    for area in AREAS {
+                        area_cell(ui, r, area);
+                    }
+                    ui.end_row();
+                }
+            });
     }
 
     fn people(&self, ui: &mut Ui) {
         let machines = &self.overview.machines;
-        egui::Grid::new("people").striped(true).spacing([18.0, 8.0]).show(ui, |ui| {
-            ui.strong("person");
-            for r in machines {
-                ui.strong(&r.machine);
-            }
-            ui.end_row();
-            for who in &self.overview.people {
-                ui.label(who);
+        egui::Grid::new("people")
+            .striped(true)
+            .spacing([18.0, 8.0])
+            .show(ui, |ui| {
+                ui.strong("person");
                 for r in machines {
-                    standing_cell(ui, r, who);
+                    ui.strong(&r.machine);
                 }
                 ui.end_row();
-            }
-            ui.label("keys of nobody");
-            for r in machines {
-                match r.access.strangers.len() {
-                    0 => ui.weak("none"),
-                    n => ui.colored_label(ui.visuals().error_fg_color, n.to_string()).on_hover_text(r.access.strangers.join("\n")),
-                };
-            }
-            ui.end_row();
-        });
+                for who in &self.overview.people {
+                    ui.label(who);
+                    for r in machines {
+                        standing_cell(ui, r, who);
+                    }
+                    ui.end_row();
+                }
+                ui.label("keys of nobody");
+                for r in machines {
+                    match r.access.strangers.len() {
+                        0 => ui.weak("none"),
+                        n => ui
+                            .colored_label(ui.visuals().error_fg_color, n.to_string())
+                            .on_hover_text(r.access.strangers.join("\n")),
+                    };
+                }
+                ui.end_row();
+            });
     }
 
     fn detail(&mut self, ui: &mut Ui, r: &Report) {
         ui.horizontal(|ui| {
             ui.heading(&r.machine);
-            if ui.add_enabled(self.probing.is_none(), egui::Button::new("Probe again")).clicked() {
+            if ui
+                .add_enabled(self.probing.is_none(), egui::Button::new("Probe again"))
+                .clicked()
+            {
                 self.probe(ui.ctx(), Some(r.machine.clone()));
             }
             if ui.button("Close").clicked() {
                 self.selected = None;
             }
         });
-        ui.label(format!("Set up by {}, probed {}.", r.provisioned.describe(), r.via.describe()));
+        ui.label(format!(
+            "Set up by {}, probed {}.",
+            r.provisioned.describe(),
+            r.via.describe()
+        ));
         if let Some(why) = &r.unprobed {
             ui.colored_label(ui.visuals().warn_fg_color, format!("Not probed: {why}"));
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
             section(ui, "Names");
             for p in &r.paths {
-                mark(ui, p.problem.is_none(), &p.name, p.problem.as_deref().unwrap_or("answers on port 22"));
+                mark(
+                    ui,
+                    p.problem.is_none(),
+                    &p.name,
+                    p.problem.as_deref().unwrap_or("answers on port 22"),
+                );
             }
             section(ui, "People");
             for (who, standing) in &r.access.people {
-                mark(ui, matches!(standing, Standing::Key | Standing::Tailnet), who, standing.describe());
+                mark(
+                    ui,
+                    matches!(standing, Standing::Key | Standing::Tailnet),
+                    who,
+                    standing.describe(),
+                );
             }
             for fp in &r.access.strangers {
                 mark(ui, false, "nobody listed", fp);
@@ -198,9 +239,16 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.collect();
         egui::Panel::top("bar").show(ui, |ui| self.bar(ui));
-        let chosen = self.selected.as_deref().and_then(|name| self.overview.machine(name)).cloned();
+        let chosen = self
+            .selected
+            .as_deref()
+            .and_then(|name| self.overview.machine(name))
+            .cloned();
         if let Some(r) = chosen {
-            egui::Panel::right("detail").resizable(true).default_size(420.0).show(ui, |ui| self.detail(ui, &r));
+            egui::Panel::right("detail")
+                .resizable(true)
+                .default_size(420.0)
+                .show(ui, |ui| self.detail(ui, &r));
         }
         egui::CentralPanel::default_margins().show(ui, |ui| match self.tab {
             Tab::Machines => self.machines(ui),
@@ -237,7 +285,11 @@ fn standing_cell(ui: &mut Ui, r: &Report, who: &str) {
 fn verdict(ui: &mut Ui, ok: bool) -> egui::Response {
     match ok {
         true => ui.label(RichText::new("ok").color(GOOD)),
-        false => ui.label(RichText::new("no").strong().color(ui.visuals().error_fg_color)),
+        false => ui.label(
+            RichText::new("no")
+                .strong()
+                .color(ui.visuals().error_fg_color),
+        ),
     }
 }
 
