@@ -111,7 +111,14 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 
 ## Tests
 
-    cargo test                     # everything local, about 15 s, safe while others are working
+    # dibs-core's unit tests and suite, and dibstop's: about 15 s, safe while others are working.
+    cargo test
+
+    # dibs-machines, which a plain cargo test leaves out for its GUI toolkit.
+    cargo test -p dibs-machines
+
+    # What a call costs, timed in the sandbox, to compare one version of dibs with another.
+    cargo test --test suite -- --ignored --test-threads=1 baselines
 
     # A real, idle machine: takes its lock and kills its own jobs there, so it is named twice.
     DIBS_LIVE_MACHINE=<machine> DIBS_LIVE_CONFIRM=<machine> cargo test --test live
