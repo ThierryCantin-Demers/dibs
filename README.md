@@ -102,8 +102,6 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 | `crates/dibs-core/` | the recipe layer behind `dibs build`, `test` and `bench`: recipes, labels, worktrees, provenance. |
 | `crates/dibstop/` | `dibstop`, a live view of who holds the machines. |
 | `crates/dibs-machines/` | `dibs-machines`, a desktop window on what each machine has against what it should. |
-| `dibs-report/` | builds a single-page handoff report from the sources themselves. |
-| `config/chips.toml` | what to assume about a chip when no runtime can probe it. |
 | `docs/guide.md` | the detailed guide. |
 | `dibs-design/` | the plans, the settled decisions and their measurements. |
 | `dibs-agent-rules.md` | the rules your agents follow. |

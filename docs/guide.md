@@ -68,6 +68,12 @@ copying it, so a `dibs --update` updates the rules too: a line `@~/<clone>/dibs-
 in `~/.claude/CLAUDE.md` imports it, and an `AGENTS.md`, which has no imports, can have it
 included when that file is generated.
 
+`dibstop [interval]` redraws every 10 seconds unless told otherwise, and `?` lists its keys. It
+keeps no state of its own: its feed is `dibs --watch --json`, one connection per machine, and
+every action it takes is a `dibs` call, so it cannot disagree with what `dibs status` would say,
+and `dibs` has to be on PATH for it. A redraw costs a read of the lock on the far side rather
+than a fresh login, which is what makes it safe to leave open beside a benchmark.
+
 ## Updating
 
     dibs --update
@@ -90,6 +96,13 @@ since recipes name your repos, and everyone clones it into place:
 
 `dibs --update` pulls it along with `dibs` itself. An edit is an ordinary commit and push, and a
 recipe still being tried out can sit uncommitted in the clone until it settles.
+
+A recipe declares a procedure and names no revisions: the invocation supplies the code, and the
+run record captures what it resolved to. Pinned revisions would bind the procedure to a moment
+and make it harder to rerun every year. The record carries the procedure itself beside its
+fingerprint, so a recipe that only ever lived in your local directory is still recoverable from
+it. What a recipe never is, is a spec handed over at the moment of the call: that is as opaque
+as the script it would replace.
 
 ## A recipe that takes values
 
@@ -487,8 +500,7 @@ rather than a hash: compatibility is directional, so it reports each pair each w
 
 `dibs --machines` says what is known, `dibs --forget <machine>` drops one, and `dibs status`
 shows every machine at once, which is how you find where a job is actually running once work is
-being placed. The inventory is not in this repo because it names your hosts; only
-`config/chips.toml`, which is a statement about silicon, ships here.
+being placed. The inventory is not in this repo because it names your hosts.
 
 `dibs --pick -v` shows where shared work would be placed, and why, without running anything.
 Machines are ranked on `/proc/loadavg` rather than on what dibs itself holds, because
@@ -630,12 +642,24 @@ installed to be usable, which is what makes adding one cheap. `lib/client/` hold
 that run on your side, and `lib/steps/` the order a call goes through them in: read the
 arguments, choose the machine, refuse what it cannot do, place it, then send it.
 
-`crates/dibs-core/` is everything above that, and runs on your side. It exists because an interface
+`crates/dibs-core/` is everything above that, and runs on your side, installed off PATH under
+`~/.local/libexec/dibs`: `dibs build`, `test`, `bench`, `list`, `runs`, `gaps`, `shell`, `raw`,
+`batch`, `with` and `machines` hand their arguments to it. It exists because an interface
 taking one arbitrary string invites four problems that were measured in the log it replaced.
 Labels were unstable, so estimates could not work. Two jobs in 179 redirected their output, so
 watching one almost never worked. Agents chose their own scratch paths, and one filled a shared
 quota. And the rule to build under the shared lock was prose rather than structure, so 17% of
 all exclusive time on the machine was spent compiling.
+
+`crates/dibstop/pty-run.py` runs `dibstop` under a pseudo-terminal and prints what is on the
+screen, which is how a change to it is checked. ratatui redraws by moving the cursor and
+rewriting only what changed, so its output is no series of frames to split apart, and applying
+the escapes to a grid is the honest way to read one:
+
+    python3 crates/dibstop/pty-run.py "dibstop 2" ROWS COLS SECONDS [keys]
+
+The keys are backslash-escaped and sent halfway through, so a wheel notch is `'\x1b[<65;10;5M'`
+and a digit is just `5`.
 
 ## Related
 
