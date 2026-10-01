@@ -95,9 +95,7 @@ fn diff(want: &str, got: &str) -> String {
     out
 }
 
-/// Text with what differs from run to run replaced by a name for it: the sandbox's paths, this
-/// computer's name and user, job and batch ids, and wall-clock times. A test adds rules for the
-/// pids and durations in what it reads, since only it knows which numbers are measured.
+/// Text with what differs from run to run named; a test adds rules for the numbers it measures.
 #[derive(Clone)]
 pub struct Normal {
     rules: Vec<(Regex, String)>,

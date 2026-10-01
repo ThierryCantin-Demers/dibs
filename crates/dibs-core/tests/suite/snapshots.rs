@@ -208,9 +208,7 @@ impl Rec<'_> {
     }
 }
 
-/// Live processes for records to name, since prune drops a record whose process has gone. They
-/// spend no CPU, so a status judges them idle the same way every time. In the order the lock
-/// directory lists their records, which is the order a status walks them in.
+/// Live idle processes for records to name, since prune drops a record whose process has gone.
 fn idlers(s: &mut Sandbox, gate: &Gate, count: usize) -> Vec<u32> {
     let mut pids: Vec<u32> = (0..count)
         .map(|_| {

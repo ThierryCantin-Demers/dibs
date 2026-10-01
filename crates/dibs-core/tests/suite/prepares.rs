@@ -19,9 +19,7 @@ fn short_hash(text: &str) -> String {
         .collect()
 }
 
-/// Each path under `root`, in the order of its normalised name, with what it is, and the contents
-/// of every file dibs writes itself. A worktree's own files are listed by name only; a job's
-/// directory is counted.
+/// Each path under `root` and what it is, with the contents of the files dibs writes itself.
 fn tree(root: &Path, n: &Normal) -> Vec<String> {
     let mut out = Vec::new();
     let mut entries: Vec<(String, PathBuf)> = fs::read_dir(root)

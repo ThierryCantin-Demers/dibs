@@ -7,9 +7,7 @@ use crate::recipes::{PARAMS, app, recipes};
 use crate::snapshot::*;
 use std::fs;
 
-/// Records each call in `$WIRE/<n>.argv`, its arguments NUL-separated, and the script it sent,
-/// decoded, in `$WIRE/<n>.payload`. With `WIRE_RUN=1` it then runs the far side here, on the
-/// same stream, as the machine would; otherwise it exits `WIRE_EXIT`, saying `WIRE_SAYS` first.
+/// `WIRE_RUN=1` runs the far side here on the same stream; otherwise it exits `WIRE_EXIT`.
 const RECORDING_SSH: &str = r#"#!/bin/bash
 n=$(( $(find "$WIRE" -name '*.argv' | wc -l) + 1 ))
 printf '%s\0' ssh "$@" > "$WIRE/$n.argv"

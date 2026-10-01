@@ -1,8 +1,4 @@
-//! What a call costs, measured in the sandbox so that a rewrite can be measured the same way:
-//! the bytes a call sends, the time until its job starts, and the CPU a status spends on a holder
-//! with thirty processes under it. Ignored by a plain `cargo test`, since it times things:
-//!
-//!     cargo test --test suite -- --ignored --test-threads=1 baselines
+//! What a call costs; `cargo test --test suite -- --ignored --test-threads=1 baselines` runs it.
 
 use crate::harness::*;
 use crate::wire::wired;
