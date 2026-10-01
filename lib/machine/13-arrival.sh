@@ -56,6 +56,17 @@ fi
 exec 5<&0
 WORKFILE=$DIR/work.$$
 MAIN=$$
+caller_gone() {   # why
+    local work="" p
+    for p in $(cat "$WORKFILE" 2>/dev/null); do kill -0 "$p" 2>/dev/null && work="$work $p"; done
+    CMD_ONE="$1: $CMD_ONE"
+    log_event caller-gone
+    if [ -n "$work" ]; then
+        reap $work
+    else
+        kill -TERM "$MAIN" 2>/dev/null   # still queueing: stop waiting for a lock nobody wants
+    fi
+}
 if [ "$NO_WATCH" != 1 ]; then
 # A caller that is alive says something at least once a lease, and one that sleeps closes nothing,
 # so silence counts as gone.
@@ -70,17 +81,19 @@ if [ "$NO_WATCH" != 1 ]; then
           exit 0
       fi
   done 2>/dev/null
-  work=""
-  for p in $(cat "$WORKFILE" 2>/dev/null); do kill -0 "$p" 2>/dev/null && work="$work $p"; done
-  if [ "$rc" -gt 128 ]; then CMD_ONE="caller silent for ${LEASE}s: $CMD_ONE"; else CMD_ONE="caller gone: $CMD_ONE"; fi
-  log_event caller-gone
-  if [ -n "$work" ]; then
-      reap $work
-  else
-      kill -TERM "$MAIN" 2>/dev/null   # still queueing: stop waiting for a lock nobody wants
-  fi
+  if [ "$rc" -gt 128 ]; then caller_gone "caller silent for ${LEASE}s"; else caller_gone "caller gone"; fi
 } &
 WATCHDOG=$!
 disown "$WATCHDOG" 2>/dev/null   # or bash announces "Terminated" when we tear it down
+elif [ "$MODE" = rsh ]; then
+# rsync owns stdin and reads none of it while a send prepares its tree, which can take minutes. The
+# ssh session this script was exec'd from ends with the caller. Holding none of its streams, or the
+# session would wait on this and this on the session.
+{ trap 'kill $! 2>/dev/null; exit 0' TERM
+  tail --pid="$PPID" -f /dev/null &
+  wait $! && caller_gone "caller gone"
+} </dev/null >/dev/null 2>&1 5<&- &
+WATCHDOG=$!
+disown "$WATCHDOG" 2>/dev/null
 fi
 

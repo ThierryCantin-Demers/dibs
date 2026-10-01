@@ -149,6 +149,22 @@ fn a_caller_that_goes_away_takes_the_whole_job_with_it() {
 }
 
 #[test]
+fn a_transfer_still_preparing_is_stopped_when_its_session_ends() {
+    // rsync owns the stream and reads none of it while a new tree is seeded, so nothing there sees
+    // the caller go. The session the far half runs under does.
+    let mut s = Sandbox::new();
+    let (up, never) = (s.gate("up"), s.gate("never"));
+    let cmd = format!("{}; {}", up.signal(), never.hold());
+    let script = s.machine_script(&[("MODE", "rsh"), ("LABEL", "send-gone"), ("CMD", &cmd), ("NO_WATCH", "1")]);
+    let (session, _channel) = s.spawn_fed(s.command("bash", ["-c", &format!("bash {script}; exit")]));
+    up.reached();
+    unsafe { libc::kill(session.pid as i32, libc::SIGKILL) };
+    s.wait(session);
+    s.log_line("caller-gone.*send-gone");
+    s.gone();
+}
+
+#[test]
 fn a_transfers_far_half_carries_its_stream_untouched() {
     // rsync's transport never reaches the machine from here, so the far half is run as rsync would.
     let s = Sandbox::new();
