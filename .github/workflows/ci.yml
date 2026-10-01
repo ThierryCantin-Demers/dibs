@@ -6,6 +6,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned, so a new release's lints cannot fail a push that changed nothing.
+  RUST: 1.99.0
 
 jobs:
   lint:
@@ -13,8 +15,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST }}
           components: rustfmt, clippy
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -30,7 +33,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST }}
       - name: The tools dibs runs on Linux
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y rsync psmisc
@@ -50,8 +55,24 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build -p dibs-machines
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST }}
+      - run: cargo test -p dibs-machines
+
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.89"
+      - run: cargo build --locked
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+      - run: cargo +1.95 build --locked -p dibs-machines
 
   hygiene:
     runs-on: ubuntu-latest
@@ -71,22 +92,32 @@ jobs:
             echo "::warning::PRIVATE_STRINGS is not set, so nothing was scanned"
             exit 0
           fi
-          patterns=$(printf '%s\n' "$PRIVATE_STRINGS" | grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$')
-          # The patterns are secret, so neither they nor a line they match ever reach the log.
-          while IFS= read -r pat; do echo "::add-mask::$pat"; done <<< "$patterns"
+          patterns=$(printf '%s\n' "$PRIVATE_STRINGS" | grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' || true)
+          if [ -z "$patterns" ]; then
+            echo "::error::PRIVATE_STRINGS holds only comments and blank lines, so there is nothing to scan for"
+            exit 1
+          fi
           from=${BASE:-$BEFORE}
           if [ -z "$from" ] || ! git cat-file -e "$from^{commit}" 2>/dev/null; then
             from=$(git merge-base "$HEAD" "origin/${{ github.event.repository.default_branch }}" 2>/dev/null || true)
           fi
           range=${from:+$from..}$HEAD
+          # The patterns are secret, so the log names neither them nor a path that holds one.
           bad=0
+          n=0
           while IFS= read -r pat; do
+            n=$((n + 1))
+            if git ls-tree -r --name-only "$HEAD" | grep -q -i -e "$pat"; then
+              echo "a file's path holds private pattern $n"; bad=1
+            fi
             for f in $(git grep -l -i -e "$pat" "$HEAD" -- . | sed "s|^$HEAD:||"); do
-              echo "a private name is in $f"; bad=1
+              printf '%s\n' "$f" | grep -q -i -e "$pat" && continue
+              echo "private pattern $n is in $f"; bad=1
             done
             for c in $(git rev-list "$range"); do
-              if git log -1 --format=%B "$c" | grep -q -i -e "$pat"; then
-                echo "a private name is in the message of $c"; bad=1
+              # GitHub names the branch's owner in this line, and a login is not ours to vet.
+              if git log -1 --format=%B "$c" | sed '1{/^Merge pull request #[0-9]* from /d;}' | grep -q -i -e "$pat"; then
+                echo "private pattern $n is in the message of $c"; bad=1
               fi
             done
           done <<< "$patterns"
