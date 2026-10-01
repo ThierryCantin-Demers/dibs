@@ -794,14 +794,16 @@ fn has(tool: &str) -> bool {
 /// A step that outlives its driver holds a lock nobody is waiting for. The kernel signals this
 /// shell when the driver dies, however it dies, but only this shell: a step running on this
 /// machine has a job runner below it holding the lock, so the signal is passed to the step's
-/// whole process group, which setsid made its own.
-const GROUP: &str = r#"trap 'trap - TERM; kill -TERM 0 2>/dev/null' TERM; bash -c "$1" & wait $!"#;
+/// whole process group, which setsid made its own. Each of the driver's threads sends its own
+/// death signal, so TERM is ignored until the group has it, and bash's warnings about the extra
+/// ones go nowhere: its stderr is a pipe to the dead driver, and a write there would end it.
+const GROUP: &str = r#"exec 3>&2 2>/dev/null; trap 'trap "" TERM; kill -TERM 0; trap - TERM; kill -TERM $$' TERM; bash -c "$1" 2>&3 3>&- & wait $!"#;
 
 /// GROUP where there is no parent-death signal, as on macOS: the step watches the driver itself.
 /// A tail that cannot watch exits non-zero, which leaves the step running rather than stopped.
-const WATCHED: &str = r#"trap 'trap - TERM; kill -TERM 0 2>/dev/null' TERM
-bash -c "$1" & s=$!
-tail --pid=$PPID -f /dev/null </dev/null >/dev/null 2>&1 & w=$!
+const WATCHED: &str = r#"exec 3>&2 2>/dev/null; trap 'trap "" TERM; kill -TERM 0; trap - TERM; kill -TERM $$' TERM
+bash -c "$1" 2>&3 3>&- & s=$!
+tail --pid=$PPID -f /dev/null </dev/null >/dev/null 2>&1 3>&- & w=$!
 wait -n -p ended $s $w; st=$?
 if [ "$ended" = "$w" ]; then
     [ "$st" = 0 ] && kill -TERM 0
