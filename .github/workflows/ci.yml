@@ -1,0 +1,93 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # A test target with test = false is left out of --all-targets.
+      - run: cargo clippy -p dibs-core --test live -- -D warnings
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The tools dibs runs on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rsync psmisc
+      - name: Homebrew's bash and GNU tools, ahead of macOS's own
+        if: runner.os == 'macOS'
+        run: |
+          brew install bash coreutils findutils gnu-sed grep gawk rsync flock
+          prefix=$(brew --prefix)
+          echo "$prefix/bin" >> "$GITHUB_PATH"
+          for tool in coreutils findutils gnu-sed grep gawk; do
+            echo "$prefix/opt/$tool/libexec/gnubin" >> "$GITHUB_PATH"
+          done
+      - run: cargo test
+
+  window:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p dibs-machines
+
+  hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No private name in the tree or in what this push says
+        env:
+          PRIVATE_STRINGS: ${{ secrets.PRIVATE_STRINGS }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$PRIVATE_STRINGS" ]; then
+            echo "::warning::PRIVATE_STRINGS is not set, so nothing was scanned"
+            exit 0
+          fi
+          patterns=$(printf '%s\n' "$PRIVATE_STRINGS" | grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$')
+          # The patterns are secret, so neither they nor a line they match ever reach the log.
+          while IFS= read -r pat; do echo "::add-mask::$pat"; done <<< "$patterns"
+          from=${BASE:-$BEFORE}
+          if [ -z "$from" ] || ! git cat-file -e "$from^{commit}" 2>/dev/null; then
+            from=$(git merge-base "$HEAD" "origin/${{ github.event.repository.default_branch }}" 2>/dev/null || true)
+          fi
+          range=${from:+$from..}$HEAD
+          bad=0
+          while IFS= read -r pat; do
+            for f in $(git grep -l -i -e "$pat" "$HEAD" -- . | sed "s|^$HEAD:||"); do
+              echo "a private name is in $f"; bad=1
+            done
+            for c in $(git rev-list "$range"); do
+              if git log -1 --format=%B "$c" | grep -q -i -e "$pat"; then
+                echo "a private name is in the message of $c"; bad=1
+              fi
+            done
+          done <<< "$patterns"
+          exit "$bad"

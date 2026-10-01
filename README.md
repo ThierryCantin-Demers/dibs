@@ -107,6 +107,7 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 | `dibs-agent-rules.md` | the rules your agents follow. |
 | `crates/dibs-core/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
 | `crates/dibs-core/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |
+| `.github/workflows/ci.yml` | formatting, clippy, the tests on Linux and macOS, the window's build, and a scan for private names whose patterns live in the `PRIVATE_STRINGS` secret. |
 
 ## Tests
 
