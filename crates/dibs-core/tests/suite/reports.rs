@@ -83,18 +83,18 @@ fn a_wait_reads_what_landed_before_it_listened_then_wakes_on_the_next_one() {
     fake_gh(&s, "PRIVATE");
     s.write(
         "ghd/issues.json",
-        r#"[{"number":5,"title":"the flag is missing","url":"https://github.com/o/r/issues/5","state":"OPEN","author":{"login":"sam"},"comments":[]}]"#,
+        r#"[{"number":5,"title":"the flag is missing","url":"https://github.com/o/r/issues/5","state":"OPEN","author":{"login":"someone"},"comments":[]}]"#,
     );
     let out = s.dibs(["--friction", "--wait"]).env("DIBS_REPORTS", "o/r").run();
-    assert_eq!((out.code, out.stdout.lines_with("report #5 from sam: the flag is missing")), (0, 1), "{}", out.all());
+    assert_eq!((out.code, out.stdout.lines_with("report #5 from someone: the flag is missing")), (0, 1), "{}", out.all());
     assert_eq!(gh_log(&s).lines_with("webhook forward"), 0, "a backlog needs no listener");
 
     s.write(
         "ghd/event.json",
-        r#"{"action":"created","issue":{"number":5,"labels":[{"name":"dibs-friction"}]},"comment":{"html_url":"https://github.com/o/r/issues/5#issuecomment-1","user":{"login":"sam"},"body":"works now"}}"#,
+        r#"{"action":"created","issue":{"number":5,"labels":[{"name":"dibs-friction"}]},"comment":{"html_url":"https://github.com/o/r/issues/5#issuecomment-1","user":{"login":"someone"},"body":"works now"}}"#,
     );
     let out = s.dibs(["--friction", "--wait"]).env("DIBS_REPORTS", "o/r").run();
-    assert_eq!((out.code, out.stdout.lines_with("comment on #5 from sam: works now")), (0, 1), "{}", out.all());
+    assert_eq!((out.code, out.stdout.lines_with("comment on #5 from someone: works now")), (0, 1), "{}", out.all());
 }
 
 #[test]
@@ -116,10 +116,10 @@ fn a_forwarder_that_stops_is_started_again_rather_than_listened_past() {
     s.write("ghd/stop-once", "");
     s.write(
         "ghd/event.json",
-        r#"{"action":"created","issue":{"number":5,"labels":[{"name":"dibs-friction"}]},"comment":{"html_url":"https://github.com/o/r/issues/5#issuecomment-2","user":{"login":"sam"},"body":"again"}}"#,
+        r#"{"action":"created","issue":{"number":5,"labels":[{"name":"dibs-friction"}]},"comment":{"html_url":"https://github.com/o/r/issues/5#issuecomment-2","user":{"login":"someone"},"body":"again"}}"#,
     );
     let out = s.dibs(["--friction", "--wait"]).env("DIBS_REPORTS", "o/r").run();
-    assert_eq!((out.code, out.stdout.lines_with("comment on #5 from sam: again")), (0, 1), "{}", out.all());
+    assert_eq!((out.code, out.stdout.lines_with("comment on #5 from someone: again")), (0, 1), "{}", out.all());
     assert_eq!(out.stderr.lines_with("started again. It said: error: the websocket closed"), 1, "{}", out.all());
 }
 

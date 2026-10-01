@@ -648,8 +648,8 @@ mod tests {
                 .into_iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
-            pins: [("colony".to_string(), "1.98.1".to_string()), ("old".to_string(), "1.80.0".to_string())].into_iter().collect(),
-            recipe_repos: vec!["burn".into(), "cubecl".into(), "colony".into()],
+            pins: [("app".to_string(), "1.98.1".to_string()), ("old".to_string(), "1.80.0".to_string())].into_iter().collect(),
+            recipe_repos: vec!["burn".into(), "cubecl".into(), "app".into()],
         }
     }
 
@@ -702,7 +702,7 @@ mod tests {
     fn toolchains_come_from_the_pins_of_the_repos_a_machine_needs() {
         let o = Observed::parse(SEEN);
         let mut m = machine(vec![Profile::Rust]);
-        assert!(m.check(&o, &cx()).iter().any(|f| f.area == Area::Rust && f.ok), "stable and colony's pin are there");
+        assert!(m.check(&o, &cx()).iter().any(|f| f.area == Area::Rust && f.ok), "stable and app's pin are there");
         m.repos = Some(vec!["old".into()]);
         assert_eq!(finding(&m.check(&o, &cx()), Area::Rust).detail, "no 1.80.0 toolchain");
     }
@@ -710,7 +710,7 @@ mod tests {
     #[test]
     fn a_missing_clone_and_privileges_are_found() {
         let fs = machine(vec![Profile::Unprivileged, Profile::Dibs, Profile::Cuda]).check(&Observed::parse(SEEN), &cx());
-        assert_eq!(finding(&fs, Area::Repos).detail, "no clone of colony");
+        assert_eq!(finding(&fs, Area::Repos).detail, "no clone of app");
         assert_eq!(finding(&fs, Area::Account).detail, "sudo without a password, in sudo");
         assert!(finding(&fs, Area::Dibs).ok && finding(&fs, Area::Cuda).ok);
     }

@@ -371,11 +371,11 @@ mod tests {
         let body = |u: &str, text: &str| serde_json::json!({
             "action": "created",
             "issue": { "number": 3, "labels": [{ "name": LABEL }] },
-            "comment": { "html_url": u, "user": { "login": "sam" }, "body": text },
+            "comment": { "html_url": u, "user": { "login": "someone" }, "body": text },
         });
         let url = "https://github.com/o/r/issues/3#issuecomment-9";
         let mut woken = keys();
-        assert_eq!(on_event("issue_comment", &body(url, "still broken\nmore"), &mut woken), vec![format!("comment on #3 from sam: still broken\n  {url}")]);
+        assert_eq!(on_event("issue_comment", &body(url, "still broken\nmore"), &mut woken), vec![format!("comment on #3 from someone: still broken\n  {url}")]);
         assert!(on_event("issue_comment", &body(url, "still broken"), &mut woken).is_empty(), "once");
         let answer = format!("fixed in abc\n\n{ANSWER}");
         assert!(on_event("issue_comment", &body("https://github.com/o/r/issues/3#issuecomment-10", &answer), &mut woken).is_empty(), "not its own");
@@ -385,7 +385,7 @@ mod tests {
     fn only_a_labelled_issue_opening_is_a_report() {
         let opened = |labels: Value, action: &str| serde_json::json!({
             "action": action,
-            "issue": { "number": 5, "labels": labels, "title": "t", "html_url": "u", "user": { "login": "sam" } },
+            "issue": { "number": 5, "labels": labels, "title": "t", "html_url": "u", "user": { "login": "someone" } },
         });
         let mut woken = keys();
         assert!(on_event("issues", &opened(serde_json::json!([]), "opened"), &mut woken).is_empty(), "unlabelled");

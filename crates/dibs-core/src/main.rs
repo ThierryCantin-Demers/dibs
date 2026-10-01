@@ -2273,14 +2273,14 @@ mod tests {
     #[test]
     fn affinity_is_one_machine_per_repo_and_expires_with_the_cache() {
         let day = 86400;
-        let text = affinity_update("cubek\tmultigpu\n", "cubek", "desktop", 10 * day);
-        let text = affinity_update(&text, "burn", "multigpu", 12 * day);
+        let text = affinity_update("cubek\tbox-a\n", "cubek", "box-b", 10 * day);
+        let text = affinity_update(&text, "burn", "box-a", 12 * day);
         assert_eq!(text.lines().count(), 2, "the untimed line is dropped: {text}");
-        assert_eq!(affinity_lookup(&text, "cubek", 14 * day).as_deref(), Some("desktop"));
+        assert_eq!(affinity_lookup(&text, "cubek", 14 * day).as_deref(), Some("box-b"));
         assert_eq!(affinity_lookup(&text, "cubek", 15 * day), None);
-        assert_eq!(affinity_lookup(&text, "burn", 15 * day).as_deref(), Some("multigpu"));
-        let text = affinity_update(&text, "burn", "desktop", 16 * day);
-        assert_eq!(text, format!("burn\tdesktop\t{}\n", 16 * day));
+        assert_eq!(affinity_lookup(&text, "burn", 15 * day).as_deref(), Some("box-a"));
+        let text = affinity_update(&text, "burn", "box-b", 16 * day);
+        assert_eq!(text, format!("burn\tbox-b\t{}\n", 16 * day));
     }
 
     fn swept(words: &[&str]) -> Args {
@@ -2549,7 +2549,7 @@ mod tests {
             params: BTreeMap::new(),
             backend: "dibs",
             device: Some("gpu:rtx2060".into()),
-            machine: Some("multigpu".into()),
+            machine: Some("box-a".into()),
             revisions: vec![],
             seeded: None,
             refs: None,
@@ -2564,7 +2564,7 @@ mod tests {
         };
         let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).expect("valid json");
         assert_eq!(v["device"], "gpu:rtx2060");
-        assert_eq!(v["machine"], "multigpu");
+        assert_eq!(v["machine"], "box-a");
     }
 
     #[test]

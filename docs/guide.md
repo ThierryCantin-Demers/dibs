@@ -420,7 +420,7 @@ service and the command read it as `$DIBS_PORT_<NAME>`, a `--hold` command also 
 `$DIBS_SERVICE_<NAME>` as `host:port`, and `--ready tcp:<name>` means that port.
 
 ```
-dibs --on multigpu --hold --port api \
+dibs --on box-a --hold --port api \
     --with cuda='target/debug/gpu-server --listen 0.0.0.0:$DIBS_PORT_API' --ready tcp:api \
     -- 'curl http://$DIBS_SERVICE_API/gpus'
 ```
@@ -443,12 +443,12 @@ with no network between the two to pay for.
 
 ```toml
 [service.gpu-servers]
-build = "cargo build -p colony-gpu-server --features cuda,vulkan"
+build = "cargo build -p app-gpu-server --features cuda,vulkan"
 ports = ["cuda", "vulkan"]
 
 [[service.gpu-servers.serve]]
 name = "cuda"
-run = "target/debug/colony-gpu-server --backend cuda --listen 0.0.0.0:$DIBS_PORT_CUDA"
+run = "target/debug/app-gpu-server --backend cuda --listen 0.0.0.0:$DIBS_PORT_CUDA"
 ready = "tcp:cuda"
 ```
 
