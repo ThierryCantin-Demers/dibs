@@ -1,0 +1,22 @@
+== dibs --log  (with nothing logged)
+-> exit 0
+1| Nothing logged yet (<root>/log).
+
+== dibs --log 20
+-> exit 0
+1| WHEN                EVENT     MODE    LABEL          QUEUED    RAN  EXIT  JOB                    AGENT                  COMMAND
+1| 2026-09-01T10:00:00 arrived   shared  build               -      -     -  pid 1001               an agent               cargo build
+1| 2026-09-01T10:00:09 finished  shared  build               0      9     0  pid 1001               an agent               cargo build
+1| 2026-09-02T11:00:00 arrived   bench   gemm                -      -     -  pid 1002               an agent on gpu:card   cargo bench  [batch 20260902-110000-7 measure]
+1| 2026-09-02T11:03:00 finished  bench   gemm                5    175     0  pid 1002               an agent on gpu:card   cargo bench  [batch 20260902-110000-7 measure]
+1| 2026-09-03T12:00:00 arrived   shared  a-very-long-la      -      -     -  20260903120000-1003    an agent whose name is an exceedingly long command line that goes on well
+1| 2026-09-03T12:00:01 bypassed  shared  a-very-long-la      -      -     -  20260903120000-1003    an agent whose name is an exceedingly long command line that goes on well
+1| 2026-09-03T12:00:02 killed    kill    1003                -      -     -  pid 1004               someone else           killed shared x (pid 1003) after 1s: sleep
+1| 2026-09-03T12:00:02 aborted   shared  a-very-long-la      -      -     -  20260903120000-1003    an agent whose name is an exceedingly long command line that goes on well
+1| 2026-09-04T13:00:00 peek      peek    peek                -      0     0  pid 1005               ?                      nvidia-smi
+
+== dibs --log 2
+-> exit 0
+1| WHEN                EVENT     MODE    LABEL          QUEUED    RAN  EXIT  JOB                    AGENT                  COMMAND
+1| 2026-09-03T12:00:02 aborted   shared  a-very-long-la      -      -     -  20260903120000-1003    an agent whose name is an exceedingly long command line that goes on well
+1| 2026-09-04T13:00:00 peek      peek    peek                -      0     0  pid 1005               ?                      nvidia-smi

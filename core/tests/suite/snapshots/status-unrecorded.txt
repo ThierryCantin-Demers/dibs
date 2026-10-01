@@ -1,0 +1,33 @@
+== dibs status
+-> exit 0
+1| dibs: the lock is taken and nothing here reports holding it.
+1|   If fuser is missing, install psmisc; without it an orphan cannot be named.
+
+== dibs status --json
+{
+  "t": <n>,
+  "state": "busy",
+  "cores": <n>,
+  "load": <n>,
+  "caches": [],
+  "clones": [],
+  "holders": [],
+  "queue": []
+}
+
+== dibs --bench --wait 1 --label behind-it true
+-> exit 75
+2| dibs: queued and has not started, behind a job starting up. dibs status shows the queue.
+2| dibs: still busy after 1s, gave up.
+2| dibs: the lock is taken and nothing here reports holding it.
+2|   If fuser is missing, install psmisc; without it an orphan cannot be named.
+2|   queued 1 of 1: bench  behind-it  waiting <dur>  pid <pid>   [starts as soon as the lock frees]
+2|     true
+2|     from session suite
+
+== dibs status, asked by a client that has just taken the lock and not yet recorded it
+-> exit 0
+1| dibs: busy, a client has just taken the lock and is recording it.
+1|   queued 1 of 1: shared  inq  waiting <dur>  pid <pid>   [starts as soon as the lock frees]
+1|     true
+1|     from someone

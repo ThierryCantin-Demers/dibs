@@ -1,4 +1,5 @@
 use crate::harness::*;
+use crate::snapshot::*;
 use std::fs;
 
 /// A clone of dibs with a stub installer, and a clone of recipes, each one commit behind its origin.
@@ -120,4 +121,34 @@ fn a_session_is_told_once_when_dibs_changed_under_it() {
     commit(&s, "update/origin", "five");
     as_session("v1", &["--update"]);
     assert_eq!(as_session("v1", &["--status"]).lines_with("dibs changed"), 0, "an update it ran itself is not reported again");
+}
+
+#[test]
+fn what_an_update_and_the_change_notice_print() {
+    let s = Sandbox::new();
+    clones(&s);
+    let n = Normal::of(&s).rule(r"\b[0-9a-f]{7,12}\b", "<sha>");
+    let clone = s.p("update/clone/bin/dibs");
+    let as_session = |args: &[&str]| {
+        s.command(&clone, args)
+            .env_remove("CLAUDE_CODE_HOST_SESSION_ID")
+            .env("CLAUDE_CODE_SESSION_ID", "notice")
+            .env("DIBS_SEEN", s.p("seen-n"))
+            .env("DIBS_CORE", s.p("fakecore"))
+            .env("DIBS_RECIPES", s.p("update/nowhere"))
+            .run()
+    };
+    s.write_exec("fakecore", "#!/bin/sh\necho \"core $*\"\n");
+    let mut t = Transcript::default();
+    as_session(&["--status"]);
+    t.section("dibs --update  (one commit behind, and the recipes one behind theirs)", &n.output(&update(&s, "update/recipes")));
+    t.section("dibs --status  (in a session that last ran it before that update)", &n.output(&as_session(&["--status"])));
+    for i in 0..12 {
+        commit(&s, "update/origin", &format!("more-{i:02}"));
+    }
+    s.git("update/clone", &["pull", "-q", "--ff-only"]);
+    t.section("dibs --status  (after twelve more commits arrived)", &n.output(&as_session(&["--status"])));
+    t.section("dibs --update  (with nothing to pull)", &n.output(&update(&s, "update/recipes")));
+    t.section("dibs --update  (with recipes that are not a clone)", &n.output(&update(&s, "update")));
+    snapshot("update", t.text());
 }

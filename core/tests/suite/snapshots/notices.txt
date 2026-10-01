@@ -1,0 +1,61 @@
+== dibs --on box-a --bench true  (two GPUs, and none named)
+-> exit 69
+2| dibs: box-a has 2 GPUs and this benchmark named none of them.
+2|   It will run on whichever the runtime picks, which is not something you
+2|   can repeat on purpose, and the number will look like any other.
+2|   Name one with --device. The aliases are in:  dibs --machines -v
+2| ssh: Could not resolve hostname box-a: Name or service not known
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   The name 'box-a' does not resolve from here. A .local name needs mDNS
+2|   and the same network; anything else needs DNS.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on here --bench --label moved true
+-> exit 2
+2| dibs: 'moved' has been measured on another card of here.
+2|   before:  gpu:card, by an agent
+2|   now:     none
+2|   Those are two histories, not one series, and a number from one cannot be
+2|   compared against a number from the other. Use the card it was measured on, or
+2|   start its series on this machine again deliberately:  --new-series
+
+== dibs --on here --bench --label started-elsewhere true
+-> exit 0
+2| dibs: first run of 'started-elsewhere' on here; its series is on box-a (5 runs).
+2| job <job>  bench  started-elsewhere  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+
+== dibs --on here --bench --new-series --label moved 'exit 1'
+-> exit 1
+2| job <job>  bench  moved  queued <s>  ran <s>  exit 1  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| dibs: the command failed, so 'moved' did not start its series here again and is still filed as it was.
+2|   --new-series takes effect only when the run it is passed with succeeds. Pass it
+2|   again with a run that works, once, rather than on every run from here on.
+
+== dibs --on box-a --sync -a ./x ':~/y'
+-> exit 69
+2| dibs: --sync is preserving mtimes into the machine. A build there may then compile nothing:
+2|   for a source tree use --checksum --no-times instead of -a.
+2| dibs: syncing with dibs@box-a (box-a)
+2| ssh: Could not resolve hostname box-a: Name or service not known
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   The name 'box-a' does not resolve from here. A .local name needs mDNS
+2|   and the same network; anything else needs DNS.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --sync -a ':~/y' ./x
+-> exit 69
+2| dibs: syncing with dibs@box-a (box-a)
+2| ssh: Could not resolve hostname box-a: Name or service not known
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   The name 'box-a' does not resolve from here. A .local name needs mDNS
+2|   and the same network; anything else needs DNS.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --hold --label nest '<a dibs call that takes the lock>'
+-> exit 2
+2| dibs: holding the shared lock on <host>, running here: <dibs> --label inner true
+2| dibs: this runs inside a --hold of the lock on <host>, so it would queue behind that hold and never start.
+2|   Take the lock once: run this outside the --hold, or peek if it is free to run.
+2| job <job>  shared  nest  queued <s>  ran <s>  exit 2  by=command

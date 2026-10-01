@@ -1,4 +1,5 @@
 use crate::harness::*;
+use crate::snapshot::*;
 
 /// A gh that answers from files in `ghd/` and writes down every call. Its webhook forward posts
 /// `ghd/event.json` to dibs's listener once it has said it is forwarding, then holds until killed.
@@ -120,4 +121,38 @@ fn a_forwarder_that_stops_is_started_again_rather_than_listened_past() {
     let out = s.dibs(["--friction", "--wait"]).env("DIBS_REPORTS", "o/r").run();
     assert_eq!((out.code, out.stdout.lines_with("comment on #5 from sam: again")), (0, 1), "{}", out.all());
     assert_eq!(out.stderr.lines_with("started again. It said: error: the websocket closed"), 1, "{}", out.all());
+}
+
+#[test]
+fn what_reporting_prints() {
+    let s = Sandbox::new();
+    fake_gh(&s, "PRIVATE");
+    let n = Normal::of(&s).clocked();
+    let mut t = Transcript::default();
+    let reported = |args: &[&str], reports: Option<&str>| {
+        let mut call = s.dibs(args);
+        if let Some(r) = reports {
+            call = call.env("DIBS_REPORTS", r);
+        }
+        call.run()
+    };
+    t.section("dibs --friction 'the flag is missing'", &n.output(&reported(&["--friction", "the flag is missing"], None)));
+    t.section("DIBS_REPORTS=o/r dibs --friction '--device is ignored'", &n.output(&reported(&["--friction", "--device is ignored"], Some("o/r"))));
+    s.write("ghd/visibility", "PUBLIC\n");
+    t.section("DIBS_REPORTS=o/r dibs --friction another  (with o/r public)", &n.output(&reported(&["--friction", "another"], Some("o/r"))));
+    s.write("ghd/visibility", "PRIVATE\n");
+    s.write(
+        "ghd/issues.json",
+        r#"[{"number":7,"title":"--device is ignored","url":"https://github.com/o/r/issues/7","state":"OPEN","author":{"login":"someone"},"comments":[{"url":"https://github.com/o/r/issues/7#issuecomment-3","author":{"login":"a-maintainer"},"body":"fixed in abc, run dibs --update\nmore"}]}]"#,
+    );
+    t.section("DIBS_REPORTS=o/r dibs --label l true  (once the report is answered)", &n.output(&reported(&["--label", "l", "true"], Some("o/r"))));
+    t.section("DIBS_REPORTS=o/r dibs --friction --wait  (with a report waiting)", &n.output(&reported(&["--friction", "--wait"], Some("o/r"))));
+    s.write(
+        "ghd/event.json",
+        r#"{"action":"created","issue":{"number":7,"labels":[{"name":"dibs-friction"}]},"comment":{"html_url":"https://github.com/o/r/issues/7#issuecomment-4","user":{"login":"someone"},"body":"works now"}}"#,
+    );
+    t.section("DIBS_REPORTS=o/r dibs --friction --wait  (until a comment lands)", &n.output(&reported(&["--friction", "--wait"], Some("o/r"))));
+    t.section("DIBS_REPORTS=o/r dibs --friction --reply 7 'fixed in abc' --close", &n.output(&reported(&["--friction", "--reply", "7", "fixed in abc", "--close"], Some("o/r"))));
+    t.section("dibs --friction --wait  (with no DIBS_REPORTS)", &n.output(&reported(&["--friction", "--wait"], None)));
+    snapshot("reports", t.text());
 }

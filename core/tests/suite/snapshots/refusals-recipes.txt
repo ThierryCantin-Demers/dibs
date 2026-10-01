@@ -1,0 +1,240 @@
+exit  call
+2     dibs build
+2     dibs build <root>/app@local
+2     dibs build <root>/app@local nope
+2     dibs build <root>/app@local p --backend metal
+2     dibs build <root>/app@local p --backends cuda
+2     dibs build <root>/app@local need
+2     dibs build <root>/app@local rel
+2     dibs bench <root>/app@local hot
+2     dibs build <root>/app@local p --reps 0
+2     dibs build <root>/app@local p --sweep samples
+2     dibs build <root>/app@local p --sweep backend=cuda,metal
+2     dibs build <root>/app@local p --device nope
+2     dibs build <root>/app@local p --reason
+2     dibs build <root>/app@local p -x
+2     dibs build <root>/app@local p --
+2     dibs build <root>/app@local p --there
+2     dibs bench <root>/app@main...local hot
+2     dibs bench <root>/app@local,local hot
+3     dibs bench <root>/app@no-such-ref stolen
+78    dibs bench <root>/app@main stolen
+2     dibs shell <root>/app@local -- true
+2     dibs shell <root>/app@local --reason r --label mine -- true
+2     dibs shell <root>/app@local --reason r --bench -- 'cargo bench --bench gemm'
+2     dibs shell <root>/loose --reason r -- true
+2     dibs raw -- true
+2     dibs raw --reason r
+2     dibs with <root>/app@local servers
+2     dibs with <root>/app@local nope -- true
+2     dibs with <root>/app@main..local servers -- true
+2     DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs bench <root>/app@local stolen
+2     dibs batch <root>/no-such-batch
+2     dibs batch - <<< 'cargo build'
+2     dibs batch - <<< '[a] dibs true\n[a] dibs true'
+2     dibs batch - <<< '[a after=b] dibs true'
+2     dibs batch - <<< '[a after=b] dibs true\n[b after=a] dibs true'
+2     dibs batch - <<< '[a bogus=1] dibs true'
+2     dibs batch - <<< '[a dibs true'
+2     dibs batch - <<< 'dibs true; dibs false'
+2     dibs batch - <<< 'dibs true \'
+2     dibs batch - <<< '# only a comment'
+2     DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs batch - <<< '[b] dibs --bench --label nameless true'
+
+== dibs build
+-> exit 2
+2| dibs: needs a repo
+
+== dibs build <root>/app@local
+-> exit 2
+2| dibs: needs a recipe name; <root>/app has: need, p, rel
+
+== dibs build <root>/app@local nope
+-> exit 2
+2| dibs: no build recipe called 'nope'; <root>/app has: need, p, rel
+
+== dibs build <root>/app@local p --backend metal
+-> exit 2
+2| dibs: p: --backend metal is not one of: cuda, vulkan
+
+== dibs build <root>/app@local p --backends cuda
+-> exit 2
+2| dibs: p: no parameter 'backends'; this recipe takes: backend, samples
+
+== dibs build <root>/app@local need
+-> exit 2
+2| dibs: need: --size has no default, so it has to be given
+
+== dibs build <root>/app@local rel
+-> exit 2
+2| dibs: recipe 'rel' names target/release, but the build writes to $CARGO_TARGET_DIR, which dibs
+2|              puts outside the tree. Use $CARGO_TARGET_DIR/... instead.
+
+== dibs bench <root>/app@local hot
+-> exit 2
+2| dibs: recipe 'hot' compiles under the exclusive lock, which holds the whole machine
+2|              for work that tolerates neighbours. Split it in two:
+2|                [[step]] lock = "shared"     run = "cargo bench --bench gemm --no-run"
+2|                [[step]] lock = "exclusive"  run = "cargo bench --bench gemm"
+
+== dibs build <root>/app@local p --reps 0
+-> exit 2
+2| dibs: --reps needs a count
+
+== dibs build <root>/app@local p --sweep samples
+-> exit 2
+2| dibs: --sweep takes <name>=<value,value,...>, not samples
+
+== dibs build <root>/app@local p --sweep backend=cuda,metal
+-> exit 2
+2| dibs: p: --backend metal is not one of: cuda, vulkan
+
+== dibs build <root>/app@local p --device nope
+-> exit 2
+2| dibs: --device names a card from a machine's entry, and this call has none.
+2|   Record one with:  dibs --check <host> --write
+
+== dibs build <root>/app@local p --reason
+-> exit 2
+2| dibs: --reason needs a sentence
+
+== dibs build <root>/app@local p -x
+-> exit 2
+2| dibs: unknown option: -x
+
+== dibs build <root>/app@local p --
+-> exit 2
+2| dibs: -- needs a command after it
+
+== dibs build <root>/app@local p --there
+-> exit 2
+2| dibs: --there belongs to with: it runs the command on the machine beside the repo's servers
+
+== dibs bench <root>/app@main...local hot
+-> exit 2
+2| dibs: main...local: A...B is not a comparison dibs makes. A..B measures B against where it left A
+
+== dibs bench <root>/app@local,local hot
+-> exit 2
+2| dibs: local,local: local is named twice
+
+== dibs bench <root>/app@no-such-ref stolen
+-> exit 3
+1| dibs: no such ref in app: no-such-ref
+2| dibs: preparing app@no-such-ref
+2| dibs: step 1/3 [Shared], with the setup ahead of it
+2| job <job>  shared  app_bench_stolen.1  queued <s>  ran <s>  exit 3  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2| dibs: could not prepare app@no-such-ref (exit 3)
+
+== dibs bench <root>/app@main stolen
+-> exit 78
+1| dibs: this tree did not make the last build in <root>/scratch/target/app, so cargo rebuilds its crates
+1|     Finished `release` profile [optimized] target(s) in 0.01s
+1| dibs: refused to measure: another tree built into <root>/scratch/target/app after this one did, so the binary there may be that tree's.
+1|   Run it again, which rebuilds this tree first, or pass --anyway to measure what is there.
+2| dibs: preparing app@main
+2| dibs: step 1/3 [Shared], with the setup ahead of it
+2| dibs: <root>/scratch/ws/app/<sha>
+2| job <job>  shared  app_bench_stolen.1  queued <s>  ran <s>  exit 0  by=command  built=nothing
+2|   log <host>:<root>/scratch/jobs/<job>/log  (6 lines)  dibs --on <host> --out <job>
+2|   built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary.
+2| dibs: step 2/3 [Shared]
+2| job <job>  shared  app_bench_stolen.2  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| dibs: step 3/3 [Exclusive]
+2| job <job>  bench  app_bench_stolen  queued <s>  ran <s>  exit 78  by=dibs
+2|   log <host>:<root>/scratch/jobs/<job>/log  (3 lines)  dibs --on <host> --out <job>
+
+== dibs shell <root>/app@local -- true
+-> exit 2
+2| dibs: shell needs --reason. Most of what gets run is neither a build nor a benchmark,
+2|              and knowing what those were is how the next recipe gets written.
+
+== dibs shell <root>/app@local --reason r --label mine -- true
+-> exit 2
+2| dibs: shell takes no --label: its durations are filed under app/shell, derived so that every run of one piece of
+2|   work lands in one history. A one-off that keeps coming back is a recipe to write, and its --reason is what
+2|   dibs gaps counts to say so.
+
+== dibs shell <root>/app@local --reason r --bench -- 'cargo bench --bench gemm'
+-> exit 2
+2| dibs: a command that compiles cannot take the exclusive lock, which holds the whole
+2|              machine for work that tolerates neighbours. Build it first without --bench:
+2|                dibs shell <repo>@<ref> --reason <why> -- 'cargo bench --bench gemm --no-run'
+2|              then measure with --bench.
+
+== dibs shell <root>/loose --reason r -- true
+-> exit 2
+2| dibs: '<root>/loose' is in no git checkout and has no .dibs.toml, so there is no tree to send
+
+== dibs raw -- true
+-> exit 2
+2| dibs: raw needs --reason. It is recorded, and a reason that keeps recurring is what
+2|              specifies the next recipe. If this fits a recipe, use the recipe instead.
+
+== dibs raw --reason r
+-> exit 2
+2| dibs: raw needs -- <command>
+
+== dibs with <root>/app@local servers
+-> exit 2
+2| dibs: with runs a command here against the repo's servers: dibs with <repo>[@<ref>] <service> -- <command>
+
+== dibs with <root>/app@local nope -- true
+-> exit 2
+2| dibs: no service 'nope' for app. It has: servers
+
+== dibs with <root>/app@main..local servers -- true
+-> exit 2
+2| dibs: with runs against one tree, so it takes one ref
+
+== DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs bench <root>/app@local stolen
+-> exit 2
+2| dibs: stolen measures, and a measurement names its machine: its series belongs to the machine it
+2|   ran on. Give --on <machine>, or export DIBS_ON; dibs --machines lists them.
+
+== dibs batch <root>/no-such-batch
+-> exit 2
+2| dibs: <root>/no-such-batch: No such file or directory (os error 2)
+
+== dibs batch - <<< 'cargo build'
+-> exit 2
+2| dibs: line 1: 'cargo build' is not a dibs command. A batch is a list of dibs calls, one per line
+
+== dibs batch - <<< '[a] dibs true\n[a] dibs true'
+-> exit 2
+2| dibs: line 2: a second step is named 'a'
+
+== dibs batch - <<< '[a after=b] dibs true'
+-> exit 2
+2| dibs: step 'a' waits for 'b', and no step has that name
+
+== dibs batch - <<< '[a after=b] dibs true\n[b after=a] dibs true'
+-> exit 2
+2| dibs: step 'a' waits on itself through after=
+
+== dibs batch - <<< '[a bogus=1] dibs true'
+-> exit 2
+2| dibs: line 1: unknown attribute 'bogus=1': a step takes a name, after=a,b and cont
+
+== dibs batch - <<< '[a dibs true'
+-> exit 2
+2| dibs: line 1: an attribute list is not closed with ]
+
+== dibs batch - <<< 'dibs true; dibs false'
+-> exit 2
+2| dibs: line 1: ';' outside quotes makes this more than one dibs call. Quote the command you are sending
+
+== dibs batch - <<< 'dibs true \'
+-> exit 2
+2| dibs: line 1: the last line ends in a backslash
+
+== dibs batch - <<< '# only a comment'
+-> exit 2
+2| dibs: the batch has no steps
+
+== DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs batch - <<< '[b] dibs --bench --label nameless true'
+-> exit 2
+2| dibs: step b measures and names no machine, and a measurement is never placed for you. Give it
+2|   --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step.

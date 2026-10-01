@@ -1,0 +1,767 @@
+== dibs build <root>/app@main p --on box-a --samples 3
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: app_build_p
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 1
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: de78f4497d16258e
+    CMD:
+      | # echo ran cuda samples=$SAMPLES
+      | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
+      | (
+      | set -eu
+      | SCRATCH=${DIBS_SCRATCH:-${DIBS_SCRATCH:-$HOME/.cache/dibs}}
+      | SRC=$HOME/prog/app
+      | [ -d "$SRC/.git" ] || { echo "dibs: no clone at $SRC" >&2; exit 3; }
+      | 
+      | # Fetch before resolving, or a ref that exists only on the remote cannot be found. Quiet
+      | # because a fetch's progress is noise in a job's output, but not silent on failure.
+      | #
+      | # Fetched into a ref of this job's own, never through FETCH_HEAD. There is one FETCH_HEAD per
+      | # repository and every job here shares one clone, so a second prepare fetching a different
+      | # branch between this one's fetch and its read hands it that branch instead. It resolves, it
+      | # looks right, and the number it produces is for code nobody asked about. Prepares run under
+      | # the shared lock precisely so several can happen at once, which makes that race the normal
+      | # case rather than a rare one.
+      | MINE=refs/dibs/prepare-$$
+      | if FETCHERR=$(git -C "$SRC" fetch -q origin "+main:$MINE" 2>&1); then
+      |     SHA=$(git -C "$SRC" rev-parse --verify -q "$MINE^{commit}" || true)
+      |     git -C "$SRC" update-ref -d "$MINE" 2>/dev/null || true
+      | else
+      |     # A bare commit cannot be fetched by name from most servers, and a branch that exists only
+      |     # on this machine cannot be fetched at all. Both resolve locally, by their own name, which
+      |     # is not a shared slot and cannot be overwritten by anyone else.
+      |     FETCHERR="$FETCHERR
+      | $(git -C "$SRC" fetch -q --all 2>&1 || true)"
+      |     SHA=$(git -C "$SRC" rev-parse --verify -q 'main^{commit}' || true)
+      | fi
+      | # A fetch that failed on credentials means this machine cannot see the remote at all, and the
+      | # ref it was asked for is very likely fine. Reported as "no such ref" it reads as a mistake in
+      | # the ref, and the way out of that reading is to carry the code over by hand, which is a whole
+      | # afternoon of bundle or tarball for something @local already does.
+      | [ -n "$SHA" ] || {
+      |     echo "dibs: no such ref in app: main" >&2
+      |     case "$FETCHERR" in
+      |       *"could not read Username"*|*"Authentication failed"*|*"terminal prompts disabled"*|\
+      |       *"Permission denied (publickey)"*|*"Repository not found"*)
+      |         echo "  The fetch failed on credentials, so nothing here can see that remote: a private" >&2
+      |         echo "  repo is the usual reason, and the ref itself is probably fine." >&2
+      |         echo "  Send your working tree instead, which fetches nothing:  app@local" >&2 ;;
+      |     esac
+      |     exit 3; }
+      | SHORT=$(printf %s "$SHA" | cut -c1-12)
+      | 
+      | WT=$SCRATCH/ws/app/$SHORT
+      | mkdir -p "${WT%/*}"
+      | # Two prepares of one commit both see no tree and both add it, and the loser dies on "already
+      | # exists". Per repo rather than per commit, because the prune below touches every worktree.
+      | exec 7>"$SCRATCH/ws/app/.prepare.lock"
+      | flock 7
+      | if [ ! -d "$WT/.git" ] && [ ! -f "$WT/.git" ]; then
+      |     # Detached on purpose: a worktree that tracks a branch would move under a job that is
+      |     # still measuring from it.
+      |     git -C "$SRC" worktree add --detach -q "$WT" "$SHA" 2>/dev/null || {
+      |         # A tree left behind by a crash is registered but absent; prune and retry once.
+      |         git -C "$SRC" worktree prune
+      |         git -C "$SRC" worktree add --detach -q "$WT" "$SHA"; }
+      | fi
+      | exec 7>&-
+      | touch "$WT/.dibs-used"
+      | 
+      | # One cache per repo rather than per tree. Cargo fingerprints per crate, so switching commits
+      | # reuses most of it, where a tree of its own would rebuild the world every commit. Concurrent
+      | # builds serialise on cargo's own lock, which is correct.
+      | TARGET=$SCRATCH/target/app
+      | mkdir -p "$TARGET" "$SCRATCH/out"
+      | : > "$TARGET/.dibs-used"
+      | 
+      | if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+      |     mv "$DIBS_PKGS" "$TARGET/.dibs-packages.pending.$DIBS_PKGS_TOKEN"
+      | fi
+      | find "$TARGET" -maxdepth 1 -name '.dibs-packages.pending.*' -mmin +1440 -delete 2>/dev/null || true
+      | KEEP=${DIBS_KEEP_DAYS:-14}
+      | for old in "$SCRATCH"/ws/*/*; do
+      |     [ -d "$old" ] || continue
+      |     [ "$old" = "$WT" ] && continue
+      |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
+      |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     echo "DIBS-GC $old" >&2
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      | done
+      | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
+      | for old in "$SCRATCH/target"/*; do
+      |     [ -d "$old" ] || continue
+      |     [ "$old" = "$TARGET" ] && continue
+      |     # A prepare's marker is empty and a sweep's is not, so a target holding only a sweep's marker
+      |     # was being deleted when a sweep dated it, and is no cache waiting for its first build.
+      |     if [ -s "$old/.dibs-used" ] && [ -z "$(find "$old" -mindepth 1 -maxdepth 1 ! -name .dibs-used -print -quit 2>/dev/null)" ]; then
+      |         rm -f "$old/.dibs-used"; rmdir "$old" 2>/dev/null || true; continue
+      |     fi
+      |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
+      |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
+      |     rm -rf "$old"
+      | done
+      | git -C "$SRC" worktree prune
+      | 
+      | echo "DIBS-WT $WT"
+      | echo "DIBS-TARGET $TARGET"
+      | echo "DIBS-REV app $SHORT"
+      | 
+      | ) > "$__dibs_report"
+      | __dibs_rc=$?
+      | cat "$__dibs_report" >&1
+      | __dibs_wt=$(sed -n 's/^DIBS-WT //p' "$__dibs_report" | tail -n 1)
+      | __dibs_target=$(sed -n 's/^DIBS-TARGET //p' "$__dibs_report" | tail -n 1)
+      | __dibs_missing=$(grep -c '^DIBS-GITMISSING ' "$__dibs_report")
+      | rm -f "$__dibs_report"
+      | [ "$__dibs_rc" = 0 ] || exit "$__dibs_rc"
+      | case $__dibs_wt in
+      |     "${DIBS_SCRATCH:-$HOME/.cache/dibs}"/ws/?*) ;;
+      |     *) echo "dibs: the setup reported no worktree under scratch, so nothing ran" >&2; exit 3 ;;
+      | esac
+      | [ "$__dibs_missing" = 0 ] || { echo DIBS-HELD; echo 'dibs: a git dependency has to be sent first; the step runs once it is' >&2; exit 3; }
+      | echo DIBS-READY
+      | cd -- "$__dibs_wt" || exit 3
+      | export CARGO_TARGET_DIR="$__dibs_target"
+      | { export SAMPLES=3; echo ran cuda samples=$SAMPLES; }
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs bench <root>/app@local gate --on box-a
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: rsh
+    LABEL: app_bench_gate_send
+    WAIT: 
+    MAXHOLD: 3600
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 1
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 6bc29855bfd0b3e9
+    CMD:
+      | # prepare, then receive <root>/app
+      | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
+      | (
+      | DIBS_PKGS_TOKEN=<token>
+      | DIBS_PKGS=${DIBS_SCRATCH:-$HOME/.cache/dibs}/.packages.$DIBS_PKGS_TOKEN
+      | trap 'rm -f "$DIBS_PKGS"' EXIT
+      | mkdir -p "${DIBS_PKGS%/*}"
+      | cat > "$DIBS_PKGS" <<'DIBS_PACKAGES'
+      | <sha>
+      | DIBS_PACKAGES
+      | set -eu
+      | SCRATCH=${DIBS_SCRATCH:-$HOME/.cache/dibs}
+      | WT=$SCRATCH/ws/app/local-<key>
+      | # Its own target directory, so two local trees of one repo cannot hand each other a binary.
+      | TARGET=$SCRATCH/target/app-local-<key>
+      | mkdir -p "${WT%/*}"
+      | if [ ! -d "$WT" ] && [ ! -d "$TARGET" ]; then
+      | ranked=$(for used in $(ls -t "$SCRATCH/target/app/.dibs-used" "$SCRATCH/target/app"-local-*/.dibs-used "$SCRATCH/target/app"-arm*/.dibs-used 2>/dev/null); do
+      |     src=${used%/.dibs-used}
+      |     # A target set aside or half copied is no sibling, and one set aside may be this tree's own.
+      |     case $src in "$TARGET"|*.old.*|*.seed.*) continue ;; esac
+      |     n=0 will=0 building=0
+      |     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -s "$lock" true || building=1
+      |     done
+      |     if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+      |         [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+      |         [ "$building" = 1 ] && will=$(cat "$src/.dibs-packages" "$src"/.dibs-packages.pending.* 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C comm -12 "$DIBS_PKGS" - | wc -l)
+      |     fi
+      |     echo "$(( will > n ? will : n )) $n $building $src"
+      | done | sort -s -k1,1nr)
+      | idle_best=$(awk '$3 == 0 && $2 > m { m = $2 } END { print m + 0 }' <<< "$ranked")
+      | while read -r rank n building src; do
+      |     [ -n "$src" ] || continue
+      |     [ "$rank" -ge "${FLOOR:-0}" ] || break
+      |     fds=
+      |     held=0
+      |     waited=0
+      |     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         exec {fd}<"$lock"
+      |         fds="$fds $fd"
+      |         flock -n -s "$fd" && continue
+      |         held=1
+      |         [ "$rank" -gt "$n" ] && [ "$rank" -gt "$idle_best" ] || break
+      |         echo "dibs: waiting up to ${DIBS_SEED_WAIT:-900}s for the build in ${src##*/}, which will have $rank of this tree's lockfile groups where anything idle has $idle_best" >&2
+      |         flock -s -w "${DIBS_SEED_WAIT:-900}" "$fd" || break
+      |         held=0
+      |         waited=1
+      |     done
+      |     if [ "$waited" = 1 ]; then
+      |         [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+      |         [ "$n" -ge "$idle_best" ] || held=1
+      |     fi
+      |     [ "$n" -ge "${FLOOR:-0}" ] || held=1
+      |     if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
+      |         echo "DIBS-SEED ${src##*/}"
+      |         printf '%s\n' "$WT" > "$TARGET/.dibs-tree"
+      |         [ -s "${DIBS_PKGS:-/nonexistent}" ] && echo "DIBS-SEED-SHARED $n $(wc -l < "$DIBS_PKGS")"
+      |         case "${src##*/}" in
+      |             app-local-*)
+      |                 sources=$SCRATCH/ws/app/local-${src##*/app-local-}
+      |                 if [ ! -e "$WT" ] && [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null &&
+      |                     : && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
+      |                     echo "DIBS-SEED-SOURCES"
+      |                 fi
+      |                 rm -rf "$WT.seed.$$" ;;
+      |         esac
+      |     fi
+      |     for fd in $fds; do exec {fd}<&-; done
+      |     rm -rf "$TARGET.seed.$$"
+      |     [ -d "$TARGET" ] && break
+      | done <<< "$ranked"
+      | elif [ -s "${DIBS_PKGS:-/nonexistent}" ] && [ -d "$WT" ] && [ -d "$TARGET" ]; then
+      | mine=0
+      | [ -f "$TARGET/.dibs-packages" ] && mine=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$TARGET/.dibs-packages" | wc -l)
+      | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
+      | own=
+      | busy=0
+      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |     exec {fd}<"$lock"
+      |     own="$own $fd"
+      |     flock -n -x "$fd" || { busy=1; break; }
+      | done
+      | if [ "$busy" = 0 ] && mv -T "$TARGET" "$TARGET.old.$$"; then
+      |     if mv -T "$WT" "$WT.old.$$"; then
+      | ranked=$(for used in $(ls -t "$SCRATCH/target/app/.dibs-used" "$SCRATCH/target/app"-local-*/.dibs-used "$SCRATCH/target/app"-arm*/.dibs-used 2>/dev/null); do
+      |     src=${used%/.dibs-used}
+      |     # A target set aside or half copied is no sibling, and one set aside may be this tree's own.
+      |     case $src in "$TARGET"|*.old.*|*.seed.*) continue ;; esac
+      |     n=0 will=0 building=0
+      |     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -s "$lock" true || building=1
+      |     done
+      |     if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+      |         [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+      |         [ "$building" = 1 ] && will=$(cat "$src/.dibs-packages" "$src"/.dibs-packages.pending.* 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C comm -12 "$DIBS_PKGS" - | wc -l)
+      |     fi
+      |     echo "$(( will > n ? will : n )) $n $building $src"
+      | done | sort -s -k1,1nr)
+      | idle_best=$(awk '$3 == 0 && $2 > m { m = $2 } END { print m + 0 }' <<< "$ranked")
+      | while read -r rank n building src; do
+      |     [ -n "$src" ] || continue
+      |     [ "$rank" -ge "${FLOOR:-0}" ] || break
+      |     fds=
+      |     held=0
+      |     waited=0
+      |     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         exec {fd}<"$lock"
+      |         fds="$fds $fd"
+      |         flock -n -s "$fd" && continue
+      |         held=1
+      |         [ "$rank" -gt "$n" ] && [ "$rank" -gt "$idle_best" ] || break
+      |         echo "dibs: waiting up to ${DIBS_SEED_WAIT:-900}s for the build in ${src##*/}, which will have $rank of this tree's lockfile groups where anything idle has $idle_best" >&2
+      |         flock -s -w "${DIBS_SEED_WAIT:-900}" "$fd" || break
+      |         held=0
+      |         waited=1
+      |     done
+      |     if [ "$waited" = 1 ]; then
+      |         [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+      |         [ "$n" -ge "$idle_best" ] || held=1
+      |     fi
+      |     [ "$n" -ge "${FLOOR:-0}" ] || held=1
+      |     if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
+      |         echo "DIBS-SEED ${src##*/}"
+      |         printf '%s\n' "$WT" > "$TARGET/.dibs-tree"
+      |         [ -s "${DIBS_PKGS:-/nonexistent}" ] && echo "DIBS-SEED-SHARED $n $(wc -l < "$DIBS_PKGS")"
+      |         case "${src##*/}" in
+      |             app-local-*)
+      |                 sources=$SCRATCH/ws/app/local-${src##*/app-local-}
+      |                 if [ ! -e "$WT" ] && [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null &&
+      |                     : && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
+      |                     echo "DIBS-SEED-SOURCES"
+      |                 fi
+      |                 rm -rf "$WT.seed.$$" ;;
+      |         esac
+      |     fi
+      |     for fd in $fds; do exec {fd}<&-; done
+      |     rm -rf "$TARGET.seed.$$"
+      |     [ -d "$TARGET" ] && break
+      | done <<< "$ranked"
+      |     fi
+      |     if [ -d "$TARGET" ]; then
+      |         echo "DIBS-RESEED $mine"
+      |         rm -rf "$TARGET.old.$$" "$WT.old.$$"
+      |     else
+      |         if [ -d "$WT.old.$$" ]; then
+      |             rm -rf "$WT"
+      |             mv -T "$WT.old.$$" "$WT"
+      |         fi
+      |         mv -T "$TARGET.old.$$" "$TARGET"
+      |     fi
+      | fi
+      | for fd in $own; do exec {fd}<&-; done
+      | unset FLOOR
+      | fi
+      | mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
+      | touch "$WT/.dibs-used"
+      | : > "$TARGET/.dibs-used"
+      | if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+      |     mv "$DIBS_PKGS" "$TARGET/.dibs-packages.pending.$DIBS_PKGS_TOKEN"
+      | fi
+      | find "$TARGET" -maxdepth 1 -name '.dibs-packages.pending.*' -mmin +1440 -delete 2>/dev/null || true
+      | KEEP=${DIBS_KEEP_DAYS:-14}
+      | for old in "$SCRATCH"/ws/*/*; do
+      |     [ -d "$old" ] || continue
+      |     [ "$old" = "$WT" ] && continue
+      |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
+      |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     echo "DIBS-GC $old" >&2
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      | done
+      | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
+      | for old in "$SCRATCH/target"/*; do
+      |     [ -d "$old" ] || continue
+      |     [ "$old" = "$TARGET" ] && continue
+      |     # A prepare's marker is empty and a sweep's is not, so a target holding only a sweep's marker
+      |     # was being deleted when a sweep dated it, and is no cache waiting for its first build.
+      |     if [ -s "$old/.dibs-used" ] && [ -z "$(find "$old" -mindepth 1 -maxdepth 1 ! -name .dibs-used -print -quit 2>/dev/null)" ]; then
+      |         rm -f "$old/.dibs-used"; rmdir "$old" 2>/dev/null || true; continue
+      |     fi
+      |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
+      |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
+      |     rm -rf "$old"
+      | done
+      | echo "DIBS-WT $WT"
+      | echo "DIBS-TARGET $TARGET"
+      | echo "DIBS-REV app local:<sha>-<content>"
+      | 
+      | ) > "$__dibs_report"
+      | __dibs_rc=$?
+      | cat "$__dibs_report" >&2
+      | __dibs_wt=$(sed -n 's/^DIBS-WT //p' "$__dibs_report" | tail -n 1)
+      | __dibs_target=$(sed -n 's/^DIBS-TARGET //p' "$__dibs_report" | tail -n 1)
+      | __dibs_missing=$(grep -c '^DIBS-GITMISSING ' "$__dibs_report")
+      | rm -f "$__dibs_report"
+      | [ "$__dibs_rc" = 0 ] || exit "$__dibs_rc"
+      | case $__dibs_wt in
+      |     "${DIBS_SCRATCH:-$HOME/.cache/dibs}"/ws/?*) ;;
+      |     *) echo "dibs: the setup reported no worktree under scratch, so nothing ran" >&2; exit 3 ;;
+      | esac
+      | echo DIBS-READY >&2
+      | cd -- "${__dibs_wt%/*}" || exit 3
+      | rsync --server <what this rsync asks of its far side>
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH:
+      | <batch>	app/bench/gate:send
+      | 1	3
+      | app/bench/gate	shared	app_bench_gate	1
+      | app/bench/gate	bench	app_bench_gate	1
+    NO_WATCH: 1
+    HOLD: 0
+    LEASE: 0
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: app_bench_gate
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 1
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 6bc29855bfd0b3e9
+    CMD:
+      | cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { (
+      |     flock 8
+      |     if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
+      |         find . -name .git -prune -o -type f -exec touch -c -- {} +
+      |         printf '%s\n' "$PWD" > "$CARGO_TARGET_DIR/.dibs-tree"
+      |         echo "dibs: this tree did not make the last build in $CARGO_TARGET_DIR, so cargo rebuilds its crates" >&2
+      |     fi
+      | ) 8>"$CARGO_TARGET_DIR/.dibs-tree.lock"
+      | ( cargo build --release ); rc=$?
+      | staged="$CARGO_TARGET_DIR/.dibs-packages.pending.<token>"
+      | if [ "$rc" = 0 ] && [ -s "$staged" ]; then
+      |     (
+      |         flock 9
+      |         { cat "$CARGO_TARGET_DIR/.dibs-packages" 2>/dev/null || true; cat "$staged"; } | LC_ALL=C sort -u > "$CARGO_TARGET_DIR/.dibs-packages.new.$$" &&
+      |             mv "$CARGO_TARGET_DIR/.dibs-packages.new.$$" "$CARGO_TARGET_DIR/.dibs-packages" && rm -f "$staged"
+      |     ) 9>"$CARGO_TARGET_DIR/.dibs-packages.lock"
+      | fi
+      | exit $rc; }
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH:
+      | <batch>	app/bench/gate
+      | 2	3
+      | app/bench/gate	bench	app_bench_gate	1
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: bench
+    LABEL: app_bench_gate
+    WAIT: 
+    MAXHOLD: 7200
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 1
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 6bc29855bfd0b3e9
+    CMD:
+      | cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
+      |     echo DIBS-REFUSED
+      |     echo "dibs: refused to measure: another tree built into $CARGO_TARGET_DIR after this one did, so the binary there may be that tree's." >&2
+      |     echo "  Run it again, which rebuilds this tree first, or pass --anyway to measure what is there." >&2
+      |     exit 78
+      | fi
+      | echo "DIBS-STATE ${DIBS_STATE:-}"
+      | echo measured; }
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH:
+      | <batch>	app/bench/gate
+      | 3	3
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs shell <root>/app@local --reason 'a look' --on box-a -- 'cat a.txt'
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: rsh
+    LABEL: app_shell_send
+    WAIT: 
+    MAXHOLD: 3600
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 1
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: ae20812789dc44ec
+    CMD:
+      | # prepare, then receive <root>/app
+      | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
+      | (
+      | DIBS_PKGS_TOKEN=<token>
+      | DIBS_PKGS=${DIBS_SCRATCH:-$HOME/.cache/dibs}/.packages.$DIBS_PKGS_TOKEN
+      | trap 'rm -f "$DIBS_PKGS"' EXIT
+      | mkdir -p "${DIBS_PKGS%/*}"
+      | cat > "$DIBS_PKGS" <<'DIBS_PACKAGES'
+      | <sha>
+      | DIBS_PACKAGES
+      | set -eu
+      | SCRATCH=${DIBS_SCRATCH:-$HOME/.cache/dibs}
+      | WT=$SCRATCH/ws/app/local-<key>
+      | # Its own target directory, so two local trees of one repo cannot hand each other a binary.
+      | TARGET=$SCRATCH/target/app-local-<key>
+      | mkdir -p "${WT%/*}"
+      | if [ ! -d "$WT" ] && [ ! -d "$TARGET" ]; then
+      | ranked=$(for used in $(ls -t "$SCRATCH/target/app/.dibs-used" "$SCRATCH/target/app"-local-*/.dibs-used "$SCRATCH/target/app"-arm*/.dibs-used 2>/dev/null); do
+      |     src=${used%/.dibs-used}
+      |     # A target set aside or half copied is no sibling, and one set aside may be this tree's own.
+      |     case $src in "$TARGET"|*.old.*|*.seed.*) continue ;; esac
+      |     n=0 will=0 building=0
+      |     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -s "$lock" true || building=1
+      |     done
+      |     if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+      |         [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+      |         [ "$building" = 1 ] && will=$(cat "$src/.dibs-packages" "$src"/.dibs-packages.pending.* 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C comm -12 "$DIBS_PKGS" - | wc -l)
+      |     fi
+      |     echo "$(( will > n ? will : n )) $n $building $src"
+      | done | sort -s -k1,1nr)
+      | idle_best=$(awk '$3 == 0 && $2 > m { m = $2 } END { print m + 0 }' <<< "$ranked")
+      | while read -r rank n building src; do
+      |     [ -n "$src" ] || continue
+      |     [ "$rank" -ge "${FLOOR:-0}" ] || break
+      |     fds=
+      |     held=0
+      |     waited=0
+      |     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         exec {fd}<"$lock"
+      |         fds="$fds $fd"
+      |         flock -n -s "$fd" && continue
+      |         held=1
+      |         [ "$rank" -gt "$n" ] && [ "$rank" -gt "$idle_best" ] || break
+      |         echo "dibs: waiting up to ${DIBS_SEED_WAIT:-900}s for the build in ${src##*/}, which will have $rank of this tree's lockfile groups where anything idle has $idle_best" >&2
+      |         flock -s -w "${DIBS_SEED_WAIT:-900}" "$fd" || break
+      |         held=0
+      |         waited=1
+      |     done
+      |     if [ "$waited" = 1 ]; then
+      |         [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+      |         [ "$n" -ge "$idle_best" ] || held=1
+      |     fi
+      |     [ "$n" -ge "${FLOOR:-0}" ] || held=1
+      |     if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
+      |         echo "DIBS-SEED ${src##*/}"
+      |         printf '%s\n' "$WT" > "$TARGET/.dibs-tree"
+      |         [ -s "${DIBS_PKGS:-/nonexistent}" ] && echo "DIBS-SEED-SHARED $n $(wc -l < "$DIBS_PKGS")"
+      |         case "${src##*/}" in
+      |             app-local-*)
+      |                 sources=$SCRATCH/ws/app/local-${src##*/app-local-}
+      |                 if [ ! -e "$WT" ] && [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null &&
+      |                     : && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
+      |                     echo "DIBS-SEED-SOURCES"
+      |                 fi
+      |                 rm -rf "$WT.seed.$$" ;;
+      |         esac
+      |     fi
+      |     for fd in $fds; do exec {fd}<&-; done
+      |     rm -rf "$TARGET.seed.$$"
+      |     [ -d "$TARGET" ] && break
+      | done <<< "$ranked"
+      | elif [ -s "${DIBS_PKGS:-/nonexistent}" ] && [ -d "$WT" ] && [ -d "$TARGET" ]; then
+      | mine=0
+      | [ -f "$TARGET/.dibs-packages" ] && mine=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$TARGET/.dibs-packages" | wc -l)
+      | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
+      | own=
+      | busy=0
+      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |     exec {fd}<"$lock"
+      |     own="$own $fd"
+      |     flock -n -x "$fd" || { busy=1; break; }
+      | done
+      | if [ "$busy" = 0 ] && mv -T "$TARGET" "$TARGET.old.$$"; then
+      |     if mv -T "$WT" "$WT.old.$$"; then
+      | ranked=$(for used in $(ls -t "$SCRATCH/target/app/.dibs-used" "$SCRATCH/target/app"-local-*/.dibs-used "$SCRATCH/target/app"-arm*/.dibs-used 2>/dev/null); do
+      |     src=${used%/.dibs-used}
+      |     # A target set aside or half copied is no sibling, and one set aside may be this tree's own.
+      |     case $src in "$TARGET"|*.old.*|*.seed.*) continue ;; esac
+      |     n=0 will=0 building=0
+      |     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -s "$lock" true || building=1
+      |     done
+      |     if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+      |         [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+      |         [ "$building" = 1 ] && will=$(cat "$src/.dibs-packages" "$src"/.dibs-packages.pending.* 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C comm -12 "$DIBS_PKGS" - | wc -l)
+      |     fi
+      |     echo "$(( will > n ? will : n )) $n $building $src"
+      | done | sort -s -k1,1nr)
+      | idle_best=$(awk '$3 == 0 && $2 > m { m = $2 } END { print m + 0 }' <<< "$ranked")
+      | while read -r rank n building src; do
+      |     [ -n "$src" ] || continue
+      |     [ "$rank" -ge "${FLOOR:-0}" ] || break
+      |     fds=
+      |     held=0
+      |     waited=0
+      |     for lock in $(find "$src" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         exec {fd}<"$lock"
+      |         fds="$fds $fd"
+      |         flock -n -s "$fd" && continue
+      |         held=1
+      |         [ "$rank" -gt "$n" ] && [ "$rank" -gt "$idle_best" ] || break
+      |         echo "dibs: waiting up to ${DIBS_SEED_WAIT:-900}s for the build in ${src##*/}, which will have $rank of this tree's lockfile groups where anything idle has $idle_best" >&2
+      |         flock -s -w "${DIBS_SEED_WAIT:-900}" "$fd" || break
+      |         held=0
+      |         waited=1
+      |     done
+      |     if [ "$waited" = 1 ]; then
+      |         [ -f "$src/.dibs-packages" ] && n=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$src/.dibs-packages" | wc -l)
+      |         [ "$n" -ge "$idle_best" ] || held=1
+      |     fi
+      |     [ "$n" -ge "${FLOOR:-0}" ] || held=1
+      |     if [ "$held" = 0 ] && cp -a --reflink=always "$src" "$TARGET.seed.$$" 2>/dev/null && mv -T "$TARGET.seed.$$" "$TARGET" 2>/dev/null; then
+      |         echo "DIBS-SEED ${src##*/}"
+      |         printf '%s\n' "$WT" > "$TARGET/.dibs-tree"
+      |         [ -s "${DIBS_PKGS:-/nonexistent}" ] && echo "DIBS-SEED-SHARED $n $(wc -l < "$DIBS_PKGS")"
+      |         case "${src##*/}" in
+      |             app-local-*)
+      |                 sources=$SCRATCH/ws/app/local-${src##*/app-local-}
+      |                 if [ ! -e "$WT" ] && [ -d "$sources" ] && cp -a --reflink=auto "$sources" "$WT.seed.$$" 2>/dev/null &&
+      |                     : && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
+      |                     echo "DIBS-SEED-SOURCES"
+      |                 fi
+      |                 rm -rf "$WT.seed.$$" ;;
+      |         esac
+      |     fi
+      |     for fd in $fds; do exec {fd}<&-; done
+      |     rm -rf "$TARGET.seed.$$"
+      |     [ -d "$TARGET" ] && break
+      | done <<< "$ranked"
+      |     fi
+      |     if [ -d "$TARGET" ]; then
+      |         echo "DIBS-RESEED $mine"
+      |         rm -rf "$TARGET.old.$$" "$WT.old.$$"
+      |     else
+      |         if [ -d "$WT.old.$$" ]; then
+      |             rm -rf "$WT"
+      |             mv -T "$WT.old.$$" "$WT"
+      |         fi
+      |         mv -T "$TARGET.old.$$" "$TARGET"
+      |     fi
+      | fi
+      | for fd in $own; do exec {fd}<&-; done
+      | unset FLOOR
+      | fi
+      | mkdir -p "$WT" "$TARGET" "$SCRATCH/out"
+      | touch "$WT/.dibs-used"
+      | : > "$TARGET/.dibs-used"
+      | if [ -s "${DIBS_PKGS:-/nonexistent}" ]; then
+      |     mv "$DIBS_PKGS" "$TARGET/.dibs-packages.pending.$DIBS_PKGS_TOKEN"
+      | fi
+      | find "$TARGET" -maxdepth 1 -name '.dibs-packages.pending.*' -mmin +1440 -delete 2>/dev/null || true
+      | KEEP=${DIBS_KEEP_DAYS:-14}
+      | for old in "$SCRATCH"/ws/*/*; do
+      |     [ -d "$old" ] || continue
+      |     [ "$old" = "$WT" ] && continue
+      |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
+      |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     echo "DIBS-GC $old" >&2
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      | done
+      | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
+      | for old in "$SCRATCH/target"/*; do
+      |     [ -d "$old" ] || continue
+      |     [ "$old" = "$TARGET" ] && continue
+      |     # A prepare's marker is empty and a sweep's is not, so a target holding only a sweep's marker
+      |     # was being deleted when a sweep dated it, and is no cache waiting for its first build.
+      |     if [ -s "$old/.dibs-used" ] && [ -z "$(find "$old" -mindepth 1 -maxdepth 1 ! -name .dibs-used -print -quit 2>/dev/null)" ]; then
+      |         rm -f "$old/.dibs-used"; rmdir "$old" 2>/dev/null || true; continue
+      |     fi
+      |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
+      |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
+      |     rm -rf "$old"
+      | done
+      | echo "DIBS-WT $WT"
+      | echo "DIBS-TARGET $TARGET"
+      | echo "DIBS-REV app local:<sha>-<content>"
+      | 
+      | ) > "$__dibs_report"
+      | __dibs_rc=$?
+      | cat "$__dibs_report" >&2
+      | __dibs_wt=$(sed -n 's/^DIBS-WT //p' "$__dibs_report" | tail -n 1)
+      | __dibs_target=$(sed -n 's/^DIBS-TARGET //p' "$__dibs_report" | tail -n 1)
+      | __dibs_missing=$(grep -c '^DIBS-GITMISSING ' "$__dibs_report")
+      | rm -f "$__dibs_report"
+      | [ "$__dibs_rc" = 0 ] || exit "$__dibs_rc"
+      | case $__dibs_wt in
+      |     "${DIBS_SCRATCH:-$HOME/.cache/dibs}"/ws/?*) ;;
+      |     *) echo "dibs: the setup reported no worktree under scratch, so nothing ran" >&2; exit 3 ;;
+      | esac
+      | echo DIBS-READY >&2
+      | cd -- "${__dibs_wt%/*}" || exit 3
+      | rsync --server <what this rsync asks of its far side>
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH:
+      | <batch>	app/shell:send
+      | 1	2
+      | app/shell	shared	app_shell	1
+    NO_WATCH: 1
+    HOLD: 0
+    LEASE: 0
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: app_shell
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 1
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: ae20812789dc44ec
+    CMD: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { cat a.txt; }
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH:
+      | <batch>	app/shell
+      | 2	2
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0

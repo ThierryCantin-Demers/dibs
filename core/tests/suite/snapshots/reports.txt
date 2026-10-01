@@ -1,0 +1,36 @@
+== dibs --friction 'the flag is missing'
+-> exit 0
+1| Recorded. dibs gaps prints it, with everything else that got in the way.
+
+== DIBS_REPORTS=o/r dibs --friction '--device is ignored'
+-> exit 0
+1| Recorded, and filed as o/r#7. An answer there shows on a later dibs call.
+
+== DIBS_REPORTS=o/r dibs --friction another  (with o/r public)
+-> exit 0
+1| Recorded here, but not filed in o/r: o/r is public, and a report carries the paths and commands of whoever filed it
+
+== DIBS_REPORTS=o/r dibs --label l true  (once the report is answered)
+-> exit 0
+2| dibs: your report #7 was answered by a-maintainer: fixed in abc, run dibs --update
+2|   https://github.com/o/r/issues/7#issuecomment-3
+2| job <job>  shared  l  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+
+== DIBS_REPORTS=o/r dibs --friction --wait  (with a report waiting)
+-> exit 0
+1| report #7 from someone: --device is ignored
+1|   https://github.com/o/r/issues/7
+
+== DIBS_REPORTS=o/r dibs --friction --wait  (until a comment lands)
+-> exit 0
+1| comment on #7 from someone: works now
+1|   https://github.com/o/r/issues/7#issuecomment-4
+
+== DIBS_REPORTS=o/r dibs --friction --reply 7 'fixed in abc' --close
+-> exit 0
+1| https://github.com/o/r/issues/7#issuecomment-99
+
+== dibs --friction --wait  (with no DIBS_REPORTS)
+-> exit 2
+2| dibs: DIBS_REPORTS names no <owner>/<repo> to take reports from

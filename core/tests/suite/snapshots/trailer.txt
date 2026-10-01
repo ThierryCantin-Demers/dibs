@@ -1,0 +1,170 @@
+== dibs --label plain 'echo hello; echo err >&2'
+-> exit 0
+1| hello
+1| err
+2| job <job>  shared  plain  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+
+== dibs --label fails 'echo out; exit 4'
+-> exit 4
+1| out
+2| job <job>  shared  fails  queued <s>  ran <s>  exit 4  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+
+== dibs --label fails 'echo out; exit 4'
+-> exit 4
+1| out
+2| job <job>  shared  fails  queued <s>  ran <s>  exit 4  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2|   this exact command already failed here: job <job> exit 4, <dur> ago. Unchanged, it failed the same way.
+
+== dibs --label digest 'seq 1 300'
+-> exit 0
+1| 1
+1| 2
+1| 3
+1| 4
+1| 5
+1| 6
+1| 7
+1| 8
+1| 9
+1| 10
+1| 11
+1| 12
+1| 13
+1| 14
+1| 15
+1| 16
+1| 17
+1| 18
+1| 19
+1| 20
+1| 
+1| ... 260 lines omitted. The whole log:  dibs --on <host> --out <job>  (<root>/scratch/jobs/<job>/log)
+1| 
+1| 281
+1| 282
+1| 283
+1| 284
+1| 285
+1| 286
+1| 287
+1| 288
+1| 289
+1| 290
+1| 291
+1| 292
+1| 293
+1| 294
+1| 295
+1| 296
+1| 297
+1| 298
+1| 299
+1| 300
+2| job <job>  shared  digest  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (300 lines)  dibs --on <host> --out <job>
+
+== dibs --stream --label streamed 'seq 1 3'
+-> exit 0
+1| 1
+1| 2
+1| 3
+2| job <job>  shared  streamed  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (3 lines)  dibs --on <host> --out <job>
+
+== dibs --label built 'echo '\''   Compiling a v1'\''; echo '\''   Compiling b v1'\''; echo '\''    Finished `release` profile [optimized] target(s) in 0.24s'\'''
+-> exit 0
+1|    Compiling a v1
+1|    Compiling b v1
+1|     Finished `release` profile [optimized] target(s) in 0.24s
+2| job <job>  shared  built  queued <s>  ran <s>  exit 0  by=command  built=2
+2|   log <host>:<root>/scratch/jobs/<job>/log  (3 lines)  dibs --on <host> --out <job>
+
+== dibs --label built-nothing 'echo '\''    Finished `release` profile [optimized] target(s) in 0.24s'\'''
+-> exit 0
+1|     Finished `release` profile [optimized] target(s) in 0.24s
+2| job <job>  shared  built-nothing  queued <s>  ran <s>  exit 0  by=command  built=nothing
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2|   built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary.
+
+== dibs --label long-suite true
+-> exit 0
+2| dibs: 90% of 3 runs of this took up to 25m00s, so it may hold the lock for 50m00s rather than 30m00s. --max sets it.
+2| job <job>  shared  long-suite  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+
+== dibs --bench --label a-bench true
+-> exit 0
+2| job <job>  bench  a-bench  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+
+== dibs --max 1 --label overran 'read -r _ <> <root>/f-never'
+-> exit 124
+2| job <job>  shared  overran  queued <s>  ran <s>  exit 124  by=dibs
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| dibs: stopped after holding the lock for <dur>, which is --max for a shared job.
+2|   Nothing is wrong with it; it was simply told to hold no longer than that.
+2|   Run it again; a compile picks up from the crates that already finished, since the
+2|   build cache outlives the job. Anything else starts over.
+2|   If it truly needs one long run, say so:  --max 2
+
+== dibs --hold --label held-here 'echo from here'
+-> exit 0
+1| from here
+2| dibs: holding the shared lock on <host>, running here: echo from here
+2| job <job>  shared  held-here  queued <s>  ran <s>  exit 0  by=command
+
+== dibs --hold --max 1 --label held-over 'read -r _ <> <root>/f-never'
+-> exit 124
+2| dibs: holding the shared lock on <host>, running here: read -r _ <> <root>/f-never
+2| job <job>  shared  held-over  queued <s>  ran <s>  exit 124  by=dibs
+2| dibs: stopped after holding the lock for <dur>, which is --max for a shared job.
+2|   Nothing is wrong with it; it was simply told to hold no longer than that.
+2|   If it truly needs one long run, say so:  --max 2
+2| dibs: the lock on <host> ended before the command did, so the command was stopped.
+
+== dibs --label served --port api --with 'srv=read -r _ <> <root>/f-never' --ready true 'test -n "$DIBS_PORT_API" && echo the port reached the command'
+-> exit 0
+1| the port reached the command
+2| job <job>  shared  served  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2|   port api: <port> on <host>
+2|   with srv: ready after <s>, stopped when the command ended  log <host>:<root>/scratch/jobs/<job>/with-srv.log
+
+== dibs --label bad-service --with 'bad=echo oops; exit 4' --ready false true
+-> exit 77
+2| dibs: service bad exited 4 before it was ready, so the command did not run.
+2|   The end of its log, <root>/scratch/jobs/<job>/with-bad.log:
+2|     oops
+2| job <job>  shared  bad-service  queued <s>  ran <s>  exit 77  by=dibs
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2|   with bad: exited 4 before it was ready  log <host>:<root>/scratch/jobs/<job>/with-bad.log
+
+== dibs --label slow-service --with 'srv=read -r _ <> <root>/f-never' --ready false --ready-within 1 true
+-> exit 77
+2| dibs: service srv was not ready within 1s, so the command did not run.
+2| job <job>  shared  slow-service  queued <s>  ran <s>  exit 77  by=dibs
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2|   with srv: was not ready within 1s, and stopped  log <host>:<root>/scratch/jobs/<job>/with-srv.log
+2|   this exact command already failed here: job <job> exit 77, <dur> ago. Unchanged, it failed the same way.
+
+== dibs --label service-dies --with 'brief=exit 5' 'read -r _ <> <root>/f-never'
+-> exit 77
+2| dibs: service brief exited 5 while the command ran, so the command was stopped.
+2| job <job>  shared  service-dies  queued <s>  ran <s>  exit 77  by=dibs
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2|   with brief: ready after <s>, exited 5 while the command ran  log <host>:<root>/scratch/jobs/<job>/with-brief.log
+2|   this exact command already failed here: job <job> exit 124, <dur> ago. Unchanged, it failed the same way.
+
+== DIBS_PEEK_WARN=1 dibs --peek '<a second and a half of work>'
+-> exit 0
+1| peeked
+2| dibs: that --peek took <dur> and ran with no lock, beside
+2|   whatever is being measured. Anything that costs time belongs in
+2|   'dibs <command>', which takes the shared lock.
+
+== dibs --peek 'echo cheap'
+-> exit 0
+1| cheap

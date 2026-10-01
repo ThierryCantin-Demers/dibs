@@ -1,0 +1,40 @@
+== dibs status
+-> exit 0
+1| dibs: LOCKED BY AN ORPHAN. No holder record, but the lock is taken, so
+1|   something outlived its parent. Nothing can run until it goes.
+1|   holding it:
+1|     <pid> <etime> <user> <args>
+1|   Stop it with: dibs --kill <pid> --anyone
+
+== dibs status --json
+{
+  "t": <n>,
+  "state": "orphan",
+  "cores": <n>,
+  "load": <n>,
+  "caches": [],
+  "clones": [],
+  "holders": [],
+  "queue": []
+}
+
+== dibs --wait 1 --label behind-it true
+-> exit 75
+2| dibs: the lock is held by an orphan (pid <pid>), which left no record, so nothing here can start. Reclaim it with: dibs --release
+2| dibs: still busy after 1s, gave up.
+2| dibs: LOCKED BY AN ORPHAN. No holder record, but the lock is taken, so
+2|   something outlived its parent. Nothing can run until it goes.
+2|   holding it:
+2|     <pid> <etime> <user> <args>
+2|   Stop it with: dibs --kill <pid> --anyone
+2|   queued 1 of 1: shared  behind-it  waiting <dur>  pid <pid>   [starts as soon as the lock frees]
+2|     true
+2|     from session suite
+
+== dibs --release
+-> exit 0
+1| Pruned dead entries.
+1| The lock was held by an orphan, which left no record. Reclaiming it:
+1|   <pid> <etime> <user> <args>
+1| dibs: idle
+1| A live holder is a running command. Stop it with: kill <pid>

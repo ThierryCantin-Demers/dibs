@@ -1,0 +1,131 @@
+== dibs --out
+-> exit 0
+1| shared  writes-a-log  pid <pid>  (<dur>)
+1|   from session suite
+1| 
+1|   <root>/job.log  (<n> bytes, last 40 lines)
+1|   | first line
+1|   | second line
+
+== dibs --out <pid>
+-> exit 0
+1| shared  writes-a-log  pid <pid>  (<dur>)
+1|   from session suite
+1| 
+1|   <root>/job.log  (<n> bytes, last 40 lines)
+1|   | first line
+1|   | second line
+
+== dibs out <finished job>  (the first read, which keeps it here)
+-> exit 0
+1| job <job>  shared  done  ran <s>  exit 0
+1|   seq 1 50 
+1|   <host>:<root>/scratch/jobs/<job>/log
+1|   kept on this computer: <root>/home/.local/state/dibs/jobs/<job>/log  (<n> bytes, last 40 lines)
+1|   | 11
+1|   | 12
+1|   | 13
+1|   | 14
+1|   | 15
+1|   | 16
+1|   | 17
+1|   | 18
+1|   | 19
+1|   | 20
+1|   | 21
+1|   | 22
+1|   | 23
+1|   | 24
+1|   | 25
+1|   | 26
+1|   | 27
+1|   | 28
+1|   | 29
+1|   | 30
+1|   | 31
+1|   | 32
+1|   | 33
+1|   | 34
+1|   | 35
+1|   | 36
+1|   | 37
+1|   | 38
+1|   | 39
+1|   | 40
+1|   | 41
+1|   | 42
+1|   | 43
+1|   | 44
+1|   | 45
+1|   | 46
+1|   | 47
+1|   | 48
+1|   | 49
+1|   | 50
+
+== dibs out <finished job>  (read again, from what was kept)
+-> exit 0
+1| job <job>  shared  done  ran <s>  exit 0
+1|   seq 1 50 
+1|   <host>:<root>/scratch/jobs/<job>/log
+1|   kept on this computer: <root>/home/.local/state/dibs/jobs/<job>/log  (<n> bytes, last 40 lines)
+1|   | 11
+1|   | 12
+1|   | 13
+1|   | 14
+1|   | 15
+1|   | 16
+1|   | 17
+1|   | 18
+1|   | 19
+1|   | 20
+1|   | 21
+1|   | 22
+1|   | 23
+1|   | 24
+1|   | 25
+1|   | 26
+1|   | 27
+1|   | 28
+1|   | 29
+1|   | 30
+1|   | 31
+1|   | 32
+1|   | 33
+1|   | 34
+1|   | 35
+1|   | 36
+1|   | 37
+1|   | 38
+1|   | 39
+1|   | 40
+1|   | 41
+1|   | 42
+1|   | 43
+1|   | 44
+1|   | 45
+1|   | 46
+1|   | 47
+1|   | 48
+1|   | 49
+1|   | 50
+
+== dibs --out 999999
+-> exit 1
+2| Nothing holding the lock with pid <pid>.
+
+== dibs --out 19700101-1
+-> exit 1
+2| no job 19700101-1 under <root>/scratch/jobs
+
+== dibs --fetch <finished job>  (which kept no files)
+-> exit 3
+2| job <job> kept no files: its recipe names no artifacts, or it wrote none of them
+
+== dibs --fetch 19700101-1
+-> exit 1
+2| no job 19700101-1 under <root>/scratch/jobs
+
+== dibs --out  (with nothing running)
+-> exit 0
+1| Nothing is running.

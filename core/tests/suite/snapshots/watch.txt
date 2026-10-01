@@ -1,0 +1,15 @@
+== dibs --watch 2, its first redraw
+<clock>   every 2s, ctrl-c to stop
+dibs: idle
+
+== dibs --watch --json, its first line
+{
+  "t": <n>,
+  "state": "idle",
+  "cores": <n>,
+  "load": <n>,
+  "caches": [],
+  "clones": [],
+  "holders": [],
+  "queue": []
+}

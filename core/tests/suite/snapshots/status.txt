@@ -1,0 +1,54 @@
+== idle
+-> exit 0
+1| dibs: idle
+
+== a benchmark holding, with a service and a batch plan, and two queued
+-> exit 0
+1| dibs: BUSY, benchmark in progress (2 queued)
+1|   bench  steady  <dur>  pid <pid>   [usually 1m40s over 3 runs, ~<dur> left]
+1|     the steady job
+1|     with srv, pid <pid>: ./serve --port 1
+1|     from an agent on gpu:card
+1|     batch <batch>, step 1 of 4: build
+1|     then here: next ~5m00s, fresh (no history)
+1|     then on other machines: far
+1|     batch time left here: over <dur>, since some of what is ahead has no history
+1|   queued 1 of 2: shared  behind-1  waiting <dur>  pid <pid>   [~<dur> until it starts]
+1|     the first waiter
+1|     from an agent
+1|   queued 2 of 2: bench  next-bench  waiting <dur>  pid <pid>   [~<dur> until it starts]
+1|     the second waiter
+1|     from an agent
+1|   (queued in arrival order; the kernel picks the actual wake order)
+
+== shared holders, each estimated from a different history
+-> exit 0
+1| dibs: in use, shared
+1|   shared  mixed  <dur>  pid <pid>   [anywhere from under a second to 4m00s over 5 runs, under <dur> left if it runs true to form]
+1|     runs disagree
+1|     from an agent
+1|   shared  solo  <dur>  pid <pid>   [ran once, in 2m00s, ~<dur> left]
+1|     ran once before
+1|     from an agent
+1|   shared  quick  <dur>  pid <pid>   [under a second over 3 runs]
+1|     always instant
+1|     from an agent
+1|   shared  novel  <dur>  pid <pid>   [nothing on this one; this agent's other shared jobs: usually 20s over 3 runs, longer than it has ever taken]
+1|     an agent's new label
+1|     from Agent One
+1|   shared  never-seen  <dur>  pid <pid>   [nothing on this one; every shared job on the machine: anywhere from under a second to 5m00s over 21 runs, under <dur> left if it runs true to form]
+1|     nothing known
+1|     from Agent Three
+1|   shared  sweep  <dur>  pid <pid>   [nothing with these values; with others: usually 20s over 3 runs, longer than it has ever taken]
+1|     other values
+1|     from an agent
+1|   shared  stuck-one  <dur>  pid <pid>   [STUCK? its slowest run was 20s, this is over twice that]
+1|     stop it with: dibs --kill <pid>
+1|     far past its slowest
+1|     from an agent
+1|   rsh  sync  <dur>  pid <pid>   [no history for this one yet]
+1|     rsync --server
+1|     from an agent
+1|   shared  six-fields  <dur>  pid <pid>   [nothing on this one; every shared job on the machine: anywhere from under a second to 5m00s over 21 runs, under <dur> left if it runs true to form]
+1|     
+1|     from an older dibs

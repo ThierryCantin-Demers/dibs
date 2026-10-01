@@ -1,0 +1,53 @@
+== series
+#dibs-series 1
+rec-series	here	none	session suite	<epoch>	1
+
+== jobs/<job> kept on this computer once read
+  head
+    | job <job>  shared  rec-kept  ran <s>  exit 0
+    |   seq 1 3 
+    |   <host>:<root>/scratch/jobs/<job>/log
+  log
+    | 1
+    | 2
+    | 3
+
+== friction.jsonl
+{"by":"session suite","dibs":"<commit>","t":<epoch>,"text":"a line about what got in the way"}
+
+== runs.jsonl, one recipe run, as JSON
+{
+  "t": <epoch>,
+  "verb": "build",
+  "label": "app/build/rec",
+  "repo": "app",
+  "recipe": "rec",
+  "fingerprint": "2593baf3b5dbbcce",
+  "isolation": "machine",
+  "backend": "dibs",
+  "procedure": [
+    {
+      "lock": "shared",
+      "run": "true"
+    }
+  ],
+  "revisions": {
+    "app": "local:<head>+dirty-<sha>"
+  },
+  "steps": [
+    {
+      "lock": "shared",
+      "status": 0,
+      "seconds": <s>,
+      "job": "<job>",
+      "log": "<host>:<root>/scratch/jobs/<job>/log"
+    }
+  ],
+  "outcome": "ok"
+}
+
+== batch/<batch>, what a batch keeps of its steps
+only.err
+only.out
+owner
+summary

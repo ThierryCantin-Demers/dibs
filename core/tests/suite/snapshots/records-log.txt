@@ -1,0 +1,400 @@
+== log: arrived, rec-plain
+  12 fields
+  when         <when>
+  event        arrived
+  pid          <pid>
+  mode         shared
+  label        rec-plain
+  queued       -
+  ran          -
+  exit         -
+  command      echo hi
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: finished, rec-plain
+  12 fields
+  when         <when>
+  event        finished
+  pid          <pid>
+  mode         shared
+  label        rec-plain
+  queued       <s>
+  ran          <s>
+  exit         0
+  command      echo hi
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: arrived, rec-fails
+  12 fields
+  when         <when>
+  event        arrived
+  pid          <pid>
+  mode         shared
+  label        rec-fails
+  queued       -
+  ran          -
+  exit         -
+  command      exit 3
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: finished, rec-fails
+  12 fields
+  when         <when>
+  event        finished
+  pid          <pid>
+  mode         shared
+  label        rec-fails
+  queued       <s>
+  ran          <s>
+  exit         3
+  command      exit 3
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: peek, <root-name>
+  12 fields
+  when         <when>
+  event        peek
+  pid          <pid>
+  mode         peek
+  label        <root-name>
+  queued       -
+  ran          <s>
+  exit         0
+  command      true
+  agent        session suite
+  batch        -
+  job          -
+
+== log: peek-slow, <root-name>
+  12 fields
+  when         <when>
+  event        peek-slow
+  pid          <pid>
+  mode         peek
+  label        <root-name>
+  queued       -
+  ran          <s>
+  exit         0
+  command      true
+  agent        session suite
+  batch        -
+  job          -
+
+== log: arrived, rec-anchor
+  12 fields
+  when         <when>
+  event        arrived
+  pid          <pid>
+  mode         shared
+  label        rec-anchor
+  queued       -
+  ran          -
+  exit         -
+  command      read -r _ < <root>/f-b
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: arrived, rec-queued-bench
+  12 fields
+  when         <when>
+  event        arrived
+  pid          <pid>
+  mode         bench
+  label        rec-queued-bench
+  queued       -
+  ran          -
+  exit         -
+  command      true
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: arrived, quickie
+  12 fields
+  when         <when>
+  event        arrived
+  pid          <pid>
+  mode         shared
+  label        quickie
+  queued       -
+  ran          -
+  exit         -
+  command      read -r _ < <root>/f-q
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: bypassed, quickie
+  12 fields
+  when         <when>
+  event        bypassed
+  pid          <pid>
+  mode         shared
+  label        quickie
+  queued       -
+  ran          -
+  exit         -
+  command      read -r _ < <root>/f-q
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: finished, quickie
+  12 fields
+  when         <when>
+  event        finished
+  pid          <pid>
+  mode         shared
+  label        quickie
+  queued       <s>
+  ran          <s>
+  exit         0
+  command      read -r _ < <root>/f-q
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: finished, rec-anchor
+  12 fields
+  when         <when>
+  event        finished
+  pid          <pid>
+  mode         shared
+  label        rec-anchor
+  queued       <s>
+  ran          <s>
+  exit         0
+  command      read -r _ < <root>/f-b
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: finished, rec-queued-bench
+  12 fields
+  when         <when>
+  event        finished
+  pid          <pid>
+  mode         bench
+  label        rec-queued-bench
+  queued       <s>
+  ran          <s>
+  exit         0
+  command      true
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: arrived, rec-killed
+  12 fields
+  when         <when>
+  event        arrived
+  pid          <pid>
+  mode         shared
+  label        rec-killed
+  queued       -
+  ran          -
+  exit         -
+  command      read -r _ < <root>/f-k
+  agent        session owner
+  batch        -
+  job          <job>
+
+== log: killed, <pid>.any
+  12 fields
+  when         <when>
+  event        killed
+  pid          <pid>
+  mode         kill
+  label        <pid>.any
+  queued       -
+  ran          -
+  exit         -
+  command      killed shared rec-killed (pid <pid>) after <dur>: read -r _ < <root>/f-k
+  agent        session stranger
+  batch        -
+  job          -
+
+== log: aborted, rec-killed
+  12 fields
+  when         <when>
+  event        aborted
+  pid          <pid>
+  mode         shared
+  label        rec-killed
+  queued       -
+  ran          -
+  exit         -
+  command      read -r _ < <root>/f-k
+  agent        session owner
+  batch        -
+  job          <job>
+
+== log: arrived, rec-gone
+  12 fields
+  when         <when>
+  event        arrived
+  pid          <pid>
+  mode         shared
+  label        rec-gone
+  queued       -
+  ran          -
+  exit         -
+  command      echo up > <root>/f-up; read -r _ < <root>/f-never
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: caller-gone, rec-gone
+  12 fields
+  when         <when>
+  event        caller-gone
+  pid          <pid>
+  mode         shared
+  label        rec-gone
+  queued       -
+  ran          -
+  exit         -
+  command      caller gone: echo up > <root>/f-up; read -r _ < <root>/f-never
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: finished, rec-gone
+  12 fields
+  when         <when>
+  event        finished
+  pid          <pid>
+  mode         shared
+  label        rec-gone
+  queued       <s>
+  ran          <s>
+  exit         143
+  command      echo up > <root>/f-up; read -r _ < <root>/f-never
+  agent        session suite
+  batch        -
+  job          <job>
+
+== log: arrived, rec-step
+  12 fields
+  when         <when>
+  event        arrived
+  pid          <pid>
+  mode         shared
+  label        rec-step
+  queued       -
+  ran          -
+  exit         -
+  command      echo up > <root>/f-sup; read -r _ < <root>/f-shold
+  agent        session suite
+  batch        <batch> first
+  job          <job>
+
+== log: cancelled, <batch>
+  12 fields
+  when         <when>
+  event        cancelled
+  pid          <pid>
+  mode         kill
+  label        <batch>
+  queued       -
+  ran          -
+  exit         -
+  command      cancelled batch <batch>: 1 job(s) stopped
+  agent        session suite
+  batch        -
+  job          -
+
+== log: finished, rec-step
+  12 fields
+  when         <when>
+  event        finished
+  pid          <pid>
+  mode         shared
+  label        rec-step
+  queued       <s>
+  ran          <s>
+  exit         76
+  command      echo up > <root>/f-sup; read -r _ < <root>/f-shold
+  agent        session suite
+  batch        <batch> first
+  job          <job>
+
+== log: refused, rec-late
+  12 fields
+  when         <when>
+  event        refused
+  pid          <pid>
+  mode         shared
+  label        rec-late
+  queued       -
+  ran          -
+  exit         -
+  command      refused, batch cancelled: true
+  agent        session suite
+  batch        <batch> late
+  job          -
+
+== history: quickie
+  4 fields
+  mode         shared
+  label        quickie
+  seconds      <s>
+  agent        someone
+
+== history: quickie
+  4 fields
+  mode         shared
+  label        quickie
+  seconds      <s>
+  agent        someone
+
+== history: quickie
+  4 fields
+  mode         shared
+  label        quickie
+  seconds      <s>
+  agent        someone
+
+== history: rec-plain
+  5 fields
+  mode         shared
+  label        rec-plain
+  seconds      <s>
+  agent        session suite
+  fingerprint  fp-plain
+
+== history: quickie
+  5 fields
+  mode         shared
+  label        quickie
+  seconds      <s>
+  agent        session suite
+  fingerprint  
+
+== history: rec-anchor
+  5 fields
+  mode         shared
+  label        rec-anchor
+  seconds      <s>
+  agent        session suite
+  fingerprint  
+
+== history: rec-queued-bench
+  5 fields
+  mode         bench
+  label        rec-queued-bench
+  seconds      <s>
+  agent        session suite
+  fingerprint  
+
+== cancelled.<batch> in the lock directory
+cancelled.<batch>: 0 bytes

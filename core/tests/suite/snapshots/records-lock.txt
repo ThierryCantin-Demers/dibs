@@ -1,0 +1,76 @@
+== holder.<pid>, a benchmark holding and a shared job queued behind it
+  9 fields
+  mode         bench
+  pid          <pid>
+  start        <epoch>
+  label        rec-bench
+  agent        session suite
+  agent id     local_suite
+  device       cpu
+  command      read -r _ < <root>/f-bench
+  fingerprint  fp-bench
+
+== waiting.<pid>, a benchmark holding and a shared job queued behind it
+  9 fields
+  mode         shared
+  pid          <pid>
+  start        <epoch>
+  label        rec-served
+  agent        session suite
+  agent id     local_suite
+  device       -
+  command      echo up > <root>/f-up; read -r _ < <root>/f-served
+  fingerprint  
+
+== batch.<pid>, the plan of the batch the queued job is a step of
+<batch>	serve
+2	3
+measure	bench	rec-bench	1
+elsewhere	shared	far	0
+
+== holder.<pid>, once the queued job holds the lock
+  9 fields
+  mode         shared
+  pid          <pid>
+  start        <epoch>
+  label        rec-served
+  agent        session suite
+  agent id     local_suite
+  device       -
+  command      echo up > <root>/f-up; read -r _ < <root>/f-served
+  fingerprint  
+
+== with.<pid>, once the queued job holds the lock
+  3 fields
+  service      srv
+  pid          <pid>
+  command      read -r _ < <root>/f-served
+
+== port.<port>, once the queued job holds the lock
+  1 fields
+  pid          <pid>
+
+== work.<pid>, once the queued job holds the lock
+  2 lines, a pid each
+
+== cpu.<pid>, the CPU sample a status leaves
+  3 words: ticks, when it last worked, when sampled
+
+== holder.<pid>, a hold
+  9 fields
+  mode         shared
+  pid          <pid>
+  start        <epoch>
+  label        rec-hold
+  agent        session suite
+  agent id     local_suite
+  device       -
+  command      held for a command run elsewhere: read -r _ < <root>/f-held
+  fingerprint  
+
+== hold.<pid>, beside the hold's record
+<a fifo>
+
+== what the lock directory holds once every job has gone
+gate
+rw

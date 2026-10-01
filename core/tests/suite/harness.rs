@@ -102,7 +102,10 @@ impl Sandbox {
         ] {
             env.insert(k.to_string(), v);
         }
-        for k in ["USER", "LOGNAME", "LANG", "RUSTUP_HOME"] {
+        for k in ["USER", "LOGNAME"] {
+            env.insert(k.to_string(), "someone".into());
+        }
+        for k in ["LANG", "RUSTUP_HOME"] {
             if let Ok(v) = std::env::var(k) {
                 env.insert(k.to_string(), v);
             }

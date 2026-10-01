@@ -1,0 +1,85 @@
+== dibs build --help
+-> exit 0
+1| dibs <verb> <repo>[@<ref>] <recipe>       run one of the repo's recipes
+1|                                           @local sends your working tree, unpushed and
+1|                                           uncommitted changes included, and is the only
+1|                                           path for a private repo: the machines carry no
+1|                                           GitHub credentials
+1| dibs list <repo>                      what that repo defines
+1| dibs runs [label] [--all]             what has run here, and what is comparable. A failed run
+1|                                       is listed only with --all
+1| dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>   a command in a prepared worktree
+1| dibs raw --reason <why> -- <cmd>      a command with nothing prepared
+1| dibs with <repo>[@<ref>] <service> [--bench] [--there] -- <cmd>   run the command here while
+1|                                       the repo's servers run on the machine under its lock,
+1|                                       started once they are ready and stopped when the command
+1|                                       ends. --bench times it: the servers are built under the
+1|                                       shared lock, then run with the machine held alone.
+1|                                       --there runs the command on the machine instead, in the
+1|                                       tree beside them, reaching them at 127.0.0.1:$DIBS_PORT_<NAME>
+1| dibs gaps                             what did not fit a recipe, what got in the way, and
+1|                                       which of it recurs
+1| dibs --friction '<one line>'          what got in the way, in your own words, kept where the
+1|                                       next session reads it: dibs gaps
+1| dibs machines [<machine>] [--json]    each machine in ~/.config/dibs/fleet.toml against what it
+1|                                       should have: tools, toolchains, GPU stack, repo clones,
+1|                                       whose keys are there, and whether its names answer here.
+1|                                       A machine in the pool is probed under its shared lock
+1| dibs batch <file|->                   a list of dibs command lines as one submission, with one
+1|                                       summary at the end. One line per step, optionally
+1|                                       prefixed [name after=a,b cont]. A step without after=
+1|                                       waits for the one before it; steps that wait for nothing
+1|                                       in common overlap only on different machines. A failed
+1|                                       step stops the batch unless it is marked cont.
+1| 
+1|   <verb>    bench, build or test
+1|   <repo>    a path to a checkout, or a name: the checkout you are in when it is that
+1|             repo, a worktree of it included, else the one under --root
+1|   <ref>     a branch, tag or commit the machine fetches, or local. Two or more are one
+1|             comparison with one record: A..B measures B against where it left A, their
+1|             merge base, so what landed on A since is not credited to B; a,b,c measures
+1|             each in turn. Every arm is built in a tree and target directory of its own,
+1|             then each rep measures them all, the order reversed every other rep (A B B A),
+1|             which cancels a drift such as a card warming up
+1|   --root    where named repos live (default $DIBS_ROOT, then `root` in machines.toml,
+1|             else the current directory)
+1|   --reason  why this does not fit a recipe. Required for shell and raw, and recorded:
+1|             a reason that keeps recurring is the specification for the next recipe.
+1|   --device  the card to run on, named from the machine's inventory. It is part of the
+1|             derived label, so each card keeps its own history and running a recipe on a
+1|             second one neither mixes with the first nor replaces it. `dibs --machines -v`
+1|             lists the aliases.
+1|   --<name>  a value for a parameter the recipe declares, such as --backend vulkan.
+1|             `dibs list <repo>` prints what each recipe takes, with its default and its
+1|             choices. The label does not carry them, so one recipe keeps one duration
+1|             history; the run record carries them.
+1|   --sweep   <name>=<a,b,c>, one run per value, submitted as one batch with one summary.
+1|             Repeatable, and the combinations are the cross product. A value is never split
+1|             on commas, so --sweep is how a sweep is asked for and --<name> always means
+1|             one value.
+1|   --reps    measure this many times. The build runs once, and the record holds each rep
+1|   --pin <repo>@<ref>  build against that repo's tree instead of the revision the lockfile
+1|             names: @local sends your checkout of it, unpushed changes included, and a ref
+1|             is fetched. dibs points cargo at it with a [patch] outside the tree, checks
+1|             after the build that cargo used it, and records its revision. Repeatable
+1|   --artifacts <dir>  copy the files the recipe's `artifacts` name into dir, at their paths
+1|             in the tree, under <arm>/r<rep>/ when there are several. They are fetched and
+1|             kept beside each job's log either way
+1|   --bench   shell only: the exclusive lock, for a one-off that is a measurement
+1|   --max     seconds the job may hold the lock, when the default is too short for it
+1|   --anyway  measure even when another tree built into the target after this one did,
+1|             which is otherwise refused with exit 78
+1|   --new-series  the measurement is moving to another card of its machine on purpose, so
+1|             its label's series there starts again. Each machine keeps its own series, so
+1|             another machine needs no flag. Checked before anything is built
+1|   --dry-run print what would run, take no lock, record nothing
+1|   --verbose with batch, each step's output as it comes, prefixed with the step's name
+1| 
+1| A recipe declares the procedure and names no revisions: the invocation supplies the code and
+1| the run record captures what it resolved to.
+1| 
+1| Which machine comes from DIBS_HOST, the same as it does for dibs itself.
+
+== dibs build
+-> exit 2
+2| dibs: needs a repo

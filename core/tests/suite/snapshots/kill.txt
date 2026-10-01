@@ -1,0 +1,36 @@
+== dibs --kill <pid>  (another session's)
+-> exit 2
+2| dibs: bench blocker (pid <pid>) belongs to session owner, not to you.
+2|   It has been running <dur>. If it is stuck and in your way, or you
+2|   know it should stop, say so:  dibs --kill <pid> --anyone
+
+== dibs --kill <pid>  (from a shell with no session)
+-> exit 2
+2| dibs: bench blocker (pid <pid>) belongs to session owner, not to you.
+2|   It has been running <dur>. If it is stuck and in your way, or you
+2|   know it should stop, say so:  dibs --kill <pid> --anyone
+
+== dibs --kill 999999
+-> exit 1
+2| Nothing holding or queued with pid <pid>.
+2| dibs: BUSY, benchmark in progress
+2|   bench  blocker  <dur>  pid <pid>   [no history for this one yet]
+2|     read -r _ < <root>/f-p
+2|     from session owner
+
+== dibs --kill <pid> --anyone
+-> exit 0
+1| Sent SIGTERM to <pids> (bench blocker, held <dur>).
+1| It belonged to session owner.
+1| If it survives that, run: dibs --kill <pid> --force
+
+== dibs --kill <pid> --force  (its own)
+-> exit 0
+1| Sent SIGKILL to <pids> (shared mine, held <dur>).
+1| It belonged to session owner.
+
+== dibs --release  (with nothing held)
+-> exit 0
+1| Pruned dead entries.
+1| dibs: idle
+1| A live holder is a running command. Stop it with: kill <pid>

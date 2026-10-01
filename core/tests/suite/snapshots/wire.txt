@@ -1,0 +1,1364 @@
+== dibs --on box-a --label one-string 'echo hi; exit 3'
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: one-string
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: echo hi; exit 3
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --label several printf '%s|' "it's" 'a b' '$HOME'
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: several
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: printf %s\| it\'s a\ b \$HOME 
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --bench --label measured true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: bench
+    LABEL: measured
+    WAIT: 
+    MAXHOLD: 7200
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --bench --device gpu:card --label pinned true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: bench
+    LABEL: pinned
+    WAIT: 
+    MAXHOLD: 7200
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 0000:01:00.0
+    DEV_RT: cuda,vulkan
+    DEV_CHIP: 10de:2786
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: gpu:card
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --wait 5 --max 60 --stream -v --label flags true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: flags
+    WAIT: 5
+    MAXHOLD: 60
+    VERBOSE: 1
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 1
+    READY_WITHIN: 300
+    MAXFROM: given
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --label served --port api --with 'srv=./serve --port $DIBS_PORT_API' --ready tcp:api --ready-within 9 --with side=true true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: served
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 9
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 1
+    PORT_NAME[0]: api
+    WITH_NAME: an array of 2
+    WITH_NAME[0]: srv
+    WITH_NAME[1]: side
+    WITH_READY: an array of 2
+    WITH_READY[0]: tcp:api
+    WITH_READY[1]: 
+    WITH_CMD: an array of 2
+    WITH_CMD[0]: ./serve --port $DIBS_PORT_API
+    WITH_CMD[1]: true
+
+== dibs --on box-a --hold --label held true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: held
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 1
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --peek 'ls -la'
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: peek
+    LABEL: <root-name>
+    WAIT: 
+    MAXHOLD: 30
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: ls -la
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --status
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: status
+    LABEL: <root-name>
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --status --json
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: status
+    LABEL: <root-name>
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 1
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a -v --status
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: status
+    LABEL: <root-name>
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 1
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --watch 3
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: watch
+    LABEL: 3
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --watch --json
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: watch
+    LABEL: 5
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 1
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --log 7
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: log
+    LABEL: 7
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --kill 4242
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: kill
+    LABEL: 4242
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --kill 4242 --anyone --force
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: kill-force
+    LABEL: 4242.any
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --out
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: out
+    LABEL: all.40
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --out 4242
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: out
+    LABEL: 4242.40
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --out 20260101120000-4242
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: out
+    LABEL: <job>.whole
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --fetch 20260101120000-4242
+-> exit 1
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: fetch
+    LABEL: <job>
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --release
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: release
+    LABEL: <root-name>
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --gc
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: gc
+    LABEL: dibs-gc
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 1
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: default 0
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --gc --days 3 --dry-run
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: gc
+    LABEL: dibs-gc
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 1
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 3 1
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --check
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: check
+    LABEL: check
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --check box-a --write
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: check
+    LABEL: check-write
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --abi
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: abi
+    LABEL: <root-name>
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --sync -a ./x ':~/y'
+-> exit 0
+call 1: rsync -e 'bash <dibs> --rsh' --mkpath -a ./x 'dibs@box-a:~/y'
+  with:
+    DIBS_HOST=dibs@box-a
+    DIBS_HOSTNAME=box-a
+    DIBS_SYNC_LABEL=
+    DIBS_ON=box-a
+    DIBS_RSH_EXIT=<a file>
+
+== dibs --on box-a --label sent --sync --checksum ':~/y/' ./x/
+-> exit 0
+call 1: rsync -e 'bash <dibs> --rsh' --mkpath --checksum 'dibs@box-a:~/y/' ./x/
+  with:
+    DIBS_HOST=dibs@box-a
+    DIBS_HOSTNAME=box-a
+    DIBS_SYNC_LABEL=sent
+    DIBS_ON=box-a
+    DIBS_RSH_EXIT=<a file>
+
+== dibs --rsh box-a rsync --server ...  (as rsync starts it, under the sync's label)
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: rsh
+    LABEL: sent
+    WAIT: 
+    MAXHOLD: 3600
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: rsync --server <what this rsync asks of its far side>
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 1
+    HOLD: 0
+    LEASE: 0
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --rsh box-a rsync --server ...  (with DIBS_SYNC_BEFORE naming a script)
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: rsh
+    LABEL: sync
+    WAIT: 
+    MAXHOLD: 3600
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD:
+      | mkdir -p ~/y
+      | cd ~/y
+      | rsync --server <what this rsync asks of its far side>
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 1
+    HOLD: 0
+    LEASE: 0
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== DIBS_BATCH=<batch> DIBS_BATCH_STEP=build DIBS_BATCH_PLAN=... dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: step
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH:
+      | <batch>	build
+      | 1	2
+      | measure	bench	gemm	1
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== DIBS_FINGERPRINT='ab c/d!0123456789abcdef' dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: step
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: abcd0123456789ab
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== DIBS_AGENT="it's \"mine\"" dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: step
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: it's "mine"
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== with no session dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: step
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: someone at a shell
+    AGENT_ID: shell-someone@<host>
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== DIBS_LEASE=0 dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: step
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 0
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== DIBS_NO_LIVE=1 dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: step
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 1
+    HOLD: 0
+    LEASE: 0
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== DIBS_NO_WATCHDOG=1 dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: step
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 1
+    HOLD: 0
+    LEASE: 0
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== DIBS_TRACE=1 DIBS_CONNECT_TIMEOUT=3 dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=3 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash -x $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: step
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== DIBS_REMOTE_DIR=/dev/shm dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p /dev/shm 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > /dev/shm/.dibs-payload.<pid>.<time>.sh &&              exec bash  /dev/shm/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: shared
+    LABEL: step
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: true
+    TTY: 0
+    AGENT: session suite
+    AGENT_ID: local_suite
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+
+== dibs --on box-a --status  (refused, so asked again why)
+-> exit 69
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  its values, ahead of lib/machine:
+    MODE: status
+    LABEL: <root-name>
+    WAIT: 
+    MAXHOLD: 1800
+    VERBOSE: 0
+    JSON: 0
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_CHIP: 
+    DEV_TWINS: 1
+    STREAM: 0
+    READY_WITHIN: 300
+    MAXFROM: default
+    FINGERPRINT: 
+    CMD: 
+    TTY: 0
+    AGENT: 
+    AGENT_ID: 
+    DEV_NAME: 
+    BATCH: 
+    NO_WATCH: 0
+    HOLD: 0
+    LEASE: 120
+    PORT_NAME: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+    WITH_CMD: an array of 0
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 dibs@box-a true
+call 3: ssh -v -o BatchMode=yes -o ConnectTimeout=10 dibs@box-a true
