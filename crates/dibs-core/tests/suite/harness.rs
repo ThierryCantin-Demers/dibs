@@ -852,6 +852,13 @@ impl Gate {
     }
 }
 
+/// Says that the calling test did not run, on the terminal past the harness's capture, so a pass
+/// that tested nothing is never taken for one that did.
+pub fn skip(why: &str) {
+    let name = thread::current().name().unwrap_or("a test").to_string();
+    let _ = writeln!(std::io::stderr(), "skipped {name}: {why}");
+}
+
 /// Polls a condition until it holds, failing the test after a bound rather than hanging it.
 pub fn until(what: &str, mut cond: impl FnMut() -> bool) {
     let deadline = Instant::now() + WAIT_LIMIT;

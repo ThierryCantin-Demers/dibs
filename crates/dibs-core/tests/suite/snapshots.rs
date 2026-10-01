@@ -561,8 +561,8 @@ fn orphan(s: &mut Sandbox, up: &Gate, release: &Gate) -> Job {
 #[test]
 fn status_of_an_orphaned_lock() {
     if cfg!(target_os = "macos") {
-        eprintln!(
-            "skipped on macOS: no process there can be shown to hold an flock, so no orphan is ever named"
+        skip(
+            "on macOS, no process there can be shown to hold an flock, so no orphan is ever named",
         );
         return;
     }
@@ -965,8 +965,8 @@ fn machines() {
 #[test]
 fn check() {
     if cfg!(target_os = "macos") {
-        eprintln!(
-            "skipped on macOS: --check there reports another platform's machine, and its snapshot is not written yet"
+        skip(
+            "on macOS, --check there reports another platform's machine, and its snapshot is not written yet",
         );
         return;
     }

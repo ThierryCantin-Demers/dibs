@@ -310,8 +310,8 @@ fn log_and_history() {
 #[test]
 fn orphan_reclaimed_in_the_log() {
     if cfg!(target_os = "macos") {
-        eprintln!(
-            "skipped on macOS: no process there can be shown to hold an flock, so no orphan is ever reclaimed"
+        skip(
+            "on macOS, no process there can be shown to hold an flock, so no orphan is ever reclaimed",
         );
         return;
     }

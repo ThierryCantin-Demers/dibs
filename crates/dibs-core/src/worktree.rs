@@ -1877,7 +1877,7 @@ mod local_tests {
             // Targets on a filesystem with reflinks, sources on one without, as on a machine
             // whose target directories alone were moved.
             "targets only" => format!(
-                "#!/bin/bash\nargs=()\nmode=\nfor a; do case \"$a\" in --reflink=*) mode=$a ;; *) args+=(\"$a\") ;; esac; done\ncase \"$mode:${{args[-1]}}\" in --reflink=auto:*/ws/*|--reflink=always:*/target/*) exec {} \"${{args[@]}}\" ;; esac\nexit 1\n",
+                "#!/bin/bash\nargs=()\nmode=\nfor a; do case \"$a\" in --reflink=*) mode=$a ;; *) args+=(\"$a\") ;; esac; done\ncase \"$mode:${{args[${{#args[@]}}-1]}}\" in --reflink=auto:*/ws/*|--reflink=always:*/target/*) exec {} \"${{args[@]}}\" ;; esac\nexit 1\n",
                 real.trim()
             ),
             _ => "#!/bin/bash\nexit 1\n".to_string(),

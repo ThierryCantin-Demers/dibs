@@ -291,6 +291,7 @@ fn any_pci_device() -> Option<(String, String)> {
 fn a_card_no_longer_in_its_slot_is_refused_rather_than_run_on_another() {
     // Vulkan's selectors ignore an address that answers to nothing and hand the job the first card.
     let Some((pci, chip)) = any_pci_device() else {
+        skip("this computer has no PCI device to stand in for a card");
         return;
     };
     let mut s = Sandbox::new();

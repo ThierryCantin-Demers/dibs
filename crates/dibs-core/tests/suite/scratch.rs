@@ -164,7 +164,7 @@ fn a_cache_seeded_from_another_is_sized_by_what_is_its_own() {
         "cp --reflink=always '{d}/app/lib' '{d}/app-local-1/lib' && sync -f '{d}/app'"
     )) != 0
     {
-        eprintln!("skipped: {d} cannot share blocks");
+        skip(&format!("{d} cannot share blocks"));
         let _ = fs::remove_dir_all(&disk);
         return;
     }

@@ -132,7 +132,8 @@ fn a_watch_whose_caller_stops_answering_stops_redrawing() {
     // A watch costs the machine a render on every tick, for nobody.
     let mut s = Sandbox::new();
     let call = s.new_session([DIBS, "--watch", "2"]);
-    let caller = s.spawn(s.remote(call).env("DIBS_LEASE", "2"));
+    let watched = s.path("watched");
+    let caller = s.spawn(s.remote(call).env("DIBS_LEASE", "2").stdout_to(&watched));
     let far = format!("^bash {}/.dibs-payload", s.p("remote-run"));
     let mut pid = 0;
     until("the watch to reach the machine", || {
@@ -145,21 +146,21 @@ fn a_watch_whose_caller_stops_answering_stops_redrawing() {
         pid != 0
     });
     signal_group(caller.pid, libc::SIGSTOP);
-    // Its parent is the stopped caller, so the far side stays a zombie once it has ended.
-    let state = || {
+    let redrawing = || {
         let st = s
             .command("ps", ["-o", "stat=", "-p", &pid.to_string()])
             .run()
             .stdout;
-        st.trim().get(..1).map(str::to_string)
+        !matches!(st.trim().get(..1), None | Some("Z"))
     };
-    until("the far side to end", || {
-        matches!(state().as_deref(), None | Some("Z"))
-    });
-    assert_eq!(state().as_deref(), Some("Z"));
+    until("the far side to stop redrawing", || !redrawing());
     signal_group(caller.pid, libc::SIGCONT);
-    signal_group(caller.pid, libc::SIGTERM);
     s.wait(caller);
+    let redraws = s.read("watched").lines_with("ctrl-c to stop");
+    assert!(
+        (1..=4).contains(&redraws),
+        "a watch nobody answers for stops within a lease or two of ticks, not after {redraws}"
+    );
 }
 
 #[test]
