@@ -7,6 +7,8 @@ default-members = ["crates/dibs-core", "crates/dibstop"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+# Let chains need 1.88 and File::try_lock 1.89.
+rust-version = "1.89"
 
 [workspace.dependencies]
 crossterm = "0.28"

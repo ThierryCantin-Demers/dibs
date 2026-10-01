@@ -2,6 +2,8 @@
 name = "dibs-machines"
 version.workspace = true
 edition.workspace = true
+# egui 0.36 needs 1.95.
+rust-version = "1.95"
 description = "A window on dibs machines: what each machine lacks against what it should have"
 
 [[bin]]
