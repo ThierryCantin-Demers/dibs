@@ -40,7 +40,7 @@ exit 0
 const MACHINES: &str = "[machine.box-a]\nssh      = \"dibs@box-a\"\nhostname = \"box-a\"\n\n  [[machine.box-a.device]]\n  kind     = \"gpu\"\n  alias    = \"gpu:card\"\n  name     = \"a card\"\n  pci      = \"0000:01:00.0\"\n  chip     = \"10de:2786\"\n  runtimes = [\"cuda\", \"vulkan\"]\n\n[machine.box-b]\nssh      = \"dibs@box-b\"\nhostname = \"box-b\"\n";
 
 /// A sandbox whose calls leave this computer for box-a over the recording ssh.
-fn wired() -> Sandbox {
+pub(crate) fn wired() -> Sandbox {
     let mut s = Sandbox::new();
     s.write_exec("wirebin/ssh", RECORDING_SSH);
     fs::create_dir_all(s.path("wire")).unwrap();

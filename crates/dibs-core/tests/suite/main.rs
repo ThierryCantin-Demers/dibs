@@ -3,6 +3,7 @@
 
 mod harness;
 
+mod baselines;
 mod batch;
 mod cli;
 mod detach;
