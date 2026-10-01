@@ -210,6 +210,26 @@
 # Never poll this. Launch it with the Bash tool's run_in_background parameter and do other
 # work; queueing then costs nothing and the notification arrives when the command is done.
 
+# What follows is written for bash 5 and GNU tools, and a Mac has bash 3.2 and BSD's. Homebrew's
+# go first, as on a machine running macOS, and the caller's own PATH comes back for its commands.
+case ${OSTYPE:-} in
+    darwin*)
+        export DIBS_CALLER_PATH=${DIBS_CALLER_PATH:-$PATH}
+        for _dibs_p in /opt/homebrew /usr/local; do
+            for _dibs_d in "$_dibs_p/bin" "$_dibs_p"/opt/{gawk,grep,gnu-sed,findutils,coreutils}/libexec/gnubin; do
+                [ -d "$_dibs_d" ] && PATH=$_dibs_d:$PATH
+            done
+        done
+        export PATH
+        if [ "${BASH_VERSINFO[0]}" -lt 5 ]; then
+            for _dibs_b in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+                [ -x "$_dibs_b" ] && exec "$_dibs_b" "$0" "$@"
+            done
+            echo "dibs: needs bash 5, and macOS has 3.2. brew install bash coreutils findutils gnu-sed grep gawk rsync" >&2
+            exit 2
+        fi ;;
+esac
+
 set -uo pipefail
 
 # Everything else is in lib/: beside the clone this runs from, or under libexec where a --copy

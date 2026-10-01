@@ -202,6 +202,7 @@ hold_run() {   # the command that takes the lock
     # would name this function's code, goes nowhere.
     { ( printf '%s\n' "$BASHPID" > "$mark.pid"; exec 2>&3 3>&-
         export DIBS_HOLDING="${DIBS_HOLDING:+$DIBS_HOLDING }$LOCK_AT" ${HOLD_ENV[@]+"${HOLD_ENV[@]}"}
+        [ -n "${DIBS_CALLER_PATH:-}" ] && PATH=$DIBS_CALLER_PATH && unset DIBS_CALLER_PATH
         if [ "${#HOLD_CMD[@]}" -eq 1 ]; then exec bash -c "${HOLD_CMD[0]}"; else exec "${HOLD_CMD[@]}"; fi ) 4<&- 6>&-; } 3>&2 2>/dev/null
     st=$?
     trap - INT

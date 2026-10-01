@@ -59,7 +59,8 @@ fi
 case ":$PATH:" in
     *":$BIN:"*) ;;
     *) echo; echo "$BIN is not on your PATH. Add it:" >&2
-       echo "  bash/zsh   echo 'export PATH=\"\$PATH:$BIN\"' >> ~/.bashrc" >&2
+       echo "  bash       echo 'export PATH=\"\$PATH:$BIN\"' >> ~/.bashrc" >&2
+       echo "  zsh        echo 'export PATH=\"\$PATH:$BIN\"' >> ~/.zshrc" >&2
        echo "  fish       fish_add_path $BIN" >&2 ;;
 esac
 

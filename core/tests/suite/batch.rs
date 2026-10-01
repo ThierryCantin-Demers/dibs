@@ -89,6 +89,18 @@ fn a_killed_driver_takes_its_running_step_and_its_lock_with_it() {
 }
 
 #[test]
+fn a_killed_driver_with_no_parent_death_signal_still_takes_its_step_with_it() {
+    let mut s = Sandbox::new();
+    let (up, hold) = (s.gate("up"), s.gate("hold"));
+    let file = batch_file(&s, "b5w", &[&format!("[hold] dibs --label batch-hold '{}; {}'", up.signal(), hold.hold())]);
+    let driver = s.spawn(s.dibs(["batch", &file]).env("DIBS_NO_PDEATHSIG", "1"));
+    up.reached();
+    kill9(driver.pid);
+    s.wait(driver);
+    s.gone();
+}
+
+#[test]
 fn status_carries_the_batchs_plan_to_the_machine() {
     // The machine sees one step at a time, so the batch's plan travels with each one.
     let mut s = Sandbox::new();

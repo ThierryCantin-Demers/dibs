@@ -6,7 +6,7 @@ kill_batch() {   # id
     local id=$1 dir pid owner m tmp status=1
     dir=${XDG_STATE_HOME:-$HOME/.local/state}/dibs/batch/$id
     pid=${id##*-}
-    if [ -d "$dir" ] && [ -r "/proc/$pid/cmdline" ] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q 'dibs-core batch '; then
+    if [ -d "$dir" ] && ps -o command= -p "$pid" 2>/dev/null | grep -q 'dibs-core batch '; then
         owner=$(cat "$dir/owner" 2>/dev/null)
         if [ -n "$owner" ] && [ "$owner" != "$(agent_id)" ] && [ "$ANYONE" != 1 ]; then
             echo "dibs: batch $id was started by another session. If it should stop:  dibs --kill $id --anyone" >&2
@@ -15,7 +15,7 @@ kill_batch() {   # id
         : > "$dir/cancel"
         echo "dibs: cancelling batch $id here: nothing more starts, and its running steps are stopped." >&2
         timeout 60 tail --pid="$pid" -f /dev/null 2>/dev/null
-        if [ -d "/proc/$pid" ]; then
+        if kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null
             echo "dibs: its driver did not stop within a minute, so it was sent SIGTERM; its steps die with it." >&2
         fi

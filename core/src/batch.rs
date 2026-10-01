@@ -469,7 +469,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
     }
     eprint!("dibs: batch {id}, {} steps. You are told when it ends; there is nothing to watch.\n{plan}", steps.len());
 
-    let owned = has("setsid") && has("setpriv");
+    let owned = std::env::var("DIBS_NO_PDEATHSIG").as_deref() != Ok("1") && has("setsid") && has("setpriv");
     let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
     let recipes: Vec<Option<Vec<Pending>>> = steps
         .iter()
@@ -494,8 +494,9 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                 c.args(["setpriv", "--pdeathsig", "TERM", "bash", "-c", GROUP, "step", &step.line]);
                 c
             } else {
+                use std::os::unix::process::CommandExt;
                 let mut c = Command::new("bash");
-                c.args(["-c", &step.line]);
+                c.args(["-c", WATCHED, "step", &step.line]).process_group(0);
                 c
             };
             let pending: Vec<Pending> = (0..steps.len())
@@ -542,7 +543,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                     if cancelled.is_none() && dir.join("cancel").exists() {
                         cancelled = Some("with dibs --kill".into());
                         stopped = true;
-                        running.values().for_each(|&pid| stop(pid, owned));
+                        running.values().for_each(|&pid| stop(pid));
                     }
                 }
                 Err(e) => return Err(e.to_string()),
@@ -552,7 +553,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
         states[i] = State::Done { exit, seconds };
         if exit == CANCELLED && cancelled.is_none() && was_cancelled(&std::fs::read_to_string(dir.join(format!("{}.err", steps[i].name))).unwrap_or_default()) {
             cancelled = Some(format!("with dibs --kill on {}", machines[i]));
-            running.values().for_each(|&pid| stop(pid, owned));
+            running.values().for_each(|&pid| stop(pid));
         }
         if exit != 0 && (!steps[i].cont || cancelled.is_some()) {
             stopped = true;
@@ -582,9 +583,8 @@ fn was_cancelled(stderr: &str) -> bool {
 
 /// A step is its own process group, so the signal reaches the dibs call under it and that call's
 /// death reaches the machine, which stops the job and releases its lock.
-fn stop(pid: u32, owned: bool) {
-    let target = if owned { format!("-{pid}") } else { pid.to_string() };
-    let _ = Command::new("kill").args(["-TERM", "--", &target]).status();
+fn stop(pid: u32) {
+    let _ = Command::new("kill").args(["-TERM", "--", &format!("-{pid}")]).status();
 }
 
 fn has(tool: &str) -> bool {
@@ -596,6 +596,19 @@ fn has(tool: &str) -> bool {
 /// machine has a job runner below it holding the lock, so the signal is passed to the step's
 /// whole process group, which setsid made its own.
 const GROUP: &str = r#"trap 'trap - TERM; kill -TERM 0 2>/dev/null' TERM; bash -c "$1" & wait $!"#;
+
+/// GROUP where there is no parent-death signal, as on macOS: the step watches the driver itself.
+/// A tail that cannot watch exits non-zero, which leaves the step running rather than stopped.
+const WATCHED: &str = r#"trap 'trap - TERM; kill -TERM 0 2>/dev/null' TERM
+bash -c "$1" & s=$!
+tail --pid=$PPID -f /dev/null </dev/null >/dev/null 2>&1 & w=$!
+wait -n -p ended $s $w; st=$?
+if [ "$ended" = "$w" ]; then
+    [ "$st" = 0 ] && kill -TERM 0
+    wait $s; st=$?
+fi
+kill $w 2>/dev/null
+exit $st"#;
 
 fn copy(from: Option<impl std::io::Read + Send + 'static>, to: PathBuf, echo: Option<String>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {

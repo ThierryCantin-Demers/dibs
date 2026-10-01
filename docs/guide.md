@@ -12,6 +12,11 @@ no root anywhere. One account shared by everyone is the intended shape rather th
 because it is what lets one build cache serve the whole team, and because a lock keyed to a uid
 tells two people the machine is idle at the same time.
 
+Your own computer needs bash 5 and GNU tools too: Linux as it comes, or macOS with Homebrew's
+`bash coreutils findutils gnu-sed grep gawk rsync`. dibs puts those first and runs under
+Homebrew's bash by itself, and a command it runs on your side, under `--hold` or `dibs with`, gets
+your own PATH back. Cargo builds the recipe layer and `dibstop`.
+
     git clone https://github.com/ThierryCantin-Demers/dibs
     cd dibs && ./install.sh
 
