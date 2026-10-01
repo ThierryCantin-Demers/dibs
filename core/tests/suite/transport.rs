@@ -55,7 +55,7 @@ fn a_caller_that_stops_answering_is_let_go_when_its_lease_runs_out() {
     // side runs in a session of its own and so keeps going, as a machine does.
     let mut s = Sandbox::new();
     let (up, never) = (s.gate("up"), s.gate("never"));
-    let call = s.command("setsid", [DIBS, "--label", "lease-asleep", &format!("{}; {}", up.signal(), never.hold())]);
+    let call = s.new_session([DIBS, "--label", "lease-asleep", &format!("{}; {}", up.signal(), never.hold())]);
     let caller = s.spawn(s.remote(call).env("DIBS_LEASE", "2"));
     up.reached();
     signal_group(caller.pid, libc::SIGSTOP);
@@ -78,7 +78,7 @@ fn a_caller_that_answers_outlasts_many_leases() {
 fn a_watch_whose_caller_stops_answering_stops_redrawing() {
     // A watch costs the machine a render on every tick, for nobody.
     let mut s = Sandbox::new();
-    let call = s.command("setsid", [DIBS, "--watch", "2"]);
+    let call = s.new_session([DIBS, "--watch", "2"]);
     let caller = s.spawn(s.remote(call).env("DIBS_LEASE", "2"));
     let far = format!("^bash {}/.dibs-payload", s.p("remote-run"));
     let mut pid = 0;
@@ -89,7 +89,10 @@ fn a_watch_whose_caller_stops_answering_stops_redrawing() {
     });
     signal_group(caller.pid, libc::SIGSTOP);
     // Its parent is the stopped caller, so the far side stays a zombie once it has ended.
-    let state = || fs::read_to_string(format!("/proc/{pid}/stat")).ok().and_then(|st| st.rsplit(')').next().and_then(|r| r.split_whitespace().next().map(str::to_string)));
+    let state = || {
+        let st = s.command("ps", ["-o", "stat=", "-p", &pid.to_string()]).run().stdout;
+        st.trim().get(..1).map(str::to_string)
+    };
     until("the far side to end", || matches!(state().as_deref(), None | Some("Z")));
     assert_eq!(state().as_deref(), Some("Z"));
     signal_group(caller.pid, libc::SIGCONT);

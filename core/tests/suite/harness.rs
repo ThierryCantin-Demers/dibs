@@ -164,6 +164,19 @@ impl Sandbox {
         self.command("bash", ["-c", script])
     }
 
+    /// `args` in a session of their own. macOS has no setsid, and its perl does the same.
+    pub fn new_session<I, S>(&self, args: I) -> Call
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let args: Vec<String> = args.into_iter().map(|a| a.as_ref().to_string()).collect();
+        match self.command("sh", ["-c", "command -v setsid"]).run().code {
+            0 => self.command("setsid", args),
+            _ => self.command("perl", ["-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV or die"].into_iter().map(String::from).chain(args)),
+        }
+    }
+
     pub fn status(&self) -> String {
         self.dibs(["--status"]).run().stdout
     }
@@ -374,7 +387,8 @@ impl Sandbox {
             "#!/bin/bash\n\
              while [ $# -gt 0 ]; do case $1 in -o) shift 2 ;; -*) shift ;; *) break ;; esac; done\n\
              shift\n\
-             setsid bash -c \"$*\" <&0 &\n\
+             if command -v setsid >/dev/null; then setsid bash -c \"$*\" <&0 &\n\
+             else perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die' bash -c \"$*\" <&0 & fi\n\
              far=$!\n\
              trap 'exit 255' TERM\n\
              wait $far\n",
@@ -408,7 +422,7 @@ impl Drop for Sandbox {
         // Holders block on a fifo under the root, and removing the directory does not release
         // them. Everything started here inherited this home, which no other sandbox has.
         let home = format!("HOME={}/home", self.root.display()).into_bytes();
-        for e in fs::read_dir("/proc").unwrap().flatten() {
+        for e in fs::read_dir("/proc").into_iter().flatten().flatten() {
             let Ok(pid) = e.file_name().to_string_lossy().parse::<i32>() else { continue };
             if let Ok(env) = fs::read(e.path().join("environ")) {
                 if env.split(|b| *b == 0).any(|v| v == home.as_slice()) {

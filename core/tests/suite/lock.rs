@@ -269,7 +269,7 @@ fn a_lock_directory_it_cannot_write_is_refused_rather_than_run_around() {
 fn orphan(s: &mut Sandbox, mode: &str, up: &Gate, release: &Gate) -> Job {
     let script = format!("exec 8>\"$1/rw\"; flock {mode} 8; printf 'up\\n' > \"$2\"; read -r _ < \"$3\"");
     let lockdir = s.var("DIBS_LOCK_DIR");
-    let call = s.command("setsid", ["bash", "-c", &script, "_", &lockdir, &up.path.display().to_string(), &release.path.display().to_string()]);
+    let call = s.new_session(["bash", "-c", &script, "_", &lockdir, &up.path.display().to_string(), &release.path.display().to_string()]);
     s.spawn(call)
 }
 
