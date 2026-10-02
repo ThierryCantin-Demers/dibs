@@ -39,9 +39,10 @@ intended setup, since it lets one build cache serve everyone.
     git clone https://github.com/ThierryCantin-Demers/dibs
     cd dibs && ./install.sh
 
-`install.sh` links `dibs` into `~/.local/bin`, so pulling the clone updates it. With cargo
-installed it also builds the recipe layer and `dibstop`, and with `--machines` the
-`dibs-machines` window; without cargo you still get the lock.
+`install.sh` builds `dibs` and `dibstop` with cargo and installs them in `~/.local/bin`, or
+`$PREFIX/bin` when `PREFIX` is set, and with `--machines` the `dibs-machines` window too. The
+binary reads the part of dibs it sends to the machines from the clone it was built from, so keep
+the clone. Installed over a dibs from before, it replaces it, the bash script included.
 
 Record each machine, and say where your checkouts live:
 
@@ -96,22 +97,21 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 
 | | |
 |---|---|
-| `bin/dibs` | the lock's entry point: the help text, then it loads `lib/`. |
-| `lib/client/`, `lib/steps/` | what runs on your side: functions by topic, and the steps of a call in order. |
+| `crates/dibs/` | the `dibs` command: the grammar, a call to a machine, placement, status, and the recipe layer behind `dibs build`, `test` and `bench`. |
+| `crates/dibs-format/` | the ids, exits, records and line formats both halves read and write. |
 | `lib/machine/` | what runs on the machine, joined into one script and sent over ssh with every call, so nothing is installed there. |
-| `crates/dibs-core/` | the recipe layer behind `dibs build`, `test` and `bench`: recipes, labels, worktrees, provenance. |
 | `crates/dibstop/` | `dibstop`, a live view of who holds the machines. |
 | `crates/dibs-machines/` | `dibs-machines`, a desktop window on what each machine has against what it should. |
 | `docs/guide.md` | the detailed guide. |
 | `dibs-design/` | the plans, the settled decisions and their measurements. |
 | `dibs-agent-rules.md` | the rules your agents follow. |
-| `crates/dibs-core/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
-| `crates/dibs-core/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |
+| `crates/dibs/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
+| `crates/dibs/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |
 | `.github/workflows/ci.yml` | formatting, clippy, the tests on Linux and macOS, the window's build, and a scan for private names whose patterns live in the `PRIVATE_STRINGS` secret. |
 
 ## Tests
 
-    # dibs-core's unit tests and suite, and dibstop's: about 15 s, safe while others are working.
+    # dibs's unit tests and suite, dibs-format's and dibstop's: about 15 s, safe while others work.
     cargo test
 
     # dibs-machines, which a plain cargo test leaves out for its GUI toolkit.

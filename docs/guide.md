@@ -12,18 +12,17 @@ no root anywhere. One account shared by everyone is the intended shape rather th
 because it is what lets one build cache serve the whole team, and because a lock keyed to a uid
 tells two people the machine is idle at the same time.
 
-Your own computer needs bash 5 and GNU tools too: Linux as it comes, or macOS with Homebrew's
-`bash coreutils findutils gnu-sed grep gawk rsync`. dibs puts those first and runs under
-Homebrew's bash by itself, and a command it runs on your side, under `--hold` or `dibs with`, gets
-your own PATH back. Cargo builds the recipe layer and `dibstop`.
+Your own computer needs cargo to build dibs, and ssh, rsync and git; bash runs the steps of a
+batch. Neither GNU tools nor a recent bash is needed on your side, macOS included.
 
     git clone https://github.com/ThierryCantin-Demers/dibs
     cd dibs && ./install.sh
 
-`install.sh` symlinks `bin/dibs` into `~/.local/bin` so a pull updates it, and builds the recipe
-layer under `~/.local/libexec/dibs` and `dibstop` if cargo is present. Pass `--copy` if you would rather have files that do not move
-under you, and `--machines` for `dibs-machines`, a desktop window on what each machine has against
-what it should. Without cargo you still have a working lock, just not the interface above it.
+`install.sh` builds `dibs` and `dibstop` and installs them in `~/.local/bin`, or `$PREFIX/bin`.
+`--machines` adds `dibs-machines`, a desktop window on what each machine has against what it
+should. The binary reads the half of dibs it sends to a machine from the clone it was built from,
+so the clone stays where it is. Installed over a dibs from before, the bash script or a binary,
+it replaces it in one rename, so nothing running sees it half written.
 
 Then record your machine and say where your checkouts live:
 
@@ -78,9 +77,10 @@ than a fresh login, which is what makes it safe to leave open beside a benchmark
 
     dibs --update
 
-It fast-forwards the clone `dibs` was installed from, lists the commits that arrived, and reruns
-`install.sh` when anything changed or when the installed recipe layer was built from another
-commit. A `--copy` install has no clone to pull and says so.
+It fast-forwards the clone `dibs` was built from, lists the commits that arrived, and reruns
+`install.sh` when anything changed or when the running `dibs` was built from another commit. The
+reinstall goes where the running `dibs` is installed, so a trial under its own prefix updates
+itself and not the one on PATH.
 
 ## Where recipes come from
 
@@ -488,16 +488,6 @@ stderr to show for it. So with several machines, a call that names none is one o
 One machine in the inventory is no choice at all and is used. `DIBS_HOST` names the machine of
 a setup with no inventory, and chooses nothing once there are several.
 
-The inventory has two layers, the way recipes do. Set `DIBS_REGISTRY` to
-`user@host:path` and `dibs --registry-sync` fetches a shared machine list, cached locally and
-refreshed on a clock rather than on every call. Your own file then holds additions and
-overrides: a machine you name yourself wins outright over a shared entry of the same name. A
-registry that cannot be reached costs the freshness of a list and never the ability to
-dispatch, because the cached copy stays. Without `DIBS_REGISTRY` there is no shared layer and
-nothing changes.
-`dibs --abi --all` says whether a binary built on one machine can run on another, as facts
-rather than a hash: compatibility is directional, so it reports each pair each way.
-
 `dibs --machines` says what is known, `dibs --forget <machine>` drops one, and `dibs status`
 shows every machine at once, which is how you find where a job is actually running once work is
 being placed. The inventory is not in this repo because it names your hosts.
@@ -694,20 +684,19 @@ the notification arrives when the command is done.
 
 ## The two halves
 
-`bin/dibs` and `lib/` are the resource layer, and stay bash because half of it travels over
-ssh: `lib/machine/*.sh`, joined in order, is sent with every call, so a machine needs nothing
-installed to be usable, which is what makes adding one cheap. `lib/client/` holds the functions
-that run on your side, and `lib/steps/` the order a call goes through them in: read the
-arguments, choose the machine, refuse what it cannot do, place it, then send it.
+`lib/machine/` is the half of dibs that runs on a machine, and stays bash for now: joined in
+order, it is sent with every call, so a machine needs nothing installed to be usable, which is
+what makes adding one cheap.
 
-`crates/dibs-core/` is everything above that, and runs on your side, installed off PATH under
-`~/.local/libexec/dibs`: `dibs build`, `test`, `bench`, `list`, `runs`, `gaps`, `shell`, `raw`,
-`batch`, `with` and `machines` hand their arguments to it. It exists because an interface
-taking one arbitrary string invites four problems that were measured in the log it replaced.
-Labels were unstable, so estimates could not work. Two jobs in 179 redirected their output, so
-watching one almost never worked. Agents chose their own scratch paths, and one filled a shared
-quota. And the rule to build under the shared lock was prose rather than structure, so 17% of
-all exclusive time on the machine was spent compiling.
+`crates/dibs/` is the other half, the `dibs` binary on your side. It reads every command line
+through one grammar, chooses and reaches the machine, and is the recipe layer behind `dibs
+build`, `test`, `bench`, `list`, `runs`, `gaps`, `shell`, `raw`, `batch`, `with` and
+`machines`: a recipe's jobs are calls it makes itself, not commands it runs. The layer exists
+because an interface taking one arbitrary string invites four problems that were measured in
+the log it replaced. Labels were unstable, so estimates could not work. Two jobs in 179
+redirected their output, so watching one almost never worked. Agents chose their own scratch
+paths, and one filled a shared quota. And the rule to build under the shared lock was prose
+rather than structure, so 17% of all exclusive time on the machine was spent compiling.
 
 `crates/dibstop/pty-run.py` runs `dibstop` under a pseudo-terminal and prints what is on the
 screen, which is how a change to it is checked. ratatui redraws by moving the cursor and

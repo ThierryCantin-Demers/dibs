@@ -59,7 +59,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 exit  call
 2     dibs --job
 2     dibs --cancel
-2     DIBS_CORE='' HOME=/nonexistent dibs list app
+2     HOME=/nonexistent dibs list app
 2     dibs --rsh
 2     dibs --rsh host rsync --server
 2     DIBS_QUEUE='' dibs --job 12345
@@ -76,7 +76,7 @@ exit  call
 -> exit 2
 2| dibs: --cancel is gone: the detach queue was removed.
 
-== DIBS_CORE='' HOME=/nonexistent dibs list app
+== HOME=/nonexistent dibs list app
 -> exit 2
 2| dibs: no repo at 'app' and none at ./app.
 2|   A bare name is looked up under DIBS_ROOT, then --root, then the `root` key of

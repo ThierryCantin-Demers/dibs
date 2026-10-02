@@ -46,9 +46,7 @@ fn removed_features() {
         vec![
             r(&["--job"]),
             r(&["--cancel"]),
-            r(&["list", "app"])
-                .env("DIBS_CORE", "")
-                .env("HOME", "/nonexistent"),
+            r(&["list", "app"]).env("HOME", "/nonexistent"),
             r(&["--rsh"]),
             r(&["--rsh", "host", "rsync", "--server"]),
             r(&["--job", "12345"]).env("DIBS_QUEUE", ""),
