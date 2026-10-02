@@ -24,6 +24,10 @@ mod resource;
 mod runs;
 mod worktree;
 
+use dibs_format::{
+    Alias, ArmRecord, BatchId, JobId, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
+    RunVerb, StepRecord,
+};
 use recipe::{Lock, Manifest, Verb};
 use resource::{Backend, Destination, Dibs, Request};
 use std::collections::BTreeMap;
@@ -509,32 +513,38 @@ fn run() -> Result<ExitCode, Failure> {
             },
             command,
         )?;
-        write_record(&provenance::Run {
+        let steps = vec![out.step_record(Lock::Shared)];
+        write_record(&RunRecord {
+            when: now_secs(),
+            verb: RunVerb::Raw,
             label: "raw".into(),
-            verb: "raw",
             repo: String::new(),
             variant: None,
             recipe: String::new(),
             fingerprint: String::new(),
             isolation: "machine".into(),
+            backend: backend.name().into(),
+            machine: backend.machine.as_deref().map(MachineName::from),
+            device: args.device.as_deref().map(Alias::from),
             needs: None,
             reason: Some(reason.to_string()),
-            procedure: vec![("shared".into(), command.to_string())],
-            params: BTreeMap::new(),
-            backend: backend.name(),
-            device: args.device.clone(),
-            machine: backend.machine.clone(),
-            revisions: Vec::new(),
             seeded: None,
+            batch: batch_of_caller(),
             refs: None,
             arms: Vec::new(),
             reps: 1,
-            batch: batch_of_caller(),
             anyway: false,
             new_series: false,
-            fresh: Vec::new(),
-            state: Vec::new(),
-            steps: vec![provenance::StepRecord::of("shared", &out)],
+            fresh: Pairs::default(),
+            state: Pairs::default(),
+            params: BTreeMap::new(),
+            procedure: vec![ProcedureStep {
+                lock: Lock::Shared,
+                run: command.to_string(),
+            }],
+            revisions: Pairs::default(),
+            outcome: Some(Outcome::of_steps(&steps)),
+            steps,
         })?;
         return Ok(ExitCode::from(out.status.clamp(0, 255) as u8));
     }
@@ -1406,7 +1416,7 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
 
     let mut steps = Vec::new();
     let mut failed = None;
-    let mut state = Vec::new();
+    let mut state = Pairs::default();
     for (k, job) in jobs
         .iter()
         .copied()
@@ -1507,12 +1517,11 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
             (Some(names), Some(_)) if lock == Lock::Shared => pin::checked(&run, names),
             _ => run,
         };
-        let record = |out: &resource::Outcome, report: &str| provenance::StepRecord {
+        let record = |out: &resource::Outcome, report: &str| StepRecord {
+            arm: compared.then(|| arms[arm].name.clone()),
+            rep: rep.filter(|_| args.reps > 1),
             artifacts: artifacts::kept(report),
-            ..provenance::StepRecord::of(step_lock(lock), out).tagged(
-                compared.then(|| arms[arm].name.clone()),
-                rep.filter(|_| args.reps > 1),
-            )
+            ..out.step_record(lock)
         };
         if fold {
             eprintln!(
@@ -1587,16 +1596,16 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
     if compared || args.reps > 1 {
         eprint!("{}", measured_summary(&arms, &steps, &revisions_of));
     }
-    let record = provenance::Run {
+    let record = RunRecord {
+        when: now_secs(),
         label,
         repo: repo_name.clone(),
         variant: worktree::variant(&dir, &repo_name),
         // shell borrows Build's machinery but is not a build, and a record that says
         // otherwise is a record that misleads whoever reads it later.
-        verb: if shell_reason.is_some() {
-            "shell"
-        } else {
-            verb.as_str()
+        verb: match shell_reason {
+            Some(_) => RunVerb::Shell,
+            None => verb.run_verb(),
         },
         recipe: name.to_string(),
         fingerprint,
@@ -1614,21 +1623,21 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
                     .iter()
                     .map(|(k, v)| format!("export {k}={}; ", sh(v)))
                     .collect();
-                (
-                    format!("{:?}", st.lock).to_lowercase(),
-                    format!("{exports}{}", st.run),
-                )
+                ProcedureStep {
+                    lock: st.lock,
+                    run: format!("{exports}{}", st.run),
+                }
             })
             .collect(),
         params,
-        backend: backend.name(),
-        device: args.device.clone(),
-        machine: backend.machine.clone(),
+        backend: backend.name().into(),
+        device: args.device.as_deref().map(Alias::from),
+        machine: backend.machine.as_deref().map(MachineName::from),
         // Read on the machine, from the tree that was actually built, rather than from a
         // checkout here that may be at a different commit entirely.
         revisions: match compared {
-            false => revisions_of(0),
-            true => Vec::new(),
+            false => revisions_of(0).into(),
+            true => Pairs::default(),
         },
         seeded: prepared(0)
             .filter(|_| !compared)
@@ -1639,10 +1648,10 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
             true => arms
                 .iter()
                 .enumerate()
-                .map(|(a, arm)| provenance::ArmRecord {
+                .map(|(a, arm)| ArmRecord {
                     name: arm.name.clone(),
                     fetched: arm.fetch.clone(),
-                    revisions: revisions_of(a),
+                    revisions: revisions_of(a).into(),
                     seeded: prepared(a).and_then(|p| p.seeded.clone()),
                 })
                 .collect(),
@@ -1651,8 +1660,9 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
         batch: batch_of_caller(),
         anyway: args.anyway,
         new_series: args.new_series,
-        fresh: fresh_values(rec, &trees[0].token).into_iter().collect(),
+        fresh: Vec::from_iter(fresh_values(rec, &trees[0].token)).into(),
         state,
+        outcome: Some(Outcome::of_steps(&steps)),
         steps,
     };
     write_record(&record)?;
@@ -1665,19 +1675,14 @@ fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
 
 /// Every job that kept files has them fetched, into `to` when given: under the job's arm and rep
 /// when a comparison or reps would otherwise write one path twice.
-fn fetch_artifacts(
-    backend: &Dibs,
-    steps: &[provenance::StepRecord],
-    to: Option<&str>,
-    compared: bool,
-) {
+fn fetch_artifacts(backend: &Dibs, steps: &[StepRecord], to: Option<&str>, compared: bool) {
     for s in steps.iter().filter(|s| s.artifacts.is_some_and(|n| n > 0)) {
         let Some(job) = &s.job else { continue };
         let mut cmd = std::process::Command::new(&backend.program);
         if let Some(m) = &backend.machine {
             cmd.arg("--on").arg(m);
         }
-        cmd.arg("--fetch").arg(job);
+        cmd.arg("--fetch").arg(job.as_str());
         if let Some(dir) = to {
             let mut dest = PathBuf::from(dir);
             if let Some(arm) = s.arm.as_deref().filter(|_| compared) {
@@ -1709,7 +1714,7 @@ fn fetch_artifacts(
 /// are the steps' wall time, which is only a first look: the recipe's own output is the result.
 fn measured_summary(
     arms: &[Arm],
-    steps: &[provenance::StepRecord],
+    steps: &[StepRecord],
     revisions: &dyn Fn(usize) -> Vec<(String, String)>,
 ) -> String {
     let width = arms.iter().map(|a| a.name.len()).max().unwrap_or(0);
@@ -1717,10 +1722,10 @@ fn measured_summary(
         "dibs: measured, each rep's exclusive seconds and the jobs with its output:\n",
     );
     for (a, arm) in arms.iter().enumerate() {
-        let mine: Vec<&provenance::StepRecord> = steps
+        let mine: Vec<&StepRecord> = steps
             .iter()
             .filter(|s| {
-                s.lock == "exclusive"
+                s.lock == Lock::Exclusive
                     && (arms.len() == 1 || s.arm.as_deref() == Some(arm.name.as_str()))
             })
             .collect();
@@ -1729,7 +1734,10 @@ fn measured_summary(
             *per_rep.entry(s.rep.unwrap_or(1)).or_default() += s.seconds;
         }
         let secs: Vec<String> = per_rep.values().map(|s| format!("{s}s")).collect();
-        let jobs: Vec<&str> = mine.iter().filter_map(|s| s.job.as_deref()).collect();
+        let jobs: Vec<&str> = mine
+            .iter()
+            .filter_map(|s| s.job.as_ref().map(JobId::as_str))
+            .collect();
         let revs: Vec<String> = revisions(a)
             .iter()
             .map(|(r, sha)| format!("{r}@{sha}"))
@@ -2736,13 +2744,6 @@ fn announce_prepared(text: &str) {
     }
 }
 
-fn step_lock(lock: Lock) -> &'static str {
-    match lock {
-        Lock::Shared => "shared",
-        Lock::Exclusive => "exclusive",
-    }
-}
-
 /// Adds files and never replaces one: git names objects by their content, so what is already
 /// there is already right, and a cargo on the machine may be reading it.
 fn sync_gitdb(backend: &Dibs, from: &Path, to: &str) -> Result<(), String> {
@@ -2894,8 +2895,11 @@ fn now_secs() -> u64 {
 }
 
 /// The batch a call is a step of, as the batch driver told it.
-fn batch_of_caller() -> Option<String> {
-    std::env::var("DIBS_BATCH").ok().filter(|b| !b.is_empty())
+fn batch_of_caller() -> Option<BatchId> {
+    std::env::var("DIBS_BATCH")
+        .ok()
+        .filter(|b| !b.is_empty())
+        .map(BatchId::from)
 }
 
 fn runs_path() -> Result<PathBuf, String> {
@@ -2908,8 +2912,7 @@ fn runs_path() -> Result<PathBuf, String> {
     }
 }
 
-fn write_record(run: &provenance::Run) -> Result<(), String> {
-    let when = now_secs();
+fn write_record(run: &RunRecord) -> Result<(), String> {
     let path = runs_path()?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -2919,7 +2922,7 @@ fn write_record(run: &provenance::Run) -> Result<(), String> {
         .append(true)
         .open(&path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    writeln!(f, "{}", run.to_json(when)).map_err(|e| format!("{}: {e}", path.display()))
+    writeln!(f, "{}", run.to_line()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn sh(s: &str) -> String {
@@ -3437,42 +3440,6 @@ mod tests {
         assert_eq!(r.isolation, Isolation::Machine);
     }
 
-    // It was set on every run and serialized by nothing, so every record said the machine and
-    // none said the card. The compiler called the field dead and was right.
-    #[test]
-    fn the_card_a_run_used_reaches_the_record() {
-        let run = provenance::Run {
-            label: "cubecl/bench/throughput-all@gpu:rtx2060".into(),
-            verb: "bench",
-            repo: "r".into(),
-            variant: None,
-            recipe: "throughput-all".into(),
-            fingerprint: "abc".into(),
-            isolation: "machine".into(),
-            needs: None,
-            reason: None,
-            procedure: vec![],
-            params: BTreeMap::new(),
-            backend: "dibs",
-            device: Some("gpu:rtx2060".into()),
-            machine: Some("box-a".into()),
-            revisions: vec![],
-            seeded: None,
-            refs: None,
-            arms: Vec::new(),
-            reps: 1,
-            batch: None,
-            anyway: false,
-            new_series: false,
-            fresh: Vec::new(),
-            state: Vec::new(),
-            steps: vec![],
-        };
-        let v: serde_json::Value = serde_json::from_str(&run.to_json(1)).expect("valid json");
-        assert_eq!(v["device"], "gpu:rtx2060");
-        assert_eq!(v["machine"], "box-a");
-    }
-
     #[test]
     fn a_card_gets_its_own_label_and_an_unpinned_run_is_left_alone() {
         let pinned = run_label("cubecl", "bench", Some("throughput-all"), Some("gpu:a"));
@@ -3482,88 +3449,5 @@ mod tests {
             run_label("cubecl", "bench", Some("throughput-all"), None),
             "cubecl/bench/throughput-all"
         );
-    }
-
-    #[test]
-    fn a_label_with_a_quote_in_it_cannot_break_the_record() {
-        let run = provenance::Run {
-            label: "r/\"x\\y\nz".into(),
-            verb: "bench",
-            repo: "r".into(),
-            variant: None,
-            recipe: "x".into(),
-            fingerprint: "abc".into(),
-            isolation: "machine".into(),
-            needs: None,
-            reason: None,
-            procedure: vec![],
-            params: BTreeMap::new(),
-            backend: "dibs",
-            device: None,
-            machine: None,
-            revisions: vec![],
-            seeded: None,
-            refs: None,
-            arms: Vec::new(),
-            reps: 1,
-            batch: None,
-            anyway: false,
-            new_series: false,
-            fresh: Vec::new(),
-            state: Vec::new(),
-            steps: vec![],
-        };
-        let line = run.to_json(1);
-        assert!(!line.contains('\n'));
-        let v: serde_json::Value = serde_json::from_str(&line).expect("valid json");
-        assert_eq!(v["label"], "r/\"x\\y\nz");
-    }
-
-    #[test]
-    fn a_run_record_is_one_line_of_valid_json() {
-        let run = provenance::Run {
-            label: "r/x".into(),
-            verb: "bench",
-            repo: "r".into(),
-            variant: None,
-            recipe: "x".into(),
-            fingerprint: "abc".into(),
-            isolation: "machine".into(),
-            needs: Some("gpu, num_tensor_cores >= 1".into()),
-            reason: None,
-            procedure: vec![("shared".into(), "cargo build".into())],
-            params: BTreeMap::new(),
-            backend: "dibs",
-            device: None,
-            machine: None,
-            revisions: vec![("cubek".into(), "abc123".into())],
-            seeded: None,
-            refs: None,
-            arms: Vec::new(),
-            reps: 1,
-            batch: None,
-            anyway: false,
-            new_series: false,
-            fresh: Vec::new(),
-            state: Vec::new(),
-            steps: vec![provenance::StepRecord {
-                lock: "shared",
-                status: 0,
-                seconds: 3,
-                job: None,
-                built: None,
-                log: None,
-                arm: None,
-                rep: None,
-                artifacts: None,
-            }],
-        };
-        let line = run.to_json(42);
-        assert!(!line.contains('\n'), "a record has to stay one line");
-        let v: serde_json::Value = serde_json::from_str(&line).expect("valid json");
-        assert_eq!(v["label"], "r/x");
-        assert_eq!(v["revisions"]["cubek"], "abc123");
-        assert_eq!(v["steps"][0]["seconds"], 3);
-        assert_eq!(v["needs"], "gpu, num_tensor_cores >= 1");
     }
 }

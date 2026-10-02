@@ -8,13 +8,13 @@
 //! So this does not just list. It says when a label's runs stopped being comparable, and
 //! where.
 
-use serde_json::Value;
+use dibs_format::{Lock, Pairs, RunRecord, RunVerb};
 use std::collections::BTreeMap;
 use std::path::Path;
 
 pub struct Record {
     pub when: u64,
-    pub verb: String,
+    pub verb: RunVerb,
     pub label: String,
     pub variant: Option<String>,
     pub fingerprint: String,
@@ -43,122 +43,68 @@ pub struct Record {
     pub seeded: Option<String>,
 }
 
-fn pairs(v: &Value) -> Vec<(String, String)> {
-    v.as_object()
-        .map(|o| {
-            o.iter()
-                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// A line that does not parse is a corrupted tail, since only this program writes the file,
 /// so it is skipped rather than fatal.
 fn parse_line(line: &str) -> Option<Record> {
-    let v: Value = serde_json::from_str(line).ok()?;
-    let text = |key: &str| v.get(key).and_then(Value::as_str).map(str::to_string);
-    let steps = v
-        .get("steps")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let secs = |s: &Value| s.get("seconds").and_then(Value::as_u64).unwrap_or(0);
-    let exclusive: Vec<&Value> = steps
-        .iter()
-        .filter(|s| s.get("lock").and_then(Value::as_str) == Some("exclusive"))
-        .collect();
-    let mut per_rep: BTreeMap<(String, u64), u64> = BTreeMap::new();
-    for st in &exclusive {
-        let arm = st
-            .get("arm")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        *per_rep
-            .entry((arm, st.get("rep").and_then(Value::as_u64).unwrap_or(1)))
-            .or_default() += secs(st);
-    }
-    let samples: Vec<(String, u64)> = per_rep.into_iter().map(|((arm, _), s)| (arm, s)).collect();
-    let arms = v
-        .get("arms")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .map(|arm| {
-                    (
-                        arm.get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        arm.get("revisions").map(pairs).unwrap_or_default(),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let failed = match v.get("outcome").and_then(Value::as_str) {
-        Some(o) => o != "ok",
-        None => steps
-            .iter()
-            .any(|s| s.get("status").and_then(Value::as_i64).unwrap_or(0) != 0),
-    };
-    Some(Record {
-        when: v.get("t")?.as_u64()?,
-        verb: text("verb")?,
-        label: text("label")?,
-        variant: text("variant"),
-        fingerprint: text("fingerprint").unwrap_or_default(),
-        machine: text("machine"),
-        params: v.get("params").map(pairs).unwrap_or_default(),
-        state: v.get("state").map(pairs).unwrap_or_default(),
-        revisions: v.get("revisions").map(pairs).unwrap_or_default(),
-        procedure: v
-            .get("procedure")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .map(|p| {
-                        let f = |k: &str| {
-                            p.get(k)
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_string()
-                        };
-                        (f("lock"), f("run"))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        seconds: steps.iter().map(secs).sum(),
-        measured: median(
-            samples
-                .iter()
-                .filter(|(a, _)| a.is_empty())
-                .map(|(_, s)| *s)
-                .collect(),
-        )
-        .map(|(m, ..)| m),
-        samples,
-        refs: text("refs"),
-        arms,
-        reps: v.get("reps").and_then(Value::as_u64).unwrap_or(1),
-        failed,
-        anyway: v.get("anyway").and_then(Value::as_bool).unwrap_or(false),
-        new_series: v
-            .get("new_series")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        fresh: v
-            .get("fresh")
-            .map(pairs)
-            .unwrap_or_default()
+    line.parse::<RunRecord>().ok().map(Record::of)
+}
+
+impl Record {
+    /// Named values by name, the order every report lists them in.
+    fn sorted(pairs: &Pairs) -> Vec<(String, String)> {
+        pairs
+            .sorted()
             .into_iter()
-            .map(|(k, _)| k)
-            .collect(),
-        reason: text("reason"),
-        seeded: text("seeded"),
-    })
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect()
+    }
+
+    fn of(run: RunRecord) -> Record {
+        let failed = run.failed();
+        let mut per_rep: BTreeMap<(String, u32), u64> = BTreeMap::new();
+        for step in run.steps.iter().filter(|s| s.lock == Lock::Exclusive) {
+            let arm = step.arm.clone().unwrap_or_default();
+            *per_rep.entry((arm, step.rep.unwrap_or(1))).or_default() += step.seconds;
+        }
+        let samples: Vec<(String, u64)> =
+            per_rep.into_iter().map(|((arm, _), s)| (arm, s)).collect();
+        let unarmed = samples
+            .iter()
+            .filter(|(a, _)| a.is_empty())
+            .map(|(_, s)| *s);
+        Record {
+            when: run.when,
+            verb: run.verb,
+            label: run.label,
+            variant: run.variant,
+            fingerprint: run.fingerprint,
+            machine: run.machine.map(|m| m.to_string()),
+            params: run.params.into_iter().collect(),
+            state: Record::sorted(&run.state),
+            revisions: Record::sorted(&run.revisions),
+            procedure: run
+                .procedure
+                .into_iter()
+                .map(|p| (p.lock.as_str().to_string(), p.run))
+                .collect(),
+            seconds: run.steps.iter().map(|s| s.seconds).sum(),
+            measured: median(unarmed.collect()).map(|(m, ..)| m),
+            samples,
+            refs: run.refs,
+            arms: run
+                .arms
+                .iter()
+                .map(|a| (a.name.clone(), Record::sorted(&a.revisions)))
+                .collect(),
+            reps: u64::from(run.reps),
+            failed,
+            anyway: run.anyway,
+            new_series: run.new_series,
+            fresh: run.fresh.sorted().keys().map(|k| k.to_string()).collect(),
+            reason: run.reason,
+            seeded: run.seeded,
+        }
+    }
 }
 
 /// The median, lowest and highest, or None for no samples.
@@ -415,7 +361,7 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
     let mut by_label: BTreeMap<(&str, String), Vec<&Record>> = BTreeMap::new();
     for r in picked
         .iter()
-        .filter(|r| !r.failed && r.verb != "shell" && !r.label.ends_with("/shell"))
+        .filter(|r| !r.failed && r.verb != RunVerb::Shell && !r.label.ends_with("/shell"))
     {
         by_label
             .entry((&r.label, words(&r.params, "=")))

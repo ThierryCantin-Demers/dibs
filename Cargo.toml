@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/dibs-core", "crates/dibstop", "crates/dibs-machines"]
+members = ["crates/dibs-core", "crates/dibs-format", "crates/dibstop", "crates/dibs-machines"]
 # The window builds a GUI toolkit, which most installs never ask for and every test run would.
-default-members = ["crates/dibs-core", "crates/dibstop"]
+default-members = ["crates/dibs-core", "crates/dibs-format", "crates/dibstop"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,7 @@ edition = "2024"
 rust-version = "1.89"
 
 [workspace.dependencies]
+dibs-format = { path = "crates/dibs-format" }
 crossterm = "0.28"
 eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
 libc = "0.2"

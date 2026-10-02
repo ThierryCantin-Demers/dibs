@@ -5,19 +5,10 @@
 //! session, and the one report anybody wrote down lived in a scratchpad and went with it.
 
 use crate::runs;
-use serde_json::Value;
+pub use dibs_format::FrictionNote as Note;
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-
-pub struct Note {
-    pub when: u64,
-    pub text: String,
-    pub by: String,
-    pub version: String,
-    /// Where it was filed, when DIBS_REPORTS names a repo to file it in.
-    pub issue: Option<u64>,
-}
 
 /// Beside the run records, and moved by a variable of its own: it answers for the same work, and
 /// where it should live is the user's to decide. Sharing it is theirs to choose too, with
@@ -55,43 +46,19 @@ pub fn append(path: &Path, n: &Note) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    let mut line = serde_json::json!({
-        "t": n.when,
-        "text": n.text,
-        "by": n.by,
-        "dibs": n.version,
-    });
-    if let Some(i) = n.issue {
-        line["issue"] = i.into();
-    }
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    writeln!(f, "{line}").map_err(|e| format!("{}: {e}", path.display()))
+    writeln!(f, "{}", n.to_line()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 pub fn load(path: &Path) -> Vec<Note> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     text.lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter_map(|v| {
-            let s = |k: &str| {
-                v.get(k)
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string()
-            };
-            let text = s("text");
-            (!text.is_empty()).then(|| Note {
-                when: v.get("t").and_then(Value::as_u64).unwrap_or_default(),
-                text,
-                by: s("by"),
-                version: s("dibs"),
-                issue: v.get("issue").and_then(Value::as_u64),
-            })
-        })
+        .filter_map(|l| l.parse::<Note>().ok())
+        .filter(|n| !n.text.is_empty())
         .collect()
 }
 

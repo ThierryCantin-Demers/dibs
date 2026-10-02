@@ -520,12 +520,21 @@ dependencies = [
 name = "dibs-core"
 version = "0.1.0"
 dependencies = [
+ "dibs-format",
  "libc",
  "regex",
  "serde",
  "serde_json",
  "sha2",
  "toml",
+]
+
+[[package]]
+name = "dibs-format"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

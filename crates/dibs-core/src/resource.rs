@@ -7,6 +7,7 @@
 //! should be a swap rather than a rewrite.
 
 use crate::recipe::{Isolation, Lock};
+use dibs_format::{JobId, StepRecord};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -33,6 +34,24 @@ pub struct Outcome {
     pub seconds: u64,
     /// What the job's trailer said, when its stderr passed through here and it printed one.
     pub trailer: Option<Trailer>,
+}
+
+impl Outcome {
+    /// The record of the step this was the outcome of.
+    pub fn step_record(&self, lock: Lock) -> StepRecord {
+        let trailer = self.trailer.as_ref();
+        StepRecord {
+            lock,
+            status: self.status,
+            seconds: self.seconds,
+            arm: None,
+            rep: None,
+            artifacts: None,
+            job: trailer.map(|t| JobId::new(t.job.as_str())),
+            built: trailer.and_then(|t| t.built.clone()),
+            log: trailer.and_then(|t| t.log.clone()),
+        }
+    }
 }
 
 pub struct Trailer {

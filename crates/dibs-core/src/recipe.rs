@@ -8,6 +8,8 @@
 //! procedure to a moment and make it progressively harder to rerun, which is the opposite of
 //! what putting it in the repo was for. The revisions belong to the run record.
 
+pub use dibs_format::Lock;
+use dibs_format::RunVerb;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -26,15 +28,6 @@ pub fn local_dir() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .unwrap_or_default();
     base.join("dibs/recipes")
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-pub enum Lock {
-    /// Builds, tests, inspection. Several at once.
-    Shared,
-    /// The measured run. Nothing else.
-    Exclusive,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy, Default)]
@@ -180,6 +173,15 @@ impl Verb {
             _ => None,
         }
     }
+    /// What a record of a run of this verb says was run.
+    pub fn run_verb(self) -> RunVerb {
+        match self {
+            Verb::Bench => RunVerb::Bench,
+            Verb::Build => RunVerb::Build,
+            Verb::Test => RunVerb::Test,
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Verb::Bench => "bench",

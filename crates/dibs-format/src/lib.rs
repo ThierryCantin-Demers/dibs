@@ -1,0 +1,21 @@
+//! What dibs writes and reads, as data: no I/O happens here.
+//!
+//! Each line codec reads every shape a released dibs has written and writes the shape the
+//! machines write today, byte for byte, so a client and a machine on different versions agree.
+
+mod exit;
+mod friction;
+mod ids;
+mod lines;
+mod mode;
+mod run;
+
+pub use exit::Exit;
+pub use friction::FrictionNote;
+pub use ids::{Alias, BatchId, JobId, Label, MachineName};
+pub use lines::{
+    BatchPlan, By, Event, HistoryLine, JobMeta, LineError, LockRecord, LogLine, PendingKind,
+    PendingStep,
+};
+pub use mode::{Lock, Mode};
+pub use run::{ArmRecord, Outcome, Pair, Pairs, ProcedureStep, RunRecord, RunVerb, StepRecord};
