@@ -180,7 +180,9 @@ tagged by its arm and rep. The seconds are the steps' wall time, a first look; t
 the recipe's own output, which `dibs out <job>` reads.
 
 `dibs shell` takes `--bench` for a one-off that is a measurement, and `--max <seconds>` where the
-default cap is too short for it.
+default cap is too short for it. Named with no repo, it sends the tree it was called from, as
+`.@local` would, and inside a worktree a bare name may be the worktree's directory as well as its
+repo.
 
 Two things in a recipe are refused when it loads, because both produce a number that looks fine:
 

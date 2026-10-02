@@ -253,7 +253,11 @@ impl RecipeCall {
                 word => positional.push(word.to_string()),
             }
         }
-        let target = positional.first().cloned().unwrap_or_default();
+        let target = match positional.first() {
+            Some(target) => target.clone(),
+            None if verb == RecipeVerb::Shell => ".@local".to_string(),
+            None => String::new(),
+        };
         if target.is_empty() && !verb.needs_no_repo() {
             return Err(refused("needs a repo".into()));
         }

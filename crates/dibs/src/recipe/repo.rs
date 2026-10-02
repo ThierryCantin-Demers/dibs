@@ -34,12 +34,14 @@ pub(crate) fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
             )
         });
     }
-    // Inside a worktree of the named repo, `@local` means that tree, and the clone under the
-    // root would otherwise be sent in its place without a word.
+    // Inside a worktree of the named repo, or one by that directory name, `@local` means that
+    // tree, and the clone under the root would otherwise be sent in its place without a word.
     let here = std::env::current_dir()
         .ok()
         .and_then(|d| worktree::toplevel(&d));
-    if let Some(here) = here.filter(|h| !repo.contains('/') && worktree::identity(h) == repo) {
+    let named =
+        |h: &PathBuf| worktree::identity(h) == repo || h.file_name().is_some_and(|n| n == repo);
+    if let Some(here) = here.filter(|h| !repo.contains('/') && named(h)) {
         return Ok(here);
     }
     let under = root.join(repo);

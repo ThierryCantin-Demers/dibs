@@ -167,8 +167,37 @@ pub(crate) struct Resolved {
     pub(crate) tree_fresh: Vec<String>,
 }
 
+const LABEL_DERIVED: &str =
+    "derived so that every run of one piece of\n  work lands in one history.";
+
+/// A shell's own words are refused before its tree is looked for, so one try finds them all.
+fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> {
+    if args.reason.is_none() {
+        return Err("shell needs --reason. Most of what gets run is neither a build nor a benchmark,\n             and knowing what those were is how the next recipe gets written.".into());
+    }
+    if args.command.is_none() {
+        return Err("shell needs -- <command>".into());
+    }
+    if args.params.contains_key("label") {
+        let label = run_label(repo, "shell", None, args.device.as_deref());
+        return Err(format!(
+            "shell takes no --label: its durations are filed under {label}, {LABEL_DERIVED} A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so."
+        )
+        .into());
+    }
+    Ok(())
+}
+
 pub(crate) fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
-    let dir = resolve_repo(&args.repo, &root_of(args))?;
+    let found = resolve_repo(&args.repo, &root_of(args));
+    if args.verb == RecipeVerb::Shell {
+        let repo = found
+            .as_deref()
+            .map(worktree::identity)
+            .unwrap_or_else(|_| args.repo.clone());
+        refuse_shell_words(args, &repo)?;
+    }
+    let dir = found?;
     let repo_name = worktree::identity(&dir);
     let manifest = if args.verb == RecipeVerb::Shell {
         Manifest::load_any(&dir, &repo_name)?
@@ -176,12 +205,9 @@ pub(crate) fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
         Manifest::load(&dir, &repo_name)?
     };
 
-    let shell_reason = if args.verb == RecipeVerb::Shell {
-        Some(args.reason.clone().ok_or(
-            "shell needs --reason. Most of what gets run is neither a build nor a benchmark,\n             and knowing what those were is how the next recipe gets written.",
-        )?)
-    } else {
-        None
+    let shell_reason = match args.verb {
+        RecipeVerb::Shell => args.reason.clone(),
+        _ => None,
     };
     let shell_recipe = shell_reason.as_ref().map(|_| Recipe {
         source: Source::Local,
@@ -200,9 +226,6 @@ pub(crate) fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
             env: BTreeMap::new(),
         }],
     });
-    if shell_recipe.is_some() && args.command.is_none() {
-        return Err("shell needs -- <command>".into());
-    }
 
     let verb = Verb::parse(args.verb.as_str())
         .or(if args.verb == RecipeVerb::Shell {
@@ -270,19 +293,10 @@ pub(crate) fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
     };
     if args.params.contains_key("label") && !rec.params.contains_key("label") {
         return Err(format!(
-            "{} takes no --label: its durations are filed under {label}, derived so that every run of one piece of\n  \
-             work lands in one history.{}",
-            if shell_recipe.is_some() {
-                "shell".to_string()
-            } else {
-                format!("{} {name}", verb.as_str())
-            },
-            if shell_recipe.is_some() {
-                " A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so."
-            } else {
-                ""
-            }
-        ).into());
+            "{} {name} takes no --label: its durations are filed under {label}, {LABEL_DERIVED}",
+            verb.as_str()
+        )
+        .into());
     }
     let params = rec
         .values(&args.params)

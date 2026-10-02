@@ -1824,3 +1824,59 @@ fn what_got_in_the_way_is_filed_and_counted() {
         "an empty report is refused rather than filed"
     );
 }
+
+#[test]
+fn a_shell_in_a_worktree_needs_no_repo_and_answers_to_its_directory_name() {
+    let s = Sandbox::new();
+    app(&s);
+    s.git("app", &["worktree", "add", "-q", &s.p("app-topk")]);
+    s.write("app-topk/a.txt", "topk\n");
+    let root = s.root.display().to_string();
+    let inside = |words: &[&str]| {
+        s.dibs(words.iter().copied())
+            .dir(&s.path("app-topk"))
+            .env("DIBS_ROOT", &root)
+            .run()
+    };
+    let out = inside(&["shell", "--reason", "r", "--", "cat a.txt"]);
+    assert_eq!(
+        (out.code, out.stdout.as_str()),
+        (0, "topk\n"),
+        "a shell naming no repo runs in the tree it was called from: {}",
+        out.all()
+    );
+    let out = inside(&[
+        "shell",
+        "app-topk@local",
+        "--reason",
+        "r",
+        "--",
+        "cat a.txt",
+    ]);
+    assert_eq!(
+        (out.code, out.stdout.as_str()),
+        (0, "topk\n"),
+        "and a worktree's directory name is that worktree: {}",
+        out.all()
+    );
+    let out = inside(&[
+        "shell",
+        "nothing-here@local",
+        "--reason",
+        "r",
+        "--label",
+        "mine",
+        "--",
+        "true",
+    ]);
+    assert_eq!(
+        (
+            out.code,
+            out.stderr.lines_with("shell takes no --label"),
+            out.stderr.lines_with("no repo at")
+        ),
+        (2, 1, 0),
+        "a shell's own words are refused before its tree is looked for: {}",
+        out.all()
+    );
+}
