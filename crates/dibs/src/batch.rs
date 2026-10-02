@@ -9,7 +9,7 @@
 use dibs::{
     call::{BatchStep, Destination, MachineCall},
     caller::Caller,
-    cli::Call,
+    cli::{Call, Invocation, Mode, RecipeCall, RecipeVerb, RunLock},
     paths::Paths,
 };
 use dibs_format::MachineName;
@@ -37,6 +37,8 @@ pub struct Step {
     pub lock: &'static str,
     pub label: Option<String>,
     pub device: Option<String>,
+    /// What a recipe step asks for, so the jobs it will make can be planned.
+    pub recipe: Option<RecipeCall>,
 }
 
 pub fn parse(text: &str) -> Result<Vec<Step>, String> {
@@ -241,87 +243,67 @@ pub fn split_words(line: &str) -> Result<Vec<String>, String> {
 }
 
 /// What the driver needs to know about a step before it runs: where it goes, for ordering, and
-/// what it is, for the summary. Everything else passes through untouched.
+/// what it is, for the summary. The words are read as written, since bash expands them only
+/// when the step runs; everything else passes through untouched.
 fn describe(words: &[String]) -> Result<Step, String> {
-    let mut on = None;
-    let mut lock = "shared";
-    let mut label = None;
-    let mut device = None;
-    let mut verb: Option<&str> = None;
-    let mut i = 1;
-    while i < words.len() {
-        let w = words[i].as_str();
-        let next = words.get(i + 1).cloned();
-        match w {
-            "--on" => {
-                on = next;
-                i += 1;
-            }
-            "--label" => {
-                label = next;
-                i += 1;
-            }
-            "--device" => {
-                device = next;
-                i += 1;
-            }
-            "--with" | "--ready" | "--ready-within" => i += 1,
-            "--bench" | "-b" => lock = "bench",
-            "--peek" => lock = "peek",
-            "--sync" => {
-                lock = "sync";
-                break;
-            }
-            "--detach" => {
-                return Err("a batch step cannot --detach: the driver owns its steps".into());
-            }
-            "--watch" => return Err("a batch step cannot --watch: it never finishes".into()),
-            "--" => break,
-            _ if w.starts_with('-') => {}
-            _ if verb.is_none() => {
-                verb = Some(w);
-                match w {
-                    "batch" => return Err("a batch step cannot be a batch".into()),
-                    "build" | "test" | "bench" | "shell" | "raw" => {
-                        lock = "recipe";
-                        label = Some(
-                            words[i..]
-                                .iter()
-                                .take(3)
-                                .filter(|x| !x.starts_with('-'))
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        );
-                        // The recipe layer takes these after the verb as well as before it.
-                        let mut rest = words[i + 1..].iter();
-                        while let Some(w) = rest.next() {
-                            match w.as_str() {
-                                "--on" => on = rest.next().cloned(),
-                                "--device" => device = rest.next().cloned(),
-                                "--" => break,
-                                _ => {}
-                            }
-                        }
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    Ok(Step {
+    let read = Invocation::parse_unexpanded(&words[1..])
+        .map_err(|e| e.message.trim_start_matches("dibs: ").to_string())?;
+    let mut step = Step {
         name: String::new(),
         line: String::new(),
         after: Vec::new(),
         cont: false,
-        on,
-        lock,
-        label,
-        device,
-    })
+        on: None,
+        lock: "shared",
+        label: None,
+        device: None,
+        recipe: None,
+    };
+    match read {
+        Invocation::Call(call) => {
+            step.lock = match &call.mode {
+                Mode::Run(run) if run.lock == RunLock::Bench => "bench",
+                Mode::Peek(_) => "peek",
+                Mode::Sync(_) => "sync",
+                Mode::Watch { .. } => {
+                    return Err("a batch step cannot --watch: it never finishes".into());
+                }
+                _ => "shared",
+            };
+            step.on = call.on.map(|m| m.as_str().to_string());
+            step.label = call.label.map(|l| l.as_str().to_string());
+            step.device = call.device.map(|d| d.as_str().to_string());
+        }
+        Invocation::Recipe(call) => {
+            if call.verb == RecipeVerb::Batch {
+                return Err("a batch step cannot be a batch".into());
+            }
+            step.on = call.on.clone();
+            step.device = call.device.clone();
+            if call.verb.runs_jobs() {
+                step.lock = "recipe";
+                step.label = Some(recipe_label(words));
+                step.recipe = Some(call);
+            }
+        }
+        _ => {}
+    }
+    Ok(step)
+}
+
+/// The verb and the two words after it, which only `--on <machine>` may come before.
+fn recipe_label(words: &[String]) -> String {
+    let verb = match words.get(1).map(String::as_str) {
+        Some("--on") => 3,
+        _ => 1,
+    };
+    words[verb.min(words.len())..]
+        .iter()
+        .take(3)
+        .filter(|w| !w.starts_with('-'))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -609,9 +591,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
         .iter()
         .map(|s| {
             if s.lock == "recipe" {
-                split_words(&s.line)
-                    .ok()
-                    .and_then(|w| crate::recipe_jobs(&w))
+                s.recipe.as_ref().and_then(crate::recipe_jobs)
             } else {
                 None
             }
@@ -970,6 +950,13 @@ mod tests {
             (Some("m"), Some("gpu:0")),
             "read after the recipe too, up to its command"
         );
+        let r = one("dibs --wait $W --max \"$M\" --label x 'true'");
+        assert_eq!(
+            (r.lock, r.label.as_deref()),
+            ("shared", Some("x")),
+            "a number bash has yet to expand is read as unknown, not refused"
+        );
+        assert_eq!(one("dibs bench app@local r --reps $N").lock, "recipe");
     }
 
     #[test]
@@ -979,7 +966,7 @@ mod tests {
             ("dibs 'true' && rm -rf x", "more than one dibs call"),
             ("dibs 'true' | tail", "more than one dibs call"),
             ("dibs $(whoami)", "runs a command here"),
-            ("dibs --detach 'x'", "cannot --detach"),
+            ("dibs --detach 'x'", "--detach is gone"),
             ("dibs --watch", "cannot --watch"),
             ("dibs batch steps.txt", "cannot be a batch"),
             ("dibs 'unclosed", "not closed"),
@@ -1028,6 +1015,7 @@ mod tests {
             lock: "shared",
             label: None,
             device: None,
+            recipe: None,
         }
     }
 

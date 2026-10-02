@@ -1,4 +1,4 @@
-use crate::cli::{CliError, Invocation, shell::ShellWord};
+use crate::cli::{CliError, Invocation, parse::Expansion, shell::ShellWord};
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
 /// The words after which the recipe layer reads the rest of the line.
@@ -53,6 +53,18 @@ impl RecipeVerb {
     }
 
     /// Whether it runs without a repo named after it.
+    /// Whether the verb runs a recipe's jobs, or answers from what is recorded here.
+    pub fn runs_jobs(self) -> bool {
+        matches!(
+            self,
+            RecipeVerb::Build
+                | RecipeVerb::Test
+                | RecipeVerb::Bench
+                | RecipeVerb::Shell
+                | RecipeVerb::Raw
+        )
+    }
+
     fn needs_no_repo(self) -> bool {
         matches!(
             self,
@@ -127,6 +139,7 @@ impl RecipeCall {
         verb: RecipeVerb,
         words: &[String],
         on: Option<String>,
+        expansion: Expansion,
     ) -> Result<Invocation, CliError> {
         let refused = |message: String| CliError::new(format!("dibs: {message}"));
         let mut call = RecipeCall {
@@ -190,7 +203,10 @@ impl RecipeCall {
                 "--reps" => {
                     call.reps = it
                         .next()
-                        .and_then(|n| n.parse().ok())
+                        .and_then(|n| match expansion.pending(n) {
+                            true => Some(1),
+                            false => n.parse().ok(),
+                        })
                         .filter(|n| *n > 0)
                         .ok_or(refused("--reps needs a count".into()))?;
                 }
@@ -198,11 +214,13 @@ impl RecipeCall {
                 "--pin" => call.pins.push(value("--pin needs <repo>@<ref>")?),
                 "--bench" | "-b" => call.bench = true,
                 "--max" => {
-                    call.max = Some(
-                        it.next()
-                            .and_then(|n| n.parse().ok())
-                            .ok_or(refused("--max needs seconds".into()))?,
-                    );
+                    call.max = match it.next() {
+                        Some(n) if expansion.pending(n) => None,
+                        n => Some(
+                            n.and_then(|n| n.parse().ok())
+                                .ok_or(refused("--max needs seconds".into()))?,
+                        ),
+                    };
                 }
                 "--anyway" => call.anyway = true,
                 "--there" => call.there = true,

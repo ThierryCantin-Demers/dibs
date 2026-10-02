@@ -11,6 +11,32 @@ impl Invocation {
     pub fn parse(words: &[String]) -> Result<Invocation, CliError> {
         Parser::default().read(words)
     }
+
+    /// Reads a command line as written, before a shell expands it. A number a flag takes that is
+    /// still `$` text is read as unknown rather than refused: only the shell can say what it is.
+    pub fn parse_unexpanded(words: &[String]) -> Result<Invocation, CliError> {
+        Parser {
+            expansion: Expansion::Pending,
+            ..Parser::default()
+        }
+        .read(words)
+    }
+}
+
+/// Whether a command line's words are as a program receives them, or as a shell has yet to
+/// expand them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Expansion {
+    #[default]
+    Done,
+    Pending,
+}
+
+impl Expansion {
+    /// A word the shell has still to expand, which reads as no particular value.
+    pub(crate) fn pending(self, word: &str) -> bool {
+        self == Expansion::Pending && word.contains('$')
+    }
 }
 
 /// The mode as the flags leave it, before what follows them is read.
@@ -61,6 +87,7 @@ struct Parser {
     wait: Option<String>,
     max: Option<String>,
     call: Call,
+    expansion: Expansion,
 }
 
 impl Default for Parser {
@@ -87,6 +114,7 @@ impl Default for Parser {
             wait: None,
             max: None,
             call: Call::default(),
+            expansion: Expansion::Done,
         }
     }
 }
@@ -111,8 +139,11 @@ const REMOVED: [(&str, &str); 9] = [
 ];
 
 impl Parser {
-    /// Reads `[0-9]+`, the optional count some flags take.
-    fn count(word: Option<&String>) -> Option<u32> {
+    /// Reads `[0-9]+`, the count some flags take.
+    fn count(&self, word: Option<&String>) -> Option<u32> {
+        if word.is_some_and(|w| self.expansion.pending(w)) {
+            return Some(0);
+        }
         word.filter(|w| !w.is_empty() && w.bytes().all(|b| b.is_ascii_digit()))
             .and_then(|w| w.parse().ok())
     }
@@ -136,7 +167,7 @@ impl Parser {
                 "--sync" => return self.sync(&words[at..]),
                 "--watch" | "-w" => {
                     self.word = Word::Watch;
-                    if let Some(n) = Parser::count(value) {
+                    if let Some(n) = self.count(value) {
                         self.watch_every = n;
                         at += 1;
                     }
@@ -159,7 +190,8 @@ impl Parser {
                     at += 1;
                 }
                 "--ready-within" => {
-                    self.ready_within = Parser::count(value)
+                    self.ready_within = self
+                        .count(value)
                         .ok_or(CliError::new("dibs: --ready-within takes seconds"))?;
                     at += 1;
                 }
@@ -175,7 +207,7 @@ impl Parser {
                 }
                 "--log" => {
                     self.word = Word::Log;
-                    if let Some(n) = Parser::count(value) {
+                    if let Some(n) = self.count(value) {
                         self.log_lines = n;
                         at += 1;
                     }
@@ -305,9 +337,9 @@ impl Parser {
     fn recipe(self, verb: RecipeVerb, words: &[String], at: usize) -> Result<Invocation, CliError> {
         let before = &words[..at - 1];
         match before {
-            [] => RecipeCall::parse(verb, &words[at..], None),
+            [] => RecipeCall::parse(verb, &words[at..], None, self.expansion),
             [on, machine] if on == "--on" => {
-                RecipeCall::parse(verb, &words[at..], Some(machine.clone()))
+                RecipeCall::parse(verb, &words[at..], Some(machine.clone()), self.expansion)
             }
             _ => Err(CliError::new(format!(
                 "dibs: only --on can come before {verb}. Put the rest after it:  dibs {verb} ... <flags>"
@@ -460,7 +492,7 @@ impl Parser {
                 let days = match &self.days {
                     None => None,
                     Some(days) => Some(
-                        Parser::count(Some(days))
+                        self.count(Some(days))
                             .ok_or(CliError::new("--days takes a number of days"))?,
                     ),
                 };
@@ -470,7 +502,10 @@ impl Parser {
                 }
             }
             Word::Kill => Mode::Kill {
-                target: self.kill.as_deref().unwrap_or_default().parse()?,
+                target: match self.kill.as_deref().unwrap_or_default() {
+                    pending if self.expansion.pending(pending) => KillTarget::Pid(0),
+                    target => target.parse()?,
+                },
                 force: self.force,
                 anyone: self.anyone,
             },
@@ -524,6 +559,7 @@ impl Parser {
         let seconds = |flag: &str, value: &Option<String>| -> Result<Option<u64>, CliError> {
             value
                 .as_deref()
+                .filter(|v| !self.expansion.pending(v))
                 .map(|v| {
                     v.parse()
                         .map_err(|_| CliError::new(format!("dibs: {flag} takes seconds")))

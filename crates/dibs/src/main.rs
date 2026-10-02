@@ -2357,21 +2357,8 @@ fn jobs_of(
 
 /// The jobs a recipe line in a batch will make, so the batch's plan can estimate them. None
 /// when the line does not resolve here, which leaves that step without an estimate.
-fn recipe_jobs(words: &[String]) -> Option<Vec<batch::Pending>> {
-    if words
-        .iter()
-        .any(|w| matches!(w.as_str(), "-h" | "--help" | "--version"))
-    {
-        return None;
-    }
-    let mut i = 1;
-    while i < words.len() && words[i].starts_with('-') {
-        i += if words[i] == "--on" { 2 } else { 1 };
-    }
-    let Ok(Invocation::Recipe(args)) = Invocation::parse(words.get(i..)?) else {
-        return None;
-    };
-    let r = resolve(&args).ok()?;
+fn recipe_jobs(args: &RecipeCall) -> Option<Vec<batch::Pending>> {
+    let r = resolve(args).ok()?;
     let pins = args
         .pins
         .iter()
