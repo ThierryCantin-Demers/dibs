@@ -366,7 +366,7 @@ fn killing_a_batch_on_a_machine_stops_its_jobs_and_refuses_its_later_steps() {
         .dibs(["--kill", &id])
         .env_remove("CLAUDE_CODE_HOST_SESSION_ID")
         .env("CLAUDE_CODE_SESSION_ID", "someone-else")
-        .env("DIBS_KILL_HERE", "1");
+        .env("XDG_STATE_HOME", s.p("elsewhere"));
     assert_eq!(
         (stranger.code(), s.count("cancelled")),
         (2, 0),
@@ -374,7 +374,7 @@ fn killing_a_batch_on_a_machine_stops_its_jobs_and_refuses_its_later_steps() {
     );
     let out = s
         .dibs(["--kill", &id])
-        .env("DIBS_KILL_HERE", "1")
+        .env("XDG_STATE_HOME", s.p("elsewhere"))
         .run()
         .all();
     assert_eq!(

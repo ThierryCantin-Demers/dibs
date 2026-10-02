@@ -1,4 +1,5 @@
 use crate::harness::*;
+use crate::recipes::{app, recipes};
 use std::fs;
 
 #[test]
@@ -390,40 +391,51 @@ fn the_cap_comes_from_the_same_procedure() {
     // One recipe on two backends is one label and two costs, and a cap taken from the cheap one
     // kills the dear one at 124. The recipe layer names the procedure it is about to run.
     let s = Sandbox::new();
-    let run = |fp: &str, label: &str| {
-        s.dibs(["--label", label, "true"])
-            .env("DIBS_FINGERPRINT", fp)
-            .run()
-            .stderr
+    let app = app(&s);
+    let local = format!("{app}@local");
+    let run = |step: &str, recipe: &str| {
+        recipes(
+            &s,
+            &format!(
+                "[build.{recipe}]\n  [[build.{recipe}.step]]\n  lock = \"shared\"\n  run = \"{step}\"\n"
+            ),
+        );
+        let out = s.dibs(["build", &local, recipe]).run();
+        assert_eq!(out.code, 0, "{}", out.all());
+        out.stderr
     };
-    run("aaaa1111", "two-shapes");
-    let last = s
-        .read("history")
-        .lines()
-        .rfind(|l| l.split('\t').nth(1) == Some("two-shapes"))
-        .unwrap()
-        .to_string();
-    assert_eq!(
-        last.split('\t').nth(4),
-        Some("aaaa1111"),
+    let procedure = |label: &str| {
+        s.read("history")
+            .lines()
+            .rfind(|l| l.split('\t').nth(1) == Some(label))
+            .and_then(|l| l.split('\t').nth(4))
+            .unwrap_or_default()
+            .to_string()
+    };
+    run("true dear", "shapes");
+    let dear = procedure("app_build_shapes");
+    run("true cheap", "shapes");
+    let cheap = procedure("app_build_shapes");
+    assert!(
+        !dear.is_empty() && dear != cheap,
         "a run files its duration under the procedure as well as the label"
     );
-    s.history(&"shared\ttwo-shapes\t1500\tx\taaaa1111\n".repeat(3));
-    s.history(&"shared\ttwo-shapes\t2\tx\tbbbb2222\n".repeat(3));
-    s.history(&"shared\tlong-suite\t1500\tx\n".repeat(3));
+    s.history(&format!("shared\tapp_build_shapes\t1500\tx\t{dear}\n").repeat(3));
+    s.history(&format!("shared\tapp_build_shapes\t2\tx\t{cheap}\n").repeat(3));
+    s.history(&"shared\tapp_build_other\t1500\tx\n".repeat(3));
     assert_eq!(
-        run("aaaa1111", "two-shapes").lines_with("may hold the lock for 50m00s"),
+        run("true dear", "shapes").lines_with("may hold the lock for 50m00s"),
         1,
         "the cap comes from the same procedure"
     );
     assert_eq!(
-        run("bbbb2222", "two-shapes").lines_with("may hold"),
+        run("true cheap", "shapes").lines_with("may hold"),
         0,
         "and the cheap one is not given the dear one's cap"
     );
     // A procedure that has never run is estimated from the label exactly as before.
     assert_eq!(
-        run("cccc3333", "long-suite").lines_with("may hold the lock for 50m00s"),
+        run("true", "other").lines_with("may hold the lock for 50m00s"),
         1,
         "a procedure with no history of its own falls back to the label"
     );
