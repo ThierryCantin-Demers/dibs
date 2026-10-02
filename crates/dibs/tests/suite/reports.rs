@@ -110,15 +110,35 @@ fn an_answer_reaches_the_session_that_reported_it_once() {
             .run()
     };
     let answered = "your report #7 was answered by maintainer: fixed in abc, run dibs --update";
+    let ask_again =
+        || std::fs::remove_file(s.path("home/.local/state/dibs/reports-asked")).unwrap();
+    call("other");
+    fetched(&s);
     assert_eq!(
         call("other").stderr.lines_with(answered),
         0,
         "not to a session that did not report it"
     );
-    std::fs::remove_file(s.path("home/.local/state/dibs/reports-asked")).unwrap();
-    assert_eq!(call("me").stderr.lines_with(answered), 1);
-    std::fs::remove_file(s.path("home/.local/state/dibs/reports-asked")).unwrap();
+    ask_again();
+    assert_eq!(
+        call("me").stderr.lines_with(answered),
+        0,
+        "not on the call that fetches it"
+    );
+    fetched(&s);
+    assert_eq!(call("me").stderr.lines_with(answered), 1, "but on the next");
+    ask_again();
+    call("me");
+    fetched(&s);
     assert_eq!(call("me").stderr.lines_with(answered), 0, "once");
+}
+
+/// Replies are fetched in the background of one call, for the next to print.
+fn fetched(s: &Sandbox) {
+    until("the replies to be fetched", || {
+        std::fs::read_dir(s.path("home/.local/state/dibs/reports-news"))
+            .is_ok_and(|mut d| d.next().is_some())
+    });
 }
 
 #[test]
@@ -263,6 +283,8 @@ fn what_reporting_prints() {
         "ghd/issues.json",
         r#"[{"number":7,"title":"--device is ignored","url":"https://github.com/o/r/issues/7","state":"OPEN","author":{"login":"someone"},"comments":[{"url":"https://github.com/o/r/issues/7#issuecomment-3","author":{"login":"a-maintainer"},"body":"fixed in abc, run dibs --update\nmore"}]}]"#,
     );
+    reported(&["--label", "l", "true"], Some("o/r"));
+    fetched(&s);
     t.section(
         "DIBS_REPORTS=o/r dibs --label l true  (once the report is answered)",
         &n.output(&reported(&["--label", "l", "true"], Some("o/r"))),

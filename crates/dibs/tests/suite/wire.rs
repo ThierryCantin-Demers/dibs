@@ -8,7 +8,9 @@ use crate::snapshot::*;
 use std::fs;
 
 /// `WIRE_RUN=1` runs the far side here, a host apiece under `WIRE_HOSTS`, else exits `WIRE_EXIT`.
+/// `ssh -G` reaches no machine, so it answers as ssh would and is not recorded.
 const RECORDING_SSH: &str = r#"#!/bin/bash
+[ "$1" = -G ] && { echo "hostname ${2##*@}"; exit 0; }
 n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
 printf '%s\0' ssh "$@" > "$WIRE/$n.argv"
 cmd=${@: -1} host=${@: -2:1}

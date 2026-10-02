@@ -14,6 +14,7 @@ mod runs;
 mod worktree;
 
 use dibs::{
+    call::{Guard, LockedCall},
     caller::Caller,
     cli::{Friction, Help, Invocation, RecipeCall, RecipeVerb, ShellWord, Sweep},
     delegate::BashClient,
@@ -49,8 +50,16 @@ fn main() -> ExitCode {
 fn dispatch(words: &[String]) -> Result<ExitCode, Failure> {
     // What the bash client asks of this binary, outside the grammar.
     match words {
-        [verb, flag] if verb == "friction" && flag == "--replies" => return friction_replies(),
+        [verb, flag] if verb == "friction" && flag == "--replies" => return friction_replies(None),
+        [verb, flag, into] if verb == "friction" && flag == "--replies" => {
+            return friction_replies(Some(Path::new(into)));
+        }
         [flag] if flag == "--version" => return Ok(version()),
+        [word, at, command @ ..] if word == Guard::WORD => {
+            return Ok(ExitCode::from(
+                Guard::serve(at, command).rem_euclid(256) as u8
+            ));
+        }
         _ => {}
     }
     let invocation = match Invocation::parse(words) {
@@ -83,9 +92,21 @@ fn dispatch(words: &[String]) -> Result<ExitCode, Failure> {
             }
             run(call)
         }
-        Invocation::Call(_) => {
-            Err(format!("could not run the bash client: {}", BashClient::exec(words)).into())
-        }
+        Invocation::Call(call) => match LockedCall::of(&call) {
+            Some(request) => {
+                let caller = Caller::from_env();
+                change_notice(&caller);
+                reports::Notice { caller: &caller }.tell();
+                let code = request.run(&call, &caller).unwrap_or_else(|e| {
+                    eprint!("{e}");
+                    e.exit()
+                });
+                Ok(ExitCode::from(code.rem_euclid(256) as u8))
+            }
+            None => {
+                Err(format!("could not run the bash client: {}", BashClient::exec(words)).into())
+            }
+        },
     }
 }
 
@@ -1638,12 +1659,19 @@ fn friction_verb(friction: Friction) -> Result<ExitCode, Failure> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Answers to the reports `DIBS_FRICTION_BY` filed, on stderr.
-fn friction_replies() -> Result<ExitCode, Failure> {
-    if let Some(repo) = reports::repo() {
-        let by = std::env::var("DIBS_FRICTION_BY").unwrap_or_default();
-        for r in reports::replies(&repo, &friction::load(&friction::path()?), &by)? {
-            eprintln!("{r}");
+/// Answers to the reports `DIBS_FRICTION_BY` filed: on stderr, or kept for its next call.
+fn friction_replies(into: Option<&Path>) -> Result<ExitCode, Failure> {
+    let Some(repo) = reports::repo() else {
+        return Ok(ExitCode::SUCCESS);
+    };
+    let by = std::env::var("DIBS_FRICTION_BY").unwrap_or_default();
+    let notes = friction::load(&friction::path()?);
+    match into {
+        Some(into) => reports::fetch_replies(&repo, &notes, &by, into)?,
+        None => {
+            for r in reports::replies(&repo, &notes, &by)? {
+                eprintln!("{r}");
+            }
         }
     }
     Ok(ExitCode::SUCCESS)

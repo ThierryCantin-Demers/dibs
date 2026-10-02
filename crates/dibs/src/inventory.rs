@@ -372,7 +372,7 @@ impl Machine {
     pub fn chip_count(&self, chip: &str) -> usize {
         self.devices
             .iter()
-            .filter(|d| d.alias.is_some() && d.chip.as_deref() == Some(chip))
+            .filter(|d| d.alias.is_some() && d.chip.as_deref().unwrap_or_default() == chip)
             .count()
     }
 }

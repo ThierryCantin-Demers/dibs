@@ -109,6 +109,11 @@ impl Paths {
         self.state(stamp.file())
     }
 
+    /// Replies fetched in the background, one file per session, printed on its next call.
+    pub fn reports_news(&self) -> Option<PathBuf> {
+        self.state("reports-news")
+    }
+
     /// Commits checked out here to be sent, one tree per repo identity.
     pub fn sent(&self) -> Option<PathBuf> {
         self.cache("sent")

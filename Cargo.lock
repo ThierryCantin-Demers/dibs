@@ -521,6 +521,7 @@ name = "dibs"
 version = "0.1.0"
 dependencies = [
  "dibs-format",
+ "flate2",
  "libc",
  "regex",
  "serde",

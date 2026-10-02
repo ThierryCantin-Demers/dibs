@@ -12,6 +12,7 @@ rust-version = "1.89"
 
 [workspace.dependencies]
 dibs-format = { path = "crates/dibs-format" }
+flate2 = "1"
 crossterm = "0.28"
 eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
 libc = "0.2"

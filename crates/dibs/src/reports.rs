@@ -2,16 +2,20 @@
 //! shares, with the answers brought back to the session that reported it.
 
 use crate::friction::Note;
-use dibs::paths::{Paths, ReportsStamp};
+use dibs::{
+    caller::Caller,
+    paths::{Paths, ReportsStamp},
+};
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
-    path::PathBuf,
+    os::unix::process::CommandExt as _,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::mpsc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 pub const LABEL: &str = "dibs-friction";
@@ -25,6 +29,85 @@ const ANSWER: &str = "<!-- dibs --friction --reply -->";
 const SHORT_LIVED: Duration = Duration::from_secs(60);
 const SHORT_LIVES: u32 = 3;
 const LISTED: &str = "200";
+/// Replies are asked for at most this often unless DIBS_REPORTS_EVERY says otherwise, in minutes.
+const ASKED_EVERY_MINUTES: u64 = 5;
+/// A fetch that has not finished by then is given up, rather than left running.
+const FETCH_LIMIT: Duration = Duration::from_secs(15);
+
+/// Answers to this session's reports, fetched in the background on one call and printed on the
+/// next, so no call waits on GitHub.
+pub struct Notice<'a> {
+    pub caller: &'a Caller,
+}
+
+impl Notice<'_> {
+    pub fn tell(&self) {
+        let paths = Paths::from_env();
+        let Some(news) = paths.reports_news() else {
+            return;
+        };
+        let mine = news.join(self.caller.file_name());
+        if let Ok(text) = std::fs::read_to_string(&mine) {
+            let _ = std::fs::remove_file(&mine);
+            eprint!("{text}");
+        }
+        if repo().is_none() {
+            return;
+        }
+        let Some(stamp) = paths.reports(ReportsStamp::Asked) else {
+            return;
+        };
+        let every = std::env::var("DIBS_REPORTS_EVERY")
+            .ok()
+            .and_then(|m| m.parse().ok())
+            .unwrap_or(ASKED_EVERY_MINUTES);
+        let asked_lately = std::fs::metadata(&stamp)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|m| SystemTime::now().duration_since(m).ok())
+            .is_some_and(|age| age < Duration::from_secs(every * 60));
+        if asked_lately || std::fs::create_dir_all(&news).is_err() {
+            return;
+        }
+        let _ = std::fs::write(&stamp, "");
+        let Ok(me) = std::env::current_exe() else {
+            return;
+        };
+        let mut fetch = Command::new(me);
+        fetch
+            .args(["friction", "--replies"])
+            .arg(&mine)
+            .env("DIBS_FRICTION_BY", &self.caller.name)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // SAFETY: setsid only detaches the child from this terminal's signals.
+        unsafe {
+            fetch.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        let _ = fetch.spawn();
+    }
+}
+
+/// Fetches the replies `by` has not seen and adds them to `into`, whole or not at all.
+pub fn fetch_replies(repo: &str, notes: &[Note], by: &str, into: &Path) -> Result<(), String> {
+    std::thread::spawn(|| {
+        std::thread::sleep(FETCH_LIMIT);
+        std::process::exit(124);
+    });
+    let mut text = std::fs::read_to_string(into).unwrap_or_default();
+    for reply in replies(repo, notes, by)? {
+        text.push_str(&reply);
+        text.push('\n');
+    }
+    let mut partial = into.as_os_str().to_owned();
+    partial.push(format!(".{}", std::process::id()));
+    std::fs::write(&partial, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&partial, into).map_err(|e| e.to_string())
+}
 
 /// Opt-in per person, since a report says what they were doing: without it, friction stays on
 /// the machine it was reported on.
