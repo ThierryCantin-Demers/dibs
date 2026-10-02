@@ -68,10 +68,6 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             print!("{}", Help::text());
             Ok(ExitCode::SUCCESS)
         }
-        Invocation::RecipeHelp => {
-            print!("{}", Help::RECIPES);
-            Ok(ExitCode::SUCCESS)
-        }
         Invocation::Version => Ok(version()),
         Invocation::Friction(friction) => reports::friction_verb(friction),
         Invocation::Recipe(call) => {

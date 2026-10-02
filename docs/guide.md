@@ -634,6 +634,64 @@ most 30 seconds before it is reported busy instead. The report, or `--json`, say
 
 It exits 1 when anything is missing or a machine could not be probed.
 
+## How the lock behaves
+
+A shared holder blocks a benchmark and a benchmark blocks everything, because a compile running
+beside a benchmark contaminates it as surely as a second benchmark would.
+
+`--peek` and `--kill` deliberately ignore the lock. Looking at a wedged machine, and freeing it,
+must not require the thing that is wedged. That exemption is the whole risk of `--peek`: it runs
+while a benchmark holds the machine, so the cost of what you peek at is paid by whoever is being
+measured. Use it only for things that are effectively free: reading a small file, listing a
+directory, `ps`, `nvidia-smi`, `git status`. If it compiles, copies, downloads, greps a tree, or
+reads gigabytes, it is not a peek however read-only it looks: run it as `dibs <command>` and take
+the shared lock, which is what the shared lock is for.
+
+`--watch` keeps one connection open and redraws from the far side, and a redraw forks nothing: it
+reads the lock files, walks the holder's own process tree through the kernel's child lists, and
+reuses the medians it worked out last time. That is about 2 ms against the 30 ms a `--status` in
+a loop spends on a fresh login and a machine-wide process scan. It is for a person at a terminal.
+An agent is told when its own job ends and has nothing to watch for.
+
+The lock lives on the machine, not on your side, so it also covers agents running on the machine
+itself, and it is held by the workload's own process: it releases when that process exits,
+however it exits, with nothing left to clean up. A call made on the machine recognizes it by
+hostname and takes the lock locally instead of reaching itself over ssh.
+
+A job runs with `DIBS_SCRATCH` and `TMPDIR` pointing at `~/.cache/dibs` on the machine, because
+`/tmp` there is a shared tmpfs under a quota: one build tree in it stops everyone else from
+running anything at all. Write build output under `$DIBS_SCRATCH`, never in `/tmp`.
+`DIBS_REMOTE_DIR` moves where a call writes its script on the machine, which is the way back in
+when the default one has filled up.
+
+A job dies with the caller that started it: kill the caller, however you kill it, and the work
+stops and the lock frees. A caller that stops answering, as a laptop does when it sleeps or a
+shell does after Ctrl-Z, counts as gone after `DIBS_LEASE` seconds (120, and 0 turns it off).
+`DIBS_TRACE=1` traces the machine's side, and `DIBS_NO_PDEATHSIG`, `DIBS_NO_LIVE` and
+`DIBS_NO_WATCHDOG` each switch off one half of that machinery, which is how it gets debugged when
+it misbehaves. `DIBS_NO_CHILDREN` forces the fallback way of finding a holder's descendants,
+which is otherwise unreachable on a kernel built the ordinary way.
+
+An unreachable machine fails in seconds with a diagnosis, including whether Tailscale needs a
+login, rather than hanging on a connection or a password prompt. Never retry that in a loop.
+
+Every completed run's duration is recorded per label, and `--status` uses the median of those to
+say how much longer the holder has and when each queued caller should start. It says nothing
+rather than guessing when it has no history to go on.
+
+Every job records which agent started it, taken from the title of its Claude Code session, which
+is the name the user sees on the window it is running in. `--status` and `--log` carry it, so a
+command on the machine leads back to the agent that can be asked about it. A shell that is not an
+agent says so, and a session with no title yet is named by its id.
+
+A holder is called idle when the CPU under it has not moved between two looks, which catches a
+job that hangs after an hour of work as well as one that never started. That takes two looks,
+and a `--watch` left running is what supplies them. `DIBS_IDLE_AFTER` sets how long a stretch of
+nothing has to be, in seconds, before it is worth mentioning.
+
+Never poll dibs. Launch it in the background and do other work: queueing then costs nothing, and
+the notification arrives when the command is done.
+
 ## The two halves
 
 `bin/dibs` and `lib/` are the resource layer, and stay bash because half of it travels over

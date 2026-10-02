@@ -10,8 +10,6 @@ pub enum Invocation {
     Friction(Friction),
     /// A recipe verb and everything after it.
     Recipe(RecipeCall),
-    /// `--help` after a recipe verb: the recipe layer's help.
-    RecipeHelp,
     /// `--version` after a recipe verb.
     Version,
     /// One call to a machine, or a mode that answers here.

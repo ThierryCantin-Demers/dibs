@@ -4,9 +4,6 @@ use dibs_format::Exit;
 pub struct Help;
 
 impl Help {
-    /// The recipe layer's own, after a recipe verb.
-    pub const RECIPES: &'static str = include_str!("recipe-help.txt");
-
     const INTERFACE: &'static str = include_str!("help.txt");
 
     /// The exits a caller acts on, one row per line of the help.

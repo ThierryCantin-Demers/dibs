@@ -71,7 +71,7 @@ fn the_refusals_the_suite_recorded_are_refused_in_the_same_words() {
 }
 
 #[test]
-fn the_help_is_what_the_bash_client_printed() {
+fn the_help_is_what_the_snapshots_hold() {
     let snapshot = |text: &str, title: &str| -> String {
         let section = text.split(&format!("== {title}\n")).nth(1).unwrap();
         section
@@ -84,7 +84,7 @@ fn the_help_is_what_the_bash_client_printed() {
     let help = include_str!("../../tests/suite/snapshots/help.txt");
     assert_eq!(Help::text(), snapshot(help, "dibs --help"));
     let recipes = include_str!("../../tests/suite/snapshots/help-recipes.txt");
-    assert_eq!(Help::RECIPES, snapshot(recipes, "dibs build --help"));
+    assert_eq!(Help::text(), snapshot(recipes, "dibs build --help"));
 }
 
 #[test]
@@ -584,8 +584,8 @@ fn recipes() -> Vec<(Vec<&'static str>, Invocation)> {
                 ..recipe(RecipeVerb::Machines, "")
             }),
         ),
-        (vec!["build", "--help"], Invocation::RecipeHelp),
-        (vec!["list", "-h"], Invocation::RecipeHelp),
+        (vec!["build", "--help"], Invocation::Help),
+        (vec!["list", "-h"], Invocation::Help),
         (vec!["build", "--version"], Invocation::Version),
     ]
 }
