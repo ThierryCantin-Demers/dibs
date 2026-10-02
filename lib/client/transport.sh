@@ -157,8 +157,31 @@ hold_tree() {   # pid; it and everything below it
     for c in $(pgrep -P "$1" 2>/dev/null); do hold_tree "$c"; done
 }
 
+# A server ready on the machine can still be out of this computer's reach, behind the machine's
+# firewall or listening on its loopback only, and the command would fail at its first connection.
+reach_ready() {   # host, then the name=port pairs the machine reserved
+    local i r port p err why
+    for i in "${!WITH_READY[@]}"; do
+        r=${WITH_READY[$i]}
+        case "$r" in tcp:*) port=${r#tcp:} port=${port##*:} ;; *) continue ;; esac
+        for p in "${@:2}"; do [ "${p%%=*}" = "$port" ] && port=${p#*=}; done
+        case "$port" in ''|*[!0-9]*) continue ;; esac
+        err=$(timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$1" "$port" 2>&1) && continue
+        case "$err" in
+            *refused*) why="nothing answers there from outside the machine: the server listens on its loopback only, or a firewall resets the connection" ;;
+            *"No route to host"*) why="a firewall on $at most likely rejects it" ;;
+            # A slow name lookup times out too, and says nothing about the port.
+            ''|*"timed out"*) command -v getent >/dev/null && timeout 2 getent hosts "$1" >/dev/null || continue
+                why="a firewall on $at most likely drops it" ;;
+            *) continue ;;
+        esac
+        echo "dibs: ${WITH_NAME[$i]} is ready on $at, but this computer cannot connect to $1:$port, so the command was not run: $why. dibs with --there runs the command on the machine instead." >&2
+        return 1
+    done
+}
+
 hold_run() {   # the command that takes the lock
-    local mark line holder st status pid p at reach
+    local mark line holder st status pid p at reach ports=()
     # A lock taken here is served from here, whichever machine the call named.
     at=${MACHINE:-${TARGET:-$SELF}} reach=${TARGET:-$SELF}
     [ "$LOCK_AT" = "$(lower "$SELF")" ] && at=$SELF reach=$SELF
@@ -187,6 +210,7 @@ hold_run() {   # the command that takes the lock
         "DIBS-HOLDING "*)
             # Named where the command here has to reach them, which is the machine, not localhost.
             for p in ${line#DIBS-HOLDING }; do
+                ports+=("$p")
                 HOLD_ENV+=("DIBS_PORT_$(printf %s "${p%%=*}" | tr 'a-z' 'A-Z')=${p#*=}")
                 HOLD_ENV+=("DIBS_SERVICE_$(printf %s "${p%%=*}" | tr 'a-z' 'A-Z')=$reach:${p#*=}")
             done ;;
@@ -195,17 +219,21 @@ hold_run() {   # the command that takes the lock
         exec 4<&- 6>&-
         wait "$holder"; return
     fi
-    echo "dibs: holding the $MODE lock on $at, running here: $COMMAND" >&2
-    # Ctrl-C is for the command. Trapped, this carries on and releases the lock with its exit.
-    trap : INT
-    # The command gets stderr back on 3, while bash's own notice of a stopped command, which
-    # would name this function's code, goes nowhere.
-    { ( printf '%s\n' "$BASHPID" > "$mark.pid"; exec 2>&3 3>&-
-        export DIBS_HOLDING="${DIBS_HOLDING:+$DIBS_HOLDING }$LOCK_AT" ${HOLD_ENV[@]+"${HOLD_ENV[@]}"}
-        [ -n "${DIBS_CALLER_PATH:-}" ] && PATH=$DIBS_CALLER_PATH && unset DIBS_CALLER_PATH
-        if [ "${#HOLD_CMD[@]}" -eq 1 ]; then exec bash -c "${HOLD_CMD[0]}"; else exec "${HOLD_CMD[@]}"; fi ) 4<&- 6>&-; } 3>&2 2>/dev/null
-    st=$?
-    trap - INT
+    if reach_ready "${reach#*@}" ${ports[@]+"${ports[@]}"}; then
+        echo "dibs: holding the $MODE lock on $at, running here: $COMMAND" >&2
+        # Ctrl-C is for the command. Trapped, this carries on and releases the lock with its exit.
+        trap : INT
+        # The command gets stderr back on 3, while bash's own notice of a stopped command, which
+        # would name this function's code, goes nowhere.
+        { ( printf '%s\n' "$BASHPID" > "$mark.pid"; exec 2>&3 3>&-
+            export DIBS_HOLDING="${DIBS_HOLDING:+$DIBS_HOLDING }$LOCK_AT" ${HOLD_ENV[@]+"${HOLD_ENV[@]}"}
+            [ -n "${DIBS_CALLER_PATH:-}" ] && PATH=$DIBS_CALLER_PATH && unset DIBS_CALLER_PATH
+            if [ "${#HOLD_CMD[@]}" -eq 1 ]; then exec bash -c "${HOLD_CMD[0]}"; else exec "${HOLD_CMD[@]}"; fi ) 4<&- 6>&-; } 3>&2 2>/dev/null
+        st=$?
+        trap - INT
+    else
+        st=77
+    fi
     : > "$mark.done"
     printf 'release %s\n' "$st" >&6
     exec 6>&-

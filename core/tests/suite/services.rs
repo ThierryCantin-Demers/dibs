@@ -161,6 +161,26 @@ fn a_holds_command_is_told_where_to_reach_the_service() {
     assert!(port.parse::<u16>().is_ok(), "{out}");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_ready_service_this_computer_cannot_reach_stops_the_call_before_its_command() {
+    let s = Sandbox::new();
+    s.write(
+        "lserve.py",
+        "import os, signal, socket\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\ns.bind((\"127.0.0.1\", int(os.environ[\"DIBS_PORT_API\"])))\ns.listen()\nsignal.pause()\n",
+    );
+    let srv = format!("srv=python3 {}", s.p("lserve.py"));
+    let ran = s.p("unreached-ran");
+    let out = s.dibs(["--hold", "--label", "port-unreached", "--port", "api", "--with", &srv, "--ready", "tcp:api", &format!("touch {ran}")]).run();
+    assert_eq!((out.code, s.exists("unreached-ran")), (77, false), "a server the caller cannot reach stops the call before its command: {}", out.all());
+    assert_eq!(
+        out.all().lines_with(&format!("this computer cannot connect to {}:", hostname())),
+        1,
+        "and says where it could not connect: {}",
+        out.all()
+    );
+}
+
 #[test]
 fn two_calls_at_once_are_never_given_the_same_port() {
     let mut s = Sandbox::new();

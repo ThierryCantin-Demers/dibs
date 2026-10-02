@@ -39,7 +39,8 @@ spoiled without it.
   its lock and stopped before the lock goes, with `--ready tcp:<port>` or a command saying when it
   can be used. Use it rather than starting a server in the background of a job: one left running
   holds cards and memory while the next person measures. A server that exits early, or is never
-  ready, stops the call with exit 77.
+  ready, stops the call with exit 77, and so does one your side cannot connect to, which is
+  usually the machine's firewall; `dibs with --there` runs the command on the machine instead.
 - Never write a port number into both the server and the client: two agents serving the same thing
   pick the same one and the second fails. `--port <name>` has the machine pick a free one and
   reserve it, which the server and the command read as `$DIBS_PORT_<NAME>`, a `--hold` command as
