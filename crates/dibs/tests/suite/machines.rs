@@ -483,7 +483,7 @@ hostname = "new"
 }
 
 #[test]
-fn a_shared_registry_sits_under_your_own_machines() {
+fn the_inventory_is_machines_toml_alone() {
     let mut s = Sandbox::new();
     s.write(
         "registry.toml",
@@ -496,40 +496,18 @@ fn a_shared_registry_sits_under_your_own_machines() {
          [machine.contested]\nssh      = \"dibs@from-mine\"\nhostname = \"from-mine\"\n",
     );
     let listed = s.dibs(["--machines"]).run().stdout;
-    assert_eq!(listed.lines().count(), 3, "both layers are listed");
-    assert_eq!(
-        listed.lines_with("team-box"),
-        1,
-        "a shared machine is usable without writing it out"
-    );
-    assert_eq!(
-        listed.lines_with("[shared]"),
-        1,
-        "and it says which layer it came from"
-    );
-    // The one only you have, and the shared one you overrode, which is yours now.
-    assert_eq!(
-        listed.lines_with("[yours]"),
-        2,
-        "your own machines are marked as yours"
-    );
-    // Half an entry from each file would describe a machine that exists nowhere.
+    assert_eq!(listed.lines().count(), 2, "a shared registry is not read");
+    assert_eq!(listed.lines_with("team-box"), 0);
     assert_eq!(
         away(s.dibs(["--on", "contested", "--status"]))
             .run()
             .all()
             .lines_with("dibs@from-mine"),
         1,
-        "a personal entry overrides the shared one whole"
+        "a machine is the entry machines.toml has for it"
     );
-    let out = s.dibs(["--forget", "team-box"]).run();
-    assert_eq!(out.code, 2, "a shared machine cannot be forgotten locally");
-    assert_eq!(
-        out.all().lines_with("shared registry"),
-        1,
-        "and it says why"
-    );
-    assert_eq!(s.dibs(["--forget", "mine"]).code(), 0, "your own can");
+    assert_eq!(s.dibs(["--forget", "team-box"]).code(), 2);
+    assert_eq!(s.dibs(["--forget", "mine"]).code(), 0);
 }
 
 fn one_and_two(s: &mut Sandbox) {

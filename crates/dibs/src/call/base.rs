@@ -2,23 +2,23 @@ use crate::{
     call::{
         card::{CardError, unpinned},
         hold::Hold,
+        machine::MachineCall,
         series::{Entry, Moved, Series, stayed_put},
     },
     caller::{Caller, short_hostname},
-    cli::{Call, Command, Mode as Words, PortName, RunLock, Service},
-    delegate::BashClient,
+    cli::{Call, Command, PortName, Run, RunLock, Service},
     machine::{
         CallValues, Card, Fleet, Here, Liveness, MachineHalf, MaxFrom, Named, Session, Target,
         TargetEnv, TargetError, exit_code,
     },
     paths::Paths,
+    placement::{Placement, Unplaced},
 };
 use dibs_format::{Exit, Label, Mode};
 use std::{
     fmt,
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
-    process::Stdio,
 };
 
 /// The most lines of a batch's plan a call carries.
@@ -44,8 +44,7 @@ pub enum CallError {
     InsideHold {
         lock_at: String,
     },
-    /// Placement refused, and the bash client that ranked the machines said why.
-    Unplaced(i32),
+    Unplaced(Unplaced),
     Io(std::io::Error),
 }
 
@@ -60,29 +59,36 @@ struct Environment {
 }
 
 impl<'a> LockedCall<'a> {
-    /// The call, when it is one of the modes ported here.
-    pub fn of(call: &'a Call) -> Option<LockedCall<'a>> {
-        match &call.mode {
-            Words::Run(run) => Some(LockedCall {
-                mode: match run.lock {
-                    RunLock::Shared => Mode::Shared,
-                    RunLock::Bench => Mode::Bench,
-                },
-                hold: run.hold,
-                command: &run.command,
-                services: &run.services,
-                ports: &run.ports,
-                ready_within: run.ready_within,
-            }),
-            Words::Peek(command) => Some(LockedCall {
-                mode: Mode::Peek,
-                hold: false,
-                command,
-                services: &[],
-                ports: &[],
-                ready_within: crate::cli::Run::default().ready_within,
-            }),
-            _ => None,
+    pub fn run_of(run: &'a Run) -> LockedCall<'a> {
+        LockedCall {
+            mode: match run.lock {
+                RunLock::Shared => Mode::Shared,
+                RunLock::Bench => Mode::Bench,
+            },
+            hold: run.hold,
+            command: &run.command,
+            services: &run.services,
+            ports: &run.ports,
+            ready_within: run.ready_within,
+        }
+    }
+
+    pub fn peek(command: &'a Command) -> LockedCall<'a> {
+        LockedCall {
+            mode: Mode::Peek,
+            ..LockedCall::shared(command)
+        }
+    }
+
+    /// A shared run of a command the client wrote itself.
+    pub fn shared(command: &'a Command) -> LockedCall<'a> {
+        LockedCall {
+            mode: Mode::Shared,
+            hold: false,
+            command,
+            services: &[],
+            ports: &[],
+            ready_within: Run::default().ready_within,
         }
     }
 
@@ -103,10 +109,7 @@ impl<'a> LockedCall<'a> {
 
         let card = match &call.device {
             Some(alias) => Card::resolve(alias, &target, &fleet)?,
-            None => Card {
-                twins: 1,
-                ..Card::default()
-            },
+            None => Card::none(),
         };
         if self.bench()
             && call.device.is_none()
@@ -118,11 +121,7 @@ impl<'a> LockedCall<'a> {
             eprint!("{note}");
         }
 
-        let label = call
-            .label
-            .clone()
-            .unwrap_or_else(|| Label::new(directory_name()))
-            .filed();
+        let label = Request::label(call);
         let device = call
             .device
             .as_ref()
@@ -184,13 +183,7 @@ impl<'a> LockedCall<'a> {
 
     /// The machine the call goes to, placed when it is shared work that names none.
     fn target(&self, call: &Call, env: &Environment, fleet: &Fleet) -> Result<Target, CallError> {
-        let target_env = TargetEnv {
-            host: std::env::var("DIBS_HOST").unwrap_or_default(),
-            hostname: set("DIBS_HOSTNAME"),
-            on: set("DIBS_ON"),
-            local: env.local,
-        };
-        let mut target = Target::resolve(call.on.as_ref(), &target_env, fleet)?;
+        let mut target = Target::resolve(call.on.as_ref(), &TargetEnv::from_env(), fleet)?;
         if self.bench()
             && !target.measurable
             && !self.hold
@@ -206,8 +199,12 @@ impl<'a> LockedCall<'a> {
             && !self.hold
             && !env.from_run;
         if placed {
-            let machine = placement(call)?;
-            target.go_to(fleet, &machine, Named::Placed)?;
+            let caller = Caller::default();
+            let machine = Placement {
+                machine: &MachineCall::new(call, &caller),
+            }
+            .pick()?;
+            target.go_to(fleet, machine.as_str(), Named::Placed)?;
         }
         if target.host.is_empty() && !env.local {
             return Err(target.no_machine(fleet, self.bench()).into());
@@ -216,18 +213,34 @@ impl<'a> LockedCall<'a> {
     }
 
     fn values(&self, call: &Call, caller: &Caller, label: Label, card: Card) -> CallValues {
-        let (max, max_from) = match call.max {
+        CallValues {
+            ready_within: self.ready_within,
+            ports: self.ports.to_vec(),
+            services: self.services.to_vec(),
+            ..Request {
+                mode: self.mode,
+                call,
+                caller,
+            }
+            .values(label, card, self.command.shell_string())
+        }
+    }
+}
+
+/// A call's values before its mode adds its own, as every mode sends them.
+pub(crate) struct Request<'a> {
+    pub mode: Mode,
+    pub call: &'a Call,
+    pub caller: &'a Caller,
+}
+
+impl Request<'_> {
+    pub fn values(&self, label: Label, card: Card, command: String) -> CallValues {
+        let (max, max_from) = match self.call.max {
             Some(max) => (max, MaxFrom::Given),
-            None => (
-                match self.mode {
-                    Mode::Bench => 7200,
-                    Mode::Peek => 30,
-                    _ => 1800,
-                },
-                MaxFrom::Default,
-            ),
+            None => (default_max(self.mode), MaxFrom::Default),
         };
-        let stream = match call.stream {
+        let stream = match self.call.stream {
             true => "1".to_string(),
             false => set("DIBS_STREAM")
                 .or_else(|| set("DIBS_FROM_RUN"))
@@ -239,26 +252,58 @@ impl<'a> LockedCall<'a> {
             .filter(|c| c.is_ascii_alphanumeric() || "._-".contains(*c))
             .take(FINGERPRINT_CHARS)
             .collect();
+        let caller = match self.mode {
+            Mode::Shared
+            | Mode::Bench
+            | Mode::Peek
+            | Mode::Rsh
+            | Mode::Kill
+            | Mode::KillForce
+            | Mode::Gc => self.caller.clone(),
+            _ => Caller::default(),
+        };
+        let batch = match self.mode {
+            Mode::Shared | Mode::Bench | Mode::Peek | Mode::Rsh => batch_plan(),
+            _ => String::new(),
+        };
         CallValues {
             mode: self.mode,
             label,
-            wait: call.wait,
+            wait: self.call.wait,
             max,
             max_from,
-            verbose: call.verbose,
-            json: call.json,
+            verbose: self.call.verbose,
+            json: self.call.json,
             card,
             stream,
-            ready_within: self.ready_within,
+            ready_within: crate::cli::Run::default().ready_within,
             fingerprint,
-            command: self.command.shell_string(),
+            command,
             // SAFETY: isatty only reads the descriptor's state.
             tty: unsafe { libc::isatty(1) } == 1,
-            caller: caller.clone(),
-            batch: batch_plan(),
-            ports: self.ports.to_vec(),
-            services: self.services.to_vec(),
+            caller,
+            batch,
+            ports: Vec::new(),
+            services: Vec::new(),
         }
+    }
+
+    /// `--label`, or the directory the call was made from, as the machine files it.
+    pub fn label(call: &Call) -> Label {
+        call.label
+            .clone()
+            .unwrap_or_else(|| Label::new(directory_name()))
+            .filed()
+    }
+}
+
+/// How long a call may hold the lock when `--max` does not say.
+fn default_max(mode: Mode) -> u64 {
+    match mode {
+        Mode::Bench => 7200,
+        Mode::Peek => 30,
+        Mode::Rsh => 3600,
+        _ => 1800,
     }
 }
 
@@ -279,30 +324,9 @@ fn set(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-/// Shared work that names no machine is ranked by the bash client, which still owns placement.
-fn placement(call: &Call) -> Result<String, CallError> {
-    let mut words = vec!["--pick".to_string()];
-    if call.verbose {
-        words.push("-v".into());
-    }
-    for (flag, value) in [("--prefer", &call.prefer), ("--repo", &call.repo)] {
-        if let Some(value) = value {
-            words.extend([flag.to_string(), value.clone()]);
-        }
-    }
-    let out = BashClient::command(&words)
-        .stdin(Stdio::null())
-        .stderr(Stdio::inherit())
-        .output()?;
-    match out.status.success() {
-        true => Ok(String::from_utf8_lossy(&out.stdout).trim().to_string()),
-        false => Err(CallError::Unplaced(exit_code(out.status))),
-    }
-}
-
 /// Inside a `--hold` of this machine's lock, a call that takes it again queues behind the hold,
 /// which only ends when the call does.
-fn holding(lock_at: &str) -> bool {
+pub(crate) fn holding(lock_at: &str) -> bool {
     let held = std::env::var("DIBS_HOLDING").unwrap_or_default();
     format!(" {held} ").contains(&format!(" {lock_at} "))
 }
@@ -356,7 +380,7 @@ fn directory_name() -> String {
 impl CallError {
     pub fn exit(&self) -> i32 {
         match self {
-            CallError::Unplaced(code) => *code,
+            CallError::Unplaced(e) => i32::from(e.exit().code()),
             CallError::Io(_) => i32::from(Exit::Failed.code()),
             _ => i32::from(Exit::Refused.code()),
         }
@@ -379,7 +403,7 @@ impl fmt::Display for CallError {
                     "  Take the lock once: run this outside the --hold, or peek if it is free to run."
                 )
             }
-            CallError::Unplaced(_) => Ok(()),
+            CallError::Unplaced(e) => e.fmt(f),
             CallError::Io(e) => writeln!(f, "dibs: {e}"),
         }
     }
@@ -400,6 +424,12 @@ impl From<CardError> for CallError {
 impl From<Moved> for CallError {
     fn from(e: Moved) -> CallError {
         CallError::Moved(e)
+    }
+}
+
+impl From<Unplaced> for CallError {
+    fn from(e: Unplaced) -> CallError {
+        CallError::Unplaced(e)
     }
 }
 

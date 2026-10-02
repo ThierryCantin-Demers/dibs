@@ -88,16 +88,50 @@ impl Fleet {
             .find(|m| m.name.as_str() == name)
     }
 
-    fn reachable(&self, name: &str) -> Option<&Machine> {
+    /// An entry a call can reach: one with an ssh string.
+    pub fn reachable(&self, name: &str) -> Option<&Machine> {
         self.inventory.as_ref()?.machine(name)
     }
 
-    fn exists(&self) -> bool {
+    /// Where the inventory is looked for, as messages name it.
+    pub fn shown(&self) -> String {
+        self.path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Whether there is an inventory file, readable or not.
+    pub fn exists(&self) -> bool {
         self.path.as_ref().is_some_and(|p| p.is_file())
     }
 }
 
+impl TargetEnv {
+    pub fn from_env() -> TargetEnv {
+        let set = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        TargetEnv {
+            host: std::env::var("DIBS_HOST").unwrap_or_default(),
+            hostname: set("DIBS_HOSTNAME"),
+            on: set("DIBS_ON"),
+            local: std::env::var("DIBS_LOCAL").is_ok_and(|v| v == "1"),
+        }
+    }
+}
+
 impl Target {
+    /// A host taken as typed, which no entry names: how `--check` reaches a new machine.
+    pub fn literal(host: &str) -> Target {
+        Target {
+            machine: None,
+            host: host.to_string(),
+            hostname: host.to_string(),
+            measurable: true,
+            named: Named::On,
+            unheeded: None,
+        }
+    }
+
     pub fn resolve(
         on: Option<&MachineName>,
         env: &TargetEnv,

@@ -27,6 +27,16 @@ pub struct Card {
     pub twins: usize,
 }
 
+impl Card {
+    /// No card named: the machine's runtime picks.
+    pub fn none() -> Card {
+        Card {
+            twins: 1,
+            ..Card::default()
+        }
+    }
+}
+
 /// One call's values, which the machine half reads ahead of its own code.
 #[derive(Debug, Clone)]
 pub struct CallValues {
@@ -160,8 +170,9 @@ pub fn encode(script: &str) -> String {
     base64(&bytes)
 }
 
+const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
 fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let n = chunk
@@ -178,9 +189,47 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// What `base64` printed, back as bytes; None when it is not base64.
+pub fn decode(text: &[u8]) -> Option<Vec<u8>> {
+    let digits: Vec<u8> = text
+        .iter()
+        .filter(|b| !b.is_ascii_whitespace() && **b != b'=')
+        .map(|b| ALPHABET.iter().position(|a| a == b).map(|p| p as u8))
+        .collect::<Option<_>>()?;
+    let mut out = Vec::with_capacity(digits.len() * 3 / 4);
+    for chunk in digits.chunks(4) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, d)| n | u32::from(*d) << (18 - 6 * i));
+        let bytes = n.to_be_bytes();
+        out.extend_from_slice(&bytes[1..chunk.len()]);
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_is_encoded_decodes_back() {
+        for text in [
+            "",
+            "f",
+            "fo",
+            "foo",
+            "foobar",
+            "a longer line\n with a newline",
+        ] {
+            assert_eq!(
+                decode(base64(text.as_bytes()).as_bytes()).as_deref(),
+                Some(text.as_bytes())
+            );
+        }
+        assert_eq!(decode(b"Zm9v\nYmFy\n").as_deref(), Some(&b"foobar"[..]));
+        assert_eq!(decode(b"not base64!"), None);
+    }
 
     #[test]
     fn base64_pads_as_the_tool_does() {

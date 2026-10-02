@@ -5,19 +5,24 @@ use crate::machine::{
 };
 use dibs_format::Exit;
 use std::{
-    io::{self, Write as _},
+    io::{self, Read as _, Write as _},
     os::unix::{
         fs::OpenOptionsExt as _,
         process::{CommandExt as _, ExitStatusExt as _},
     },
     path::PathBuf,
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
-    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 /// A caller that says nothing for this long is gone, unless `DIBS_LEASE` says otherwise.
 const DEFAULT_LEASE_SECS: u64 = 120;
+/// How long a stopped call's last output is waited for.
+const AFTER_STOP: Duration = Duration::from_secs(1);
 const DEFAULT_CONNECT_TIMEOUT: &str = "10";
 /// ssh's own failure, never the command's.
 const SSH_FAILED: i32 = 255;
@@ -106,6 +111,48 @@ enum Feed {
     Stdin,
 }
 
+/// What the machine half is given besides its script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// The command runs there.
+    Run,
+    /// The lock is held there for a command run here, and released down the channel.
+    Hold,
+    /// rsync's far side: this process's stdin is the transfer, and nothing is watched.
+    Transfer,
+}
+
+/// Where the machine half's output goes.
+enum Streams {
+    Inherit,
+    /// Stdout piped back to this process.
+    Piped,
+    /// Stdout into a pipe this process reads, and stderr where it is sent.
+    Into {
+        stdout: io::PipeWriter,
+        stderr: Stdio,
+    },
+}
+
+/// Which of a machine half's streams an answer keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kept {
+    /// Stdout, with stderr passed through to this process's.
+    Stdout,
+    /// Stdout, with stderr dropped.
+    StdoutAlone,
+    /// Both, interleaved as they were written, with what this side says about the machine.
+    Everything,
+}
+
+/// What a machine said within the bound it was given.
+#[derive(Debug)]
+pub struct Answer {
+    pub output: Vec<u8>,
+    /// None when the bound passed first and the call was stopped.
+    pub exit: Option<i32>,
+}
+
 /// The machine half of a call, started.
 pub struct Started {
     pub child: Child,
@@ -171,23 +218,42 @@ impl Session {
 
     /// The exit a call gives for its machine half's: ssh's own failures are diagnosed here.
     pub fn exit(&self, status: i32, target: &Target) -> i32 {
+        let (exit, said) = self.diagnose(status, target);
+        eprint!("{said}");
+        exit
+    }
+
+    /// The exit for a machine half's, and what to say about it.
+    pub fn diagnose(&self, status: i32, target: &Target) -> (i32, String) {
         match (&self.route, status) {
-            (Route::Ssh { .. }, SSH_FAILED) => {
-                eprint!("{}", Unreachable { target }.diagnosis());
-                i32::from(Exit::Unreachable.code())
-            }
+            (Route::Ssh { .. }, SSH_FAILED) => (
+                i32::from(Exit::Unreachable.code()),
+                Unreachable { target }.diagnosis(),
+            ),
             (Route::Ssh { .. }, SCRIPT_UNWRITTEN) => {
-                eprint!("{}", no_room(target));
-                i32::from(Exit::NoRoom.code())
+                (i32::from(Exit::NoRoom.code()), no_room(target))
             }
-            (_, status) => status,
+            (_, status) => (status, String::new()),
         }
     }
 
     /// Runs a call whose command runs on the machine, and returns its exit.
     pub fn run(&self, values: &CallValues, half: &str, live: Liveness) -> io::Result<ExitStatus> {
+        self.wait(self.start(values, half, live, Shape::Run, Streams::Inherit)?)
+    }
+
+    /// rsync's far side, fed this process's stdin.
+    pub fn transfer(
+        &self,
+        values: &CallValues,
+        half: &str,
+        live: Liveness,
+    ) -> io::Result<ExitStatus> {
+        self.wait(self.start(values, half, live, Shape::Transfer, Streams::Inherit)?)
+    }
+
+    fn wait(&self, started: Started) -> io::Result<ExitStatus> {
         let deferred = Interrupt::defer();
-        let started = self.start(values, half, live, false)?;
         let mut child = started.child;
         let status = child.wait();
         drop(deferred);
@@ -199,7 +265,57 @@ impl Session {
 
     /// Starts the machine half of a hold, with its stdout piped here.
     pub fn hold(&self, values: &CallValues, half: &str, live: Liveness) -> io::Result<Started> {
-        self.start(values, half, live, true)
+        self.start(values, half, live, Shape::Hold, Streams::Piped)
+    }
+
+    /// Runs a call and keeps what it prints, stopping it when a bound passes first.
+    pub fn ask(
+        &self,
+        values: &CallValues,
+        half: &str,
+        bound: Option<Duration>,
+        kept: Kept,
+    ) -> io::Result<Answer> {
+        let (reader, writer) = io::pipe()?;
+        let stderr = match kept {
+            Kept::Stdout => Stdio::inherit(),
+            Kept::StdoutAlone => Stdio::null(),
+            Kept::Everything => Stdio::from(writer.try_clone()?),
+        };
+        let streams = Streams::Into {
+            stdout: writer,
+            stderr,
+        };
+        let live = Liveness::from_env();
+        let deadline = bound.map(|bound| Instant::now() + bound);
+        let left = || deadline.map(|d| d.saturating_duration_since(Instant::now()));
+        let Started { mut child, channel } = self.start(values, half, live, Shape::Run, streams)?;
+        let heard = Heard::read(reader);
+        let pid = child.id() as libc::pid_t;
+        let (tell, exited) = mpsc::channel();
+        std::thread::spawn(move || tell.send(child.wait()));
+        let status = match left() {
+            Some(left) => exited.recv_timeout(left).ok(),
+            None => exited.recv().ok(),
+        };
+        let exit = match status {
+            Some(status) => {
+                heard.until_closed(left());
+                Some(exit_code(status?))
+            }
+            None => {
+                // SAFETY: the child is not reaped until the waiter's wait returns.
+                unsafe { libc::kill(pid, libc::SIGTERM) };
+                let _ = exited.recv();
+                heard.until_closed(Some(AFTER_STOP));
+                None
+            }
+        };
+        drop(channel);
+        Ok(Answer {
+            output: heard.taken(),
+            exit,
+        })
     }
 
     fn start(
@@ -207,11 +323,13 @@ impl Session {
         values: &CallValues,
         half: &str,
         live: Liveness,
-        hold: bool,
+        shape: Shape,
+        streams: Streams,
     ) -> io::Result<Started> {
+        let hold = shape == Shape::Hold;
         let (mut command, prelude, feed) = match &self.route {
             Route::Here => Session::here(values, half, hold)?,
-            Route::Ssh { host } => Session::over_ssh(host, values, half, live, hold),
+            Route::Ssh { host } => Session::over_ssh(host, values, half, live, shape),
         };
         let die_with_me = !live.no_pdeathsig && !matches!((&self.route, hold), (Route::Here, true));
         // SAFETY: the closure makes async-signal-safe calls only.
@@ -228,10 +346,17 @@ impl Session {
             });
         }
         command.stdin(Stdio::piped());
-        if hold {
-            command.stdout(Stdio::piped());
+        match streams {
+            Streams::Inherit => {}
+            Streams::Piped => {
+                command.stdout(Stdio::piped());
+            }
+            Streams::Into { stdout, stderr } => {
+                command.stdout(stdout).stderr(stderr);
+            }
         }
         let mut child = command.spawn()?;
+        drop(command);
         let stdin = child.stdin.take().expect("stdin was piped");
         let (channel, messages) = mpsc::channel();
         std::thread::spawn(move || relay(stdin, prelude, feed, messages));
@@ -267,9 +392,14 @@ impl Session {
         values: &CallValues,
         half: &str,
         live: Liveness,
-        hold: bool,
+        shape: Shape,
     ) -> (Command, String, Feed) {
-        let watching = hold || !(live.no_live || live.no_watchdog);
+        let hold = shape == Shape::Hold;
+        let watching = match shape {
+            Shape::Hold => true,
+            Shape::Run => !(live.no_live || live.no_watchdog),
+            Shape::Transfer => false,
+        };
         let lease = if watching { live.lease } else { 0 };
         let watch = Watch {
             off: !watching,
@@ -277,7 +407,8 @@ impl Session {
             lease,
         };
         let payload = encode(&values.script(watch, half));
-        let feed = match (live.no_live && !hold, lease) {
+        let fed = shape == Shape::Transfer || (live.no_live && !hold);
+        let feed = match (fed, lease) {
             (true, _) => Feed::Stdin,
             (false, 0) => Feed::Quiet,
             (false, lease) => Feed::Heartbeat(Duration::from_millis(lease * 250)),
@@ -365,7 +496,15 @@ fn relay(mut stdin: ChildStdin, prelude: String, feed: Feed, messages: Receiver<
     let beat = match feed {
         Feed::Close => return,
         Feed::Stdin => {
-            let _ = io::copy(&mut io::stdin().lock(), &mut stdin);
+            // Not io::copy: its splice holds the pipe's lock while it waits on a socket, and
+            // the machine half's exit then blocks on that lock for good.
+            let mut chunk = [0u8; 8192];
+            let mut from = io::stdin().lock();
+            while let Ok(n @ 1..) = from.read(&mut chunk) {
+                if stdin.write_all(&chunk[..n]).is_err() {
+                    return;
+                }
+            }
             return;
         }
         Feed::Quiet => None,
@@ -436,6 +575,42 @@ impl Drop for Interrupt {
     fn drop(&mut self) {
         // SAFETY: puts back the handler `defer` replaced.
         unsafe { libc::signal(libc::SIGINT, self.previous) };
+    }
+}
+
+/// What a pipe has carried so far, read on a thread of its own.
+struct Heard {
+    so_far: Arc<Mutex<Vec<u8>>>,
+    closed: Receiver<()>,
+}
+
+impl Heard {
+    fn read(mut pipe: io::PipeReader) -> Heard {
+        let so_far = Arc::new(Mutex::new(Vec::new()));
+        let (tell, closed) = mpsc::channel();
+        let into = Arc::clone(&so_far);
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 8192];
+            while let Ok(n @ 1..) = pipe.read(&mut chunk) {
+                into.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .extend_from_slice(&chunk[..n]);
+            }
+            let _ = tell.send(());
+        });
+        Heard { so_far, closed }
+    }
+
+    /// Waits for the pipe to close, or for so long.
+    fn until_closed(&self, within: Option<Duration>) {
+        let _ = match within {
+            Some(within) => self.closed.recv_timeout(within).ok(),
+            None => self.closed.recv().ok(),
+        };
+    }
+
+    fn taken(&self) -> Vec<u8> {
+        std::mem::take(&mut self.so_far.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 

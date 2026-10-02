@@ -6,7 +6,7 @@ use std::{ffi::OsString, path::PathBuf};
 const NAME_CHARS: usize = 48;
 
 /// Ownership keys on the session id, which never moves; only the display uses the title.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Caller {
     pub id: String,
     pub name: String,

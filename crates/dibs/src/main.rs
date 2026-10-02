@@ -14,10 +14,9 @@ mod runs;
 mod worktree;
 
 use dibs::{
-    call::{Guard, LockedCall},
+    call::{Dispatch, Guard},
     caller::Caller,
-    cli::{Friction, Help, Invocation, RecipeCall, RecipeVerb, ShellWord, Sweep},
-    delegate::BashClient,
+    cli::{Friction, Help, Invocation, Mode, RecipeCall, RecipeVerb, ShellWord, Sweep},
     inventory::Inventory,
     paths::Paths,
     update::{self, ChangeNotice},
@@ -92,21 +91,19 @@ fn dispatch(words: &[String]) -> Result<ExitCode, Failure> {
             }
             run(call)
         }
-        Invocation::Call(call) => match LockedCall::of(&call) {
-            Some(request) => {
-                let caller = Caller::from_env();
+        Invocation::Call(call) => {
+            let caller = Caller::from_env();
+            if call.mode != Mode::Update {
                 change_notice(&caller);
                 reports::Notice { caller: &caller }.tell();
-                let code = request.run(&call, &caller).unwrap_or_else(|e| {
-                    eprint!("{e}");
-                    e.exit()
-                });
-                Ok(ExitCode::from(code.rem_euclid(256) as u8))
             }
-            None => {
-                Err(format!("could not run the bash client: {}", BashClient::exec(words)).into())
+            let code = Dispatch {
+                call: &call,
+                caller: &caller,
             }
-        },
+            .exit();
+            Ok(ExitCode::from(code.rem_euclid(256) as u8))
+        }
     }
 }
 
@@ -122,7 +119,7 @@ fn version() -> ExitCode {
 
 fn change_notice(caller: &Caller) {
     if let Some(seen) = Paths::from_env().seen() {
-        ChangeNotice { seen }.tell(caller);
+        ChangeNotice::of_this_build(seen).tell(caller);
     }
 }
 
