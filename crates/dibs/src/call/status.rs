@@ -5,7 +5,7 @@ use crate::{
     },
     cli::Call,
     machine::{Answer, Kept},
-    render::Answers,
+    render::{Answered, Answers},
 };
 use dibs_format::{Exit, MachineName, Mode};
 use std::time::Duration;
@@ -59,7 +59,7 @@ impl MachineCall<'_> {
         &self,
         names: &[MachineName],
         ask: impl Fn(&MachineName) -> Answer + Sync,
-    ) -> Vec<(MachineName, Answer)> {
+    ) -> Vec<Answered> {
         std::thread::scope(|scope| {
             let asking: Vec<_> = names
                 .iter()
@@ -68,7 +68,10 @@ impl MachineCall<'_> {
             asking
                 .into_iter()
                 .map(|(name, asked)| match asked.join() {
-                    Ok(answer) => (name.clone(), answer),
+                    Ok(answer) => Answered {
+                        machine: name.clone(),
+                        answer,
+                    },
                     Err(panic) => std::panic::resume_unwind(panic),
                 })
                 .collect()

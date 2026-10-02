@@ -86,7 +86,7 @@ impl Kill<'_> {
                 spaced: false,
             }
         );
-        let stopped = answers.iter().any(|(_, answer)| answer.exit == Some(0));
+        let stopped = answers.iter().any(|a| a.answer.exit == Some(0));
         Ok(i32::from(
             match stopped {
                 true => Exit::Success,

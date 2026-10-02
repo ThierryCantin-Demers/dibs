@@ -2,16 +2,23 @@ use crate::machine::Answer;
 use dibs_format::MachineName;
 use std::{fmt, path::Path};
 
+/// What one machine said when asked among several.
+#[derive(Debug)]
+pub struct Answered {
+    pub machine: MachineName,
+    pub answer: Answer,
+}
+
 /// Each machine's answer under its name, or that it gave none.
 pub struct Answers<'a> {
-    pub answers: &'a [(MachineName, Answer)],
+    pub answers: &'a [Answered],
     /// A blank line between machines.
     pub spaced: bool,
 }
 
 impl fmt::Display for Answers<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, (machine, answer)) in self.answers.iter().enumerate() {
+        for (i, Answered { machine, answer }) in self.answers.iter().enumerate() {
             if self.spaced && i > 0 {
                 writeln!(f)?;
             }

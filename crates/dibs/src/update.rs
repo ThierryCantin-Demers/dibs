@@ -196,7 +196,8 @@ impl Pulled<'_> {
         }
         let _ = writeln!(out, "{what} {before} -> {after}");
         let range = format!("{before}..{after}");
-        let log = git(self.clone, &["log", "--oneline", &range]).unwrap_or_default();
+        let log =
+            git(self.clone, &["log", "--oneline", "--no-decorate", &range]).unwrap_or_default();
         for line in log.lines() {
             let _ = writeln!(out, "  {line}");
         }

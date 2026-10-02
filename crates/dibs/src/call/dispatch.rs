@@ -11,8 +11,27 @@ use crate::{
     update::Update,
 };
 use dibs_format::{Label, Mode};
+use std::fmt;
 
 const GC_LABEL: &str = "dibs-gc";
+
+/// What `--gc` asks the machine to sweep, in the command's place: its clocks, and whether only
+/// to list.
+struct GcSweep {
+    /// None leaves the machine's own clocks.
+    days: Option<u32>,
+    dry_run: bool,
+}
+
+impl fmt::Display for GcSweep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.days {
+            Some(days) => write!(f, "{days}")?,
+            None => write!(f, "default")?,
+        }
+        write!(f, " {}", u8::from(self.dry_run))
+    }
+}
 
 /// A parsed call, answered by the mode it names.
 pub struct Dispatch<'a> {
@@ -49,11 +68,11 @@ impl Dispatch<'_> {
                     .label
                     .clone()
                     .unwrap_or_else(|| Label::new(GC_LABEL)),
-                command: format!(
-                    "{} {}",
-                    days.map_or("default".to_string(), |d| d.to_string()),
-                    u8::from(*dry_run)
-                ),
+                command: GcSweep {
+                    days: *days,
+                    dry_run: *dry_run,
+                }
+                .to_string(),
                 streamed: true,
             }),
             Words::Check { host } => machine.check(host.as_deref()),

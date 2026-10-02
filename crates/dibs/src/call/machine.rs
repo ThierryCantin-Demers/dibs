@@ -128,7 +128,10 @@ impl<'a> MachineCall<'a> {
     /// Sends the mode's values and keeps what the machine prints, saying why on stderr when it
     /// could not be reached.
     pub fn capture(&self, asked: Asked, target: &Target) -> Result<Answer, CallError> {
-        let values = self.values(asked, target)?;
+        let values = CallValues {
+            tty: false,
+            ..self.values(asked, target)?
+        };
         let session = Session::new(target, &self.here);
         let half = MachineHalf::load()?;
         let answer = session.ask(&values, &half, None, Kept::Stdout)?;
@@ -140,10 +143,10 @@ impl<'a> MachineCall<'a> {
 
     /// A machine the inventory names, asked as `dibs --on <machine>` with `flags` would ask it,
     /// within a bound. What stops the call before it is sent is part of what it said.
-    pub fn ask(&self, machine: &MachineName, flags: &Call, asked: Asked, ask: Bound) -> Answer {
-        let answer = self.asking(machine, flags, asked, ask);
+    pub fn ask(&self, machine: &MachineName, flags: &Call, asked: Asked, bound: Bound) -> Answer {
+        let answer = self.asking(machine, flags, asked, bound);
         answer.unwrap_or_else(|e| Answer {
-            output: match ask.kept {
+            output: match bound.kept {
                 Kept::Stdout | Kept::StdoutAlone => Vec::new(),
                 Kept::Everything => e.to_string().into_bytes(),
             },
@@ -156,7 +159,7 @@ impl<'a> MachineCall<'a> {
         machine: &MachineName,
         flags: &Call,
         asked: Asked,
-        ask: Bound,
+        bound: Bound,
     ) -> Result<Answer, CallError> {
         let target = Target::resolve(Some(machine), &TargetEnv::from_env(), &self.fleet)?;
         let values = CallValues {
@@ -165,11 +168,11 @@ impl<'a> MachineCall<'a> {
         };
         let session = Session::new(&target, &self.here);
         let half = MachineHalf::load()?;
-        let mut answer = session.ask(&values, &half, ask.within, ask.kept)?;
-        if let (Some(status), Kept::Everything) = (answer.exit, ask.kept) {
-            let (exit, said) = session.diagnose(status, &target);
-            answer.output.extend_from_slice(said.as_bytes());
-            answer.exit = Some(exit);
+        let mut answer = session.ask(&values, &half, bound.within, bound.kept)?;
+        if let (Some(status), Kept::Everything) = (answer.exit, bound.kept) {
+            let diagnosis = session.diagnose(status, &target);
+            answer.output.extend_from_slice(diagnosis.said.as_bytes());
+            answer.exit = Some(diagnosis.exit);
         }
         Ok(answer)
     }

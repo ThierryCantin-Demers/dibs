@@ -266,7 +266,8 @@ impl Drop for RshExit {
     }
 }
 
-/// Whether rsync is asked to carry mtimes across, read as the bash client's glob read it.
+/// Whether rsync is asked to carry mtimes across: `-a`, `-t`, `--archive`, `--times`, or a word of
+/// short flags with an `a` anywhere after its first letter, later words included.
 fn preserves_mtimes(args: &[String]) -> bool {
     let joined = format!(" {} ", args.join(" "));
     if joined.contains(" --no-times ") || joined.contains(" --no-t ") {

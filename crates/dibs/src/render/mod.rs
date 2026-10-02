@@ -2,4 +2,4 @@
 
 mod base;
 
-pub use base::{Answers, Indented, KeptLog};
+pub use base::{Answered, Answers, Indented, KeptLog};

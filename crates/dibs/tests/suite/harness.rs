@@ -16,8 +16,6 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const DIBS: &str = env!("CARGO_BIN_EXE_dibs");
-/// The bash client, which the binary hands every mode it does not answer itself.
-pub const BASH_DIBS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../bin/dibs");
 
 const CALL_LIMIT: Duration = Duration::from_secs(120);
 const WAIT_LIMIT: Duration = Duration::from_secs(30);

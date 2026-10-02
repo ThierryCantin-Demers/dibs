@@ -3,7 +3,6 @@
 pub mod call;
 pub mod caller;
 pub mod cli;
-pub mod delegate;
 pub mod inventory;
 pub mod machine;
 pub mod paths;

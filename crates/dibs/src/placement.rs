@@ -5,6 +5,7 @@ use crate::{
     call::{Asked, Bound, MachineCall, poll_timeout},
     cli::Call,
     machine::Kept,
+    render::Answered,
 };
 use dibs_format::{Exit, MachineName, Mode};
 use serde::Deserialize;
@@ -36,6 +37,13 @@ pub struct Reading {
     pub caches: Option<Vec<String>>,
     /// None from a machine too old to say, which is ranked rather than read as having none.
     pub clones: Option<Vec<String>>,
+}
+
+impl Reading {
+    /// Held exclusively, so it cannot start shared work.
+    fn benchmarking(&self) -> bool {
+        self.state == Mode::Bench.as_str()
+    }
 }
 
 /// A machine that answered, as the ranking sees it.
@@ -93,7 +101,7 @@ impl Ranking {
             }
             let cores = reading.cores.filter(|c| *c > 0).unwrap_or(1);
             let mut score = reading.load.unwrap_or_default() / cores;
-            if reading.state == "bench" {
+            if reading.benchmarking() {
                 score += BENCH_PENALTY;
             }
             if candidate.workstation {
@@ -187,9 +195,13 @@ impl Placement<'_> {
             let status = Asked::plain(Mode::Status, self.machine.label());
             self.machine.ask(name, &flags, status, bound)
         });
-        answers.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
+        answers.sort_by(|a, b| a.machine.as_str().cmp(b.machine.as_str()));
         let mut candidates = Vec::new();
-        for (name, answer) in answers {
+        for Answered {
+            machine: name,
+            answer,
+        } in answers
+        {
             if answer.output.is_empty() {
                 if call.verbose {
                     eprintln!("  {:<18} no answer", name.as_str());

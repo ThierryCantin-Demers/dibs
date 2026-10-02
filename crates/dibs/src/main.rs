@@ -47,7 +47,7 @@ fn main() -> ExitCode {
 }
 
 fn dispatch(words: &[String]) -> Result<ExitCode, Failure> {
-    // What the bash client asks of this binary, outside the grammar.
+    // Words outside the grammar: the background fetch of report replies, and the build stamp.
     match words {
         [verb, flag] if verb == "friction" && flag == "--replies" => return friction_replies(None),
         [verb, flag, into] if verb == "friction" && flag == "--replies" => {

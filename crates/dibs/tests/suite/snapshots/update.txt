@@ -5,17 +5,15 @@
 1| recipes <sha> -> <sha>
 1|   <sha> r2
 
-== dibs --status  (in a session that last ran it before that update)
+== the change notice  (in a session that last ran it before that update)
 -> exit 0
-1| dibs: idle
 2| dibs changed since this session last ran it: <sha> -> <sha>
 2|   <sha> two
 2|   Flags and output you remember may be wrong now. Read dibs --help, and
 2|   <root>/update/clone/dibs-agent-rules.md for how it is meant to be used.
 
-== dibs --status  (after twelve more commits arrived)
+== the change notice  (after twelve more commits arrived)
 -> exit 0
-1| dibs: idle
 2| dibs changed since this session last ran it: <sha> -> <sha>
 2|   <sha> more-11
 2|   <sha> more-10

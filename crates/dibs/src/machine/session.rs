@@ -14,6 +14,7 @@ use std::{
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
     sync::{
         Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -21,7 +22,8 @@ use std::{
 
 /// A caller that says nothing for this long is gone, unless `DIBS_LEASE` says otherwise.
 const DEFAULT_LEASE_SECS: u64 = 120;
-/// How long a stopped call's last output is waited for.
+/// How long the last output of a call that has ended is waited for, which a process it left
+/// behind may hold open.
 const AFTER_STOP: Duration = Duration::from_secs(1);
 const DEFAULT_CONNECT_TIMEOUT: &str = "10";
 /// ssh's own failure, never the command's.
@@ -153,6 +155,13 @@ pub struct Answer {
     pub exit: Option<i32>,
 }
 
+/// The exit a call gives for its machine half's, and why when that is not the command's own.
+#[derive(Debug)]
+pub struct Diagnosis {
+    pub exit: i32,
+    pub said: String,
+}
+
 /// The machine half of a call, started.
 pub struct Started {
     pub child: Child,
@@ -218,22 +227,26 @@ impl Session {
 
     /// The exit a call gives for its machine half's: ssh's own failures are diagnosed here.
     pub fn exit(&self, status: i32, target: &Target) -> i32 {
-        let (exit, said) = self.diagnose(status, target);
-        eprint!("{said}");
-        exit
+        let diagnosis = self.diagnose(status, target);
+        eprint!("{}", diagnosis.said);
+        diagnosis.exit
     }
 
     /// The exit for a machine half's, and what to say about it.
-    pub fn diagnose(&self, status: i32, target: &Target) -> (i32, String) {
+    pub fn diagnose(&self, status: i32, target: &Target) -> Diagnosis {
         match (&self.route, status) {
-            (Route::Ssh { .. }, SSH_FAILED) => (
-                i32::from(Exit::Unreachable.code()),
-                Unreachable { target }.diagnosis(),
-            ),
-            (Route::Ssh { .. }, SCRIPT_UNWRITTEN) => {
-                (i32::from(Exit::NoRoom.code()), no_room(target))
-            }
-            (_, status) => (status, String::new()),
+            (Route::Ssh { .. }, SSH_FAILED) => Diagnosis {
+                exit: i32::from(Exit::Unreachable.code()),
+                said: Unreachable { target }.diagnosis(),
+            },
+            (Route::Ssh { .. }, SCRIPT_UNWRITTEN) => Diagnosis {
+                exit: i32::from(Exit::NoRoom.code()),
+                said: no_room(target),
+            },
+            (_, exit) => Diagnosis {
+                exit,
+                said: String::new(),
+            },
         }
     }
 
@@ -300,7 +313,7 @@ impl Session {
         };
         let exit = match status {
             Some(status) => {
-                heard.until_closed(left());
+                heard.until_closed(Some(left().map_or(AFTER_STOP, |l| l.min(AFTER_STOP))));
                 Some(exit_code(status?))
             }
             None => {
@@ -458,11 +471,11 @@ impl Ssh {
     /// by length off stdin, and what follows it is the channel.
     fn far_line(count: usize) -> String {
         let dir = Ssh::remote_dir().unwrap_or_else(|| "$HOME/.cache/dibs/run".into());
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default();
-        let script = format!("{dir}/.dibs-payload.{}.{secs}.sh", std::process::id());
+        let script = format!(
+            "{dir}/.dibs-payload.{}.{}.sh",
+            std::process::id(),
+            Ssh::stamp()
+        );
         let trace = match std::env::var("DIBS_TRACE") {
             Ok(v) if !v.is_empty() => "-x",
             _ => "",
@@ -470,6 +483,24 @@ impl Ssh {
         format!(
             "mkdir -p {dir} 2>/dev/null; dd bs=1 count={count} 2>/dev/null | base64 -d | gzip -dc > {script} && {CONTINUATION}exec bash {trace} {script}\nexit 70"
         )
+    }
+
+    /// The time in nanoseconds, never the same twice in this process, whose calls to machines that
+    /// share a home would otherwise write one script over another.
+    fn stamp() -> u64 {
+        static LAST: AtomicU64 = AtomicU64::new(0);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
+            .unwrap_or_default();
+        let next = |last: u64| now.max(last.saturating_add(1));
+        let mut last = LAST.load(Ordering::Relaxed);
+        while let Err(seen) =
+            LAST.compare_exchange_weak(last, next(last), Ordering::Relaxed, Ordering::Relaxed)
+        {
+            last = seen;
+        }
+        next(last)
     }
 
     /// The address ssh dials for a host, which a held command reaches its services at.
