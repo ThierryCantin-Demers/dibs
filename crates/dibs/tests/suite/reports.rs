@@ -133,6 +133,36 @@ fn an_answer_reaches_the_session_that_reported_it_once() {
     assert_eq!(call("me").stderr.lines_with(answered), 0, "once");
 }
 
+#[test]
+fn an_answer_reaches_a_session_that_only_runs_recipe_verbs() {
+    let s = Sandbox::new();
+    fake_gh(&s, "PRIVATE");
+    s.write(
+        "home/.local/state/dibs/friction.jsonl",
+        "{\"t\":1,\"text\":\"x\",\"by\":\"me\",\"dibs\":\"a\",\"issue\":7}\n",
+    );
+    s.write(
+        "ghd/issues.json",
+        r#"[{"number":7,"state":"OPEN","comments":[{"url":"https://github.com/o/r/issues/7#issuecomment-3","author":{"login":"maintainer"},"body":"fixed in abc"}]}]"#,
+    );
+    let runs = || {
+        s.dibs(["runs"])
+            .no_session()
+            .env("DIBS_AGENT", "me")
+            .env("DIBS_REPORTS", "o/r")
+            .run()
+    };
+    runs();
+    fetched(&s);
+    assert_eq!(
+        runs()
+            .stderr
+            .lines_with("your report #7 was answered by maintainer: fixed in abc"),
+        1,
+        "a recipe verb fetches the answer and the next one prints it"
+    );
+}
+
 /// Replies are fetched in the background of one call, for the next to print.
 fn fetched(s: &Sandbox) {
     until("the replies to be fetched", || {

@@ -73,6 +73,7 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         Invocation::Recipe(call) => {
             let caller = Caller::from_env();
             change_notice(&caller);
+            reports::Notice { caller: &caller }.tell();
             if call.verb == RecipeVerb::Batch {
                 // SAFETY: nothing has started a thread yet.
                 unsafe { std::env::set_var("DIBS_BATCH_OWNER", &caller.id) };
