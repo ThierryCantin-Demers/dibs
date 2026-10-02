@@ -2,14 +2,17 @@
 //! shares, with the answers brought back to the session that reported it.
 
 use crate::friction::Note;
+use dibs_core::paths::{Paths, ReportsStamp};
 use serde_json::Value;
-use std::collections::BTreeSet;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeSet,
+    io::{BufRead, BufReader, Read, Write},
+    net::{TcpListener, TcpStream},
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 pub const LABEL: &str = "dibs-friction";
 const FORWARD_READY: Duration = Duration::from_secs(30);
@@ -112,15 +115,10 @@ struct Keys {
 }
 
 impl Keys {
-    fn load(name: &str) -> Result<Keys, String> {
-        let dir = match std::env::var_os("XDG_STATE_HOME") {
-            Some(d) => PathBuf::from(d),
-            None => {
-                PathBuf::from(std::env::var_os("HOME").ok_or("no HOME to keep reports' state in")?)
-                    .join(".local/state")
-            }
-        };
-        let path = dir.join("dibs").join(name);
+    fn load(stamp: ReportsStamp) -> Result<Keys, String> {
+        let path = Paths::from_env()
+            .reports(stamp)
+            .ok_or("no HOME to keep reports' state in")?;
         let text = std::fs::read_to_string(&path);
         let fresh = text.is_err();
         let set = text
@@ -188,7 +186,7 @@ pub fn replies(repo: &str, notes: &[Note], by: &str) -> Result<Vec<String>, Stri
     if filed.is_empty() {
         return Ok(Vec::new());
     }
-    let mut shown = Keys::load("reports-shown")?;
+    let mut shown = Keys::load(ReportsStamp::Shown)?;
     let mut out = Vec::new();
     for issue in listed(repo)? {
         let Some(n) = issue["number"].as_u64().filter(|n| filed.contains(n)) else {
@@ -398,7 +396,7 @@ impl Drop for Forward {
 /// Returns once a report, or an answer that was not posted from here, lands. What landed while
 /// nothing listened is read first, since GitHub delivers a webhook once or not at all.
 pub fn wait(repo: &str) -> Result<Vec<String>, String> {
-    let mut woken = Keys::load("reports-woken")?;
+    let mut woken = Keys::load(ReportsStamp::Woken)?;
     let news = catch_up(repo, &mut woken)?;
     if !news.is_empty() {
         woken.save()?;

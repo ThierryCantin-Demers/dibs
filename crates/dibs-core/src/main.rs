@@ -24,7 +24,10 @@ mod resource;
 mod runs;
 mod worktree;
 
-use dibs_core::cli::{Help, Invocation, RecipeCall, RecipeVerb, ShellWord, Sweep};
+use dibs_core::{
+    cli::{Help, Invocation, RecipeCall, RecipeVerb, ShellWord, Sweep},
+    paths::Paths,
+};
 use dibs_format::{
     Alias, ArmRecord, BatchId, Exit, JobId, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
     RunVerb, StepRecord,
@@ -84,14 +87,7 @@ impl From<&str> for Failure {
 }
 
 fn inventory_path() -> Option<PathBuf> {
-    std::env::var_os("DIBS_MACHINES")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-                .map(|c| c.join("dibs/machines.toml"))
-        })
+    Paths::from_env().inventory()
 }
 
 /// The machines the inventory names, which are reached only through dibs.
@@ -2558,8 +2554,7 @@ fn canon(p: PathBuf) -> Result<PathBuf, String> {
 /// Which machine holds a repo's build cache. Kept beside the run record, on this side, since
 /// it describes the pool rather than any one machine in it.
 fn affinity_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".local/state/dibs/affinity"))
+    Paths::from_env().affinity()
 }
 
 /// The machine deletes a target directory unused this long, so a memo of one is kept no longer.
@@ -2656,13 +2651,9 @@ fn batch_of_caller() -> Option<BatchId> {
 }
 
 fn runs_path() -> Result<PathBuf, String> {
-    match std::env::var_os("DIBS_RUNS") {
-        Some(p) => Ok(PathBuf::from(p)),
-        None => {
-            let home = std::env::var_os("HOME").ok_or("no HOME, and nowhere to record runs")?;
-            Ok(PathBuf::from(home).join(".local/state/dibs/runs.jsonl"))
-        }
-    }
+    Paths::from_env()
+        .runs()
+        .ok_or_else(|| "no HOME, and nowhere to record runs".into())
 }
 
 fn write_record(run: &RunRecord) -> Result<(), String> {

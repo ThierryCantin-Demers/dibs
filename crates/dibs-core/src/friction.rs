@@ -5,22 +5,21 @@
 //! session, and the one report anybody wrote down lived in a scratchpad and went with it.
 
 use crate::runs;
+use dibs_core::paths::Paths;
 pub use dibs_format::FrictionNote as Note;
-use std::collections::BTreeMap;
-use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    io::Write as _,
+    path::{Path, PathBuf},
+};
 
 /// Beside the run records, and moved by a variable of its own: it answers for the same work, and
 /// where it should live is the user's to decide. Sharing it is theirs to choose too, with
 /// DIBS_REPORTS, and never a default.
 pub fn path() -> Result<PathBuf, String> {
-    match std::env::var_os("DIBS_FRICTION") {
-        Some(p) => Ok(PathBuf::from(p)),
-        None => {
-            let home = std::env::var_os("HOME").ok_or("no HOME, and nowhere to record this")?;
-            Ok(PathBuf::from(home).join(".local/state/dibs/friction.jsonl"))
-        }
-    }
+    Paths::from_env()
+        .friction()
+        .ok_or_else(|| "no HOME, and nowhere to record this".into())
 }
 
 /// Whitespace collapsed to one line, because what makes the list readable later is that each

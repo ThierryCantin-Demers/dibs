@@ -6,13 +6,16 @@
 //! agent would have made; if the driver dies its steps die with it and their locks release,
 //! which is the lifetime a single job already has. The design is `dibs-design/batch.md`.
 
-use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use dibs_core::paths::Paths;
+use std::{
+    collections::{HashMap, HashSet},
+    io::{BufRead, BufReader, Write},
+    os::unix::process::CommandExt,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 /// The exit dibs gives a step of a batch that `dibs --kill <batch-id>` cancelled on a machine.
 pub const CANCELLED: i32 = 76;
@@ -388,13 +391,7 @@ fn duration(s: u64) -> String {
 }
 
 fn state_dir() -> PathBuf {
-    std::env::var_os("XDG_STATE_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state")
-        })
-        .join("dibs/batch")
+    Paths::from_env().batches().unwrap_or_default()
 }
 
 /// Where a step goes, asked of dibs itself so the answer is the one the step will reach. None

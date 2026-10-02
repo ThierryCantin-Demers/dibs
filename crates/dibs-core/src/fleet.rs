@@ -4,6 +4,7 @@
 //! it should have, so a machine set up by hand drifted from the others unseen until a job failed
 //! on it.
 
+use dibs_core::paths::Paths;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -509,14 +510,9 @@ impl Profile {
 
 /// `DIBS_FLEET`, or beside the inventory.
 pub fn path() -> Result<PathBuf, String> {
-    if let Some(p) = std::env::var_os("DIBS_FLEET") {
-        return Ok(PathBuf::from(p));
-    }
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .ok_or("no HOME to find fleet.toml under")?;
-    Ok(config.join("dibs/fleet.toml"))
+    Paths::from_env()
+        .fleet()
+        .ok_or_else(|| "no HOME to find fleet.toml under".into())
 }
 
 fn load(path: &Path) -> Result<Fleet, String> {

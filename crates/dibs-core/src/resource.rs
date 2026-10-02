@@ -8,10 +8,12 @@
 
 use crate::recipe::{Isolation, Lock};
 use dibs_format::{JobId, StepRecord};
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::time::Instant;
+use std::{
+    io::{BufRead, BufReader, Write},
+    process::{Command, Stdio},
+    sync::mpsc,
+    time::Instant,
+};
 
 pub struct Request<'a> {
     pub label: &'a str,

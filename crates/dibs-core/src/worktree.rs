@@ -9,6 +9,7 @@
 //! on the machine under the shared lock, because it is a fetch and a checkout: work that
 //! tolerates neighbours perfectly and must never hold the exclusive lock.
 
+use dibs_core::paths::Paths;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 
@@ -1411,7 +1412,10 @@ pub fn checkout(
     why: Option<&'static str>,
 ) -> Result<Checkout, String> {
     checkout_in(
-        &cache_home()?.join("dibs/sent").join(identity),
+        &Paths::from_env()
+            .sent()
+            .ok_or("no HOME to keep a cache under")?
+            .join(identity),
         dir,
         identity,
         sha,
@@ -1469,13 +1473,6 @@ fn checkout_in(
     })
 }
 
-fn cache_home() -> Result<std::path::PathBuf, String> {
-    std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
-        .ok_or_else(|| "no HOME to keep a cache under".to_string())
-}
-
 /// The commit `name` means here, the name it was found under, and why it must be sent rather than
 /// fetched by name. That is the remote-tracking ref, which a local branch of that name may be
 /// behind, unless the local branch has commits origin lacks: fetching it would take origin's.
@@ -1525,7 +1522,7 @@ fn private(url: &str) -> bool {
     let Some(url) = anonymous_url(url) else {
         return false;
     };
-    let Ok(file) = cache_home().map(|c| c.join("dibs/remotes")) else {
+    let Some(file) = Paths::from_env().remotes() else {
         return false;
     };
     let now = std::time::SystemTime::now()

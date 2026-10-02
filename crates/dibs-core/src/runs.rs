@@ -9,8 +9,7 @@
 //! where.
 
 use dibs_format::{Lock, Pairs, RunRecord, RunVerb};
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 pub struct Record {
     pub when: u64,

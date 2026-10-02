@@ -8,26 +8,24 @@
 //! procedure to a moment and make it progressively harder to rerun, which is the opposite of
 //! what putting it in the repo was for. The revisions belong to the run record.
 
+use dibs_core::paths::Paths;
 pub use dibs_format::Lock;
 use dibs_format::RunVerb;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 fn default_source() -> Source {
     Source::Repo
 }
 
 pub fn local_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("DIBS_RECIPES") {
-        return PathBuf::from(d);
-    }
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_default();
-    base.join("dibs/recipes")
+    Paths::from_env()
+        .recipes()
+        .unwrap_or_else(|| PathBuf::from("dibs/recipes"))
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy, Default)]
