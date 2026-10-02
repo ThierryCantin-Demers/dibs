@@ -1,4 +1,4 @@
-== dibs --label waits-it-out true  (behind a benchmark that ends by itself after six seconds)
+== dibs --label waits-it-out true  (behind a benchmark that ends six seconds after it arrives)
 -> exit 0
 2| dibs: queued and has not started, behind the benchmark six-seconds. dibs status shows the queue.
 2| dibs: acquired the shared lock after <dur>

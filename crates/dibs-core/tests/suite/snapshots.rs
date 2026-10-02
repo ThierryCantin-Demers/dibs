@@ -592,15 +592,20 @@ fn status_of_an_orphaned_lock() {
 
 #[test]
 fn watch() {
-    let s = Sandbox::new();
+    let mut s = Sandbox::new();
     let n = status_clock(Normal::of(&s));
-    let first_tick = |args: &[&str], until_line: &str| {
-        let out = s.dibs(args).within(Duration::from_millis(1500)).run();
-        let end = out
-            .stdout
-            .find(until_line)
-            .map_or(out.stdout.len(), |i| i + until_line.len());
-        n.apply(&out.stdout[..end])
+    let mut first_tick = |args: &[&str], until_line: &str| {
+        let file = s.path("watch.out");
+        let job = s.spawn(s.dibs(args).stdout_to(&file));
+        let mut seen = String::new();
+        until("the first redraw", || {
+            seen = fs::read_to_string(&file).unwrap_or_default();
+            seen.contains(until_line)
+        });
+        unsafe { libc::kill(job.pid as i32, libc::SIGKILL) };
+        s.wait(job);
+        let end = seen.find(until_line).unwrap() + until_line.len();
+        n.apply(&seen[..end])
     };
     let mut t = Transcript::default();
     t.section(
@@ -678,24 +683,34 @@ fn queued_line() {
 fn acquired_after_waiting() {
     let mut s = Sandbox::new();
     let n = status_clock(Normal::of(&s));
-    let never = s.gate("never");
-    let slow = s.spawn(s.dibs([
-        "--bench",
-        "--label",
-        "six-seconds",
-        &format!("read -r -t 6 _ <> {}", never.path.display()),
-    ]));
+    let ends = s.gate("ends");
+    let slow = s.spawn(s.dibs(["--bench", "--label", "six-seconds", &ends.hold()]));
     s.held(1);
     let args = ["--label", "waits-it-out", "true"];
+    let (out, err) = (s.path("waiter.out"), s.path("waiter.err"));
+    let waiter = s.spawn(s.dibs(args).streams_to(&out, &err));
+    s.queued(1);
+    // Only a wait of five seconds or more is said, so the benchmark ends six after it arrived.
+    let arrived: u64 = s.records("waiting")[0][2].parse().unwrap();
+    until("the waiter to have waited six seconds", || {
+        now() >= arrived + 6
+    });
+    ends.open();
+    s.wait(slow);
+    let code = s.wait(waiter);
+    let said = Output {
+        code,
+        stdout: fs::read_to_string(&out).unwrap_or_default(),
+        stderr: fs::read_to_string(&err).unwrap_or_default(),
+    };
     let mut t = Transcript::default();
     t.section(
         &format!(
-            "dibs {}  (behind a benchmark that ends by itself after six seconds)",
+            "dibs {}  (behind a benchmark that ends six seconds after it arrives)",
             typed(&args)
         ),
-        &n.output(&s.dibs(args).run()),
+        &n.output(&said),
     );
-    s.wait(slow);
     snapshot("acquired", t.text());
 }
 
