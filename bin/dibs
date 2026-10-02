@@ -1,0 +1,20 @@
+#!/bin/sh
+# Stands where the bash dibs was, for a dibs that is still a link to this file: install.sh
+# replaces that link with the binary, so a call that reaches this one means it did not finish.
+# It runs nothing, so a call never runs without the lock.
+
+self=$0
+while [ -L "$self" ]; do
+    link=$(readlink "$self")
+    case $link in
+        /*) self=$link ;;
+        *) self=$(dirname "$self")/$link ;;
+    esac
+done
+clone=$(cd "$(dirname "$self")/.." && pwd -P)
+
+echo "dibs: dibs is a binary now, and it is not installed on this computer. An update pulled it," >&2
+echo "  but install.sh did not finish: it needs cargo, Rust 1.89 or newer, and a network to fetch" >&2
+echo "  its crates. Nothing ran. Once that is fixed, install it with:" >&2
+echo "    cd $clone && ./install.sh" >&2
+exit 2

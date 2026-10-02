@@ -101,6 +101,7 @@ over plain ssh or sleeping under the lock. Those live in your own config, not he
 | `crates/dibs/` | the `dibs` command: the grammar, a call to a machine, placement, status, and the recipe layer behind `dibs build`, `test` and `bench`. |
 | `crates/dibs-format/` | the ids, exits, records and line formats both halves read and write. |
 | `lib/machine/` | what runs on the machine, joined into one script and sent over ssh with every call, so nothing is installed there. |
+| `bin/dibs` | where the bash dibs was: for a dibs still linked here, it says how to install the binary, and runs nothing. |
 | `crates/dibstop/` | `dibstop`, a live view of who holds the machines. |
 | `crates/dibs-machines/` | `dibs-machines`, a desktop window on what each machine has against what it should. |
 | `docs/guide.md` | the detailed guide. |

@@ -331,3 +331,23 @@ fn a_build_keeps_working_once_its_clone_is_gone() {
         assert_eq!(out.code, 0, "{words:?}: {}", out.all());
     }
 }
+
+#[test]
+fn a_dibs_still_linked_into_the_clone_says_how_to_install_and_runs_nothing() {
+    let s = Sandbox::new();
+    fs::create_dir_all(s.path("linked")).unwrap();
+    symlink(repo_root().join("bin/dibs"), s.path("linked/dibs")).unwrap();
+    let out = s.command(&s.p("linked/dibs"), ["touch", &s.p("ran")]).run();
+    let clone = repo_root().canonicalize().unwrap();
+    assert_eq!(
+        (
+            out.code,
+            out.stderr
+                .lines_with(&format!("cd {} && ./install.sh", clone.display()))
+        ),
+        (2, 1),
+        "it names the one command that installs the binary: {}",
+        out.all()
+    );
+    assert!(!s.exists("ran"), "and runs nothing itself");
+}
