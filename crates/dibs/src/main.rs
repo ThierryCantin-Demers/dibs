@@ -100,7 +100,7 @@ fn version() -> ExitCode {
     println!(
         "dibs {} ({})",
         env!("CARGO_PKG_VERSION"),
-        option_env!("DIBS_CORE_COMMIT").unwrap_or("commit unknown")
+        option_env!("DIBS_COMMIT").unwrap_or("commit unknown")
     );
     ExitCode::SUCCESS
 }

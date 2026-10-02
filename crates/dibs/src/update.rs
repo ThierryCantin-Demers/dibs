@@ -67,6 +67,9 @@ pub struct Update {
     pub recipes: Option<PathBuf>,
     pub notice: Option<ChangeNotice>,
     pub caller: Caller,
+    /// Where the running build is installed, so install.sh replaces it rather than one
+    /// elsewhere on PATH: a trial install updates the trial.
+    pub prefix: Option<PathBuf>,
 }
 
 impl Update {
@@ -74,7 +77,7 @@ impl Update {
         let paths = Paths::from_env();
         let clone = clone_dir();
         Update {
-            installed: option_env!("DIBS_CORE_COMMIT").map(str::to_string),
+            installed: option_env!("DIBS_COMMIT").map(str::to_string),
             recipes: paths.recipes(),
             notice: paths.seen().map(|seen| ChangeNotice {
                 seen,
@@ -82,7 +85,15 @@ impl Update {
             }),
             clone,
             caller: Caller::from_env(),
+            prefix: Update::installed_under(),
         }
+    }
+
+    /// The directory above the `bin` this binary runs from, when it runs from one.
+    fn installed_under() -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+        let bin = exe.parent()?;
+        (bin.file_name()? == "bin").then(|| bin.parent().map(Path::to_path_buf))?
     }
 
     pub fn run(&self) -> i32 {
@@ -123,10 +134,16 @@ impl Update {
         }
         .tell(out);
         if before != after || self.installed.as_deref() != Some(after.as_str()) {
-            let installed = Command::new("bash")
-                .arg(clone.join("install.sh"))
-                .status()
-                .is_ok_and(|s| s.success());
+            let mut install = Command::new("bash");
+            install.arg(clone.join("install.sh"));
+            if let Some(prefix) = self
+                .prefix
+                .as_ref()
+                .filter(|_| std::env::var_os("PREFIX").is_none())
+            {
+                install.env("PREFIX", prefix);
+            }
+            let installed = install.status().is_ok_and(|s| s.success());
             if !installed {
                 let _ = writeln!(err, "dibs: install.sh failed; the clone is at {after}");
                 return Err(Exit::Failed);
