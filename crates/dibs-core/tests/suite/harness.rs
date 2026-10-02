@@ -6,7 +6,7 @@ use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -324,31 +324,66 @@ impl Sandbox {
         while !cond() {
             if Instant::now() > deadline {
                 let records: Vec<String> = fs::read_dir(self.lockdir())
-                    .map(|d| {
-                        d.flatten()
-                            .map(|e| {
-                                format!(
-                                    "{}: {}",
-                                    e.file_name().to_string_lossy(),
-                                    fs::read_to_string(e.path()).unwrap_or_default().trim_end()
-                                )
-                            })
-                            .collect()
-                    })
+                    .map(|d| d.flatten().map(|e| record_line(&e.path())).collect())
                     .unwrap_or_default();
                 panic!(
-                    "timed out waiting for {what}; the lock directory holds:\n{}\nand the log ends:\n{}",
+                    "timed out waiting for {what}; the lock directory holds:\n{}\nthe log ends:\n{}\nand the sandbox's processes are:\n{}",
                     records.join("\n"),
                     self.log()
                         .lines()
                         .rev()
                         .take(6)
                         .collect::<Vec<_>>()
-                        .join("\n")
+                        .join("\n"),
+                    self.processes()
                 );
             }
             thread::sleep(POLL);
         }
+    }
+
+    /// Every process started under this sandbox's home, which no other sandbox shares.
+    fn own_pids(&self) -> Vec<u32> {
+        let home = format!("HOME={}/home", self.root.display()).into_bytes();
+        fs::read_dir("/proc")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let pid = e.file_name().to_string_lossy().parse::<u32>().ok()?;
+                let env = fs::read(e.path().join("environ")).ok()?;
+                env.split(|b| *b == 0)
+                    .any(|v| v == home.as_slice())
+                    .then_some(pid)
+            })
+            .collect()
+    }
+
+    /// This sandbox's processes and what each waits in, for a failure to show.
+    pub fn processes(&self) -> String {
+        let pids: Vec<String> = self.own_pids().iter().map(u32::to_string).collect();
+        if pids.is_empty() {
+            let root = self.root.display().to_string();
+            return self
+                .command("ps", ["-eo", "pid,ppid,pgid,stat,args"])
+                .run()
+                .stdout
+                .lines()
+                .filter(|l| l.contains(&root))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        self.command(
+            "ps",
+            [
+                "-o",
+                "pid,ppid,pgid,sid,stat,wchan:24,args",
+                "-p",
+                &pids.join(","),
+            ],
+        )
+        .run()
+        .stdout
     }
 
     /// Writes a lock record by hand, tab-separated, as a job would have.
@@ -538,18 +573,9 @@ impl Drop for Sandbox {
             }
             let _ = c.reaper.join();
         }
-        // Holders block on a fifo under the root, and removing the directory does not release
-        // them. Everything started here inherited this home, which no other sandbox has.
-        let home = format!("HOME={}/home", self.root.display()).into_bytes();
-        for e in fs::read_dir("/proc").into_iter().flatten().flatten() {
-            let Ok(pid) = e.file_name().to_string_lossy().parse::<i32>() else {
-                continue;
-            };
-            if let Ok(env) = fs::read(e.path().join("environ"))
-                && env.split(|b| *b == 0).any(|v| v == home.as_slice())
-            {
-                unsafe { libc::kill(pid, libc::SIGKILL) };
-            }
+        // Holders block on a fifo under the root, and removing the directory does not release them.
+        for pid in self.own_pids() {
+            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
         }
         let _ = Command::new("pkill")
             .arg("-f")
@@ -791,6 +817,18 @@ impl Output {
             s.push('\n');
         }
         s + &self.stderr
+    }
+}
+
+/// A lock record's name and text; a fifo is only named, since reading one blocks.
+fn record_line(path: &Path) -> String {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_fifo() => format!("{name}: a fifo"),
+        _ => format!(
+            "{name}: {}",
+            fs::read_to_string(path).unwrap_or_default().trim_end()
+        ),
     }
 }
 
