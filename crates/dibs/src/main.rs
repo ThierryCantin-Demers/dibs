@@ -49,9 +49,8 @@ fn main() -> ExitCode {
 fn dispatch(words: &[String]) -> Result<ExitCode, Failure> {
     // Words outside the grammar: the background fetch of report replies, and the build stamp.
     match words {
-        [verb, flag] if verb == "friction" && flag == "--replies" => return friction_replies(None),
         [verb, flag, into] if verb == "friction" && flag == "--replies" => {
-            return friction_replies(Some(Path::new(into)));
+            return friction_replies(Path::new(into));
         }
         [flag] if flag == "--version" => return Ok(version()),
         [word, at, command @ ..] if word == Guard::WORD => {
@@ -1656,21 +1655,14 @@ fn friction_verb(friction: Friction) -> Result<ExitCode, Failure> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Answers to the reports `DIBS_FRICTION_BY` filed: on stderr, or kept for its next call.
-fn friction_replies(into: Option<&Path>) -> Result<ExitCode, Failure> {
+/// Answers to the reports `DIBS_FRICTION_BY` filed, kept for its next call.
+fn friction_replies(into: &Path) -> Result<ExitCode, Failure> {
     let Some(repo) = reports::repo() else {
         return Ok(ExitCode::SUCCESS);
     };
     let by = std::env::var("DIBS_FRICTION_BY").unwrap_or_default();
     let notes = friction::load(&friction::path()?);
-    match into {
-        Some(into) => reports::fetch_replies(&repo, &notes, &by, into)?,
-        None => {
-            for r in reports::replies(&repo, &notes, &by)? {
-                eprintln!("{r}");
-            }
-        }
-    }
+    reports::fetch_replies(&repo, &notes, &by, into)?;
     Ok(ExitCode::SUCCESS)
 }
 

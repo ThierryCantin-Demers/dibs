@@ -260,7 +260,7 @@ fn listed(repo: &str) -> Result<Vec<Value>, String> {
 }
 
 /// Answers to the reports this session filed, each said once.
-pub fn replies(repo: &str, notes: &[Note], by: &str) -> Result<Vec<String>, String> {
+fn replies(repo: &str, notes: &[Note], by: &str) -> Result<Vec<String>, String> {
     let filed: BTreeSet<u64> = notes
         .iter()
         .filter(|n| n.by == by)
