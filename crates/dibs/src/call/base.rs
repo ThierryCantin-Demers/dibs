@@ -8,8 +8,8 @@ use crate::{
     cli::{Call, Command, Mode as Words, PortName, RunLock, Service},
     delegate::BashClient,
     machine::{
-        CallValues, Card, Fleet, Here, Liveness, MachineHalf, MaxFrom, Named, Route, Session,
-        Target, TargetEnv, TargetError, Unreachable, exit_code, no_room,
+        CallValues, Card, Fleet, Here, Liveness, MachineHalf, MaxFrom, Named, Session, Target,
+        TargetEnv, TargetError, exit_code,
     },
     paths::Paths,
 };
@@ -24,8 +24,6 @@ use std::{
 /// The most lines of a batch's plan a call carries.
 const BATCH_PLAN_LINES: usize = 200;
 const FINGERPRINT_CHARS: usize = 16;
-/// ssh's own failure, never the command's.
-const SSH_FAILED: i32 = 255;
 
 /// A call that takes the lock, or peeks past it: what the Rust client runs itself.
 pub struct LockedCall<'a> {
@@ -181,17 +179,7 @@ impl<'a> LockedCall<'a> {
         if self.bench() && call.new_series && status != 0 {
             eprint!("{}", stayed_put(label.as_str()));
         }
-        Ok(match (&session.route, status) {
-            (Route::Ssh { .. }, SSH_FAILED) => {
-                eprint!("{}", Unreachable { target: &target }.diagnosis());
-                i32::from(Exit::Unreachable.code())
-            }
-            (Route::Ssh { .. }, 70) => {
-                eprint!("{}", no_room(&target));
-                i32::from(Exit::NoRoom.code())
-            }
-            (_, status) => status,
-        })
+        Ok(session.exit(status, &target))
     }
 
     /// The machine the call goes to, placed when it is shared work that names none.

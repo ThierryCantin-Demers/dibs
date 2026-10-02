@@ -1,7 +1,9 @@
 use crate::machine::{
     payload::{CallValues, Watch, encode},
     target::Target,
+    unreachable::{Unreachable, no_room},
 };
+use dibs_format::Exit;
 use std::{
     io::{self, Write as _},
     os::unix::{
@@ -17,6 +19,10 @@ use std::{
 /// A caller that says nothing for this long is gone, unless `DIBS_LEASE` says otherwise.
 const DEFAULT_LEASE_SECS: u64 = 120;
 const DEFAULT_CONNECT_TIMEOUT: &str = "10";
+/// ssh's own failure, never the command's.
+const SSH_FAILED: i32 = 255;
+/// What the far line exits with when it could not write the script.
+const SCRIPT_UNWRITTEN: i32 = 70;
 /// The far side's `&&` continues a line the bash client split with a backslash.
 const CONTINUATION: &str = "             ";
 
@@ -160,6 +166,21 @@ impl Session {
             (Route::Ssh { .. }, Some(machine)) => machine.to_string(),
             (Route::Ssh { .. }, None) if !target.hostname.is_empty() => target.hostname.clone(),
             (Route::Ssh { .. }, None) => here.name.clone(),
+        }
+    }
+
+    /// The exit a call gives for its machine half's: ssh's own failures are diagnosed here.
+    pub fn exit(&self, status: i32, target: &Target) -> i32 {
+        match (&self.route, status) {
+            (Route::Ssh { .. }, SSH_FAILED) => {
+                eprint!("{}", Unreachable { target }.diagnosis());
+                i32::from(Exit::Unreachable.code())
+            }
+            (Route::Ssh { .. }, SCRIPT_UNWRITTEN) => {
+                eprint!("{}", no_room(target));
+                i32::from(Exit::NoRoom.code())
+            }
+            (_, status) => status,
         }
     }
 
