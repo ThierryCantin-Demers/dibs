@@ -24,99 +24,20 @@ mod resource;
 mod runs;
 mod worktree;
 
+use dibs_core::cli::{Help, Invocation, RecipeCall, RecipeVerb, ShellWord, Sweep};
 use dibs_format::{
-    Alias, ArmRecord, BatchId, JobId, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
+    Alias, ArmRecord, BatchId, Exit, JobId, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
     RunVerb, StepRecord,
 };
 use recipe::{Lock, Manifest, Verb};
 use resource::{Backend, Destination, Dibs, Request};
-use std::collections::BTreeMap;
-use std::io::Write as _;
-use std::os::unix::process::CommandExt as _;
-use std::path::{Path, PathBuf};
-use std::process::ExitCode;
-
-const USAGE: &str = "\
-dibs <verb> <repo>[@<ref>] <recipe>       run one of the repo's recipes
-                                          @local sends your working tree, unpushed and
-                                          uncommitted changes included, and is the only
-                                          path for a private repo: the machines carry no
-                                          GitHub credentials
-dibs list <repo>                      what that repo defines
-dibs runs [label] [--all]             what has run here, and what is comparable. A failed run
-                                      is listed only with --all
-dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>   a command in a prepared worktree
-dibs raw --reason <why> -- <cmd>      a command with nothing prepared
-dibs with <repo>[@<ref>] <service> [--bench] [--there] -- <cmd>   run the command here while
-                                      the repo's servers run on the machine under its lock,
-                                      started once they are ready and stopped when the command
-                                      ends. --bench times it: the servers are built under the
-                                      shared lock, then run with the machine held alone.
-                                      --there runs the command on the machine instead, in the
-                                      tree beside them, reaching them at 127.0.0.1:$DIBS_PORT_<NAME>
-dibs gaps                             what did not fit a recipe, what got in the way, and
-                                      which of it recurs
-dibs --friction '<one line>'          what got in the way, in your own words, kept where the
-                                      next session reads it: dibs gaps
-dibs machines [<machine>] [--json]    each machine in ~/.config/dibs/fleet.toml against what it
-                                      should have: tools, toolchains, GPU stack, repo clones,
-                                      whose keys are there, and whether its names answer here.
-                                      A machine in the pool is probed under its shared lock
-dibs batch <file|->                   a list of dibs command lines as one submission, with one
-                                      summary at the end. One line per step, optionally
-                                      prefixed [name after=a,b cont]. A step without after=
-                                      waits for the one before it; steps that wait for nothing
-                                      in common overlap only on different machines. A failed
-                                      step stops the batch unless it is marked cont.
-
-  <verb>    bench, build or test
-  <repo>    a path to a checkout, or a name: the checkout you are in when it is that
-            repo, a worktree of it included, else the one under --root
-  <ref>     a branch, tag or commit the machine fetches, or local. Two or more are one
-            comparison with one record: A..B measures B against where it left A, their
-            merge base, so what landed on A since is not credited to B; a,b,c measures
-            each in turn. Every arm is built in a tree and target directory of its own,
-            then each rep measures them all, the order reversed every other rep (A B B A),
-            which cancels a drift such as a card warming up
-  --root    where named repos live (default $DIBS_ROOT, then `root` in machines.toml,
-            else the current directory)
-  --reason  why this does not fit a recipe. Required for shell and raw, and recorded:
-            a reason that keeps recurring is the specification for the next recipe.
-  --device  the card to run on, named from the machine's inventory. It is part of the
-            derived label, so each card keeps its own history and running a recipe on a
-            second one neither mixes with the first nor replaces it. `dibs --machines -v`
-            lists the aliases.
-  --<name>  a value for a parameter the recipe declares, such as --backend vulkan.
-            `dibs list <repo>` prints what each recipe takes, with its default and its
-            choices. The label does not carry them, so one recipe keeps one duration
-            history; the run record carries them.
-  --sweep   <name>=<a,b,c>, one run per value, submitted as one batch with one summary.
-            Repeatable, and the combinations are the cross product. A value is never split
-            on commas, so --sweep is how a sweep is asked for and --<name> always means
-            one value.
-  --reps    measure this many times. The build runs once, and the record holds each rep
-  --pin <repo>@<ref>  build against that repo's tree instead of the revision the lockfile
-            names: @local sends your checkout of it, unpushed changes included, and a ref
-            is fetched. dibs points cargo at it with a [patch] outside the tree, checks
-            after the build that cargo used it, and records its revision. Repeatable
-  --artifacts <dir>  copy the files the recipe's `artifacts` name into dir, at their paths
-            in the tree, under <arm>/r<rep>/ when there are several. They are fetched and
-            kept beside each job's log either way
-  --bench   shell only: the exclusive lock, for a one-off that is a measurement
-  --max     seconds the job may hold the lock, when the default is too short for it
-  --anyway  measure even when another tree built into the target after this one did,
-            which is otherwise refused with exit 78
-  --new-series  the measurement is moving to another card of its machine on purpose, so
-            its label's series there starts again. Each machine keeps its own series, so
-            another machine needs no flag. Checked before anything is built
-  --dry-run print what would run, take no lock, record nothing
-  --verbose with batch, each step's output as it comes, prefixed with the step's name
-
-A recipe declares the procedure and names no revisions: the invocation supplies the code and
-the run record captures what it resolved to.
-
-Which machine comes from DIBS_HOST, the same as it does for dibs itself.
-";
+use std::{
+    collections::BTreeMap,
+    io::Write as _,
+    os::unix::process::CommandExt as _,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 fn main() -> ExitCode {
     match run() {
@@ -162,212 +83,6 @@ impl From<&str> for Failure {
     }
 }
 
-#[derive(Clone)]
-struct Args {
-    verb: String,
-    repo: String,
-    reference: Option<String>,
-    recipe: Option<String>,
-    root: PathBuf,
-    dry_run: bool,
-    reason: Option<String>,
-    /// Everything after `--`, unsplit. A command is one string here because it is one string
-    /// on the far side, and taking it apart only to put it back would change it.
-    command: Option<String>,
-    /// The card to run on, named from the machine's inventory.
-    device: Option<String>,
-    /// `--on` given after the verb, where the wrapper does not see it.
-    on: Option<String>,
-    /// `--<name> <value>` for whatever the recipe declares. Unknown here rather than refused,
-    /// because which names are valid is the recipe's to say, and it says so with the list.
-    params: BTreeMap<String, String>,
-    /// `--sweep <name>=<a,b,c>`, in the order given, so the points come out in an order a
-    /// reader can follow. Spelled apart from `--<name>` because a value may contain a comma:
-    /// splitting one would make `--problems a,b` mean two runs of one problem each.
-    sweep: Vec<(String, Vec<String>)>,
-    reps: u32,
-    /// Where the files a recipe keeps are copied once fetched.
-    artifacts_to: Option<String>,
-    /// `<repo>@<ref>` trees to build against in place of what the lockfile names.
-    pins: Vec<String>,
-    /// shell only: the exclusive lock, for a one-off that is a measurement.
-    bench: bool,
-    max: Option<u64>,
-    /// Measure even when another tree built into the target after this one did.
-    anyway: bool,
-    /// with only: the command runs on the machine, in the tree, rather than here.
-    there: bool,
-    json: bool,
-    /// runs only: failed runs too.
-    all: bool,
-    /// The measurement starts its label's series on this machine again, on another card.
-    new_series: bool,
-    verbose: bool,
-}
-
-fn parse() -> Result<Args, String> {
-    parse_words(std::env::args().skip(1))
-}
-
-fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> {
-    let mut positional: Vec<String> = Vec::new();
-    let mut root = repo_root();
-    let mut dry_run = false;
-    let mut reason = None;
-    let mut command = None;
-    let mut device: Option<String> = None;
-    let mut on = None;
-    let mut params: BTreeMap<String, String> = BTreeMap::new();
-    let mut sweep: Vec<(String, Vec<String>)> = Vec::new();
-    let mut reps: u32 = 1;
-    let mut artifacts_to = None;
-    let mut pins = Vec::new();
-    let mut bench = false;
-    let mut max = None;
-    let mut anyway = false;
-    let mut there = false;
-    let mut json = false;
-    let mut all = false;
-    let mut new_series = false;
-    let mut verbose = false;
-    let mut it = words.into_iter();
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--" => {
-                let rest: Vec<String> = it.by_ref().collect();
-                // One word is a shell string, as ssh and the wrapper take it. Several are each
-                // quoted, so a word with spaces, such as the script given to bash -c, stays one.
-                command = Some(match rest.as_slice() {
-                    [] => return Err("-- needs a command after it".into()),
-                    [one] => one.clone(),
-                    words => words.iter().map(|w| sh(w)).collect::<Vec<_>>().join(" "),
-                });
-                break;
-            }
-            "--reason" => reason = Some(it.next().ok_or("--reason needs a sentence")?),
-            "--device" => device = Some(it.next().ok_or("--device needs an alias")?),
-            "--on" => on = Some(it.next().ok_or("--on needs a machine")?),
-            "-h" | "--help" => {
-                print!("{USAGE}");
-                std::process::exit(0);
-            }
-            "--version" => {
-                // Stamped by install.sh, so a binary that has drifted from the source can be
-                // told apart from one that is current.
-                println!(
-                    "dibs-core {} ({})",
-                    env!("CARGO_PKG_VERSION"),
-                    option_env!("DIBS_CORE_COMMIT").unwrap_or("commit unknown")
-                );
-                std::process::exit(0);
-            }
-            "--root" => root = PathBuf::from(it.next().ok_or("--root needs a path")?),
-            "--sweep" => {
-                let s = it.next().ok_or("--sweep needs <name>=<value,value,...>")?;
-                let (name, values) = s
-                    .split_once('=')
-                    .ok_or_else(|| format!("--sweep takes <name>=<value,value,...>, not {s}"))?;
-                sweep.push((
-                    name.to_string(),
-                    values.split(',').map(str::to_string).collect(),
-                ));
-            }
-            "--reps" => {
-                reps = it
-                    .next()
-                    .and_then(|n| n.parse().ok())
-                    .filter(|n| *n > 0)
-                    .ok_or("--reps needs a count")?;
-            }
-            "--artifacts" => artifacts_to = Some(it.next().ok_or("--artifacts needs a directory")?),
-            "--pin" => pins.push(it.next().ok_or("--pin needs <repo>@<ref>")?),
-            "--bench" | "-b" => bench = true,
-            "--max" => {
-                max = Some(
-                    it.next()
-                        .and_then(|n| n.parse().ok())
-                        .ok_or("--max needs seconds")?,
-                );
-            }
-            "--anyway" => anyway = true,
-            "--there" => there = true,
-            "--json" => json = true,
-            "--all" => all = true,
-            "--new-series" => new_series = true,
-            "--dry-run" => dry_run = true,
-            "--verbose" | "-v" => verbose = true,
-            "-" => positional.push("-".into()),
-            s if s.starts_with("--") => {
-                let (name, value) = match s.split_once('=') {
-                    Some((n, v)) => (n, Some(v.to_string())),
-                    None => (s, None),
-                };
-                let name = name.trim_start_matches('-').to_string();
-                let value = match value {
-                    Some(v) => v,
-                    None => it
-                        .next()
-                        .filter(|v| !v.starts_with("--"))
-                        .ok_or(format!("--{name} needs a value, or is not a flag dibs has"))?,
-                };
-                params.insert(name, value);
-            }
-            s if s.starts_with('-') => return Err(format!("unknown option: {s}")),
-            s => positional.push(s.to_string()),
-        }
-    }
-    if positional.is_empty() {
-        print!("{USAGE}");
-        std::process::exit(2);
-    }
-    let verb = positional.remove(0);
-    let target = positional.first().cloned().unwrap_or_default();
-    if target.is_empty()
-        && !matches!(
-            verb.as_str(),
-            "runs" | "gaps" | "raw" | "friction" | "machines"
-        )
-    {
-        return Err("needs a repo".into());
-    }
-    if verb == "with" && command.is_none() {
-        return Err("with runs a command here against the repo's servers: dibs with <repo>[@<ref>] <service> -- <command>".into());
-    }
-    // runs takes a recorded label, not repo@ref, and a label carries its device after an @.
-    // Splitting there drops the half that tells two runs of one recipe on different cards apart.
-    let (repo, reference) = match target.split_once('@') {
-        Some((r, rev)) if !matches!(verb.as_str(), "runs" | "batch" | "friction") => {
-            (r.to_string(), Some(rev.to_string()))
-        }
-        _ => (target, None),
-    };
-    Ok(Args {
-        verb,
-        repo,
-        reference,
-        recipe: positional.get(1).cloned(),
-        root,
-        dry_run,
-        reason,
-        command,
-        device,
-        on,
-        params,
-        sweep,
-        reps,
-        artifacts_to,
-        pins,
-        bench,
-        max,
-        anyway,
-        there,
-        json,
-        all,
-        new_series,
-        verbose,
-    })
-}
-
 fn inventory_path() -> Option<PathBuf> {
     std::env::var_os("DIBS_MACHINES")
         .map(PathBuf::from)
@@ -409,6 +124,11 @@ fn recipe_repos() -> Vec<String> {
     repos
 }
 
+/// `--root`, or else where checkouts are looked up by default.
+fn root_of(args: &RecipeCall) -> PathBuf {
+    args.root.clone().unwrap_or_else(repo_root)
+}
+
 /// Where a bare repo name is looked up. Everyone lays their checkouts out differently, so
 /// this is only a starting guess: DIBS_ROOT, then --root, then the directory you are in.
 fn repo_root() -> PathBuf {
@@ -444,8 +164,36 @@ fn run() -> Result<ExitCode, Failure> {
     if words.first().map(String::as_str) == Some("friction") {
         return friction_verb(&words[1..]);
     }
-    let args = parse()?;
-    if args.there && args.verb != "with" {
+    if words.is_empty() {
+        print!("{}", Help::RECIPES);
+        return Ok(ExitCode::from(Exit::Refused));
+    }
+    let args = match Invocation::parse(&words) {
+        Ok(Invocation::Recipe(call)) => call,
+        Ok(Invocation::RecipeHelp) => {
+            print!("{}", Help::RECIPES);
+            return Ok(ExitCode::SUCCESS);
+        }
+        // Stamped by install.sh, so a binary that has drifted from the source can be told
+        // apart from one that is current.
+        Ok(Invocation::Version) => {
+            println!(
+                "dibs-core {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                option_env!("DIBS_CORE_COMMIT").unwrap_or("commit unknown")
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        Ok(_) => {
+            print!("{}", Help::RECIPES);
+            return Ok(ExitCode::from(Exit::Refused));
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            return Ok(ExitCode::from(Exit::Refused));
+        }
+    };
+    if args.there && args.verb != RecipeVerb::With {
         return Err(
             "--there belongs to with: it runs the command on the machine beside the repo's servers"
                 .into(),
@@ -457,7 +205,7 @@ fn run() -> Result<ExitCode, Failure> {
         unsafe { std::env::set_var("DIBS_ON", m) };
     }
 
-    if args.verb == "batch" {
+    if args.verb == RecipeVerb::Batch {
         let text = match args.repo.as_str() {
             "-" => std::io::read_to_string(std::io::stdin())
                 .map_err(|e| format!("reading the batch from stdin: {e}"))?,
@@ -473,18 +221,18 @@ fn run() -> Result<ExitCode, Failure> {
         return Ok(ExitCode::from(code.clamp(0, 255) as u8));
     }
 
-    if args.verb == "machines" {
+    if args.verb == RecipeVerb::Machines {
         let only = (!args.repo.is_empty()).then_some(args.repo.as_str());
         return Ok(fleet::command(
             args.json,
             only,
-            &args.root,
+            &root_of(&args),
             recipe_repos(),
             &pool(),
         )?);
     }
 
-    if args.verb == "gaps" {
+    if args.verb == RecipeVerb::Gaps {
         print!("{}", runs::gaps(&runs::load(&runs_path()?)?));
         print!("{}", friction::report(&friction::load(&friction::path()?)));
         return Ok(ExitCode::SUCCESS);
@@ -492,7 +240,7 @@ fn run() -> Result<ExitCode, Failure> {
 
     // Nothing prepared, nothing looked up: the last resort, and instrumented so that being a
     // last resort is visible rather than assumed.
-    if args.verb == "raw" {
+    if args.verb == RecipeVerb::Raw {
         let reason = args.reason.as_deref().ok_or(
             "raw needs --reason. It is recorded, and a reason that keeps recurring is what\n             specifies the next recipe. If this fits a recipe, use the recipe instead.",
         )?;
@@ -550,7 +298,7 @@ fn run() -> Result<ExitCode, Failure> {
     }
 
     // Reads only what this machine recorded, so it needs no repo and no connection.
-    if args.verb == "runs" {
+    if args.verb == RecipeVerb::Runs {
         let label = if args.repo.is_empty() {
             None
         } else {
@@ -561,12 +309,12 @@ fn run() -> Result<ExitCode, Failure> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    if args.verb == "with" {
+    if args.verb == RecipeVerb::With {
         return with_service(&args);
     }
 
-    if args.verb == "list" {
-        let dir = resolve_repo(&args.repo, &args.root)?;
+    if args.verb == RecipeVerb::List {
+        let dir = resolve_repo(&args.repo, &root_of(&args))?;
         let manifest = Manifest::load(&dir, &worktree::identity(&dir))?;
         for v in [Verb::Bench, Verb::Build, Verb::Test] {
             let listing = manifest.listing(v);
@@ -923,11 +671,11 @@ struct Pinned {
 
 /// Every pin, resolved against every arm's lockfile and every pin's: one pinned crate may reach
 /// the build through another pinned repo rather than through this one.
-fn pins_of(args: &Args, repo: &str, dir: &Path, arms: &[Arm]) -> Result<Vec<Pinned>, String> {
+fn pins_of(args: &RecipeCall, repo: &str, dir: &Path, arms: &[Arm]) -> Result<Vec<Pinned>, String> {
     let mut pins = Vec::new();
     for p in &args.pins {
         let (name, reference) = pin_spec(p)?;
-        let pdir = resolve_repo(name, &args.root)?;
+        let pdir = resolve_repo(name, &root_of(args))?;
         let identity = worktree::identity(&pdir);
         if identity == repo {
             return Err(format!(
@@ -1035,13 +783,13 @@ struct Tree {
     prepared: Option<worktree::Prepared>,
 }
 
-fn run_recipe(args: Args) -> Result<ExitCode, Failure> {
+fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
     let points = sweep_points(&args);
     if points.len() > 1 {
         return sweep_run(&args, &points);
     }
     // One point is the ordinary call with its values filled in, not a batch of one.
-    let args = Args {
+    let args = RecipeCall {
         params: points.into_iter().next().unwrap_or_default(),
         ..args
     };
@@ -1763,9 +1511,9 @@ fn measured_summary(
 
 /// Every combination `--sweep` asks for, each a complete set of values for one run. Without a
 /// sweep this is the one point the call already described.
-fn sweep_points(args: &Args) -> Vec<BTreeMap<String, String>> {
+fn sweep_points(args: &RecipeCall) -> Vec<BTreeMap<String, String>> {
     let mut points = vec![args.params.clone()];
-    for (name, values) in &args.sweep {
+    for Sweep { name, values } in &args.sweep {
         points = points
             .iter()
             .flat_map(|p| {
@@ -1816,7 +1564,7 @@ fn refused_before_building(
     backend: &Dibs,
     rec: &recipe::Recipe,
     step_labels: &[String],
-    args: &Args,
+    args: &RecipeCall,
 ) -> Result<bool, Failure> {
     let exclusive: Vec<usize> = (0..rec.steps.len())
         .filter(|&i| rec.steps[i].lock == Lock::Exclusive)
@@ -1913,12 +1661,12 @@ fn friction_verb(words: &[String]) -> Result<ExitCode, Failure> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn sweep_run(args: &Args, points: &[BTreeMap<String, String>]) -> Result<ExitCode, Failure> {
+fn sweep_run(args: &RecipeCall, points: &[BTreeMap<String, String>]) -> Result<ExitCode, Failure> {
     // Every point is checked before any of them is queued: a value the recipe refuses should be
     // found now, not two measurements into a sweep that is already holding the machine.
     sides(args.reference.as_deref())?;
     for p in points {
-        let probe = Args {
+        let probe = RecipeCall {
             params: p.clone(),
             sweep: Vec::new(),
             reps: 1,
@@ -1939,7 +1687,7 @@ fn sweep_run(args: &Args, points: &[BTreeMap<String, String>]) -> Result<ExitCod
 
 /// The batch a sweep becomes: one ordinary dibs call per point, named by what makes it that
 /// point, in the order the sweep was written.
-fn sweep_text(args: &Args, points: &[BTreeMap<String, String>]) -> String {
+fn sweep_text(args: &RecipeCall, points: &[BTreeMap<String, String>]) -> String {
     let target = match &args.reference {
         Some(r) => format!("{}@{r}", args.repo),
         None => args.repo.clone(),
@@ -1992,7 +1740,7 @@ fn sweep_text(args: &Args, points: &[BTreeMap<String, String>]) -> String {
 }
 
 /// What the summary calls one point: the values that make it that point.
-fn point_name(args: &Args, p: &BTreeMap<String, String>) -> String {
+fn point_name(args: &RecipeCall, p: &BTreeMap<String, String>) -> String {
     let slug = |v: &str| {
         v.chars()
             .map(|c| {
@@ -2007,7 +1755,10 @@ fn point_name(args: &Args, p: &BTreeMap<String, String>) -> String {
     let parts: Vec<String> = args
         .sweep
         .iter()
-        .map(|(k, _)| format!("{k}-{}", slug(p.get(k).map(String::as_str).unwrap_or(""))))
+        .map(|Sweep { name, .. }| {
+            let value = p.get(name).map(String::as_str).unwrap_or("");
+            format!("{name}-{}", slug(value))
+        })
         .collect();
     parts.join(".")
 }
@@ -2015,7 +1766,7 @@ fn point_name(args: &Args, p: &BTreeMap<String, String>) -> String {
 /// A repo's servers, running on the machine under one lock while the command runs here: a
 /// dashboard, a client, a test suite driving them over the network. It ends by becoming that
 /// dibs call rather than waiting on one, so the command keeps this terminal.
-fn with_service(args: &Args) -> Result<ExitCode, Failure> {
+fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
     let sides = sides(args.reference.as_deref())?;
     if sides.len() > 1 {
         return Err("with runs against one tree, so it takes one ref".into());
@@ -2023,7 +1774,7 @@ fn with_service(args: &Args) -> Result<ExitCode, Failure> {
     if !args.pins.is_empty() {
         return Err("with does not take --pin; a recipe does".into());
     }
-    let dir = resolve_repo(&args.repo, &args.root)?;
+    let dir = resolve_repo(&args.repo, &root_of(args))?;
     let repo_name = worktree::identity(&dir);
     let manifest = Manifest::load(&dir, &repo_name)?;
     let name = args.recipe.as_deref().ok_or_else(|| {
@@ -2409,16 +2160,16 @@ struct Resolved {
     tree_fresh: Vec<String>,
 }
 
-fn resolve(args: &Args) -> Result<Resolved, String> {
-    let dir = resolve_repo(&args.repo, &args.root)?;
+fn resolve(args: &RecipeCall) -> Result<Resolved, String> {
+    let dir = resolve_repo(&args.repo, &root_of(args))?;
     let repo_name = worktree::identity(&dir);
-    let manifest = if args.verb == "shell" {
+    let manifest = if args.verb == RecipeVerb::Shell {
         Manifest::load_any(&dir, &repo_name)?
     } else {
         Manifest::load(&dir, &repo_name)?
     };
 
-    let shell_reason = if args.verb == "shell" {
+    let shell_reason = if args.verb == RecipeVerb::Shell {
         Some(args.reason.clone().ok_or(
             "shell needs --reason. Most of what gets run is neither a build nor a benchmark,\n             and knowing what those were is how the next recipe gets written.",
         )?)
@@ -2446,8 +2197,8 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         return Err("shell needs -- <command>".into());
     }
 
-    let verb = Verb::parse(&args.verb)
-        .or(if args.verb == "shell" {
+    let verb = Verb::parse(args.verb.as_str())
+        .or(if args.verb == RecipeVerb::Shell {
             Some(Verb::Build)
         } else {
             None
@@ -2620,7 +2371,9 @@ fn recipe_jobs(words: &[String]) -> Option<Vec<batch::Pending>> {
     while i < words.len() && words[i].starts_with('-') {
         i += if words[i] == "--on" { 2 } else { 1 };
     }
-    let args = parse_words(words.get(i..)?.iter().cloned()).ok()?;
+    let Ok(Invocation::Recipe(args)) = Invocation::parse(words.get(i..)?) else {
+        return None;
+    };
     let r = resolve(&args).ok()?;
     let pins = args
         .pins
@@ -2926,14 +2679,7 @@ fn write_record(run: &RunRecord) -> Result<(), String> {
 }
 
 fn sh(s: &str) -> String {
-    if !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_alphanumeric() || "/._-@".contains(c))
-    {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', r"'\''"))
-    }
+    ShellWord(s).to_string()
 }
 
 #[cfg(test)]
@@ -2999,8 +2745,12 @@ mod tests {
         assert_eq!(text, format!("burn\tbox-b\t{}\n", 16 * day));
     }
 
-    fn swept(words: &[&str]) -> Args {
-        parse_words(words.iter().map(|w| w.to_string())).unwrap()
+    fn swept(words: &[&str]) -> RecipeCall {
+        let words: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+        match Invocation::parse(&words) {
+            Ok(Invocation::Recipe(call)) => call,
+            other => panic!("not a recipe call: {other:?}"),
+        }
     }
 
     #[test]
@@ -3077,11 +2827,7 @@ mod tests {
 
     #[test]
     fn several_words_after_the_separator_stay_several_words() {
-        let parsed = |words: &[&str]| {
-            parse_words(words.iter().map(|w| w.to_string()))
-                .unwrap()
-                .command
-        };
+        let parsed = |words: &[&str]| swept(words).command;
         assert_eq!(
             parsed(&[
                 "with",
