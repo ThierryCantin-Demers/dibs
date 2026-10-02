@@ -541,8 +541,10 @@ fn a_timed_client_holds_the_machine_alone_against_the_server_it_built() {
     assert_eq!(
         out.code,
         0,
-        "unless told to time what is there: {}",
-        out.all()
+        "unless told to time what is there: {}\nthe log ends:\n{}\nand what is still running:\n{}",
+        out.all(),
+        s.log().lines().rev().take(8).collect::<Vec<_>>().join("\n"),
+        s.processes()
     );
 }
 
