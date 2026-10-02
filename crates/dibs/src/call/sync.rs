@@ -329,7 +329,7 @@ impl Rsh {
             stream: self.stream,
             ..Call::default()
         };
-        let machine = MachineCall::new(&call, caller);
+        let machine = MachineCall::new(&call, caller)?;
         let command = format!("{}{}", Before(&before), self.command.join(" "));
         let label = self.label.clone().unwrap_or_else(|| Label::new(SYNC_LABEL));
         let target = machine.target()?;

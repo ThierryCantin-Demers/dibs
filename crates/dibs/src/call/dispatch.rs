@@ -1,6 +1,6 @@
 use crate::{
     call::{
-        base::{CallError, LockedCall},
+        base::{CallError, LockedCall, Request},
         kill::Kill,
         machine::{Asked, MachineCall},
         origin::Origin,
@@ -50,19 +50,21 @@ impl Dispatch<'_> {
     }
 
     fn answer(&self) -> Result<i32, CallError> {
-        let machine = MachineCall::new(self.call, self.caller);
+        let machine = || MachineCall::new(self.call, self.caller);
         match &self.call.mode {
             Words::Run(run) => LockedCall::run_of(run).run(self.call, self.caller),
             Words::Peek(command) => LockedCall::peek(command).run(self.call, self.caller),
-            Words::Status => machine.status(),
+            Words::Status => machine()?.status(),
             Words::Watch { every } => {
-                machine.answer(Asked::plain(Mode::Watch, Label::new(every.to_string())))
+                machine()?.answer(Asked::plain(Mode::Watch, Label::new(every.to_string())))
             }
             Words::Log { lines } => {
-                machine.answer(Asked::plain(Mode::Log, Label::new(lines.to_string())))
+                machine()?.answer(Asked::plain(Mode::Log, Label::new(lines.to_string())))
             }
-            Words::Release => machine.answer(Asked::plain(Mode::Release, machine.label())),
-            Words::Gc { days, dry_run } => machine.answer(Asked {
+            Words::Release => {
+                machine()?.answer(Asked::plain(Mode::Release, Request::label(self.call)))
+            }
+            Words::Gc { days, dry_run } => machine()?.answer(Asked {
                 mode: Mode::Gc,
                 label: self
                     .call
@@ -76,40 +78,39 @@ impl Dispatch<'_> {
                 .to_string(),
                 streamed: true,
             }),
-            Words::Check { host } => machine.check(host.as_deref()),
-            Words::Out(target) => machine.out(target.as_ref()),
+            Words::Check { host } => machine()?.check(host.as_deref()),
+            Words::Out(target) => machine()?.out(target.as_ref()),
             Words::Fetch { job, into } => {
-                machine.fetch(job, into.as_deref(), &mut std::io::stdout())
+                machine()?.fetch(job, into.as_deref(), &mut std::io::stdout())
             }
             Words::Kill {
                 target,
                 force,
                 anyone,
             } => Kill {
-                machine: &machine,
+                machine: &machine()?,
                 force: *force,
                 anyone: *anyone,
             }
             .answer(target),
             Words::Sync(args) => Sync {
-                machine: &machine,
+                machine: &machine()?,
                 args,
                 before: "",
                 origin: Origin::Words,
             }
             .answer(),
-            Words::Machines => {
-                machine.known()?;
-                machine.machines()
-            }
-            Words::Which => machine.which(),
-            Words::Forget(name) => {
-                machine.known()?;
-                machine.forget(name)
-            }
+            Words::Machines => machine()?.machines(),
+            Words::Which => machine()?.which(),
+            Words::Forget(name) => machine()?.forget(name),
             Words::Pick => {
-                machine.known()?;
-                println!("{}", Placement { machine: &machine }.pick()?);
+                println!(
+                    "{}",
+                    Placement {
+                        machine: &machine()?
+                    }
+                    .pick()?
+                );
                 Ok(0)
             }
             Words::Update => Ok(Update::of_this_build().run()),

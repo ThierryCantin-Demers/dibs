@@ -41,10 +41,12 @@ impl Asked {
 }
 
 impl<'a> MachineCall<'a> {
-    pub fn new(call: &'a Call, caller: &'a Caller) -> MachineCall<'a> {
+    /// Refused, as every call is, when `--on` or `DIBS_ON` names a machine the inventory cannot
+    /// reach.
+    pub fn new(call: &'a Call, caller: &'a Caller) -> Result<MachineCall<'a>, CallError> {
         let paths = Paths::from_env();
         let fleet = Fleet::load(paths.inventory());
-        MachineCall {
+        let machine = MachineCall {
             call,
             caller,
             paths,
@@ -53,7 +55,9 @@ impl<'a> MachineCall<'a> {
                 name: short_hostname(None),
                 local: TargetEnv::from_env().local,
             },
-        }
+        };
+        machine.target()?;
+        Ok(machine)
     }
 
     /// The machine the call names, or the one a setup with a single machine has.
@@ -63,11 +67,6 @@ impl<'a> MachineCall<'a> {
             &TargetEnv::from_env(),
             &self.fleet,
         )?)
-    }
-
-    /// Refused, as every call is, when `--on` or `DIBS_ON` names a machine the inventory lacks.
-    pub fn known(&self) -> Result<(), CallError> {
-        self.target().map(drop)
     }
 
     /// Refused when the call names no machine and does not run on this computer.

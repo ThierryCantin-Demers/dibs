@@ -62,7 +62,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         .as_deref()
         .ok_or("with needs a command after --")?;
 
-    let backend = Jobs::on(match Jobs::destination() {
+    let backend = Jobs::on(match Jobs::destination()? {
         Destination::Named(m) => Some(m),
         Destination::Unnamed => None,
         Destination::Unchosen => {

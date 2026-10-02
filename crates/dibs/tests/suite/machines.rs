@@ -364,6 +364,52 @@ fn an_unknown_machine_is_refused_and_the_known_ones_named() {
 }
 
 #[test]
+fn a_machine_the_inventory_cannot_reach_refuses_every_path_before_anything_runs() {
+    let mut s = Sandbox::new();
+    s.machines(&format!(
+        "{DESK_AND_LAP}\n[machine.bare]\nhostname = \"bare\"\n"
+    ));
+    let app = crate::recipes::app(&s);
+    crate::recipes::recipes(&s, crate::recipes::PARAMS);
+    let at = format!("{app}@local");
+    let shell = ["shell", &at, "--reason", "t", "--", "true"];
+    let paths: Vec<(Vec<&str>, Option<&str>)> = vec![
+        (vec!["--on", "nope", "build", &at, "p"], None),
+        (vec!["--on", "nope", "bench", &at, "hot"], None),
+        (
+            vec!["--on", "nope", "raw", "--reason", "t", "--", "true"],
+            None,
+        ),
+        (vec!["--on", "nope", "list", &app], None),
+        (vec!["--on", "nope", "runs"], None),
+        (vec!["--on", "nope", "gaps"], None),
+        (vec!["--on", "nope", "--pick"], None),
+        (
+            vec!["--on", "bare", "raw", "--reason", "t", "--", "true"],
+            None,
+        ),
+        (vec!["--on", "bare", "true"], None),
+        (shell.to_vec(), Some("nope")),
+        (vec!["true"], Some("nope")),
+    ];
+    for (words, dibs_on) in paths {
+        let call = s.dibs(&words);
+        let out = match dibs_on {
+            Some(on) => call.env("DIBS_ON", on),
+            None => call,
+        }
+        .run();
+        assert_eq!(
+            (out.code, out.stderr.lines_with("no machine named")),
+            (2, 1),
+            "{words:?} with DIBS_ON={dibs_on:?}: {}",
+            out.all()
+        );
+    }
+    assert_eq!(s.log().lines_with("\tarrived\t"), 0, "and nothing ran");
+}
+
+#[test]
 fn a_machine_that_does_not_measure_refuses_a_benchmark() {
     // A machine that cannot produce a trustworthy number must not be able to produce one at all,
     // rather than everyone remembering not to ask it.

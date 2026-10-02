@@ -1,7 +1,7 @@
 //! The jobs a recipe runs: locked calls made in this process, whose output is read here for the
 //! trailer and for what a setup reports ahead of its command.
 
-use crate::recipe::Lock;
+use crate::{execution::RunError, recipe::Lock};
 use dibs::{
     call::{CallError, Destination, LockedCall, MachineCall, Origin, Output, RecipeJob, Sync},
     caller::Caller,
@@ -195,7 +195,7 @@ impl Jobs {
     ///
     /// `prefer` names the machine already holding this repo's build cache; `repo` asks which
     /// machines hold it, which is what makes the first run for a repo land somewhere useful.
-    pub fn placed(prefer: Option<&str>, repo: Option<&str>) -> Result<Jobs, String> {
+    pub fn placed(prefer: Option<&str>, repo: Option<&str>) -> Result<Jobs, RunError> {
         let call = Call {
             mode: Mode::Pick,
             prefer: prefer.map(str::to_string),
@@ -203,8 +203,8 @@ impl Jobs {
             ..Call::default()
         };
         let caller = Caller::default();
-        let machine = MachineCall::new(&call, &caller);
-        let placed = match machine.destination() {
+        let machine = MachineCall::new(&call, &caller)?;
+        let placed = match machine.destination()? {
             Destination::Named(m) => Some(m),
             Destination::Unnamed => None,
             Destination::Unchosen => Some(Placement { machine: &machine }.pick().map_err(|_| {
@@ -221,10 +221,10 @@ impl Jobs {
     /// The machine a call goes to with no ranking at all. Naming it matters even when there was
     /// no choice to make: a benchmark cannot be moved, so it is the one that decides where its
     /// repo's build cache belongs, and the record should say where it ran.
-    pub fn destination() -> Destination {
+    pub fn destination() -> Result<Destination, RunError> {
         let call = Call::default();
         let caller = Caller::default();
-        MachineCall::new(&call, &caller).destination()
+        Ok(MachineCall::new(&call, &caller)?.destination()?)
     }
 
     pub fn run(&self, req: &Request, command: &str) -> JobOutcome {
@@ -271,16 +271,17 @@ impl Jobs {
     ) -> Reported {
         let mut reader = Reader::new(Reading::Reported, on_report);
         let call = self.call(req, "");
-        let machine = MachineCall::new(&call, &self.caller);
-        let exit = Sync {
-            machine: &machine,
-            args,
-            before,
-            origin: Origin::Recipe(req.job),
-        }
-        .answer_into(&mut Output::Lines(&mut |stream, line| {
-            reader.line(stream, line)
-        }));
+        let exit = MachineCall::new(&call, &self.caller).and_then(|machine| {
+            Sync {
+                machine: &machine,
+                args,
+                before,
+                origin: Origin::Recipe(req.job),
+            }
+            .answer_into(&mut Output::Lines(&mut |stream, line| {
+                reader.line(stream, line)
+            }))
+        });
         reader.reported(Jobs::exit(exit))
     }
 
@@ -291,7 +292,8 @@ impl Jobs {
             ..Call::default()
         };
         let mut report = Vec::new();
-        let exit = MachineCall::new(&call, &self.caller).fetch(job, into, &mut report);
+        let exit = MachineCall::new(&call, &self.caller)
+            .and_then(|machine| machine.fetch(job, into, &mut report));
         match Jobs::exit(exit) {
             0 => Ok(String::from_utf8_lossy(&report).into_owned()),
             exit => Err(exit),

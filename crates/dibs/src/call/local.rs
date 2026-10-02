@@ -49,16 +49,17 @@ impl MachineCall<'_> {
         Ok(0)
     }
 
-    /// Where the call goes before anything is placed.
-    pub fn destination(&self) -> Destination {
-        match self.target() {
-            Ok(target) => match (target.machine, target.host.is_empty() && !self.here.local) {
+    /// Where the call goes before anything is placed; refused when it names a machine the
+    /// inventory cannot reach.
+    pub fn destination(&self) -> Result<Destination, CallError> {
+        let target = self.target()?;
+        Ok(
+            match (target.machine, target.host.is_empty() && !self.here.local) {
                 (Some(machine), _) => Destination::Named(machine),
                 (None, false) => Destination::Unnamed,
                 (None, true) => Destination::Unchosen,
             },
-            Err(_) => Destination::Unchosen,
-        }
+        )
     }
 
     /// `dibs --which`: the machine this call would go to, by the name `--on` takes.

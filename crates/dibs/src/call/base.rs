@@ -229,7 +229,7 @@ impl<'a> LockedCall<'a> {
         if placed {
             let caller = Caller::default();
             let machine = Placement {
-                machine: &MachineCall::new(call, &caller),
+                machine: &MachineCall::new(call, &caller)?,
             }
             .pick()?;
             target.go_to(fleet, machine.as_str(), Named::Placed)?;

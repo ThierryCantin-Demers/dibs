@@ -98,9 +98,9 @@ pub(crate) fn machine_of(step: &Step) -> Option<String> {
         ..Call::default()
     };
     let caller = Caller::default();
-    match MachineCall::new(&call, &caller).destination() {
-        Destination::Named(machine) => Some(machine.to_string()),
-        Destination::Unchosen if step.on.is_none() => None,
+    match MachineCall::new(&call, &caller).and_then(|machine| machine.destination()) {
+        Ok(Destination::Named(machine)) => Some(machine.to_string()),
+        Ok(Destination::Unchosen) if step.on.is_none() => None,
         _ => Some(step.on.clone().unwrap_or_else(|| "?".into())),
     }
 }

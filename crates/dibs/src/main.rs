@@ -14,9 +14,9 @@ mod reports;
 mod worktree;
 
 use dibs::{
-    call::{Dispatch, Guard, Rsh},
+    call::{Dispatch, Guard, MachineCall, Rsh},
     caller::Caller,
-    cli::{Help, Invocation, Mode, RecipeCall, RecipeVerb},
+    cli::{Call, Help, Invocation, Mode, RecipeCall, RecipeVerb},
     paths::Paths,
     update::ChangeNotice,
 };
@@ -29,7 +29,7 @@ fn main() -> ExitCode {
     match dispatch(&words) {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("dibs: {e}");
+            eprint!("{e}");
             ExitCode::from(e.exit())
         }
     }
@@ -123,6 +123,8 @@ fn run(args: RecipeCall) -> Result<ExitCode, RunError> {
         // SAFETY: nothing has started a thread yet; every thread this spawns comes after.
         unsafe { std::env::set_var("DIBS_ON", m) };
     }
+    // Refused even by a verb that never reaches a machine, as every call naming one is.
+    MachineCall::new(&Call::default(), &Caller::default())?;
 
     if args.verb == RecipeVerb::Batch {
         let text = match args.repo.as_str() {

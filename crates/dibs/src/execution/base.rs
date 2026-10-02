@@ -14,7 +14,7 @@ use crate::{
     worktree,
 };
 use dibs::{
-    call::{Destination, RecipeJob},
+    call::{CallError, Destination, RecipeJob},
     cli::{RecipeCall, ShellWord},
 };
 use dibs_format::{
@@ -23,7 +23,7 @@ use dibs_format::{
 };
 use std::{collections::BTreeMap, fmt, path::Path, process::ExitCode};
 
-/// What stops a recipe run, said as its `Display`, and the exit it ends with.
+/// What stops a recipe run, said as its `Display` in full, and the exit it ends with.
 #[derive(Debug)]
 pub(crate) enum RunError {
     /// Refused here: exit 2.
@@ -31,6 +31,8 @@ pub(crate) enum RunError {
     /// A call the run made failed. Its exit passes on, so an unreachable machine reads as 69 to
     /// whoever ran this rather than as a refusal.
     Call { exit: i32, why: String },
+    /// A call refused before it was sent, in its own words.
+    Unsent(CallError),
 }
 
 impl RunError {
@@ -40,21 +42,30 @@ impl RunError {
 
     pub(crate) fn exit(&self) -> u8 {
         let refused = Exit::Refused.code();
-        match self {
-            RunError::Refused(_) => refused,
-            RunError::Call { exit, .. } => u8::try_from(*exit)
-                .ok()
-                .filter(|c| *c != 0)
-                .unwrap_or(refused),
-        }
+        let exit = match self {
+            RunError::Refused(_) => return refused,
+            RunError::Call { exit, .. } => *exit,
+            RunError::Unsent(e) => e.exit(),
+        };
+        u8::try_from(exit)
+            .ok()
+            .filter(|c| *c != 0)
+            .unwrap_or(refused)
     }
 }
 
 impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RunError::Refused(why) | RunError::Call { why, .. } => f.write_str(why),
+            RunError::Refused(why) | RunError::Call { why, .. } => writeln!(f, "dibs: {why}"),
+            RunError::Unsent(e) => e.fmt(f),
         }
+    }
+}
+
+impl From<CallError> for RunError {
+    fn from(e: CallError) -> RunError {
+        RunError::Unsent(e)
     }
 }
 
@@ -752,7 +763,7 @@ pub(crate) fn destination(
         let placed = Jobs::placed(affinity_get(repo_name).as_deref(), Some(repo_name))?;
         return Ok(placed.machine);
     }
-    match Jobs::destination() {
+    match Jobs::destination()? {
         Destination::Named(m) => Ok(Some(m)),
         Destination::Unnamed => Ok(None),
         Destination::Unchosen => Err(format!(
