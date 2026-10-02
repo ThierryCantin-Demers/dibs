@@ -5,7 +5,7 @@ use super::{
 };
 use crate::execution::recipe_jobs;
 use dibs::{
-    call::{Destination, MachineCall},
+    call::{Destination, Driver, MachineCall},
     caller::Caller,
     cli::Call,
     paths::Paths,
@@ -164,6 +164,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     collect_old(&root);
     let dir = root.join(&id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let _driving = Driver::claim(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     if let Ok(owner) = std::env::var("DIBS_BATCH_OWNER") {
         let _ = std::fs::write(dir.join("owner"), owner);
     }

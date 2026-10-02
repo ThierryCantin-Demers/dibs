@@ -19,6 +19,7 @@ mod sync;
 pub use base::{CallError, LockedCall};
 pub use dispatch::Dispatch;
 pub use hold::Guard;
+pub use kill::{Driver, DriverClaim};
 pub use local::Destination;
 pub use machine::{Asked, Bound, MachineCall};
 pub use origin::{BatchStep, Origin, RecipeJob};

@@ -9,7 +9,12 @@ use crate::{
     render::Answers,
 };
 use dibs_format::{BatchId, Exit, Label, MachineName, Mode};
-use std::{path::Path, process::Command, time::Duration};
+use std::{
+    fs::{self, File, OpenOptions, TryLockError},
+    io::{self, Write as _},
+    path::Path,
+    time::Duration,
+};
 
 /// How long a batch's driver has to stop on its own before it is sent SIGTERM.
 const DRIVER_GRACE: Duration = Duration::from_secs(60);
@@ -51,9 +56,9 @@ impl Kill<'_> {
     fn batch(&self, batch: &BatchId) -> Result<i32, CallError> {
         let at = self.machine.target()?;
         if let Some(dir) = self.machine.paths.batches().map(|d| d.join(batch.as_str()))
-            && let Some(driver) = Driver::here(&dir, batch)
+            && let Some(driver) = Driver::of(&dir)
         {
-            return driver.stop(self);
+            return driver.stop(self, batch);
         }
         let machines: Vec<MachineName> = match &self.machine.call.on {
             Some(on) => vec![on.clone()],
@@ -95,38 +100,61 @@ impl Kill<'_> {
     }
 }
 
-/// A batch's driver running on this computer.
-struct Driver<'a> {
+/// A batch's driver running on this computer, as the record it holds in the batch's directory
+/// says: whatever its command line reads, it is the process holding that record's lock.
+pub struct Driver<'a> {
     dir: &'a Path,
-    batch: &'a BatchId,
     pid: i32,
 }
 
+/// A driver's hold on its batch's record, for as long as the batch runs.
+pub struct DriverClaim {
+    _record: File,
+}
+
 impl<'a> Driver<'a> {
-    fn here(dir: &'a Path, batch: &'a BatchId) -> Option<Driver<'a>> {
-        let pid: i32 = batch.as_str().rsplit('-').next()?.parse().ok()?;
-        let out = Command::new("ps")
-            .args(["-o", "command=", "-p", &pid.to_string()])
-            .output()
-            .ok()?;
-        let driving = String::from_utf8_lossy(&out.stdout).contains("dibs batch ");
-        (dir.is_dir() && driving).then_some(Driver { dir, batch, pid })
+    const RECORD: &'static str = "driver";
+
+    /// Records this process as the driver of the batch in `dir`.
+    pub fn claim(dir: &Path) -> io::Result<DriverClaim> {
+        let mut record = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(dir.join(Driver::RECORD))?;
+        record.lock()?;
+        record.set_len(0)?;
+        writeln!(record, "{}", std::process::id())?;
+        Ok(DriverClaim { _record: record })
     }
 
-    fn stop(&self, kill: &Kill) -> Result<i32, CallError> {
-        let owner = std::fs::read_to_string(self.dir.join("owner")).unwrap_or_default();
+    /// The driver of the batch in `dir`, while one runs here.
+    fn of(dir: &'a Path) -> Option<Driver<'a>> {
+        let record = File::open(dir.join(Driver::RECORD)).ok()?;
+        match record.try_lock_shared() {
+            Err(TryLockError::WouldBlock) => {}
+            Ok(()) | Err(TryLockError::Error(_)) => return None,
+        }
+        let pid = fs::read_to_string(dir.join(Driver::RECORD))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()?;
+        Some(Driver { dir, pid })
+    }
+
+    fn stop(&self, kill: &Kill, batch: &BatchId) -> Result<i32, CallError> {
+        let owner = fs::read_to_string(self.dir.join("owner")).unwrap_or_default();
         let owner = owner.trim_end_matches('\n');
         if !owner.is_empty() && owner != kill.machine.caller.id && !kill.anyone {
             eprintln!(
-                "dibs: batch {} was started by another session. If it should stop:  dibs --kill {} --anyone",
-                self.batch, self.batch
+                "dibs: batch {batch} was started by another session. If it should stop:  dibs --kill {batch} --anyone"
             );
             return Ok(i32::from(Exit::Refused.code()));
         }
-        std::fs::write(self.dir.join("cancel"), "")?;
+        fs::write(self.dir.join("cancel"), "")?;
         eprintln!(
-            "dibs: cancelling batch {} here: nothing more starts, and its running steps are stopped.",
-            self.batch
+            "dibs: cancelling batch {batch} here: nothing more starts, and its running steps are stopped."
         );
         if !ended(self.pid, DRIVER_GRACE) {
             // SAFETY: signals a process by pid; the worst a stale pid costs is a stray SIGTERM.
@@ -135,7 +163,7 @@ impl<'a> Driver<'a> {
                 "dibs: its driver did not stop within a minute, so it was sent SIGTERM; its steps die with it."
             );
         }
-        if let Ok(summary) = std::fs::read_to_string(self.dir.join("summary")) {
+        if let Ok(summary) = fs::read_to_string(self.dir.join("summary")) {
             print!("{summary}");
         }
         Ok(0)

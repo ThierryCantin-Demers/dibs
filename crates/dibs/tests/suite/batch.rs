@@ -289,7 +289,8 @@ fn status_carries_the_batchs_plan_to_the_machine() {
     );
 }
 
-fn cancellable(s: &mut Sandbox, name: &str) -> (Job, String, String) {
+/// A batch held at its first step, driven by `dibs <words> batch`.
+fn cancellable(s: &mut Sandbox, name: &str, words: &[&str]) -> (Job, String, String) {
     let (up, hold) = (
         s.gate(&format!("{name}-up")),
         s.gate(&format!("{name}-hold")),
@@ -311,7 +312,9 @@ fn cancellable(s: &mut Sandbox, name: &str) -> (Job, String, String) {
         s.path(&format!("{name}.out")),
         s.path(&format!("{name}.err")),
     );
-    let call = s.dibs(["batch", &file]).streams_to(&out, &err);
+    let call = s
+        .dibs(words.iter().copied().chain(["batch", file.as_str()]))
+        .streams_to(&out, &err);
     let driver = s.spawn(call);
     up.reached();
     let id = capture(&s.read(&format!("{name}.err")), r"^dibs: batch ([0-9-]*), ").unwrap();
@@ -321,7 +324,7 @@ fn cancellable(s: &mut Sandbox, name: &str) -> (Job, String, String) {
 #[test]
 fn killing_a_batch_where_its_driver_runs_cancels_all_of_it() {
     let mut s = Sandbox::new();
-    let (driver, id, after) = cancellable(&mut s, "b8");
+    let (driver, id, after) = cancellable(&mut s, "b8", &[]);
     let out = s.dibs(["--kill", &id]).run().all();
     assert_eq!(
         s.wait(driver),
@@ -359,9 +362,27 @@ fn killing_a_batch_where_its_driver_runs_cancels_all_of_it() {
 }
 
 #[test]
+fn a_driver_is_found_here_however_its_command_line_reads() {
+    let mut s = Sandbox::new();
+    s.machines(&format!(
+        "[machine.here]\nssh = \"here\"\nhostname = \"{}\"\n",
+        hostname()
+    ));
+    let (driver, id, after) = cancellable(&mut s, "b10", &["--on", "here"]);
+    let out = s.dibs(["--kill", &id]).run().all();
+    assert_eq!(s.wait(driver), 76, "it is cancelled where it runs: {out}");
+    assert!(!s.exists(&after));
+    assert_eq!(
+        out.lines_matching("^batch .*, cancelled with dibs --kill"),
+        1,
+        "and the kill prints its summary: {out}"
+    );
+}
+
+#[test]
 fn killing_a_batch_on_a_machine_stops_its_jobs_and_refuses_its_later_steps() {
     let mut s = Sandbox::new();
-    let (driver, id, after) = cancellable(&mut s, "b9");
+    let (driver, id, after) = cancellable(&mut s, "b9", &[]);
     let stranger = s
         .dibs(["--kill", &id])
         .env_remove("CLAUDE_CODE_HOST_SESSION_ID")
