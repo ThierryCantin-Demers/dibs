@@ -98,16 +98,20 @@ impl Dispatch<'_> {
                 command,
             }
             .answer(),
-            Words::Machines => machine.machines(),
+            Words::Machines => {
+                machine.known()?;
+                machine.machines()
+            }
             Words::Which => machine.which(),
-            Words::Forget(name) => machine.forget(name),
-            Words::Pick => match (Placement { machine: &machine }).pick() {
-                Ok(placed) => {
-                    println!("{placed}");
-                    Ok(0)
-                }
-                Err(unplaced) => Err(unplaced.into()),
-            },
+            Words::Forget(name) => {
+                machine.known()?;
+                machine.forget(name)
+            }
+            Words::Pick => {
+                machine.known()?;
+                println!("{}", Placement { machine: &machine }.pick()?);
+                Ok(0)
+            }
             Words::Update => Ok(Update::of_this_build().run()),
         }
     }

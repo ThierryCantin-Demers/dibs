@@ -3,7 +3,7 @@ use crate::{
         base::{CallError, LockedCall, holding},
         machine::{Asked, MachineCall},
     },
-    cli::{Call, Command as Words},
+    cli::{BashQuoted, Call, Command as Words},
     machine::{Interrupt, Liveness, MachineHalf, Route, Session, Target, exit_code},
 };
 use dibs_format::{Exit, Label, Mode};
@@ -65,7 +65,7 @@ impl Sync<'_> {
         let machine_side = format!("{}:", target.host);
         let quoted: Vec<String> = args
             .iter()
-            .map(|a| crate::cli::BashQuoted(a.strip_prefix(&machine_side).unwrap_or(a)).to_string())
+            .map(|a| BashQuoted(a.strip_prefix(&machine_side).unwrap_or(a)).to_string())
             .collect();
         let before = match SyncBefore::read() {
             Ok(before) => before,

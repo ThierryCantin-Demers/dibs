@@ -5,7 +5,7 @@ use crate::{
         status::poll_timeout,
     },
     cli::{Call, KillTarget},
-    machine::{Kept, TargetEnv},
+    machine::Kept,
     render::Answers,
 };
 use dibs_format::{BatchId, Exit, Label, MachineName, Mode};
@@ -49,6 +49,7 @@ impl Kill<'_> {
 
     /// Stopped where its driver runs, when that is here; otherwise on every machine.
     fn batch(&self, batch: &BatchId) -> Result<i32, CallError> {
+        let at = self.machine.target()?;
         if let Some(dir) = self.machine.paths.batches().map(|d| d.join(batch.as_str()))
             && let Some(driver) = Driver::here(&dir, batch)
         {
@@ -60,10 +61,7 @@ impl Kill<'_> {
             None => Vec::new(),
         };
         if machines.is_empty() {
-            let at = self.machine.target()?;
-            if at.host.is_empty() && !TargetEnv::from_env().local {
-                return Err(at.no_machine(&self.machine.fleet, false).into());
-            }
+            self.machine.somewhere(&at)?;
             return self.machine.send(self.asked(batch.as_str()), &at);
         }
         let named: Vec<&str> = machines.iter().map(MachineName::as_str).collect();

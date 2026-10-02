@@ -65,6 +65,11 @@ impl<'a> MachineCall<'a> {
         )?)
     }
 
+    /// Refused, as every call is, when `--on` or `DIBS_ON` names a machine the inventory lacks.
+    pub fn known(&self) -> Result<(), CallError> {
+        self.target().map(drop)
+    }
+
     /// Refused when the call names no machine and does not run on this computer.
     pub fn somewhere(&self, target: &Target) -> Result<(), CallError> {
         match target.host.is_empty() && !self.here.local {

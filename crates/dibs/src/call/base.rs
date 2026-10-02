@@ -276,7 +276,7 @@ impl Request<'_> {
             json: self.call.json,
             card,
             stream,
-            ready_within: crate::cli::Run::default().ready_within,
+            ready_within: Run::default().ready_within,
             fingerprint,
             command,
             // SAFETY: isatty only reads the descriptor's state.
