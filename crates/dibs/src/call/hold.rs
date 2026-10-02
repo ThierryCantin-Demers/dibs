@@ -2,11 +2,14 @@
 //! here with the terminal; the command is stopped if the lock goes first.
 
 use crate::{
-    cli::Command,
+    cli::{Command, Service},
     machine::{Interrupt, Message, Reach, Started, exit_code},
 };
+use dibs_format::Exit;
 use std::{
-    io::{BufRead as _, BufReader, Write as _},
+    fmt,
+    io::{BufRead as _, BufReader, ErrorKind, Write as _},
+    net::{TcpStream, ToSocketAddrs as _},
     os::{
         fd::{AsRawFd as _, FromRawFd as _, OwnedFd},
         unix::process::CommandExt as _,
@@ -17,7 +20,13 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
+    time::{Duration, Instant},
 };
+
+/// How long a connection to a ready service may take, its name's lookup included.
+const REACH_WITHIN: Duration = Duration::from_secs(3);
+/// How long a name may take to resolve before a connection that timed out is put down to it.
+const RESOLVE_WITHIN: Duration = Duration::from_secs(2);
 
 /// The line the machine prints once the lock is held, with each picked port after it.
 const HOLDING: &str = "DIBS-HOLDING";
@@ -33,6 +42,8 @@ pub struct Hold<'a> {
     pub lock_at: String,
     /// Where the command reaches the machine's services.
     pub reach: Reach,
+    /// The services the machine runs for the call, which the command here has to reach.
+    pub services: &'a [Service],
 }
 
 #[derive(Default)]
@@ -82,6 +93,16 @@ impl Hold<'_> {
             return Ok(holder_exit(holder.join()));
         };
 
+        if let Some(unreached) = self.unreached(&ports) {
+            eprintln!("{unreached}");
+            return Ok(self.release(
+                i32::from(Exit::ServiceFailed.code()),
+                &shared,
+                channel,
+                &lines,
+                holder,
+            ));
+        }
         eprintln!(
             "dibs: holding the {} lock on {}, running here: {}",
             self.lock,
@@ -106,6 +127,19 @@ impl Hold<'_> {
             }
         };
         drop(interrupt);
+        Ok(self.release(status, &shared, channel, &lines, holder))
+    }
+
+    /// Releases the lock with the command's status, passes on what the machine says after it,
+    /// and gives the holder's exit.
+    fn release(
+        &self,
+        status: i32,
+        shared: &Mutex<Shared>,
+        channel: mpsc::Sender<Message>,
+        lines: &mpsc::Receiver<Event>,
+        holder: std::thread::JoinHandle<std::io::Result<ExitStatus>>,
+    ) -> i32 {
         shared
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -121,7 +155,55 @@ impl Hold<'_> {
                 Event::Closed => break,
             }
         }
-        Ok(holder_exit(holder.join()))
+        holder_exit(holder.join())
+    }
+
+    /// The first `--ready tcp:` service this computer cannot connect to, which the command here
+    /// would fail at: ready on the machine, but behind its firewall or on its loopback only.
+    fn unreached(&self, ports: &str) -> Option<Unreached> {
+        let picked: Vec<(&str, &str)> = ports
+            .split_whitespace()
+            .filter_map(|p| p.split_once('='))
+            .collect();
+        let mut host = None;
+        for service in self.services {
+            let Some(ready) = service
+                .ready
+                .as_deref()
+                .and_then(|r| r.strip_prefix("tcp:"))
+            else {
+                continue;
+            };
+            let named = ready.rsplit(':').next().unwrap_or_default();
+            let port = picked
+                .iter()
+                .find(|(name, _)| *name == named)
+                .map_or(named, |(_, port)| port);
+            let Ok(port) = port.parse::<u16>() else {
+                continue;
+            };
+            let host: &String = host.get_or_insert_with(|| {
+                let address = self.reach.address();
+                match address.split_once('@') {
+                    Some((_, host)) => host.to_string(),
+                    None => address,
+                }
+            });
+            let cause = match Attempt::connect(host, port) {
+                Attempt::Refused => Cause::Refused,
+                Attempt::NoRoute => Cause::Rejected,
+                Attempt::TimedOut if Attempt::resolves(host) => Cause::Dropped,
+                Attempt::Connected | Attempt::TimedOut | Attempt::Failed => continue,
+            };
+            return Some(Unreached {
+                service: service.name.0.clone(),
+                at: self.at.clone(),
+                host: host.clone(),
+                port,
+                cause,
+            });
+        }
+        None
     }
 
     /// The guard that runs the command, with the machine's ports and the hold it runs inside in
@@ -153,6 +235,105 @@ impl Hold<'_> {
             command.env("PATH", path).env_remove("DIBS_CALLER_PATH");
         }
         Ok(command)
+    }
+}
+
+/// How a connection from here to a ready service went.
+enum Attempt {
+    Connected,
+    Refused,
+    NoRoute,
+    TimedOut,
+    /// Anything else, which says nothing about the machine's firewall.
+    Failed,
+}
+
+impl Attempt {
+    /// One connection, its name's lookup included, within `REACH_WITHIN`.
+    fn connect(host: &str, port: u16) -> Attempt {
+        let (tell, heard) = mpsc::channel();
+        let host = host.to_string();
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + REACH_WITHIN;
+            let Ok(addresses) = (host.as_str(), port).to_socket_addrs() else {
+                let _ = tell.send(Attempt::Failed);
+                return;
+            };
+            let mut last = Attempt::Failed;
+            for address in addresses {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                last = match TcpStream::connect_timeout(&address, left) {
+                    Ok(_) => Attempt::Connected,
+                    Err(e) => match e.kind() {
+                        ErrorKind::ConnectionRefused => Attempt::Refused,
+                        ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable => {
+                            Attempt::NoRoute
+                        }
+                        ErrorKind::TimedOut => Attempt::TimedOut,
+                        _ => Attempt::Failed,
+                    },
+                };
+                if matches!(last, Attempt::Connected) {
+                    break;
+                }
+            }
+            let _ = tell.send(last);
+        });
+        heard
+            .recv_timeout(REACH_WITHIN)
+            .unwrap_or(Attempt::TimedOut)
+    }
+
+    /// Whether the name resolves quickly, without which a timeout may be a slow lookup and says
+    /// nothing about the port.
+    fn resolves(host: &str) -> bool {
+        let (tell, heard) = mpsc::channel();
+        let host = host.to_string();
+        std::thread::spawn(move || {
+            let _ = tell.send((host.as_str(), 0).to_socket_addrs().is_ok());
+        });
+        heard.recv_timeout(RESOLVE_WITHIN).unwrap_or(false)
+    }
+}
+
+/// What a connection that failed most likely ran into.
+enum Cause {
+    /// Nothing listens there from outside: a loopback-only server, or a reset.
+    Refused,
+    Rejected,
+    Dropped,
+}
+
+/// A ready service this computer cannot connect to.
+struct Unreached {
+    service: String,
+    at: String,
+    host: String,
+    port: u16,
+    cause: Cause,
+}
+
+impl fmt::Display for Unreached {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Unreached {
+            service,
+            at,
+            host,
+            port,
+            cause,
+        } = self;
+        let why = match cause {
+            Cause::Refused => "nothing answers there from outside the machine: the server listens on its loopback only, or a firewall resets the connection".to_string(),
+            Cause::Rejected => format!("a firewall on {at} most likely rejects it"),
+            Cause::Dropped => format!("a firewall on {at} most likely drops it"),
+        };
+        write!(
+            f,
+            "dibs: {service} is ready on {at}, but this computer cannot connect to {host}:{port}, so the command was not run: {why}. dibs with --there runs the command on the machine instead."
+        )
     }
 }
 

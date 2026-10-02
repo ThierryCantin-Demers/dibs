@@ -180,6 +180,7 @@ impl<'a> LockedCall<'a> {
                 at: session.at(&target, &here),
                 lock_at: session.lock_at.clone(),
                 reach: session.reach(&target, &here),
+                services: self.services,
             }
             .run(session.hold(&values, &half, live)?)?,
             (false, Output::Inherit) => exit_code(session.run(&values, &half, live)?),
