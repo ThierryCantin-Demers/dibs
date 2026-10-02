@@ -43,7 +43,7 @@ if command -v cargo >/dev/null 2>&1; then
     # current one.
     CORE=${PREFIX:-$HOME/.local}/libexec/dibs
     DIBS_CORE_COMMIT=$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown) \
-        cargo install --quiet --locked --path "$HERE/crates/dibs-core" --root "$CORE" --force
+        cargo install --quiet --locked --path "$HERE/crates/dibs" --root "$CORE" --force
     echo "installed the recipe layer $(git -C "$HERE" rev-parse --short HEAD 2>/dev/null) in $CORE/bin"
     cargo install --quiet --locked --path "$HERE/crates/dibstop" --root "${PREFIX:-$HOME/.local}" --force
     echo "installed dibstop in $BIN"
@@ -53,7 +53,7 @@ if command -v cargo >/dev/null 2>&1; then
     fi
 else
     echo "no cargo, so the recipe layer and dibstop were not built. Install Rust and run this again, or ask" >&2
-    echo "whoever owns the machine for a prebuilt dibs-core to drop in ${PREFIX:-$HOME/.local}/libexec/dibs/bin." >&2
+    echo "whoever owns the machine for a prebuilt dibs to drop in ${PREFIX:-$HOME/.local}/libexec/dibs/bin." >&2
 fi
 
 case ":$PATH:" in

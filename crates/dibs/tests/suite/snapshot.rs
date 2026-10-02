@@ -1,6 +1,6 @@
 //! Outputs pinned word for word; `UPDATE_SNAPSHOTS=<name>,<name>` or `=all` accepts a change.
 
-use crate::harness::{CORE, DIBS, Output, Sandbox, hostname, repo_root};
+use crate::harness::{DIBS, Output, Sandbox, hostname, repo_root};
 use regex::Regex;
 use std::fmt::Write as _;
 use std::fs;
@@ -112,12 +112,10 @@ impl Normal {
     /// Only what places the text on this computer: paths, its name and its user.
     pub fn paths(s: &Sandbox) -> Normal {
         let mut n = Normal { rules: Vec::new() };
-        for (path, name) in [(DIBS, "<dibs>"), (CORE, "<dibs-core>")] {
-            if let Ok(real) = Path::new(path).canonicalize() {
-                n = n.literal(&real.display().to_string(), name);
-            }
-            n = n.literal(path, name);
+        if let Ok(real) = Path::new(DIBS).canonicalize() {
+            n = n.literal(&real.display().to_string(), "<dibs>");
         }
+        n = n.literal(DIBS, "<dibs>");
         if let Ok(real) = s.root.canonicalize()
             && real != s.root
         {

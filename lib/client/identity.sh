@@ -46,8 +46,8 @@ agent_name() {
 # one command anyone types.
 dibs_core() {
     local c
-    for c in "${DIBS_CORE:-}" "$(dirname "$0")/../libexec/dibs/bin/dibs-core" \
-             "$HOME/.local/libexec/dibs/bin/dibs-core"; do
+    for c in "${DIBS_CORE:-}" "$(dirname "$0")/../libexec/dibs/bin/dibs" \
+             "$HOME/.local/libexec/dibs/bin/dibs"; do
         [ -n "$c" ] && [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
     done
     return 1

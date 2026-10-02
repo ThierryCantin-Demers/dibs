@@ -4,7 +4,7 @@
 //! it should have, so a machine set up by hand drifted from the others unseen until a job failed
 //! on it.
 
-use dibs_core::paths::Paths;
+use dibs::paths::Paths;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},

@@ -5,7 +5,7 @@
 //! session, and the one report anybody wrote down lived in a scratchpad and went with it.
 
 use crate::runs;
-use dibs_core::paths::Paths;
+use dibs::paths::Paths;
 pub use dibs_format::FrictionNote as Note;
 use std::{
     collections::BTreeMap,

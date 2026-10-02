@@ -1,10 +1,5 @@
 use crate::harness::*;
 
-fn fake_core(s: &Sandbox) -> String {
-    s.write_exec("fakecore", "#!/bin/sh\necho \"core $*\"\n");
-    s.p("fakecore")
-}
-
 #[test]
 fn run_status_and_out_are_words_as_well_as_flags() {
     let s = Sandbox::new();
@@ -49,30 +44,11 @@ fn run_status_and_out_are_words_as_well_as_flags() {
 }
 
 #[test]
-fn a_recipe_verb_goes_to_the_recipe_layer_with_its_arguments_intact() {
+fn only_on_comes_before_a_recipe_verb() {
     let s = Sandbox::new();
-    let core = fake_core(&s);
-    let via = |args: &[&str]| s.dibs(args).env("DIBS_CORE", &core).run();
     assert_eq!(
-        via(&["bench", "cubek@local", "gemm", "--dry-run"]).stdout,
-        "core bench cubek@local gemm --dry-run\n"
-    );
-    assert_eq!(
-        via(&["list", "cubek"]).stdout,
-        "core list cubek\n",
-        "and list too"
-    );
-    assert_eq!(
-        via(&["--label", "x", "list", "cubek"]).code,
+        s.dibs(["--label", "x", "list", "cubek"]).code(),
         2,
         "a flag other than --on before a recipe verb is refused"
-    );
-    assert_eq!(
-        s.dibs(["list", "cubek"])
-            .env("DIBS_CORE", "")
-            .env("HOME", s.p("nohome"))
-            .code(),
-        2,
-        "a missing recipe layer is refused"
     );
 }

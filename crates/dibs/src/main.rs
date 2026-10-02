@@ -1,15 +1,4 @@
-//! The agent-facing half of dibs: verbs, recipes, labels and provenance, over a resource layer
-//! whose only job is to hand back a machine with the right things held.
-//!
-//! It runs here rather than on the target, which is why it can be a program rather than a
-//! shell script. The half that ships over ssh stays bash on purpose: installing nothing on a
-//! machine is what makes adding one cheap.
-//!
-//! The verbs exist because an interface taking one arbitrary string invites the four problems
-//! measured in the log it replaces. Labels were unstable, so estimates could not work. Two
-//! jobs in 179 redirected their output, so watching one almost never worked. Agents chose
-//! their own scratch paths, and one filled a shared quota. And the rule to build under the
-//! shared lock was prose, so 17% of all exclusive time was spent compiling.
+//! The `dibs` command: one grammar, then the recipe layer, a friction report, or a call.
 
 mod artifacts;
 mod batch;
@@ -24,13 +13,16 @@ mod resource;
 mod runs;
 mod worktree;
 
-use dibs_core::{
-    cli::{Help, Invocation, RecipeCall, RecipeVerb, ShellWord, Sweep},
+use dibs::{
+    caller::Caller,
+    cli::{Friction, Help, Invocation, RecipeCall, RecipeVerb, ShellWord, Sweep},
+    delegate::BashClient,
     inventory::Inventory,
     paths::Paths,
+    update::{self, ChangeNotice},
 };
 use dibs_format::{
-    Alias, ArmRecord, BatchId, Exit, JobId, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
+    Alias, ArmRecord, BatchId, JobId, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
     RunVerb, StepRecord,
 };
 use recipe::{Lock, Manifest, Verb};
@@ -44,12 +36,72 @@ use std::{
 };
 
 fn main() -> ExitCode {
-    match run() {
+    let words: Vec<String> = std::env::args().skip(1).collect();
+    match dispatch(&words) {
         Ok(code) => code,
         Err(e) => {
             eprintln!("dibs: {}", e.message);
             ExitCode::from(e.code)
         }
+    }
+}
+
+fn dispatch(words: &[String]) -> Result<ExitCode, Failure> {
+    // What the bash client asks of this binary, outside the grammar.
+    match words {
+        [verb, flag] if verb == "friction" && flag == "--replies" => return friction_replies(),
+        [flag] if flag == "--version" => return Ok(version()),
+        _ => {}
+    }
+    let invocation = match Invocation::parse(words) {
+        Ok(invocation) => invocation,
+        Err(e) => {
+            eprintln!("{e}");
+            if e.with_help {
+                print!("{}", Help::text());
+            }
+            return Ok(ExitCode::from(e.exit()));
+        }
+    };
+    match invocation {
+        Invocation::Help => {
+            print!("{}", Help::text());
+            Ok(ExitCode::SUCCESS)
+        }
+        Invocation::RecipeHelp => {
+            print!("{}", Help::RECIPES);
+            Ok(ExitCode::SUCCESS)
+        }
+        Invocation::Version => Ok(version()),
+        Invocation::Friction(friction) => friction_verb(friction),
+        Invocation::Recipe(call) => {
+            let caller = Caller::from_env();
+            change_notice(&caller);
+            if call.verb == RecipeVerb::Batch {
+                // SAFETY: nothing has started a thread yet.
+                unsafe { std::env::set_var("DIBS_BATCH_OWNER", &caller.id) };
+            }
+            run(call)
+        }
+        Invocation::Call(_) => {
+            Err(format!("could not run the bash client: {}", BashClient::exec(words)).into())
+        }
+    }
+}
+
+/// Stamped by install.sh, so a binary that has drifted from the source can be told apart.
+fn version() -> ExitCode {
+    println!(
+        "dibs {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        option_env!("DIBS_CORE_COMMIT").unwrap_or("commit unknown")
+    );
+    ExitCode::SUCCESS
+}
+
+fn change_notice(caller: &Caller) {
+    if let Some(seen) = Paths::from_env().seen() {
+        ChangeNotice { seen }.tell(caller);
     }
 }
 
@@ -140,40 +192,7 @@ fn repo_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn run() -> Result<ExitCode, Failure> {
-    let words: Vec<String> = std::env::args().skip(1).collect();
-    if words.first().map(String::as_str) == Some("friction") {
-        return friction_verb(&words[1..]);
-    }
-    if words.is_empty() {
-        print!("{}", Help::RECIPES);
-        return Ok(ExitCode::from(Exit::Refused));
-    }
-    let args = match Invocation::parse(&words) {
-        Ok(Invocation::Recipe(call)) => call,
-        Ok(Invocation::RecipeHelp) => {
-            print!("{}", Help::RECIPES);
-            return Ok(ExitCode::SUCCESS);
-        }
-        // Stamped by install.sh, so a binary that has drifted from the source can be told
-        // apart from one that is current.
-        Ok(Invocation::Version) => {
-            println!(
-                "dibs-core {} ({})",
-                env!("CARGO_PKG_VERSION"),
-                option_env!("DIBS_CORE_COMMIT").unwrap_or("commit unknown")
-            );
-            return Ok(ExitCode::SUCCESS);
-        }
-        Ok(_) => {
-            print!("{}", Help::RECIPES);
-            return Ok(ExitCode::from(Exit::Refused));
-        }
-        Err(e) => {
-            eprintln!("{e}");
-            return Ok(ExitCode::from(Exit::Refused));
-        }
-    };
+fn run(args: RecipeCall) -> Result<ExitCode, Failure> {
     if args.there && args.verb != RecipeVerb::With {
         return Err(
             "--there belongs to with: it runs the command on the machine beside the repo's servers"
@@ -1574,53 +1593,30 @@ fn refused_before_building(
 
 /// The text arrives in the environment rather than as an argument: a report about a flag starts
 /// with the flag, and parsing that as one is how the complaint becomes the complaint.
-fn friction_verb(words: &[String]) -> Result<ExitCode, Failure> {
-    let env = |k: &str| std::env::var(k).unwrap_or_default();
+fn friction_verb(friction: Friction) -> Result<ExitCode, Failure> {
     let reports_repo =
         || reports::repo().ok_or("DIBS_REPORTS names no <owner>/<repo> to take reports from");
-    let words: Vec<&str> = words.iter().map(String::as_str).collect();
-    match words.as_slice() {
-        ["--wait"] => {
+    match friction {
+        Friction::Wait => {
             for news in reports::wait(&reports_repo()?)? {
                 println!("{news}");
             }
         }
-        ["--reply", issue, rest @ ..] => {
-            let n: u64 = issue
-                .trim_start_matches('#')
-                .parse()
-                .map_err(|_| format!("--reply needs an issue number, not {issue}"))?;
-            let close = match rest {
-                [] => false,
-                ["--close"] => true,
-                _ => return Err("--reply <issue> '<answer>' takes only --close after it".into()),
-            };
-            let text = env("DIBS_FRICTION_TEXT");
-            if text.trim().is_empty() {
-                return Err("--reply needs the answer to post".into());
-            }
-            println!("{}", reports::reply(&reports_repo()?, n, &text, close)?);
-        }
-        ["--replies"] => {
-            if let Some(repo) = reports::repo() {
-                for r in reports::replies(
-                    &repo,
-                    &friction::load(&friction::path()?),
-                    &env("DIBS_FRICTION_BY"),
-                )? {
-                    eprintln!("{r}");
-                }
-            }
-        }
-        _ => {
-            let said = match env("DIBS_FRICTION_TEXT") {
-                t if !t.trim().is_empty() => t,
-                _ => words.join(" "),
-            };
+        Friction::Reply {
+            issue,
+            answer,
+            close,
+        } => println!(
+            "{}",
+            reports::reply(&reports_repo()?, issue, &answer, close)?
+        ),
+        Friction::Note { text } => {
+            let caller = Caller::from_env();
+            change_notice(&caller);
             let mut note = friction::note(
-                &said,
-                &env("DIBS_FRICTION_BY"),
-                &env("DIBS_FRICTION_AT"),
+                &text,
+                &caller.name,
+                &update::version().unwrap_or_default(),
                 now_secs(),
             )?;
             let filed = reports::repo().map(|repo| (reports::file(&repo, &note), repo));
@@ -1637,6 +1633,17 @@ fn friction_verb(words: &[String]) -> Result<ExitCode, Failure> {
                 ),
                 Some((Err(e), repo)) => println!("Recorded here, but not filed in {repo}: {e}"),
             }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Answers to the reports `DIBS_FRICTION_BY` filed, on stderr.
+fn friction_replies() -> Result<ExitCode, Failure> {
+    if let Some(repo) = reports::repo() {
+        let by = std::env::var("DIBS_FRICTION_BY").unwrap_or_default();
+        for r in reports::replies(&repo, &friction::load(&friction::path()?), &by)? {
+            eprintln!("{r}");
         }
     }
     Ok(ExitCode::SUCCESS)

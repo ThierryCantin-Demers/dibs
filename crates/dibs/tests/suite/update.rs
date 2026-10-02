@@ -11,7 +11,7 @@ fn clones(s: &Sandbox) -> Clones {
     fs::create_dir_all(s.path("update/bin")).unwrap();
     s.git(".", &["init", "-q", "-b", "main", "update/origin"]);
     fs::create_dir_all(s.path("update/origin/bin")).unwrap();
-    fs::copy(DIBS, s.path("update/origin/bin/dibs")).unwrap();
+    fs::copy(BASH_DIBS, s.path("update/origin/bin/dibs")).unwrap();
     s.command(
         "cp",
         [
@@ -122,7 +122,7 @@ fn a_copy_outside_a_clone_is_refused_but_still_runs() {
     s.machines("[machine.m]\nssh = \"m\"\nhostname = \"m\"\n");
     fs::create_dir_all(s.path("loose/bin")).unwrap();
     fs::create_dir_all(s.path("loose/libexec/dibs")).unwrap();
-    fs::copy(DIBS, s.path("loose/bin/dibs")).unwrap();
+    fs::copy(BASH_DIBS, s.path("loose/bin/dibs")).unwrap();
     s.command(
         "cp",
         [

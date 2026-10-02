@@ -6,7 +6,7 @@ kill_batch() {   # id
     local id=$1 dir pid owner m tmp status=1
     dir=${XDG_STATE_HOME:-$HOME/.local/state}/dibs/batch/$id
     pid=${id##*-}
-    if [ -d "$dir" ] && ps -o command= -p "$pid" 2>/dev/null | grep -q 'dibs-core batch '; then
+    if [ -d "$dir" ] && ps -o command= -p "$pid" 2>/dev/null | grep -q 'dibs batch '; then
         owner=$(cat "$dir/owner" 2>/dev/null)
         if [ -n "$owner" ] && [ "$owner" != "$(agent_id)" ] && [ "$ANYONE" != 1 ]; then
             echo "dibs: batch $id was started by another session. If it should stop:  dibs --kill $id --anyone" >&2

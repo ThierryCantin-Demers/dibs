@@ -5,11 +5,11 @@ exit  call
 2     dibs --prefer
 2     dibs --repo
 2     dibs --gc --days
-I1    dibs --wait
-I1    dibs --max
-I1    dibs --label
-I1    dibs --device
-I1    dibs --with s=true --ready
+2     dibs --wait
+2     dibs --max
+2     dibs --label
+2     dibs --device
+2     dibs --with s=true --ready
 2     dibs --with ./serve true
 2     dibs --with a-b=true true
 2     dibs --with s=true --with s=false true
@@ -90,19 +90,24 @@ I1    dibs --with s=true --ready
 2| dibs: --days needs a value.
 
 == dibs --wait
--> known I1: today it hangs or exits 1
+-> exit 2
+2| dibs: --wait needs a value.
 
 == dibs --max
--> known I1: today it hangs or exits 1
+-> exit 2
+2| dibs: --max needs a value.
 
 == dibs --label
--> known I1: today it hangs or exits 1
+-> exit 2
+2| dibs: --label needs a value.
 
 == dibs --device
--> known I1: today it hangs or exits 1
+-> exit 2
+2| dibs: --device needs a value.
 
 == dibs --with s=true --ready
--> known I1: today it hangs or exits 1
+-> exit 2
+2| dibs: --ready needs a value.
 
 == dibs --with ./serve true
 -> exit 2

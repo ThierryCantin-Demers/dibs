@@ -8,7 +8,7 @@
 //! procedure to a moment and make it progressively harder to rerun, which is the opposite of
 //! what putting it in the repo was for. The revisions belong to the run record.
 
-use dibs_core::paths::Paths;
+use dibs::paths::Paths;
 pub use dibs_format::Lock;
 use dibs_format::RunVerb;
 use serde::Deserialize;

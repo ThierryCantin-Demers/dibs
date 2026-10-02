@@ -9,7 +9,7 @@
 //! on the machine under the shared lock, because it is a fetch and a checkout: work that
 //! tolerates neighbours perfectly and must never hold the exclusive lock.
 
-use dibs_core::paths::Paths;
+use dibs::paths::Paths;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 

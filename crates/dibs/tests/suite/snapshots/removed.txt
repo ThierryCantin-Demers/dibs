@@ -1,12 +1,5 @@
 == dibs --on box-a --abi
--> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    MODE: abi
-    TTY: 0
+-> exit 2
 
 == DIBS_REMOTE_DIR=/dev/shm dibs --on box-a --label step true
 -> exit 0
@@ -81,15 +74,17 @@ exit  call
 
 == dibs --job
 -> exit 2
-2| dibs: --job needs a value.
+2| dibs: --job is gone: the detach queue was removed.
 
 == dibs --cancel
 -> exit 2
-2| dibs: --cancel needs a value.
+2| dibs: --cancel is gone: the detach queue was removed.
 
 == DIBS_CORE='' HOME=/nonexistent dibs list app
 -> exit 2
-2| dibs: list needs the recipe layer, which is not installed. Run install.sh from the clone.
+2| dibs: no repo at 'app' and none at ./app.
+2|   A bare name is looked up under DIBS_ROOT, then --root, then the `root` key of
+2|   ~/.config/dibs/machines.toml, then the current directory. Give a path, or set one of those.
 
 == dibs --rsh
 -> exit 2
@@ -101,28 +96,20 @@ exit  call
 
 == DIBS_QUEUE='' dibs --job 12345
 -> exit 2
-2| dibs: 12345 is a pid, not a job id from --jobs.
-2|   A holder is not a detached job. dibs --status shows it.
+2| dibs: --job is gone: the detach queue was removed.
 
 == DIBS_QUEUE='' dibs --cancel 12345
 -> exit 2
-2| dibs: 12345 is a pid, not a job id from --jobs.
-2|   A holder is not a detached job. Stop it with:  dibs --kill 12345
+2| dibs: --cancel is gone: the detach queue was removed.
 
 == DIBS_QUEUE='' dibs --detach true
 -> exit 2
-2| dibs: no DIBS_QUEUE, so there is nowhere for the job to outlive this session.
-2|   Set it to the machine that stays up:  DIBS_QUEUE=dibs@<box>
-2|   Or name one for this job:  dibs --detach --on <machine> <command>
+2| dibs: --detach is gone: the detach queue was removed.
 
 == DIBS_QUEUE=box@elsewhere dibs --bench --detach true
 -> exit 2
-2| dibs: --detach starts a caller elsewhere. It does not take the lock itself.
-2|   Alone with it, the measurement would run beside everything else there.
-2|   Put the run inside it, where the lock and the series both still apply:
-2|     dibs --detach 'dibs --bench <command>'
+2| dibs: --detach is gone: the detach queue was removed.
 
 == DIBS_QUEUE=box@elsewhere dibs --detach --wait 5 true
 -> exit 2
-2| dibs: --wait describes a run, and --detach starts a caller.
-2|   Give it to the dibs call inside:  dibs --detach 'dibs --wait ... <command>'
+2| dibs: --detach is gone: the detach queue was removed.

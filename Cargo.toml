@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/dibs-core", "crates/dibs-format", "crates/dibstop", "crates/dibs-machines"]
+members = ["crates/dibs", "crates/dibs-format", "crates/dibstop", "crates/dibs-machines"]
 # The window builds a GUI toolkit, which most installs never ask for and every test run would.
-default-members = ["crates/dibs-core", "crates/dibs-format", "crates/dibstop"]
+default-members = ["crates/dibs", "crates/dibs-format", "crates/dibstop"]
 
 [workspace.package]
 version = "0.1.0"

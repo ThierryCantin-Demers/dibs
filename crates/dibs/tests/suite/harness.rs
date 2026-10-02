@@ -15,8 +15,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub const DIBS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../bin/dibs");
-pub const CORE: &str = env!("CARGO_BIN_EXE_dibs-core");
+pub const DIBS: &str = env!("CARGO_BIN_EXE_dibs");
+/// The bash client, which the binary hands every mode it does not answer itself.
+pub const BASH_DIBS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../bin/dibs");
 
 const CALL_LIMIT: Duration = Duration::from_secs(120);
 const WAIT_LIMIT: Duration = Duration::from_secs(30);
@@ -118,7 +119,6 @@ impl Sandbox {
             ("DIBS_SERIES", at("series")),
             ("DIBS_SEEN", at("seen")),
             ("DIBS_SCRATCH", at("scratch")),
-            ("DIBS_CORE", CORE.into()),
             ("CLAUDE_CODE_HOST_SESSION_ID", "local_suite".into()),
         ] {
             env.insert(k.to_string(), v);

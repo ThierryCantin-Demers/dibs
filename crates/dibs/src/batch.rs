@@ -6,7 +6,7 @@
 //! agent would have made; if the driver dies its steps die with it and their locks release,
 //! which is the lifetime a single job already has. The design is `dibs-design/batch.md`.
 
-use dibs_core::paths::Paths;
+use dibs::paths::Paths;
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Write},

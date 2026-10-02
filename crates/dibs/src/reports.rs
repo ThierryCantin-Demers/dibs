@@ -2,7 +2,7 @@
 //! shares, with the answers brought back to the session that reported it.
 
 use crate::friction::Note;
-use dibs_core::paths::{Paths, ReportsStamp};
+use dibs::paths::{Paths, ReportsStamp};
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
