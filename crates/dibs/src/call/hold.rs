@@ -211,6 +211,7 @@ impl Guard {
             }
             [] => std::process::Command::new("true"),
         };
+        let interrupt = Interrupt::defer();
         let mut running = match command.spawn() {
             Ok(running) => running,
             Err(e) => {
@@ -230,7 +231,6 @@ impl Guard {
                 stop_early(&at, pid);
             }
         });
-        let interrupt = Interrupt::defer();
         let status = running.wait().map(exit_code).unwrap_or(1);
         drop(interrupt);
         done.store(true, Ordering::SeqCst);

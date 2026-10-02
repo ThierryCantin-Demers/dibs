@@ -186,9 +186,9 @@ impl Session {
 
     /// Runs a call whose command runs on the machine, and returns its exit.
     pub fn run(&self, values: &CallValues, half: &str, live: Liveness) -> io::Result<ExitStatus> {
+        let deferred = Interrupt::defer();
         let started = self.start(values, half, live, false)?;
         let mut child = started.child;
-        let deferred = Interrupt::defer();
         let status = child.wait();
         drop(deferred);
         drop(started.channel);
