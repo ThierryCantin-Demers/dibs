@@ -13,7 +13,11 @@ fn a_malformed_sync_is_refused_before_anything_is_reached_for() {
         2,
         "and it wants two paths"
     );
-    assert_eq!(s.dibs(["--rsh"]).code(), 2, "--rsh is not for hands");
+    assert_eq!(
+        s.dibs(["__rsh"]).code(),
+        2,
+        "rsync's transport is not for hands"
+    );
     // Everything after --sync is rsync's, so a dibs flag there would reach rsync as a path.
     assert_eq!(
         s.dibs(["--sync", "--on", "x", "./a", ":~/b"]).code(),

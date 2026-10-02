@@ -3,7 +3,8 @@ use crate::{
         base::{CallError, LockedCall},
         kill::Kill,
         machine::{Asked, MachineCall},
-        sync::{Rsh, Sync},
+        origin::Origin,
+        sync::Sync,
     },
     caller::Caller,
     cli::{Call, Mode as Words},
@@ -77,7 +78,9 @@ impl Dispatch<'_> {
             }),
             Words::Check { host } => machine.check(host.as_deref()),
             Words::Out(target) => machine.out(target.as_ref()),
-            Words::Fetch { job, into } => machine.fetch(job, into.as_deref()),
+            Words::Fetch { job, into } => {
+                machine.fetch(job, into.as_deref(), &mut std::io::stdout())
+            }
             Words::Kill {
                 target,
                 force,
@@ -91,11 +94,8 @@ impl Dispatch<'_> {
             Words::Sync(args) => Sync {
                 machine: &machine,
                 args,
-            }
-            .answer(),
-            Words::Rsh { command, .. } => Rsh {
-                machine: &machine,
-                command,
+                before: "",
+                origin: Origin::Words,
             }
             .answer(),
             Words::Machines => {

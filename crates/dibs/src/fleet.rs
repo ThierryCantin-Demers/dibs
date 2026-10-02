@@ -4,7 +4,14 @@
 //! it should have, so a machine set up by hand drifted from the others unseen until a job failed
 //! on it.
 
-use dibs::paths::Paths;
+use dibs::{
+    call::{LockedCall, Origin, Output, RecipeJob},
+    caller::Caller,
+    cli::{Call, Command as ShellCommand, Mode, Run},
+    machine::Stream,
+    paths::Paths,
+};
+use dibs_format::{Exit, Label, MachineName};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -50,9 +57,8 @@ p disk "free_kb=$(df -Pk "$HOME" | awk 'NR==2{print $4}')"
 const PRIVILEGED_GROUPS: [&str; 4] = ["sudo", "admin", "wheel", "docker"];
 const BASH_NEEDED: (u32, u32) = (5, 1);
 /// Long enough to go around a quick shared job, short enough not to sit out a benchmark.
-const PROBE_WAIT_SECONDS: &str = "30";
-const EXIT_BUSY: i32 = 75;
-const EXIT_UNREACHABLE: i32 = 69;
+const PROBE_WAIT_SECONDS: u64 = 30;
+const PROBE_LABEL: &str = "machines-probe";
 const SSH_UNREACHABLE: i32 = 255;
 
 #[derive(Deserialize)]
@@ -578,47 +584,104 @@ fn pin(checkout: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
-fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> (Via, Result<Observed, String>) {
-    let (via, out) = match (pool.contains(name), &m.ssh) {
-        (true, _) => {
-            let out = Command::new("dibs")
-                .args(["--on", name, "--wait", PROBE_WAIT_SECONDS, "--label", "machines-probe", PROBE])
-                .env("DIBS_FROM_RUN", "1")
-                .stdin(Stdio::null())
-                .output();
-            (Via::Dibs, out)
-        }
+/// How a machine was probed, and what it said or why it said nothing.
+struct Probed {
+    via: Via,
+    observed: Result<Observed, String>,
+}
+
+/// What a probe printed, and its exit.
+struct Heard {
+    status: Option<i32>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> Probed {
+    let (via, heard) = match (pool.contains(name), &m.ssh) {
+        (true, _) => (Via::Dibs, Ok(over_dibs(name))),
         (false, Some(target)) => (Via::Ssh, over_ssh(target)),
         (false, None) => {
-            return (Via::Ssh, Err("not in the pool, and no ssh to reach it by: give it one, or record it with dibs --check".into()))
+            return Probed {
+                via: Via::Ssh,
+                observed: Err("not in the pool, and no ssh to reach it by: give it one, or record it with dibs --check".into()),
+            };
         }
     };
-    let out = match out {
-        Ok(o) => o,
-        Err(e) => return (via, Err(e.to_string())),
+    let heard = match heard {
+        Ok(heard) => heard,
+        Err(e) => {
+            return Probed {
+                via,
+                observed: Err(e.to_string()),
+            };
+        }
     };
     let said = || {
-        String::from_utf8_lossy(&out.stderr)
+        String::from_utf8_lossy(&heard.stderr)
             .lines()
             .rfind(|l| !l.trim().is_empty())
             .unwrap_or_default()
             .trim()
             .to_string()
     };
-    let observed = match out.status.code() {
-        Some(0) => Ok(Observed::parse(&String::from_utf8_lossy(&out.stdout))),
-        Some(EXIT_BUSY) => Err("busy: a benchmark holds it, so it was not probed".into()),
-        Some(EXIT_UNREACHABLE) | Some(SSH_UNREACHABLE) => Err(format!("unreachable: {}", said())),
+    let busy = i32::from(Exit::Busy.code());
+    let unreachable = i32::from(Exit::Unreachable.code());
+    let observed = match heard.status {
+        Some(0) => Ok(Observed::parse(&String::from_utf8_lossy(&heard.stdout))),
+        Some(code) if code == busy => {
+            Err("busy: a benchmark holds it, so it was not probed".into())
+        }
+        Some(code) if code == unreachable || code == SSH_UNREACHABLE => {
+            Err(format!("unreachable: {}", said()))
+        }
         code => Err(format!(
             "the probe failed (exit {}): {}",
             code.unwrap_or(-1),
             said()
         )),
     };
-    (via, observed)
+    Probed { via, observed }
 }
 
-fn over_ssh(target: &str) -> std::io::Result<std::process::Output> {
+/// The probe as a shared job on a machine in the pool, under its lock.
+fn over_dibs(name: &str) -> Heard {
+    let run = Run {
+        command: ShellCommand(vec![PROBE.to_string()]),
+        ..Run::default()
+    };
+    let call = Call {
+        mode: Mode::Run(run.clone()),
+        on: Some(MachineName::new(name)),
+        wait: Some(PROBE_WAIT_SECONDS),
+        label: Some(Label::new(PROBE_LABEL)),
+        stream: true,
+        ..Call::default()
+    };
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let job = RecipeJob::default();
+    let exit = LockedCall::run_of(&run)
+        .made_by(Origin::Recipe(&job))
+        .run_into(
+            &call,
+            &Caller::from_env(),
+            &mut Output::Lines(&mut |stream, line| match stream {
+                Stream::Out => stdout.extend_from_slice(line),
+                Stream::Err => stderr.extend_from_slice(line),
+            }),
+        );
+    let status = exit.unwrap_or_else(|e| {
+        stderr.extend_from_slice(e.to_string().as_bytes());
+        e.exit()
+    });
+    Heard {
+        status: Some(status),
+        stdout,
+        stderr,
+    }
+}
+
+fn over_ssh(target: &str) -> std::io::Result<Heard> {
     let mut child = Command::new("ssh")
         .args([
             "-o",
@@ -637,7 +700,12 @@ fn over_ssh(target: &str) -> std::io::Result<std::process::Output> {
         .take()
         .expect("piped")
         .write_all(PROBE.as_bytes())?;
-    child.wait_with_output()
+    let out = child.wait_with_output()?;
+    Ok(Heard {
+        status: out.status.code(),
+        stdout: out.stdout,
+        stderr: out.stderr,
+    })
 }
 
 /// From here: the name resolves, and something answers on the ssh port.
@@ -672,7 +740,7 @@ fn reach_all(paths: &[String]) -> Vec<PathCheck> {
 }
 
 fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Report {
-    let (via, observed) = probe(name, m, pool);
+    let Probed { via, observed } = probe(name, m, pool);
     let paths = reach_all(&m.paths);
     let problems = paths.iter().filter_map(|p| p.problem.clone()).collect();
     let mut findings = vec![Finding::new(Area::Paths, problems, m.paths.join(", "))];

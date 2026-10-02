@@ -5,6 +5,16 @@ use crate::{
 use dibs_format::{Exit, MachineName};
 use std::fmt;
 
+/// Where a call goes before anything is placed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Destination {
+    Named(MachineName),
+    /// Somewhere with no inventory name: a DIBS_HOST outside the inventory, or this computer.
+    Unnamed,
+    /// Nowhere until a machine is named, because several could take it.
+    Unchosen,
+}
+
 impl MachineCall<'_> {
     /// `dibs --machines`: every machine the inventory names, with its cards under `-v`.
     pub fn machines(&self) -> Result<i32, CallError> {
@@ -37,6 +47,18 @@ impl MachineCall<'_> {
             );
         }
         Ok(0)
+    }
+
+    /// Where the call goes before anything is placed.
+    pub fn destination(&self) -> Destination {
+        match self.target() {
+            Ok(target) => match (target.machine, target.host.is_empty() && !self.here.local) {
+                (Some(machine), _) => Destination::Named(machine),
+                (None, false) => Destination::Unnamed,
+                (None, true) => Destination::Unchosen,
+            },
+            Err(_) => Destination::Unchosen,
+        }
     }
 
     /// `dibs --which`: the machine this call would go to, by the name `--on` takes.

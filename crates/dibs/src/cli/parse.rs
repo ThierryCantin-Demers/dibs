@@ -35,7 +35,6 @@ enum Word {
     Update,
     Forget,
     Sync,
-    Rsh,
 }
 
 /// Every flag as it was read, the way the call's words leave them.
@@ -93,7 +92,7 @@ impl Default for Parser {
 }
 
 /// The flags dibs had and does not any more, with what to do instead.
-const REMOVED: [(&str, &str); 8] = [
+const REMOVED: [(&str, &str); 9] = [
     (
         "--shared",
         "shared is what a call is unless --bench says otherwise",
@@ -108,6 +107,7 @@ const REMOVED: [(&str, &str); 8] = [
     ("--job", "the detach queue was removed"),
     ("--cancel", "the detach queue was removed"),
     ("--abi", "dibs --check <machine> reports what a machine has"),
+    ("--rsh", "--sync starts rsync's transport itself"),
 ];
 
 impl Parser {
@@ -134,7 +134,6 @@ impl Parser {
                 "--bench" | "-b" => self.word = Word::Bench,
                 "--status" | "-s" => self.word = Word::Status,
                 "--sync" => return self.sync(&words[at..]),
-                "--rsh" => return self.rsh(&words[at..]),
                 "--watch" | "-w" => {
                     self.word = Word::Watch;
                     if let Some(n) = Parser::count(value) {
@@ -237,7 +236,6 @@ impl Parser {
                     at += 1;
                 }
                 "--new-series" => self.call.new_series = true,
-                "--preflight" => self.call.preflight = true,
                 "--stream" => self.call.stream = true,
                 "-h" | "--help" => return Ok(Invocation::Help),
                 "--" => return self.rest(&words[at..]),
@@ -353,25 +351,6 @@ impl Parser {
             ));
         }
         self.finish(Mode::Sync(args.to_vec()))
-    }
-
-    /// rsync's end of `--sync`: `[-l <user>] <host> <command...>`.
-    fn rsh(mut self, args: &[String]) -> Result<Invocation, CliError> {
-        self.word = Word::Rsh;
-        self.refuse_hold_and_services()?;
-        let refused = || CliError::new("--rsh is rsync's transport, not for calling directly");
-        if args.len() < 2 {
-            return Err(refused());
-        }
-        let args = match args {
-            [l, _user, rest @ ..] if l == "-l" => rest,
-            args => args,
-        };
-        let (host, command) = args.split_first().ok_or_else(refused)?;
-        self.finish(Mode::Rsh {
-            host: host.clone(),
-            command: command.to_vec(),
-        })
     }
 
     /// What the words after the flags mean for the mode the flags chose.
@@ -500,8 +479,7 @@ impl Parser {
             | Word::Pick
             | Word::Update
             | Word::Forget
-            | Word::Sync
-            | Word::Rsh => unreachable!("answered before a machine mode is read"),
+            | Word::Sync => unreachable!("answered before a machine mode is read"),
         })
     }
 
@@ -562,6 +540,19 @@ impl Parser {
 }
 
 impl Service {
+    /// A server declared by name rather than typed as `--with`, refused as the flag would be.
+    pub fn declared(
+        name: &str,
+        command: &str,
+        ready: Option<&str>,
+        before: &[Service],
+    ) -> Result<Service, CliError> {
+        Ok(Service {
+            ready: ready.map(str::to_string),
+            ..Service::of(Some(&format!("{name}={command}")), before)?
+        })
+    }
+
     /// `--with name='<command>'`, refused unless the name is new and well formed.
     fn of(value: Option<&String>, before: &[Service]) -> Result<Service, CliError> {
         let given = value.map(String::as_str).unwrap_or_default();
@@ -592,7 +583,7 @@ impl Service {
     }
 
     /// `--ready tcp:<name>` has to name a `--port`; a number needs none.
-    fn refuse_unknown_port(&self, ports: &[PortName]) -> Result<(), CliError> {
+    pub(super) fn refuse_unknown_port(&self, ports: &[PortName]) -> Result<(), CliError> {
         let Some(port) = self.ready.as_deref().and_then(|r| r.strip_prefix("tcp:")) else {
             return Ok(());
         };
@@ -608,6 +599,11 @@ impl Service {
 }
 
 impl PortName {
+    /// A port declared by name rather than typed as `--port`, refused as the flag would be.
+    pub fn declared(name: &str, before: &[PortName]) -> Result<PortName, CliError> {
+        PortName::of(Some(&name.to_string()), before)
+    }
+
     fn of(value: Option<&String>, before: &[PortName]) -> Result<PortName, CliError> {
         let name = value.map(String::as_str).unwrap_or_default();
         let well_formed = name.starts_with(|c: char| c.is_ascii_lowercase())

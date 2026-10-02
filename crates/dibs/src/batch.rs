@@ -6,7 +6,13 @@
 //! agent would have made; if the driver dies its steps die with it and their locks release,
 //! which is the lifetime a single job already has. The design is `dibs-design/batch.md`.
 
-use dibs::paths::Paths;
+use dibs::{
+    call::{BatchStep, Destination, MachineCall},
+    caller::Caller,
+    cli::Call,
+    paths::Paths,
+};
+use dibs_format::MachineName;
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Write},
@@ -394,23 +400,18 @@ fn state_dir() -> PathBuf {
     Paths::from_env().batches().unwrap_or_default()
 }
 
-/// Where a step goes, asked of dibs itself so the answer is the one the step will reach. None
-/// when it names no machine and several could take it, which a shared step is placed from and a
-/// measurement is refused over.
+/// Where a step goes, resolved as the step's own call will resolve it. None when it names no
+/// machine and several could take it, which a shared step is placed from and a measurement is
+/// refused over.
 fn machine_of(step: &Step) -> Option<String> {
-    let mut cmd = Command::new("dibs");
-    if let Some(on) = &step.on {
-        cmd.args(["--on", on]);
-    }
-    cmd.arg("--which")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null());
-    match cmd.output() {
-        Ok(o) if o.status.success() => {
-            let m = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            Some(if m.is_empty() { "?".into() } else { m })
-        }
-        Ok(o) if o.status.code() == Some(2) && step.on.is_none() => None,
+    let call = Call {
+        on: step.on.as_deref().map(MachineName::new),
+        ..Call::default()
+    };
+    let caller = Caller::default();
+    match MachineCall::new(&call, &caller).destination() {
+        Destination::Named(machine) => Some(machine.to_string()),
+        Destination::Unchosen if step.on.is_none() => None,
         _ => Some(step.on.clone().unwrap_or_else(|| "?".into())),
     }
 }
@@ -468,13 +469,7 @@ pub struct Pending {
 
 /// What a step of a batch is started with. `DIBS_BATCH_PLAN` is `k<TAB>n` and then one pending
 /// step per line; dibs sends it with the job and the machine keeps it beside the holder.
-pub fn step_env(
-    id: &str,
-    step: &str,
-    k: usize,
-    n: usize,
-    pending: &[Pending],
-) -> Vec<(&'static str, String)> {
+pub fn step_env(id: &str, step: &str, k: usize, n: usize, pending: &[Pending]) -> BatchStep {
     let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
     let mut plan = format!("{k}\t{n}\n");
     for p in pending {
@@ -486,46 +481,49 @@ pub fn step_env(
             u8::from(p.here)
         ));
     }
-    vec![
-        ("DIBS_BATCH", clean(id)),
-        ("DIBS_BATCH_STEP", clean(step)),
-        ("DIBS_BATCH_PLAN", plan),
-    ]
+    BatchStep {
+        batch: clean(id),
+        step: clean(step),
+        plan,
+    }
 }
 
 /// The plan each of a recipe's jobs carries. Inside a batch the recipe is one of its steps, so
 /// the recipe's jobs still to come go ahead of the batch's own.
-pub fn recipe_env(own_id: &str, calls: &[Pending], k: usize) -> Vec<(&'static str, String)> {
-    let var = |n: &str| std::env::var(n).unwrap_or_default();
-    let outer = Some(var("DIBS_BATCH"))
-        .filter(|v| !v.is_empty())
-        .map(|id| (id, var("DIBS_BATCH_STEP"), var("DIBS_BATCH_PLAN")));
-    nested_env(outer, own_id, calls, k)
+pub fn recipe_env(own_id: &str, calls: &[Pending], k: usize) -> Option<BatchStep> {
+    nested_env(BatchStep::from_env(), own_id, calls, k)
 }
 
 fn nested_env(
-    outer: Option<(String, String, String)>,
+    outer: Option<BatchStep>,
     own_id: &str,
     calls: &[Pending],
     k: usize,
-) -> Vec<(&'static str, String)> {
+) -> Option<BatchStep> {
     let pending = &calls[k + 1..];
     match outer {
-        Some((id, outer_step, outer)) => {
-            let (head, rest) = outer.split_once('\n').unwrap_or((outer.as_str(), ""));
+        Some(outer) => {
+            let (head, rest) = outer
+                .plan
+                .split_once('\n')
+                .unwrap_or((outer.plan.as_str(), ""));
             let mut nums = head
                 .split('\t')
                 .map(|x| x.trim().parse::<usize>().unwrap_or(0));
             let (bk, bn) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0));
-            let step = format!("{outer_step}: {}", calls[k].name);
-            let mut env = step_env(&id, &step, bk, bn, pending);
-            if let Some((_, plan)) = env.iter_mut().find(|(name, _)| *name == "DIBS_BATCH_PLAN") {
-                plan.push_str(rest);
-            }
-            env
+            let step = format!("{}: {}", outer.step, calls[k].name);
+            let mut env = step_env(&outer.batch, &step, bk, bn, pending);
+            env.plan.push_str(rest);
+            Some(env)
         }
-        None if calls.len() > 1 => step_env(own_id, &calls[k].name, k + 1, calls.len(), pending),
-        None => Vec::new(),
+        None if calls.len() > 1 => Some(step_env(
+            own_id,
+            &calls[k].name,
+            k + 1,
+            calls.len(),
+            pending,
+        )),
+        None => None,
     }
 }
 
@@ -671,7 +669,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                     }
                 })
                 .collect();
-            cmd.envs(step_env(&id, &step.name, i + 1, steps.len(), &pending))
+            cmd.envs(step_env(&id, &step.name, i + 1, steps.len(), &pending).vars())
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -1116,16 +1114,10 @@ mod tests {
                 },
             ],
         );
-        let get = |k: &str| {
-            env.iter()
-                .find(|(n, _)| *n == k)
-                .map(|(_, v)| v.clone())
-                .unwrap()
-        };
-        assert_eq!(get("DIBS_BATCH"), "b1");
-        assert_eq!(get("DIBS_BATCH_STEP"), "build");
+        assert_eq!(env.batch, "b1");
+        assert_eq!(env.step, "build");
         assert_eq!(
-            get("DIBS_BATCH_PLAN"),
+            env.plan,
             "1\t3\nbench\tbench\tbench_x\t1\nhome\trsh\thome_x\t0\n"
         );
     }
@@ -1137,23 +1129,23 @@ mod tests {
             call("build", "shared"),
             call("bench", "bench"),
         ];
-        let alone = nested_env(None, "own", &calls, 1);
-        assert_eq!(alone[0].1, "own");
-        assert_eq!(alone[2].1, "2\t3\nbench\tbench\tbench_x\t1\n");
+        let alone = nested_env(None, "own", &calls, 1).unwrap();
+        assert_eq!(alone.batch, "own");
+        assert_eq!(alone.plan, "2\t3\nbench\tbench\tbench_x\t1\n");
         assert!(
-            nested_env(None, "own", &calls[..1], 0).is_empty(),
+            nested_env(None, "own", &calls[..1], 0).is_none(),
             "one job is not a batch"
         );
-        let outer = Some((
-            "b9".to_string(),
-            "arm-a".to_string(),
-            "2\t4\narm-b\trecipe\t\t1\n".to_string(),
-        ));
-        let inside = nested_env(outer, "own", &calls, 1);
-        assert_eq!(inside[0].1, "b9");
-        assert_eq!(inside[1].1, "arm-a: build");
+        let outer = Some(BatchStep {
+            batch: "b9".to_string(),
+            step: "arm-a".to_string(),
+            plan: "2\t4\narm-b\trecipe\t\t1\n".to_string(),
+        });
+        let inside = nested_env(outer, "own", &calls, 1).unwrap();
+        assert_eq!(inside.batch, "b9");
+        assert_eq!(inside.step, "arm-a: build");
         assert_eq!(
-            inside[2].1,
+            inside.plan,
             "2\t4\nbench\tbench\tbench_x\t1\narm-b\trecipe\t\t1\n"
         );
     }

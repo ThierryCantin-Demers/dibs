@@ -14,23 +14,25 @@ mod runs;
 mod worktree;
 
 use dibs::{
-    call::{Dispatch, Guard},
+    call::{Destination, Dispatch, Guard, RecipeJob, Rsh},
     caller::Caller,
-    cli::{Friction, Help, Invocation, Mode, RecipeCall, RecipeVerb, ShellWord, Sweep},
+    cli::{
+        Call, CliError, Command as ShellCommand, Friction, Help, Invocation, Mode, PortName,
+        RecipeCall, RecipeVerb, Run, RunLock, Service, ShellWord, Sweep,
+    },
     inventory::Inventory,
     paths::Paths,
     update::{self, ChangeNotice},
 };
 use dibs_format::{
-    Alias, ArmRecord, BatchId, JobId, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
+    Alias, ArmRecord, BatchId, JobId, Label, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
     RunVerb, StepRecord,
 };
 use recipe::{Lock, Manifest, Verb};
-use resource::{Backend, Destination, Dibs, Request};
+use resource::{Jobs, Reported, Request};
 use std::{
     collections::BTreeMap,
     io::Write as _,
-    os::unix::process::CommandExt as _,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -47,12 +49,16 @@ fn main() -> ExitCode {
 }
 
 fn dispatch(words: &[String]) -> Result<ExitCode, Failure> {
-    // Words outside the grammar: the background fetch of report replies, and the build stamp.
+    // Words outside the grammar: the background fetch of report replies, the build stamp, and
+    // the processes dibs starts as rsync's transport and as a held command's guard.
     match words {
         [verb, flag, into] if verb == "friction" && flag == "--replies" => {
             return friction_replies(Path::new(into));
         }
         [flag] if flag == "--version" => return Ok(version()),
+        [word, rest @ ..] if word == Rsh::WORD => {
+            return Ok(ExitCode::from(Rsh::serve(rest).rem_euclid(256) as u8));
+        }
         [word, at, command @ ..] if word == Guard::WORD => {
             return Ok(ExitCode::from(
                 Guard::serve(at, command).rem_euclid(256) as u8
@@ -216,7 +222,7 @@ fn run(args: RecipeCall) -> Result<ExitCode, Failure> {
                 .into(),
         );
     }
-    // Every call this makes is a wrapper call, and the wrapper reads the machine from here.
+    // Every call this makes, and every step of a batch, reads the machine from here.
     if let Some(m) = &args.on {
         // SAFETY: nothing has started a thread yet; every thread this spawns comes after.
         unsafe { std::env::set_var("DIBS_ON", m) };
@@ -263,21 +269,18 @@ fn run(args: RecipeCall) -> Result<ExitCode, Failure> {
         )?;
         let command = args.command.as_deref().ok_or("raw needs -- <command>")?;
         // Always shared, and nothing is prepared for it, so it is placed like any other shared work.
-        let mut backend = Dibs::default();
-        backend.machine = place(&backend.program, None, None)?;
+        let backend = Jobs::placed(None, None)?;
         let out = backend.run(
             &Request {
                 label: "raw",
                 lock: Lock::Shared,
-                isolation: recipe::Isolation::Machine,
-                needs: None,
                 device: args.device.as_deref(),
-                env: &[],
+                job: &RecipeJob::default(),
                 max: args.max,
                 new_series: args.new_series,
             },
             command,
-        )?;
+        );
         let steps = vec![out.step_record(Lock::Shared)];
         write_record(&RunRecord {
             when: now_secs(),
@@ -288,8 +291,8 @@ fn run(args: RecipeCall) -> Result<ExitCode, Failure> {
             recipe: String::new(),
             fingerprint: String::new(),
             isolation: "machine".into(),
-            backend: backend.name().into(),
-            machine: backend.machine.as_deref().map(MachineName::from),
+            backend: resource::BACKEND.into(),
+            machine: backend.machine.clone(),
             device: args.device.as_deref().map(Alias::from),
             needs: None,
             reason: Some(reason.to_string()),
@@ -867,20 +870,14 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
         // Asked what the real run asks before it builds, so a card or a series it would refuse
         // is refused here, where someone reads the device line before measuring.
         if rec.steps.iter().any(|s| s.lock == Lock::Exclusive) || args.device.is_some() {
-            let backend = Dibs {
-                machine: destination(rec, &repo_name, name)?,
-                ..Dibs::default()
-            };
-            if refused_before_building(&backend, rec, &step_labels, &args)? {
+            let backend = Jobs::on(destination(rec, &repo_name, name)?);
+            if refused_before_building(&backend, rec, &step_labels, &args) {
                 return Ok(ExitCode::from(EXIT_REFUSED));
             }
         }
         println!("label       {label}");
         println!("recipe      {name}  ({fingerprint})");
         println!("isolation   {:?}", rec.isolation);
-        if let Some(n) = &rec.needs {
-            println!("needs       {n}");
-        }
         for arm in &arms {
             let head = if compared {
                 format!("arm         {}  ", arm.name)
@@ -980,14 +977,11 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
     // build ranked onto one machine leaves the benchmark on another to compile inside its own
     // exclusive lock, which is what splitting build from measure prevents. A pinned call claims
     // nothing: the machines report the caches it leaves.
-    let backend = Dibs {
-        machine: destination(rec, &repo_name, name)?,
-        ..Dibs::default()
-    };
+    let backend = Jobs::on(destination(rec, &repo_name, name)?);
     if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
-        affinity_set(&repo_name, m);
+        affinity_set(&repo_name, m.as_str());
     }
-    if refused_before_building(&backend, rec, &step_labels, &args)? {
+    if refused_before_building(&backend, rec, &step_labels, &args) {
         return Ok(ExitCode::from(EXIT_REFUSED));
     }
 
@@ -1003,10 +997,9 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
     // What the wrapper files this job's duration under, beside the label. The fingerprint is of
     // the bound recipe, so it already tells one backend from another and a procedure from the
     // one it replaced: two runs sharing it are the same work, and no others are.
-    let env_of = |k: usize| {
-        let mut env = batch::recipe_env(&own_batch, &calls, k);
-        env.push(("DIBS_FINGERPRINT", fingerprint.clone()));
-        env
+    let env_of = |k: usize| RecipeJob {
+        batch: batch::recipe_env(&own_batch, &calls, k),
+        fingerprint: Some(fingerprint.clone()),
     };
     let mut announce = |text: &str| announce_prepared(text);
 
@@ -1017,10 +1010,8 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
         let setup = Request {
             label: &calls[k].label,
             lock: Lock::Shared,
-            isolation: rec.isolation,
-            needs: None,
             device: None,
-            env: &env,
+            job: &env,
             max: None,
             new_series: false,
         };
@@ -1063,8 +1054,8 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
                         }
                     ),
                 }
-                let (out, text) =
-                    sync_prepared(&backend, from, &script, &l.key, &setup, &mut announce)?;
+                let Reported { outcome: out, text } =
+                    sync_prepared(&backend, from, &script, &l.key, &setup, &mut announce);
                 drop(lock);
                 if !text.contains("DIBS-READY") || out.status != 0 {
                     return Err(Failure::passing(
@@ -1081,7 +1072,7 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
             }
             None => {
                 eprintln!("dibs: pinning {}@{}", p.repo, p.reference);
-                let (out, text) = backend.run_capture(&setup, &script)?;
+                let Reported { outcome: out, text } = backend.run_capture(&setup, &script);
                 if out.status != 0 {
                     return Err(Failure::passing(
                         out.status,
@@ -1195,12 +1186,10 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
         let setup = Request {
             label: &calls[k].label,
             lock: Lock::Shared,
-            isolation: rec.isolation,
-            needs: None,
             // Preparing a worktree touches no GPU, so pinning it would only make the setup fail
             // on a machine whose card has been pulled.
             device: None,
-            env: &env,
+            job: &env,
             max: None,
             new_series: false,
         };
@@ -1208,14 +1197,14 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
             Job::Send(a) => {
                 let t = &mut trees[a];
                 let key = &t.local.as_ref().expect("a sent tree is local").key;
-                let (out, text) = sync_prepared(
+                let Reported { outcome: out, text } = sync_prepared(
                     &backend,
                     arms[a].dir(&dir),
                     &t.script,
                     key,
                     &setup,
                     &mut announce,
-                )?;
+                );
                 checkout_locks[a] = None;
                 if !text.contains("DIBS-READY") {
                     return Err(Failure::passing(
@@ -1239,7 +1228,7 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
             }
             Job::Setup(a) => {
                 let t = &mut trees[a];
-                let (out, text) = backend.run_capture(&setup, &t.script)?;
+                let Reported { outcome: out, text } = backend.run_capture(&setup, &t.script);
                 if out.status != 0 {
                     return Err(Failure::passing(
                         out.status,
@@ -1262,10 +1251,8 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
         let req = Request {
             label: &step_labels[step],
             lock,
-            isolation: rec.isolation,
-            needs: rec.needs.as_deref(),
             device: args.device.as_deref(),
-            env: &env,
+            job: &env,
             max: args.max,
             new_series: args.new_series,
         };
@@ -1297,7 +1284,8 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
             );
             let command = worktree::ahead(&t.script, worktree::Then::Step, &rec.steps[step].run)
                 + &format!("{{ {run}; }}");
-            let (out, text) = backend.run_reporting(&req, &command, &mut announce)?;
+            let Reported { outcome: out, text } =
+                backend.run_reporting(&req, &command, &mut announce);
             if !text.contains("DIBS-READY") && !text.contains("DIBS-HELD") {
                 return Err(Failure::passing(
                     out.status,
@@ -1331,7 +1319,10 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
         );
         // The step says which lock it wants, where it can be reviewed, instead of a compile
         // being invisible inside a script that holds the machine exclusively.
-        let (out, report) = backend.run_reporting(&req, &cd, &mut |_| {})?;
+        let Reported {
+            outcome: out,
+            text: report,
+        } = backend.run_reporting(&req, &cd, &mut |_| {});
         // The machine has said why; a refusal is not a run, so it leaves no record.
         if report.lines().any(|l| l == "DIBS-REFUSED") {
             return Ok(ExitCode::from(78));
@@ -1374,8 +1365,6 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
         },
         recipe: name.to_string(),
         fingerprint,
-        isolation: format!("{:?}", rec.isolation).to_lowercase(),
-        needs: rec.needs.clone(),
         reason: shell_reason.clone(),
         procedure: rec
             .steps
@@ -1395,9 +1384,11 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
             })
             .collect(),
         params,
-        backend: backend.name().into(),
+        isolation: format!("{:?}", rec.isolation).to_lowercase(),
+        needs: None,
+        backend: resource::BACKEND.into(),
         device: args.device.as_deref().map(Alias::from),
-        machine: backend.machine.as_deref().map(MachineName::from),
+        machine: backend.machine.clone(),
         // Read on the machine, from the tree that was actually built, rather than from a
         // checkout here that may be at a different commit entirely.
         revisions: match compared {
@@ -1440,15 +1431,10 @@ fn run_recipe(args: RecipeCall) -> Result<ExitCode, Failure> {
 
 /// Every job that kept files has them fetched, into `to` when given: under the job's arm and rep
 /// when a comparison or reps would otherwise write one path twice.
-fn fetch_artifacts(backend: &Dibs, steps: &[StepRecord], to: Option<&str>, compared: bool) {
+fn fetch_artifacts(backend: &Jobs, steps: &[StepRecord], to: Option<&str>, compared: bool) {
     for s in steps.iter().filter(|s| s.artifacts.is_some_and(|n| n > 0)) {
         let Some(job) = &s.job else { continue };
-        let mut cmd = std::process::Command::new(&backend.program);
-        if let Some(m) = &backend.machine {
-            cmd.arg("--on").arg(m);
-        }
-        cmd.arg("--fetch").arg(job.as_str());
-        if let Some(dir) = to {
+        let dest = to.map(|dir| {
             let mut dest = PathBuf::from(dir);
             if let Some(arm) = s.arm.as_deref().filter(|_| compared) {
                 dest.push(arm);
@@ -1456,21 +1442,14 @@ fn fetch_artifacts(backend: &Dibs, steps: &[StepRecord], to: Option<&str>, compa
             if let Some(r) = s.rep {
                 dest.push(format!("r{r}"));
             }
-            cmd.arg(dest);
-        }
+            dest.display().to_string()
+        });
         // Its report goes where every other dibs: line does, apart from the jobs' own output.
-        let out = cmd
-            .env("DIBS_FROM_RUN", "1")
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::inherit())
-            .output();
-        match out {
-            Ok(o) if o.status.success() => eprint!("{}", String::from_utf8_lossy(&o.stdout)),
-            Ok(o) => eprintln!(
-                "dibs: could not fetch what job {job} kept (exit {}); dibs --fetch {job} tries again",
-                o.status.code().unwrap_or(-1)
+        match backend.fetch(job, dest.as_deref()) {
+            Ok(report) => eprint!("{report}"),
+            Err(exit) => eprintln!(
+                "dibs: could not fetch what job {job} kept (exit {exit}); dibs --fetch {job} tries again"
             ),
-            Err(e) => eprintln!("dibs: could not fetch what job {job} kept: {e}"),
         }
     }
 }
@@ -1554,16 +1533,12 @@ fn destination(
     rec: &recipe::Recipe,
     repo_name: &str,
     name: &str,
-) -> Result<Option<String>, Failure> {
-    let program = Dibs::default().program;
+) -> Result<Option<MachineName>, Failure> {
     if rec.steps.iter().all(|s| s.lock == Lock::Shared) {
-        return Ok(place(
-            &program,
-            affinity_get(repo_name).as_deref(),
-            Some(repo_name),
-        )?);
+        let placed = Jobs::placed(affinity_get(repo_name).as_deref(), Some(repo_name))?;
+        return Ok(placed.machine);
     }
-    match Dibs::which(&program) {
+    match Jobs::destination() {
         Destination::Named(m) => Ok(Some(m)),
         Destination::Unnamed => Ok(None),
         Destination::Unchosen => Err(format!(
@@ -1578,11 +1553,11 @@ fn destination(
 /// decides without the machine. A shared recipe's card is otherwise checked by the first step that
 /// carries it, after the tree and its dependencies have been sent.
 fn refused_before_building(
-    backend: &Dibs,
+    backend: &Jobs,
     rec: &recipe::Recipe,
     step_labels: &[String],
     args: &RecipeCall,
-) -> Result<bool, Failure> {
+) -> bool {
     let exclusive: Vec<usize> = (0..rec.steps.len())
         .filter(|&i| rec.steps[i].lock == Lock::Exclusive)
         .collect();
@@ -1594,18 +1569,16 @@ fn refused_before_building(
         let req = Request {
             label: &step_labels[i],
             lock: rec.steps[i].lock,
-            isolation: rec.isolation,
-            needs: None,
             device: args.device.as_deref(),
-            env: &[],
+            job: &RecipeJob::default(),
             max: None,
             new_series: args.new_series,
         };
-        if !backend.preflight(&req)? {
-            return Ok(true);
+        if !backend.preflight(&req) {
+            return true;
         }
     }
-    Ok(false)
+    false
 }
 
 /// The text arrives in the environment rather than as an argument: a report about a flag starts
@@ -1809,8 +1782,7 @@ fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
         .as_deref()
         .ok_or("with needs a command after --")?;
 
-    let mut backend = Dibs::default();
-    backend.machine = match Dibs::which(&backend.program) {
+    let backend = Jobs::on(match Jobs::destination() {
         Destination::Named(m) => Some(m),
         Destination::Unnamed => None,
         Destination::Unchosen => {
@@ -1818,21 +1790,19 @@ fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
                         or export DIBS_ON. dibs --machines lists them."
                 .into())
         }
-    };
+    });
     let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
     if args.device.is_some() {
         let req = Request {
             label: &label,
             lock: Lock::Shared,
-            isolation: recipe::Isolation::Machine,
-            needs: None,
             device: args.device.as_deref(),
-            env: &[],
+            job: &RecipeJob::default(),
             max: None,
             new_series: false,
         };
-        if !backend.preflight(&req)? {
-            return Ok(ExitCode::from(2));
+        if !backend.preflight(&req) {
+            return Ok(ExitCode::from(EXIT_REFUSED));
         }
     }
 
@@ -1842,7 +1812,10 @@ fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
         println!("label       {label}");
         println!(
             "machine     {}",
-            backend.machine.as_deref().unwrap_or("the only one")
+            backend
+                .machine
+                .as_ref()
+                .map_or("the only one", MachineName::as_str)
         );
         println!(
             "tree        {}",
@@ -1875,7 +1848,7 @@ fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
         return Ok(ExitCode::SUCCESS);
     }
     if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
-        affinity_set(&repo_name, m);
+        affinity_set(&repo_name, m.as_str());
     }
     eprintln!(
         "dibs: preparing {}",
@@ -1904,18 +1877,16 @@ fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
     let setup = Request {
         label: &setup_label,
         lock: Lock::Shared,
-        isolation: recipe::Isolation::Machine,
-        needs: None,
         device: None,
-        env: &[],
+        job: &RecipeJob::default(),
         max: None,
         new_series: false,
     };
     let mut announce = |text: &str| announce_prepared(text);
     let text = match &local {
         Some(l) => {
-            let (out, text) =
-                sync_prepared(&backend, &from, &script, &l.key, &setup, &mut announce)?;
+            let Reported { outcome: out, text } =
+                sync_prepared(&backend, &from, &script, &l.key, &setup, &mut announce);
             if let Some(c) = &mut arm.checkout {
                 c.lock = None;
             }
@@ -1932,7 +1903,7 @@ fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
             text
         }
         None => {
-            let (out, text) = backend.run_capture(&setup, &script)?;
+            let Reported { outcome: out, text } = backend.run_capture(&setup, &script);
             if out.status != 0 {
                 return Err(Failure::passing(
                     out.status,
@@ -1963,10 +1934,8 @@ fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
         let req = Request {
             label: &build_label,
             lock: Lock::Shared,
-            isolation: recipe::Isolation::Machine,
-            needs: None,
             device: args.device.as_deref(),
-            env: &[],
+            job: &RecipeJob::default(),
             max: None,
             new_series: false,
         };
@@ -1974,32 +1943,12 @@ fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
             Some(_) => worktree::claiming(build),
             None => build.clone(),
         };
-        let out = backend.run(&req, &in_tree(&build))?;
+        let out = backend.run(&req, &in_tree(&build));
         if out.status != 0 {
             return Ok(ExitCode::from(out.status.clamp(1, 255) as u8));
         }
     }
 
-    let mut cmd = std::process::Command::new(&backend.program);
-    if let Some(m) = &backend.machine {
-        cmd.arg("--on").arg(m);
-    }
-    if !args.there {
-        cmd.arg("--hold");
-    }
-    cmd.arg("--label").arg(&label);
-    if args.bench {
-        cmd.arg("--bench");
-    }
-    if let Some(m) = args.max {
-        cmd.arg("--max").arg(m.to_string());
-    }
-    if let Some(d) = &args.device {
-        cmd.arg("--device").arg(d);
-    }
-    for p in &svc.ports {
-        cmd.arg("--port").arg(p);
-    }
     // Timed against a server this call built, a server another tree has built over since is refused.
     let guarded = args.bench
         && !args.anyway
@@ -2008,23 +1957,70 @@ fn with_service(args: &RecipeCall) -> Result<ExitCode, Failure> {
             .as_deref()
             .and_then(worktree::build_signature)
             .is_some();
-    for serve in &svc.serves {
-        let run = if guarded {
-            worktree::checked(&serve.run)
-        } else {
-            serve.run.clone()
-        };
-        cmd.arg("--with")
-            .arg(format!("{}={}", serve.name, in_tree(&run)));
-        if let Some(ready) = &serve.ready {
-            cmd.arg("--ready").arg(ready);
+    let run = match served(svc, args, command, guarded, &in_tree) {
+        Ok(run) => run,
+        Err(e) => {
+            eprintln!("{e}");
+            return Ok(ExitCode::from(e.exit()));
         }
-    }
-    match args.there {
-        true => cmd.arg("--").arg(in_tree(command)),
-        false => cmd.arg("--").arg(command),
     };
-    Err(format!("could not run {}: {}", backend.program, exec(cmd)).into())
+    let call = Call {
+        mode: Mode::Run(run),
+        on: backend.machine.clone(),
+        label: Some(Label::new(&label)),
+        max: args.max,
+        device: args.device.as_deref().map(Alias::new),
+        ..Call::default()
+    };
+    let code = Dispatch {
+        call: &call,
+        caller: &Caller::from_env(),
+    }
+    .exit();
+    Ok(ExitCode::from(code.rem_euclid(256) as u8))
+}
+
+/// The call `with` ends in: its servers, its ports and the command, held here unless `--there`.
+fn served(
+    svc: &recipe::Service,
+    args: &RecipeCall,
+    command: &str,
+    guarded: bool,
+    in_tree: &dyn Fn(&str) -> String,
+) -> Result<Run, CliError> {
+    let mut ports = Vec::new();
+    for p in &svc.ports {
+        ports.push(PortName::declared(p, &ports)?);
+    }
+    let mut services = Vec::new();
+    for serve in &svc.serves {
+        let run = match guarded {
+            true => worktree::checked(&serve.run),
+            false => serve.run.clone(),
+        };
+        services.push(Service::declared(
+            &serve.name,
+            &in_tree(&run),
+            serve.ready.as_deref(),
+            &services,
+        )?);
+    }
+    let run = Run {
+        lock: match args.bench {
+            true => RunLock::Bench,
+            false => RunLock::Shared,
+        },
+        hold: !args.there,
+        services,
+        ports,
+        command: ShellCommand(vec![match args.there {
+            true => in_tree(command),
+            false => command.to_string(),
+        }]),
+        ..Run::default()
+    };
+    run.refuse_unknown_ports()?;
+    Ok(run)
 }
 
 /// What step `i` runs in its tree. A build claims the target for this tree, and a measurement
@@ -2129,7 +2125,7 @@ fn new_token() -> String {
     )
 }
 
-fn send_missing_gitdbs(backend: &Dibs, text: &str, gitdbs: &[gitdeps::Db]) {
+fn send_missing_gitdbs(backend: &Jobs, text: &str, gitdbs: &[gitdeps::Db]) {
     let (Some(remote), gone) = gitdeps::missing(text, gitdbs) else {
         return;
     };
@@ -2146,10 +2142,6 @@ fn send_missing_gitdbs(backend: &Dibs, text: &str, gitdbs: &[gitdeps::Db]) {
 
 /// Becomes the command, so it keeps this terminal: prompts, Ctrl-C and the exit status are the
 /// command's own rather than something relayed.
-fn exec(mut cmd: std::process::Command) -> std::io::Error {
-    cmd.exec()
-}
-
 /// A recipe invocation resolved as far as it can be without a machine: which recipe, and the
 /// labels its jobs are filed under.
 struct Resolved {
@@ -2436,40 +2428,24 @@ fn label_steps(base: &str, steps: &[recipe::Step]) -> Vec<String> {
 /// droppings never make the trip, and `--delete` means a file deleted locally stops existing
 /// there too rather than going on compiling.
 fn sync_prepared(
-    backend: &Dibs,
+    backend: &Jobs,
     from: &Path,
     setup: &str,
     key: &str,
     req: &Request,
     on_report: &mut dyn FnMut(&str),
-) -> Result<(resource::Outcome, String), String> {
-    let before = std::env::temp_dir().join(format!("dibs-before.{}.{key}", std::process::id()));
-    std::fs::write(
-        &before,
-        worktree::ahead(
-            setup,
-            worktree::Then::Transfer,
-            &format!("prepare, then receive {}", from.display()),
-        ),
-    )
-    .map_err(|e| format!("{}: {e}", before.display()))?;
-    let mut cmd = std::process::Command::new(&backend.program);
-    if let Some(m) = &backend.machine {
-        cmd.arg("--on").arg(m);
-    }
-    cmd.arg("--label")
-        .arg(req.label)
-        .arg("--sync")
-        .args(worktree::SYNC_ARGS)
-        .arg(format!("{}/", from.display()))
-        .arg(format!(":local-{key}/"))
-        .env("DIBS_FROM_RUN", "1")
-        .env("DIBS_SYNC_BEFORE", &before)
-        .envs(req.env.iter().map(|(k, v)| (*k, v)))
-        .stdin(std::process::Stdio::null());
-    let result = resource::reporting(cmd, on_report);
-    let _ = std::fs::remove_file(&before);
-    result
+) -> Reported {
+    let before = worktree::ahead(
+        setup,
+        worktree::Then::Transfer,
+        &format!("prepare, then receive {}", from.display()),
+    );
+    let args: Vec<String> = worktree::SYNC_ARGS
+        .iter()
+        .map(|a| a.to_string())
+        .chain([format!("{}/", from.display()), format!(":local-{key}/")])
+        .collect();
+    backend.sync(req, &args, &before, on_report)
 }
 
 fn announce_prepared(text: &str) {
@@ -2504,24 +2480,30 @@ fn announce_prepared(text: &str) {
 
 /// Adds files and never replaces one: git names objects by their content, so what is already
 /// there is already right, and a cargo on the machine may be reading it.
-fn sync_gitdb(backend: &Dibs, from: &Path, to: &str) -> Result<(), String> {
-    let mut cmd = std::process::Command::new(&backend.program);
-    if let Some(m) = &backend.machine {
-        cmd.arg("--on").arg(m);
+fn sync_gitdb(backend: &Jobs, from: &Path, to: &str) -> Result<(), String> {
+    let args = gitdb_args(from, to);
+    let req = Request {
+        label: "",
+        lock: Lock::Shared,
+        device: None,
+        job: &RecipeJob::default(),
+        max: None,
+        new_series: false,
+    };
+    match backend.sync(&req, &args, "", &mut |_| {}).outcome.status {
+        0 => Ok(()),
+        _ => Err(format!("sending {} failed", from.display())),
     }
-    cmd.arg("--sync")
-        .arg("-a")
-        .arg("--no-times")
-        .arg("--ignore-existing")
-        .arg(format!("{}/", from.display()))
-        .arg(format!(":{to}/"))
-        .env("DIBS_FROM_RUN", "1")
-        .stdin(std::process::Stdio::null());
-    let st = cmd.status().map_err(|e| format!("dibs --sync: {e}"))?;
-    if !st.success() {
-        return Err(format!("sending {} failed", from.display()));
-    }
-    Ok(())
+}
+
+fn gitdb_args(from: &Path, to: &str) -> [String; 5] {
+    [
+        "-a".to_string(),
+        "--no-times".to_string(),
+        "--ignore-existing".to_string(),
+        format!("{}/", from.display()),
+        format!(":{to}/"),
+    ]
 }
 
 fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
@@ -2618,26 +2600,6 @@ fn affinity_set(repo: &str, machine: &str) {
     }
 }
 
-/// Where shared work goes: the machine the wrapper would use when the call names one or there is
-/// only one to use, and otherwise a placement among them, by build cache and then by load.
-fn place(
-    program: &str,
-    prefer: Option<&str>,
-    repo: Option<&str>,
-) -> Result<Option<String>, String> {
-    match Dibs::which(program) {
-        Destination::Named(m) => Ok(Some(m)),
-        Destination::Unnamed => Ok(None),
-        Destination::Unchosen => Dibs::routed(program, prefer, repo).map(Some).ok_or_else(|| {
-            let why = repo.map(|r| format!(" --repo {r}")).unwrap_or_default();
-            format!(
-                "nowhere to send this: it names no machine, and none could be placed. dibs --pick -v{why}\n  \
-                 says why; --on <machine> names one."
-            )
-        }),
-    }
-}
-
 /// `--on` reaches here as DIBS_ON. A call sent to a named machine is not ranked, and says
 /// nothing about where the repo's cache belongs.
 fn pinned() -> bool {
@@ -2686,7 +2648,6 @@ fn sh(s: &str) -> String {
 mod tests {
     use super::*;
     use recipe::{Isolation, Recipe, Step};
-    use std::os::unix::fs::PermissionsExt;
 
     fn step(lock: Lock, run: &str) -> Step {
         Step {
@@ -2700,26 +2661,8 @@ mod tests {
     // tree and never a git database, so dibs's own send must not set it off.
     #[test]
     fn a_git_database_is_sent_without_its_mtimes() {
-        let dir = std::env::temp_dir().join(format!("dibs-gitdb-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let fake = dir.join("dibs");
-        std::fs::write(
-            &fake,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$@\" > {}/args\n",
-                dir.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let backend = Dibs {
-            program: fake.display().to_string(),
-            machine: None,
-        };
-        sync_gitdb(&backend, &dir, "db").unwrap();
-        let args = std::fs::read_to_string(dir.join("args")).unwrap();
-        assert!(args.lines().any(|a| a == "--no-times"), "{args}");
-        let _ = std::fs::remove_dir_all(&dir);
+        let args = gitdb_args(Path::new("/x"), "db");
+        assert!(args.iter().any(|a| a == "--no-times"), "{args:?}");
     }
 
     #[test]

@@ -84,11 +84,11 @@ exit  call
 
 == dibs --rsh
 -> exit 2
-2| --rsh is rsync's transport, not for calling directly
+2| dibs: --rsh is gone: --sync starts rsync's transport itself.
 
 == dibs --rsh host rsync --server
 -> exit 2
-2| dibs: --sync reaches the machine from elsewhere. You are on it: use cp.
+2| dibs: --rsh is gone: --sync starts rsync's transport itself.
 
 == DIBS_QUEUE='' dibs --job 12345
 -> exit 2

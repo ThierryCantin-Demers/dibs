@@ -1,4 +1,5 @@
 use crate::machine::{
+    lines::{Lines, Stream},
     payload::{CallValues, Watch, encode},
     target::Target,
     unreachable::{Unreachable, no_room},
@@ -14,7 +15,7 @@ use std::{
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -129,6 +130,8 @@ enum Streams {
     Inherit,
     /// Stdout piped back to this process.
     Piped,
+    /// Both piped back to this process.
+    Lines,
     /// Stdout into a pipe this process reads, and stderr where it is sent.
     Into {
         stdout: io::PipeWriter,
@@ -252,7 +255,38 @@ impl Session {
 
     /// Runs a call whose command runs on the machine, and returns its exit.
     pub fn run(&self, values: &CallValues, half: &str, live: Liveness) -> io::Result<ExitStatus> {
-        self.wait(self.start(values, half, live, Shape::Run, Streams::Inherit)?)
+        let deferred = Interrupt::defer();
+        let started = self.start(values, half, live, Shape::Run, Streams::Inherit)?;
+        Session::wait(started, deferred)
+    }
+
+    /// Runs a call whose output this process reads, a line at a time, as it arrives.
+    pub fn run_reading(
+        &self,
+        values: &CallValues,
+        half: &str,
+        live: Liveness,
+        on_line: &mut dyn FnMut(Stream, &[u8]),
+    ) -> io::Result<ExitStatus> {
+        let deferred = Interrupt::defer();
+        let Started { mut child, channel } =
+            self.start(values, half, live, Shape::Run, Streams::Lines)?;
+        let lines = Lines::of(&mut child);
+        // The channel closes as the machine half ends, not when its output does: what it leaves
+        // watching the channel holds that output open until then.
+        let waiter = std::thread::spawn(move || {
+            let status = child.wait();
+            drop(channel);
+            status
+        });
+        lines.relay(on_line);
+        let status = waiter
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("the wait for the machine half panicked")));
+        drop(deferred);
+        let status = status?;
+        Interrupt::pass_on(status);
+        Ok(status)
     }
 
     /// rsync's far side, fed this process's stdin.
@@ -262,11 +296,12 @@ impl Session {
         half: &str,
         live: Liveness,
     ) -> io::Result<ExitStatus> {
-        self.wait(self.start(values, half, live, Shape::Transfer, Streams::Inherit)?)
+        let deferred = Interrupt::defer();
+        let started = self.start(values, half, live, Shape::Transfer, Streams::Inherit)?;
+        Session::wait(started, deferred)
     }
 
-    fn wait(&self, started: Started) -> io::Result<ExitStatus> {
-        let deferred = Interrupt::defer();
+    fn wait(started: Started, deferred: Interrupt) -> io::Result<ExitStatus> {
         let mut child = started.child;
         let status = child.wait();
         drop(deferred);
@@ -363,6 +398,9 @@ impl Session {
             Streams::Inherit => {}
             Streams::Piped => {
                 command.stdout(Stdio::piped());
+            }
+            Streams::Lines => {
+                command.stdout(Stdio::piped()).stderr(Stdio::piped());
             }
             Streams::Into { stdout, stderr } => {
                 command.stdout(stdout).stderr(stderr);
@@ -580,7 +618,11 @@ pub struct Interrupt {
     previous: libc::sighandler_t,
 }
 
-extern "C" fn noted(_: libc::c_int) {}
+static HEARD: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn noted(_: libc::c_int) {
+    HEARD.store(true, Ordering::Relaxed);
+}
 
 impl Interrupt {
     pub fn defer() -> Interrupt {
@@ -590,14 +632,24 @@ impl Interrupt {
         Interrupt { previous }
     }
 
+    /// Whether Ctrl-C arrived while a child had it, whatever the child did with it.
+    pub fn heard() -> bool {
+        HEARD.load(Ordering::Relaxed)
+    }
+
+    /// Ends this process as Ctrl-C would have.
+    pub fn raise() {
+        // SAFETY: restores the default action and raises it on this process.
+        unsafe {
+            libc::signal(libc::SIGINT, libc::SIG_DFL);
+            libc::raise(libc::SIGINT);
+        }
+    }
+
     /// A child that died of Ctrl-C takes this process with it.
     pub fn pass_on(status: ExitStatus) {
         if status.signal() == Some(libc::SIGINT) {
-            // SAFETY: restores the default action and raises it on this process.
-            unsafe {
-                libc::signal(libc::SIGINT, libc::SIG_DFL);
-                libc::raise(libc::SIGINT);
-            }
+            Interrupt::raise();
         }
     }
 }

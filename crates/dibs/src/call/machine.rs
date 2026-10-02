@@ -121,9 +121,6 @@ impl<'a> MachineCall<'a> {
     /// Sends the mode's values, and gives the call's exit.
     pub fn send(&self, asked: Asked, target: &Target) -> Result<i32, CallError> {
         let values = self.values(asked, target)?;
-        if self.call.preflight {
-            return Ok(0);
-        }
         let session = Session::new(target, &self.here);
         let half = MachineHalf::load()?;
         let status = exit_code(session.run(&values, &half, Liveness::from_env())?);

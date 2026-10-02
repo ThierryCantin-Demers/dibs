@@ -1,4 +1,4 @@
-use crate::cli::{recipe::RecipeCall, shell::Command};
+use crate::cli::{CliError, recipe::RecipeCall, shell::Command};
 use dibs_format::{Alias, BatchId, JobId, Label, MachineName};
 
 /// What one `dibs` command line asks for.
@@ -47,6 +47,7 @@ pub struct Call {
     pub all: bool,
     pub stream: bool,
     pub new_series: bool,
+    /// Never typed: the recipe layer asks what would refuse a call before it builds anything.
     pub preflight: bool,
     pub write: bool,
     pub prefer: Option<String>,
@@ -86,11 +87,6 @@ pub enum Mode {
     },
     /// Everything after `--sync`, for rsync.
     Sync(Vec<String>),
-    /// rsync's end of `--sync`: the host it was given, and the command it runs there.
-    Rsh {
-        host: String,
-        command: Vec<String>,
-    },
     Machines,
     Which,
     Pick,
@@ -163,6 +159,15 @@ impl Default for Run {
             ready_within: 300,
             command: Command::default(),
         }
+    }
+}
+
+impl Run {
+    /// Refused when a service's `--ready tcp:<name>` names no `--port`.
+    pub fn refuse_unknown_ports(&self) -> Result<(), CliError> {
+        self.services
+            .iter()
+            .try_for_each(|s| s.refuse_unknown_port(&self.ports))
     }
 }
 

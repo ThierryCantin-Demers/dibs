@@ -3,6 +3,8 @@ use crate::{
         card::{CardError, unpinned},
         hold::Hold,
         machine::MachineCall,
+        origin::{BatchStep, Origin, RecipeJob},
+        output::Output,
         series::{Entry, Moved, Series, stayed_put},
     },
     caller::{Caller, short_hostname},
@@ -21,8 +23,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// The most lines of a batch's plan a call carries.
-const BATCH_PLAN_LINES: usize = 200;
 const FINGERPRINT_CHARS: usize = 16;
 
 /// A call that takes the lock, or peeks past it: what the Rust client runs itself.
@@ -33,6 +33,7 @@ pub struct LockedCall<'a> {
     services: &'a [Service],
     ports: &'a [PortName],
     ready_within: u32,
+    origin: Origin<'a>,
 }
 
 #[derive(Debug)]
@@ -52,8 +53,6 @@ pub enum CallError {
 struct Environment {
     /// `DIBS_LOCAL=1`: the lock is taken on this computer.
     local: bool,
-    /// `DIBS_FROM_RUN=1`: the recipe layer is the caller.
-    from_run: bool,
     series_check: bool,
     unpinned_quiet: bool,
 }
@@ -70,7 +69,12 @@ impl<'a> LockedCall<'a> {
             services: &run.services,
             ports: &run.ports,
             ready_within: run.ready_within,
+            origin: Origin::Words,
         }
+    }
+
+    pub fn made_by(self, origin: Origin<'a>) -> LockedCall<'a> {
+        LockedCall { origin, ..self }
     }
 
     pub fn peek(command: &'a Command) -> LockedCall<'a> {
@@ -89,6 +93,7 @@ impl<'a> LockedCall<'a> {
             services: &[],
             ports: &[],
             ready_within: Run::default().ready_within,
+            origin: Origin::Words,
         }
     }
 
@@ -98,6 +103,16 @@ impl<'a> LockedCall<'a> {
 
     /// Runs the call and returns the exit to give.
     pub fn run(&self, call: &Call, caller: &Caller) -> Result<i32, CallError> {
+        self.run_into(call, caller, &mut Output::Inherit)
+    }
+
+    /// Runs the call with its output going where `output` says.
+    pub fn run_into(
+        &self,
+        call: &Call,
+        caller: &Caller,
+        output: &mut Output,
+    ) -> Result<i32, CallError> {
         let env = Environment::read();
         let paths = Paths::from_env();
         let fleet = Fleet::load(paths.inventory());
@@ -118,7 +133,7 @@ impl<'a> LockedCall<'a> {
             && !env.unpinned_quiet
             && let Some(note) = target.entry(&fleet).and_then(unpinned)
         {
-            eprint!("{note}");
+            output.say(&note);
         }
 
         let label = Request::label(call);
@@ -138,9 +153,9 @@ impl<'a> LockedCall<'a> {
             && env.series_check
             && !call.new_series
             && let Some(series) = &series
-            && let Some(note) = series.check(&entry, &fleet, env.from_run && !call.preflight)?
+            && let Some(note) = series.check(&entry, &fleet, self.recipe() && !call.preflight)?
         {
-            eprint!("{note}");
+            output.say(&note);
         }
         if call.preflight {
             return Ok(0);
@@ -152,11 +167,14 @@ impl<'a> LockedCall<'a> {
                 lock_at: session.lock_at,
             });
         }
-        let values = self.values(call, caller, label.clone(), card);
+        let values = CallValues {
+            tty: output.tty(),
+            ..self.values(call, caller, label.clone(), card)
+        };
         let half = MachineHalf::load()?;
         let live = Liveness::from_env();
-        let status = match self.hold {
-            true => Hold {
+        let status = match (self.hold, &mut *output) {
+            (true, _) => Hold {
                 command: self.command,
                 lock: self.mode.as_str(),
                 at: session.at(&target, &here),
@@ -164,7 +182,10 @@ impl<'a> LockedCall<'a> {
                 reach: session.reach(&target, &here),
             }
             .run(session.hold(&values, &half, live)?)?,
-            false => exit_code(session.run(&values, &half, live)?),
+            (false, Output::Inherit) => exit_code(session.run(&values, &half, live)?),
+            (false, Output::Lines(on_line)) => {
+                exit_code(session.run_reading(&values, &half, live, *on_line)?)
+            }
         };
 
         if self.bench()
@@ -176,9 +197,15 @@ impl<'a> LockedCall<'a> {
             series.record(&entry, &caller.name, call.new_series);
         }
         if self.bench() && call.new_series && status != 0 {
-            eprint!("{}", stayed_put(label.as_str()));
+            output.say(&stayed_put(label.as_str()));
         }
-        Ok(session.exit(status, &target))
+        let diagnosis = session.diagnose(status, &target);
+        output.say(&diagnosis.said);
+        Ok(diagnosis.exit)
+    }
+
+    fn recipe(&self) -> bool {
+        matches!(self.origin, Origin::Recipe(_))
     }
 
     /// The machine the call goes to, placed when it is shared work that names none.
@@ -197,7 +224,7 @@ impl<'a> LockedCall<'a> {
             && fleet.names().len() > 1
             && !env.local
             && !self.hold
-            && !env.from_run;
+            && !self.recipe();
         if placed {
             let caller = Caller::default();
             let machine = Placement {
@@ -213,16 +240,30 @@ impl<'a> LockedCall<'a> {
     }
 
     fn values(&self, call: &Call, caller: &Caller, label: Label, card: Card) -> CallValues {
+        let values = Request {
+            mode: self.mode,
+            call,
+            caller,
+        }
+        .values(label, card, self.command.shell_string());
         CallValues {
             ready_within: self.ready_within,
             ports: self.ports.to_vec(),
             services: self.services.to_vec(),
-            ..Request {
-                mode: self.mode,
-                call,
-                caller,
-            }
-            .values(label, card, self.command.shell_string())
+            batch: match self.origin {
+                Origin::Recipe(RecipeJob {
+                    batch: Some(batch), ..
+                }) if carries_batch(self.mode) => batch.sent(),
+                _ => values.batch.clone(),
+            },
+            fingerprint: match self.origin {
+                Origin::Recipe(RecipeJob {
+                    fingerprint: Some(fingerprint),
+                    ..
+                }) => Fingerprint(fingerprint).sent(),
+                _ => String::new(),
+            },
+            ..values
         }
     }
 }
@@ -242,16 +283,8 @@ impl Request<'_> {
         };
         let stream = match self.call.stream {
             true => "1".to_string(),
-            false => set("DIBS_STREAM")
-                .or_else(|| set("DIBS_FROM_RUN"))
-                .unwrap_or_else(|| "0".into()),
+            false => set("DIBS_STREAM").unwrap_or_else(|| "0".into()),
         };
-        let fingerprint: String = std::env::var("DIBS_FINGERPRINT")
-            .unwrap_or_default()
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || "._-".contains(*c))
-            .take(FINGERPRINT_CHARS)
-            .collect();
         let caller = match self.mode {
             Mode::Shared
             | Mode::Bench
@@ -262,9 +295,9 @@ impl Request<'_> {
             | Mode::Gc => self.caller.clone(),
             _ => Caller::default(),
         };
-        let batch = match self.mode {
-            Mode::Shared | Mode::Bench | Mode::Peek | Mode::Rsh => batch_plan(),
-            _ => String::new(),
+        let batch = match carries_batch(self.mode) {
+            true => BatchStep::from_env().map(|b| b.sent()).unwrap_or_default(),
+            false => String::new(),
         };
         CallValues {
             mode: self.mode,
@@ -277,10 +310,9 @@ impl Request<'_> {
             card,
             stream,
             ready_within: Run::default().ready_within,
-            fingerprint,
+            fingerprint: String::new(),
             command,
-            // SAFETY: isatty only reads the descriptor's state.
-            tty: unsafe { libc::isatty(1) } == 1,
+            tty: Output::Inherit.tty(),
             caller,
             batch,
             ports: Vec::new(),
@@ -295,6 +327,24 @@ impl Request<'_> {
             .unwrap_or_else(|| Label::new(directory_name()))
             .filed()
     }
+}
+
+/// What a job's duration is filed under beside its label.
+pub(crate) struct Fingerprint<'a>(pub &'a str);
+
+impl Fingerprint<'_> {
+    pub fn sent(&self) -> String {
+        self.0
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || "._-".contains(*c))
+            .take(FINGERPRINT_CHARS)
+            .collect()
+    }
+}
+
+/// Whether the machine keeps a call's batch beside its holder.
+fn carries_batch(mode: Mode) -> bool {
+    matches!(mode, Mode::Shared | Mode::Bench | Mode::Peek | Mode::Rsh)
 }
 
 /// How long a call may hold the lock when `--max` does not say.
@@ -312,7 +362,6 @@ impl Environment {
         let is = |k: &str, v: &str| std::env::var(k).is_ok_and(|x| x == v);
         Environment {
             local: is("DIBS_LOCAL", "1"),
-            from_run: is("DIBS_FROM_RUN", "1"),
             series_check: set("DIBS_SERIES_CHECK").is_none_or(|v| v == "1"),
             unpinned_quiet: is("DIBS_UNPINNED_QUIET", "1"),
         }
@@ -345,19 +394,6 @@ fn series_machine(target: &Target) -> String {
     .into_iter()
     .find(|m| !m.is_empty())
     .unwrap_or_else(|| "?".into())
-}
-
-/// Which batch this call is a step of, and what is still to come, so the machine can say how
-/// long the batch has left.
-fn batch_plan() -> String {
-    let Some(batch) = set("DIBS_BATCH") else {
-        return String::new();
-    };
-    let step = std::env::var("DIBS_BATCH_STEP").unwrap_or_default();
-    let plan = std::env::var("DIBS_BATCH_PLAN").unwrap_or_default();
-    let text = format!("{batch}\t{step}\n{plan}\n");
-    let kept: String = text.split_inclusive('\n').take(BATCH_PLAN_LINES).collect();
-    kept.trim_end_matches('\n').to_string()
 }
 
 /// The name of the directory the call was made from, as the shell sees it.

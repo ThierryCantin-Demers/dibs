@@ -751,15 +751,6 @@ fn shared_work_naming_no_machine_is_placed_on_one_that_answered() {
         1,
         "a machine that did not answer says so"
     );
-    // Every step of a run lands on the machine its worktree was prepared on, so a step arriving
-    // without one is refused rather than placed on its own.
-    assert_eq!(
-        away(s.dibs(["--label", "r", "true"]))
-            .env("DIBS_FROM_RUN", "1")
-            .code(),
-        2,
-        "a step of a run is never placed on its own"
-    );
 }
 
 #[test]

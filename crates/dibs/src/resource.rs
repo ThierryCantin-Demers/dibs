@@ -1,30 +1,28 @@
-//! Getting a machine with the right things held, which is the only thing the layer below is
-//! for.
-//!
-//! Today that is `dibs`, a bash script that ships itself over ssh and takes an flock. It could
-//! become `srun` against a Slurm cluster without anything above this file changing, which is
-//! the entire reason the boundary is here: the crossover is the multi-device machine, and it
-//! should be a swap rather than a rewrite.
+//! The jobs a recipe runs: locked calls made in this process, whose output is read here for the
+//! trailer and for what a setup reports ahead of its command.
 
-use crate::recipe::{Isolation, Lock};
-use dibs_format::{JobId, StepRecord};
-use std::{
-    io::{BufRead, BufReader, Write},
-    process::{Command, Stdio},
-    sync::mpsc,
-    time::Instant,
+use crate::recipe::Lock;
+use dibs::{
+    call::{CallError, Destination, LockedCall, MachineCall, Origin, Output, RecipeJob, Sync},
+    caller::Caller,
+    cli::{Call, Command, Mode, Run, RunLock},
+    machine::{Interrupt, Stream},
+    placement::Placement,
 };
+use dibs_format::{Alias, JobId, Label, MachineName, StepRecord};
+use std::{io::Write as _, time::Instant};
+
+/// What a run record names the layer its jobs ran on.
+pub const BACKEND: &str = "dibs";
 
 pub struct Request<'a> {
     pub label: &'a str,
     pub lock: Lock,
-    pub isolation: Isolation,
-    pub needs: Option<&'a str>,
     /// The card to run on, named from the machine's inventory. Absent means the runtime
     /// picks, which is fine for a build and is what makes two benchmarks incomparable.
     pub device: Option<&'a str>,
     /// Which batch this is a step of and what is still to come, for the machine's status.
-    pub env: &'a [(&'static str, String)],
+    pub job: &'a RecipeJob,
     /// Seconds the job may hold the lock, when the caller knows the default is too short.
     pub max: Option<u64>,
     /// A measurement that starts its label's series on this machine again, on another card.
@@ -36,6 +34,12 @@ pub struct Outcome {
     pub seconds: u64,
     /// What the job's trailer said, when its stderr passed through here and it printed one.
     pub trailer: Option<Trailer>,
+}
+
+/// A job's outcome, and the `DIBS-` lines it reported, or its whole stdout when that was kept.
+pub struct Reported {
+    pub outcome: Outcome,
+    pub text: String,
 }
 
 impl Outcome {
@@ -86,272 +90,265 @@ impl Trailer {
     }
 }
 
-pub trait Backend {
-    fn run(&self, req: &Request, command: &str) -> Result<Outcome, String>;
-    /// Same, but the job's stdout comes back rather than going to the terminal. For setup
-    /// steps that have to report where they put things; a benchmark's output must keep
-    /// streaming to whoever asked for it.
-    fn run_capture(&self, req: &Request, command: &str) -> Result<(Outcome, String), String>;
+/// What a job's output is read for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    /// Passed through, apart from the `DIBS-` lines a setup reports and the trailer.
+    Reported,
+    /// Stdout kept whole, stderr passed through.
+    Kept,
+}
+
+/// A job's output as it arrives: passed through, with what the recipe layer reads kept aside.
+struct Reader<'a> {
+    reading: Reading,
+    on_report: &'a mut dyn FnMut(&str),
+    text: String,
+    told: bool,
+    trailer: Option<Trailer>,
+    start: Instant,
+}
+
+impl<'a> Reader<'a> {
+    fn new(reading: Reading, on_report: &'a mut dyn FnMut(&str)) -> Reader<'a> {
+        Reader {
+            reading,
+            on_report,
+            text: String::new(),
+            told: false,
+            trailer: None,
+            start: Instant::now(),
+        }
+    }
+
+    fn line(&mut self, stream: Stream, line: &[u8]) {
+        if self.reading == Reading::Kept {
+            match stream {
+                Stream::Out => self.text.push_str(&String::from_utf8_lossy(line)),
+                Stream::Err => Reader::pass(stream, line),
+            }
+            return;
+        }
+        if stream == Stream::Err {
+            Trailer::read(String::from_utf8_lossy(line).trim_end(), &mut self.trailer);
+        }
+        if !line.starts_with(b"DIBS-") {
+            return Reader::pass(stream, line);
+        }
+        let text = String::from_utf8_lossy(line);
+        let text = text.trim_end();
+        self.text.push_str(text);
+        self.text.push('\n');
+        if !self.told && (text == "DIBS-READY" || text == "DIBS-HELD") {
+            self.told = true;
+            (self.on_report)(&self.text);
+        }
+    }
+
+    fn pass(stream: Stream, line: &[u8]) {
+        let _ = match stream {
+            Stream::Err => {
+                let mut e = std::io::stderr().lock();
+                e.write_all(line).and_then(|_| e.flush())
+            }
+            Stream::Out => {
+                let mut o = std::io::stdout().lock();
+                o.write_all(line).and_then(|_| o.flush())
+            }
+        };
+    }
+
+    fn reported(self, status: i32) -> Reported {
+        let trailer = match self.reading {
+            Reading::Reported => self.trailer,
+            Reading::Kept => None,
+        };
+        Reported {
+            outcome: Outcome {
+                status,
+                seconds: self.start.elapsed().as_secs(),
+                trailer,
+            },
+            text: self.text,
+        }
+    }
+}
+
+/// Where a recipe's jobs go: chosen once per run and held for every step. Picking per step would
+/// put the build on one machine and the command that needs its worktree on another.
+pub struct Jobs {
+    pub machine: Option<MachineName>,
+    caller: Caller,
+}
+
+impl Jobs {
+    pub fn on(machine: Option<MachineName>) -> Jobs {
+        Jobs {
+            machine,
+            caller: Caller::from_env(),
+        }
+    }
+
+    /// Where shared work goes: the machine named, or the only one there is, or else a placement
+    /// among them by build cache and then by load. Only for work that is shared throughout: a
+    /// measurement's history keys on the machine it ran on.
+    ///
+    /// `prefer` names the machine already holding this repo's build cache; `repo` asks which
+    /// machines hold it, which is what makes the first run for a repo land somewhere useful.
+    pub fn placed(prefer: Option<&str>, repo: Option<&str>) -> Result<Jobs, String> {
+        let call = Call {
+            mode: Mode::Pick,
+            prefer: prefer.map(str::to_string),
+            repo: repo.map(str::to_string),
+            ..Call::default()
+        };
+        let caller = Caller::default();
+        let machine = MachineCall::new(&call, &caller);
+        let placed = match machine.destination() {
+            Destination::Named(m) => Some(m),
+            Destination::Unnamed => None,
+            Destination::Unchosen => Some(Placement { machine: &machine }.pick().map_err(|_| {
+                let why = repo.map(|r| format!(" --repo {r}")).unwrap_or_default();
+                format!(
+                    "nowhere to send this: it names no machine, and none could be placed. dibs --pick -v{why}\n  \
+                     says why; --on <machine> names one."
+                )
+            })?),
+        };
+        Ok(Jobs::on(placed))
+    }
+
+    /// The machine a call goes to with no ranking at all. Naming it matters even when there was
+    /// no choice to make: a benchmark cannot be moved, so it is the one that decides where its
+    /// repo's build cache belongs, and the record should say where it ran.
+    pub fn destination() -> Destination {
+        let call = Call::default();
+        let caller = Caller::default();
+        MachineCall::new(&call, &caller).destination()
+    }
+
+    pub fn run(&self, req: &Request, command: &str) -> Outcome {
+        self.read(req, command, Reader::new(Reading::Reported, &mut |_| {}))
+            .outcome
+    }
+
+    /// Same, but the job's stdout comes back rather than going to the terminal. For setup steps
+    /// that have to report where they put things; a benchmark's output must keep streaming to
+    /// whoever asked for it.
+    pub fn run_capture(&self, req: &Request, command: &str) -> Reported {
+        self.read(req, command, Reader::new(Reading::Kept, &mut |_| {}))
+    }
+
     /// Output streams as `run`'s does, except the report of a setup run ahead of the command,
     /// which is collected and handed to `on_report` before anything after it is shown.
-    fn run_reporting(
+    pub fn run_reporting(
         &self,
         req: &Request,
         command: &str,
         on_report: &mut dyn FnMut(&str),
-    ) -> Result<(Outcome, String), String>;
-    fn name(&self) -> &'static str;
-}
-
-/// The bash wrapper. Exclusive maps to `--bench`, shared to a plain call.
-///
-/// `needs` and per-device isolation have nowhere to go here: this backend knows one machine
-/// and does not know what is in it. Rather than pretend, it refuses, because silently running
-/// a tensor-core benchmark on whatever card happens to be free is the failure that routing
-/// exists to prevent.
-pub struct Dibs {
-    pub program: String,
-    /// Chosen once per run and held for every step. Picking per step would put the build on one
-    /// machine and the command that needs its worktree on another.
-    pub machine: Option<String>,
-}
-
-impl Default for Dibs {
-    fn default() -> Self {
-        Dibs {
-            program: "dibs".into(),
-            machine: None,
-        }
+    ) -> Reported {
+        self.read(req, command, Reader::new(Reading::Reported, on_report))
     }
-}
 
-/// Where a call goes before anything is placed.
-pub enum Destination {
-    Named(String),
-    /// Somewhere with no inventory name: a DIBS_HOST outside the inventory, or this computer.
-    Unnamed,
-    /// Nowhere until a machine is named, because several could take it.
-    Unchosen,
-}
-
-impl Dibs {
-    /// The machine this would go to with no ranking at all. Naming it matters even when there
-    /// was no choice to make: a benchmark cannot be moved, so it is the one that decides where
-    /// its repo's build cache belongs, and the record should say where it ran.
-    pub fn which(program: &str) -> Destination {
-        let Ok(out) = Command::new(program)
-            .arg("--which")
-            .stdin(Stdio::null())
-            .output()
-        else {
-            return Destination::Unnamed;
+    /// Whether the call would be refused on grounds decided here, without the machine: a machine
+    /// that does not measure, or a label measured somewhere else.
+    pub fn preflight(&self, req: &Request) -> bool {
+        let call = Call {
+            preflight: true,
+            ..self.call(req, "true")
         };
-        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        match out.status.code() {
-            Some(0) if !name.is_empty() => Destination::Named(name),
-            Some(2) => Destination::Unchosen,
-            _ => Destination::Unnamed,
-        }
+        Jobs::exit(self.locked(&call, req.job, &mut Output::Inherit)) == 0
     }
 
-    /// Asks the wrapper to rank the inventory. Only for recipes that are shared throughout: a
-    /// measurement's history keys on the machine it ran on, so moving one silently merges two
-    /// distributions under a single label.
-    ///
-    /// `prefer` names the machine already holding this repo's build cache. Without it a build
-    /// can land on one machine and the benchmark that needs what it built on another, which
-    /// leaves the benchmark to compile inside its own exclusive lock.
-    pub fn routed(program: &str, prefer: Option<&str>, repo: Option<&str>) -> Option<String> {
-        let mut cmd = Command::new(program);
-        cmd.arg("--pick");
-        if let Some(p) = prefer {
-            cmd.arg("--prefer").arg(p);
-        }
-        // The recorded preference is a memo; asking which machines actually hold the cache is
-        // what makes the first run for a repo land somewhere useful.
-        if let Some(r) = repo {
-            cmd.arg("--repo").arg(r);
-        }
-        let out = cmd.stdin(Stdio::null()).output().ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        (!name.is_empty()).then_some(name)
-    }
-}
-
-impl Backend for Dibs {
-    fn run(&self, req: &Request, command: &str) -> Result<Outcome, String> {
-        Ok(reporting(self.build(req, command)?, &mut |_| {})?.0)
-    }
-
-    fn run_capture(&self, req: &Request, command: &str) -> Result<(Outcome, String), String> {
-        let mut cmd = self.build(req, command)?;
-        cmd.stderr(Stdio::inherit()); // or a failing fetch says only "exit 3"
-        let start = std::time::Instant::now();
-        let out = cmd
-            .output()
-            .map_err(|e| format!("could not run {}: {e}", self.program))?;
-        Ok((
-            Outcome {
-                status: out.status.code().unwrap_or(-1),
-                seconds: start.elapsed().as_secs(),
-                trailer: None,
-            },
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-        ))
-    }
-
-    fn run_reporting(
+    /// rsync between here and the machine, with `before` run there first under the same shared
+    /// lock, its report read as `run_reporting` reads one.
+    pub fn sync(
         &self,
         req: &Request,
-        command: &str,
+        args: &[String],
+        before: &str,
         on_report: &mut dyn FnMut(&str),
-    ) -> Result<(Outcome, String), String> {
-        reporting(self.build(req, command)?, on_report)
+    ) -> Reported {
+        let mut reader = Reader::new(Reading::Reported, on_report);
+        let call = self.call(req, "");
+        let machine = MachineCall::new(&call, &self.caller);
+        let exit = Sync {
+            machine: &machine,
+            args,
+            before,
+            origin: Origin::Recipe(req.job),
+        }
+        .answer_into(&mut Output::Lines(&mut |stream, line| {
+            reader.line(stream, line)
+        }));
+        reader.reported(Jobs::exit(exit))
     }
 
-    fn name(&self) -> &'static str {
-        "dibs"
-    }
-}
-
-/// Runs `cmd` passing its output through, except the `DIBS-` lines of a setup's report. Both
-/// streams are read: a transfer reports on stderr because rsync owns stdout, and the same
-/// transfer run on the machine itself is an ordinary job whose streams arrive merged.
-pub fn reporting(
-    mut cmd: Command,
-    on_report: &mut dyn FnMut(&str),
-) -> Result<(Outcome, String), String> {
-    let start = Instant::now();
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not run {:?}: {e}", cmd.get_program()))?;
-    let (tx, rx) = mpsc::channel::<(bool, Vec<u8>)>();
-    let out = child
-        .stdout
-        .take()
-        .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>);
-    let err = child
-        .stderr
-        .take()
-        .map(|s| Box::new(s) as Box<dyn std::io::Read + Send>);
-    let readers: Vec<_> = [(false, out), (true, err)]
-        .into_iter()
-        .filter_map(|(is_err, r)| r.map(|r| (is_err, r)))
-        .map(|(is_err, r)| {
-            let tx = tx.clone();
-            std::thread::spawn(move || {
-                let mut r = BufReader::new(r);
-                let mut line = Vec::new();
-                while matches!(r.read_until(b'\n', &mut line), Ok(n) if n > 0) {
-                    if tx.send((is_err, std::mem::take(&mut line))).is_err() {
-                        break;
-                    }
-                }
-            })
-        })
-        .collect();
-    drop(tx);
-    let mut report = String::new();
-    let mut told = false;
-    let mut trailer = None;
-    for (is_err, line) in rx {
-        if is_err {
-            Trailer::read(String::from_utf8_lossy(&line).trim_end(), &mut trailer);
-        }
-        if line.starts_with(b"DIBS-") {
-            let text = String::from_utf8_lossy(&line);
-            let text = text.trim_end();
-            report.push_str(text);
-            report.push('\n');
-            if !told && (text == "DIBS-READY" || text == "DIBS-HELD") {
-                told = true;
-                on_report(&report);
-            }
-            continue;
-        }
-        let _ = if is_err {
-            let mut e = std::io::stderr().lock();
-            e.write_all(&line).and_then(|_| e.flush())
-        } else {
-            let mut o = std::io::stdout().lock();
-            o.write_all(&line).and_then(|_| o.flush())
+    /// What a job kept, fetched into `into`: the report of it, or the exit that stopped it.
+    pub fn fetch(&self, job: &JobId, into: Option<&str>) -> Result<String, i32> {
+        let call = Call {
+            on: self.machine.clone(),
+            ..Call::default()
         };
-    }
-    for r in readers {
-        let _ = r.join();
-    }
-    let status = child.wait().map_err(|e| e.to_string())?;
-    Ok((
-        Outcome {
-            status: status.code().unwrap_or(-1),
-            seconds: start.elapsed().as_secs(),
-            trailer,
-        },
-        report,
-    ))
-}
-
-impl Dibs {
-    /// Whether the wrapper would refuse this request on grounds it decides here, without the
-    /// machine: a machine that does not measure, or a label measured somewhere else.
-    pub fn preflight(&self, req: &Request) -> Result<bool, String> {
-        let mut cmd = self.flags(req)?;
-        cmd.arg("--preflight").arg("true").stdin(Stdio::null());
-        let status = cmd
-            .status()
-            .map_err(|e| format!("could not run {}: {e}", self.program))?;
-        Ok(status.success())
+        let mut report = Vec::new();
+        let exit = MachineCall::new(&call, &self.caller).fetch(job, into, &mut report);
+        match Jobs::exit(exit) {
+            0 => Ok(String::from_utf8_lossy(&report).into_owned()),
+            exit => Err(exit),
+        }
     }
 
-    fn build(&self, req: &Request, command: &str) -> Result<Command, String> {
-        let mut cmd = self.flags(req)?;
-        cmd.arg(command);
-        // A job must never inherit this process's stdin: the wrapper reads its own channel to
-        // learn that the caller is gone, and a shared stdin makes that signal meaningless.
-        cmd.stdin(Stdio::null());
-        Ok(cmd)
+    fn read(&self, req: &Request, command: &str, mut reader: Reader) -> Reported {
+        let call = self.call(req, command);
+        let exit = self.locked(
+            &call,
+            req.job,
+            &mut Output::Lines(&mut |stream, line| reader.line(stream, line)),
+        );
+        reader.reported(Jobs::exit(exit))
     }
 
-    fn flags(&self, req: &Request) -> Result<Command, String> {
-        if req.isolation == Isolation::Device {
-            return Err(
-                "per-device isolation needs a backend that knows what is in the machine; \
-                        this one locks the whole machine or nothing"
-                    .into(),
-            );
+    fn locked(&self, call: &Call, job: &RecipeJob, output: &mut Output) -> Result<i32, CallError> {
+        let Mode::Run(run) = &call.mode else {
+            unreachable!("a recipe's call is a run");
+        };
+        LockedCall::run_of(run)
+            .made_by(Origin::Recipe(job))
+            .run_into(call, &self.caller, output)
+    }
+
+    /// A call's exit, with what refused it said. A Ctrl-C the job was given ends the run here too,
+    /// once the job has released its lock.
+    fn exit(exit: Result<i32, CallError>) -> i32 {
+        let exit = exit.unwrap_or_else(|e| {
+            eprint!("{e}");
+            e.exit()
+        });
+        if Interrupt::heard() {
+            Interrupt::raise();
         }
-        if let Some(n) = req.needs {
-            return Err(format!(
-                "this recipe needs '{n}', and the dibs backend cannot check that or route on it"
-            ));
+        exit
+    }
+
+    fn call(&self, req: &Request, command: &str) -> Call {
+        let lock = match req.lock {
+            Lock::Exclusive => RunLock::Bench,
+            Lock::Shared => RunLock::Shared,
+        };
+        Call {
+            mode: Mode::Run(Run {
+                lock,
+                command: Command(vec![command.to_string()]),
+                ..Run::default()
+            }),
+            on: self.machine.clone(),
+            label: (!req.label.is_empty()).then(|| Label::new(req.label)),
+            max: req.max,
+            device: req.device.map(Alias::new),
+            new_series: req.new_series && req.lock == Lock::Exclusive,
+            stream: true,
+            ..Call::default()
         }
-        let mut cmd = Command::new(&self.program);
-        if let Some(m) = &self.machine {
-            cmd.arg("--on").arg(m);
-        }
-        if req.lock == Lock::Exclusive {
-            cmd.arg("--bench");
-            if req.new_series {
-                cmd.arg("--new-series");
-            }
-        }
-        cmd.arg("--label").arg(req.label);
-        if let Some(m) = req.max {
-            cmd.arg("--max").arg(m.to_string());
-        }
-        if let Some(d) = req.device {
-            cmd.arg("--device").arg(d);
-        }
-        // Tells the wrapper this came through the interface, so it does not print the note
-        // that points at the interface.
-        cmd.env("DIBS_FROM_RUN", "1");
-        cmd.envs(req.env.iter().map(|(k, v)| (*k, v)));
-        Ok(cmd)
     }
 }
 
@@ -374,45 +371,23 @@ mod tests {
         );
     }
 
-    fn request(lock: Lock, new_series: bool) -> Request<'static> {
-        Request {
-            label: "a/bench/x",
-            lock,
-            isolation: Isolation::Machine,
-            needs: None,
-            device: None,
-            env: &[],
-            max: None,
-            new_series,
-        }
-    }
-
     #[test]
     fn a_new_series_reaches_the_measurement_and_nothing_else() {
-        let d = Dibs {
-            program: "dibs".into(),
-            machine: Some("m".into()),
+        let job = RecipeJob::default();
+        let jobs = Jobs::on(Some(MachineName::new("m")));
+        let new_series = |lock, new_series| {
+            let req = Request {
+                label: "a/bench/x",
+                lock,
+                device: None,
+                job: &job,
+                max: None,
+                new_series,
+            };
+            jobs.call(&req, "cmd").new_series
         };
-        let args = |req: &Request| {
-            d.build(req, "cmd")
-                .unwrap()
-                .get_args()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            args(&request(Lock::Exclusive, true)),
-            [
-                "--on",
-                "m",
-                "--bench",
-                "--new-series",
-                "--label",
-                "a/bench/x",
-                "cmd"
-            ]
-        );
-        assert!(!args(&request(Lock::Shared, true)).contains(&"--new-series".to_string()));
-        assert!(!args(&request(Lock::Exclusive, false)).contains(&"--new-series".to_string()));
+        assert!(new_series(Lock::Exclusive, true));
+        assert!(!new_series(Lock::Shared, true));
+        assert!(!new_series(Lock::Exclusive, false));
     }
 }

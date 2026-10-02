@@ -31,12 +31,9 @@ pub fn local_dir() -> PathBuf {
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Isolation {
-    /// Nothing else runs on the machine. The default, because the failure mode of the other
-    /// one is a number that is wrong and looks fine.
+    /// Nothing else runs on the machine, the only isolation there is.
     #[default]
     Machine,
-    /// This device only; neighbours may use theirs.
-    Device,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -65,9 +62,9 @@ pub struct Recipe {
     /// Filled in on load, never read from the file.
     #[serde(skip, default = "default_source")]
     pub source: Source,
-    /// What hardware this needs, in the vocabulary cubecl reports and Slurm consumes.
+    /// Refused on load: nothing here can check what a machine has or route on it.
     #[serde(default)]
-    pub needs: Option<String>,
+    pub(crate) needs: Option<String>,
     #[serde(default)]
     pub isolation: Isolation,
     #[serde(default)]
@@ -245,6 +242,7 @@ impl Manifest {
             let at = |e: String| format!("{}: {e}", path.display());
             let text = std::fs::read_to_string(&path).map_err(|e| at(e.to_string()))?;
             let parsed: Manifest = toml::from_str(&text).map_err(|e| at(e.to_string()))?;
+            parsed.refuse_needs().map_err(at)?;
             parsed
                 .tree
                 .as_ref()
@@ -255,6 +253,19 @@ impl Manifest {
             found = true;
         }
         Ok((m, found))
+    }
+
+    fn refuse_needs(&self) -> Result<(), String> {
+        let named = [&self.bench, &self.build, &self.test]
+            .into_iter()
+            .flatten()
+            .find_map(|(name, rec)| Some((name, rec.needs.as_deref()?)));
+        match named {
+            Some((name, needs)) => Err(format!(
+                "recipe {name} needs '{needs}', which nothing here can check or route on; name the machine with --on"
+            )),
+            None => Ok(()),
+        }
     }
 
     /// What a new tree of this repo starts without, from whichever layer last said.
@@ -332,7 +343,6 @@ impl Recipe {
     /// ran is what has to be identified, not the template it came from.
     pub fn fingerprint(&self) -> String {
         let mut h = Sha256::new();
-        h.update(self.needs.as_deref().unwrap_or("").as_bytes());
         h.update(format!("{:?}", self.isolation).as_bytes());
         for s in &self.steps {
             h.update(format!("{:?}", s.lock).as_bytes());

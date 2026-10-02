@@ -98,6 +98,7 @@ fn a_removed_flag_is_refused_as_gone() {
         "--any",
         "--shared",
         "--abi",
+        "--rsh",
     ] {
         let error = parse(&[flag, "x"]).unwrap_err();
         assert!(
@@ -296,20 +297,6 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
             on("m", Mode::Sync(words(&["-a", "./x", ":~/y"]))),
         ),
         (
-            vec!["--rsh", "host", "rsync", "--server", "."],
-            of(Mode::Rsh {
-                host: "host".into(),
-                command: words(&["rsync", "--server", "."]),
-            }),
-        ),
-        (
-            vec!["--rsh", "-l", "me", "host", "rsync"],
-            of(Mode::Rsh {
-                host: "host".into(),
-                command: words(&["rsync"]),
-            }),
-        ),
-        (
             vec!["--machines", "-v"],
             with(Call {
                 verbose: true,
@@ -343,7 +330,6 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
                 "gpu:0",
                 "--new-series",
                 "--stream",
-                "--preflight",
                 "x",
             ],
             with(Call {
@@ -353,7 +339,6 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
                 device: Some(Alias::new("gpu:0")),
                 new_series: true,
                 stream: true,
-                preflight: true,
                 ..call(run(RunLock::Shared, &["x"]))
             }),
         ),
@@ -698,11 +683,6 @@ fn refusals() -> Vec<(Vec<&'static str>, &'static str, bool)> {
         (
             vec!["--hold", "--sync", "-a", "x", ":y"],
             "dibs: --hold takes a lock for a command run on this computer. It goes alone or with --bench.",
-            false,
-        ),
-        (
-            vec!["--rsh", "host"],
-            "--rsh is rsync's transport, not for calling directly",
             false,
         ),
     ]

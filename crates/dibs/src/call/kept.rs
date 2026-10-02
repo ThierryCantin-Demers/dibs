@@ -9,7 +9,7 @@ use crate::{
 };
 use dibs_format::{Exit, JobId, Label, Mode};
 use std::{
-    io::Write as _,
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -90,7 +90,12 @@ impl MachineCall<'_> {
     }
 
     /// `dibs --fetch`: a job's files, kept here and copied where asked.
-    pub fn fetch(&self, job: &JobId, into: Option<&str>) -> Result<i32, CallError> {
+    pub fn fetch(
+        &self,
+        job: &JobId,
+        into: Option<&str>,
+        report: &mut dyn Write,
+    ) -> Result<i32, CallError> {
         let kept = self.kept(job).join("artifacts");
         if !kept.is_dir() {
             let at = self.target()?;
@@ -101,7 +106,7 @@ impl MachineCall<'_> {
                 .strip_prefix(FETCHED.as_bytes())
                 .and_then(|r| r.strip_prefix(b"\n"))
             else {
-                std::io::stdout().write_all(&raw)?;
+                report.write_all(&raw)?;
                 return Ok(match answer.exit.unwrap_or_default() {
                     0 => i32::from(Exit::Failed.code()),
                     exit => exit,
@@ -116,21 +121,23 @@ impl MachineCall<'_> {
             }
         }
         let files = files_under(&kept);
-        println!(
+        writeln!(
+            report,
             "dibs: {} file(s) from job {job}, kept in {}",
             files.len(),
             kept.display()
-        );
+        )?;
         let listed: Vec<String> = files.iter().take(FILES_LISTED).cloned().collect();
-        print!(
+        write!(
+            report,
             "{}",
             Indented {
                 text: &listed.join("\n"),
                 by: "  ",
             }
-        );
+        )?;
         if files.len() > FILES_LISTED {
-            println!("  and {} more", files.len() - FILES_LISTED);
+            writeln!(report, "  and {} more", files.len() - FILES_LISTED)?;
         }
         if let Some(into) = into {
             let copied = std::fs::create_dir_all(into).is_ok()
@@ -143,7 +150,7 @@ impl MachineCall<'_> {
             if !copied {
                 return Ok(i32::from(Exit::Failed.code()));
             }
-            println!("dibs: copied into {into}");
+            writeln!(report, "dibs: copied into {into}")?;
         }
         Ok(0)
     }
