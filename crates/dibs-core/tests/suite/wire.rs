@@ -9,7 +9,7 @@ use std::fs;
 
 /// `WIRE_RUN=1` runs the far side here on the same stream; otherwise it exits `WIRE_EXIT`.
 const RECORDING_SSH: &str = r#"#!/bin/bash
-n=$(( $(find "$WIRE" -name '*.argv' | wc -l) + 1 ))
+n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
 printf '%s\0' ssh "$@" > "$WIRE/$n.argv"
 cmd=${@: -1}
 count=$(printf '%s\n' "$cmd" | sed -n 's/.*count=\([0-9][0-9]*\).*/\1/p' | head -n 1)
@@ -19,21 +19,36 @@ if [ -n "$count" ]; then
 fi
 [ -n "${WIRE_SAYS:-}" ] && printf '%s\n' "$WIRE_SAYS" >&2
 if [ "${WIRE_RUN:-0}" = 1 ]; then
+    [ -n "${WIRE_FAR_CARGO_HOME:-}" ] && export CARGO_HOME=$WIRE_FAR_CARGO_HOME
     if [ -n "$count" ]; then exec bash -c "$cmd" < <(cat "$WIRE/$n.b64"; exec cat); fi
     exec bash -c "$cmd"
 fi
 exit "${WIRE_EXIT:-0}"
 "#;
 
-/// An rsync that writes down how dibs started it and which machine it was handed.
+/// An rsync that writes down what it was asked to copy, then reaches the far side as rsync does,
+/// through the program it was given with -e, which is how dibs is reached and not pinned here.
 const RECORDING_RSYNC: &str = r#"#!/bin/bash
 [ "$1" = --help ] && { echo '  --mkpath   create destination path components'; exit 0; }
-n=$(( $(find "$WIRE" -name '*.argv' | wc -l) + 1 ))
-printf '%s\0' rsync "$@" > "$WIRE/$n.argv"
-for v in DIBS_HOST DIBS_HOSTNAME DIBS_SYNC_LABEL DIBS_ON; do printf '%s=%s\n' "$v" "${!v-<unset>}"; done > "$WIRE/$n.env"
-[ -n "${DIBS_RSH_EXIT:-}" ] && echo "DIBS_RSH_EXIT=<a file>" >> "$WIRE/$n.env"
-exit 0
+rsh=ssh args=() remote=
+while [ $# -gt 0 ]; do
+    case $1 in
+        -e) rsh=$2; shift 2; continue ;;
+        --rsh=*) rsh=${1#--rsh=}; shift; continue ;;
+        *:*) remote=$1 ;;
+    esac
+    args+=("$1"); shift
+done
+n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
+printf '%s\0' rsync "${args[@]}" > "$WIRE/$n.argv"
+host=${remote%%:*}
+case $host in *@*) set -- -l "${host%@*}" "${host#*@}" ;; *) set -- "$host" ;; esac
+exec $rsh "$@" rsync --server -logDtprze.iLsfxCIvu . "${remote#*:}"
 "#;
+
+/// A terminal for a call to write to, so it says what it would say to a person.
+const PTY: &str =
+    "import os, pty, sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))";
 
 const MACHINES: &str = "[machine.box-a]\nssh      = \"dibs@box-a\"\nhostname = \"box-a\"\n\n  [[machine.box-a.device]]\n  kind     = \"gpu\"\n  alias    = \"gpu:card\"\n  name     = \"a card\"\n  pci      = \"0000:01:00.0\"\n  chip     = \"10de:2786\"\n  runtimes = [\"cuda\", \"vulkan\"]\n\n[machine.box-b]\nssh      = \"dibs@box-b\"\nhostname = \"box-b\"\n";
 
@@ -87,7 +102,7 @@ fn wire_normal(s: &Sandbox) -> Normal {
 }
 
 /// Reads a payload's values back the way the machine does, by running them, and prints each
-/// as `NAME`, NUL, value, NUL in the order sent; an array's members as `NAME[i]`.
+/// as `NAME`, NUL, value, NUL; an array's members as `NAME[i]`.
 const READ_VALUES: &str = r#"set -u
 . "$1"
 for name in $(sed -n 's/^\([A-Z_][A-Z_]*\)=.*/\1/p; s/^declare -a \([A-Z_][A-Z_]*\)=.*/\1/p' "$1"); do
@@ -102,47 +117,110 @@ for name in $(sed -n 's/^\([A-Z_][A-Z_]*\)=.*/\1/p; s/^declare -a \([A-Z_][A-Z_]
 done
 "#;
 
-/// The values a payload carries, as the machine sees them once it has run them: one per line, a
-/// value of several lines indented under its name.
-fn values(s: &Sandbox, sent: &str) -> String {
-    s.write("values.sh", sent);
-    let out = s
-        .command("bash", ["-c", READ_VALUES, "_", &s.p("values.sh")])
-        .run();
-    assert_eq!(out.code, 0, "the values do not run: {}\n{sent}", out.stderr);
-    let fields: Vec<&str> = out.stdout.split('\0').collect();
-    let mut text = String::new();
-    for pair in fields.chunks(2) {
-        let [name, value] = pair else { continue };
-        if let Some(count) = name.strip_suffix("[]") {
-            text.push_str(&format!("{count}: an array of {value}\n"));
-        } else if value.contains('\n') {
-            text.push_str(&format!("{name}:\n"));
-            text.extend(value.split('\n').map(|l| format!("  | {l}\n")));
-        } else {
-            text.push_str(&format!("{name}: {value}\n"));
-        }
+/// The words a shell makes of a command, NUL-separated, as the machine's `bash -c` runs it.
+const WORDS: &str = r#"eval "set -- $1"; printf '%s\0' "$@""#;
+
+/// The values each mode that runs no job reads. A mode that runs one reads them all.
+fn read_by(mode: &str) -> Option<&'static [&'static str]> {
+    match mode {
+        "status" => Some(&["JSON", "MODE", "TTY", "VERBOSE"]),
+        "watch" => Some(&[
+            "JSON", "LABEL", "LEASE", "MODE", "NO_WATCH", "TTY", "VERBOSE",
+        ]),
+        "abi" => Some(&["MODE", "TTY"]),
+        "log" | "check" | "out" | "fetch" => Some(&["LABEL", "MODE", "TTY"]),
+        "kill" | "kill-force" => Some(&[
+            "AGENT", "AGENT_ID", "BATCH", "DEV_NAME", "LABEL", "MODE", "TTY",
+        ]),
+        "release" => Some(&["AGENT", "BATCH", "DEV_NAME", "MODE", "TTY", "VERBOSE"]),
+        _ => None,
     }
-    text
 }
 
-/// What the recorded calls sent, in order, with the machine script checked rather than shown.
-fn captured(s: &Sandbox, n: &Normal) -> String {
-    let wire = s.path("wire");
-    let mut calls: Vec<usize> = fs::read_dir(&wire)
-        .unwrap()
-        .flatten()
-        .filter_map(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .strip_suffix(".argv")
-                .and_then(|k| k.parse().ok())
-        })
-        .collect();
-    calls.sort();
-    let script = machine_script();
-    let mut out = String::new();
-    for k in calls {
+/// How a call's command is compared.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Cmd {
+    /// As one shell string, the way it was given.
+    AsSent,
+    /// By the words the machine's shell makes of it, since several arguments may be quoted any
+    /// way that yields them.
+    AsWords,
+}
+
+/// Whether a capture's calls come one after another or all at once, in no particular order.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Calls {
+    InOrder,
+    AtOnce,
+}
+
+/// One snapshot's worth of captures from a wired sandbox.
+pub(crate) struct Wire<'a> {
+    s: &'a Sandbox,
+    n: Normal,
+    t: Transcript,
+}
+
+impl<'a> Wire<'a> {
+    pub(crate) fn new(s: &'a Sandbox) -> Wire<'a> {
+        Wire {
+            s,
+            n: wire_normal(s),
+            t: Transcript::default(),
+        }
+    }
+
+    /// One call's wire, under the call.
+    pub(crate) fn record(&mut self, title: &str, call: Call) -> Output {
+        self.record_as(title, call, Cmd::AsSent, Calls::InOrder)
+    }
+
+    pub(crate) fn record_as(&mut self, title: &str, call: Call, cmd: Cmd, calls: Calls) -> Output {
+        self.clear();
+        let out = call.run();
+        let body = format!("-> exit {}\n{}", out.code, self.captured(cmd, calls));
+        self.t.section(&self.n.apply(title), &body);
+        out
+    }
+
+    pub(crate) fn text(&self) -> &str {
+        self.t.text()
+    }
+
+    fn clear(&self) {
+        let wire = self.s.path("wire");
+        let _ = fs::remove_dir_all(&wire);
+        fs::create_dir_all(&wire).unwrap();
+    }
+
+    /// What the recorded calls sent, with the machine script checked rather than shown.
+    fn captured(&self, cmd: Cmd, calls: Calls) -> String {
+        let wire = self.s.path("wire");
+        let mut numbers: Vec<usize> = fs::read_dir(&wire)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .strip_suffix(".argv")
+                    .and_then(|k| k.parse().ok())
+            })
+            .collect();
+        numbers.sort();
+        let mut blocks: Vec<String> = numbers.iter().map(|&k| self.call(k, cmd)).collect();
+        if calls == Calls::AtOnce {
+            blocks.sort();
+        }
+        blocks
+            .iter()
+            .enumerate()
+            .map(|(i, b)| format!("call {}:{b}", i + 1))
+            .collect()
+    }
+
+    /// One recorded call, from just after its number.
+    fn call(&self, k: usize, cmd: Cmd) -> String {
+        let wire = self.s.path("wire");
         let argv = fs::read(wire.join(format!("{k}.argv"))).unwrap();
         let argv: Vec<String> = argv
             .split(|b| *b == 0)
@@ -155,43 +233,88 @@ fn captured(s: &Sandbox, n: &Normal) -> String {
             false => (&argv[..], None),
         };
         let head: Vec<&str> = head.iter().map(String::as_str).collect();
-        out.push_str(&format!("call {k}: {}\n", n.apply(&typed(&head))));
+        let mut out = format!(" {}\n", self.n.apply(&typed(&head)));
         if let Some(c) = command {
             out.push_str("  its command, for the login shell there:\n");
-            out.push_str(&indent(&n.apply(c)));
-        }
-        if let Ok(env) = fs::read_to_string(wire.join(format!("{k}.env"))) {
-            out.push_str("  with:\n");
-            out.push_str(&indent(&n.apply(&env)));
+            out.push_str(&indent(&self.n.apply(c)));
         }
         if let Ok(payload) = fs::read_to_string(wire.join(format!("{k}.payload"))) {
+            let script = machine_script();
             let sent = payload.strip_suffix(script.as_str()).unwrap_or_else(|| {
                 panic!(
                     "call {k} sent something other than lib/machine after its values:\n{payload}"
                 )
             });
-            out.push_str("  its values, ahead of lib/machine:\n");
-            out.push_str(&indent(&n.apply(&values(s, sent))));
+            out.push_str("  the values the machine acts on, ahead of lib/machine:\n");
+            out.push_str(&indent(&self.n.apply(&self.values(sent, cmd))));
         }
+        out
     }
-    out
+
+    /// The values a payload carries, as the machine sees them once it has run them, by name.
+    fn values(&self, sent: &str, cmd: Cmd) -> String {
+        self.s.write("values.sh", sent);
+        let out = self
+            .s
+            .command("bash", ["-c", READ_VALUES, "_", &self.s.p("values.sh")])
+            .run();
+        assert_eq!(out.code, 0, "the values do not run: {}\n{sent}", out.stderr);
+        let fields: Vec<&str> = out.stdout.split('\0').collect();
+        let mode = fields
+            .chunks(2)
+            .find(|p| p[0] == "MODE")
+            .and_then(|p| p.get(1))
+            .copied()
+            .unwrap_or_default();
+        let read = read_by(mode);
+        let mut entries: Vec<String> = fields
+            .chunks(2)
+            .filter_map(|pair| {
+                let [name, value] = pair else { return None };
+                let base = name.split('[').next().unwrap_or(name);
+                if read.is_some_and(|r| !r.contains(&base)) {
+                    return None;
+                }
+                Some(self.entry(name, value, cmd))
+            })
+            .collect();
+        entries.sort();
+        entries.concat()
+    }
+
+    /// One value as the machine sees it; a script's comments and blank lines are left out, since
+    /// they change nothing it does.
+    fn entry(&self, name: &str, value: &str, cmd: Cmd) -> String {
+        if let Some(array) = name.strip_suffix("[]") {
+            return format!("{array}: an array of {value}\n");
+        }
+        if name == "CMD" && cmd == Cmd::AsWords {
+            return format!("CMD, as the words it runs:\n{}", self.words(value));
+        }
+        if !value.contains('\n') {
+            return format!("{name}: {value}\n");
+        }
+        let lines: String = value
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+            .map(|l| format!("  | {l}\n"))
+            .collect();
+        format!("{name}:\n{lines}")
+    }
+
+    fn words(&self, command: &str) -> String {
+        let out = self.s.command("bash", ["-c", WORDS, "_", command]).run();
+        assert_eq!(out.code, 0, "{command} is not words: {}", out.stderr);
+        out.stdout
+            .split('\0')
+            .filter(|w| !w.is_empty())
+            .map(|w| format!("  | {w}\n"))
+            .collect()
+    }
 }
 
 fn indent(text: &str) -> String {
     text.lines().map(|l| format!("    {l}\n")).collect()
-}
-
-fn clear(s: &Sandbox) {
-    for e in fs::read_dir(s.path("wire")).unwrap().flatten() {
-        let _ = fs::remove_file(e.path());
-    }
-}
-
-/// One call's wire, under the call.
-fn record(s: &Sandbox, n: &Normal, t: &mut Transcript, title: &str, call: Call) {
-    clear(s);
-    let out = call.run();
-    t.section(title, &format!("-> exit {}\n{}", out.code, captured(s, n)));
 }
 
 #[test]
@@ -199,13 +322,9 @@ fn what_each_call_sends() {
     let mut s = wired();
     s.write_exec("fakersync/rsync", RECORDING_RSYNC);
     s.set("PATH", format!("{}:{}", s.p("fakersync"), s.var("PATH")));
-    let n = wire_normal(&s);
-    let mut t = Transcript::default();
+    let mut w = Wire::new(&s);
     let calls: Vec<&[&str]> = vec![
         &["--on", "box-a", "--label", "one-string", "echo hi; exit 3"],
-        &[
-            "--on", "box-a", "--label", "several", "printf", "%s|", "it's", "a b", "$HOME",
-        ],
         &["--on", "box-a", "--bench", "--label", "measured", "true"],
         &[
             "--on", "box-a", "--bench", "--device", "gpu:card", "--label", "pinned", "true",
@@ -245,12 +364,12 @@ fn what_each_call_sends() {
         &["--on", "box-a", "--out", "4242"],
         &["--on", "box-a", "--out", "20260101120000-4242"],
         &["--on", "box-a", "--fetch", "20260101120000-4242"],
+        &["--on", "box-a", "--fetch", "20260101120000-4242", "./got"],
         &["--on", "box-a", "--release"],
         &["--on", "box-a", "--gc"],
         &["--on", "box-a", "--gc", "--days", "3", "--dry-run"],
         &["--on", "box-a", "--check"],
         &["--check", "box-a", "--write"],
-        &["--on", "box-a", "--abi"],
         &["--on", "box-a", "--sync", "-a", "./x", ":~/y"],
         &[
             "--on",
@@ -264,57 +383,46 @@ fn what_each_call_sends() {
         ],
     ];
     for args in calls {
-        record(
-            &s,
-            &n,
-            &mut t,
-            &format!("dibs {}", typed(args)),
-            s.dibs(args),
-        );
+        w.record(&format!("dibs {}", typed(args)), s.dibs(args));
     }
-    let rsh = |label: &str| {
-        s.dibs([
-            "--rsh",
-            "box-a",
-            "rsync",
-            "--server",
-            "-logDtprze.iLsfxCIvu",
-            ".",
-            "~/y",
-        ])
-        .env("DIBS_HOST", "dibs@box-a")
-        .env("DIBS_HOSTNAME", "box-a")
-        .env("DIBS_ON", "box-a")
-        .env("DIBS_SYNC_LABEL", label)
-    };
-    record(
-        &s,
-        &n,
-        &mut t,
-        "dibs --rsh box-a rsync --server ...  (as rsync starts it, under the sync's label)",
-        rsh("sent"),
+    let several = [
+        "--on", "box-a", "--label", "several", "printf", "%s|", "it's", "a b", "$HOME",
+    ];
+    w.record_as(
+        &format!("dibs {}", typed(&several)),
+        s.dibs(several),
+        Cmd::AsWords,
+        Calls::InOrder,
     );
-    s.write("before.sh", "mkdir -p ~/y\ncd ~/y\n");
-    record(
-        &s,
-        &n,
-        &mut t,
-        "dibs --rsh box-a rsync --server ...  (with DIBS_SYNC_BEFORE naming a script)",
-        rsh("sync").env("DIBS_SYNC_BEFORE", s.p("before.sh")),
+    w.record(
+        "dibs --on box-a --status  (on a terminal)",
+        s.command("python3", ["-c", PTY, DIBS, "--on", "box-a", "--status"]),
     );
-    let steps: [(&str, Call); 9] = [
-        (
-            "DIBS_BATCH=<batch> DIBS_BATCH_STEP=build DIBS_BATCH_PLAN=...",
-            s.dibs(["--on", "box-a", "--label", "step", "true"])
-                .env("DIBS_BATCH", "20260101-120000-42")
-                .env("DIBS_BATCH_STEP", "build")
-                .env("DIBS_BATCH_PLAN", "1\t2\nmeasure\tbench\tgemm\t1\n"),
-        ),
-        (
-            "DIBS_FINGERPRINT='ab c/d!0123456789abcdef'",
-            s.dibs(["--on", "box-a", "--label", "step", "true"])
-                .env("DIBS_FINGERPRINT", "ab c/d!0123456789abcdef"),
-        ),
+    s.write(
+        "steps",
+        "[build] dibs --on box-a --label step true\n[measure] dibs --on box-a --bench --label gemm true\n",
+    );
+    w.record(
+        "dibs batch steps  (two steps on box-a)",
+        s.dibs(["batch", &s.p("steps")]),
+    );
+    w.record_as(
+        "dibs --kill 20260101-120000-42  (a batch driven from elsewhere)",
+        s.dibs(["--kill", "20260101-120000-42"]),
+        Cmd::AsSent,
+        Calls::AtOnce,
+    );
+    s.write(
+        "fleet.toml",
+        "[machine.box-a]\nprovisioned = { by = \"hand\" }\n\n[machine.box-b]\nprovisioned = { by = \"hand\" }\n",
+    );
+    w.record_as(
+        "dibs machines",
+        s.dibs(["machines"]).env("DIBS_FLEET", s.p("fleet.toml")),
+        Cmd::AsSent,
+        Calls::AtOnce,
+    );
+    let steps: [(&str, Call); 6] = [
         (
             "DIBS_AGENT=\"it's \\\"mine\\\"\"",
             s.dibs(["--on", "box-a", "--label", "step", "true"])
@@ -346,33 +454,21 @@ fn what_each_call_sends() {
                 .env("DIBS_TRACE", "1")
                 .env("DIBS_CONNECT_TIMEOUT", "3"),
         ),
-        (
-            "DIBS_REMOTE_DIR=/dev/shm",
-            s.dibs(["--on", "box-a", "--label", "step", "true"])
-                .env("DIBS_REMOTE_DIR", "/dev/shm"),
-        ),
     ];
     for (env, call) in steps {
-        record(
-            &s,
-            &n,
-            &mut t,
-            &format!("{env} dibs --on box-a --label step true"),
-            call,
-        );
+        w.record(&format!("{env} dibs --on box-a --label step true"), call);
     }
-    let refused = s
-        .dibs(["--on", "box-a", "--status"])
-        .env("WIRE_EXIT", "255")
-        .env("WIRE_SAYS", "dibs@box-a: Permission denied (publickey).");
-    record(
-        &s,
-        &n,
-        &mut t,
+    w.record(
         "dibs --on box-a --status  (refused, so asked again why)",
-        refused,
+        s.dibs(["--on", "box-a", "--status"])
+            .env("WIRE_EXIT", "255")
+            .env("WIRE_SAYS", "dibs@box-a: Permission denied (publickey)."),
     );
-    snapshot("wire", t.text());
+    w.record(
+        "dibs --check box-c --write  (a machine the inventory does not have yet)",
+        s.dibs(["--check", "box-c", "--write"]),
+    );
+    snapshot("wire", w.text());
 }
 
 #[test]
@@ -386,16 +482,58 @@ fn what_a_recipe_sends() {
     recipes(
         &s,
         &format!(
-            "{PARAMS}\n[bench.gate]\n  [[bench.gate.step]]\n  lock = \"shared\"\n  run = \"cargo build --release\"\n  [[bench.gate.step]]\n  lock = \"exclusive\"\n  run = \"echo measured\"\n"
+            "{PARAMS}\n[bench.gate]\n  [[bench.gate.step]]\n  lock = \"shared\"\n  run = \"cargo build --release\"\n  [[bench.gate.step]]\n  lock = \"exclusive\"\n  run = \"echo measured\"\n\n[bench.art]\nartifacts = [\"results/*.json\"]\n  [[bench.art.step]]\n  lock = \"exclusive\"\n  run = \"mkdir -p results && echo measured > results/new.json\"\n\n[service.servers]\nbuild = \"true\"\nports = [\"api\"]\n\n[[service.servers.serve]]\nname = \"api\"\nrun = \"read -r _ < \\\"$WIRE_NEVER\\\"\"\n"
         ),
     );
     s.write("app/Cargo.lock", "[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n");
     s.git("app", &["add", "-A"]);
     s.git("app", &["commit", "-qm", "lock"]);
     s.git("app", &["push", "-q", "origin", "HEAD:main"]);
-    let n = wire_normal(&s);
-    let mut t = Transcript::default();
-    let run = |args: &[&str]| s.dibs(args).env("WIRE_RUN", "1");
+    s.git(".", &["init", "-q", "lib"]);
+    s.write(
+        "lib/Cargo.toml",
+        "[package]\nname = \"serde\"\nversion = \"1.0.0\"\n",
+    );
+    s.write("lib/src/lib.rs", "");
+    s.git("lib", &["add", "-A"]);
+    s.git("lib", &["commit", "-qm", "lib"]);
+    let never = s.gate("never");
+    let mut w = Wire::new(&s);
+    let run = |args: &[&str]| {
+        s.dibs(args)
+            .env("WIRE_RUN", "1")
+            .env("WIRE_NEVER", never.path.display().to_string())
+    };
+    let (main, local) = (format!("{dir}@main"), format!("{dir}@local"));
+    let lib = format!("{}@local", s.p("lib"));
+    let got = s.p("got");
+    let features: [&[&str]; 7] = [
+        &["build", &main, "p", "--on", "box-a", "--device", "gpu:card"],
+        &[
+            "build",
+            &main,
+            "p",
+            "--on",
+            "box-a",
+            "--sweep",
+            "samples=1,2",
+        ],
+        &[
+            "bench",
+            &format!("{dir}@origin/main..local"),
+            "gate",
+            "--on",
+            "box-a",
+            "--reps",
+            "1",
+        ],
+        &["bench", &local, "art", "--on", "box-a", "--artifacts", &got],
+        &["with", &local, "servers", "--on", "box-a", "--", "true"],
+        &[
+            "with", &local, "servers", "--there", "--on", "box-a", "--", "true",
+        ],
+        &["build", &local, "p", "--on", "box-a", "--pin", &lib],
+    ];
     for args in [
         &[
             "build",
@@ -418,13 +556,32 @@ fn what_a_recipe_sends() {
             "cat a.txt",
         ],
     ] {
-        clear(&s);
-        let out = run(args).run();
+        let out = w.record(&format!("dibs {}", typed(args)), run(args));
         assert_eq!(out.code, 0, "{args:?}: {}", out.all());
-        t.section(
-            &format!("dibs {}", n.apply(&typed(args))),
-            &format!("-> exit {}\n{}", out.code, captured(&s, &n)),
-        );
     }
-    snapshot("wire-recipes", t.text());
+    for args in features {
+        w.record(&format!("dibs {}", typed(args)), run(args));
+    }
+    let commit = s.git("lib", &["rev-parse", "HEAD"]);
+    s.git(
+        ".",
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            "lib",
+            "home/.cargo/git/db/dep-0123456789abcdef",
+        ],
+    );
+    s.write(
+        "app/Cargo.lock",
+        &format!("{}\n[[package]]\nname = \"dep\"\nversion = \"1.0.0\"\nsource = \"git+https://example.invalid/dep.git#{commit}\"\n", s.read("app/Cargo.lock")),
+    );
+    s.git("app", &["commit", "-qam", "a git dependency"]);
+    s.git("app", &["push", "-q", "origin", "HEAD:main"]);
+    w.record(
+        "dibs build app@local p --on box-a  (a git dependency the machine lacks)",
+        run(&["build", &local, "p", "--on", "box-a"]).env("WIRE_FAR_CARGO_HOME", s.p("far-cargo")),
+    );
+    snapshot("wire-recipes", w.text());
 }
