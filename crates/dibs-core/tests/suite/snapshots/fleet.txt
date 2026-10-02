@@ -1,0 +1,27 @@
+== dibs --pick -v  (both idle, box-b measures nothing)
+-> exit 0
+1| box-a
+2|   box-a              <n>% busy, idle
+2|   box-b              <n>% busy, idle
+
+== dibs status  (box-a measuring)
+-> exit 0
+1| box-a
+1|   dibs: BUSY, benchmark in progress
+1|     bench  busy  <dur>  pid <pid>   [no history for this one yet]
+1|       read -r _ < <root>/f-busy
+1|       from session suite
+1| 
+1| box-b
+1|   dibs: idle
+
+== dibs --pick -v  (box-a measuring)
+-> exit 0
+1| box-b
+2|   box-a              <n>% busy, bench
+2|   box-b              <n>% busy, idle
+
+== dibs --label placed true  (no --on, box-a measuring)
+-> exit 0
+2| job <job>  shared  placed  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/hosts/box-b/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>

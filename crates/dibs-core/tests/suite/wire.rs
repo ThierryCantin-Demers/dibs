@@ -7,11 +7,12 @@ use crate::recipes::{PARAMS, app, recipes};
 use crate::snapshot::*;
 use std::fs;
 
-/// `WIRE_RUN=1` runs the far side here on the same stream; otherwise it exits `WIRE_EXIT`.
+/// `WIRE_RUN=1` runs the far side here on the same stream, each host with its own lock directory
+/// and state under `WIRE_HOSTS` when that is set; otherwise it exits `WIRE_EXIT`.
 const RECORDING_SSH: &str = r#"#!/bin/bash
 n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
 printf '%s\0' ssh "$@" > "$WIRE/$n.argv"
-cmd=${@: -1}
+cmd=${@: -1} host=${@: -2:1}
 count=$(printf '%s\n' "$cmd" | sed -n 's/.*count=\([0-9][0-9]*\).*/\1/p' | head -n 1)
 if [ -n "$count" ]; then
     head -c "$count" > "$WIRE/$n.b64"
@@ -20,6 +21,11 @@ fi
 [ -n "${WIRE_SAYS:-}" ] && printf '%s\n' "$WIRE_SAYS" >&2
 if [ "${WIRE_RUN:-0}" = 1 ]; then
     [ -n "${WIRE_FAR_CARGO_HOME:-}" ] && export CARGO_HOME=$WIRE_FAR_CARGO_HOME
+    if [ -n "${WIRE_HOSTS:-}" ]; then
+        far=$WIRE_HOSTS/${host#*@}
+        export DIBS_LOCK_DIR=$far/lock DIBS_HISTORY=$far/history DIBS_LOG=$far/log DIBS_SCRATCH=$far/scratch
+        mkdir -p "$DIBS_LOCK_DIR" "$DIBS_SCRATCH"
+    fi
     if [ -n "$count" ]; then exec bash -c "$cmd" < <(cat "$WIRE/$n.b64"; exec cat); fi
     exec bash -c "$cmd"
 fi

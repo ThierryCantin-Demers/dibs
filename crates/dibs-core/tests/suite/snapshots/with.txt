@@ -1,0 +1,45 @@
+== dibs with <root>/app@local servers -- 'echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API'
+-> exit 0
+1| port=<port> service=<host>:<port>
+2| dibs: preparing app from <root>/app (uncommitted changes included)
+2| dibs: <root>/scratch/ws/app/local-<key>
+2| job <job>  shared  app_with_servers_send  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (4 lines)  dibs --on <host> --out <job>
+2| dibs: building servers
+2| job <job>  shared  app_with_servers_build  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| dibs: holding the shared lock on <host>, running here: echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API
+2| job <job>  shared  app_with_servers  queued <s>  ran <s>  exit 0  by=command
+2|   port api: <port> on <host>
+2|   with api: ready after <s>, stopped when the command ended  log <host>:<root>/scratch/jobs/<job>/with-api.log
+
+== dibs with <root>/app@local servers --there -- 'echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API'
+-> exit 0
+1| port=<port> service=
+2| dibs: preparing app from <root>/app (uncommitted changes included)
+2| dibs: <root>/scratch/ws/app/local-<key>
+2| job <job>  shared  app_with_servers_send  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (4 lines)  dibs --on <host> --out <job>
+2| dibs: building servers
+2| job <job>  shared  app_with_servers_build  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| job <job>  shared  app_with_servers  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2|   port api: <port> on <host>
+2|   with api: ready after <s>, stopped when the command ended  log <host>:<root>/scratch/jobs/<job>/with-api.log
+
+== dibs --hold --port api --with 'srv=read -r _ < <root>/f-never' --label held 'echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API'
+-> exit 0
+1| port=<port> service=<host>:<port>
+2| dibs: holding the shared lock on <host>, running here: echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API
+2| job <job>  shared  held  queued <s>  ran <s>  exit 0  by=command
+2|   port api: <port> on <host>
+2|   with srv: ready after <s>, stopped when the command ended  log <host>:<root>/scratch/jobs/<job>/with-srv.log
+
+== dibs --on box-a --hold --port api --with 'srv=read -r _ < <root>/f-never' --label held 'echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API'
+-> exit 0
+1| port=<port> service=box-a:<port>
+2| dibs: holding the shared lock on box-a, running here: echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API
+2| job <job>  shared  held  queued <s>  ran <s>  exit 0  by=command
+2|   port api: <port> on <host>
+2|   with srv: ready after <s>, stopped when the command ended  log <host>:<root>/hosts/box-a/scratch/jobs/<job>/with-srv.log

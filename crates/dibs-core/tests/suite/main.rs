@@ -6,6 +6,7 @@ mod harness;
 mod baselines;
 mod batch;
 mod cli;
+mod client;
 mod detach;
 mod hold;
 mod identity;
