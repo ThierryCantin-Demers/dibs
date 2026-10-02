@@ -70,6 +70,12 @@ impl From<&str> for RunError {
     }
 }
 
+impl From<batch::BatchError> for RunError {
+    fn from(e: batch::BatchError) -> RunError {
+        RunError::Refused(e.to_string())
+    }
+}
+
 impl From<RecipeError> for RunError {
     fn from(e: RecipeError) -> RunError {
         RunError::Refused(e.to_string())
@@ -138,7 +144,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         .pins
         .iter()
         .zip(&pins)
-        .map(|(spec, p)| pin_spec(spec).map(|(r, _)| (r.to_string(), p.local.is_some())))
+        .map(|(spec, p)| pin_spec(spec).map(|s| (s.repo.to_string(), p.local.is_some())))
         .collect::<Result<Vec<_>, _>>()?;
     let calls = jobs_of(&resolved, &sides, &local, args.reps, &pin_specs);
     let Resolved {
@@ -287,11 +293,8 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    // Both paths claim the repo's build cache for the machine they chose, and a measurement's
-    // claim is the one that sticks because it is the one that could not move. Without that, a
-    // build ranked onto one machine leaves the benchmark on another to compile inside its own
-    // exclusive lock, which is what splitting build from measure prevents. A pinned call claims
-    // nothing: the machines report the caches it leaves.
+    // A measurement's claim on the repo's build cache is the one that sticks, since it could not
+    // move; a pinned call claims nothing, since the machines report the caches it leaves.
     let backend = Jobs::on(destination(rec, &repo_name, name)?);
     if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
         affinity_set(&repo_name, m.as_str());
@@ -300,18 +303,9 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         return Ok(ExitCode::from(Exit::Refused.code()));
     }
 
-    // The worktree comes first and takes the shared lock, because a fetch and a checkout are
-    // work that tolerates neighbours. Doing it inside a measured step would put a git fetch
-    // inside the exclusive hold.
-    //
-    // A branch that was never pushed has no fetchable ref, and refusing to push a perf branch
-    // just to measure it is not misuse. Without @local the answer was to hand-roll sync and
-    // build, which loses the cache isolation, the recorded revision and the lock split all at
-    // once, and the two wrong numbers that produced were both in the part that got rewritten.
+    // Trees are prepared under the shared lock, so no fetch or checkout runs inside a hold.
     let own_batch = batch::batch_id();
-    // What the wrapper files this job's duration under, beside the label. The fingerprint is of
-    // the bound recipe, so it already tells one backend from another and a procedure from the
-    // one it replaced: two runs sharing it are the same work, and no others are.
+    // The fingerprint is of the bound recipe: two runs sharing it are the same work.
     let env_of = |k: usize| RecipeJob {
         batch: batch::recipe_env(&own_batch, &calls, k),
         fingerprint: Some(fingerprint.clone()),
@@ -640,7 +634,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         } = backend.run_reporting(&req, &cd, &mut |_| {});
         // The machine has said why; a refusal is not a run, so it leaves no record.
         if report.lines().any(|l| l == "DIBS-REFUSED") {
-            return Ok(ExitCode::from(78));
+            return Ok(ExitCode::from(Exit::TargetRebuilt.code()));
         }
         let read = provenance::state_of(&report);
         if !read.is_empty() {
@@ -910,7 +904,11 @@ pub(crate) fn new_token() -> String {
 }
 
 pub(crate) fn send_missing_gitdbs(backend: &Jobs, text: &str, gitdbs: &[gitdeps::Db]) {
-    let (Some(remote), gone) = gitdeps::missing(text, gitdbs) else {
+    let gitdeps::Missing {
+        gitdb: Some(remote),
+        gone,
+    } = gitdeps::missing(text, gitdbs)
+    else {
         return;
     };
     for db in gone {

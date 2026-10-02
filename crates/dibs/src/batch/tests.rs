@@ -1,10 +1,11 @@
 use super::{
     base::{State, jobs, ready, was_cancelled},
-    parse::{Step, parse, split_words},
-    plan::{Pending, nested_env, step_env},
+    parse::{Step, StepKind, parse, split_words},
+    plan::{Pending, Planned, nested_env, step_env},
     summary::summary,
 };
 use dibs::call::BatchStep;
+use dibs_format::Mode;
 use std::path::Path;
 
 fn names(v: &[usize], steps: &[Step]) -> Vec<String> {
@@ -38,7 +39,7 @@ fn attributes_name_a_step_its_dependencies_and_whether_a_failure_stops_the_rest(
             s[1].device.as_deref(),
             s[1].label.as_deref()
         ),
-        (Some("a"), "bench", Some("gpu:x"), Some("m"))
+        (Some("a"), StepKind::Bench, Some("gpu:x"), Some("m"))
     );
     assert_eq!(
         s[1].line,
@@ -59,13 +60,13 @@ fn a_step_continued_over_lines_is_one_step() {
 #[test]
 fn what_a_step_is_comes_from_its_own_flags() {
     let one = |l: &str| parse(l).unwrap().remove(0);
-    assert_eq!(one("dibs --sync -a ./x :~/y").lock, "sync");
-    assert_eq!(one("dibs --peek 'ls'").lock, "peek");
-    assert_eq!(one("dibs run --bench 'x'").lock, "bench");
+    assert_eq!(one("dibs --sync -a ./x :~/y").lock, StepKind::Sync);
+    assert_eq!(one("dibs --peek 'ls'").lock, StepKind::Peek);
+    assert_eq!(one("dibs run --bench 'x'").lock, StepKind::Bench);
     let r = one("dibs bench cubek@local reduce --device gpu:0");
     assert_eq!(
         (r.lock, r.label.as_deref()),
-        ("recipe", Some("bench cubek@local reduce"))
+        (StepKind::Recipe, Some("bench cubek@local reduce"))
     );
     let r = one("dibs bench cubek@a,b gemv --on m --backend cpu --device gpu:0 -- --on x");
     assert_eq!(
@@ -76,10 +77,13 @@ fn what_a_step_is_comes_from_its_own_flags() {
     let r = one("dibs --wait $W --max \"$M\" --label x 'true'");
     assert_eq!(
         (r.lock, r.label.as_deref()),
-        ("shared", Some("x")),
+        (StepKind::Shared, Some("x")),
         "a number bash has yet to expand is read as unknown, not refused"
     );
-    assert_eq!(one("dibs bench app@local r --reps $N").lock, "recipe");
+    assert_eq!(
+        one("dibs bench app@local r --reps $N").lock,
+        StepKind::Recipe
+    );
 }
 
 #[test]
@@ -95,7 +99,7 @@ fn anything_that_is_not_one_dibs_call_is_refused() {
         ("dibs 'unclosed", "not closed"),
         ("[a b=c] dibs x", "unknown attribute"),
     ] {
-        let e = parse(line).unwrap_err();
+        let e = parse(line).unwrap_err().to_string();
         assert!(e.contains(why), "{line}: {e}");
     }
     assert!(
@@ -109,21 +113,25 @@ fn names_and_dependencies_must_make_sense() {
     assert!(
         parse("[a] dibs x\n[a] dibs y")
             .unwrap_err()
+            .to_string()
             .contains("second step is named")
     );
     assert!(
         parse("[a after=zz] dibs x")
             .unwrap_err()
+            .to_string()
             .contains("no step has that name")
     );
     assert!(
         parse("[a after=b] dibs x\n[b after=a] dibs y")
             .unwrap_err()
+            .to_string()
             .contains("waits on itself")
     );
     assert!(
         parse("# only a comment\n")
             .unwrap_err()
+            .to_string()
             .contains("no steps")
     );
 }
@@ -135,7 +143,7 @@ fn st(n: &str, after: &[&str]) -> Step {
         after: after.iter().map(|s| s.to_string()).collect(),
         cont: false,
         on: None,
-        lock: "shared",
+        lock: StepKind::Shared,
         label: None,
         device: None,
         recipe: None,
@@ -201,10 +209,10 @@ fn a_failed_step_still_releases_what_waits_on_it_when_the_batch_goes_on() {
     );
 }
 
-fn call(name: &str, mode: &'static str) -> Pending {
+fn call(name: &str, mode: Mode) -> Pending {
     Pending {
         name: name.into(),
-        mode,
+        mode: Planned::Job(mode),
         label: format!("{name}/x"),
         here: true,
     }
@@ -218,10 +226,10 @@ fn a_step_carries_what_is_still_to_come_under_the_keys_its_history_is_filed_by()
         1,
         3,
         &[
-            call("bench", "bench"),
+            call("bench", Mode::Bench),
             Pending {
                 here: false,
-                ..call("home", "rsh")
+                ..call("home", Mode::Rsh)
             },
         ],
     );
@@ -236,9 +244,9 @@ fn a_step_carries_what_is_still_to_come_under_the_keys_its_history_is_filed_by()
 #[test]
 fn a_recipe_alone_is_its_own_batch_and_inside_one_goes_ahead_of_the_rest() {
     let calls = [
-        call("send", "rsh"),
-        call("build", "shared"),
-        call("bench", "bench"),
+        call("send", Mode::Rsh),
+        call("build", Mode::Shared),
+        call("bench", Mode::Bench),
     ];
     let alone = nested_env(None, "own", &calls, 1).unwrap();
     assert_eq!(alone.batch, "own");

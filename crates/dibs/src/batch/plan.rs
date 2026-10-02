@@ -1,16 +1,33 @@
-use super::parse::Step;
+use super::parse::{Step, StepKind};
 use dibs::call::BatchStep;
+use dibs_format::Mode;
+use std::fmt;
 
 /// A step not yet started, as the machine's `--status` reads it to say how long a batch has left.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pending {
     pub name: String,
-    /// The lock as the duration history files it: shared, bench, rsh, peek, or recipe, which
-    /// runs several jobs under labels of its own and so has no single history.
-    pub mode: &'static str,
+    pub mode: Planned,
     pub label: String,
     /// On the same machine as the step carrying the plan.
     pub here: bool,
+}
+
+/// What a pending step's duration is filed under: a mode, or a recipe, which runs several jobs
+/// under labels of their own and so has no single history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Planned {
+    Job(Mode),
+    Recipe,
+}
+
+impl fmt::Display for Planned {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Planned::Job(mode) => f.write_str(mode.as_str()),
+            Planned::Recipe => f.write_str("recipe"),
+        }
+    }
 }
 
 /// What a step of a batch is started with. `DIBS_BATCH_PLAN` is `k<TAB>n` and then one pending
@@ -75,13 +92,13 @@ pub(crate) fn nested_env(
 
 /// The history key dibs will file a step under, which is what its estimate is looked up by.
 pub(crate) fn pending_of(step: &Step, here: bool, cwd: &str) -> Pending {
+    let directory = || cwd.rsplit('/').next().unwrap_or_default().to_string();
     let (mode, default) = match step.lock {
-        "sync" => ("rsh", "sync".to_string()),
-        "recipe" => ("recipe", String::new()),
-        other => (
-            other,
-            cwd.rsplit('/').next().unwrap_or_default().to_string(),
-        ),
+        StepKind::Sync => (Planned::Job(Mode::Rsh), "sync".to_string()),
+        StepKind::Recipe => (Planned::Recipe, String::new()),
+        StepKind::Shared => (Planned::Job(Mode::Shared), directory()),
+        StepKind::Bench => (Planned::Job(Mode::Bench), directory()),
+        StepKind::Peek => (Planned::Job(Mode::Peek), directory()),
     };
     Pending {
         name: step.name.clone(),

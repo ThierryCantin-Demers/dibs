@@ -9,6 +9,7 @@
 //! on the machine under the shared lock, because it is a fetch and a checkout: work that
 //! tolerates neighbours perfectly and must never hold the exclusive lock.
 
+use crate::{git::Git, lockfile::Package};
 use dibs::paths::Paths;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
@@ -343,20 +344,9 @@ pub fn packages_script(lock: &str, signature: &str, token: &str) -> String {
             buckets[i].push(key);
         }
     };
-    let (mut name, mut version, mut source) = (None, None, None);
-    for line in lock.lines() {
-        let line = line.trim();
-        if line == "[[package]]" {
-            take(name.take(), version.take(), source.take());
-        } else if let Some(v) = line.strip_prefix("name = ") {
-            name = Some(v.trim_matches('"').to_string());
-        } else if let Some(v) = line.strip_prefix("version = ") {
-            version = Some(v.trim_matches('"').to_string());
-        } else if let Some(v) = line.strip_prefix("source = ") {
-            source = Some(v.trim_matches('"').to_string());
-        }
+    for package in Package::all(lock) {
+        take(Some(package.name), package.version, package.source);
     }
-    take(name, version, source);
     for (i, mut keys) in buckets.into_iter().enumerate() {
         if !keys.is_empty() {
             keys.sort();
@@ -522,12 +512,10 @@ impl Nest {
 
 /// The commit `name` is here, in full.
 pub fn commit(dir: &std::path::Path, name: &str) -> Result<String, String> {
-    git(
-        dir,
-        &["rev-parse", "--verify", "-q", &format!("{name}^{{commit}}")],
-    )
-    .map(|s| s.trim().to_string())
-    .map_err(|_| format!("no {name} in {}", dir.display()))
+    Git(dir)
+        .run(&["rev-parse", "--verify", "-q", &format!("{name}^{{commit}}")])
+        .map(|s| s.trim().to_string())
+        .map_err(|_| format!("no {name} in {}", dir.display()))
 }
 
 /// Where `tip` left `from`: the commit an A/B of `from..tip` measures `tip` against. A local branch
@@ -541,26 +529,31 @@ pub fn merge_base(
 ) -> Result<(String, Option<String>), String> {
     let tip = commit(dir, tip)?;
     let own = commit(dir, from)?;
-    let base = |c: &str| git(dir, &["merge-base", c, &tip]).map(|s| s.trim().to_string());
+    let base = |c: &str| {
+        Git(dir)
+            .run(&["merge-base", c, &tip])
+            .map(|s| s.trim().to_string())
+    };
     let mine = base(&own)
         .map_err(|_| format!("{from} and {tip:.8} share no history in {}", dir.display()))?;
-    let upstream = git(
-        dir,
-        &[
+    let upstream = Git(dir)
+        .run(&[
             "rev-parse",
             "--abbrev-ref",
             "-q",
             &format!("{from}@{{upstream}}"),
-        ],
-    )
-    .ok()
-    .map(|s| s.trim().to_string());
+        ])
+        .ok()
+        .map(|s| s.trim().to_string());
     let theirs = upstream
         .as_deref()
         .and_then(|u| Some((u.to_string(), base(&commit(dir, u).ok()?).ok()?)));
     match theirs {
         Some((u, b))
-            if b != mine && git(dir, &["merge-base", "--is-ancestor", &mine, &b]).is_ok() =>
+            if b != mine
+                && Git(dir)
+                    .run(&["merge-base", "--is-ancestor", &mine, &b])
+                    .is_ok() =>
         {
             Ok((b, Some(u)))
         }
@@ -1300,10 +1293,8 @@ pub fn identity(dir: &std::path::Path) -> String {
     if toplevel(dir) != dir.canonicalize().ok() {
         return fallback;
     }
-    let Ok(common) = git(
-        dir,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ) else {
+    let Ok(common) = Git(dir).run(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    else {
         return fallback;
     };
     let common = std::path::PathBuf::from(common.trim());
@@ -1317,7 +1308,7 @@ pub fn identity(dir: &std::path::Path) -> String {
 
 /// The checkout `dir` is inside, if any.
 pub fn toplevel(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let top = git(dir, &["rev-parse", "--show-toplevel"]).ok()?;
+    let top = Git(dir).run(&["rev-parse", "--show-toplevel"]).ok()?;
     std::path::PathBuf::from(top.trim()).canonicalize().ok()
 }
 
@@ -1328,31 +1319,14 @@ pub fn variant(dir: &std::path::Path, identity: &str) -> Option<String> {
     (folder != identity).then(|| folder.to_string())
 }
 
-fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
-    if !out.status.success() {
-        return Err(format!(
-            "git {} in {}: {}",
-            args.join(" "),
-            dir.display(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
 pub fn local(dir: &std::path::Path) -> Result<Local, String> {
-    let head = git(dir, &["rev-parse", "--short", "HEAD"])?
+    let head = Git(dir)
+        .run(&["rev-parse", "--short", "HEAD"])?
         .trim()
         .to_string();
     // Tracked and untracked-but-not-ignored, which is the same set the sync carries, so the
     // hash describes what was actually built rather than what was committed.
-    let list = git(dir, &["ls-files", "-co", "--exclude-standard", "-z"])?;
+    let list = Git(dir).run(&["ls-files", "-co", "--exclude-standard", "-z"])?;
     let mut h = Sha256::new();
     let mut dirty = false;
     for rel in list.split('\0').filter(|s| !s.is_empty()) {
@@ -1363,7 +1337,7 @@ pub fn local(dir: &std::path::Path) -> Result<Local, String> {
             h.update(&b);
         }
     }
-    if !git(dir, &["status", "--porcelain"])?.trim().is_empty() {
+    if !Git(dir).run(&["status", "--porcelain"])?.trim().is_empty() {
         dirty = true;
     }
     let content = format!(
@@ -1452,16 +1426,10 @@ fn checkout_in(
         let from = dir
             .to_str()
             .ok_or_else(|| format!("{}: not a path git can take", dir.display()))?;
-        git(
-            root,
-            &["clone", "--quiet", "--shared", "--no-checkout", from, &slot],
-        )?;
+        Git(root).run(&["clone", "--quiet", "--shared", "--no-checkout", from, &slot])?;
     }
-    git(
-        &checkout,
-        &["checkout", "--quiet", "--detach", "--force", sha],
-    )?;
-    git(&checkout, &["clean", "-fdxq"])?;
+    Git(&checkout).run(&["checkout", "--quiet", "--detach", "--force", sha])?;
+    Git(&checkout).run(&["clean", "-fdxq"])?;
     let mut k = Sha256::new();
     k.update(format!("base\0{identity}\0{sha}"));
     Ok(Checkout {
@@ -1485,7 +1453,11 @@ pub fn as_fetched(
         return commit(dir, name).ok().map(|c| (c, name.to_string(), None));
     };
     match commit(dir, &format!("refs/heads/{name}")) {
-        Ok(own) if git(dir, &["merge-base", "--is-ancestor", &own, &pushed]).is_err() => {
+        Ok(own)
+            if Git(dir)
+                .run(&["merge-base", "--is-ancestor", &own, &pushed])
+                .is_err() =>
+        {
             Some((own, name.to_string(), Some("origin's branch lacks it")))
         }
         _ => Some((pushed, tracking, None)),
@@ -1496,21 +1468,18 @@ pub fn as_fetched(
 /// None when it can. A commit on no branch of origin here is taken as never pushed: sending one
 /// that was costs a transfer, where fetching one that was not fails the run.
 pub fn unfetchable(dir: &std::path::Path, sha: &str) -> Option<&'static str> {
-    let on = git(
-        dir,
-        &[
-            "for-each-ref",
-            "--count=1",
-            "--contains",
-            sha,
-            "--format=%(refname)",
-            "refs/remotes/origin/",
-        ],
-    );
+    let on = Git(dir).run(&[
+        "for-each-ref",
+        "--count=1",
+        "--contains",
+        sha,
+        "--format=%(refname)",
+        "refs/remotes/origin/",
+    ]);
     if on.map_or(true, |r| r.trim().is_empty()) {
         return Some("it was never pushed");
     }
-    let url = git(dir, &["remote", "get-url", "origin"]).ok()?;
+    let url = Git(dir).run(&["remote", "get-url", "origin"]).ok()?;
     private(url.trim()).then_some("its remote needs credentials, which the machines do not hold")
 }
 
@@ -2373,9 +2342,8 @@ mod local_tests {
         let repo = scratch.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         let commit_empty = |m: &str| {
-            git(
-                &repo,
-                &[
+            Git(&repo)
+                .run(&[
                     "-c",
                     "user.email=a@b",
                     "-c",
@@ -2385,11 +2353,10 @@ mod local_tests {
                     "--allow-empty",
                     "-m",
                     m,
-                ],
-            )
-            .unwrap()
+                ])
+                .unwrap()
         };
-        git(&repo, &["init", "-q"]).unwrap();
+        Git(&repo).run(&["init", "-q"]).unwrap();
         commit_empty("one");
         commit_empty("two");
         let (one, two) = (
@@ -2398,7 +2365,8 @@ mod local_tests {
         );
         let root = scratch.join("sent/repo");
         let at = |c: &Checkout| {
-            git(&c.dir, &["rev-parse", "HEAD"])
+            Git(&c.dir)
+                .run(&["rev-parse", "HEAD"])
                 .unwrap()
                 .trim()
                 .to_string()

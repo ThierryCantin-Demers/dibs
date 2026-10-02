@@ -11,25 +11,37 @@ pub(crate) fn affinity_path() -> Option<PathBuf> {
 /// The machine deletes a target directory unused this long, so a memo of one is kept no longer.
 pub(crate) const AFFINITY_SECS: u64 = 5 * 86400;
 
+/// One line of the affinity file: the machine holding a repo's build cache, and when it was last
+/// used there.
+struct Claim<'a> {
+    repo: &'a str,
+    machine: &'a str,
+    used: u64,
+}
+
 /// Lines older than the cache they name, and lines without a time, are not read.
-pub(crate) fn affinity_live(text: &str, now: u64) -> impl Iterator<Item = (&str, &str, u64)> {
+fn affinity_live(text: &str, now: u64) -> impl Iterator<Item = Claim<'_>> {
     text.lines().filter_map(move |l| {
         let mut f = l.split('\t');
-        let (repo, machine, used) = (f.next()?, f.next()?, f.next()?.trim().parse::<u64>().ok()?);
-        (now.saturating_sub(used) < AFFINITY_SECS).then_some((repo, machine, used))
+        let claim = Claim {
+            repo: f.next()?,
+            machine: f.next()?,
+            used: f.next()?.trim().parse::<u64>().ok()?,
+        };
+        (now.saturating_sub(claim.used) < AFFINITY_SECS).then_some(claim)
     })
 }
 
 pub(crate) fn affinity_lookup(text: &str, repo: &str, now: u64) -> Option<String> {
     affinity_live(text, now)
-        .find(|(r, ..)| *r == repo)
-        .map(|(_, m, _)| m.to_string())
+        .find(|c| c.repo == repo)
+        .map(|c| c.machine.to_string())
 }
 
 pub(crate) fn affinity_update(text: &str, repo: &str, machine: &str, now: u64) -> String {
     let mut lines: Vec<String> = affinity_live(text, now)
-        .filter(|(r, ..)| *r != repo)
-        .map(|(r, m, t)| format!("{r}\t{m}\t{t}"))
+        .filter(|c| c.repo != repo)
+        .map(|c| format!("{}\t{}\t{}", c.repo, c.machine, c.used))
         .collect();
     lines.push(format!("{repo}\t{machine}\t{now}"));
     lines.join("\n") + "\n"

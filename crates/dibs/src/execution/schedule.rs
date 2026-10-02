@@ -7,6 +7,7 @@ use crate::{
     recipe::{self, Lock, Resolved, resolve},
 };
 use dibs::cli::RecipeCall;
+use dibs_format::Mode;
 
 /// One job of a recipe run, in the order they are sent.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -94,16 +95,16 @@ pub(crate) fn jobs_of(
             false => format!(" ({})", tags.join(" ")),
         }
     };
-    let job = |label: String, mode: &'static str, tag: String| batch::Pending {
+    let job = |label: String, mode: Mode, tag: String| batch::Pending {
         name: format!("{label}{tag}"),
-        mode,
+        mode: batch::Planned::Job(mode),
         label,
         here: true,
     };
     let pinned = pins.iter().map(|(repo, local)| {
         job(
             format!("{}:pin", r.label),
-            if *local { "rsh" } else { "shared" },
+            if *local { Mode::Rsh } else { Mode::Shared },
             format!(" ({repo})"),
         )
     });
@@ -112,12 +113,12 @@ pub(crate) fn jobs_of(
             schedule(local, &r.rec.steps, reps)
                 .into_iter()
                 .map(|j| match j {
-                    Job::Send(a) => job(format!("{}:send", r.label), "rsh", of(a, None)),
-                    Job::Setup(a) => job(format!("{}:setup", r.label), "shared", of(a, None)),
+                    Job::Send(a) => job(format!("{}:send", r.label), Mode::Rsh, of(a, None)),
+                    Job::Setup(a) => job(format!("{}:setup", r.label), Mode::Shared, of(a, None)),
                     Job::Step { arm, step, rep, .. } => {
                         let mode = match r.rec.steps[step].lock {
-                            Lock::Shared => "shared",
-                            Lock::Exclusive => "bench",
+                            Lock::Shared => Mode::Shared,
+                            Lock::Exclusive => Mode::Bench,
                         };
                         job(r.step_labels[step].clone(), mode, of(arm, rep))
                     }
@@ -133,7 +134,7 @@ pub(crate) fn recipe_jobs(args: &RecipeCall) -> Option<Vec<batch::Pending>> {
     let pins = args
         .pins
         .iter()
-        .map(|p| pin_spec(p).map(|(repo, reference)| (repo.to_string(), reference == "local")))
+        .map(|p| pin_spec(p).map(|s| (s.repo.to_string(), s.reference == "local")))
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
     // Whether a ref is sent is only known once it is looked up, so a ref is planned as fetched.

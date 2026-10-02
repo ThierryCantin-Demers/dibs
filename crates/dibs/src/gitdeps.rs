@@ -5,6 +5,7 @@
 //! has that commit already, so it is sent ahead of the build, and only when the machine lacks
 //! it. Git objects are named by content, so adding files never changes one already there.
 
+use crate::lockfile::Package;
 use std::path::{Path, PathBuf};
 
 /// A pinned commit and the directory in this machine's cargo git cache that holds it.
@@ -18,11 +19,14 @@ pub struct Db {
 /// `(repo name, commit)` for every git source in a lockfile, once each.
 pub fn pinned(lock: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
-    for line in lock.lines() {
-        let Some(src) = line.trim().strip_prefix("source = \"git+") else {
+    for package in Package::all(lock) {
+        let Some(src) = package
+            .source
+            .as_deref()
+            .and_then(|s| s.strip_prefix("git+"))
+        else {
             continue;
         };
-        let src = src.trim_end_matches('"');
         let Some((url, commit)) = src.rsplit_once('#') else {
             continue;
         };
@@ -109,7 +113,7 @@ pub fn check_script(dbs: &[Db]) -> String {
 }
 
 /// The machine's cache directory and which of `dbs` it reported missing.
-pub fn missing<'a>(setup_output: &str, dbs: &'a [Db]) -> (Option<String>, Vec<&'a Db>) {
+pub fn missing<'a>(setup_output: &str, dbs: &'a [Db]) -> Missing<'a> {
     let mut gitdb = None;
     let mut out = Vec::new();
     for line in setup_output.lines() {
@@ -124,7 +128,13 @@ pub fn missing<'a>(setup_output: &str, dbs: &'a [Db]) -> (Option<String>, Vec<&'
             }
         }
     }
-    (gitdb, out)
+    Missing { gitdb, gone: out }
+}
+
+/// What a machine said of its git cache: where it is, and which databases it lacks.
+pub struct Missing<'a> {
+    pub gitdb: Option<String>,
+    pub gone: Vec<&'a Db>,
 }
 
 #[cfg(test)]
@@ -259,7 +269,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             String::from_utf8_lossy(&out.stderr)
         );
         let text = String::from_utf8_lossy(&out.stdout);
-        let (gitdb, gone) = missing(&text, &all);
+        let Missing { gitdb, gone } = missing(&text, &all);
         assert_eq!(
             gitdb.as_deref(),
             Some(root.join("cargo/git/db").to_str().unwrap())

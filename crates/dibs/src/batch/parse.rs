@@ -1,5 +1,88 @@
 use dibs::cli::{Invocation, Mode, RecipeCall, RecipeVerb, RunLock};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
+
+/// Why a batch is refused before anything runs, or stops: said as its `Display`.
+#[derive(Debug)]
+pub enum BatchError {
+    /// A line that is not one dibs call the driver can run.
+    Line {
+        line: usize,
+        why: String,
+    },
+    NoSteps,
+    UnknownStep {
+        step: String,
+        waits_for: String,
+    },
+    /// A step waits on itself through the steps it waits for.
+    Cycle {
+        step: String,
+    },
+    /// A measurement names no machine, and a measurement is never placed.
+    Unplaced {
+        step: String,
+    },
+    Refused(String),
+}
+
+impl fmt::Display for BatchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BatchError::Line { line, why } => write!(f, "line {line}: {why}"),
+            BatchError::NoSteps => f.write_str("the batch has no steps"),
+            BatchError::UnknownStep { step, waits_for } => write!(
+                f,
+                "step '{step}' waits for '{waits_for}', and no step has that name"
+            ),
+            BatchError::Cycle { step } => {
+                write!(f, "step '{step}' waits on itself through after=")
+            }
+            BatchError::Unplaced { step } => write!(
+                f,
+                "step {step} measures and names no machine, and a measurement is never placed for you. Give it\n  \
+                 --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step."
+            ),
+            BatchError::Refused(why) => f.write_str(why),
+        }
+    }
+}
+
+impl From<String> for BatchError {
+    fn from(why: String) -> BatchError {
+        BatchError::Refused(why)
+    }
+}
+
+/// What a step of a batch is, by the lock its call takes: a recipe takes several.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepKind {
+    Shared,
+    Bench,
+    Peek,
+    Sync,
+    Recipe,
+}
+
+impl StepKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StepKind::Shared => "shared",
+            StepKind::Bench => "bench",
+            StepKind::Peek => "peek",
+            StepKind::Sync => "sync",
+            StepKind::Recipe => "recipe",
+        }
+    }
+}
+
+impl fmt::Display for StepKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad(self.as_str())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Step {
@@ -9,14 +92,14 @@ pub struct Step {
     pub after: Vec<String>,
     pub cont: bool,
     pub on: Option<String>,
-    pub lock: &'static str,
+    pub lock: StepKind,
     pub label: Option<String>,
     pub device: Option<String>,
     /// What a recipe step asks for, so the jobs it will make can be planned.
     pub recipe: Option<RecipeCall>,
 }
 
-pub fn parse(text: &str) -> Result<Vec<Step>, String> {
+pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
     let mut steps: Vec<Step> = Vec::new();
     let mut joined = String::new();
     let mut first_line = 0;
@@ -35,7 +118,10 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let at = |e: String| format!("line {first_line}: {e}");
+        let at = |why: String| BatchError::Line {
+            line: first_line,
+            why,
+        };
         let (attrs, command) = match line.strip_prefix('[') {
             Some(rest) => {
                 let (a, c) = rest
@@ -94,21 +180,22 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
         });
     }
     if !joined.trim().is_empty() {
-        return Err(format!(
-            "line {first_line}: the last line ends in a backslash"
-        ));
+        return Err(BatchError::Line {
+            line: first_line,
+            why: "the last line ends in a backslash".into(),
+        });
     }
     if steps.is_empty() {
-        return Err("the batch has no steps".into());
+        return Err(BatchError::NoSteps);
     }
     let names: HashSet<&str> = steps.iter().map(|s| s.name.as_str()).collect();
     for s in &steps {
         for a in &s.after {
             if !names.contains(a.as_str()) {
-                return Err(format!(
-                    "step '{}' waits for '{a}', and no step has that name",
-                    s.name
-                ));
+                return Err(BatchError::UnknownStep {
+                    step: s.name.clone(),
+                    waits_for: a.clone(),
+                });
             }
         }
     }
@@ -117,7 +204,7 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
 }
 
 /// Fails on a cycle, naming a step in it.
-pub(crate) fn order(steps: &[Step]) -> Result<Vec<usize>, String> {
+pub(crate) fn order(steps: &[Step]) -> Result<Vec<usize>, BatchError> {
     let index: HashMap<&str, usize> = steps
         .iter()
         .enumerate()
@@ -135,10 +222,9 @@ pub(crate) fn order(steps: &[Step]) -> Result<Vec<usize>, String> {
             }
             None => {
                 let stuck = (0..steps.len()).find(|&i| !done[i]).unwrap();
-                return Err(format!(
-                    "step '{}' waits on itself through after=",
-                    steps[stuck].name
-                ));
+                return Err(BatchError::Cycle {
+                    step: steps[stuck].name.clone(),
+                });
             }
         }
     }
@@ -229,7 +315,7 @@ pub(crate) fn describe(words: &[String]) -> Result<Step, String> {
         after: Vec::new(),
         cont: false,
         on: None,
-        lock: "shared",
+        lock: StepKind::Shared,
         label: None,
         device: None,
         recipe: None,
@@ -237,13 +323,13 @@ pub(crate) fn describe(words: &[String]) -> Result<Step, String> {
     match read {
         Invocation::Call(call) => {
             step.lock = match &call.mode {
-                Mode::Run(run) if run.lock == RunLock::Bench => "bench",
-                Mode::Peek(_) => "peek",
-                Mode::Sync(_) => "sync",
+                Mode::Run(run) if run.lock == RunLock::Bench => StepKind::Bench,
+                Mode::Peek(_) => StepKind::Peek,
+                Mode::Sync(_) => StepKind::Sync,
                 Mode::Watch { .. } => {
                     return Err("a batch step cannot --watch: it never finishes".into());
                 }
-                _ => "shared",
+                _ => StepKind::Shared,
             };
             step.on = call.on.map(|m| m.as_str().to_string());
             step.label = call.label.map(|l| l.as_str().to_string());
@@ -256,7 +342,7 @@ pub(crate) fn describe(words: &[String]) -> Result<Step, String> {
             step.on = call.on.clone();
             step.device = call.device.clone();
             if call.verb.runs_jobs() {
-                step.lock = "recipe";
+                step.lock = StepKind::Recipe;
                 step.label = Some(recipe_label(words));
                 step.recipe = Some(call);
             }
@@ -283,8 +369,8 @@ pub(crate) fn recipe_label(words: &[String]) -> String {
 
 impl Step {
     pub(crate) fn measures(&self) -> bool {
-        self.lock == "bench"
-            || (self.lock == "recipe"
+        self.lock == StepKind::Bench
+            || (self.lock == StepKind::Recipe
                 && self
                     .label
                     .as_deref()

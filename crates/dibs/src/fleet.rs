@@ -866,7 +866,7 @@ pub fn command(
     }
     Ok(match reports.iter().all(Report::as_expected) {
         true => ExitCode::SUCCESS,
-        false => ExitCode::from(1),
+        false => ExitCode::from(Exit::Failed.code()),
     })
 }
 

@@ -7,6 +7,8 @@
 
 use super::{base::lockfile, refs::Arm};
 use crate::{
+    git::Git,
+    lockfile::Package,
     recipe::{resolve_repo, root_of},
     worktree,
 };
@@ -40,18 +42,15 @@ pub fn crates<'a>(manifests: impl Iterator<Item = (&'a str, String)>) -> BTreeMa
 
 /// A local tree's crates, from the files a send would carry.
 pub fn local_crates(dir: &Path) -> Result<BTreeMap<String, String>, String> {
-    let list = git(
-        dir,
-        &[
-            "ls-files",
-            "-co",
-            "--exclude-standard",
-            "-z",
-            "--",
-            "Cargo.toml",
-            "*/Cargo.toml",
-        ],
-    )?;
+    let list = Git(dir).run(&[
+        "ls-files",
+        "-co",
+        "--exclude-standard",
+        "-z",
+        "--",
+        "Cargo.toml",
+        "*/Cargo.toml",
+    ])?;
     let paths: Vec<&str> = list.split('\0').filter(|p| !p.is_empty()).collect();
     Ok(crates(paths.iter().filter_map(|p| {
         std::fs::read_to_string(dir.join(p)).ok().map(|t| (*p, t))
@@ -60,13 +59,14 @@ pub fn local_crates(dir: &Path) -> Result<BTreeMap<String, String>, String> {
 
 /// A ref's crates, read from the repo's history here.
 pub fn ref_crates(dir: &Path, reference: &str) -> Result<BTreeMap<String, String>, String> {
-    let list = git(dir, &["ls-tree", "-r", "--name-only", "-z", reference])?;
+    let list = Git(dir).run(&["ls-tree", "-r", "--name-only", "-z", reference])?;
     let paths: Vec<&str> = list
         .split('\0')
         .filter(|p| *p == "Cargo.toml" || p.ends_with("/Cargo.toml"))
         .collect();
     Ok(crates(paths.iter().filter_map(|p| {
-        git(dir, &["show", &format!("{reference}:{p}")])
+        Git(dir)
+            .run(&["show", &format!("{reference}:{p}")])
             .ok()
             .map(|t| (*p, t))
     })))
@@ -98,17 +98,9 @@ pub fn sources(
         out.entry(key).or_default().insert(n);
         Ok(())
     };
-    let (mut name, mut source) = (None, None);
-    for line in lock.lines().map(str::trim) {
-        if line == "[[package]]" {
-            take(name.take(), source.take())?;
-        } else if let Some(v) = line.strip_prefix("name = ") {
-            name = Some(v.trim_matches('"').to_string());
-        } else if let Some(v) = line.strip_prefix("source = ") {
-            source = Some(v.trim_matches('"').to_string());
-        }
+    for package in Package::all(lock) {
+        take(Some(package.name), package.source)?;
     }
-    take(name, source)?;
     Ok(out)
 }
 
@@ -180,26 +172,13 @@ exit $__dibs_rc"#,
     )
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
-    if !out.status.success() {
-        return Err(format!(
-            "git {} in {}: {}",
-            args.join(" "),
-            dir.display(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+/// `--pin <repo>@<ref>`, both halves named.
+pub(crate) struct PinSpec<'a> {
+    pub(crate) repo: &'a str,
+    pub(crate) reference: &'a str,
 }
 
-/// `<repo>@<ref>`, both halves named.
-pub(crate) fn pin_spec(p: &str) -> Result<(&str, &str), String> {
+pub(crate) fn pin_spec(p: &str) -> Result<PinSpec<'_>, String> {
     match p.split_once('@') {
         Some((repo, reference))
             if !repo.is_empty()
@@ -207,7 +186,7 @@ pub(crate) fn pin_spec(p: &str) -> Result<(&str, &str), String> {
                 && !reference.contains("..")
                 && !reference.contains(',') =>
         {
-            Ok((repo, reference))
+            Ok(PinSpec { repo, reference })
         }
         _ => Err(format!(
             "--pin {p}: a pin is one tree, <repo>@local or <repo>@<ref>"
@@ -240,7 +219,10 @@ pub(crate) fn pins_of(
 ) -> Result<Vec<Pinned>, String> {
     let mut pins = Vec::new();
     for p in &args.pins {
-        let (name, reference) = pin_spec(p)?;
+        let PinSpec {
+            repo: name,
+            reference,
+        } = pin_spec(p)?;
         let pdir = resolve_repo(name, &root_of(args))?;
         let identity = worktree::identity(&pdir);
         if identity == repo {

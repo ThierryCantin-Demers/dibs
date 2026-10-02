@@ -14,4 +14,5 @@ mod summary;
 mod tests;
 
 pub(crate) use base::{Options, batch_id, run};
-pub(crate) use plan::{Pending, recipe_env};
+pub(crate) use parse::BatchError;
+pub(crate) use plan::{Pending, Planned, recipe_env};

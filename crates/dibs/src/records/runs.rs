@@ -92,7 +92,7 @@ impl Record {
                 .map(|p| (p.lock.as_str().to_string(), p.run))
                 .collect(),
             seconds: run.steps.iter().map(|s| s.seconds).sum(),
-            measured: median(unarmed.collect()).map(|(m, ..)| m),
+            measured: Spread::of(unarmed.collect()).map(|s| s.median),
             samples,
             refs: run.refs,
             arms: run
@@ -111,11 +111,24 @@ impl Record {
     }
 }
 
-/// The median, lowest and highest, or None for no samples.
-fn median(mut secs: Vec<u64>) -> Option<(u64, u64, u64)> {
-    secs.sort_unstable();
-    let n = secs.len();
-    (n > 0).then(|| ((secs[(n - 1) / 2] + secs[n / 2]) / 2, secs[0], secs[n - 1]))
+/// The median of some seconds, and the lowest and highest.
+struct Spread {
+    median: u64,
+    low: u64,
+    high: u64,
+}
+
+impl Spread {
+    /// None for no samples.
+    fn of(mut secs: Vec<u64>) -> Option<Spread> {
+        secs.sort_unstable();
+        let n = secs.len();
+        (n > 0).then(|| Spread {
+            median: (secs[(n - 1) / 2] + secs[n / 2]) / 2,
+            low: secs[0],
+            high: secs[n - 1],
+        })
+    }
 }
 
 pub fn load(path: &Path) -> Result<Vec<Record>, String> {
@@ -248,11 +261,11 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
             Some(m) => (m, "exclusive"),
             None => (r.seconds, "shared"),
         };
-        let spread = median(r.samples.iter().map(|(_, s)| *s).collect())
+        let spread = Spread::of(r.samples.iter().map(|(_, s)| *s).collect())
             .filter(|_| r.arms.is_empty() && r.reps > 1);
         let extra = [
             r.variant.as_ref().map(|v| format!("from {v}")),
-            spread.map(|(_, lo, hi)| format!("median of {} reps, {lo}s to {hi}s", r.reps)),
+            spread.map(|s| format!("median of {} reps, {}s to {}s", r.reps, s.low, s.high)),
             (!r.params.is_empty()).then(|| words(&r.params, "=")),
             r.seeded.as_ref().map(|s| format!("seeded from {s}")),
             r.anyway.then(|| "measured with --anyway".to_string()),
@@ -279,7 +292,7 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
             ));
             let name_w = r.arms.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
             for (name, revisions) in &r.arms {
-                let secs = median(
+                let secs = Spread::of(
                     r.samples
                         .iter()
                         .filter(|(a, _)| a == name)
@@ -290,9 +303,9 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
                     "    {name:<name_w$}  {}  {}\n",
                     words(revisions, "@"),
                     match secs {
-                        Some((m, lo, hi)) if lo != hi =>
-                            format!("median {m}s exclusive, {lo}s to {hi}s"),
-                        Some((m, ..)) => format!("{m}s exclusive"),
+                        Some(s) if s.low != s.high =>
+                            format!("median {}s exclusive, {}s to {}s", s.median, s.low, s.high),
+                        Some(s) => format!("{}s exclusive", s.median),
                         None => "nothing measured".to_string(),
                     }
                 ));
@@ -346,7 +359,12 @@ pub fn report(records: &[Record], only: Option<&str>, limit: usize, all: bool) -
         ) in repeated
         {
             let n = secs.len();
-            let Some((m, lo, hi)) = median(secs) else {
+            let Some(Spread {
+                median: m,
+                low: lo,
+                high: hi,
+            }) = Spread::of(secs)
+            else {
                 continue;
             };
             let context: String = [params, state]

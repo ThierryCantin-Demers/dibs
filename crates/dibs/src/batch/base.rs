@@ -1,5 +1,5 @@
 use super::{
-    parse::{Step, parse},
+    parse::{BatchError, Step, StepKind, parse},
     plan::{Pending, pending_of, plan, step_env},
     summary::summary,
 };
@@ -10,7 +10,7 @@ use dibs::{
     cli::Call,
     paths::Paths,
 };
-use dibs_format::MachineName;
+use dibs_format::{Exit, MachineName};
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Write},
@@ -20,9 +20,6 @@ use std::{
     sync::mpsc,
     time::{Duration, Instant},
 };
-
-/// The exit dibs gives a step of a batch that `dibs --kill <batch-id>` cancelled on a machine.
-pub const CANCELLED: i32 = 76;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
@@ -141,7 +138,7 @@ pub struct Options {
     pub verbose: bool,
 }
 
-pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
+pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let steps = parse(text)?;
     let named: Vec<Option<String>> = steps.iter().map(machine_of).collect();
     if let Some((s, _)) = steps
@@ -149,11 +146,9 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
         .zip(&named)
         .find(|(s, m)| m.is_none() && s.measures())
     {
-        return Err(format!(
-            "step {} measures and names no machine, and a measurement is never placed for you. Give it\n  \
-             --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step.",
-            s.name
-        ));
+        return Err(BatchError::Unplaced {
+            step: s.name.clone(),
+        });
     }
     let machines: Vec<String> = named
         .into_iter()
@@ -185,7 +180,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
     let recipes: Vec<Option<Vec<Pending>>> = steps
         .iter()
         .map(|s| {
-            if s.lock == "recipe" {
+            if s.lock == StepKind::Recipe {
                 s.recipe.as_ref().and_then(recipe_jobs)
             } else {
                 None
@@ -289,12 +284,12 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
                         running.values().for_each(|&pid| stop(pid));
                     }
                 }
-                Err(e) => return Err(e.to_string()),
+                Err(e) => return Err(e.to_string().into()),
             }
         };
         running.remove(&i);
         states[i] = State::Done { exit, seconds };
-        if exit == CANCELLED
+        if exit == i32::from(Exit::Cancelled.code())
             && cancelled.is_none()
             && was_cancelled(
                 &std::fs::read_to_string(dir.join(format!("{}.err", steps[i].name)))
@@ -325,7 +320,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
     let _ = std::fs::write(dir.join("summary"), &report);
     print!("{report}");
     Ok(if cancelled.is_some() {
-        CANCELLED
+        i32::from(Exit::Cancelled.code())
     } else if states
         .iter()
         .all(|s| matches!(s, State::Done { exit: 0, .. }))
@@ -339,9 +334,10 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, String> {
 /// A command may exit 76 of its own accord, so only dibs saying so makes it a cancellation.
 pub(crate) fn was_cancelled(stderr: &str) -> bool {
     stderr.contains("was cancelled with dibs --kill")
-        || stderr
-            .lines()
-            .any(|l| l.starts_with("job ") && l.contains("  exit 76  by=dibs"))
+        || stderr.lines().any(|l| {
+            l.starts_with("job ")
+                && l.contains(&format!("  exit {}  by=dibs", Exit::Cancelled.code()))
+        })
 }
 
 /// A step is its own process group, so the signal reaches the dibs call under it and that call's
