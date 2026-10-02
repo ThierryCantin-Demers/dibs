@@ -1,7 +1,7 @@
 //! Friction filed where the people who fix dibs see it: an issue in a private repo the team
 //! shares, with the answers brought back to the session that reported it.
 
-use crate::friction::Note;
+use crate::records::friction::Note;
 use dibs::{
     caller::Caller,
     paths::{Paths, ReportsStamp},
@@ -550,6 +550,51 @@ pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, 
         gh(&["issue", "close", &n, "-R", repo])?;
     }
     Ok(url)
+}
+
+/// The text arrives in the environment rather than as an argument: a report about a flag starts
+/// with the flag, and parsing that as one is how the complaint becomes the complaint.
+pub(crate) fn friction_verb(
+    friction: dibs::cli::Friction,
+) -> Result<std::process::ExitCode, crate::execution::RunError> {
+    let reports_repo = || repo().ok_or("DIBS_REPORTS names no <owner>/<repo> to take reports from");
+    match friction {
+        dibs::cli::Friction::Wait => {
+            for news in wait(&reports_repo()?)? {
+                println!("{news}");
+            }
+        }
+        dibs::cli::Friction::Reply {
+            issue,
+            answer,
+            close,
+        } => println!("{}", reply(&reports_repo()?, issue, &answer, close)?),
+        dibs::cli::Friction::Note { text } => {
+            let caller = Caller::from_env();
+            crate::change_notice(&caller);
+            let mut note = crate::records::friction::note(
+                &text,
+                &caller.name,
+                &dibs::update::version().unwrap_or_default(),
+                crate::records::now_secs(),
+            )?;
+            let filed = repo().map(|repo| (file(&repo, &note), repo));
+            if let Some((Ok(n), _)) = &filed {
+                note.issue = Some(*n);
+            }
+            crate::records::friction::append(&crate::records::friction::path()?, &note)?;
+            match filed {
+                None => println!(
+                    "Recorded. dibs gaps prints it, with everything else that got in the way."
+                ),
+                Some((Ok(n), repo)) => println!(
+                    "Recorded, and filed as {repo}#{n}. An answer there shows on a later dibs call."
+                ),
+                Some((Err(e), repo)) => println!("Recorded here, but not filed in {repo}: {e}"),
+            }
+        }
+    }
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

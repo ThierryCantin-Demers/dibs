@@ -8,6 +8,7 @@ use dibs::{
     call::{LockedCall, Origin, Output, RecipeJob},
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run},
+    inventory::Inventory,
     machine::Stream,
     paths::Paths,
 };
@@ -867,6 +868,40 @@ pub fn command(
         true => ExitCode::SUCCESS,
         false => ExitCode::from(1),
     })
+}
+
+pub(crate) fn inventory_path() -> Option<PathBuf> {
+    Paths::from_env().inventory()
+}
+
+/// The machines the inventory names, which are reached only through dibs.
+pub(crate) fn pool() -> std::collections::BTreeSet<String> {
+    inventory()
+        .map(|i| i.names().map(MachineName::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// The inventory, when there is one that reads.
+pub(crate) fn inventory() -> Option<Inventory> {
+    Inventory::load(&inventory_path()?).ok().flatten()
+}
+
+/// Every repo with a recipes file.
+pub(crate) fn recipe_repos() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(crate::recipe::local_dir()) else {
+        return Vec::new();
+    };
+    let mut repos: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()?
+                .strip_suffix(".toml")
+                .map(str::to_string)
+        })
+        .collect();
+    repos.sort();
+    repos
 }
 
 #[cfg(test)]

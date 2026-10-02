@@ -8,8 +8,13 @@
 //! So this does not just list. It says when a label's runs stopped being comparable, and
 //! where.
 
+use dibs::paths::Paths;
 use dibs_format::{Lock, Pairs, RunRecord, RunVerb};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    io::Write as _,
+    path::{Path, PathBuf},
+};
 
 pub struct Record {
     pub when: u64,
@@ -473,6 +478,32 @@ pub fn gaps(records: &[Record]) -> String {
         ));
     }
     out
+}
+
+pub(crate) fn runs_path() -> Result<PathBuf, String> {
+    Paths::from_env()
+        .runs()
+        .ok_or_else(|| "no HOME, and nowhere to record runs".into())
+}
+
+pub(crate) fn write_record(run: &RunRecord) -> Result<(), String> {
+    let path = runs_path()?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    writeln!(f, "{}", run.to_line()).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+pub(crate) fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

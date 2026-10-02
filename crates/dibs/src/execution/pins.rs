@@ -5,8 +5,16 @@
 //! `[patch]`, in a config file above the tree rather than in it: the tree stays what was sent.
 //! A pinned build still gets a tree of its own, since resolving the patch rewrites the lockfile.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use super::{base::lockfile, refs::Arm};
+use crate::{
+    recipe::{resolve_repo, root_of},
+    worktree,
+};
+use dibs::cli::RecipeCall;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+};
 
 /// The crates a tree defines: name, and the directory of its manifest relative to the root.
 pub fn crates<'a>(manifests: impl Iterator<Item = (&'a str, String)>) -> BTreeMap<String, String> {
@@ -190,8 +198,123 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// `<repo>@<ref>`, both halves named.
+pub(crate) fn pin_spec(p: &str) -> Result<(&str, &str), String> {
+    match p.split_once('@') {
+        Some((repo, reference))
+            if !repo.is_empty()
+                && !reference.is_empty()
+                && !reference.contains("..")
+                && !reference.contains(',') =>
+        {
+            Ok((repo, reference))
+        }
+        _ => Err(format!(
+            "--pin {p}: a pin is one tree, <repo>@local or <repo>@<ref>"
+        )),
+    }
+}
+
+/// A repo built against in place of what the lockfile names, and what that replaces.
+pub(crate) struct Pinned {
+    pub(crate) repo: String,
+    pub(crate) reference: String,
+    pub(crate) dir: PathBuf,
+    /// The tree sent, when one is: the one at `dir`, or a checkout of a commit the machine cannot fetch.
+    pub(crate) local: Option<worktree::Local>,
+    pub(crate) checkout: Option<worktree::Checkout>,
+    pub(crate) note: Option<String>,
+    pub(crate) crates: BTreeMap<String, String>,
+    pub(crate) lock: Option<String>,
+    /// The sources a `[patch]` has to redirect, and the crates taken from each.
+    pub(crate) sources: BTreeMap<String, std::collections::BTreeSet<String>>,
+}
+
+/// Every pin, resolved against every arm's lockfile and every pin's: one pinned crate may reach
+/// the build through another pinned repo rather than through this one.
+pub(crate) fn pins_of(
+    args: &RecipeCall,
+    repo: &str,
+    dir: &Path,
+    arms: &[Arm],
+) -> Result<Vec<Pinned>, String> {
+    let mut pins = Vec::new();
+    for p in &args.pins {
+        let (name, reference) = pin_spec(p)?;
+        let pdir = resolve_repo(name, &root_of(args))?;
+        let identity = worktree::identity(&pdir);
+        if identity == repo {
+            return Err(format!(
+                "--pin {p}: that is the repo being built; name its tree with {repo}@<ref> instead"
+            ));
+        }
+        if pins.iter().any(|q: &Pinned| q.repo == identity) {
+            return Err(format!("--pin {p}: {identity} is pinned twice"));
+        }
+        let (local, checkout, note, crates, lock) = match reference {
+            "local" => (
+                Some(worktree::local(&pdir)?),
+                None,
+                None,
+                local_crates(&pdir)?,
+                lockfile(&pdir, None),
+            ),
+            _ => {
+                let (sha, seen, ahead) = worktree::as_fetched(&pdir, reference)
+                    .ok_or_else(|| format!("--pin {p}: no {reference} in {}", pdir.display()))?;
+                let (crates, lock) = (ref_crates(&pdir, &sha)?, lockfile(&pdir, Some(&sha)));
+                match ahead.or_else(|| worktree::unfetchable(&pdir, &sha)) {
+                    Some(why) => {
+                        let c = worktree::checkout(&pdir, &identity, &sha, Some(why))?;
+                        (
+                            Some(c.local()?),
+                            Some(c),
+                            Some(format!("as {seen} stands here")),
+                            crates,
+                            lock,
+                        )
+                    }
+                    None => (None, None, None, crates, lock),
+                }
+            }
+        };
+        pins.push(Pinned {
+            repo: identity,
+            reference: reference.to_string(),
+            dir: pdir,
+            local,
+            checkout,
+            note,
+            crates,
+            lock,
+            sources: BTreeMap::new(),
+        });
+    }
+    let locks: Vec<String> = arms
+        .iter()
+        .filter_map(|a| lockfile(a.dir(dir), a.fetch.as_deref()))
+        .chain(pins.iter().filter_map(|p| p.lock.clone()))
+        .collect();
+    for p in &mut pins {
+        for lock in &locks {
+            for (source, names) in sources(lock, &p.crates)? {
+                p.sources.entry(source).or_default().extend(names);
+            }
+        }
+        if p.sources.is_empty() {
+            return Err(format!(
+                "--pin {}: {repo}'s Cargo.lock takes none of {}'s crates from git or crates.io, so there is nothing\n  \
+                 for the pin to replace. A repo already built from a path, as a local-development block does, needs no pin.",
+                p.repo, p.repo
+            ));
+        }
+    }
+    Ok(pins)
+}
+
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     const LOCK: &str = r#"

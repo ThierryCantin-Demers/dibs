@@ -5,7 +5,7 @@ use crate::recipe::Lock;
 use dibs::{
     call::{CallError, Destination, LockedCall, MachineCall, Origin, Output, RecipeJob, Sync},
     caller::Caller,
-    cli::{Call, Command, Mode, Run, RunLock},
+    cli::{Call, Command as ShellCommand, Mode, Run, RunLock},
     machine::{Interrupt, Stream},
     placement::Placement,
 };
@@ -29,7 +29,7 @@ pub struct Request<'a> {
     pub new_series: bool,
 }
 
-pub struct Outcome {
+pub struct JobOutcome {
     pub status: i32,
     pub seconds: u64,
     /// What the job's trailer said, when its stderr passed through here and it printed one.
@@ -38,11 +38,11 @@ pub struct Outcome {
 
 /// A job's outcome, and the `DIBS-` lines it reported, or its whole stdout when that was kept.
 pub struct Reported {
-    pub outcome: Outcome,
+    pub outcome: JobOutcome,
     pub text: String,
 }
 
-impl Outcome {
+impl JobOutcome {
     /// The record of the step this was the outcome of.
     pub fn step_record(&self, lock: Lock) -> StepRecord {
         let trailer = self.trailer.as_ref();
@@ -164,7 +164,7 @@ impl<'a> Reader<'a> {
             Reading::Kept => None,
         };
         Reported {
-            outcome: Outcome {
+            outcome: JobOutcome {
                 status,
                 seconds: self.start.elapsed().as_secs(),
                 trailer,
@@ -227,7 +227,7 @@ impl Jobs {
         MachineCall::new(&call, &caller).destination()
     }
 
-    pub fn run(&self, req: &Request, command: &str) -> Outcome {
+    pub fn run(&self, req: &Request, command: &str) -> JobOutcome {
         self.read(req, command, Reader::new(Reading::Reported, &mut |_| {}))
             .outcome
     }
@@ -338,7 +338,7 @@ impl Jobs {
         Call {
             mode: Mode::Run(Run {
                 lock,
-                command: Command(vec![command.to_string()]),
+                command: ShellCommand(vec![command.to_string()]),
                 ..Run::default()
             }),
             on: self.machine.clone(),

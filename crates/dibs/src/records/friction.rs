@@ -4,7 +4,7 @@
 //! by an agent choosing to mention it in chat. The same few gaps were found again session after
 //! session, and the one report anybody wrote down lived in a scratchpad and went with it.
 
-use crate::runs;
+use crate::records::runs;
 use dibs::paths::Paths;
 pub use dibs_format::FrictionNote as Note;
 use std::{
