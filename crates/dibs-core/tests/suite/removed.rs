@@ -1,5 +1,4 @@
-//! What the features being removed print and send, so that removing them is one diff here: the
-//! detach queue, the shared registry, `--abi`, and the handoffs between dibs's own halves.
+//! What the features being removed print and send, so that removing them is one diff here.
 
 use crate::harness::*;
 use crate::snapshot::*;

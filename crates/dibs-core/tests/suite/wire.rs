@@ -7,8 +7,7 @@ use crate::recipes::{PARAMS, app, recipes};
 use crate::snapshot::*;
 use std::fs;
 
-/// `WIRE_RUN=1` runs the far side here on the same stream, each host with its own lock directory
-/// and state under `WIRE_HOSTS` when that is set; otherwise it exits `WIRE_EXIT`.
+/// `WIRE_RUN=1` runs the far side here, a host apiece under `WIRE_HOSTS`, else exits `WIRE_EXIT`.
 const RECORDING_SSH: &str = r#"#!/bin/bash
 n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
 printf '%s\0' ssh "$@" > "$WIRE/$n.argv"
@@ -32,8 +31,7 @@ fi
 exit "${WIRE_EXIT:-0}"
 "#;
 
-/// An rsync that writes down what it was asked to copy, then reaches the far side as rsync does,
-/// through the program it was given with -e, which is how dibs is reached and not pinned here.
+/// An rsync that records what it copies and reaches the far side through its -e program.
 const RECORDING_RSYNC: &str = r#"#!/bin/bash
 [ "$1" = --help ] && { echo '  --mkpath   create destination path components'; exit 0; }
 rsh=ssh args=() remote=
@@ -148,8 +146,7 @@ fn read_by(mode: &str) -> Option<&'static [&'static str]> {
 pub(crate) enum Cmd {
     /// As one shell string, the way it was given.
     AsSent,
-    /// By the words the machine's shell makes of it, since several arguments may be quoted any
-    /// way that yields them.
+    /// By the words the machine's shell makes of it, however the arguments were quoted.
     AsWords,
 }
 

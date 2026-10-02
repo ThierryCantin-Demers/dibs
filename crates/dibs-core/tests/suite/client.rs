@@ -1,6 +1,4 @@
-//! What the client decides and says on its own, which a client that replaces the bash one has to
-//! decide and say the same way: where a call is placed, a status across machines, a recipe run's
-//! account of itself, `with`, and a hold's servers.
+//! What the client decides and says by itself, which a client that replaces it has to match.
 
 use crate::harness::*;
 use crate::recipes::{PARAMS, app, recipes};

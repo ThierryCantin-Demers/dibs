@@ -791,12 +791,9 @@ fn has(tool: &str) -> bool {
         .is_ok()
 }
 
-/// A step that outlives its driver holds a lock nobody is waiting for. The kernel signals this
-/// shell when the driver dies, however it dies, but only this shell: a step running on this
-/// machine has a job runner below it holding the lock, so the signal is passed to the step's
-/// whole process group, which setsid made its own. Each of the driver's threads sends its own
-/// death signal, so TERM is ignored until the group has it, and bash's warnings about the extra
-/// ones go nowhere: its stderr is a pipe to the dead driver, and a write there would end it.
+/// The kernel signals only this shell when the driver dies, so it passes TERM to its whole group,
+/// where a local step's job runner holds the lock. Each driver thread signals, so TERM is ignored
+/// until the group has it, and bash's warnings stay off stderr, a pipe the dead driver closed.
 const GROUP: &str = r#"exec 3>&2 2>/dev/null; trap 'trap "" TERM; kill -TERM 0; trap - TERM; kill -TERM $$' TERM; bash -c "$1" 2>&3 3>&- & wait $!"#;
 
 /// GROUP where there is no parent-death signal, as on macOS: the step watches the driver itself.
