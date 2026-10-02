@@ -220,7 +220,7 @@ spoiled without it.
   that copies results into `$DIBS_SCRATCH/out` for a `--sync` afterwards. `dibs --fetch <job>
   [dir]` fetches one job's again.
 - `dibs shell` takes `--bench` when the one-off is a measurement, and `--max <seconds>` when it
-  would otherwise be killed at the default cap.
+  would otherwise be killed at the default cap. Without a repo it runs in the tree you are in.
 - `@local` in place of a ref sends your working tree, uncommitted changes included, following the
   repo's ignore rules. A ref the machine cannot fetch, because it was never pushed or the repo is
   private (the machines hold no credentials), is checked out here and sent the same way, and so

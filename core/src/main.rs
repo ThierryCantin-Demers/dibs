@@ -302,7 +302,11 @@ fn parse_words(words: impl IntoIterator<Item = String>) -> Result<Args, String> 
         std::process::exit(2);
     }
     let verb = positional.remove(0);
-    let target = positional.first().cloned().unwrap_or_default();
+    let target = match positional.first() {
+        Some(t) => t.clone(),
+        None if verb == "shell" => ".@local".to_string(),
+        None => String::new(),
+    };
     if target.is_empty() && !matches!(verb.as_str(), "runs" | "gaps" | "raw" | "friction" | "machines") {
         return Err("needs a repo".into());
     }
@@ -1813,8 +1817,32 @@ struct Resolved {
     tree_fresh: Vec<String>,
 }
 
+const LABEL_DERIVED: &str = "derived so that every run of one piece of\n  work lands in one history.";
+
+/// A shell's own words are refused before its tree is looked for, so one try finds them all out.
+fn refuse_shell_words(args: &Args, repo: &str) -> Result<(), String> {
+    if args.reason.is_none() {
+        return Err("shell needs --reason. Most of what gets run is neither a build nor a benchmark,\n             and knowing what those were is how the next recipe gets written.".into());
+    }
+    if args.command.is_none() {
+        return Err("shell needs -- <command>".into());
+    }
+    if args.params.contains_key("label") {
+        let label = run_label(repo, "shell", None, args.device.as_deref());
+        return Err(format!(
+            "shell takes no --label: its durations are filed under {label}, {LABEL_DERIVED} A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so."
+        ));
+    }
+    Ok(())
+}
+
 fn resolve(args: &Args) -> Result<Resolved, String> {
-    let dir = resolve_repo(&args.repo, &args.root)?;
+    let found = resolve_repo(&args.repo, &args.root);
+    if args.verb == "shell" {
+        let repo = found.as_deref().map(worktree::identity).unwrap_or_else(|_| args.repo.clone());
+        refuse_shell_words(args, &repo)?;
+    }
+    let dir = found?;
     let repo_name = worktree::identity(&dir);
     let manifest = if args.verb == "shell" {
         Manifest::load_any(&dir, &repo_name)?
@@ -1823,13 +1851,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
     };
 
 
-    let shell_reason = if args.verb == "shell" {
-        Some(args.reason.clone().ok_or(
-            "shell needs --reason. Most of what gets run is neither a build nor a benchmark,\n             and knowing what those were is how the next recipe gets written.",
-        )?)
-    } else {
-        None
-    };
+    let shell_reason = if args.verb == "shell" { args.reason.clone() } else { None };
     let shell_recipe = shell_reason.as_ref().map(|_| recipe::Recipe {
         source: recipe::Source::Local,
         needs: None,
@@ -1843,10 +1865,6 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
             env: BTreeMap::new(),
         }],
     });
-    if shell_recipe.is_some() && args.command.is_none() {
-        return Err("shell needs -- <command>".into());
-    }
-
     let verb = Verb::parse(&args.verb).or(if args.verb == "shell" {
         Some(Verb::Build)
     } else {
@@ -1889,16 +1907,7 @@ fn resolve(args: &Args) -> Result<Resolved, String> {
         None => run_label(&repo_name, verb.as_str(), Some(name), args.device.as_deref()),
     };
     if args.params.contains_key("label") && !rec.params.contains_key("label") {
-        return Err(format!(
-            "{} takes no --label: its durations are filed under {label}, derived so that every run of one piece of\n  \
-             work lands in one history.{}",
-            if shell_recipe.is_some() { "shell".to_string() } else { format!("{} {name}", verb.as_str()) },
-            if shell_recipe.is_some() {
-                " A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so."
-            } else {
-                ""
-            }
-        ));
+        return Err(format!("{} {name} takes no --label: its durations are filed under {label}, {LABEL_DERIVED}", verb.as_str()));
     }
     let params = rec.values(&args.params).map_err(|e| format!("{name}: {e}"))?;
     rec = rec.bound(&params);
@@ -2109,10 +2118,11 @@ fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
             format!("'{repo}' is in no git checkout and has no .dibs.toml, so there is no tree to send")
         });
     }
-    // Inside a worktree of the named repo, `@local` means that tree, and the clone under the
-    // root would otherwise be sent in its place without a word.
+    // Inside a worktree of the named repo, or one by that directory name, `@local` means that
+    // tree, and the clone under the root would otherwise be sent in its place without a word.
     let here = std::env::current_dir().ok().and_then(|d| worktree::toplevel(&d));
-    if let Some(here) = here.filter(|h| !repo.contains('/') && worktree::identity(h) == repo) {
+    let named = |h: &PathBuf| worktree::identity(h) == repo || h.file_name().is_some_and(|n| n == repo);
+    if let Some(here) = here.filter(|h| !repo.contains('/') && named(h)) {
         return Ok(here);
     }
     let under = root.join(repo);
