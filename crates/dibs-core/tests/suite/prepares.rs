@@ -68,7 +68,17 @@ fn tree(root: &Path, n: &Normal) -> Vec<String> {
 
 #[test]
 fn the_scratch_a_fixed_sequence_of_prepares_leaves() {
-    let s = Sandbox::new();
+    let mut s = Sandbox::new();
+    // Whether this filesystem shares blocks would otherwise decide which trees get seeded.
+    let cp = s.command("bash", ["-c", "type -P cp"]).run().stdout;
+    s.write_exec(
+        "nocow/cp",
+        &format!(
+            "#!/bin/bash\nfor a; do [ \"$a\" = --reflink=always ] && exit 1; done\nexec {} \"$@\"\n",
+            cp.trim()
+        ),
+    );
+    s.set("PATH", format!("{}:{}", s.p("nocow"), s.var("PATH")));
     let dir = app(&s);
     s.write_exec(
         "home/.cargo/bin/cargo",
