@@ -26,6 +26,7 @@ mod worktree;
 
 use dibs_core::{
     cli::{Help, Invocation, RecipeCall, RecipeVerb, ShellWord, Sweep},
+    inventory::Inventory,
     paths::Paths,
 };
 use dibs_format::{
@@ -92,14 +93,14 @@ fn inventory_path() -> Option<PathBuf> {
 
 /// The machines the inventory names, which are reached only through dibs.
 fn pool() -> std::collections::BTreeSet<String> {
-    let text = inventory_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .unwrap_or_default();
-    let inv: toml::Value = toml::from_str(&text).unwrap_or(toml::Value::Table(Default::default()));
-    inv.get("machine")
-        .and_then(toml::Value::as_table)
-        .map(|t| t.keys().cloned().collect())
+    inventory()
+        .map(|i| i.names().map(MachineName::to_string).collect())
         .unwrap_or_default()
+}
+
+/// The inventory, when there is one that reads.
+fn inventory() -> Option<Inventory> {
+    Inventory::load(&inventory_path()?).ok().flatten()
 }
 
 /// Every repo with a recipes file.
@@ -134,25 +135,9 @@ fn repo_root() -> PathBuf {
     // A fresh non-interactive shell has no DIBS_ROOT, since it lives in the user's fish
     // config, so the inventory file may carry it: `root = "/home/me/prog"` at the top level.
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    if let Some(text) = inventory_path().and_then(|p| std::fs::read_to_string(p).ok()) {
-        for line in text
-            .lines()
-            .take_while(|l| !l.trim_start().starts_with('['))
-        {
-            if let Some(v) = line.trim().strip_prefix("root") {
-                let v = v.trim_start();
-                if let Some(v) = v.strip_prefix('=') {
-                    let v = v.trim().trim_matches('"');
-                    let v = match (v.strip_prefix("~/"), &home) {
-                        (Some(rest), Some(h)) => h.join(rest),
-                        _ => PathBuf::from(v),
-                    };
-                    return v;
-                }
-            }
-        }
-    }
-    PathBuf::from(".")
+    inventory()
+        .and_then(|i| i.root(home.as_deref()))
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn run() -> Result<ExitCode, Failure> {
