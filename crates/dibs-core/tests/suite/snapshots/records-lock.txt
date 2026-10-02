@@ -1,16 +1,16 @@
-== holder.<pid>, a benchmark holding and a shared job queued behind it
+== holder.<pid>, a recipe's measurement holding and a batch step queued behind it
   9 fields
   mode         bench
   pid          <pid>
   start        <epoch>
-  label        rec-bench
+  label        app_bench_held_cpu
   agent        session suite
   agent id     local_suite
   device       cpu
-  command      read -r _ < <root>/f-bench
-  fingerprint  fp-bench
+  command      cd <root>/scratch/ws/app/<tree> && export CARGO_TARGET_DIR=<root>/scratch/target/app && { echo "DIBS-STATE ${DIBS_STATE:-}" read -r _ < "$REC_GATE"; }
+  fingerprint  21eafeca56a1b2ba
 
-== waiting.<pid>, a benchmark holding and a shared job queued behind it
+== waiting.<pid>, a recipe's measurement holding and a batch step queued behind it
   9 fields
   mode         shared
   pid          <pid>
@@ -23,10 +23,13 @@
   fingerprint  
 
 == batch.<pid>, the plan of the batch the queued job is a step of
+<batch>	app/bench/held@cpu
+2	2
+
+== batch.<pid>, the plan of the batch the queued job is a step of
 <batch>	serve
-2	3
-measure	bench	rec-bench	1
-elsewhere	shared	far	0
+1	2
+next	shared	rec-next	1
 
 == holder.<pid>, once the queued job holds the lock
   9 fields
@@ -44,7 +47,7 @@ elsewhere	shared	far	0
   3 fields
   service      srv
   pid          <pid>
-  command      read -r _ < <root>/f-served
+  command      read -r _ < <root>/f-server
 
 == port.<port>, once the queued job holds the lock
   1 fields

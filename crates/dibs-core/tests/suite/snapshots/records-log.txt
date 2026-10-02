@@ -1,29 +1,29 @@
-== log: arrived, rec-plain
+== log: arrived, app_build_plain
   12 fields
   when         <when>
   event        arrived
   pid          <pid>
   mode         shared
-  label        rec-plain
+  label        app_build_plain
   queued       -
   ran          -
   exit         -
-  command      echo hi
+  command      # echo hi <then its prepare>
   agent        session suite
   batch        -
   job          <job>
 
-== log: finished, rec-plain
+== log: finished, app_build_plain
   12 fields
   when         <when>
   event        finished
   pid          <pid>
   mode         shared
-  label        rec-plain
+  label        app_build_plain
   queued       <s>
   ran          <s>
   exit         0
-  command      echo hi
+  command      # echo hi <then its prepare>
   agent        session suite
   batch        -
   job          <job>
@@ -364,13 +364,13 @@
   seconds      <s>
   agent        someone
 
-== history: rec-plain
+== history: app_build_plain
   5 fields
   mode         shared
-  label        rec-plain
+  label        app_build_plain
   seconds      <s>
   agent        session suite
-  fingerprint  fp-plain
+  fingerprint  e8e800432f19a324
 
 == history: quickie
   5 fields

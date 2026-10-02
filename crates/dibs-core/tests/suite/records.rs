@@ -48,6 +48,11 @@ fn records_normal(s: &Sandbox) -> Normal {
         .rule(r"(?m)^(  (queued|ran|seconds)\s+)[0-9]+$", "$1<s>")
         .rule(r"\b(port)\.[0-9]+\b", "$1.<port>")
         .rule(r"(?m)^(  pid\s+)<pid>$", "$1<pid>")
+        .rule(r"/ws/app/[0-9a-f]{12}\b", "/ws/app/<tree>")
+        .rule(
+            r"(?m)^(  command +# .*?) __dibs_report=.*$",
+            "$1 <then its prepare>",
+        )
 }
 
 /// Every record of one kind in the lock directory, named by its kind with the pid left out.
@@ -76,57 +81,82 @@ fn lock_files(s: &Sandbox, kind: &str) -> Vec<(String, String)> {
     found
 }
 
+/// Every batch step's stderr, which the driver keeps rather than passing on.
+fn steps_said(s: &Sandbox) -> String {
+    let mut said = String::new();
+    for batch in fs::read_dir(s.path("home/.local/state/dibs/batch"))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        for f in fs::read_dir(batch.path()).into_iter().flatten().flatten() {
+            if f.path().extension().is_some_and(|e| e == "err") {
+                said.push_str(&format!(
+                    "{}:\n{}",
+                    f.file_name().to_string_lossy(),
+                    fs::read_to_string(f.path()).unwrap_or_default()
+                ));
+            }
+        }
+    }
+    said
+}
+
 #[test]
 fn lock_records() {
     let mut s = Sandbox::new();
     s.machines(&format!("[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n\n  [[machine.here.device]]\n  kind  = \"cpu\"\n  name  = \"a processor\"\n  cores = 4\n", hostname()));
+    let app = app(&s);
+    recipes(
+        &s,
+        "[bench.held]\n  [[bench.held.step]]\n  lock = \"exclusive\"\n  run = \"read -r _ < \\\"$REC_GATE\\\"\"\n",
+    );
+    s.git("app", &["add", "-A"]);
+    s.git("app", &["commit", "-qm", "recipes"]);
+    s.git("app", &["push", "-q", "origin", "HEAD:main"]);
     let n = records_normal(&s);
     let mut t = Transcript::default();
-    let (bench, served, held, up) = (
+    let (bench, served, server, held, up) = (
         s.gate("bench"),
         s.gate("served"),
+        s.gate("server"),
         s.gate("held"),
         s.gate("up"),
     );
     let holder = s.spawn(
         s.dibs([
+            "bench",
+            &format!("{app}@main"),
+            "held",
             "--on",
             "here",
-            "--bench",
             "--device",
             "cpu",
-            "--label",
-            "rec-bench",
-            &bench.hold(),
         ])
-        .env("DIBS_FINGERPRINT", "fp-bench"),
+        .env("REC_GATE", bench.path.display().to_string()),
     );
-    s.held(1);
-    let waiter = s
-        .dibs([
-            "--on",
-            "here",
-            "--label",
-            "rec-served",
-            "--port",
-            "api",
-            "--with",
-            &format!("srv={}", served.hold()),
-            &format!("{}; {}", up.signal(), served.hold()),
-        ])
-        .env("DIBS_BATCH", "20260101-120000-42")
-        .env("DIBS_BATCH_STEP", "serve")
-        .env(
-            "DIBS_BATCH_PLAN",
-            "2\t3\nmeasure\tbench\trec-bench\t1\nelsewhere\tshared\tfar\t0\n",
-        );
-    let waiter = s.spawn(waiter);
+    s.until_records("the recipe's measurement to hold the lock", || {
+        s.records("holder").iter().any(|r| r[0] == "bench")
+    });
+    let steps = s.path("steps");
+    std::fs::write(
+        &steps,
+        format!(
+            "[serve] dibs --on here --label rec-served --port api --with 'srv={}' '{}; {}'\n[next] dibs --on here --label rec-next true\n",
+            server.hold(),
+            up.signal(),
+            served.hold()
+        ),
+    )
+    .unwrap();
+    let (out, err) = (s.path("batch.out"), s.path("batch.err"));
+    let driver = s.spawn(s.dibs(["batch", &s.p("steps")]).streams_to(&out, &err));
     s.queued(1);
     for kind in ["holder", "waiting"] {
         for (name, text) in lock_files(&s, kind) {
             t.section(
                 &n.apply(&format!(
-                    "{name}, a benchmark holding and a shared job queued behind it"
+                    "{name}, a recipe's measurement holding and a batch step queued behind it"
                 )),
                 &n.apply(&fields(text.trim_end_matches('\n'), &LOCK_FIELDS)),
             );
@@ -171,7 +201,16 @@ fn lock_records() {
         );
     }
     served.open();
-    s.wait(waiter);
+    let code = s.wait(driver);
+    assert_eq!(
+        code,
+        0,
+        "the batch said:\n{}{}what its steps said:\n{}\nand the log ends:\n{}",
+        fs::read_to_string(&out).unwrap_or_default(),
+        fs::read_to_string(&err).unwrap_or_default(),
+        steps_said(&s),
+        s.log().lines().rev().take(8).collect::<Vec<_>>().join("\n")
+    );
     let hold = s.spawn(s.dibs([
         "--on",
         "here",
@@ -214,10 +253,17 @@ fn lock_records() {
 fn log_and_history() {
     let mut s = Sandbox::new();
     s.history(&"shared\tquickie\t1\tsomeone\n".repeat(3));
+    let app = app(&s);
+    recipes(
+        &s,
+        "[build.plain]\n  [[build.plain.step]]\n  lock = \"shared\"\n  run = \"echo hi\"\n",
+    );
+    s.git("app", &["add", "-A"]);
+    s.git("app", &["commit", "-qm", "recipes"]);
+    s.git("app", &["push", "-q", "origin", "HEAD:main"]);
     let n = records_normal(&s);
-    s.dibs(["--label", "rec-plain", "echo hi"])
-        .env("DIBS_FINGERPRINT", "fp-plain")
-        .run();
+    let built = s.dibs(["build", &format!("{app}@main"), "plain"]).run();
+    assert_eq!(built.code, 0, "{}", built.all());
     s.dibs(["--label", "rec-fails", "exit 3"]).run();
     s.dibs(["--peek", "true"]).env("DIBS_PEEK_WARN", "0").run();
 
@@ -273,7 +319,7 @@ fn log_and_history() {
         .env("DIBS_BATCH_STEP", "first"),
     );
     sup.reached();
-    s.dibs(["--kill", id]).env("DIBS_KILL_HERE", "1").run();
+    s.dibs(["--kill", id]).run();
     s.wait(step);
     s.dibs(["--label", "rec-late", "true"])
         .env("DIBS_BATCH", id)
