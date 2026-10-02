@@ -16,26 +16,3 @@
 1|      gpu:other                    0000:02:00.0   cuda, vulkan
 1|    box-b box-b.local  (no measurements)
 2|   A 'default =' line in the inventory is no longer read: a call names its machine.
-
-== dibs --machines  (with a shared registry under your own)
--> exit 0
-1|    box-a    dibs@box-a  [yours]
-1|    box-b    box-b.local  (no measurements)  [yours]
-1|    team-box dibs@team-box  [shared]
-2|   A 'default =' line in the inventory is no longer read: a call names its machine.
-
-== dibs --forget team-box
--> exit 2
-2| dibs: 'team-box' comes from the shared registry, not from <root>/machines.toml
-2|   Nothing here can remove it. Give it an entry of your own to override it.
-
-== dibs --forget box-b
--> exit 0
-1| forgot box-b
-
-== dibs --machines
--> exit 0
-1|    box-a    dibs@box-a  [yours]
-1|    team-box dibs@team-box  [shared]
-1|    box-b    elsewhere  [shared]
-2|   A 'default =' line in the inventory is no longer read: a call names its machine.

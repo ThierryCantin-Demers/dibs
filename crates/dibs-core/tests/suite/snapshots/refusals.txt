@@ -4,8 +4,6 @@ exit  call
 2     dibs --forget
 2     dibs --prefer
 2     dibs --repo
-2     dibs --job
-2     dibs --cancel
 2     dibs --gc --days
 I1    dibs --wait
 I1    dibs --max
@@ -24,7 +22,6 @@ I1    dibs --with s=true --ready
 2     dibs --peek --hold true
 2     dibs --hold --device gpu:x true
 2     dibs --label x list app
-2     DIBS_CORE='' HOME=/nonexistent dibs list app
 2     dibs
 2     dibs --status extra
 2     dibs --release extra
@@ -45,13 +42,6 @@ I1    dibs --with s=true --ready
 2     dibs --sync ./a ./b
 2     dibs --sync --on x ./a ':~/b'
 2     dibs --sync ./x ':$DIBS_SCRATCH/x'
-2     dibs --rsh
-2     dibs --rsh host rsync --server
-2     DIBS_QUEUE='' dibs --job 12345
-2     DIBS_QUEUE='' dibs --cancel 12345
-2     DIBS_QUEUE='' dibs --detach true
-2     DIBS_QUEUE=box@elsewhere dibs --bench --detach true
-2     DIBS_QUEUE=box@elsewhere dibs --detach --wait 5 true
 71    DIBS_LOCK_DIR=<root>/ro-lock dibs --label x true
 2     DIBS_HOLDING=<host> dibs --label x true
 2     dibs --friction '   '
@@ -94,14 +84,6 @@ I1    dibs --with s=true --ready
 == dibs --repo
 -> exit 2
 2| dibs: --repo needs a value.
-
-== dibs --job
--> exit 2
-2| dibs: --job needs a value.
-
-== dibs --cancel
--> exit 2
-2| dibs: --cancel needs a value.
 
 == dibs --gc --days
 -> exit 2
@@ -171,10 +153,6 @@ I1    dibs --with s=true --ready
 == dibs --label x list app
 -> exit 2
 2| dibs: only --on can come before list. Put the rest after it:  dibs list ... <flags>
-
-== DIBS_CORE='' HOME=/nonexistent dibs list app
--> exit 2
-2| dibs: list needs the recipe layer, which is not installed. Run install.sh from the clone.
 
 == dibs
 -> exit 2
@@ -259,42 +237,6 @@ I1    dibs --with s=true --ready
 -> exit 2
 2| dibs: --sync does not expand variables on the machine: :$DIBS_SCRATCH/x
 2|   Name the directory: :~/.cache/dibs/... is $DIBS_SCRATCH, :~/... is $HOME
-
-== dibs --rsh
--> exit 2
-2| --rsh is rsync's transport, not for calling directly
-
-== dibs --rsh host rsync --server
--> exit 2
-2| dibs: --sync reaches the machine from elsewhere. You are on it: use cp.
-
-== DIBS_QUEUE='' dibs --job 12345
--> exit 2
-2| dibs: 12345 is a pid, not a job id from --jobs.
-2|   A holder is not a detached job. dibs --status shows it.
-
-== DIBS_QUEUE='' dibs --cancel 12345
--> exit 2
-2| dibs: 12345 is a pid, not a job id from --jobs.
-2|   A holder is not a detached job. Stop it with:  dibs --kill 12345
-
-== DIBS_QUEUE='' dibs --detach true
--> exit 2
-2| dibs: no DIBS_QUEUE, so there is nowhere for the job to outlive this session.
-2|   Set it to the machine that stays up:  DIBS_QUEUE=dibs@<box>
-2|   Or name one for this job:  dibs --detach --on <machine> <command>
-
-== DIBS_QUEUE=box@elsewhere dibs --bench --detach true
--> exit 2
-2| dibs: --detach starts a caller elsewhere. It does not take the lock itself.
-2|   Alone with it, the measurement would run beside everything else there.
-2|   Put the run inside it, where the lock and the series both still apply:
-2|     dibs --detach 'dibs --bench <command>'
-
-== DIBS_QUEUE=box@elsewhere dibs --detach --wait 5 true
--> exit 2
-2| dibs: --wait describes a run, and --detach starts a caller.
-2|   Give it to the dibs call inside:  dibs --detach 'dibs --wait ... <command>'
 
 == DIBS_LOCK_DIR=<root>/ro-lock dibs --label x true
 -> exit 71

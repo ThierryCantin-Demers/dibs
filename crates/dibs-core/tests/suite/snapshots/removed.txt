@@ -1,0 +1,128 @@
+== dibs --on box-a --abi
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  the values the machine acts on, ahead of lib/machine:
+    MODE: abi
+    TTY: 0
+
+== DIBS_REMOTE_DIR=/dev/shm dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
+  its command, for the login shell there:
+    mkdir -p /dev/shm 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > /dev/shm/.dibs-payload.<pid>.<time>.sh &&              exec bash  /dev/shm/.dibs-payload.<pid>.<time>.sh
+    exit 70
+  the values the machine acts on, ahead of lib/machine:
+    AGENT: session suite
+    AGENT_ID: local_suite
+    BATCH: 
+    CMD: true
+    DEV_CHIP: 
+    DEV_NAME: 
+    DEV_PCI: 
+    DEV_RT: 
+    DEV_TWINS: 1
+    FINGERPRINT: 
+    HOLD: 0
+    JSON: 0
+    LABEL: step
+    LEASE: 120
+    MAXFROM: default
+    MAXHOLD: 1800
+    MODE: shared
+    NO_WATCH: 0
+    PORT_NAME: an array of 0
+    READY_WITHIN: 300
+    STREAM: 0
+    TTY: 0
+    VERBOSE: 0
+    WAIT: 
+    WITH_CMD: an array of 0
+    WITH_NAME: an array of 0
+    WITH_READY: an array of 0
+
+== dibs --machines  (with a shared registry under your own)
+-> exit 0
+1|    box-a    dibs@box-a  [yours]
+1|    box-b    box-b.local  (no measurements)  [yours]
+1|    team-box dibs@team-box  [shared]
+2|   A 'default =' line in the inventory is no longer read: a call names its machine.
+
+== dibs --forget team-box
+-> exit 2
+2| dibs: 'team-box' comes from the shared registry, not from <root>/machines.toml
+2|   Nothing here can remove it. Give it an entry of your own to override it.
+
+== dibs --forget box-b
+-> exit 0
+1| forgot box-b
+
+== dibs --machines
+-> exit 0
+1|    box-a    dibs@box-a  [yours]
+1|    team-box dibs@team-box  [shared]
+1|    box-b    elsewhere  [shared]
+2|   A 'default =' line in the inventory is no longer read: a call names its machine.
+
+== refused
+exit  call
+2     dibs --job
+2     dibs --cancel
+2     DIBS_CORE='' HOME=/nonexistent dibs list app
+2     dibs --rsh
+2     dibs --rsh host rsync --server
+2     DIBS_QUEUE='' dibs --job 12345
+2     DIBS_QUEUE='' dibs --cancel 12345
+2     DIBS_QUEUE='' dibs --detach true
+2     DIBS_QUEUE=box@elsewhere dibs --bench --detach true
+2     DIBS_QUEUE=box@elsewhere dibs --detach --wait 5 true
+
+== dibs --job
+-> exit 2
+2| dibs: --job needs a value.
+
+== dibs --cancel
+-> exit 2
+2| dibs: --cancel needs a value.
+
+== DIBS_CORE='' HOME=/nonexistent dibs list app
+-> exit 2
+2| dibs: list needs the recipe layer, which is not installed. Run install.sh from the clone.
+
+== dibs --rsh
+-> exit 2
+2| --rsh is rsync's transport, not for calling directly
+
+== dibs --rsh host rsync --server
+-> exit 2
+2| dibs: --sync reaches the machine from elsewhere. You are on it: use cp.
+
+== DIBS_QUEUE='' dibs --job 12345
+-> exit 2
+2| dibs: 12345 is a pid, not a job id from --jobs.
+2|   A holder is not a detached job. dibs --status shows it.
+
+== DIBS_QUEUE='' dibs --cancel 12345
+-> exit 2
+2| dibs: 12345 is a pid, not a job id from --jobs.
+2|   A holder is not a detached job. Stop it with:  dibs --kill 12345
+
+== DIBS_QUEUE='' dibs --detach true
+-> exit 2
+2| dibs: no DIBS_QUEUE, so there is nowhere for the job to outlive this session.
+2|   Set it to the machine that stays up:  DIBS_QUEUE=dibs@<box>
+2|   Or name one for this job:  dibs --detach --on <machine> <command>
+
+== DIBS_QUEUE=box@elsewhere dibs --bench --detach true
+-> exit 2
+2| dibs: --detach starts a caller elsewhere. It does not take the lock itself.
+2|   Alone with it, the measurement would run beside everything else there.
+2|   Put the run inside it, where the lock and the series both still apply:
+2|     dibs --detach 'dibs --bench <command>'
+
+== DIBS_QUEUE=box@elsewhere dibs --detach --wait 5 true
+-> exit 2
+2| dibs: --wait describes a run, and --detach starts a caller.
+2|   Give it to the dibs call inside:  dibs --detach 'dibs --wait ... <command>'

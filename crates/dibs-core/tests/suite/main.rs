@@ -15,6 +15,7 @@ mod output;
 mod prepares;
 mod recipes;
 mod records;
+mod removed;
 mod reports;
 mod sandbox;
 mod scratch;

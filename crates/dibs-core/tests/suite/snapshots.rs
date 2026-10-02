@@ -884,7 +884,7 @@ fn runs_and_gaps() {
     snapshot("runs", t.text());
 }
 
-const INVENTORY: &str = r#"default = "box-a"
+pub(crate) const INVENTORY: &str = r#"default = "box-a"
 root = "~/prog"
 
 [machine.box-a]
@@ -936,22 +936,6 @@ fn machines() {
     );
     s.machines(INVENTORY);
     for args in [&["--machines"][..], &["--machines", "-v"]] {
-        t.section(
-            &format!("dibs {}", typed(args)),
-            &n.output(&s.dibs(args).run()),
-        );
-    }
-    s.write("registry.toml", "[machine.team-box]\nssh      = \"dibs@team-box\"\nhostname = \"team-box\"\n\n[machine.box-b]\nssh      = \"elsewhere\"\nhostname = \"elsewhere\"\n");
-    s.set("DIBS_REGISTRY_CACHE", s.p("registry.toml"));
-    t.section(
-        "dibs --machines  (with a shared registry under your own)",
-        &n.output(&s.dibs(["--machines"]).run()),
-    );
-    for args in [
-        &["--forget", "team-box"][..],
-        &["--forget", "box-b"],
-        &["--machines"],
-    ] {
         t.section(
             &format!("dibs {}", typed(args)),
             &n.output(&s.dibs(args).run()),
@@ -1370,7 +1354,7 @@ fn notices() {
 }
 
 /// A call that is refused, and what it takes to be refused that way.
-struct Refusal {
+pub(crate) struct Refusal {
     args: Vec<String>,
     env: Vec<(String, String)>,
     stdin: Option<String>,
@@ -1386,7 +1370,7 @@ enum Today {
 }
 
 impl Refusal {
-    fn of(args: &[&str]) -> Refusal {
+    pub(crate) fn of(args: &[&str]) -> Refusal {
         Refusal {
             args: args.iter().map(|a| a.to_string()).collect(),
             env: Vec::new(),
@@ -1395,7 +1379,7 @@ impl Refusal {
         }
     }
 
-    fn env(mut self, key: &str, value: &str) -> Refusal {
+    pub(crate) fn env(mut self, key: &str, value: &str) -> Refusal {
         self.env.push((key.to_string(), value.to_string()));
         self
     }
@@ -1414,7 +1398,7 @@ impl Refusal {
 const HANG_LIMIT: Duration = Duration::from_secs(2);
 
 /// Each refusal's exit in one table, then what each one said.
-fn refusal_table(s: &Sandbox, n: &Normal, refusals: Vec<Refusal>) -> String {
+pub(crate) fn refusal_table(s: &Sandbox, n: &Normal, refusals: Vec<Refusal>) -> String {
     let mut table = String::from("exit  call\n");
     let mut t = Transcript::default();
     for r in refusals {
@@ -1472,8 +1456,6 @@ fn refusals() {
         r(&["--forget"]),
         r(&["--prefer"]),
         r(&["--repo"]),
-        r(&["--job"]),
-        r(&["--cancel"]),
         r(&["--gc", "--days"]),
         r(&["--wait"]).known_i1(),
         r(&["--max"]).known_i1(),
@@ -1492,9 +1474,6 @@ fn refusals() {
         r(&["--peek", "--hold", "true"]),
         r(&["--hold", "--device", "gpu:x", "true"]),
         r(&["--label", "x", "list", "app"]),
-        r(&["list", "app"])
-            .env("DIBS_CORE", "")
-            .env("HOME", "/nonexistent"),
         r(&[]),
         r(&["--status", "extra"]),
         r(&["--release", "extra"]),
@@ -1515,13 +1494,6 @@ fn refusals() {
         r(&["--sync", "./a", "./b"]),
         r(&["--sync", "--on", "x", "./a", ":~/b"]),
         r(&["--sync", "./x", ":$DIBS_SCRATCH/x"]),
-        r(&["--rsh"]),
-        r(&["--rsh", "host", "rsync", "--server"]),
-        r(&["--job", "12345"]).env("DIBS_QUEUE", ""),
-        r(&["--cancel", "12345"]).env("DIBS_QUEUE", ""),
-        r(&["--detach", "true"]).env("DIBS_QUEUE", ""),
-        r(&["--bench", "--detach", "true"]).env("DIBS_QUEUE", "box@elsewhere"),
-        r(&["--detach", "--wait", "5", "true"]).env("DIBS_QUEUE", "box@elsewhere"),
         r(&["--label", "x", "true"]).env("DIBS_LOCK_DIR", &ro),
         r(&["--label", "x", "true"]).env("DIBS_HOLDING", hostname()),
         r(&["--friction", "   "]),
