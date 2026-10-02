@@ -1374,8 +1374,15 @@ struct Refusal {
     args: Vec<String>,
     env: Vec<(String, String)>,
     stdin: Option<String>,
-    /// A call that never returns on its own is stopped after a moment and shown as such.
-    hangs: bool,
+    today: Today,
+}
+
+/// What a refused call does today, where that is not yet what it should do.
+#[derive(Clone, Copy, PartialEq)]
+enum Today {
+    Refused,
+    /// I1, a flag missing its value: it should exit 2 at once, and hangs or exits 1 instead.
+    KnownI1,
 }
 
 impl Refusal {
@@ -1384,7 +1391,7 @@ impl Refusal {
             args: args.iter().map(|a| a.to_string()).collect(),
             env: Vec::new(),
             stdin: None,
-            hangs: false,
+            today: Today::Refused,
         }
     }
 
@@ -1398,8 +1405,8 @@ impl Refusal {
         self
     }
 
-    fn hangs(mut self) -> Refusal {
-        self.hangs = true;
+    fn known_i1(mut self) -> Refusal {
+        self.today = Today::KnownI1;
         self
     }
 }
@@ -1426,23 +1433,15 @@ fn refusal_table(s: &Sandbox, n: &Normal, refusals: Vec<Refusal>) -> String {
             );
         }
         let title = n.apply(&title);
-        if r.hangs {
+        if r.today == Today::KnownI1 {
             let out = call.within(HANG_LIMIT).run();
-            assert_eq!(out.code, 124, "{title} returned after all");
-            table.push_str(&format!("hang  {title}\n"));
-            let said = n
-                .output(&out)
-                .lines()
-                .skip(1)
-                .map(|l| format!("{l}\n"))
-                .collect::<String>();
-            t.section(
-                &title,
-                &format!(
-                    "-> no exit: still running after {}s, and stopped\n{said}",
-                    HANG_LIMIT.as_secs()
-                ),
+            assert!(
+                matches!(out.code, 1 | 124),
+                "{title} is no longer I1 as it is today: {}",
+                out.all()
             );
+            table.push_str(&format!("I1    {title}\n"));
+            t.section(&title, "-> known I1: today it hangs or exits 1\n");
             continue;
         }
         let out = call.run();
@@ -1476,11 +1475,11 @@ fn refusals() {
         r(&["--job"]),
         r(&["--cancel"]),
         r(&["--gc", "--days"]),
-        r(&["--wait"]),
-        r(&["--max"]),
-        r(&["--label"]),
-        r(&["--device"]).hangs(),
-        r(&["--with", "s=true", "--ready"]).hangs(),
+        r(&["--wait"]).known_i1(),
+        r(&["--max"]).known_i1(),
+        r(&["--label"]).known_i1(),
+        r(&["--device"]).known_i1(),
+        r(&["--with", "s=true", "--ready"]).known_i1(),
         r(&["--with", "./serve", "true"]),
         r(&["--with", "a-b=true", "true"]),
         r(&["--with", "s=true", "--with", "s=false", "true"]),

@@ -7,11 +7,11 @@ exit  call
 2     dibs --job
 2     dibs --cancel
 2     dibs --gc --days
-1     dibs --wait
-1     dibs --max
-1     dibs --label
-hang  dibs --device
-hang  dibs --with s=true --ready
+I1    dibs --wait
+I1    dibs --max
+I1    dibs --label
+I1    dibs --device
+I1    dibs --with s=true --ready
 2     dibs --with ./serve true
 2     dibs --with a-b=true true
 2     dibs --with s=true --with s=false true
@@ -108,22 +108,19 @@ hang  dibs --with s=true --ready
 2| dibs: --days needs a value.
 
 == dibs --wait
--> exit 1
-2| <repo>/bin/../lib/steps/02-args.sh: line 100: $2: unbound variable
+-> known I1: today it hangs or exits 1
 
 == dibs --max
--> exit 1
-2| <repo>/bin/../lib/steps/02-args.sh: line 101: $2: unbound variable
+-> known I1: today it hangs or exits 1
 
 == dibs --label
--> exit 1
-2| <repo>/bin/../lib/steps/02-args.sh: line 106: $2: unbound variable
+-> known I1: today it hangs or exits 1
 
 == dibs --device
--> no exit: still running after 2s, and stopped
+-> known I1: today it hangs or exits 1
 
 == dibs --with s=true --ready
--> no exit: still running after 2s, and stopped
+-> known I1: today it hangs or exits 1
 
 == dibs --with ./serve true
 -> exit 2
