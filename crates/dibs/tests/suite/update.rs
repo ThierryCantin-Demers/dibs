@@ -8,7 +8,10 @@ use dibs::{
     caller::Caller,
     update::{ChangeNotice, Update},
 };
-use std::fs;
+use std::{
+    fs, iter,
+    os::unix::fs::{PermissionsExt as _, symlink},
+};
 
 /// A clone of dibs with a stub installer, and a clone of recipes, each one commit behind its origin.
 struct Clones {
@@ -76,8 +79,10 @@ fn update(s: &Sandbox, installed: &str, recipes: &str, caller: &str) -> Output {
     }
 }
 
-fn told(notice: &ChangeNotice, caller: &str) -> String {
-    notice.record(&session(caller)).unwrap_or_default()
+/// What a build stamped with the clone's head tells `caller`.
+fn told(s: &Sandbox, notice: &ChangeNotice, caller: &str) -> String {
+    let head = s.git("update/clone", &["rev-parse", "--short", "HEAD"]);
+    notice.record(&session(caller), &head).unwrap_or_default()
 }
 
 fn pulled(s: &Sandbox, name: &str) {
@@ -164,9 +169,9 @@ fn a_session_is_told_once_when_dibs_changed_under_it() {
     let s = Sandbox::new();
     let c = clones(&s);
     let seen = notice(&s, "seen-v");
-    assert_eq!(told(&seen, "v1"), "", "a first call says nothing");
+    assert_eq!(told(&s, &seen, "v1"), "", "a first call says nothing");
     pulled(&s, "three");
-    let text = told(&seen, "v1");
+    let text = told(&s, &seen, "v1");
     assert_eq!(
         text.lines_with("dibs changed since this session last ran it: "),
         1,
@@ -177,9 +182,9 @@ fn a_session_is_told_once_when_dibs_changed_under_it() {
         1,
         "and lists what changed"
     );
-    assert_eq!(told(&seen, "v1"), "", "once");
+    assert_eq!(told(&s, &seen, "v1"), "", "once");
     assert_eq!(
-        told(&seen, "v2"),
+        told(&s, &seen, "v2"),
         "",
         "a session that never saw the old one is not told"
     );
@@ -195,13 +200,14 @@ fn a_session_is_told_once_when_dibs_changed_under_it() {
     }
     .run_into(&mut out, &mut err);
     assert_eq!(
-        told(&seen, "v1"),
+        told(&s, &seen, "v1"),
         "",
         "an update it ran itself is not reported again"
     );
 }
 
-/// The binary reads its own clone, so a stamp from no commit at all stands in for an old one.
+/// The binary's version is the commit stamped into it, so a stamp from no commit at all stands in
+/// for an old one.
 #[test]
 fn a_call_and_a_recipe_verb_tell_their_session() {
     let s = Sandbox::new();
@@ -248,14 +254,14 @@ fn what_an_update_and_the_change_notice_print() {
         stderr: text,
     };
     let mut t = Transcript::default();
-    told(&notice, "n");
+    told(&s, &notice, "n");
     t.section(
         "dibs --update  (one commit behind, and the recipes one behind theirs)",
         &n.output(&update(&s, &c.head, "update/recipes", "u")),
     );
     t.section(
         "the change notice  (in a session that last ran it before that update)",
-        &n.output(&said(told(&notice, "n"))),
+        &n.output(&said(told(&s, &notice, "n"))),
     );
     for i in 0..12 {
         commit(&s, "update/origin", &format!("more-{i:02}"));
@@ -263,7 +269,7 @@ fn what_an_update_and_the_change_notice_print() {
     s.git("update/clone", &["pull", "-q", "--ff-only"]);
     t.section(
         "the change notice  (after twelve more commits arrived)",
-        &n.output(&said(told(&notice, "n"))),
+        &n.output(&said(told(&s, &notice, "n"))),
     );
     let head = s.git("update/clone", &["rev-parse", "--short", "HEAD"]);
     t.section(
@@ -275,4 +281,53 @@ fn what_an_update_and_the_change_notice_print() {
         &n.output(&update(&s, &head, "update", "u")),
     );
     snapshot("update", t.text());
+}
+
+/// This build's binary with every mention of its clone pointed at a path that does not exist, as
+/// a build is once its clone has moved or been deleted.
+fn with_its_clone_gone(s: &Sandbox) -> String {
+    let mut bytes = fs::read(DIBS).unwrap();
+    let named = repo_root();
+    for clone in [named.clone(), named.canonicalize().unwrap()] {
+        let clone = clone.display().to_string().into_bytes();
+        let gone: Vec<u8> = iter::once(b'/')
+            .chain(iter::repeat_n(b'x', clone.len() - 1))
+            .collect();
+        let mut at = 0;
+        while let Some(found) = bytes[at..].windows(clone.len()).position(|w| w == clone) {
+            let start = at + found;
+            bytes[start..start + clone.len()].copy_from_slice(&gone);
+            at = start + clone.len();
+        }
+    }
+    let copy = s.path("moved/dibs");
+    fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    fs::write(&copy, bytes).unwrap();
+    fs::set_permissions(&copy, fs::Permissions::from_mode(0o755)).unwrap();
+    if cfg!(target_os = "macos") {
+        let signed = s.command("codesign", ["--force", "-s", "-", &s.p("moved/dibs")]);
+        assert_eq!(signed.code(), 0, "a patched binary has to be signed again");
+    }
+    fs::remove_file(s.path("bin/dibs")).unwrap();
+    symlink(&copy, s.path("bin/dibs")).unwrap();
+    s.p("moved/dibs")
+}
+
+#[test]
+fn a_build_keeps_working_once_its_clone_is_gone() {
+    let s = Sandbox::new();
+    let dibs = with_its_clone_gone(&s);
+    let ran = s
+        .command(&dibs, ["--label", "gone", "echo", "it ran"])
+        .run();
+    assert_eq!(
+        (ran.code, ran.stdout.lines_with("it ran")),
+        (0, 1),
+        "a call runs on the machine half it was built with: {}",
+        ran.all()
+    );
+    for words in [["--status"].as_slice(), &["runs"], &["--version"]] {
+        let out = s.command(&dibs, words).run();
+        assert_eq!(out.code, 0, "{words:?}: {}", out.all());
+    }
 }

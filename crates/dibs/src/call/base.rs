@@ -10,8 +10,8 @@ use crate::{
     caller::{Caller, short_hostname},
     cli::{Call, Command, PortName, Run, RunLock, Service},
     machine::{
-        CallValues, Card, Fleet, Here, Liveness, MachineHalf, MaxFrom, Named, Session, Target,
-        TargetEnv, TargetError, exit_code,
+        CallValues, Card, Fleet, Here, Liveness, MaxFrom, Named, Session, Target, TargetEnv,
+        TargetError, exit_code,
     },
     paths::Paths,
     placement::{Placement, Unplaced},
@@ -171,7 +171,6 @@ impl<'a> LockedCall<'a> {
             tty: output.tty(),
             ..self.values(call, caller, label.clone(), card)
         };
-        let half = MachineHalf::load()?;
         let live = Liveness::from_env();
         let status = match (self.hold, &mut *output) {
             (true, _) => Hold {
@@ -182,10 +181,10 @@ impl<'a> LockedCall<'a> {
                 reach: session.reach(&target, &here),
                 services: self.services,
             }
-            .run(session.hold(&values, &half, live)?)?,
-            (false, Output::Inherit) => exit_code(session.run(&values, &half, live)?),
+            .run(session.hold(&values, live)?)?,
+            (false, Output::Inherit) => exit_code(session.run(&values, live)?),
             (false, Output::Lines(on_line)) => {
-                exit_code(session.run_reading(&values, &half, live, *on_line)?)
+                exit_code(session.run_reading(&values, live, *on_line)?)
             }
         };
 

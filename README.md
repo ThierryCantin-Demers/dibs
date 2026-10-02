@@ -41,8 +41,9 @@ intended setup, since it lets one build cache serve everyone.
 
 `install.sh` builds `dibs` and `dibstop` with cargo and installs them in `~/.local/bin`, or
 `$PREFIX/bin` when `PREFIX` is set, and with `--machines` the `dibs-machines` window too. The
-binary reads the part of dibs it sends to the machines from the clone it was built from, so keep
-the clone. Installed over a dibs from before, it replaces it, the bash script included.
+part of dibs it sends to the machines is built into the binary, so an edit in the clone changes
+nothing until the next install, and only `dibs --update` needs the clone. Installed over a dibs
+from before, it replaces it, the bash script included.
 
 Record each machine, and say where your checkouts live:
 

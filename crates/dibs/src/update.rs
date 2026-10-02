@@ -13,15 +13,17 @@ use std::{
 const STAMP_LIFETIME: Duration = Duration::from_secs(31 * 86400);
 const LISTED: usize = 10;
 
-/// The clone this binary was built from.
-pub fn clone_dir() -> PathBuf {
-    let built = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
-    built.canonicalize().unwrap_or_else(|_| built.to_path_buf())
-}
+/// What this binary was built from, as its build script stamped it.
+pub struct Build;
 
-/// The commit the clone is at, or nothing outside a clone.
-pub fn version() -> Option<String> {
-    git(&clone_dir(), &["rev-parse", "--short", "HEAD"])
+impl Build {
+    /// The commit, when it was built from a clone.
+    pub const COMMIT: Option<&str> = option_env!("DIBS_COMMIT");
+
+    /// The clone: what `--update` pulls, and where the change notice reads what arrived.
+    pub fn clone_dir() -> &'static Path {
+        Path::new(env!("DIBS_CLONE"))
+    }
 }
 
 fn git(clone: &Path, args: &[&str]) -> Option<String> {
@@ -75,15 +77,11 @@ pub struct Update {
 impl Update {
     pub fn of_this_build() -> Update {
         let paths = Paths::from_env();
-        let clone = clone_dir();
         Update {
-            installed: option_env!("DIBS_COMMIT").map(str::to_string),
+            clone: Build::clone_dir().to_path_buf(),
+            installed: Build::COMMIT.map(str::to_string),
             recipes: paths.recipes(),
-            notice: paths.seen().map(|seen| ChangeNotice {
-                seen,
-                clone: clone.clone(),
-            }),
-            clone,
+            notice: paths.seen().map(ChangeNotice::of_this_build),
             caller: Caller::from_env(),
             prefix: Update::installed_under(),
         }
@@ -151,7 +149,7 @@ impl Update {
         }
         self.pull_recipes(out, err)?;
         if let Some(notice) = &self.notice {
-            notice.record(&self.caller);
+            notice.record(&self.caller, &after);
         }
         Ok(0)
     }
@@ -221,7 +219,7 @@ impl Pulled<'_> {
     }
 }
 
-/// Where each session's last seen version is kept, and the clone it is read from.
+/// Where each session's last seen version is kept, and the clone whose log says what changed.
 pub struct ChangeNotice {
     pub seen: PathBuf,
     pub clone: PathBuf,
@@ -231,20 +229,22 @@ impl ChangeNotice {
     pub fn of_this_build(seen: PathBuf) -> ChangeNotice {
         ChangeNotice {
             seen,
-            clone: clone_dir(),
+            clone: Build::clone_dir().to_path_buf(),
         }
     }
 
-    /// Records this session's version, and says on stderr what changed since its last call.
+    /// Records this build's commit as the session's version, and says on stderr what changed
+    /// since its last call.
     pub fn tell(&self, caller: &Caller) {
-        if let Some(text) = self.record(caller) {
+        if let Some(now) = Build::COMMIT
+            && let Some(text) = self.record(caller, now)
+        {
             eprint!("{text}");
         }
     }
 
-    /// Records this session's version, and gives what changed since its last call.
-    pub fn record(&self, caller: &Caller) -> Option<String> {
-        let now = git(&self.clone, &["rev-parse", "--short", "HEAD"])?;
+    /// Records `now` as the session's version, and gives what changed since its last call.
+    pub fn record(&self, caller: &Caller, now: &str) -> Option<String> {
         let stamp = self.seen.join(caller.file_name());
         let was = std::fs::read_to_string(&stamp).unwrap_or_default();
         let was = was.trim_end();
@@ -255,7 +255,7 @@ impl ChangeNotice {
             let _ = std::fs::write(&stamp, format!("{now}\n"));
         }
         self.forget_old_sessions();
-        (!was.is_empty()).then(|| self.text(was, &now))
+        (!was.is_empty()).then(|| self.text(was, now))
     }
 
     fn forget_old_sessions(&self) {

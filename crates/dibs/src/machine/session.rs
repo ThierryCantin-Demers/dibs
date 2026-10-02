@@ -254,9 +254,9 @@ impl Session {
     }
 
     /// Runs a call whose command runs on the machine, and returns its exit.
-    pub fn run(&self, values: &CallValues, half: &str, live: Liveness) -> io::Result<ExitStatus> {
+    pub fn run(&self, values: &CallValues, live: Liveness) -> io::Result<ExitStatus> {
         let deferred = Interrupt::defer();
-        let started = self.start(values, half, live, Shape::Run, Streams::Inherit)?;
+        let started = self.start(values, live, Shape::Run, Streams::Inherit)?;
         Session::wait(started, deferred)
     }
 
@@ -264,13 +264,12 @@ impl Session {
     pub fn run_reading(
         &self,
         values: &CallValues,
-        half: &str,
         live: Liveness,
         on_line: &mut dyn FnMut(Stream, &[u8]),
     ) -> io::Result<ExitStatus> {
         let deferred = Interrupt::defer();
         let Started { mut child, channel } =
-            self.start(values, half, live, Shape::Run, Streams::Lines)?;
+            self.start(values, live, Shape::Run, Streams::Lines)?;
         let lines = Lines::of(&mut child);
         // The channel closes as the machine half ends, not when its output does: what it leaves
         // watching the channel holds that output open until then.
@@ -290,14 +289,9 @@ impl Session {
     }
 
     /// rsync's far side, fed this process's stdin.
-    pub fn transfer(
-        &self,
-        values: &CallValues,
-        half: &str,
-        live: Liveness,
-    ) -> io::Result<ExitStatus> {
+    pub fn transfer(&self, values: &CallValues, live: Liveness) -> io::Result<ExitStatus> {
         let deferred = Interrupt::defer();
-        let started = self.start(values, half, live, Shape::Transfer, Streams::Inherit)?;
+        let started = self.start(values, live, Shape::Transfer, Streams::Inherit)?;
         Session::wait(started, deferred)
     }
 
@@ -312,15 +306,14 @@ impl Session {
     }
 
     /// Starts the machine half of a hold, with its stdout piped here.
-    pub fn hold(&self, values: &CallValues, half: &str, live: Liveness) -> io::Result<Started> {
-        self.start(values, half, live, Shape::Hold, Streams::Piped)
+    pub fn hold(&self, values: &CallValues, live: Liveness) -> io::Result<Started> {
+        self.start(values, live, Shape::Hold, Streams::Piped)
     }
 
     /// Runs a call and keeps what it prints, stopping it when a bound passes first.
     pub fn ask(
         &self,
         values: &CallValues,
-        half: &str,
         bound: Option<Duration>,
         kept: Kept,
     ) -> io::Result<Answer> {
@@ -337,7 +330,7 @@ impl Session {
         let live = Liveness::from_env();
         let deadline = bound.map(|bound| Instant::now() + bound);
         let left = || deadline.map(|d| d.saturating_duration_since(Instant::now()));
-        let Started { mut child, channel } = self.start(values, half, live, Shape::Run, streams)?;
+        let Started { mut child, channel } = self.start(values, live, Shape::Run, streams)?;
         let heard = Heard::read(reader);
         let pid = child.id() as libc::pid_t;
         let (tell, exited) = mpsc::channel();
@@ -369,15 +362,14 @@ impl Session {
     fn start(
         &self,
         values: &CallValues,
-        half: &str,
         live: Liveness,
         shape: Shape,
         streams: Streams,
     ) -> io::Result<Started> {
         let hold = shape == Shape::Hold;
         let (mut command, prelude, feed) = match &self.route {
-            Route::Here => Session::here(values, half, hold)?,
-            Route::Ssh { host } => Session::over_ssh(host, values, half, live, shape),
+            Route::Here => Session::here(values, hold)?,
+            Route::Ssh { host } => Session::over_ssh(host, values, live, shape),
         };
         let die_with_me = !live.no_pdeathsig && !matches!((&self.route, hold), (Route::Here, true));
         // SAFETY: the closure makes async-signal-safe calls only.
@@ -416,7 +408,7 @@ impl Session {
 
     /// On this computer: the script on bash's stdin, which dies with this process, or, where
     /// nothing signals a parent's death or a hold needs the channel, from a file.
-    fn here(values: &CallValues, half: &str, hold: bool) -> io::Result<(Command, String, Feed)> {
+    fn here(values: &CallValues, hold: bool) -> io::Result<(Command, String, Feed)> {
         if !hold && cfg!(target_os = "linux") {
             let watch = Watch {
                 off: true,
@@ -425,14 +417,14 @@ impl Session {
             };
             let mut bash = Command::new("bash");
             bash.arg("-s");
-            return Ok((bash, values.script(watch, half), Feed::Close));
+            return Ok((bash, values.script(watch), Feed::Close));
         }
         let watch = Watch {
             off: false,
             hold,
             lease: 0,
         };
-        let file = ScriptFile::write(&values.script(watch, half))?;
+        let file = ScriptFile::write(&values.script(watch))?;
         let mut bash = Command::new("bash");
         bash.arg(file);
         Ok((bash, String::new(), Feed::Quiet))
@@ -441,7 +433,6 @@ impl Session {
     fn over_ssh(
         host: &str,
         values: &CallValues,
-        half: &str,
         live: Liveness,
         shape: Shape,
     ) -> (Command, String, Feed) {
@@ -457,7 +448,7 @@ impl Session {
             hold,
             lease,
         };
-        let payload = encode(&values.script(watch, half));
+        let payload = encode(&values.script(watch));
         let fed = shape == Shape::Transfer || (live.no_live && !hold);
         let feed = match (fed, lease) {
             (true, _) => Feed::Stdin,

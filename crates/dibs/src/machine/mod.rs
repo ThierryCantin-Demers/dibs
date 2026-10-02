@@ -7,7 +7,7 @@ mod target;
 mod unreachable;
 
 pub use lines::{Lines, Stream};
-pub use payload::{CallValues, Card, MachineHalf, MaxFrom, Watch, decode, encode};
+pub use payload::{CallValues, Card, MaxFrom, Watch, decode, encode};
 pub use session::{
     Answer, Diagnosis, Here, Interrupt, Kept, Liveness, Message, Reach, Route, Session, Ssh,
     Started, exit_code,

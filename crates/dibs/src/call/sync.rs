@@ -7,9 +7,7 @@ use crate::{
     },
     caller::Caller,
     cli::{BashQuoted, Call, Command as Words},
-    machine::{
-        CallValues, Interrupt, Lines, Liveness, MachineHalf, Route, Session, Target, exit_code,
-    },
+    machine::{CallValues, Interrupt, Lines, Liveness, Route, Session, Target, exit_code},
 };
 use dibs_format::{Exit, Label, Mode};
 use std::{
@@ -356,8 +354,7 @@ impl Rsh {
                 &target,
             )?
         };
-        let half = MachineHalf::load()?;
-        let status = exit_code(session.transfer(&values, &half, Liveness::from_env())?);
+        let status = exit_code(session.transfer(&values, Liveness::from_env())?);
         Ok(session.exit(status, &target))
     }
 }

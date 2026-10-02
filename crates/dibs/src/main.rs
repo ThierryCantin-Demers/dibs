@@ -18,7 +18,7 @@ use dibs::{
     caller::Caller,
     cli::{Call, Help, Invocation, Mode, RecipeCall, RecipeVerb},
     paths::Paths,
-    update::ChangeNotice,
+    update::{Build, ChangeNotice},
 };
 use execution::RunError;
 use records::{friction, runs};
@@ -95,12 +95,12 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
     }
 }
 
-/// Stamped by install.sh, so a binary that has drifted from the source can be told apart.
+/// Stamped at build time, so a binary that has drifted from the source can be told apart.
 fn version() -> ExitCode {
     println!(
         "dibs {} ({})",
         env!("CARGO_PKG_VERSION"),
-        option_env!("DIBS_COMMIT").unwrap_or("commit unknown")
+        Build::COMMIT.unwrap_or("commit unknown")
     );
     ExitCode::SUCCESS
 }

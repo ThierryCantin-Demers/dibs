@@ -20,9 +20,10 @@ batch. Neither GNU tools nor a recent bash is needed on your side, macOS include
 
 `install.sh` builds `dibs` and `dibstop` and installs them in `~/.local/bin`, or `$PREFIX/bin`.
 `--machines` adds `dibs-machines`, a desktop window on what each machine has against what it
-should. The binary reads the half of dibs it sends to a machine from the clone it was built from,
-so the clone stays where it is. Installed over a dibs from before, the bash script or a binary,
-it replaces it in one rename, so nothing running sees it half written.
+should. The half of dibs it sends to a machine, and the commit it was built from, are built into
+the binary: an edit in the clone changes nothing until the next install, and only `dibs --update`
+needs the clone to be where it was. Installed over a dibs from before, the bash script or a
+binary, it replaces it in one rename, so nothing running sees it half written.
 
 Then record your machine and say where your checkouts live:
 
@@ -687,8 +688,8 @@ the notification arrives when the command is done.
 ## The two halves
 
 `lib/machine/` is the half of dibs that runs on a machine, and stays bash for now: joined in
-order, it is sent with every call, so a machine needs nothing installed to be usable, which is
-what makes adding one cheap.
+order into the binary when it is built, it is sent with every call, so a machine needs nothing
+installed to be usable, which is what makes adding one cheap.
 
 `crates/dibs/` is the other half, the `dibs` binary on your side. It reads every command line
 through one grammar, chooses and reaches the machine, and is the recipe layer behind `dibs

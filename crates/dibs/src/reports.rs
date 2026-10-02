@@ -5,6 +5,7 @@ use crate::records::friction::Note;
 use dibs::{
     caller::Caller,
     paths::{Paths, ReportsStamp},
+    update::Build,
 };
 use serde_json::Value;
 use std::{
@@ -575,7 +576,7 @@ pub(crate) fn friction_verb(
             let mut note = crate::records::friction::note(
                 &text,
                 &caller.name,
-                &dibs::update::version().unwrap_or_default(),
+                Build::COMMIT.unwrap_or_default(),
                 crate::records::now_secs(),
             )?;
             let filed = repo().map(|repo| (file(&repo, &note), repo));

@@ -3,8 +3,8 @@ use crate::{
     caller::{Caller, short_hostname},
     cli::Call,
     machine::{
-        Answer, CallValues, Card, Fleet, Here, Kept, Liveness, MachineHalf, Session, Target,
-        TargetEnv, exit_code,
+        Answer, CallValues, Card, Fleet, Here, Kept, Liveness, Session, Target, TargetEnv,
+        exit_code,
     },
     paths::Paths,
 };
@@ -121,8 +121,7 @@ impl<'a> MachineCall<'a> {
     pub fn send(&self, asked: Asked, target: &Target) -> Result<i32, CallError> {
         let values = self.values(asked, target)?;
         let session = Session::new(target, &self.here);
-        let half = MachineHalf::load()?;
-        let status = exit_code(session.run(&values, &half, Liveness::from_env())?);
+        let status = exit_code(session.run(&values, Liveness::from_env())?);
         Ok(session.exit(status, target))
     }
 
@@ -134,8 +133,7 @@ impl<'a> MachineCall<'a> {
             ..self.values(asked, target)?
         };
         let session = Session::new(target, &self.here);
-        let half = MachineHalf::load()?;
-        let answer = session.ask(&values, &half, None, Kept::Stdout)?;
+        let answer = session.ask(&values, None, Kept::Stdout)?;
         Ok(Answer {
             exit: answer.exit.map(|status| session.exit(status, target)),
             ..answer
@@ -168,8 +166,7 @@ impl<'a> MachineCall<'a> {
             ..self.values_for(flags, asked, &target)?
         };
         let session = Session::new(&target, &self.here);
-        let half = MachineHalf::load()?;
-        let mut answer = session.ask(&values, &half, bound.within, bound.kept)?;
+        let mut answer = session.ask(&values, bound.within, bound.kept)?;
         if let (Some(status), Kept::Everything) = (answer.exit, bound.kept) {
             let diagnosis = session.diagnose(status, &target);
             answer.output.extend_from_slice(diagnosis.said.as_bytes());

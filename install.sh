@@ -29,9 +29,8 @@ fi
 mkdir -p "$BIN"
 STAGE=$(mktemp -d "$PREFIX/.dibs-install.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT
-# The commit is stamped into the binary, so dibs --update can tell a stale build from a current one.
 COMMIT=$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)
-DIBS_COMMIT=$COMMIT cargo install --quiet --locked --path "$HERE/crates/dibs" --root "$STAGE" --force
+cargo install --quiet --locked --path "$HERE/crates/dibs" --root "$STAGE" --force
 # Renamed over dibs in one step, so a symlink to the bash dibs, or a dibs running now, is never
 # seen half replaced.
 mv -f "$STAGE/bin/dibs" "$BIN/.dibs.new"

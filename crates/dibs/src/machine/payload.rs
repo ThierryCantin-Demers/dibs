@@ -1,11 +1,10 @@
 use crate::{
     caller::Caller,
     cli::{BashQuoted, PortName, Service},
-    update::clone_dir,
 };
 use dibs_format::{Label, Mode};
 use flate2::{Compression, write::GzEncoder};
-use std::{fmt::Write as _, io::Write as _, path::PathBuf};
+use std::{fmt::Write as _, io::Write as _};
 
 /// Where `--max` came from, which decides whether history may raise it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +72,7 @@ pub struct Watch {
 
 impl CallValues {
     /// The values as assignments, then the machine half.
-    pub fn script(&self, watch: Watch, machine_half: &str) -> String {
+    pub fn script(&self, watch: Watch) -> String {
         let flag = |b: bool| if b { "1" } else { "0" };
         let max_from = match self.max_from {
             MaxFrom::Given => "given",
@@ -134,33 +133,14 @@ impl CallValues {
                 .collect();
             let _ = writeln!(script, "declare -a {name}=({})", members.join(" "));
         }
-        script.push_str(machine_half);
+        script.push_str(MACHINE_HALF);
         script
     }
 }
 
-/// `lib/machine`, the half of dibs every call ships to the machine it runs on.
-pub struct MachineHalf;
-
-impl MachineHalf {
-    pub fn dir() -> PathBuf {
-        clone_dir().join("lib/machine")
-    }
-
-    /// Its files in order, as one script.
-    pub fn load() -> std::io::Result<String> {
-        let mut parts: Vec<PathBuf> = std::fs::read_dir(MachineHalf::dir())?
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "sh"))
-            .collect();
-        parts.sort();
-        parts.iter().try_fold(String::new(), |mut all, part| {
-            all.push_str(&std::fs::read_to_string(part)?);
-            Ok(all)
-        })
-    }
-}
+/// `lib/machine`, the half of dibs every call ships to the machine it runs on, as it was when
+/// this binary was built.
+const MACHINE_HALF: &str = include_str!(concat!(env!("OUT_DIR"), "/machine-half.sh"));
 
 /// A script as it crosses ssh: compressed, then base64 on one line.
 pub fn encode(script: &str) -> String {
