@@ -302,7 +302,11 @@ fn with_its_clone_gone(s: &Sandbox) -> String {
     }
     let copy = s.path("moved/dibs");
     fs::create_dir_all(copy.parent().unwrap()).unwrap();
-    fs::write(&copy, bytes).unwrap();
+    fs::write(s.path("moved/patched"), bytes).unwrap();
+    // Copied by a process of its own: a test thread forking while this one held the file open
+    // for writing would leave it busy to exec.
+    let copied = s.command("cp", [&s.p("moved/patched"), &s.p("moved/dibs")]);
+    assert_eq!(copied.code(), 0);
     fs::set_permissions(&copy, fs::Permissions::from_mode(0o755)).unwrap();
     if cfg!(target_os = "macos") {
         let signed = s.command("codesign", ["--force", "-s", "-", &s.p("moved/dibs")]);
