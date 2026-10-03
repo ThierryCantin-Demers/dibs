@@ -1,10 +1,10 @@
 use crate::machine::{
+    interrupt::Interrupt,
     lines::Stream,
     payload::{CallValues, Watch},
     provision::{Installed, Provision},
-    session::{
-        Interrupt, Liveness, Route, SSH_FAILED, Session, Ssh, exit_code, parent_death_signal,
-    },
+    session::{Liveness, Route, SSH_FAILED, Session, exit_code},
+    ssh::{Ssh, parent_death_signal},
 };
 use dibs_format::{
     Exit,

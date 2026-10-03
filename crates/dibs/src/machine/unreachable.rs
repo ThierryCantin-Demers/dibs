@@ -1,5 +1,5 @@
 use crate::machine::{
-    session::Ssh,
+    ssh::Ssh,
     target::{Named, Target, after_at},
 };
 use std::{

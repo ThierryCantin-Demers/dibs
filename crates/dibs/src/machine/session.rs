@@ -1,9 +1,11 @@
 use crate::{
     machine::{
         half::Half,
+        interrupt::Interrupt,
         lines::{Lines, Stream},
         payload::{CallValues, Watch, encode},
         served::{Delivery, Served},
+        ssh::{Ssh, parent_death_signal},
         target::Target,
         unreachable::{Unreachable, no_room},
     },
@@ -17,10 +19,9 @@ use std::{
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 /// A caller that says nothing for this long is gone, unless `DIBS_LEASE` says otherwise.
@@ -28,14 +29,10 @@ const DEFAULT_LEASE_SECS: u64 = 120;
 /// How long the last output of a call that has ended is waited for, which a process it left
 /// behind may hold open.
 const AFTER_STOP: Duration = Duration::from_secs(1);
-const DEFAULT_CONNECT_TIMEOUT: &str = "10";
 /// ssh's own failure, never the command's.
 pub(crate) const SSH_FAILED: i32 = 255;
 /// What the far line exits with when it could not write the script.
 const SCRIPT_UNWRITTEN: i32 = 70;
-/// After the far line's `&&`, so the line a machine receives stays the same byte for byte.
-const CONTINUATION: &str = "             ";
-
 /// This computer, and whether every call stays on it.
 #[derive(Debug, Clone)]
 pub struct Here {
@@ -511,90 +508,6 @@ impl Session {
     }
 }
 
-/// How dibs runs ssh.
-pub struct Ssh;
-
-impl Ssh {
-    pub fn connect_timeout() -> String {
-        std::env::var("DIBS_CONNECT_TIMEOUT")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| DEFAULT_CONNECT_TIMEOUT.into())
-    }
-
-    /// No TTY, so nothing downstream believes it is interactive, and a machine that stops
-    /// answering is given up on after about two minutes.
-    pub(crate) fn options() -> Vec<String> {
-        [
-            "BatchMode=yes".to_string(),
-            "LogLevel=ERROR".into(),
-            format!("ConnectTimeout={}", Ssh::connect_timeout()),
-            "ServerAliveInterval=30".into(),
-            "ServerAliveCountMax=4".into(),
-        ]
-        .into_iter()
-        .flat_map(|o| ["-o".to_string(), o])
-        .collect()
-    }
-
-    /// Where the script is written there; unexpanded, for the far shell's own `$HOME`.
-    pub fn remote_dir() -> Option<String> {
-        std::env::var("DIBS_REMOTE_DIR")
-            .ok()
-            .filter(|v| !v.is_empty())
-    }
-
-    /// The line the login shell there runs, which fish and bash read alike: the script is read
-    /// by length off stdin, and what follows it is the channel.
-    fn far_line(count: usize) -> String {
-        let dir = Ssh::remote_dir().unwrap_or_else(|| "$HOME/.cache/dibs/run".into());
-        let script = format!(
-            "{dir}/.dibs-payload.{}.{}.sh",
-            std::process::id(),
-            Ssh::stamp()
-        );
-        let trace = match std::env::var("DIBS_TRACE") {
-            Ok(v) if !v.is_empty() => "-x",
-            _ => "",
-        };
-        format!(
-            "mkdir -p {dir} 2>/dev/null; dd bs=1 count={count} 2>/dev/null | base64 -d | gzip -dc > {script} && {CONTINUATION}exec bash {trace} {script}\nexit 70"
-        )
-    }
-
-    /// The time in nanoseconds, never the same twice in this process, whose calls to machines that
-    /// share a home would otherwise write one script over another.
-    fn stamp() -> u64 {
-        static LAST: AtomicU64 = AtomicU64::new(0);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-            .unwrap_or_default();
-        let next = |last: u64| now.max(last.saturating_add(1));
-        let mut last = LAST.load(Ordering::Relaxed);
-        while let Err(seen) =
-            LAST.compare_exchange_weak(last, next(last), Ordering::Relaxed, Ordering::Relaxed)
-        {
-            last = seen;
-        }
-        next(last)
-    }
-
-    /// The address ssh dials for a host, which a held command reaches its services at.
-    pub fn dials(host: &str) -> Option<String> {
-        let out = Command::new("ssh")
-            .args(["-G", host])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .find_map(|l| l.strip_prefix("hostname ").map(str::to_string))
-            .filter(|h| !h.is_empty())
-    }
-}
-
 /// Copies the script, then the channel, into the machine half's stdin, and closes it when told
 /// to or when this process ends.
 fn relay(mut stdin: ChildStdin, prelude: Option<String>, feed: Feed, messages: Receiver<Message>) {
@@ -638,70 +551,11 @@ fn relay(mut stdin: ChildStdin, prelude: Option<String>, feed: Feed, messages: R
     }
 }
 
-/// The kernel signals the child when this process dies, SIGKILL included.
-#[cfg(target_os = "linux")]
-pub(crate) fn parent_death_signal() {
-    // SAFETY: prctl with these arguments only sets a flag on the calling process.
-    unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) };
-}
-
-#[cfg(not(target_os = "linux"))]
-pub(crate) fn parent_death_signal() {}
-
 /// The exit a shell reports for a process: its code, or 128 and the signal that ended it.
 pub fn exit_code(status: ExitStatus) -> i32 {
     status
         .code()
         .unwrap_or_else(|| 128 + status.signal().unwrap_or_default())
-}
-
-/// Ctrl-C while a child runs belongs to the child: this process carries on, and dies of it only
-/// if the child did, as a shell does.
-pub struct Interrupt {
-    previous: libc::sighandler_t,
-}
-
-static HEARD: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn noted(_: libc::c_int) {
-    HEARD.store(true, Ordering::Relaxed);
-}
-
-impl Interrupt {
-    pub fn defer() -> Interrupt {
-        let handler = noted as extern "C" fn(libc::c_int);
-        // SAFETY: the handler does nothing, and is replaced again on drop.
-        let previous = unsafe { libc::signal(libc::SIGINT, handler as libc::sighandler_t) };
-        Interrupt { previous }
-    }
-
-    /// Whether Ctrl-C arrived while a child had it, whatever the child did with it.
-    pub fn heard() -> bool {
-        HEARD.load(Ordering::Relaxed)
-    }
-
-    /// Ends this process as Ctrl-C would have.
-    pub fn raise() {
-        // SAFETY: restores the default action and raises it on this process.
-        unsafe {
-            libc::signal(libc::SIGINT, libc::SIG_DFL);
-            libc::raise(libc::SIGINT);
-        }
-    }
-
-    /// A child that died of Ctrl-C takes this process with it.
-    pub fn pass_on(status: ExitStatus) {
-        if status.signal() == Some(libc::SIGINT) {
-            Interrupt::raise();
-        }
-    }
-}
-
-impl Drop for Interrupt {
-    fn drop(&mut self) {
-        // SAFETY: puts back the handler `defer` replaced.
-        unsafe { libc::signal(libc::SIGINT, self.previous) };
-    }
 }
 
 /// What a pipe has carried so far, read on a thread of its own.
