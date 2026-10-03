@@ -1,3 +1,4 @@
+use crate::job::PortRange;
 use std::{env, path::PathBuf};
 
 /// A variable's value, where an empty one counts as unset.
@@ -26,6 +27,8 @@ pub struct Settings {
     pub digest_tail: usize,
     /// Seconds within which the same failure is pointed out.
     pub repeat_window: u64,
+    /// The ports `--port` is given from.
+    pub ports: PortRange,
 }
 
 impl Settings {
@@ -40,6 +43,9 @@ impl Settings {
             digest_head: number("DIBS_DIGEST_HEAD", 20) as usize,
             digest_tail: number("DIBS_DIGEST_TAIL", 20) as usize,
             repeat_window: number("DIBS_REPEAT_WINDOW", 900),
+            ports: var("DIBS_PORTS")
+                .and_then(|r| r.parse().ok())
+                .unwrap_or_default(),
         }
     }
 }

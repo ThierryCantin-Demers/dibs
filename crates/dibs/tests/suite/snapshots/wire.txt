@@ -13,6 +13,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -36,6 +39,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 7200
     max_from: default
     mode: bench
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -63,6 +69,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 7200
     max_from: default
     mode: bench
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -108,80 +117,55 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs --on box-a --label served --port api --with 'srv=./serve --port $DIBS_PORT_API' --ready tcp:api --ready-within 9 --with side=true true
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD: true
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 
-    HOLD: 0
-    JSON: 0
-    LABEL: served
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 1
-    PORT_NAME[0]: api
-    READY_WITHIN: 9
-    STREAM: 0
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 2
-    WITH_CMD[0]: ./serve --port $DIBS_PORT_API
-    WITH_CMD[1]: true
-    WITH_NAME: an array of 2
-    WITH_NAME[0]: srv
-    WITH_NAME[1]: side
-    WITH_READY: an array of 2
-    WITH_READY[0]: tcp:api
-    WITH_READY[1]: 
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: true
+    fingerprint: null
+    json: false
+    label: served
+    max: 1800
+    max_from: default
+    mode: shared
+    ports: ["api"]
+    ready_within: 9
+    services: [{"command":"./serve --port $DIBS_PORT_API","name":"srv","ready":"tcp:api"},{"command":"true","name":"side","ready":null}]
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs --on box-a --hold --label held true
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD: true
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 
-    HOLD: 1
-    JSON: 0
-    LABEL: held
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 0
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: true
+    fingerprint: null
+    json: false
+    label: held
+    max: 1800
+    max_from: default
+    mode: shared
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: true
+    watch.lease: 120
+    watch.off: false
 
 == dibs --on box-a --peek 'ls -la'
 -> exit 0
@@ -198,6 +182,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 30
     max_from: default
     mode: peek
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -568,6 +555,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -606,6 +596,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -628,6 +621,9 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 7200
     max_from: default
     mode: bench
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -799,6 +795,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -822,6 +821,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -845,6 +847,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -868,6 +873,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -891,6 +899,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false
@@ -914,6 +925,9 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=3 -o ServerAliv
     max: 1800
     max_from: default
     mode: shared
+    ports: []
+    ready_within: 300
+    services: []
     stream: false
     tty: false
     verbose: false

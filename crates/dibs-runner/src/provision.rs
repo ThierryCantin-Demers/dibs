@@ -68,6 +68,9 @@ pub fn build(hash: &str) -> i32 {
             hold: false,
             lease: 0,
         },
+        ports: Vec::new(),
+        services: Vec::new(),
+        ready_within: 0,
     };
     let code = Session::new(request, sink).serve(None, signals);
     let _ = fs::remove_dir_all(&source);

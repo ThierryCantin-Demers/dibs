@@ -4,14 +4,13 @@
 use crate::{
     call::watched::{Starter, Watched},
     cli::{Command, Service},
-    machine::{Interrupt, Message, Reach, Started, exit_code},
+    machine::{Held, Holder, Interrupt, Reach, exit_code},
 };
-use dibs_format::{Exit, Mode};
+use dibs_format::{Exit, Mode, wire::Picked};
 use std::{
     fmt,
-    io::{BufRead as _, BufReader, ErrorKind, Write as _},
+    io::ErrorKind,
     net::{TcpStream, ToSocketAddrs as _},
-    process::{ChildStdout, ExitStatus},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -24,9 +23,6 @@ use std::{
 const REACH_WITHIN: Duration = Duration::from_secs(3);
 /// How long a name may take to resolve before a connection that timed out is put down to it.
 const RESOLVE_WITHIN: Duration = Duration::from_secs(2);
-
-/// The line the machine prints once the lock is held, with each picked port after it.
-const HOLDING: &str = "DIBS-HOLDING";
 
 /// What runs here while the lock is held.
 pub struct Hold<'a> {
@@ -50,55 +46,30 @@ struct Shared {
     holder_gone: bool,
 }
 
-enum Event {
-    Line(String),
-    Closed,
-}
-
 impl Hold<'_> {
     /// Runs the command once the machine holds the lock; the exit is the holder's.
-    pub fn run(&self, started: Started) -> std::io::Result<i32> {
-        let Started { mut child, channel } = started;
-        let stdout = child.stdout.take().expect("a hold's stdout is piped");
-        let lines = read_lines(stdout);
+    pub fn run(&self, holder: Holder) -> std::io::Result<i32> {
+        let Holder { held, ended } = holder;
         let shared = Arc::new(Mutex::new(Shared::default()));
         let at = self.at.clone();
         let watched = Arc::clone(&shared);
         let holder = std::thread::spawn(move || {
-            let status = child.wait();
+            let exit = ended.join();
             let mut state = watched.lock().unwrap_or_else(|e| e.into_inner());
             state.holder_gone = true;
             if let Some(pid) = state.command.filter(|_| !state.command_done) {
                 stop_early(&at, pid);
             }
-            status
+            exit
         });
-
-        let mut ports = None;
-        for event in lines.iter() {
-            match event {
-                Event::Line(line) if line == HOLDING || line.starts_with("DIBS-HOLDING ") => {
-                    ports = Some(line[HOLDING.len()..].to_string());
-                    break;
-                }
-                Event::Line(line) => println!("{line}"),
-                Event::Closed => break,
-            }
-        }
-        let Some(ports) = ports else {
-            drop(channel);
+        let Ok(Held { ports, release }) = held.recv() else {
             return Ok(holder_exit(holder.join()));
         };
-
         if let Some(unreached) = self.unreached(&ports) {
             eprintln!("{unreached}");
-            return Ok(self.release(
-                i32::from(Exit::ServiceFailed.code()),
-                &shared,
-                channel,
-                &lines,
-                holder,
-            ));
+            done(&shared);
+            release.send(i32::from(Exit::ServiceFailed.code()));
+            return Ok(holder_exit(holder.join()));
         }
         eprintln!(
             "dibs: holding the {} lock on {}, running here: {}",
@@ -124,44 +95,14 @@ impl Hold<'_> {
             }
         };
         drop(interrupt);
-        Ok(self.release(status, &shared, channel, &lines, holder))
-    }
-
-    /// Releases the lock with the command's status, passes on what the machine says after it,
-    /// and gives the holder's exit.
-    fn release(
-        &self,
-        status: i32,
-        shared: &Mutex<Shared>,
-        channel: mpsc::Sender<Message>,
-        lines: &mpsc::Receiver<Event>,
-        holder: std::thread::JoinHandle<std::io::Result<ExitStatus>>,
-    ) -> i32 {
-        shared
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .command_done = true;
-        let _ = channel.send(Message::Release(status));
-        drop(channel);
-        let mut out = std::io::stdout().lock();
-        for event in lines.iter() {
-            match event {
-                Event::Line(line) => {
-                    let _ = writeln!(out, "{line}");
-                }
-                Event::Closed => break,
-            }
-        }
-        holder_exit(holder.join())
+        done(&shared);
+        release.send(status);
+        Ok(holder_exit(holder.join()))
     }
 
     /// The first `--ready tcp:` service this computer cannot connect to, which the command here
     /// would fail at: ready on the machine, but behind its firewall or on its loopback only.
-    fn unreached(&self, ports: &str) -> Option<Unreached> {
-        let picked: Vec<(&str, &str)> = ports
-            .split_whitespace()
-            .filter_map(|p| p.split_once('='))
-            .collect();
+    fn unreached(&self, ports: &[Picked]) -> Option<Unreached> {
         let mut host = None;
         for service in self.services {
             let Some(ready) = service
@@ -172,11 +113,12 @@ impl Hold<'_> {
                 continue;
             };
             let named = ready.rsplit(':').next().unwrap_or_default();
-            let port = picked
+            let port = ports
                 .iter()
-                .find(|(name, _)| *name == named)
-                .map_or(named, |(_, port)| port);
-            let Ok(port) = port.parse::<u16>() else {
+                .find(|p| p.name == named)
+                .map(|p| p.port)
+                .or_else(|| named.parse().ok());
+            let Some(port) = port else {
                 continue;
             };
             let host: &String = host.get_or_insert_with(|| {
@@ -205,7 +147,7 @@ impl Hold<'_> {
 
     /// The guard that runs the command, with the machine's ports and the hold it runs inside in
     /// its environment.
-    fn guard(&self, ports: &str) -> std::io::Result<std::process::Command> {
+    fn guard(&self, ports: &[Picked]) -> std::io::Result<std::process::Command> {
         let mut command = std::process::Command::new(std::env::current_exe()?);
         command
             .arg(Guard::WORD)
@@ -216,20 +158,27 @@ impl Hold<'_> {
             _ => self.lock_at.clone(),
         };
         command.env("DIBS_HOLDING", holding);
-        let picked: Vec<(&str, &str)> = ports
-            .split_whitespace()
-            .filter_map(|p| p.split_once('='))
-            .collect();
-        if !picked.is_empty() {
+        if !ports.is_empty() {
             let reach = self.reach.address();
-            for (name, port) in picked {
-                let name = name.to_ascii_uppercase();
-                command.env(format!("DIBS_PORT_{name}"), port);
-                command.env(format!("DIBS_SERVICE_{name}"), format!("{reach}:{port}"));
+            for picked in ports {
+                let name = picked.name.to_ascii_uppercase();
+                command.env(format!("DIBS_PORT_{name}"), picked.port.to_string());
+                command.env(
+                    format!("DIBS_SERVICE_{name}"),
+                    format!("{reach}:{}", picked.port),
+                );
             }
         }
         Ok(command)
     }
+}
+
+/// The command here has ended, so the lock going now stops nothing.
+fn done(shared: &Mutex<Shared>) {
+    shared
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .command_done = true;
 }
 
 /// How a connection from here to a ready service went.
@@ -380,27 +329,9 @@ impl Guard {
     }
 }
 
-/// The holder's stdout, a line at a time, read on a thread of its own so the machine never
-/// waits on this side.
-fn read_lines(stdout: ChildStdout) -> mpsc::Receiver<Event> {
-    let (send, receive) = mpsc::channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else {
-                break;
-            };
-            if send.send(Event::Line(line)).is_err() {
-                return;
-            }
-        }
-        let _ = send.send(Event::Closed);
-    });
-    receive
-}
-
-fn holder_exit(joined: std::thread::Result<std::io::Result<ExitStatus>>) -> i32 {
+fn holder_exit(joined: std::thread::Result<std::thread::Result<std::io::Result<i32>>>) -> i32 {
     match joined {
-        Ok(Ok(status)) => exit_code(status),
+        Ok(Ok(Ok(code))) => code,
         _ => 1,
     }
 }

@@ -1,21 +1,22 @@
 use crate::machine::{
+    held::{Held, Holder, Release},
     interrupt::Interrupt,
     lines::Stream,
     payload::{CallValues, Watch},
     provision::{Installed, Provision},
-    session::{Liveness, Route, SSH_FAILED, Session, exit_code},
+    session::{Liveness, Message, Route, SSH_FAILED, Session, exit_code},
     ssh::{Ssh, parent_death_signal},
 };
 use dibs_format::{
     Exit,
-    wire::{Frame, Record, Unframer},
+    wire::{Frame, Picked, Record, Unframer},
 };
 use std::{
     io::{self, BufRead as _, BufReader, Read, Write as _},
     os::unix::process::CommandExt as _,
     path::PathBuf,
     process::{ChildStdin, Command, Stdio},
-    sync::mpsc::{self, Receiver, RecvTimeoutError},
+    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
     thread,
     time::Duration,
 };
@@ -73,6 +74,8 @@ pub struct Served<'a> {
     pub session: &'a Session,
     pub values: &'a CallValues,
     pub live: Liveness,
+    /// A hold's: told once the lock is held, with what releases it.
+    pub holding: Option<Sender<Held>>,
 }
 
 /// What reached this side from the runner.
@@ -81,6 +84,7 @@ pub(super) enum Heard {
     Err(Vec<u8>),
     /// A line the runner or ssh wrote on stderr, outside any frame.
     Line(Vec<u8>),
+    Holding(Vec<Picked>),
     Exit(i32),
     Broken(String),
 }
@@ -90,10 +94,26 @@ impl Served<'_> {
     /// first, through the newest runner it has, and the call is made again.
     pub fn run(&self, delivery: Delivery) -> io::Result<i32> {
         let mut delivery = delivery;
-        let deferred = Interrupt::defer();
+        let deferred = self.holding.is_none().then(Interrupt::defer);
         let answer = self.answer(&mut delivery);
         drop(deferred);
         answer
+    }
+
+    /// A hold's side, on a thread of its own: Ctrl-C belongs to the command here, so the runner
+    /// is started ignoring it, and so is ssh.
+    pub fn holder(session: Session, values: CallValues, live: Liveness) -> Holder {
+        let (tell, held) = mpsc::channel();
+        let ended = thread::spawn(move || {
+            Served {
+                session: &session,
+                values: &values,
+                live,
+                holding: Some(tell),
+            }
+            .run(Delivery::Inherit)
+        });
+        Holder { held, ended }
     }
 
     fn answer(&self, delivery: &mut Delivery) -> io::Result<i32> {
@@ -117,19 +137,21 @@ impl Served<'_> {
         }
     }
 
-    /// The process that reaches the runner, and how the runner is to watch for its caller.
+    /// The process that reaches the runner, and how the runner is to watch for its caller. A hold
+    /// is always watched, since its release comes down the channel.
     fn launch(&self) -> Launch {
-        match &self.session.route {
-            Route::Here => Launch {
-                command: Runner::here(),
-                watch: Watch {
-                    off: self.live.no_watchdog,
-                    hold: false,
+        let hold = self.holding.is_some();
+        let (mut command, watch) = match &self.session.route {
+            Route::Here => (
+                Runner::here(),
+                Watch {
+                    off: self.live.no_watchdog && !hold,
+                    hold,
                     lease: 0,
                 },
-            },
+            ),
             Route::Ssh { host } => {
-                let off = self.live.no_live || self.live.no_watchdog;
+                let off = (self.live.no_live || self.live.no_watchdog) && !hold;
                 let mut ssh = Command::new("ssh");
                 ssh.args(Ssh::options()).arg(host).arg(Runner::far_line());
                 let die_with_me = !self.live.no_pdeathsig;
@@ -142,16 +164,21 @@ impl Served<'_> {
                         Ok(())
                     });
                 }
-                Launch {
-                    command: ssh,
-                    watch: Watch {
-                        off,
-                        hold: false,
-                        lease: if off { 0 } else { self.live.lease },
-                    },
-                }
+                let lease = if off { 0 } else { self.live.lease };
+                (ssh, Watch { off, hold, lease })
+            }
+        };
+        if hold {
+            // SAFETY: the closure makes async-signal-safe calls only.
+            unsafe {
+                command.pre_exec(|| {
+                    libc::signal(libc::SIGINT, libc::SIG_IGN);
+                    libc::signal(libc::SIGQUIT, libc::SIG_IGN);
+                    Ok(())
+                });
             }
         }
+        Launch { command, watch }
     }
 
     fn attempt(&self, delivery: &mut Delivery) -> io::Result<Answer> {
@@ -165,9 +192,10 @@ impl Served<'_> {
         drop(command);
         let request = Frame::Request(Box::new(self.values.request(watch))).encode();
         let stdin = child.stdin.take().expect("stdin was piped");
-        let (channel, quiet) = mpsc::channel::<()>();
+        let (channel, messages) = mpsc::channel();
         let beat = (watch.lease > 0).then(|| Duration::from_millis(watch.lease * 250));
-        thread::spawn(move || feed(stdin, request, beat, quiet));
+        thread::spawn(move || feed(stdin, request, beat, messages));
+        let release = self.holding.as_ref().map(|_| channel.clone());
 
         let (tell, heard) = mpsc::channel();
         let out = child.stdout.take().expect("stdout was piped");
@@ -194,12 +222,21 @@ impl Served<'_> {
                 Heard::Out(bytes) => delivery.give(Stream::Out, &bytes, &mut buffers),
                 Heard::Line(bytes) => delivery.give(Stream::Err, &bytes, &mut buffers),
                 Heard::Err(bytes) => delivery.give(Stream::Err, &bytes, &mut buffers),
+                Heard::Holding(ports) => {
+                    if let (Some(holding), Some(release)) = (&self.holding, &release) {
+                        let _ = holding.send(Held {
+                            ports,
+                            release: Release(release.clone()),
+                        });
+                    }
+                }
                 Heard::Exit(code) => exit = Some(code),
                 Heard::Broken(why) => {
                     delivery.say(&format!("dibs: the runner's answer broke off: {why}\n"))
                 }
             }
         }
+        drop(release);
         delivery.flush(&mut buffers);
         let _ = frames.join();
         if let Some(err) = err {
@@ -289,23 +326,30 @@ impl Delivery<'_> {
     }
 }
 
-/// The request, then a beat whenever so long passes, until the call ends.
-fn feed(mut stdin: ChildStdin, request: Vec<u8>, beat: Option<Duration>, quiet: Receiver<()>) {
+/// The request, then a release when one is sent and a beat whenever so long passes without
+/// one, until every sender is gone: the runner's end, and a hold's release.
+fn feed(
+    mut stdin: ChildStdin,
+    request: Vec<u8>,
+    beat: Option<Duration>,
+    messages: Receiver<Message>,
+) {
     if stdin.write_all(&request).is_err() {
         return;
     }
-    let beats = std::iter::from_fn(|| match beat {
-        Some(every) => {
-            matches!(quiet.recv_timeout(every), Err(RecvTimeoutError::Timeout)).then_some(())
-        }
-        None => {
-            let _ = quiet.recv();
-            None
+    let frames = std::iter::from_fn(|| {
+        let next = match beat {
+            Some(every) => messages.recv_timeout(every),
+            None => messages.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        match next {
+            Ok(Message::Release(status)) => Some(Frame::Release(status)),
+            Err(RecvTimeoutError::Timeout) => Some(Frame::Beat),
+            Err(RecvTimeoutError::Disconnected) => None,
         }
     });
-    let frame = Frame::Beat.encode();
-    for () in beats {
-        if stdin.write_all(&frame).is_err() {
+    for frame in frames {
+        if stdin.write_all(&frame.encode()).is_err() {
             return;
         }
     }
@@ -330,6 +374,7 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
                 Frame::Record(Record::Trailer(trailer)) => {
                     Heard::Err(format!("{trailer}\n").into_bytes())
                 }
+                Frame::Record(Record::Holding(ports)) => Heard::Holding(ports),
                 Frame::Exit(code) => Heard::Exit(code),
                 Frame::Request(_) | Frame::Beat | Frame::Release(_) => continue,
             };

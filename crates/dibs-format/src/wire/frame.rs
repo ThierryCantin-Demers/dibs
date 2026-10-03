@@ -168,6 +168,9 @@ mod tests {
                 hold: false,
                 lease: 120,
             },
+            ports: vec!["api".into()],
+            services: Vec::new(),
+            ready_within: 300,
         }
     }
 

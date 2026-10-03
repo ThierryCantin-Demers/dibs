@@ -53,9 +53,6 @@ next	shared	rec-next	1
   1 fields
   pid          <pid>
 
-== work.<pid>, once the queued job holds the lock
-  2 lines, a pid each
-
 == cpu.<pid>, the CPU sample a status leaves
   3 words: ticks, when it last worked, when sampled
 

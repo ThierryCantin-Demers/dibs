@@ -8,6 +8,15 @@ use std::fmt;
 pub enum Record {
     /// How a job ended, which the client prints on stderr.
     Trailer(Trailer),
+    /// The lock is held for a command the client runs, with the ports picked for it.
+    Holding(Vec<Picked>),
+}
+
+/// A `--port` name and the port the machine picked for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Picked {
+    pub name: String,
+    pub port: u16,
 }
 
 /// The one line a job ends with, the same shape every time.

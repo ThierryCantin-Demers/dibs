@@ -29,6 +29,22 @@ pub struct Request {
     /// the steps still to come.
     pub batch: Option<String>,
     pub watch: Watch,
+    /// `--port` names, each given a free port the job reads as `$DIBS_PORT_<NAME>`.
+    pub ports: Vec<String>,
+    /// `--with` servers, run for the job's length.
+    pub services: Vec<Service>,
+    /// Seconds the services have to be ready in.
+    pub ready_within: u64,
+}
+
+/// A server run on the machine for one call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Service {
+    pub name: String,
+    pub command: String,
+    /// `tcp:[host:]port`, the port possibly a `--port` name, or a command that exits 0 once the
+    /// server can be used. None is ready at once.
+    pub ready: Option<String>,
 }
 
 /// Where `--max` came from, which decides whether history may raise it.

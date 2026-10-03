@@ -92,6 +92,11 @@ impl LockDir {
         for kind in ["waiting", "holder", "work", "cpu", "batch", "hold", "with"] {
             let _ = fs::remove_file(self.file(kind, pid));
         }
+        for port in self.named("port") {
+            if fs::read_to_string(&port).is_ok_and(|by| by.trim() == pid.to_string()) {
+                let _ = fs::remove_file(&port);
+            }
+        }
     }
 
     /// Drops what dead jobs left: a record outlives its process only when that was killed outright.

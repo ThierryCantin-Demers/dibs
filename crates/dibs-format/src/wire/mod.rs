@@ -5,5 +5,5 @@ mod record;
 mod request;
 
 pub use frame::{Frame, FrameError, Unframer};
-pub use record::{Built, Record, Trailer};
-pub use request::{Card, MaxFrom, Request, Watch};
+pub use record::{Built, Picked, Record, Trailer};
+pub use request::{Card, MaxFrom, Request, Service, Watch};

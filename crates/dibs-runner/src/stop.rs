@@ -22,6 +22,8 @@ pub enum Stage {
     Peeking(u32),
     /// Its records are written and it waits for the lock.
     Queued,
+    /// It holds the lock, and its services are starting.
+    Starting,
     Running(u32),
     /// Its job has ended.
     Finishing,
@@ -35,6 +37,8 @@ pub struct State {
     pub logged_end: bool,
     /// Named once it arrives, and on every line it logs from then on.
     pub job: Option<JobId>,
+    /// Its `--with` servers, which go with it.
+    pub services: Vec<u32>,
 }
 
 /// Stops a call from another thread, leaving the machine as the call's own end would.
@@ -53,6 +57,7 @@ impl Stopper {
                 stage: Stage::Setup,
                 logged_end: false,
                 job: None,
+                services: Vec::new(),
             }),
             call,
             dir,
@@ -76,7 +81,10 @@ impl Stopper {
     /// takes the job's tree, and the call finishes as for any other end.
     pub fn caller_gone(&self, why: &str) {
         let mut state = self.state();
-        if !matches!(state.stage, Stage::Queued | Stage::Running(_)) {
+        if !matches!(
+            state.stage,
+            Stage::Queued | Stage::Starting | Stage::Running(_)
+        ) {
             return;
         }
         let mut line = self.call.log_line(Event::CallerGone);
@@ -85,17 +93,23 @@ impl Stopper {
         Journal { path: &self.log }.write(&line);
         match state.stage {
             Stage::Running(work) => reap(&[work]),
+            Stage::Starting => reap(&state.services),
             _ => self.abort(&mut state, 128 + libc::SIGTERM),
         }
     }
 
     fn abort(&self, state: &mut State, code: i32) -> ! {
-        if let Stage::Peeking(work) | Stage::Running(work) = state.stage {
-            reap(&[work]);
+        let work = match state.stage {
+            Stage::Peeking(work) | Stage::Running(work) => Some(work),
+            _ => None,
+        };
+        let stopped: Vec<u32> = work.into_iter().chain(state.services.clone()).collect();
+        if !stopped.is_empty() {
+            reap(&stopped);
         }
         if matches!(
             state.stage,
-            Stage::Queued | Stage::Running(_) | Stage::Finishing
+            Stage::Queued | Stage::Starting | Stage::Running(_) | Stage::Finishing
         ) {
             self.dir.clear(self.call.pid);
             if !state.logged_end {
@@ -115,14 +129,19 @@ pub struct Signals {
 }
 
 impl Signals {
-    /// Called before any other thread exists, which then inherit the mask.
+    /// Called before any other thread exists, which then inherit the mask. A signal this process
+    /// was started ignoring stays ignored: a hold's caller keeps Ctrl-C for its own command.
     pub fn block() -> Signals {
         // SAFETY: the set is initialised by sigemptyset before it is used.
         let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
         unsafe {
             libc::sigemptyset(&mut set);
             for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
-                libc::sigaddset(&mut set, signal);
+                let mut was: libc::sigaction = std::mem::zeroed();
+                libc::sigaction(signal, std::ptr::null(), &mut was);
+                if was.sa_sigaction != libc::SIG_IGN {
+                    libc::sigaddset(&mut set, signal);
+                }
             }
             libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
         }

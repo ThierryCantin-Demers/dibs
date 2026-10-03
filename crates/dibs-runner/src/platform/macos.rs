@@ -76,6 +76,18 @@ impl Platform for MacOs {
             .collect()
     }
 
+    fn listening() -> Vec<u16> {
+        output_of("netstat", &["-anp", "tcp"])
+            .lines()
+            .filter_map(|line| {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                (fields.get(5) == Some(&"LISTEN"))
+                    .then(|| fields.get(3)?.rsplit('.').next()?.parse().ok())
+                    .flatten()
+            })
+            .collect()
+    }
+
     /// Which process holds an flock is visible only in Linux's `/proc`.
     fn lock_holders(_file: &Path) -> Vec<u32> {
         Vec::new()

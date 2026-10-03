@@ -1,4 +1,4 @@
-use crate::stop::Stopper;
+use crate::{job::Held, stop::Stopper};
 use dibs_format::wire::{Frame, FrameError, Request, Unframer};
 use std::{
     fmt,
@@ -89,20 +89,33 @@ impl Channel {
 
     /// Watches the stream on a thread of its own: its end, or silence past the lease, is the
     /// caller gone. A caller alive says something at least once a lease, and one that sleeps
-    /// closes nothing.
-    pub fn watch(mut self, lease: u64, stopper: Arc<Stopper>) {
+    /// closes nothing. A hold ends with a release, which is its caller's command ending, not the
+    /// caller going.
+    pub fn watch(mut self, lease: u64, stopper: Arc<Stopper>, held: Option<Held>) {
         let within = (lease > 0).then_some(lease);
         thread::spawn(move || {
-            let gone = std::iter::repeat_with(|| self.hear(within))
-                .find_map(|heard| match heard {
-                    Ok(Heard::Frame(_)) => None,
-                    Ok(Heard::Silent) => Some(Gone::Silent(lease)),
-                    _ => Some(Gone::Ended),
+            let end = std::iter::repeat_with(|| self.hear(within))
+                .find_map(|heard| match (heard, &held) {
+                    (Ok(Heard::Frame(Frame::Release(status))), Some(held)) => {
+                        held.release(status);
+                        Some(End::Released)
+                    }
+                    (Ok(Heard::Frame(_)), _) => None,
+                    (Ok(Heard::Silent), _) => Some(End::Gone(Gone::Silent(lease))),
+                    _ => Some(End::Gone(Gone::Ended)),
                 })
-                .unwrap_or(Gone::Ended);
-            stopper.caller_gone(&gone.to_string());
+                .unwrap_or(End::Gone(Gone::Ended));
+            if let End::Gone(gone) = end {
+                stopper.caller_gone(&gone.to_string());
+            }
         });
     }
+}
+
+/// How watching a caller ended.
+enum End {
+    Gone(Gone),
+    Released,
 }
 
 impl fmt::Display for Gone {

@@ -136,6 +136,26 @@ impl Platform for Linux {
             .collect()
     }
 
+    fn listening() -> Vec<u16> {
+        ["/proc/net/tcp", "/proc/net/tcp6"]
+            .iter()
+            .filter_map(|table| fs::read_to_string(table).ok())
+            .flat_map(|table| {
+                table
+                    .lines()
+                    .skip(1)
+                    .filter_map(|line| {
+                        let fields: Vec<&str> = line.split_whitespace().collect();
+                        let port = fields.get(1)?.rsplit(':').next()?;
+                        (fields.get(3) == Some(&"0A"))
+                            .then(|| u16::from_str_radix(port, 16).ok())
+                            .flatten()
+                    })
+                    .collect::<Vec<u16>>()
+            })
+            .collect()
+    }
+
     fn lock_holders(file: &Path) -> Vec<u32> {
         let Ok(lock) = fs::metadata(file) else {
             return Vec::new();

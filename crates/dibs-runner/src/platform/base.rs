@@ -34,6 +34,9 @@ pub trait Platform {
     /// Every process on the machine.
     fn processes() -> Vec<Process>;
 
+    /// The TCP ports something listens on.
+    fn listening() -> Vec<u16>;
+
     /// The processes holding an flock on the file; empty where the system cannot say.
     fn lock_holders(file: &Path) -> Vec<u32>;
 

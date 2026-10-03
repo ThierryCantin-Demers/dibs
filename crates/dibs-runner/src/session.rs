@@ -3,7 +3,10 @@ use crate::{
     channel::Channel,
     clock::{Moment, Span},
     history::{History, Key, Scope},
-    job::{Cap, Digest, Environment, Job, Output, Repeat, Unpinned, built, job_id},
+    job::{
+        Cap, Digest, Environment, Guard, Held, Job, Output, Ports, Readiness, Repeat, Services,
+        Start, Unpinned, built, job_id,
+    },
     lock::{Hold, Kind, Lock, LockDir},
     machine::{Machine, line_count},
     platform::{Host, Platform as _},
@@ -36,6 +39,8 @@ const LOG_BOUND: usize = 20000;
 const LOG_KEPT: usize = 10000;
 /// What a command bash could not start exits with.
 const NOT_STARTED: i32 = 127;
+/// A port or a service failed the call.
+const SERVICE_FAILED: i32 = 77;
 /// Longer than the coarsest tick a file's time is stamped by.
 const FILE_TICK: Duration = Duration::from_millis(11);
 
@@ -186,6 +191,19 @@ impl Session {
         };
         let start = Moment::epoch_now();
         let job = job_id(start, pid);
+        let held = match request.watch.hold {
+            true => match Held::make(at.dir, pid) {
+                Ok(held) => Some(held),
+                Err(_) => {
+                    self.sink.say(&format!(
+                        "dibs: could not make {}, so nothing is held.\n",
+                        at.dir.file("hold", pid).display()
+                    ));
+                    return 71;
+                }
+            },
+            false => None,
+        };
         {
             let mut state = at.stopper.state();
             at.dir.write(Kind::Waiting, &self.call.lock_record(start));
@@ -203,7 +221,7 @@ impl Session {
         if let Some(channel) = channel
             && !request.watch.off
         {
-            channel.watch(request.watch.lease, Arc::clone(at.stopper));
+            channel.watch(request.watch.lease, Arc::clone(at.stopper), held.clone());
         }
 
         let lock = match Lock::open(at.dir) {
@@ -282,19 +300,75 @@ impl Session {
             after: Duration::from_secs(max),
             grace: JOB_GRACE,
         });
-        let started = Job::spawn(&request.command, &environment, output, &self.sink);
-        let status = match started {
-            Ok(work) => {
-                state.stage = Stage::Running(work.pid);
-                drop(state);
-                work.wait(cap)
+        let ports = Ports::take(&request.ports, self.settings.ports, at.dir, pid);
+        for picked in &ports.picked {
+            environment.port(picked);
+        }
+        let mut hosted = Hosted {
+            ports,
+            services: None,
+            failed: false,
+        };
+        if !hosted.ports.complete() {
+            self.sink.say(&format!(
+                "dibs: no free port in {} on {}, so the command did not run.\n",
+                self.settings.ports, at.machine.host
+            ));
+            hosted.failed = true;
+        } else if !request.services.is_empty() {
+            let mut services = Services::start(Start {
+                specs: &request.services,
+                environment: &environment,
+                job_dir: log.as_ref().map(|_| job_dir.as_path()),
+                record: at.dir.file("with", pid),
+                sink: &self.sink,
+            });
+            state.services = services.pids();
+            state.stage = Stage::Starting;
+            drop(state);
+            let ready = services.ready(
+                request.ready_within,
+                &Readiness {
+                    ports: &hosted.ports,
+                    environment: &environment,
+                    sink: &self.sink,
+                },
+            );
+            if !ready {
+                services.stop();
             }
-            Err(e) => {
+            hosted.failed = !ready;
+            hosted.services = Some(services);
+            state = at.stopper.state();
+        }
+        let status = match hosted.failed {
+            true => {
                 drop(state);
-                self.sink.say(&format!("dibs: bash could not start: {e}\n"));
-                NOT_STARTED
+                if let Some(log) = &log {
+                    let _ = fs::OpenOptions::new().create(true).append(true).open(log);
+                }
+                SERVICE_FAILED
+            }
+            false => {
+                let command = held.as_ref().map(Held::command);
+                let command = command.as_deref().unwrap_or(&request.command);
+                match Job::spawn(command, &environment, output, &self.sink) {
+                    Ok(work) => {
+                        state.stage = Stage::Running(work.pid);
+                        drop(state);
+                        self.work(work, cap, held.is_some(), &mut hosted)
+                    }
+                    Err(e) => {
+                        drop(state);
+                        self.sink.say(&format!("dibs: bash could not start: {e}\n"));
+                        NOT_STARTED
+                    }
+                }
             }
         };
+        if let Some(services) = &mut hosted.services {
+            services.stop();
+        }
         let cancelled = self.call.batch_id().is_some_and(|b| at.dir.cancelled(b));
         let status = if cancelled { 76 } else { status };
         let ran = Moment::epoch_now().saturating_sub(acquired);
@@ -313,6 +387,7 @@ impl Session {
             let by = match status {
                 124 if max > 0 => By::Dibs,
                 76 if cancelled => By::Dibs,
+                SERVICE_FAILED if hosted.failed => By::Dibs,
                 78 if fs::read_to_string(log)
                     .is_ok_and(|l| l.lines().any(|l| l == "DIBS-REFUSED")) =>
                 {
@@ -326,6 +401,7 @@ impl Session {
                 job: &job,
                 log,
                 job_dir: &job_dir,
+                hosted: &hosted,
                 waited,
                 ran,
                 status,
@@ -357,6 +433,31 @@ impl Session {
         at.dir.clear(pid);
         drop(lock);
         status
+    }
+
+    /// Waits for the job, with its services watched: one that ends first stops the job, and the
+    /// call ends 77. A hold's caller learns here that the lock is held, and on which ports.
+    fn work(&self, work: Job, cap: Option<Cap>, holding: bool, hosted: &mut Hosted) -> i32 {
+        let guard = hosted.services.as_mut().map(|s| s.guard(work.pid));
+        if holding {
+            self.sink
+                .record(Record::Holding(hosted.ports.picked.clone()));
+        }
+        let status = work.wait(cap);
+        match (guard.and_then(Guard::over), hosted.services.as_mut()) {
+            (Some(at), Some(services)) => {
+                let code = services.status(at);
+                services.failed(
+                    at,
+                    &format!("exited {code} while the command ran"),
+                    "the command was stopped",
+                    &self.sink,
+                );
+                hosted.failed = true;
+                SERVICE_FAILED
+            }
+            _ => status,
+        }
     }
 
     /// What the job runs, whose time marks the job's start: what it writes is newer. File times
@@ -431,6 +532,22 @@ struct Place<'a> {
     stopper: &'a Arc<Stopper>,
 }
 
+/// What a job was given besides its command.
+struct Hosted {
+    ports: Ports,
+    services: Option<Services>,
+    /// A port or a service failed the call, which ends with 77.
+    failed: bool,
+}
+
+impl Hosted {
+    /// The trailer's lines for the ports, then the services.
+    fn lines(&self, host: &str) -> String {
+        let services = self.services.as_ref().map(|s| s.lines(host));
+        format!("{}{}", self.ports.lines(host), services.unwrap_or_default())
+    }
+}
+
 /// A job that has ended, which its caller is told about.
 struct Ended<'a> {
     session: &'a Session,
@@ -438,6 +555,7 @@ struct Ended<'a> {
     job: &'a JobId,
     log: &'a PathBuf,
     job_dir: &'a PathBuf,
+    hosted: &'a Hosted,
     waited: u64,
     ran: u64,
     status: i32,
@@ -485,6 +603,7 @@ impl Ended<'_> {
                 self.job
             ));
         }
+        after.push_str(&self.hosted.lines(host));
         if built == Some(dibs_format::wire::Built::Nothing) {
             after.push_str(
                 "  built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary.\n",

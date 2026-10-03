@@ -151,6 +151,13 @@ impl Job {
         }
     }
 
+    /// Waits for the job on a thread of its own, which hands its status on; the pid comes back.
+    pub fn on_end(self, then: impl FnOnce(i32) + Send + 'static) -> u32 {
+        let pid = self.pid;
+        thread::spawn(move || then(self.wait(None)));
+        pid
+    }
+
     fn signal_group(&self, signal: libc::c_int) {
         // SAFETY: kill only sends a signal, here to the job's own group.
         unsafe { libc::kill(-(self.pid as libc::pid_t), signal) };

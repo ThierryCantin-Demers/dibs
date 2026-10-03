@@ -12,20 +12,14 @@ pub enum Half {
 
 impl Half {
     /// The runner serves the calls it implements; every other call still ships `lib/machine`.
-    /// A held call, or one with `--wait`, `-v`, `--port` or `--with`, needs what the runner does not
-    /// do yet: a release, the status display, ports and servers.
-    pub fn of(values: &CallValues, held: bool) -> Half {
+    /// One with `--wait` or `-v` needs the status display, which the runner does not print yet.
+    pub fn of(values: &CallValues) -> Half {
         let served = match values.mode {
             Mode::Peek => true,
-            Mode::Shared | Mode::Bench => {
-                values.wait.is_none()
-                    && !values.verbose
-                    && values.ports.is_empty()
-                    && values.services.is_empty()
-            }
+            Mode::Shared | Mode::Bench => values.wait.is_none() && !values.verbose,
             _ => false,
         };
-        match served && !held {
+        match served {
             true => Half::Runner,
             false => Half::Payload,
         }

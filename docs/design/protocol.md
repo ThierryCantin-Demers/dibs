@@ -32,12 +32,12 @@ Every message, both ways, is one frame: a header line, then the payload.
 
 | Kind | Way | Payload |
 |---|---|---|
-| `request` | to the runner, first and once | the call, as JSON: mode, label, command, `--max` and where it came from, the card, the caller, the batch step, the fingerprint, and how the caller is watched |
+| `request` | to the runner, first and once | the call, as JSON: mode, label, command, `--max` and where it came from, the card, the caller, the batch step, the fingerprint, how the caller is watched, and the `--port` names and `--with` servers |
 | `beat` | to the runner | none: the caller is still there |
 | `release` | to the runner | a held command's exit, in decimal: the end of a hold, not the caller going away |
 | `out` | to the client | bytes for the caller's stdout |
 | `err` | to the client | bytes for the caller's stderr |
-| `record` | to the client | a fact as JSON: today the job's trailer, which the client prints on stderr |
+| `record` | to the client | a fact as JSON: the job's trailer, which the client prints on stderr, or that a hold's lock is held, with the ports picked for it |
 | `exit` | to the client, last | the call's exit, in decimal |
 
 The runner's own stderr carries only what is not a frame, a panic for instance, and the client
@@ -57,7 +57,11 @@ runner's status.
   The runner handles them from before it writes its first record, so a signal at any moment either
   stops a job that has started or prevents it from starting.
 - The job runs in a process group of its own, with stdin from `/dev/null`, and never inherits the
-  lock descriptors or the channel, which are all opened close-on-exec.
+  lock descriptors or the channel, which are all opened close-on-exec. So does each `--with`
+  server, which is stopped with the job, and with the runner however it ends.
+- A hold's job waits on the fifo `hold.<pid>` for its caller's `release`. The client starts the
+  runner, or ssh, ignoring `INT` and `QUIT`, and the runner leaves a signal it was started
+  ignoring ignored, so Ctrl-C reaches only the command run here.
 
 ## Versions
 
@@ -117,3 +121,5 @@ one of them.
   read across both.
 - **What differs.** A runner's job is in its own process group, where a script's shared the
   script's. A runner does not sweep old job directories as a job starts: that belongs to `--gc`.
+  A runner keeps the pids it would stop in memory, so it writes no `work.<pid>`, which only the
+  script that wrote one ever read.

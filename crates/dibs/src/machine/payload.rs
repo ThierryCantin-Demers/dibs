@@ -113,6 +113,17 @@ impl CallValues {
                 hold: watch.hold,
                 lease: watch.lease,
             },
+            ports: self.ports.iter().map(|p| p.0.clone()).collect(),
+            services: self
+                .services
+                .iter()
+                .map(|s| wire::Service {
+                    name: s.name.0.clone(),
+                    command: s.command.clone(),
+                    ready: s.ready.clone().filter(|r| !r.is_empty()),
+                })
+                .collect(),
+            ready_within: u64::from(self.ready_within),
         }
     }
 

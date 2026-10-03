@@ -61,6 +61,7 @@ impl Sink {
         match (self.kind, record) {
             (Kind::Frames, record) => self.frame(Frame::Record(record)),
             (Kind::Plain, Record::Trailer(trailer)) => self.say(&format!("{trailer}\n")),
+            (Kind::Plain, Record::Holding(_)) => {}
         }
     }
 

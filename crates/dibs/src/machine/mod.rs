@@ -1,6 +1,7 @@
 //! One call to one machine: where it goes, what it sends, and how it ends.
 
 mod half;
+mod held;
 mod interrupt;
 mod lines;
 mod payload;
@@ -12,6 +13,7 @@ mod target;
 mod unreachable;
 
 pub use half::Half;
+pub use held::{Held, Holder, Release};
 pub use interrupt::Interrupt;
 pub use lines::{Lines, Stream};
 pub use payload::{CallValues, Card, MaxFrom, Watch, decode, encode};

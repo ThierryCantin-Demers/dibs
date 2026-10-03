@@ -1,6 +1,7 @@
 use crate::{
     machine::{
         half::Half,
+        held::Holder,
         interrupt::Interrupt,
         lines::{Lines, Stream},
         payload::{CallValues, Watch, encode},
@@ -275,7 +276,7 @@ impl Session {
 
     /// Runs a call whose command runs on the machine, and returns its exit.
     pub fn run(&self, values: &CallValues, live: Liveness) -> io::Result<i32> {
-        if Half::of(values, false) == Half::Runner {
+        if Half::of(values) == Half::Runner {
             return self.served(values, live).run(Delivery::Inherit);
         }
         let deferred = Interrupt::defer();
@@ -288,6 +289,7 @@ impl Session {
             session: self,
             values,
             live,
+            holding: None,
         }
     }
 
@@ -298,7 +300,7 @@ impl Session {
         live: Liveness,
         on_line: &mut dyn FnMut(Stream, &[u8]),
     ) -> io::Result<i32> {
-        if Half::of(values, false) == Half::Runner {
+        if Half::of(values) == Half::Runner {
             return self.served(values, live).run(Delivery::Lines(on_line));
         }
         let deferred = Interrupt::defer();
@@ -339,9 +341,13 @@ impl Session {
         Ok(status)
     }
 
-    /// Starts the machine half of a hold, with its stdout piped here.
-    pub fn hold(&self, values: &CallValues, live: Liveness) -> io::Result<Started> {
-        self.start(values, live, Shape::Hold, Streams::Piped)
+    /// Starts the machine's side of a hold.
+    pub fn hold(&self, values: &CallValues, live: Liveness) -> io::Result<Holder> {
+        if Half::of(values) == Half::Runner {
+            return Ok(Served::holder(self.clone(), values.clone(), live));
+        }
+        let started = self.start(values, live, Shape::Hold, Streams::Piped)?;
+        Ok(Holder::of_payload(started))
     }
 
     /// Runs a call and keeps what it prints, stopping it when a bound passes first.

@@ -4,13 +4,15 @@ use crate::{
     settings::{home, var},
     stop::Signals,
 };
-use dibs_format::wire::Card;
+use dibs_format::wire::{Card, Picked};
 use std::{collections::BTreeMap, path::PathBuf, process::Command};
 
 /// What a job finds in its environment besides what the runner inherited.
 #[derive(Debug, Clone, Default)]
 pub struct Environment {
     vars: BTreeMap<&'static str, String>,
+    /// `DIBS_PORT_<NAME>`, one per `--port`.
+    ports: BTreeMap<String, String>,
 }
 
 /// A card the job cannot be pinned to, so it does not run: running it on whichever card is
@@ -41,7 +43,10 @@ impl Environment {
             }
             .export(&mut vars)?;
         }
-        Ok(Environment { vars })
+        Ok(Environment {
+            vars,
+            ports: BTreeMap::new(),
+        })
     }
 
     /// A command over ssh runs in a shell that reads no profile, so a toolchain installed the
@@ -65,8 +70,16 @@ impl Environment {
         self.vars.insert(name, value);
     }
 
+    pub fn port(&mut self, picked: &Picked) {
+        self.ports.insert(
+            format!("DIBS_PORT_{}", picked.name.to_ascii_uppercase()),
+            picked.port.to_string(),
+        );
+    }
+
     pub fn apply(&self, command: &mut Command) {
         command.envs(&self.vars);
+        command.envs(&self.ports);
     }
 }
 
