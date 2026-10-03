@@ -8,4 +8,5 @@ pub mod machine;
 pub mod paths;
 pub mod placement;
 pub mod render;
+pub mod scratch;
 pub mod update;

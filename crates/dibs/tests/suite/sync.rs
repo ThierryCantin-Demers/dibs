@@ -1,4 +1,5 @@
 use crate::harness::*;
+use std::fs;
 
 #[test]
 fn a_malformed_sync_is_refused_before_anything_is_reached_for() {
@@ -147,4 +148,42 @@ fn a_transfer_goes_where_it_was_told() {
         1,
         "and says where it is about to write"
     );
+}
+
+#[test]
+fn the_transports_files_are_private_and_named_where_nobody_can_plant_one() {
+    let mut s = Sandbox::new();
+    s.machines("[machine.box]\nssh = \"dibs@box\"\nhostname = \"box\"\n");
+    s.write_exec(
+        "fakersync/rsync",
+        &format!(
+            "#!/bin/bash\n\
+             case $1 in --help|--version) echo 'rsync  version 3.2.7  --mkpath'; exit 0 ;; esac\n\
+             words=$2\n\
+             exit_file=${{words##*--exit }}\n\
+             ls -ln \"$exit_file\" | cut -c1-10 > {seen}\n\
+             echo \"$exit_file\" >> {seen}\n",
+            seen = s.p("transport-seen")
+        ),
+    );
+    let out = s
+        .dibs(["--on", "box", "--sync", "./x", ":~/y"])
+        .env("DIBS_LOCAL", "0")
+        .env("PATH", format!("{}:{}", s.p("fakersync"), s.var("PATH")))
+        .run();
+    let seen = s.read("transport-seen");
+    let mut lines = seen.lines();
+    assert_eq!(
+        lines.next(),
+        Some("-rw-------"),
+        "readable by its owner alone: {}",
+        out.all()
+    );
+    let exit_file = lines.next().unwrap_or_default();
+    assert!(
+        exit_file.starts_with(&format!("{}/.rsh-exit.", s.var("DIBS_SCRATCH")))
+            && !exit_file.ends_with(&format!(".{}", std::process::id())),
+        "in the scratch directory, under a name nobody can guess: {exit_file}"
+    );
+    assert!(!fs::exists(exit_file).unwrap(), "and gone once the sync is");
 }

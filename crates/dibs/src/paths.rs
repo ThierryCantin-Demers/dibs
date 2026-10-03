@@ -34,7 +34,7 @@ impl ReportsStamp {
 }
 
 impl Paths {
-    const VARS: [&'static str; 13] = [
+    const VARS: [&'static str; 14] = [
         "HOME",
         "XDG_STATE_HOME",
         "XDG_CACHE_HOME",
@@ -48,6 +48,7 @@ impl Paths {
         "DIBS_MACHINES",
         "DIBS_RECIPES",
         "DIBS_FLEET",
+        "DIBS_SCRATCH",
     ];
 
     pub fn from_env() -> Paths {
@@ -137,6 +138,13 @@ impl Paths {
     /// `fleet.toml`, what each machine should have.
     pub fn fleet(&self) -> Option<PathBuf> {
         self.overridden("DIBS_FLEET", self.config("fleet.toml"))
+    }
+
+    /// Where a call keeps files for a moment: the scratch a machine's jobs use, so on a machine
+    /// both are one directory.
+    pub fn scratch(&self) -> Option<PathBuf> {
+        let home = self.vars.get("HOME").map(|home| home.join(".cache/dibs"));
+        self.overridden("DIBS_SCRATCH", home)
     }
 
     fn overridden(&self, var: &str, default: Option<PathBuf>) -> Option<PathBuf> {

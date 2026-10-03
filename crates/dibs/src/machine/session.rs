@@ -1,16 +1,16 @@
-use crate::machine::{
-    lines::{Lines, Stream},
-    payload::{CallValues, Watch, encode},
-    target::Target,
-    unreachable::{Unreachable, no_room},
+use crate::{
+    machine::{
+        lines::{Lines, Stream},
+        payload::{CallValues, Watch, encode},
+        target::Target,
+        unreachable::{Unreachable, no_room},
+    },
+    scratch::ScratchFile,
 };
 use dibs_format::Exit;
 use std::{
     io::{self, Read as _, Write as _},
-    os::unix::{
-        fs::OpenOptionsExt as _,
-        process::{CommandExt as _, ExitStatusExt as _},
-    },
+    os::unix::process::{CommandExt as _, ExitStatusExt as _},
     path::PathBuf,
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
     sync::{
@@ -697,41 +697,6 @@ impl ScriptFile {
             .filter(|d| !d.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp"));
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-            ^ u128::from(std::process::id()) << 64;
-        let mut last = None;
-        for attempt in 0..16u32 {
-            let path = dir.join(format!(
-                "dibs-hold-script.{}",
-                suffix(seed.wrapping_add(u128::from(attempt) * 7919))
-            ));
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&path)
-            {
-                Ok(mut file) => {
-                    file.write_all(script.as_bytes())?;
-                    return Ok(path);
-                }
-                Err(e) => last = Some(e),
-            }
-        }
-        Err(last.unwrap_or_else(|| io::Error::other("no name left for a script")))
+        ScratchFile::create(&dir, "dibs-hold-script", script.as_bytes())
     }
-}
-
-fn suffix(mut n: u128) -> String {
-    const LETTERS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    (0..6)
-        .map(|_| {
-            let c = LETTERS[(n % LETTERS.len() as u128) as usize];
-            n /= LETTERS.len() as u128;
-            char::from(c)
-        })
-        .collect()
 }

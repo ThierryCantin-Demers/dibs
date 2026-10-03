@@ -8,10 +8,12 @@ use crate::{
     caller::Caller,
     cli::{BashQuoted, Call, Command as Words},
     machine::{CallValues, Interrupt, Lines, Liveness, Route, Session, Target, exit_code},
+    paths::Paths,
+    scratch::ScratchFile,
 };
 use dibs_format::{Exit, Label, Mode};
 use std::{
-    io::Write as _,
+    io,
     os::unix::process::CommandExt as _,
     path::PathBuf,
     process::{Command, Stdio},
@@ -166,28 +168,27 @@ struct Transport<'a> {
 }
 
 impl<'a> Transport<'a> {
-    fn create(sync: &'a Sync<'a>) -> std::io::Result<Transport<'a>> {
-        let dir = std::env::var_os("TMPDIR")
-            .filter(|d| !d.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
-        let named = |what: &str| dir.join(format!("dibs-rsh-{what}.{}", std::process::id()));
+    fn create(sync: &'a Sync<'a>) -> io::Result<Transport<'a>> {
+        let dir = Paths::from_env().scratch().ok_or_else(|| {
+            io::Error::other("no DIBS_SCRATCH and no HOME to keep a sync's files in")
+        })?;
         let mut transport = Transport {
             sync,
-            exit: named("exit"),
+            exit: ScratchFile::create(&dir, ".rsh-exit", b"")?,
             before: None,
         };
-        std::fs::File::create(&transport.exit)?.flush()?;
         if !sync.before.is_empty() {
-            let before = named("before");
-            std::fs::write(&before, sync.before)?;
-            transport.before = Some(before);
+            transport.before = Some(ScratchFile::create(
+                &dir,
+                ".rsh-before",
+                sync.before.as_bytes(),
+            )?);
         }
         Ok(transport)
     }
 
     /// rsync's `-e`, which it splits on whitespace and follows with the host and its command.
-    fn words(&self) -> std::io::Result<String> {
+    fn words(&self) -> io::Result<String> {
         let me = std::env::current_exe()?;
         let mut words = vec![me.display().to_string(), Rsh::WORD.to_string()];
         if self.sync.machine.call.stream {
@@ -318,9 +319,8 @@ impl Rsh {
 
     fn transfer(&self, caller: &Caller) -> Result<i32, CallError> {
         let before = match &self.before {
-            Some(path) => std::fs::read_to_string(path).map_err(|e| {
-                CallError::Io(std::io::Error::other(format!("{}: {e}", path.display())))
-            })?,
+            Some(path) => std::fs::read_to_string(path)
+                .map_err(|e| CallError::Io(io::Error::other(format!("{}: {e}", path.display()))))?,
             None => String::new(),
         };
         let call = Call {
