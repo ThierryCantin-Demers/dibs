@@ -197,6 +197,38 @@ fn a_killed_driver_with_no_parent_death_signal_still_takes_its_step_with_it() {
 }
 
 #[test]
+fn a_killed_driver_takes_every_step_running_on_its_threads_with_it() {
+    let mut s = Sandbox::new();
+    s.machines(&format!(
+        "[machine.one]\nssh = \"one\"\nhostname = \"{0}\"\n\n[machine.two]\nssh = \"two\"\nhostname = \"{0}\"\n",
+        hostname()
+    ));
+    let (one, two, hold) = (s.gate("one"), s.gate("two"), s.gate("hold"));
+    let file = batch_file(
+        &s,
+        "b5m",
+        &[
+            &format!(
+                "[one after=] dibs --on one --label batch-hold '{}; {}'",
+                one.signal(),
+                hold.hold()
+            ),
+            &format!(
+                "[two after=] dibs --on two --label batch-hold '{}; {}'",
+                two.signal(),
+                hold.hold()
+            ),
+        ],
+    );
+    let driver = s.spawn(s.dibs(["batch", &file]));
+    one.reached();
+    two.reached();
+    kill9(driver.pid);
+    s.wait(driver);
+    s.gone();
+}
+
+#[test]
 fn status_carries_the_batchs_plan_to_the_machine() {
     // The machine sees one step at a time, so the batch's plan travels with each one.
     let mut s = Sandbox::new();

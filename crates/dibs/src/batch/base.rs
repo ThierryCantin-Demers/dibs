@@ -1,4 +1,5 @@
 use super::{
+    guard::StepGuard,
     parse::{BatchError, Step, StepKind, parse},
     plan::{Pending, pending_of, plan, step_env},
     summary::summary,
@@ -14,9 +15,8 @@ use dibs_format::{Exit, MachineName};
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Write},
-    os::unix::process::CommandExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -173,8 +173,6 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         steps.len()
     );
 
-    let owned =
-        std::env::var("DIBS_NO_PDEATHSIG").as_deref() != Ok("1") && has("setsid") && has("setpriv");
     let cwd = std::env::current_dir()
         .map(|d| d.display().to_string())
         .unwrap_or_default();
@@ -205,24 +203,6 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
                 dir.join(format!("{}.out", step.name)),
                 dir.join(format!("{}.err", step.name)),
             );
-            let mut cmd = if owned {
-                let mut c = Command::new("setsid");
-                c.args([
-                    "setpriv",
-                    "--pdeathsig",
-                    "TERM",
-                    "bash",
-                    "-c",
-                    GROUP,
-                    "step",
-                    &step.line,
-                ]);
-                c
-            } else {
-                let mut c = Command::new("bash");
-                c.args(["-c", WATCHED, "step", &step.line]).process_group(0);
-                c
-            };
             let pending: Vec<Pending> = (0..steps.len())
                 .filter(|&j| j != i && states[j] == State::Waiting)
                 .flat_map(|j| {
@@ -240,29 +220,26 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
                     }
                 })
                 .collect();
-            cmd.envs(step_env(&id, &step.name, i + 1, steps.len(), &pending).vars())
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+            let batch = step_env(&id, &step.name, i + 1, steps.len(), &pending);
             let tx = tx.clone();
             let verbose = opts.verbose;
             let t = Instant::now();
-            match cmd.spawn() {
-                Ok(mut child) => {
-                    running.insert(i, child.id());
+            match StepGuard::spawn(&step.line, &batch) {
+                Ok(mut guarded) => {
+                    running.insert(i, guarded.id());
                     std::thread::spawn(move || {
                         let o = copy(
-                            child.stdout.take(),
+                            guarded.take_stdout(),
                             out,
                             verbose.then(|| format!("{} ", step.name)),
                         );
                         let e = copy(
-                            child.stderr.take(),
+                            guarded.take_stderr(),
                             err,
                             verbose.then(|| format!("{} ", step.name)),
                         );
                         // No code means a signal ended it, which the summary shows as killed.
-                        let status = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
+                        let status = guarded.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
                         let _ = (o.join(), e.join());
                         let _ = tx.send((i, status, t.elapsed().as_secs()));
                     });
@@ -344,37 +321,9 @@ pub(crate) fn was_cancelled(stderr: &str) -> bool {
 /// A step is its own process group, so the signal reaches the dibs call under it and that call's
 /// death reaches the machine, which stops the job and releases its lock.
 pub(crate) fn stop(pid: u32) {
-    let _ = Command::new("kill")
-        .args(["-TERM", "--", &format!("-{pid}")])
-        .status();
+    // SAFETY: signals the step's process group, which its guard leads.
+    unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
 }
-
-pub(crate) fn has(tool: &str) -> bool {
-    Command::new(tool)
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
-}
-
-/// The kernel signals only this shell when the driver dies, so it passes TERM to its whole group,
-/// where a local step's job runner holds the lock. Each driver thread signals, so TERM is ignored
-/// until the group has it, and bash's warnings stay off stderr, a pipe the dead driver closed.
-pub(crate) const GROUP: &str = r#"exec 3>&2 2>/dev/null; trap 'trap "" TERM; kill -TERM 0; trap - TERM; kill -TERM $$' TERM; bash -c "$1" 2>&3 3>&- & wait $!"#;
-
-/// GROUP where there is no parent-death signal, as on macOS: the step watches the driver itself.
-/// A tail that cannot watch exits non-zero, which leaves the step running rather than stopped.
-pub(crate) const WATCHED: &str = r#"exec 3>&2 2>/dev/null; trap 'trap "" TERM; kill -TERM 0; trap - TERM; kill -TERM $$' TERM
-bash -c "$1" 2>&3 3>&- & s=$!
-tail --pid=$PPID -f /dev/null </dev/null >/dev/null 2>&1 3>&- & w=$!
-wait -n -p ended $s $w; st=$?
-if [ "$ended" = "$w" ]; then
-    [ "$st" = 0 ] && kill -TERM 0
-    wait $s; st=$?
-fi
-kill $w 2>/dev/null
-exit $st"#;
 
 pub(crate) fn copy(
     from: Option<impl std::io::Read + Send + 'static>,

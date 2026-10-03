@@ -15,6 +15,7 @@ mod output;
 mod series;
 mod status;
 mod sync;
+mod watched;
 
 pub use base::{CallError, LockedCall};
 pub use dispatch::Dispatch;
@@ -26,3 +27,4 @@ pub use origin::{BatchStep, Origin, RecipeJob};
 pub use output::Output;
 pub use status::poll_timeout;
 pub use sync::{Rsh, Sync};
+pub use watched::{Starter, Watched};

@@ -12,8 +12,10 @@ no root anywhere. One account shared by everyone is the intended shape rather th
 because it is what lets one build cache serve the whole team, and because a lock keyed to a uid
 tells two people the machine is idle at the same time.
 
-Your own computer needs cargo to build dibs, and ssh, rsync and git; bash runs the steps of a
-batch. Neither GNU tools nor a recent bash is needed on your side, macOS included.
+Your own computer needs cargo to build dibs, and ssh, rsync 3 and git; bash runs the steps of a
+batch. Neither GNU tools nor a recent bash is needed on your side, macOS included. macOS's own
+rsync is too old, so a sync there uses Homebrew's (`brew install rsync`) wherever it is, and says
+so rather than settling for the other.
 
     git clone https://github.com/ThierryCantin-Demers/dibs
     cd dibs && ./install.sh

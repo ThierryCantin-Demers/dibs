@@ -35,7 +35,7 @@ exit "${WIRE_EXIT:-0}"
 
 /// An rsync that records what it copies and reaches the far side through its -e program.
 const RECORDING_RSYNC: &str = r#"#!/bin/bash
-[ "$1" = --help ] && { echo '  --mkpath   create destination path components'; exit 0; }
+[ "$1" = --version ] && { echo 'rsync  version 3.2.7  protocol version 31'; exit 0; }
 rsh=ssh args=() remote=
 while [ $# -gt 0 ]; do
     case $1 in

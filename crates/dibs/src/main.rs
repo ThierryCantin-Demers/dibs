@@ -37,7 +37,8 @@ fn main() -> ExitCode {
 
 fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
     // Words outside the grammar: the background fetch of report replies, the build stamp, and
-    // the processes dibs starts as rsync's transport and as a held command's guard.
+    // the processes dibs starts as rsync's transport and as the guard of a held command or a
+    // batch step.
     match words {
         [verb, flag, into] if verb == "friction" && flag == "--replies" => {
             return friction_replies(Path::new(into));
@@ -49,6 +50,11 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         [word, at, command @ ..] if word == Guard::WORD => {
             return Ok(ExitCode::from(
                 Guard::serve(at, command).rem_euclid(256) as u8
+            ));
+        }
+        [word, line] if word == batch::StepGuard::WORD => {
+            return Ok(ExitCode::from(
+                batch::StepGuard::serve(line).rem_euclid(256) as u8,
             ));
         }
         _ => {}

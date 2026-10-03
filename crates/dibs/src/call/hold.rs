@@ -2,6 +2,7 @@
 //! here with the terminal; the command is stopped if the lock goes first.
 
 use crate::{
+    call::watched::{Starter, Watched},
     cli::{Command, Service},
     machine::{Interrupt, Message, Reach, Started, exit_code},
 };
@@ -10,11 +11,7 @@ use std::{
     fmt,
     io::{BufRead as _, BufReader, ErrorKind, Write as _},
     net::{TcpStream, ToSocketAddrs as _},
-    os::{
-        fd::{AsRawFd as _, FromRawFd as _, OwnedFd},
-        unix::process::CommandExt as _,
-    },
-    process::{Child, ChildStdout, ExitStatus},
+    process::{ChildStdout, ExitStatus},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -110,16 +107,16 @@ impl Hold<'_> {
             self.command.shell_string()
         );
         let interrupt = Interrupt::defer();
-        let status = match self.guard(&ports).and_then(Guard::spawn) {
-            Ok((mut running, _liveness)) => {
+        let status = match self.guard(&ports).and_then(Watched::spawn) {
+            Ok(mut guarded) => {
                 {
                     let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
-                    state.command = Some(running.id());
+                    state.command = Some(guarded.id());
                     if state.holder_gone {
-                        stop_early(&self.at, running.id());
+                        stop_early(&self.at, guarded.id());
                     }
                 }
-                running.wait().map(exit_code).unwrap_or(1)
+                guarded.wait().map(exit_code).unwrap_or(1)
             }
             Err(e) => {
                 eprintln!("dibs: could not run {}: {e}", self.command.shell_string());
@@ -231,9 +228,6 @@ impl Hold<'_> {
                 command.env(format!("DIBS_SERVICE_{name}"), format!("{reach}:{port}"));
             }
         }
-        if let Some(path) = std::env::var_os("DIBS_CALLER_PATH").filter(|p| !p.is_empty()) {
-            command.env("PATH", path).env_remove("DIBS_CALLER_PATH");
-        }
         Ok(command)
     }
 }
@@ -344,41 +338,10 @@ pub struct Guard;
 impl Guard {
     /// The word a guard is started with, outside the grammar.
     pub const WORD: &'static str = "__hold-guard";
-    /// Where the guard reads the end of its dibs: the pipe only that dibs writes to.
-    const LIVENESS: libc::c_int = 3;
-
-    fn spawn(mut guard: std::process::Command) -> std::io::Result<(Child, OwnedFd)> {
-        let mut fds = [0; 2];
-        // SAFETY: pipe fills the two-element array it is given.
-        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: both descriptors were just created, and nothing else owns them.
-        let (read, write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
-        close_on_exec(read.as_raw_fd(), true);
-        close_on_exec(write.as_raw_fd(), true);
-        let raw = read.as_raw_fd();
-        // SAFETY: dup2 and fcntl are async-signal-safe.
-        unsafe {
-            guard.pre_exec(move || {
-                match raw == Guard::LIVENESS {
-                    true => close_on_exec(raw, false),
-                    false if libc::dup2(raw, Guard::LIVENESS) < 0 => {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    false => {}
-                }
-                Ok(())
-            });
-        }
-        let child = guard.spawn()?;
-        drop(read);
-        Ok((child, write))
-    }
 
     /// The guard's own side: runs the command, and stops it if its dibs goes first.
     pub fn serve(at: &str, words: &[String]) -> i32 {
-        close_on_exec(Guard::LIVENESS, true);
+        let starter = Starter::take();
         let mut command = match words {
             [one] => {
                 let mut bash = std::process::Command::new("bash");
@@ -405,9 +368,7 @@ impl Guard {
         let watched = Arc::clone(&done);
         let at = at.to_string();
         std::thread::spawn(move || {
-            // SAFETY: the guard was started with its dibs's pipe here, and nothing else uses it.
-            let mut liveness = unsafe { std::fs::File::from_raw_fd(Guard::LIVENESS) };
-            let _ = std::io::copy(&mut liveness, &mut std::io::sink());
+            starter.gone();
             if !watched.load(Ordering::SeqCst) {
                 stop_early(&at, pid);
             }
@@ -416,20 +377,6 @@ impl Guard {
         drop(interrupt);
         done.store(true, Ordering::SeqCst);
         status
-    }
-}
-
-fn close_on_exec(fd: libc::c_int, on: bool) {
-    // SAFETY: fcntl on a descriptor this process holds changes only its flags.
-    unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFD);
-        if flags >= 0 {
-            let flags = match on {
-                true => flags | libc::FD_CLOEXEC,
-                false => flags & !libc::FD_CLOEXEC,
-            };
-            libc::fcntl(fd, libc::F_SETFD, flags);
-        }
     }
 }
 

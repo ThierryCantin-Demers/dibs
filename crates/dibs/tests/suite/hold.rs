@@ -255,6 +255,43 @@ fn a_batch_step_can_hold() {
 }
 
 #[test]
+fn what_runs_here_for_the_caller_finds_its_tools_on_the_callers_path() {
+    let mut s = holding();
+    s.write_exec(
+        "mine/only-mine",
+        &format!("#!/bin/sh\necho \"$1\" >> {}\n", s.p("ran-mine")),
+    );
+    s.set("PATH", format!("{}:{}", s.p("mine"), s.var("PATH")));
+    s.set("DIBS_CALLER_PATH", "/nowhere");
+    let app = crate::recipes::app(&s);
+    crate::recipes::recipes(
+        &s,
+        "[service.idle]\n[[service.idle.serve]]\nname = \"idle\"\nrun = \"python3 -c 'import signal; signal.pause()'\"\n",
+    );
+    assert_eq!(
+        s.dibs(["--hold", "--label", "path-hold", "only-mine held"])
+            .code(),
+        0
+    );
+    let step = "[b] dibs --hold --label path-batch 'only-mine batch'\n";
+    assert_eq!(s.dibs(["batch", "-"]).stdin(step).code(), 0);
+    let with = s.dibs([
+        "with",
+        &format!("{app}@local"),
+        "idle",
+        "--",
+        "only-mine",
+        "with",
+    ]);
+    assert_eq!(with.code(), 0);
+    assert_eq!(
+        s.read("ran-mine"),
+        "held\nbatch\nwith\n",
+        "a held command, a batch line and a with command each ran the caller's own tool"
+    );
+}
+
+#[test]
 fn a_hold_whose_caller_died_is_let_go_with_its_command() {
     let mut s = holding();
     let (up, never) = (s.gate("up"), s.gate("never"));

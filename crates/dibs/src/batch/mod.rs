@@ -7,6 +7,7 @@
 //! which is the lifetime a single job already has. The design is `dibs-design/batch.md`.
 
 mod base;
+mod guard;
 mod parse;
 mod plan;
 mod summary;
@@ -14,5 +15,6 @@ mod summary;
 mod tests;
 
 pub(crate) use base::{Options, batch_id, run};
+pub(crate) use guard::StepGuard;
 pub(crate) use parse::BatchError;
 pub(crate) use plan::{Pending, Planned, recipe_env};

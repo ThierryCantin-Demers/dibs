@@ -13,7 +13,7 @@ use crate::{
 };
 use dibs_format::{Exit, Label, Mode};
 use std::{
-    io,
+    fmt, io,
     os::unix::process::CommandExt as _,
     path::PathBuf,
     process::{Command, Stdio},
@@ -53,16 +53,19 @@ impl Sync<'_> {
                  for a source tree use --checksum --no-times instead of -a.\n",
             );
         }
-        let Some(mkpath) = Rsync::mkpath() else {
-            output.say("--sync needs rsync on both machines\n");
-            return Ok(i32::from(Exit::Refused.code()));
+        let rsync = match Rsync::find() {
+            Ok(rsync) => rsync,
+            Err(missing) => {
+                output.say(&missing.to_string());
+                return Ok(i32::from(Exit::Refused.code()));
+            }
         };
-        if mkpath && !args.iter().any(|a| a == "--mkpath" || a == "--no-mkpath") {
+        if rsync.mkpath() && !args.iter().any(|a| a == "--mkpath" || a == "--no-mkpath") {
             args.insert(0, "--mkpath".into());
         }
         match Session::new(&target, &self.machine.here).route {
             Route::Here => self.here(&target, &args, output),
-            Route::Ssh { .. } => self.over_rsync(&target, &args, output),
+            Route::Ssh { .. } => self.over_rsync(&rsync, &target, &args, output),
         }
     }
 
@@ -95,12 +98,13 @@ impl Sync<'_> {
     /// rsync runs here and reaches the machine through `dibs __rsh`, which takes the lock.
     fn over_rsync(
         &self,
+        found: &Rsync,
         target: &Target,
         args: &[String],
         output: &mut Output,
     ) -> Result<i32, CallError> {
         let transport = Transport::create(self)?;
-        let mut rsync = Command::new("rsync");
+        let mut rsync = Command::new(&found.path);
         rsync
             .arg("-e")
             .arg(transport.words()?)
@@ -239,8 +243,8 @@ impl Drop for Transport<'_> {
 /// Lines run ahead of a transfer, each ending in a newline.
 struct Before<'a>(&'a str);
 
-impl std::fmt::Display for Before<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Before<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0.trim_end_matches('\n') {
             "" => Ok(()),
             lines => writeln!(f, "{lines}"),
@@ -360,18 +364,59 @@ impl Rsh {
 }
 
 /// The rsync on this computer.
-struct Rsync;
+/// The rsync a sync runs here: the first rsync 3 on PATH or where Homebrew puts it. macOS's own
+/// is 2.6.9 or openrsync, which lack what a sync relies on, so it is never settled for.
+struct Rsync {
+    path: PathBuf,
+    version: RsyncVersion,
+}
+
+/// What stands in for rsync 3 here, when nothing does.
+struct NoRsync {
+    older: Option<Rsync>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct RsyncVersion {
+    major: u32,
+    minor: u32,
+    patch: u32,
+}
 
 impl Rsync {
-    /// Whether it takes `--mkpath`; None when there is no rsync.
-    fn mkpath() -> Option<bool> {
-        let out = Command::new("rsync")
-            .arg("--help")
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        Some(String::from_utf8_lossy(&out.stdout).contains("--mkpath"))
+    const PLACES: [&'static str; 3] = ["rsync", "/opt/homebrew/bin/rsync", "/usr/local/bin/rsync"];
+    const MKPATH_SINCE: RsyncVersion = RsyncVersion {
+        major: 3,
+        minor: 2,
+        patch: 3,
+    };
+
+    fn find() -> Result<Rsync, NoRsync> {
+        Rsync::first_of(&Rsync::PLACES)
+    }
+
+    fn first_of(places: &[&str]) -> Result<Rsync, NoRsync> {
+        let mut older = None;
+        for &place in places {
+            let Some(version) = RsyncVersion::of(place) else {
+                continue;
+            };
+            let found = Rsync {
+                path: PathBuf::from(place),
+                version,
+            };
+            match version.major >= 3 {
+                true => return Ok(found),
+                false => {
+                    older.get_or_insert(found);
+                }
+            }
+        }
+        Err(NoRsync { older })
+    }
+
+    fn mkpath(&self) -> bool {
+        self.version >= Rsync::MKPATH_SINCE
     }
 
     /// A word of `-e`'s command, which rsync splits on whitespace.
@@ -380,6 +425,57 @@ impl Rsync {
             true => format!("'{}'", text.replace('\'', r"'\''")),
             false => text.to_string(),
         }
+    }
+}
+
+impl RsyncVersion {
+    /// What `<rsync> --version` says it is; None when it does not run.
+    fn of(rsync: &str) -> Option<RsyncVersion> {
+        let out = Command::new(rsync)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        RsyncVersion::read(&String::from_utf8_lossy(&out.stdout))
+    }
+
+    /// The first line naming rsync's version: `rsync  version 3.2.7  protocol version 31`, or
+    /// openrsync's `rsync version 2.6.9 compatible` under a line of its own.
+    fn read(text: &str) -> Option<RsyncVersion> {
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("rsync") && l.contains(" version "))?;
+        let number = line.split(" version ").nth(1)?.split_whitespace().next()?;
+        let mut parts = number
+            .split(|c: char| !c.is_ascii_digit())
+            .map(|p| p.parse().ok());
+        Some(RsyncVersion {
+            major: parts.next()??,
+            minor: parts.next().flatten().unwrap_or(0),
+            patch: parts.next().flatten().unwrap_or(0),
+        })
+    }
+}
+
+impl fmt::Display for RsyncVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+impl fmt::Display for NoRsync {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some(older) = &self.older else {
+            return writeln!(f, "--sync needs rsync on both machines");
+        };
+        writeln!(
+            f,
+            "dibs: --sync needs rsync 3 here, and the only rsync found is {} {}, which is too old: macOS ships one.",
+            older.path.display(),
+            older.version
+        )?;
+        writeln!(f, "  Install rsync 3 with:  brew install rsync")
     }
 }
 
@@ -403,9 +499,54 @@ fn preserves_mtimes(args: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt};
 
     fn words(line: &str) -> Vec<String> {
         line.split(' ').map(str::to_string).collect()
+    }
+
+    #[test]
+    fn rsync_3_is_found_past_an_older_one_and_an_older_one_alone_is_refused() {
+        let dir = std::env::temp_dir().join(format!("dibs-rsync-test.{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let fake = |name: &str, says: &str| {
+            let path = dir.join(name);
+            fs::write(&path, format!("#!/bin/sh\nprintf '{says}'\n")).unwrap();
+            fs::set_permissions(&path, PermissionsExt::from_mode(0o755)).unwrap();
+            path.display().to_string()
+        };
+        let apple = fake(
+            "apple",
+            "openrsync: protocol version 29\nrsync version 2.6.9 compatible\n",
+        );
+        let brew = fake("brew", "rsync  version 3.2.7  protocol version 31\n");
+        let found = Rsync::first_of(&["/nonexistent/rsync", &apple, &brew])
+            .ok()
+            .unwrap();
+        assert_eq!(
+            (found.path.display().to_string(), found.mkpath()),
+            (brew, true)
+        );
+        let refused = Rsync::first_of(&[&apple]).err().unwrap().to_string();
+        assert!(
+            refused.contains("2.6.9") && refused.contains("brew install rsync"),
+            "{refused}"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_rsync_is_known_by_the_version_it_names() {
+        let read = |text: &str| RsyncVersion::read(text).map(|v| v.to_string());
+        assert_eq!(
+            read("rsync  version 3.5.0-g483b5efc  protocol version 32"),
+            Some("3.5.0".into())
+        );
+        assert_eq!(
+            read("rsync  version 2.6.9  protocol version 29"),
+            Some("2.6.9".into())
+        );
+        assert_eq!(read("usage: something else"), None);
     }
 
     #[test]
