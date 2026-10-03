@@ -1,7 +1,9 @@
 use crate::{
     machine::{
+        half::Half,
         lines::{Lines, Stream},
         payload::{CallValues, Watch, encode},
+        served::{Delivery, Served},
         target::Target,
         unreachable::{Unreachable, no_room},
     },
@@ -58,6 +60,8 @@ pub struct Session {
     pub route: Route,
     /// The machine whose lock the call takes, lowercased.
     pub lock_at: String,
+    /// What notices call the machine: its inventory name, or the host.
+    pub name: String,
 }
 
 /// Where a command run here reaches the machine a session locks.
@@ -206,18 +210,22 @@ impl Session {
 
     pub fn new(target: &Target, here: &Here) -> Session {
         let me = here.name.to_ascii_lowercase();
-        match me == target.hostname.to_ascii_lowercase() || here.local {
+        let mut session = match me == target.hostname.to_ascii_lowercase() || here.local {
             true => Session {
                 route: Route::Here,
                 lock_at: me,
+                name: String::new(),
             },
             false => Session {
                 route: Route::Ssh {
                     host: target.host.clone(),
                 },
                 lock_at: target.hostname.to_ascii_lowercase(),
+                name: String::new(),
             },
-        }
+        };
+        session.name = session.at(target, here);
+        session
     }
 
     pub fn reach(&self, target: &Target, here: &Here) -> Reach {
@@ -269,10 +277,21 @@ impl Session {
     }
 
     /// Runs a call whose command runs on the machine, and returns its exit.
-    pub fn run(&self, values: &CallValues, live: Liveness) -> io::Result<ExitStatus> {
+    pub fn run(&self, values: &CallValues, live: Liveness) -> io::Result<i32> {
+        if Half::of(values, false) == Half::Runner {
+            return self.served(values, live).run(Delivery::Inherit);
+        }
         let deferred = Interrupt::defer();
         let started = self.start(values, live, Shape::Run, Streams::Inherit)?;
-        Session::wait(started, deferred)
+        Session::wait(started, deferred).map(exit_code)
+    }
+
+    fn served<'a>(&'a self, values: &'a CallValues, live: Liveness) -> Served<'a> {
+        Served {
+            session: self,
+            values,
+            live,
+        }
     }
 
     /// Runs a call whose output this process reads, a line at a time, as it arrives.
@@ -281,7 +300,10 @@ impl Session {
         values: &CallValues,
         live: Liveness,
         on_line: &mut dyn FnMut(Stream, &[u8]),
-    ) -> io::Result<ExitStatus> {
+    ) -> io::Result<i32> {
+        if Half::of(values, false) == Half::Runner {
+            return self.served(values, live).run(Delivery::Lines(on_line));
+        }
         let deferred = Interrupt::defer();
         let Started { mut child, channel } =
             self.start(values, live, Shape::Run, Streams::Lines)?;
@@ -300,7 +322,7 @@ impl Session {
         drop(deferred);
         let status = status?;
         Interrupt::pass_on(status);
-        Ok(status)
+        Ok(exit_code(status))
     }
 
     /// rsync's far side, fed this process's stdin.
@@ -502,7 +524,7 @@ impl Ssh {
 
     /// No TTY, so nothing downstream believes it is interactive, and a machine that stops
     /// answering is given up on after about two minutes.
-    fn options() -> Vec<String> {
+    pub(crate) fn options() -> Vec<String> {
         [
             "BatchMode=yes".to_string(),
             "LogLevel=ERROR".into(),
@@ -618,13 +640,13 @@ fn relay(mut stdin: ChildStdin, prelude: Option<String>, feed: Feed, messages: R
 
 /// The kernel signals the child when this process dies, SIGKILL included.
 #[cfg(target_os = "linux")]
-fn parent_death_signal() {
+pub(crate) fn parent_death_signal() {
     // SAFETY: prctl with these arguments only sets a flag on the calling process.
     unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) };
 }
 
 #[cfg(not(target_os = "linux"))]
-fn parent_death_signal() {}
+pub(crate) fn parent_death_signal() {}
 
 /// The exit a shell reports for a process: its code, or 128 and the signal that ended it.
 pub fn exit_code(status: ExitStatus) -> i32 {

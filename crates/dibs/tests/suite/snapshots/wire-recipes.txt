@@ -1,14 +1,12 @@
 == dibs build <root>/app@main p --on box-a --samples 3
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | set -eu
@@ -95,29 +93,19 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | cd -- "$__dibs_wt" || exit 3
       | export CARGO_TARGET_DIR="$__dibs_target"
       | { export SAMPLES=3; echo ran cuda samples=$SAMPLES; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: de78f4497d16258e
-    HOLD: 0
-    JSON: 0
-    LABEL: app_build_p
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: de78f4497d16258e
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs bench <root>/app@local gate --on box-a
 -> exit 0
@@ -354,18 +342,16 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     WITH_CMD: an array of 0
     WITH_NAME: an array of 0
     WITH_READY: an array of 0
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/gate
       | 2	3
       | app/bench/gate	bench	app_bench_gate	1
-    CMD:
+    card: null
+    command:
       | cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { (
       |     flock 8
       |     if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
@@ -384,40 +370,28 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     ) 9>"$CARGO_TARGET_DIR/.dibs-packages.lock"
       | fi
       | exit $rc; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 6bc29855bfd0b3e9
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_gate
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
-call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/gate
       | 3	3
-    CMD:
+    card: null
+    command:
       | cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
       |     echo DIBS-REFUSED
       |     echo "dibs: refused to measure: another tree built into $CARGO_TARGET_DIR after this one did, so the binary there may be that tree's." >&2
@@ -426,29 +400,19 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | fi
       | echo "DIBS-STATE ${DIBS_STATE:-}"
       | echo measured; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 6bc29855bfd0b3e9
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_gate
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 7200
-    MODE: bench
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 7200
+    max_from: default
+    mode: bench
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs shell <root>/app@local --reason 'a look' --on box-a -- 'cat a.txt'
 -> exit 0
@@ -684,52 +648,42 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     WITH_CMD: an array of 0
     WITH_NAME: an array of 0
     WITH_READY: an array of 0
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/shell
       | 2	2
-    CMD: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { cat a.txt; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: ae20812789dc44ec
-    HOLD: 0
-    JSON: 0
-    LABEL: app_shell
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    card: null
+    command: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { cat a.txt; }
+    fingerprint: ae20812789dc44ec
+    json: false
+    label: app_shell
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs build <root>/app@main p --on box-a --device gpu:card
 -> exit 2
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card.alias: "gpu:card"
+    card.chip: "10de:2786"
+    card.pci: "0000:01:00.0"
+    card.runtimes: ["cuda","vulkan"]
+    card.twins: 1
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | set -eu
@@ -816,44 +770,32 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | cd -- "$__dibs_wt" || exit 3
       | export CARGO_TARGET_DIR="$__dibs_target"
       | { export SAMPLES=10; echo ran cuda samples=$SAMPLES; }
-    DEV_CHIP: 10de:2786
-    DEV_NAME: gpu:card
-    DEV_PCI: 0000:01:00.0
-    DEV_RT: cuda,vulkan
-    DEV_TWINS: 1
-    FINGERPRINT: 70e532912455d091
-    HOLD: 0
-    JSON: 0
-    LABEL: app_build_p_gpu_card
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p_gpu_card
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs build <root>/app@main p --on box-a --sweep samples=1,2
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	samples-1: app/build/p
       | 1	2
       | samples-2: app/build/p	shared	app_build_p	1
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | set -eu
@@ -940,40 +882,28 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | cd -- "$__dibs_wt" || exit 3
       | export CARGO_TARGET_DIR="$__dibs_target"
       | { export SAMPLES=1; echo ran cuda samples=$SAMPLES; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 83480f9a8587b084
-    HOLD: 0
-    JSON: 0
-    LABEL: app_build_p
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+    fingerprint: 83480f9a8587b084
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	samples-2: app/build/p
       | 2	2
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | set -eu
@@ -1060,29 +990,19 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | cd -- "$__dibs_wt" || exit 3
       | export CARGO_TARGET_DIR="$__dibs_target"
       | { export SAMPLES=2; echo ran cuda samples=$SAMPLES; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: eb8f9d64e6207555
-    HOLD: 0
-    JSON: 0
-    LABEL: app_build_p
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: eb8f9d64e6207555
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs bench <root>/app@origin/main..local gate --on box-a --reps 1
 -> exit 0
@@ -1322,21 +1242,19 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     WITH_CMD: an array of 0
     WITH_NAME: an array of 0
     WITH_READY: an array of 0
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/gate (base)
       | 2	6
       | app/bench/gate:send (local)	rsh	app_bench_gate_send	1
       | app/bench/gate (local)	shared	app_bench_gate	1
       | app/bench/gate (base)	bench	app_bench_gate	1
       | app/bench/gate (local)	bench	app_bench_gate	1
-    CMD:
+    card: null
+    command:
       | cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { (
       |     flock 8
       |     if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
@@ -1355,29 +1273,19 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     ) 9>"$CARGO_TARGET_DIR/.dibs-packages.lock"
       | fi
       | exit $rc; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 6bc29855bfd0b3e9
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_gate
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
   its command, for the login shell there:
     mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
@@ -1612,19 +1520,17 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     WITH_CMD: an array of 0
     WITH_NAME: an array of 0
     WITH_READY: an array of 0
-call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/gate (local)
       | 4	6
       | app/bench/gate (base)	bench	app_bench_gate	1
       | app/bench/gate (local)	bench	app_bench_gate	1
-    CMD:
+    card: null
+    command:
       | cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { (
       |     flock 8
       |     if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
@@ -1643,41 +1549,29 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     ) 9>"$CARGO_TARGET_DIR/.dibs-packages.lock"
       | fi
       | exit $rc; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 6bc29855bfd0b3e9
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_gate
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
-call 5: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 5: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/gate (base)
       | 5	6
       | app/bench/gate (local)	bench	app_bench_gate	1
-    CMD:
+    card: null
+    command:
       | cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
       |     echo DIBS-REFUSED
       |     echo "dibs: refused to measure: another tree built into $CARGO_TARGET_DIR after this one did, so the binary there may be that tree's." >&2
@@ -1686,40 +1580,28 @@ call 5: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | fi
       | echo "DIBS-STATE ${DIBS_STATE:-}"
       | echo measured; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 6bc29855bfd0b3e9
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_gate
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 7200
-    MODE: bench
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
-call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 7200
+    max_from: default
+    mode: bench
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/gate (local)
       | 6	6
-    CMD:
+    card: null
+    command:
       | cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
       |     echo DIBS-REFUSED
       |     echo "dibs: refused to measure: another tree built into $CARGO_TARGET_DIR after this one did, so the binary there may be that tree's." >&2
@@ -1728,29 +1610,19 @@ call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | fi
       | echo "DIBS-STATE ${DIBS_STATE:-}"
       | echo measured; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 6bc29855bfd0b3e9
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_gate
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 7200
-    MODE: bench
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 7200
+    max_from: default
+    mode: bench
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs bench <root>/app@local art --on box-a --artifacts <root>/got
 -> exit 0
@@ -1986,17 +1858,15 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     WITH_CMD: an array of 0
     WITH_NAME: an array of 0
     WITH_READY: an array of 0
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/art
       | 2	2
-    CMD:
+    card: null
+    command:
       | cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { ( echo "DIBS-STATE ${DIBS_STATE:-}"
       | mkdir -p results && echo measured > results/new.json ); __dibs_rc=$?
       | __dibs_ref=${DIBS_SCRATCH:-$HOME/.cache/dibs}/jobs/${DIBS_JOB:-}/cmd
@@ -2014,29 +1884,19 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     [ "$__dibs_n" = 0 ] || echo "DIBS-ARTIFACTS $__dibs_n"
       | fi
       | exit $__dibs_rc; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 29dcff772dc1e4fa
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_art
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 7200
-    MODE: bench
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 29dcff772dc1e4fa
+    json: false
+    label: app_bench_art
+    max: 7200
+    max_from: default
+    mode: bench
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
   its command, for the login shell there:
     mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
@@ -2277,38 +2137,26 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     WITH_CMD: an array of 0
     WITH_NAME: an array of 0
     WITH_READY: an array of 0
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { true; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 
-    HOLD: 0
-    JSON: 0
-    LABEL: app_with_servers_build
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { true; }
+    fingerprint: null
+    json: false
+    label: app_with_servers_build
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
   its command, for the login shell there:
     mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
@@ -2577,38 +2425,26 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     WITH_CMD: an array of 0
     WITH_NAME: an array of 0
     WITH_READY: an array of 0
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { true; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 
-    HOLD: 0
-    JSON: 0
-    LABEL: app_with_servers_build
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { true; }
+    fingerprint: null
+    json: false
+    label: app_with_servers_build
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
   its command, for the login shell there:
     mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
@@ -3114,40 +2950,28 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     WITH_CMD: an array of 0
     WITH_NAME: an array of 0
     WITH_READY: an array of 0
-call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/build/p
       | 3	3
-    CMD: cd <root>/scratch/ws/app/pin-<hash>/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key>-pin-<hash> && { export SAMPLES=10; echo ran cuda samples=$SAMPLES; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 70e532912455d091
-    HOLD: 0
-    JSON: 0
-    LABEL: app_build_p
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    card: null
+    command: cd <root>/scratch/ws/app/pin-<hash>/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key>-pin-<hash> && { export SAMPLES=10; echo ran cuda samples=$SAMPLES; }
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs build app@local p --on box-a  (a git dependency the machine lacks)
 -> exit 0
@@ -3419,37 +3243,25 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     WITH_CMD: an array of 0
     WITH_NAME: an array of 0
     WITH_READY: an array of 0
-call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/build/p
       | 2	2
-    CMD: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { export SAMPLES=10; echo ran cuda samples=$SAMPLES; }
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 70e532912455d091
-    HOLD: 0
-    JSON: 0
-    LABEL: app_build_p
-    LEASE: 120
-    MAXFROM: default
-    MAXHOLD: 1800
-    MODE: shared
-    NO_WATCH: 0
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    card: null
+    command: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { export SAMPLES=10; echo ran cuda samples=$SAMPLES; }
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false

@@ -25,18 +25,19 @@ kill_batch_here() {   # id anyone
     : > "$DIR/cancelled.$id"
     [ "$MODE" = kill-force ] && sig=KILL || sig=TERM
     for pid in "${jobs[@]}"; do
+        { [ -e "$DIR/holder.$pid" ] || [ -e "$DIR/waiting.$pid" ]; } && stopped=$((stopped+1))
+    done
+    # Logged before the signals, so the jobs' own ends come after it in the log.
+    CMD_ONE="cancelled batch $id: $stopped job(s) stopped"
+    LABEL=$id
+    log_event cancelled
+    for pid in "${jobs[@]}"; do
         if [ -e "$DIR/holder.$pid" ]; then
             for victim in $(tree_below "$pid" | tac); do kill -"$sig" "$victim" 2>/dev/null; done
         elif [ -e "$DIR/waiting.$pid" ]; then
             for victim in $(printf '%s\n' "$pid" $(tree_below "$pid") | tac); do kill -"$sig" "$victim" 2>/dev/null; done
-        else
-            continue
         fi
-        stopped=$((stopped+1))
     done
-    CMD_ONE="cancelled batch $id: $stopped job(s) stopped"
-    LABEL=$id
-    log_event cancelled
     echo "Cancelled batch $id on $(hostname -s): stopped $stopped job(s), and its later steps are refused here."
     exit 0
 }

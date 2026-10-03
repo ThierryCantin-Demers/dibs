@@ -2,10 +2,7 @@ use crate::{
     call::base::{CallError, Request},
     caller::{Caller, short_hostname},
     cli::Call,
-    machine::{
-        Answer, CallValues, Card, Fleet, Here, Kept, Liveness, Session, Target, TargetEnv,
-        exit_code,
-    },
+    machine::{Answer, CallValues, Card, Fleet, Here, Kept, Liveness, Session, Target, TargetEnv},
     paths::Paths,
 };
 use dibs_format::{Label, MachineName, Mode};
@@ -121,7 +118,7 @@ impl<'a> MachineCall<'a> {
     pub fn send(&self, asked: Asked, target: &Target) -> Result<i32, CallError> {
         let values = self.values(asked, target)?;
         let session = Session::new(target, &self.here);
-        let status = exit_code(session.run(&values, Liveness::from_env())?);
+        let status = session.run(&values, Liveness::from_env())?;
         Ok(session.exit(status, target))
     }
 

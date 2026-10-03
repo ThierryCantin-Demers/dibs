@@ -2,7 +2,10 @@ use crate::{
     caller::Caller,
     cli::{BashQuoted, PortName, Service},
 };
-use dibs_format::{Label, Mode};
+use dibs_format::{
+    Alias, Label, Mode,
+    wire::{self, Request},
+};
 use flate2::{Compression, write::GzEncoder};
 use std::{fmt::Write as _, io::Write as _};
 
@@ -71,6 +74,48 @@ pub struct Watch {
 }
 
 impl CallValues {
+    /// The values as the runner is asked for them.
+    pub fn request(&self, watch: Watch) -> Request {
+        let some = |text: &str| Some(text.to_string()).filter(|t| !t.is_empty());
+        let card = &self.card;
+        Request {
+            mode: self.mode,
+            label: self.label.clone(),
+            command: self.command.clone(),
+            wait: self.wait,
+            max: self.max,
+            max_from: match self.max_from {
+                MaxFrom::Given => wire::MaxFrom::Given,
+                MaxFrom::Default => wire::MaxFrom::Default,
+            },
+            verbose: self.verbose,
+            json: self.json,
+            stream: self.stream,
+            tty: self.tty,
+            card: some(&card.alias).map(|alias| wire::Card {
+                alias: Alias::new(alias),
+                pci: some(&card.pci),
+                runtimes: card
+                    .runtimes
+                    .split(',')
+                    .filter(|r| !r.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+                chip: some(&card.chip),
+                twins: card.twins,
+            }),
+            fingerprint: self.fingerprint.clone().filter(|f| !f.is_empty()),
+            agent: self.caller.name.clone(),
+            agent_id: self.caller.id.clone(),
+            batch: some(&self.batch),
+            watch: wire::Watch {
+                off: watch.off,
+                hold: watch.hold,
+                lease: watch.lease,
+            },
+        }
+    }
+
     /// The values as assignments, then the machine half.
     pub fn script(&self, watch: Watch) -> String {
         let flag = |b: bool| if b { "1" } else { "0" };

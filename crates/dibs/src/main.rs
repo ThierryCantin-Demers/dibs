@@ -17,6 +17,7 @@ use dibs::{
     call::{Dispatch, Guard, MachineCall, Rsh},
     caller::Caller,
     cli::{Call, Help, Invocation, Mode, RecipeCall, RecipeVerb},
+    machine::RUNNER_WORD,
     paths::Paths,
     update::{Build, ChangeNotice},
 };
@@ -36,14 +37,17 @@ fn main() -> ExitCode {
 }
 
 fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
-    // Words outside the grammar: the background fetch of report replies, the build stamp, and
-    // the processes dibs starts as rsync's transport and as the guard of a held command or a
-    // batch step.
+    // Words outside the grammar: the background fetch of report replies, the build stamp, the
+    // runner this binary links, and the processes dibs starts as rsync's transport and as the
+    // guard of a held command or a batch step.
     match words {
         [verb, flag, into] if verb == "friction" && flag == "--replies" => {
             return friction_replies(Path::new(into));
         }
         [flag] if flag == "--version" => return Ok(version()),
+        [word, rest @ ..] if word == RUNNER_WORD => {
+            return Ok(ExitCode::from(dibs_runner::main(rest).rem_euclid(256) as u8));
+        }
         [word, rest @ ..] if word == Rsh::WORD => {
             return Ok(ExitCode::from(Rsh::serve(rest).rem_euclid(256) as u8));
         }

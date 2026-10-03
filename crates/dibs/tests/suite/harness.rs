@@ -44,6 +44,19 @@ pub fn now() -> u64 {
         .as_secs()
 }
 
+/// Where a machine keeps the runner for this build, under its home.
+pub fn runner_path() -> String {
+    format!(
+        ".cache/dibs/runner/{}/dibs-runner",
+        env!("DIBS_RUNNER_HASH")
+    )
+}
+
+/// The runner this build links, as a machine would have built it: the binary serves it.
+pub fn prebuilt_runner() -> String {
+    format!("#!/bin/sh\nexec '{DIBS}' __runner \"$@\"\n")
+}
+
 /// A pid that stays alive for the whole test, for records that prune would drop otherwise.
 pub fn live_pid() -> u32 {
     std::process::id()
@@ -93,6 +106,9 @@ impl Sandbox {
             exit 255\n";
         write_exec(&root.join("nossh/ssh"), nossh);
         write_exec(&root.join("nossh/scp"), nossh);
+        let runner = root.join(format!("home/{}", runner_path()));
+        fs::create_dir_all(runner.parent().unwrap()).unwrap();
+        write_exec(&runner, &prebuilt_runner());
 
         let at = |p: &str| root.join(p).display().to_string();
         let mut env = BTreeMap::new();

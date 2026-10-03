@@ -245,7 +245,6 @@ exit  call
 
 == DIBS_LOCK_DIR=<root>/ro-lock dibs --label x true
 -> exit 71
-2| bash: line <n>: <root>/ro-lock/.writable.<pid>: Permission denied
 2| dibs: <root>/ro-lock cannot be written, so no lock can be taken. Nothing was run.
 2|   A sandboxed shell is the usual cause: it sees the lock directory and cannot
 2|   write in it. Unlocked work beside a measurement is the one outcome this exists

@@ -18,6 +18,10 @@ count=$(printf '%s\n' "$cmd" | sed -n 's/.*count=\([0-9][0-9]*\).*/\1/p' | head 
 if [ -n "$count" ]; then
     head -c "$count" > "$WIRE/$n.b64"
     base64 -d < "$WIRE/$n.b64" | gzip -dc > "$WIRE/$n.payload"
+elif [[ $cmd == *dibs-runner* ]]; then
+    IFS= read -r header
+    head -c "${header#request }" > "$WIRE/$n.request"
+    { printf '%s\n' "$header"; cat "$WIRE/$n.request"; } > "$WIRE/$n.frame"
 fi
 [ -n "${WIRE_SAYS:-}" ] && printf '%s\n' "$WIRE_SAYS" >&2
 if [ "${WIRE_RUN:-0}" = 1 ]; then
@@ -28,6 +32,7 @@ if [ "${WIRE_RUN:-0}" = 1 ]; then
         mkdir -p "$DIBS_LOCK_DIR" "$DIBS_SCRATCH"
     fi
     if [ -n "$count" ]; then exec bash -c "$cmd" < <(cat "$WIRE/$n.b64"; exec cat); fi
+    if [ -e "$WIRE/$n.frame" ]; then exec bash -c "$cmd" < <(cat "$WIRE/$n.frame"; exec cat); fi
     exec bash -c "$cmd"
 fi
 exit "${WIRE_EXIT:-0}"
@@ -92,6 +97,7 @@ fn wire_normal(s: &Sandbox) -> Normal {
             ".dibs-payload.<pid>.<time>.sh",
         )
         .rule(r"\b[0-9]+-[0-9]{16,}\b", "<token>")
+        .rule(r"runner/[0-9a-f]{16}/", "runner/<hash>/")
         .rule(r"local-[0-9a-f]{10}\b", "local-<key>")
         .rule(
             r"(local:[0-9a-f]{7,12})(\+dirty)?-[0-9a-f]{12}\b",
@@ -253,7 +259,39 @@ impl<'a> Wire<'a> {
             out.push_str("  the values the machine acts on, ahead of lib/machine:\n");
             out.push_str(&indent(&self.n.apply(&self.values(sent, cmd))));
         }
+        if let Ok(request) = fs::read_to_string(wire.join(format!("{k}.request"))) {
+            out.push_str("  the request the runner acts on:\n");
+            out.push_str(&indent(&self.n.apply(&self.request(&request, cmd))));
+        }
         out
+    }
+
+    /// A request's fields, one a line, a card's and the watch's under their names.
+    fn request(&self, request: &str, cmd: Cmd) -> String {
+        let value: serde_json::Value = serde_json::from_str(request)
+            .unwrap_or_else(|e| panic!("the request is not JSON: {e}\n{request}"));
+        let mut entries = Vec::new();
+        for (name, field) in value.as_object().expect("a request is an object") {
+            match field {
+                serde_json::Value::Object(inner) => {
+                    for (key, value) in inner {
+                        entries.push(format!("{name}.{key}: {value}\n"));
+                    }
+                }
+                serde_json::Value::String(command) if name == "command" => {
+                    entries.push(self.entry("command", command, cmd));
+                }
+                serde_json::Value::String(text) if !text.contains('\n') => {
+                    entries.push(format!("{name}: {text}\n"));
+                }
+                serde_json::Value::String(text) => {
+                    entries.push(self.entry(name, text, Cmd::AsSent))
+                }
+                other => entries.push(format!("{name}: {other}\n")),
+            }
+        }
+        entries.sort();
+        entries.concat()
     }
 
     /// The values a payload carries, as the machine sees them once it has run them, by name.
@@ -293,8 +331,8 @@ impl<'a> Wire<'a> {
         if let Some(array) = name.strip_suffix("[]") {
             return format!("{array}: an array of {value}\n");
         }
-        if name == "CMD" && cmd == Cmd::AsWords {
-            return format!("CMD, as the words it runs:\n{}", self.words(value));
+        if (name == "CMD" || name == "command") && cmd == Cmd::AsWords {
+            return format!("{name}, as the words it runs:\n{}", self.words(value));
         }
         if !value.contains('\n') {
             return format!("{name}: {value}\n");

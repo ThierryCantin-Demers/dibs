@@ -18,6 +18,7 @@ mod recipes;
 mod records;
 mod removed;
 mod reports;
+mod runner;
 mod sandbox;
 mod scratch;
 mod services;

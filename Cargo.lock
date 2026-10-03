@@ -521,6 +521,7 @@ name = "dibs"
 version = "0.1.0"
 dependencies = [
  "dibs-format",
+ "dibs-runner",
  "flate2",
  "libc",
  "regex",
@@ -546,6 +547,14 @@ dependencies = [
  "eframe",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "dibs-runner"
+version = "0.1.0"
+dependencies = [
+ "dibs-format",
+ "libc",
 ]
 
 [[package]]
