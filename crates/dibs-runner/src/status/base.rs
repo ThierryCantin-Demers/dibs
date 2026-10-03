@@ -28,6 +28,7 @@ use std::{
 
 /// A look at the machine's lock, from its records and what the system says of the processes
 /// they name. Nothing here forks.
+#[derive(Clone, Copy)]
 pub struct Look<'a> {
     pub machine: &'a Machine,
     pub dir: &'a LockDir,

@@ -8,6 +8,7 @@ mod clock;
 mod history;
 mod job;
 mod kept;
+mod kill;
 mod lock;
 mod machine;
 mod platform;

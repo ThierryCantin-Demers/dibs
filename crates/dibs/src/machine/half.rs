@@ -24,6 +24,9 @@ impl Half {
                 | Mode::Status
                 | Mode::Watch
                 | Mode::Log
+                | Mode::Kill
+                | Mode::KillForce
+                | Mode::Release
         );
         match served {
             true => Half::Runner,

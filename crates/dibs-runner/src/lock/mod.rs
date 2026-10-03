@@ -4,4 +4,4 @@ mod base;
 mod records;
 
 pub use base::{Hold, Lock};
-pub use records::{Kind, LockDir};
+pub use records::{Kind, LockDir, pid_of, still_the_same};

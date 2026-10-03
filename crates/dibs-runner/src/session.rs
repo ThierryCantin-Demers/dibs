@@ -8,6 +8,7 @@ use crate::{
         Start, Unpinned, built, job_id,
     },
     kept::Kept,
+    kill::Kill,
     lock::{Hold, Kind, Lock, LockDir},
     machine::{Machine, line_count},
     platform::{Host, Platform as _},
@@ -123,10 +124,17 @@ impl Session {
             sink: &self.sink,
             request: &self.call.request,
         };
+        let kill = || Kill {
+            call: &self.call,
+            look: views.look,
+            sink: &self.sink,
+        };
         match self.call.mode() {
             Mode::Status => return views.status(),
             Mode::Watch => return views.watch(channel),
             Mode::Log => return views.log(),
+            Mode::Kill | Mode::KillForce => return kill().serve(),
+            Mode::Release => return kill().release(),
             _ => {}
         }
         let environment = match Environment::of(&machine, self.call.request.card.as_ref()) {
