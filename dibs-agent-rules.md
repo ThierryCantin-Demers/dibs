@@ -158,9 +158,9 @@ spoiled without it.
 
 ### Machines
 
-- `dibs --machines` lists the known machines. `dibs --check <host>` says whether a
-  machine is usable and what is in it; run it before first use and read its warnings, not only its
-  exit code, and `--write` records the machine.
+- `dibs --machines` lists the known machines. `dibs --check <host>` installs dibs's runner there,
+  which needs cargo on the machine, and says whether it is usable and what is in it; run it before
+  first use and read its warnings, not only its exit code, and `--write` records the machine.
 - A machine marked `measure = false` refuses `--bench`. That is not an obstacle to route around: its
   numbers would mean nothing. Send the benchmark to a machine that measures, or run it shared if it
   was never a measurement. Such a machine is still good for builds and tests through `--on`.
@@ -265,13 +265,15 @@ spoiled without it.
 
 - The first call after dibs has changed says so on stderr, once per session, with the commits that
   arrived. Flags and output you remember may be wrong from then on: read `dibs --help`.
-- Exits 69, 70 and 71 are for telling the person you work for, never for working around:
+- Exits 69, 70, 71 and 72 are for telling the person you work for, never for working around:
   - **69** unreachable: off, asleep, or its network needs a login. Do what does not need the
     machine, and do not retry in a loop.
   - **70** no room: the machine's scratch is full or over quota, so nothing can run there.
     `dibs --gc --dry-run` says what is filling it, which is what to tell them.
   - **71** the lock directory cannot be written, so **nothing ran**; a sandboxed shell is the usual
     cause. Never point `DIBS_LOCK_DIR` somewhere writable: a lock nobody else uses excludes nobody.
+  - **72** dibs could not install its runner on the machine, so **nothing ran**: it has none yet,
+    which `dibs --check <machine>` installs, or the build failed and its output says why.
 - **75** it was busy and you passed `--wait`.
 - **76** its batch was cancelled with `dibs --kill <batch-id>`. It was meant to stop: do not run it
   again unless asked.

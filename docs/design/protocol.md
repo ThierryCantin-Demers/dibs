@@ -74,10 +74,11 @@ runner's status.
 
 - **A version missing on a machine** shows as exit 125 with no frame. The client then runs the
   newest runner already there (`ls -t`) as `build <hash>`, fed the tree. That runner takes the
-  shared lock as an ordinary job, labelled `dibs-runner`, which unpacks the tree under
-  `$DIBS_SCRATCH/runner/` and runs the tree's own `install.sh`: `cargo build --locked --release`
-  into a target directory every version shares, then a rename into
-  `~/.cache/dibs/runner/<hash>/dibs-runner`. The client then makes its call again, once.
+  shared lock as an ordinary job, labelled `dibs-runner`, which unpacks the tree in
+  `~/.cache/dibs/runner/.src.<hash>.<pid>` and runs the tree's own `install.sh`:
+  `cargo build --locked --release` into `~/.cache/dibs/runner/.target`, which every version
+  shares, then a rename into `~/.cache/dibs/runner/<hash>/dibs-runner`. The client shows the
+  build on stderr and then makes its call again, once.
 - **Two clients building one version** both build; the rename makes the last one win, with the
   same bytes. A build that finds its version already installed when it gets the lock stops there.
 - **A machine with no runner at all** refuses the call with exit 72, naming `dibs --check`.

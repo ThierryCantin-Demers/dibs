@@ -7,9 +7,10 @@ impl Help {
     const INTERFACE: &'static str = include_str!("help.txt");
 
     /// The exits a caller acts on, one row per line of the help.
-    const EXITS: [&'static [Exit]; 3] = [
-        &[Exit::Unreachable, Exit::NoRoom, Exit::NoLock, Exit::Busy],
-        &[Exit::Cancelled, Exit::ServiceFailed, Exit::Overran],
+    const EXITS: [&'static [Exit]; 4] = [
+        &[Exit::Unreachable, Exit::NoRoom, Exit::NoLock],
+        &[Exit::NoRunner, Exit::Busy, Exit::Cancelled],
+        &[Exit::ServiceFailed, Exit::Overran],
         &[Exit::TargetRebuilt],
     ];
 

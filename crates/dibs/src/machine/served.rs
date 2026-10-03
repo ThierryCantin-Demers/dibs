@@ -1,7 +1,10 @@
 use crate::machine::{
     lines::Stream,
     payload::{CallValues, Watch},
-    session::{Interrupt, Liveness, Route, Session, Ssh, exit_code, parent_death_signal},
+    provision::{Installed, Provision},
+    session::{
+        Interrupt, Liveness, Route, SSH_FAILED, Session, Ssh, exit_code, parent_death_signal,
+    },
 };
 use dibs_format::{
     Exit,
@@ -18,7 +21,7 @@ use std::{
 };
 
 /// What a far shell exits with when the runner for this source is not there.
-const MISSING: i32 = 125;
+pub(super) const MISSING: i32 = 125;
 /// The word the client's own binary serves the runner under, on this computer.
 pub const RUNNER_WORD: &str = "__runner";
 
@@ -28,6 +31,8 @@ pub struct Runner;
 
 impl Runner {
     pub const HASH: &str = env!("DIBS_RUNNER_HASH");
+    /// The tree a machine builds it from, as a gzipped tar.
+    pub const SOURCE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runner-source.tar.gz"));
 
     /// The line the login shell there runs, which fish, bash and dash read alike.
     fn far_line() -> String {
@@ -71,7 +76,7 @@ pub struct Served<'a> {
 }
 
 /// What reached this side from the runner.
-enum Heard {
+pub(super) enum Heard {
     Out(Vec<u8>),
     Err(Vec<u8>),
     /// A line the runner or ssh wrote on stderr, outside any frame.
@@ -81,23 +86,32 @@ enum Heard {
 }
 
 impl Served<'_> {
-    /// Runs the call and returns its exit.
+    /// Runs the call and returns its exit. A machine without this runner has it built there
+    /// first, through the newest runner it has, and the call is made again.
     pub fn run(&self, delivery: Delivery) -> io::Result<i32> {
         let mut delivery = delivery;
         let deferred = Interrupt::defer();
-        let answer = self.attempt(&mut delivery);
+        let answer = self.answer(&mut delivery);
         drop(deferred);
-        let answer = answer?;
-        match answer {
-            Answer::Exit(code) => Ok(code),
-            Answer::Missing => {
-                let said = format!(
-                    "dibs: {} has no dibs runner for this version yet, so nothing ran.\n  Install one with:  dibs --check {}\n",
-                    self.session.name, self.session.name
-                );
-                delivery.say(&said);
-                Ok(i32::from(Exit::NoRunner.code()))
-            }
+        answer
+    }
+
+    fn answer(&self, delivery: &mut Delivery) -> io::Result<i32> {
+        if let Answer::Exit(code) = self.attempt(delivery)? {
+            return Ok(code);
+        }
+        let provision = Provision {
+            session: self.session,
+            live: self.live,
+        };
+        match provision.through_newest(delivery)? {
+            Installed::Done => match self.attempt(delivery)? {
+                Answer::Exit(code) => Ok(code),
+                Answer::Missing => Ok(provision.failed(delivery)),
+            },
+            Installed::NoneThere => Ok(provision.none_there(delivery)),
+            Installed::Failed => Ok(provision.failed(delivery)),
+            Installed::Unreached => Ok(SSH_FAILED),
         }
     }
 
@@ -216,13 +230,13 @@ enum Answer {
 
 /// Partial lines held back until their end arrives.
 #[derive(Default)]
-struct LineBuffers {
+pub(super) struct LineBuffers {
     out: Vec<u8>,
     err: Vec<u8>,
 }
 
 impl Delivery<'_> {
-    fn give(&mut self, stream: Stream, bytes: &[u8], buffers: &mut LineBuffers) {
+    pub(super) fn give(&mut self, stream: Stream, bytes: &[u8], buffers: &mut LineBuffers) {
         match self {
             Delivery::Inherit => {
                 let _ = match stream {
@@ -251,7 +265,7 @@ impl Delivery<'_> {
     }
 
     /// What is left of a last line without its end.
-    fn flush(&mut self, buffers: &mut LineBuffers) {
+    pub(super) fn flush(&mut self, buffers: &mut LineBuffers) {
         if let Delivery::Lines(on_line) = self {
             for (stream, held) in [(Stream::Out, &buffers.out), (Stream::Err, &buffers.err)] {
                 if !held.is_empty() {
@@ -325,7 +339,7 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
 }
 
 /// The runner's own stderr, and ssh's, a line at a time.
-fn read_lines(err: impl Read, tell: mpsc::Sender<Heard>) {
+pub(super) fn read_lines(err: impl Read, tell: mpsc::Sender<Heard>) {
     let mut err = BufReader::new(err);
     let mut line = Vec::new();
     while matches!(err.read_until(b'\n', &mut line), Ok(1..)) {

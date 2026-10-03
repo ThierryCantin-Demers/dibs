@@ -30,7 +30,7 @@ const DEFAULT_LEASE_SECS: u64 = 120;
 const AFTER_STOP: Duration = Duration::from_secs(1);
 const DEFAULT_CONNECT_TIMEOUT: &str = "10";
 /// ssh's own failure, never the command's.
-const SSH_FAILED: i32 = 255;
+pub(crate) const SSH_FAILED: i32 = 255;
 /// What the far line exits with when it could not write the script.
 const SCRIPT_UNWRITTEN: i32 = 70;
 /// After the far line's `&&`, so the line a machine receives stays the same byte for byte.

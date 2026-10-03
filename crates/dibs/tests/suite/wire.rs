@@ -18,7 +18,7 @@ count=$(printf '%s\n' "$cmd" | sed -n 's/.*count=\([0-9][0-9]*\).*/\1/p' | head 
 if [ -n "$count" ]; then
     head -c "$count" > "$WIRE/$n.b64"
     base64 -d < "$WIRE/$n.b64" | gzip -dc > "$WIRE/$n.payload"
-elif [[ $cmd == *dibs-runner* ]]; then
+elif [[ $cmd == *'"$r" serve'* ]]; then
     IFS= read -r header
     head -c "${header#request }" > "$WIRE/$n.request"
     { printf '%s\n' "$header"; cat "$WIRE/$n.request"; } > "$WIRE/$n.frame"
@@ -97,7 +97,7 @@ fn wire_normal(s: &Sandbox) -> Normal {
             ".dibs-payload.<pid>.<time>.sh",
         )
         .rule(r"\b[0-9]+-[0-9]{16,}\b", "<token>")
-        .rule(r"runner/[0-9a-f]{16}/", "runner/<hash>/")
+        .rule(env!("DIBS_RUNNER_HASH"), "<hash>")
         .rule(r"local-[0-9a-f]{10}\b", "local-<key>")
         .rule(
             r"(local:[0-9a-f]{7,12})(\+dirty)?-[0-9a-f]{12}\b",

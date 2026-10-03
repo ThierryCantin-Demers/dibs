@@ -4,7 +4,7 @@ use crate::{
         machine::{Asked, MachineCall},
     },
     inventory::Inventory,
-    machine::{Target, TargetEnv},
+    machine::{Delivery, Installed, Liveness, Provision, Session, Target, TargetEnv},
 };
 use dibs_format::{Exit, Label, MachineName, Mode};
 
@@ -13,7 +13,8 @@ const ENTRY_START: &str = "--8<-- dibs inventory";
 const ENTRY_END: &str = "--8<-- end";
 
 impl MachineCall<'_> {
-    /// `dibs --check [host]`: what the machine has, and with `--write`, its entry recorded.
+    /// `dibs --check [host]`: the runner installed there, what the machine has, and with
+    /// `--write`, its entry recorded.
     pub fn check(&self, host: Option<&str>) -> Result<i32, CallError> {
         let target = match host {
             Some(host) if self.fleet.reachable(host).is_some() => Target::resolve(
@@ -25,6 +26,15 @@ impl MachineCall<'_> {
             None => self.target()?,
         };
         self.somewhere(&target)?;
+        let provision = Provision {
+            session: &Session::new(&target, &self.here),
+            live: Liveness::from_env(),
+        };
+        let mut delivery = Delivery::Inherit;
+        match provision.ensure(&mut delivery)? {
+            Installed::Done | Installed::Unreached => {}
+            Installed::NoneThere | Installed::Failed => return Ok(provision.failed(&mut delivery)),
+        }
         if !self.call.write {
             return self.send(Asked::plain(Mode::Check, Label::new("check")), &target);
         }

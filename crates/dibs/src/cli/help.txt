@@ -122,7 +122,8 @@ Calls: one command under the lock, and what the machines are doing.
   dibs --peek <command>       look at the machine without taking the lock. Free things
                                only: ps, nvidia-smi, ls, tail, git status. It runs beside
                                a benchmark, so anything that costs CPU or IO spoils it.
-  dibs --check [host]          is this machine usable, and what is in it. Run it first on a
+  dibs --check [host]          install dibs's runner there, with its cargo, then say whether
+                               the machine is usable and what is in it. Run it first on a
                                machine you have never used. --write records what it found
                                as that machine's inventory entry.
   dibs --on <machine>         send this call to a named machine from the inventory. There is

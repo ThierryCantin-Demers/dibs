@@ -37,7 +37,7 @@ pub fn serve() -> i32 {
     let sink = Sink::frames();
     let mut channel = Channel::stdin();
     let code = match channel.request() {
-        Ok(request) => Session::new(request, sink.clone()).serve(channel, signals),
+        Ok(request) => Session::new(request, sink.clone()).serve(Some(channel), signals),
         Err(e) => {
             sink.say(&format!("dibs-runner: {e}\n"));
             2
@@ -63,8 +63,9 @@ impl Session {
         }
     }
 
-    /// Runs the call to its end; the caller's channel is watched while it is queued and runs.
-    pub fn serve(&self, channel: Channel, signals: Signals) -> i32 {
+    /// Runs the call to its end; the caller's channel, where it has one, is watched while it is
+    /// queued and runs.
+    pub fn serve(&self, channel: Option<Channel>, signals: Signals) -> i32 {
         let machine = match Machine::set_up() {
             Ok(machine) => machine,
             Err(unwritable) => {
@@ -168,7 +169,7 @@ impl Session {
     }
 
     /// A shared job or a benchmark: queue, take the lock, run the job, and say how it went.
-    fn run(&self, at: &Place, mut environment: Environment, channel: Channel) -> i32 {
+    fn run(&self, at: &Place, mut environment: Environment, channel: Option<Channel>) -> i32 {
         let request = &self.call.request;
         let mode = self.call.mode();
         let pid = self.call.pid;
@@ -191,7 +192,9 @@ impl Session {
         }
         let history = History::load(&at.machine.history);
         let max = self.cap(&history);
-        if !request.watch.off {
+        if let Some(channel) = channel
+            && !request.watch.off
+        {
             channel.watch(request.watch.lease, Arc::clone(at.stopper));
         }
 

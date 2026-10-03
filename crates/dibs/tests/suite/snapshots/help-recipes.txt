@@ -124,7 +124,8 @@
 1|   dibs --peek <command>       look at the machine without taking the lock. Free things
 1|                                only: ps, nvidia-smi, ls, tail, git status. It runs beside
 1|                                a benchmark, so anything that costs CPU or IO spoils it.
-1|   dibs --check [host]          is this machine usable, and what is in it. Run it first on a
+1|   dibs --check [host]          install dibs's runner there, with its cargo, then say whether
+1|                                the machine is usable and what is in it. Run it first on a
 1|                                machine you have never used. --write records what it found
 1|                                as that machine's inventory entry.
 1|   dibs --on <machine>         send this call to a named machine from the inventory. There is
@@ -198,8 +199,9 @@
 1| 
 1| docs/guide.md in the clone says why each of these behaves as it does.
 1| 
-1|   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran    75 busy
-1|        76 its batch was cancelled    77 a --with service failed    124 overran --max
+1|   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran
+1|        72 no runner there, nothing ran    75 busy    76 its batch was cancelled
+1|        77 a --with service failed    124 overran --max
 1|        78 a recipe's measurement refused: another tree built into its target since
 1| 
 
