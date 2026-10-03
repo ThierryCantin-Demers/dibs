@@ -16,7 +16,13 @@ use dibs_format::{
     By, Event, HistoryLine, JobId, JobMeta, Mode,
     wire::{MaxFrom, Record, Request, Trailer},
 };
-use std::{fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    sync::Arc,
+    thread,
+    time::{Duration, SystemTime},
+};
 
 /// How long a peek's command is given to stop once its cap has passed, and a job's.
 const PEEK_GRACE: Duration = Duration::from_secs(5);
@@ -30,6 +36,8 @@ const LOG_BOUND: usize = 20000;
 const LOG_KEPT: usize = 10000;
 /// What a command bash could not start exits with.
 const NOT_STARTED: i32 = 127;
+/// Longer than the coarsest tick a file's time is stamped by.
+const FILE_TICK: Duration = Duration::from_millis(11);
 
 /// One request in, frames out, the exit.
 pub fn serve() -> i32 {
@@ -259,7 +267,7 @@ impl Session {
         }
         let job_dir = at.machine.jobs().join(job.as_str());
         let log = fs::create_dir_all(&job_dir)
-            .and_then(|()| fs::write(job_dir.join("cmd"), format!("{}\n", request.command)))
+            .and_then(|()| Session::write_command(&job_dir.join("cmd"), &request.command))
             .is_ok()
             .then(|| job_dir.join("log"));
         if log.is_some() {
@@ -349,6 +357,17 @@ impl Session {
         at.dir.clear(pid);
         drop(lock);
         status
+    }
+
+    /// What the job runs, whose time marks the job's start: what it writes is newer. File times
+    /// move a tick, up to 10 ms, at a time, so the job starts once a tick has passed the mark.
+    fn write_command(path: &Path, command: &str) -> io::Result<()> {
+        fs::write(path, format!("{command}\n"))?;
+        let marked = fs::metadata(path)?.modified()?;
+        if let Ok(left) = (marked + FILE_TICK).duration_since(SystemTime::now()) {
+            thread::sleep(left);
+        }
+        Ok(())
     }
 
     /// `--max`, raised to twice what 90% of this job's own runs took when nobody chose it, so work

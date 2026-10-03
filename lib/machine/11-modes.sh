@@ -326,7 +326,10 @@ case "$MODE" in
         # Its descendants, never its process group. The holder is not its group's leader,
         # the pipeline that launched it is, so a group kill signals whatever else happens
         # to share that group rather than the job that was asked for.
-        tree="$pid $(tree_below "$pid")"
+        # TERM goes to the holder alone, which stops its own tree before it lets the lock go and
+        # logs how it ended; a job killed under it first would end it as a plain failure.
+        tree=$pid
+        [ "$MODE" = kill-force ] && tree="$pid $(tree_below "$pid")"
         [ "$MODE" = kill-force ] && sig=KILL || sig=TERM
         signalled=""
         # Deepest first, so a parent cannot spawn more work while its children are dying.
