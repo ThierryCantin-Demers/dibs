@@ -18,6 +18,7 @@ mod provision;
 mod queue;
 mod session;
 mod settings;
+pub mod shared;
 mod sink;
 mod status;
 mod stop;

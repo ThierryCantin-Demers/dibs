@@ -2,6 +2,7 @@
 //! histories, so a benchmark that moves to another card without saying so is refused.
 
 use crate::machine::Fleet;
+use dibs_runner::shared::SharedFile;
 use std::{
     fmt,
     path::PathBuf,
@@ -123,48 +124,43 @@ impl Series {
         }
     }
 
-    /// Files a run that measured something, starting the series again when asked to.
+    /// Files a run that measured something, starting the series again when asked to, under the
+    /// file's lock so two runs filed at once both count.
     pub fn record(&self, entry: &Entry, by: &str, new_series: bool) {
-        let Some(dir) = self.path.parent() else {
-            return;
-        };
-        if std::fs::create_dir_all(dir).is_err() {
-            return;
-        }
-        let text = self.text();
-        let runs = match (new_series, &text) {
-            (false, Some(text)) => text
-                .lines()
-                .map(Line::of)
-                .find(|l| l.is(entry.label, entry.machine))
-                .map(|l| l.runs())
-                .unwrap_or(0),
-            _ => 0,
-        };
-        let mut written = format!("{HEADER}\n");
-        for line in text.iter().flat_map(|t| t.lines().skip(1)) {
-            if !Line::of(line).is(entry.label, entry.machine) {
-                written.push_str(line);
-                written.push('\n');
+        let _ = SharedFile { path: &self.path }.rewrite(|text| {
+            let text = match text.lines().next() == Some(HEADER) {
+                true => text,
+                false => "",
+            };
+            let runs = match new_series {
+                false => text
+                    .lines()
+                    .map(Line::of)
+                    .find(|l| l.is(entry.label, entry.machine))
+                    .map(|l| l.runs())
+                    .unwrap_or(0),
+                true => 0,
+            };
+            let mut written = format!("{HEADER}\n");
+            for line in text.lines().skip(1) {
+                if !Line::of(line).is(entry.label, entry.machine) {
+                    written.push_str(line);
+                    written.push('\n');
+                }
             }
-        }
-        let when = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or_default();
-        written.push_str(&format!(
-            "{}\t{}\t{}\t{by}\t{when}\t{}\n",
-            entry.label,
-            entry.machine,
-            entry.card,
-            runs + 1
-        ));
-        let mut tmp = self.path.clone().into_os_string();
-        tmp.push(format!(".{}", std::process::id()));
-        let tmp = PathBuf::from(tmp);
-        if std::fs::write(&tmp, written).is_ok() && std::fs::rename(&tmp, &self.path).is_err() {
-            let _ = std::fs::remove_file(&tmp);
-        }
+            let when = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or_default();
+            written.push_str(&format!(
+                "{}\t{}\t{}\t{by}\t{when}\t{}\n",
+                entry.label,
+                entry.machine,
+                entry.card,
+                runs + 1
+            ));
+            Some(written)
+        });
     }
 
     /// A machine as a person knows it: its inventory name, or the ssh string after its user.

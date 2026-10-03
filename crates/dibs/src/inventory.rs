@@ -4,6 +4,7 @@
 //! rest of the file, comments included, as its owner wrote it.
 
 use dibs_format::{Alias, MachineName};
+use dibs_runner::shared::SharedFile;
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
@@ -261,23 +262,23 @@ impl Inventory {
 
     /// Records the entry `dibs --check --write` printed, in place of any the machine had.
     pub fn write(path: &Path, name: &MachineName, entry: &str) -> Result<(), InventoryError> {
-        let text = Inventory::existing_text(path)?;
-        let written = Inventory::with_entry(&text, name, entry).map_err(|e| e.at(path))?;
-        Inventory::replace(path, &written)
+        Inventory::rewrite(path, |text| {
+            Inventory::with_entry(text, name, entry).map_err(|e| e.at(path))
+        })
     }
 
     /// Removes a machine and its devices; refused for one the file does not have.
     pub fn forget(path: &Path, name: &MachineName) -> Result<(), InventoryError> {
-        let text = Inventory::existing_text(path)?;
-        let known = Inventory::parse(&text)
-            .map_err(|e| e.at(path))?
-            .machine(name.as_str())
-            .is_some();
-        if !known {
-            return Err(InventoryError::NoSuchMachine(name.clone()));
-        }
-        let written = Inventory::without(&text, name).map_err(|e| e.at(path))?;
-        Inventory::replace(path, &written)
+        Inventory::rewrite(path, |text| {
+            let known = Inventory::parse(text)
+                .map_err(|e| e.at(path))?
+                .machine(name.as_str())
+                .is_some();
+            if !known {
+                return Err(InventoryError::NoSuchMachine(name.clone()));
+            }
+            Inventory::without(text, name).map_err(|e| e.at(path))
+        })
     }
 
     fn reachable(&self) -> impl Iterator<Item = &Machine> {
@@ -294,31 +295,26 @@ impl Inventory {
             })
     }
 
-    fn existing_text(path: &Path) -> Result<String, InventoryError> {
-        match std::fs::read_to_string(path) {
-            Ok(text) => Ok(text),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(String::new()),
-            Err(error) => Err(InventoryError::Read {
+    /// Under the file's lock, and renamed over it whole, so a reader never sees half a file and
+    /// two writers never lose each other's change.
+    fn rewrite(
+        path: &Path,
+        change: impl FnOnce(&str) -> Result<String, InventoryError>,
+    ) -> Result<(), InventoryError> {
+        let mut refused = None;
+        SharedFile { path }
+            .rewrite(|text| match change(text) {
+                Ok(written) => Some(written),
+                Err(e) => {
+                    refused = Some(e);
+                    None
+                }
+            })
+            .map_err(|error| InventoryError::Write {
                 path: path.to_path_buf(),
                 error,
-            }),
-        }
-    }
-
-    /// Written beside it and renamed over it, so a reader never sees half a file.
-    fn replace(path: &Path, text: &str) -> Result<(), InventoryError> {
-        let failed = |error| InventoryError::Write {
-            path: path.to_path_buf(),
-            error,
-        };
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(failed)?;
-        }
-        let mut temporary = path.as_os_str().to_owned();
-        temporary.push(format!(".{}", std::process::id()));
-        let temporary = PathBuf::from(temporary);
-        std::fs::write(&temporary, text).map_err(failed)?;
-        std::fs::rename(&temporary, path).map_err(failed)
+            })?;
+        refused.map_or(Ok(()), Err)
     }
 }
 

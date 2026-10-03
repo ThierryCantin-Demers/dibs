@@ -1,14 +1,14 @@
+use crate::shared::SharedFile;
 pub use dibs_format::status::Scope;
 use dibs_format::{HistoryLine, Label, Mode};
-use std::{
-    fs::{self, OpenOptions},
-    io::Write as _,
-    path::Path,
-};
+use std::{collections::HashMap, fs, path::Path};
 
-/// Lines kept once the history outgrows its bound.
-const KEPT: usize = 500;
-const BOUND: usize = 1000;
+/// Lines past which the history is compacted.
+const BOUND: usize = 4000;
+/// Runs a compaction keeps of each label: enough for its percentiles, however rarely it runs.
+const PER_LABEL: usize = 50;
+/// The most lines a compaction keeps, newest first, however many labels there are.
+const KEPT: usize = 3000;
 
 /// Every successful run's duration on this machine, which estimates are drawn from.
 pub struct History {
@@ -88,17 +88,11 @@ impl History {
         Estimate::of(&seconds, scope, other)
     }
 
-    /// Records a run that did what it set out to, keeping the file to its bound.
+    /// Records a run that did what it set out to, compacting the file past its bound.
     pub fn append(path: &Path, line: &HistoryLine) {
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-            let _ = file.write_all(format!("{line}\n").as_bytes());
-        }
-        Trim {
-            path,
-            bound: BOUND,
-            kept: KEPT,
-        }
-        .run();
+        let file = SharedFile { path };
+        let _ = file.append(&line.to_string());
+        let _ = file.rewrite(|text| (text.lines().count() > BOUND).then(|| compacted(text)));
     }
 }
 
@@ -139,33 +133,25 @@ impl Estimate {
     }
 }
 
-/// A file cut back to its last lines once it outgrows a bound.
-pub struct Trim<'a> {
-    pub path: &'a Path,
-    pub bound: usize,
-    pub kept: usize,
-}
-
-impl Trim<'_> {
-    pub fn run(&self) {
-        let Ok(text) = fs::read_to_string(self.path) else {
-            return;
-        };
-        let lines: Vec<&str> = text.lines().collect();
-        if lines.len() <= self.bound {
-            return;
-        }
-        let kept: String = lines[lines.len() - self.kept..]
-            .iter()
-            .map(|l| format!("{l}\n"))
-            .collect();
-        let temporary = self
-            .path
-            .with_extension(format!("tmp.{}", std::process::id()));
-        if fs::write(&temporary, kept).is_ok() {
-            let _ = fs::rename(&temporary, self.path);
-        }
-    }
+/// The newest runs of each label, so a label run once a week keeps its estimate as long as one
+/// run a hundred times a day; lines that do not read are dropped.
+fn compacted(text: &str) -> String {
+    let mut kept_of: HashMap<(Mode, Label), usize> = HashMap::new();
+    let mut kept: Vec<&str> = text
+        .lines()
+        .rev()
+        .filter(|line| {
+            let Ok(run) = line.parse::<HistoryLine>() else {
+                return false;
+            };
+            let count = kept_of.entry((run.mode, run.label)).or_default();
+            *count += 1;
+            *count <= PER_LABEL
+        })
+        .take(KEPT)
+        .collect();
+    kept.reverse();
+    kept.iter().map(|line| format!("{line}\n")).collect()
 }
 
 #[cfg(test)]
@@ -197,6 +183,19 @@ mod tests {
         assert_eq!((e.low, e.median, e.high), (4, 9, 30));
         let e = est(&[7]);
         assert_eq!((e.low, e.median, e.high), (7, 7, 7));
+    }
+
+    #[test]
+    fn a_compaction_keeps_the_newest_runs_of_every_label() {
+        let mut text = String::from("shared\tweekly\t30\tme\t\n");
+        for n in 0..(PER_LABEL + 10) {
+            text.push_str(&format!("shared\tbusy\t{n}\tme\t\nnot a line\n"));
+        }
+        let kept = compacted(&text);
+        assert!(kept.starts_with("shared\tweekly\t30"));
+        assert_eq!(kept.lines().count(), PER_LABEL + 1);
+        assert!(kept.ends_with(&format!("shared\tbusy\t{}\tme\t\n", PER_LABEL + 9)));
+        assert!(!kept.contains("not a line"));
     }
 
     #[test]

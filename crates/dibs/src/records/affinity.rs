@@ -1,5 +1,6 @@
 use crate::records::runs::now_secs;
 use dibs::{cli::RecipeCall, paths::Paths};
+use dibs_runner::shared::SharedFile;
 use std::path::PathBuf;
 
 /// Which machine holds a repo's build cache. Kept beside the run record, on this side, since
@@ -57,19 +58,8 @@ pub(crate) fn affinity_get(repo: &str) -> Option<String> {
 
 pub(crate) fn affinity_set(repo: &str, machine: &str) {
     let Some(p) = affinity_path() else { return };
-    let text = affinity_update(
-        &std::fs::read_to_string(&p).unwrap_or_default(),
-        repo,
-        machine,
-        now_secs(),
-    );
-    if let Some(dir) = p.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let tmp = p.with_extension(std::process::id().to_string());
-    if std::fs::write(&tmp, text).is_ok() {
-        let _ = std::fs::rename(&tmp, &p);
-    }
+    let _ = SharedFile { path: &p }
+        .rewrite(|text| Some(affinity_update(text, repo, machine, now_secs())));
 }
 
 /// A call sent to a named machine, by `--on` or `DIBS_ON`, is not ranked, and says nothing

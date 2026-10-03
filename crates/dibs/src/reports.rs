@@ -15,6 +15,7 @@ use dibs::{
     paths::{Paths, ReportsStamp},
     update::Build,
 };
+use dibs_runner::shared::SharedFile;
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
@@ -107,15 +108,17 @@ pub fn fetch_replies(repo: &str, notes: &[Note], by: &str, into: &Path) -> Resul
         std::thread::sleep(FETCH_LIMIT);
         std::process::exit(124);
     });
-    let mut text = std::fs::read_to_string(into).unwrap_or_default();
-    for reply in replies(repo, notes, by)? {
-        text.push_str(&reply);
-        text.push('\n');
-    }
-    let mut partial = into.as_os_str().to_owned();
-    partial.push(format!(".{}", std::process::id()));
-    std::fs::write(&partial, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&partial, into).map_err(|e| e.to_string())
+    let fetched = replies(repo, notes, by)?;
+    SharedFile { path: into }
+        .rewrite(|text| {
+            let mut text = text.to_string();
+            for reply in &fetched {
+                text.push_str(reply);
+                text.push('\n');
+            }
+            Some(text)
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Opt-in per person, since a report says what they were doing: without it, friction stays on

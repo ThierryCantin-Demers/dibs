@@ -11,6 +11,7 @@
 
 use crate::{git::Git, lockfile::Package};
 use dibs::paths::Paths;
+use dibs_runner::shared::SharedFile;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 
@@ -1524,20 +1525,15 @@ fn private(url: &str) -> bool {
     let Some(p) = refuses_anonymous(&url) else {
         return false;
     };
-    let mut kept: String = known
-        .lines()
-        .filter(|l| l.split('\t').next() != Some(url.as_str()))
-        .map(|l| format!("{l}\n"))
-        .collect();
-    kept += &format!("{url}\t{}\t{now}\n", if p { "private" } else { "public" });
-    let tmp = file.with_extension(format!("{}", std::process::id()));
-    if file
-        .parent()
-        .is_some_and(|d| std::fs::create_dir_all(d).is_ok())
-        && std::fs::write(&tmp, kept).is_ok()
-    {
-        let _ = std::fs::rename(&tmp, &file);
-    }
+    let _ = SharedFile { path: &file }.rewrite(|known| {
+        let mut kept: String = known
+            .lines()
+            .filter(|l| l.split('\t').next() != Some(url.as_str()))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        kept += &format!("{url}\t{}\t{now}\n", if p { "private" } else { "public" });
+        Some(kept)
+    });
     p
 }
 

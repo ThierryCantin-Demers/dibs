@@ -515,12 +515,7 @@ impl Session {
             }
             .report();
         }
-        crate::history::Trim {
-            path: &at.machine.log,
-            bound: LOG_BOUND,
-            kept: LOG_KEPT,
-        }
-        .run();
+        journal.trim(LOG_BOUND, LOG_KEPT);
         if status == 124 {
             self.overran(max);
         }

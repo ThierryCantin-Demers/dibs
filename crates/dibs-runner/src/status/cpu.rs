@@ -1,5 +1,9 @@
 use dibs_format::status::{Idle, IdleKind};
-use std::{fs, path::Path};
+use std::{
+    fs::{File, OpenOptions},
+    io::{Read as _, Seek as _, SeekFrom, Write as _},
+    path::Path,
+};
 
 /// What one look at a holder's CPU found, measured against what the last look left in
 /// `cpu.<pid>`: a cumulative count says only whether a job ever worked, so each look leaves its
@@ -30,8 +34,23 @@ pub struct Look<'a> {
 }
 
 impl Look<'_> {
+    /// Read and left under the file's own lock, since two looks at once would each measure
+    /// against a sample the other is replacing.
     pub fn sample(&self) -> Sample {
-        let text = fs::read_to_string(self.file).unwrap_or_default();
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.file)
+            .ok();
+        if let Some(file) = &file {
+            let _ = file.lock();
+        }
+        let mut text = String::new();
+        if let Some(file) = file.as_mut() {
+            let _ = file.read_to_string(&mut text);
+        }
         let mut words = text.split_whitespace();
         let number = |w: Option<&str>| -> Option<u64> {
             w.filter(|w| w.bytes().all(|b| b.is_ascii_digit()))?
@@ -64,7 +83,9 @@ impl Look<'_> {
                 Worked::At(t) => t.to_string(),
                 Worked::Never | Worked::Unknown => "-".to_string(),
             };
-            let _ = fs::write(self.file, format!("{} {mark} {}\n", self.ticks, self.now));
+            if let Some(file) = file.as_mut() {
+                let _ = Look::replace(file, &format!("{} {mark} {}\n", self.ticks, self.now));
+            }
         }
         let idle = match worked {
             Worked::Never => Some(Idle {
@@ -78,6 +99,12 @@ impl Look<'_> {
             _ => None,
         };
         Sample { rate, idle }
+    }
+
+    fn replace(file: &mut File, text: &str) -> std::io::Result<()> {
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(text.as_bytes())
     }
 }
 
@@ -99,14 +126,14 @@ mod tests {
     #[test]
     fn a_tree_that_never_worked_is_idle_from_its_start_and_one_that_stops_from_its_last_work() {
         let dir = std::env::temp_dir().join(format!("dibs-cpu-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("cpu.1");
         let first = look(&file, 0, 1010);
         assert_eq!(
             first.idle.map(|i| (i.idle_for, i.idle_kind)),
             Some((10, IdleKind::Never))
         );
-        assert_eq!(fs::read_to_string(&file).unwrap(), "0 - 1010\n");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "0 - 1010\n");
         let working = look(&file, 300, 1013);
         assert_eq!((working.rate, working.idle), (Some(100), None));
         let stalled = look(&file, 300, 1020);
@@ -115,6 +142,6 @@ mod tests {
             Some((7, IdleKind::Stalled))
         );
         assert_eq!(stalled.rate, Some(0));
-        let _ = fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,6 +1,6 @@
-use crate::{clock::Moment, gc};
+use crate::{clock::Moment, gc, shared::SharedFile};
 use dibs_format::{BatchId, Event, JobId, Label, LockRecord, LogLine, Mode, wire::Request};
-use std::{fs::OpenOptions, io::Write as _, path::Path};
+use std::path::Path;
 
 /// How much of a command its records keep.
 const ONE_LINE: usize = 200;
@@ -137,9 +137,20 @@ pub struct Journal<'a> {
 
 impl Journal<'_> {
     pub fn write(&self, line: &LogLine) {
-        if let Ok(mut log) = OpenOptions::new().create(true).append(true).open(self.path) {
-            let _ = log.write_all(format!("{line}\n").as_bytes());
-        }
+        let _ = SharedFile { path: self.path }.append(&line.to_string());
+    }
+
+    /// Cut back to its last `kept` lines once it outgrows `bound`.
+    pub fn trim(&self, bound: usize, kept: usize) {
+        let _ = SharedFile { path: self.path }.rewrite(|text| {
+            let lines: Vec<&str> = text.lines().collect();
+            (lines.len() > bound).then(|| {
+                lines[lines.len() - kept.min(lines.len())..]
+                    .iter()
+                    .map(|l| format!("{l}\n"))
+                    .collect()
+            })
+        });
     }
 }
 
