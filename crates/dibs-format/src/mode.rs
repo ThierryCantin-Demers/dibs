@@ -21,7 +21,8 @@ impl Lock {
 }
 
 /// What a call does on the machine, as its records spell it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Mode {
     Shared,
     Bench,

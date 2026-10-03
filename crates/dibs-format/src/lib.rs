@@ -9,6 +9,7 @@ mod ids;
 mod lines;
 mod mode;
 mod run;
+pub mod wire;
 
 pub use exit::Exit;
 pub use friction::FrictionNote;

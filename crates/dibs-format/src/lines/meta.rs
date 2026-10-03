@@ -2,10 +2,12 @@ use crate::{
     Label, Mode,
     lines::base::{Field, LineError},
 };
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
 /// Who produced a job's exit: the command, or dibs stopping it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum By {
     Command,
     Dibs,

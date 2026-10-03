@@ -15,6 +15,8 @@ pub enum Exit {
     NoRoom,
     /// The lock directory cannot be written, so nothing ran.
     NoLock,
+    /// dibs could not install its runner on the machine, so nothing ran.
+    NoRunner,
     /// The machine stayed busy past `--wait`.
     Busy,
     /// Its batch was cancelled with `dibs --kill <batch-id>`.
@@ -34,7 +36,7 @@ pub enum Exit {
 }
 
 impl Exit {
-    pub const ALL: [Exit; 15] = [
+    pub const ALL: [Exit; 16] = [
         Exit::Success,
         Exit::Failed,
         Exit::Refused,
@@ -42,6 +44,7 @@ impl Exit {
         Exit::Unreachable,
         Exit::NoRoom,
         Exit::NoLock,
+        Exit::NoRunner,
         Exit::Busy,
         Exit::Cancelled,
         Exit::ServiceFailed,
@@ -61,6 +64,7 @@ impl Exit {
             Exit::Unreachable => 69,
             Exit::NoRoom => 70,
             Exit::NoLock => 71,
+            Exit::NoRunner => 72,
             Exit::Busy => 75,
             Exit::Cancelled => 76,
             Exit::ServiceFailed => 77,
@@ -87,6 +91,7 @@ impl Exit {
             Exit::Unreachable => "unreachable",
             Exit::NoRoom => "no room on the target",
             Exit::NoLock => "no lock, nothing ran",
+            Exit::NoRunner => "no runner there, nothing ran",
             Exit::Busy => "busy",
             Exit::Cancelled => "its batch was cancelled",
             Exit::ServiceFailed => "a --with service failed",
