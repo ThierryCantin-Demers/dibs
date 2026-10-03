@@ -1301,16 +1301,6 @@ fn unreachable() {
         "DIBS_HOST=dibs@box-z dibs --status  (with no inventory, and box-z timing out)",
         &n.output(&from_host),
     );
-    s.write_exec("fails/ssh", "#!/bin/sh\nexit 70\n");
-    let full = s
-        .dibs(["--on", "box-a", "true"])
-        .env("PATH", format!("{}:{}", s.p("fails"), s.var("PATH")))
-        .env("DIBS_LOCAL", "0")
-        .run();
-    t.section(
-        "dibs --on box-a true  (a machine whose scratch cannot be written)",
-        &n.output(&full),
-    );
     snapshot("unreachable", t.text());
 }
 

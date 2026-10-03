@@ -45,19 +45,16 @@ a setup with no inventory at all.
 once. A machine without it is dropped from that repo's routing rather than sent work it cannot
 do, and `dibs --check` lists what it has.
 
-**Which machines.** The half of dibs that runs on a machine assumes bash 5.1 and a GNU userland,
-and reads what differs between operating systems through a small set of functions, which each
-`lib/machine/01-platform-<name>.sh` defines for its own:
+**Which machines.** The half of dibs that runs on a machine is `dibs-runner`, which each machine
+builds with its own cargo the first time a client needs it (`dibs --check` builds the first one).
+It needs cargo and a toolchain at the workspace's `rust-version`, bash for the jobs, and rsync 3
+and git for trees sent there. What differs between operating systems is behind one trait in
+`crates/dibs-runner/src/platform/`:
 
-- **Linux**, any distribution: bash, flock, GNU coreutils, rsync and git, which most have.
-- **macOS**, with Homebrew's `bash flock coreutils findutils gnu-sed grep gawk rsync`. dibs
-  puts the GNU tools first on the PATH and re-runs itself under Homebrew's bash. It cannot see
-  which process holds a lock, so an orphaned lock there waits for a kill by hand, and it counts
-  no CPU of children already reaped, so a busy job can read as idle. The one GPU is recorded
-  with no slot, and naming it pins nothing.
-
-Another platform is one more file: `00-platform.sh` lists the functions in `PLATFORM_API`, and
-a machine whose platform file lacks one refuses to run rather than half working.
+- **Linux**, any distribution, read from `/proc` and `/sys`.
+- **macOS**, read through libproc. It cannot see which process holds a lock, so an orphaned lock
+  there waits for a kill by hand. The one GPU is recorded with no slot, and naming it pins
+  nothing.
 
 **Check it works:**
 
@@ -679,17 +676,16 @@ hostname and takes the lock locally instead of reaching itself over ssh.
 
 A job runs with `DIBS_SCRATCH` and `TMPDIR` pointing at `~/.cache/dibs` on the machine, because
 `/tmp` there is a shared tmpfs under a quota: one build tree in it stops everyone else from
-running anything at all. Write build output under `$DIBS_SCRATCH`, never in `/tmp`.
-`DIBS_REMOTE_DIR` moves where a call writes its script on the machine, which is the way back in
-when the default one has filled up.
+running anything at all. Write build output under `$DIBS_SCRATCH`, never in `/tmp`. Nothing is
+written on the machine to make a call, so a full scratch stops jobs, with exit 70, and never
+`status`, `--peek` or `--gc`.
 
 A job dies with the caller that started it: kill the caller, however you kill it, and the work
 stops and the lock frees. A caller that stops answering, as a laptop does when it sleeps or a
 shell does after Ctrl-Z, counts as gone after `DIBS_LEASE` seconds (120, and 0 turns it off).
-`DIBS_TRACE=1` traces the machine's side, and `DIBS_NO_PDEATHSIG`, `DIBS_NO_LIVE` and
-`DIBS_NO_WATCHDOG` each switch off one half of that machinery, which is how it gets debugged when
-it misbehaves. `DIBS_NO_CHILDREN` forces the fallback way of finding a holder's descendants,
-which is otherwise unreachable on a kernel built the ordinary way.
+`DIBS_NO_LIVE` and `DIBS_NO_WATCHDOG` each switch off half of that machinery, which is how it
+gets debugged when it misbehaves. `DIBS_NO_CHILDREN` forces the fallback way of finding a holder's
+descendants, which is otherwise unreachable on a kernel built the ordinary way.
 
 An unreachable machine fails in seconds with a diagnosis, including whether Tailscale needs a
 login, rather than hanging on a connection or a password prompt. Never retry that in a loop.
@@ -713,9 +709,11 @@ the notification arrives when the command is done.
 
 ## The two halves
 
-`lib/machine/` is the half of dibs that runs on a machine, and stays bash for now: joined in
-order into the binary when it is built, it is sent with every call, so a machine needs nothing
-installed to be usable, which is what makes adding one cheap.
+`crates/dibs-runner/` is the half of dibs that runs on a machine: it takes the lock, runs the
+job and reads the lock directory back for `status`. A call reaches it through a one-line `sh -c`
+that ssh runs, and each client only ever talks to the runner built from its own source, which the
+machine builds when it first lacks it, so nobody installs or upgrades anything there by hand.
+`docs/design/protocol.md` is what passes between the two.
 
 `crates/dibs/` is the other half, the `dibs` binary on your side. It reads every command line
 through one grammar, chooses and reaches the machine, and is the recipe layer behind `dibs

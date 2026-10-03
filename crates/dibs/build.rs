@@ -1,5 +1,5 @@
-//! Embeds the machine half and the runner's source with its hash, and stamps the commit and the
-//! clone, so a call reads nothing from the clone and the binary keeps working with it moved or gone.
+//! Embeds the runner's source with its hash, and stamps the commit and the clone, so a call reads
+//! nothing from the clone and the binary keeps working with it moved or gone.
 
 use flate2::{Compression, write::GzEncoder};
 use sha2::{Digest as _, Sha256};
@@ -15,10 +15,6 @@ fn main() {
     let clone = manifest.join("../..");
     let clone = clone.canonicalize().unwrap_or(clone);
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("set by cargo"));
-
-    let half = clone.join("lib/machine");
-    println!("cargo:rerun-if-changed={}", half.display());
-    fs::write(out.join("machine-half.sh"), MachineHalf::read(&half)).expect("OUT_DIR is writable");
 
     let tree = RunnerTree::of(&clone);
     for dir in RunnerTree::WATCHED {
@@ -45,27 +41,6 @@ fn main() {
         for watched in commit.watched {
             println!("cargo:rerun-if-changed={}", watched.display());
         }
-    }
-}
-
-/// `lib/machine`'s scripts, in the order the machine reads them.
-struct MachineHalf;
-
-impl MachineHalf {
-    fn read(dir: &Path) -> String {
-        let mut parts: Vec<PathBuf> = fs::read_dir(dir)
-            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "sh"))
-            .collect();
-        parts.sort();
-        parts
-            .iter()
-            .map(|part| {
-                fs::read_to_string(part).unwrap_or_else(|e| panic!("{}: {e}", part.display()))
-            })
-            .collect()
     }
 }
 

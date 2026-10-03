@@ -2,10 +2,10 @@ use crate::machine::{
     held::{Held, Holder, Release},
     interrupt::Interrupt,
     lines::Stream,
-    payload::{CallValues, Watch},
     provision::{Installed, Provision},
     session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Session, exit_code},
     ssh::{Ssh, parent_death_signal},
+    values::{CallValues, Watch},
 };
 use dibs_format::{
     Exit,
@@ -216,7 +216,7 @@ impl Served<'_> {
                 let off = (self.live.no_live || self.live.no_watchdog) && !hold;
                 let mut ssh = Command::new("ssh");
                 ssh.args(Ssh::options()).arg(host).arg(Runner::far_line());
-                let die_with_me = !self.live.no_pdeathsig;
+                let die_with_me = true;
                 // SAFETY: the closure makes async-signal-safe calls only.
                 unsafe {
                     ssh.pre_exec(move || {

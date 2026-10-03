@@ -61,6 +61,9 @@ pub fn prebuilt_runner() -> String {
     format!("#!/bin/sh\nexec '{DIBS}' __runner \"$@\"\n")
 }
 
+/// Master's machine half, as the clients that have not updated send it on switch day.
+const MACHINE_HALF: &str = include_str!("fixtures/machine-half.sh");
+
 /// A pid that stays alive for the whole test, for records that prune would drop otherwise.
 pub fn live_pid() -> u32 {
     std::process::id()
@@ -68,6 +71,15 @@ pub fn live_pid() -> u32 {
 
 /// What a client sends `dibs __runner serve` first: the call, unwatched, as a request frame.
 pub fn request_frame(mode: Mode, label: &str, command: &str) -> String {
+    frame_of(mode, label, command, true)
+}
+
+/// The same, with the runner watching its stdin, whose end is the caller gone.
+pub fn watched_request_frame(mode: Mode, label: &str, command: &str) -> String {
+    frame_of(mode, label, command, false)
+}
+
+fn frame_of(mode: Mode, label: &str, command: &str, unwatched: bool) -> String {
     let request = Request {
         mode,
         label: Label::new(label),
@@ -85,7 +97,7 @@ pub fn request_frame(mode: Mode, label: &str, command: &str) -> String {
         agent_id: "local_suite".into(),
         batch: None,
         watch: Watch {
-            off: true,
+            off: unwatched,
             hold: false,
             lease: 0,
         },
@@ -532,8 +544,9 @@ impl Sandbox {
         });
     }
 
-    /// The machine script as a call sends it: the call's values as assignments, then every part
-    /// of the script in order. The values are an ordinary shared job's, with `values` over them.
+    /// The bash machine half a client that has not updated still sends: the call's values as
+    /// assignments, then master's `lib/machine`, frozen in `fixtures/machine-half.sh`. The values
+    /// are an ordinary shared job's, with `values` over them.
     pub fn machine_script(&self, values: &[(&str, &str)]) -> String {
         let mut call: Vec<(&str, &str)> = vec![
             ("MODE", "shared"),
@@ -572,13 +585,7 @@ impl Sandbox {
             .map(|(k, v)| format!("{k}='{}'\n", v.replace('\'', r"'\''")))
             .collect();
         script.push_str("PORT_NAME=()\nWITH_NAME=()\nWITH_READY=()\nWITH_CMD=()\n");
-        let mut parts: Vec<_> = fs::read_dir(repo_root().join("lib/machine"))
-            .unwrap()
-            .flatten()
-            .map(|e| e.path())
-            .collect();
-        parts.sort();
-        script.extend(parts.iter().map(|p| fs::read_to_string(p).unwrap()));
+        script.push_str(MACHINE_HALF);
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = self.path(&format!("payload.{}", NEXT.fetch_add(1, Ordering::Relaxed)));
         fs::write(&path, script).unwrap();
@@ -601,7 +608,6 @@ impl Sandbox {
              trap 'exit 255' TERM\n\
              wait $far\n",
         );
-        fs::create_dir_all(self.path("remote-run")).unwrap();
         call.env(
             "PATH",
             format!("{}:{}", self.p("fakessh"), self.var("PATH")),
@@ -609,7 +615,6 @@ impl Sandbox {
         .env("DIBS_LOCAL", "0")
         .env("DIBS_HOST", "fake-remote")
         .env("DIBS_HOSTNAME", "laptop-here")
-        .env("DIBS_REMOTE_DIR", self.p("remote-run"))
     }
 
     pub fn git(&self, dir: &str, args: &[&str]) -> String {

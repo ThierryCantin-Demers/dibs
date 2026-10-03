@@ -399,11 +399,29 @@ impl Session {
             environment.set("DIBS_STATE", Host::machine_state());
         }
         let job_dir = at.machine.jobs().join(job.as_str());
-        let log = (!transfer
-            && fs::create_dir_all(&job_dir)
-                .and_then(|()| Session::write_command(&job_dir.join("cmd"), &self.call.work))
-                .is_ok())
-        .then(|| job_dir.join("log"));
+        let kept = match transfer {
+            true => Ok(()),
+            false => fs::create_dir_all(&job_dir)
+                .and_then(|()| Session::write_command(&job_dir.join("cmd"), &self.call.work)),
+        };
+        if let Err(e) = &kept
+            && no_room(e)
+        {
+            self.sink.say(&format!(
+                "dibs: {} on {host} is full or over quota, so nothing ran there.\n  \
+                 dibs --on {host} --gc --dry-run says what fills it. Tell the person you work for,\n  \
+                 and do not delete anything on a shared machine to make room.\n",
+                at.machine.scratch.display(),
+                host = at.machine.host
+            ));
+            at.dir.clear(pid);
+            let mut line = self.call.log_line(Event::Aborted);
+            line.job = Some(job.clone());
+            journal.write(&line);
+            state.logged_end = true;
+            return 70;
+        }
+        let log = (!transfer && kept.is_ok()).then(|| job_dir.join("log"));
         if log.is_some() {
             environment.set("DIBS_JOB", job.to_string());
         }
@@ -647,6 +665,14 @@ impl Session {
     }
 }
 
+/// A write that failed for want of space, which no retry here fixes.
+fn no_room(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
+    )
+}
+
 /// Where a call runs: the machine, its lock directory, and what stops the call.
 struct Place<'a> {
     machine: &'a Machine,
@@ -764,5 +790,17 @@ impl Ended<'_> {
             lines: lines as u64,
         };
         let _ = fs::write(self.job_dir.join("meta"), meta.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_full_disk_or_quota_is_no_room_and_a_refusal_is_not() {
+        assert!(no_room(&io::Error::from_raw_os_error(libc::ENOSPC)));
+        assert!(no_room(&io::Error::from_raw_os_error(libc::EDQUOT)));
+        assert!(!no_room(&io::Error::from_raw_os_error(libc::EACCES)));
     }
 }

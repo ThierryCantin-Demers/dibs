@@ -123,7 +123,8 @@ one of them.
   same two files. Both take them with `flock(2)`, which `flock(1)` uses: everyone passes through
   `gate` exclusively, an exclusive caller keeps holding `gate` while it waits for `rw`, and the job
   holds `rw`, shared or exclusive. The contention test in the suite runs a bash job and a runner
-  job against one directory, in both orders.
+  job against one directory, in both orders, the bash side being master's `lib/machine` as old
+  clients send it, kept in `crates/dibs/tests/suite/fixtures/machine-half.sh`.
 - **Records.** `waiting.<pid>`, `holder.<pid>`, `batch.<pid>`, `cancelled.<id>` and the rest keep
   their names and lines, written and read through `dibs-format`'s codecs, and listed in the order
   of their file names, as the shell's glob lists them. A runner's `waiting` and `holder` lines add

@@ -785,7 +785,11 @@ fn ctrl_c(remote: bool) {
         up.signal(),
         never.hold()
     );
-    let call = s.dibs(["--label", "ctrl-c", &cmd]).own_group();
+    let (out, err) = (s.path("ctrl-c.out"), s.path("ctrl-c.err"));
+    let call = s
+        .dibs(["--label", "ctrl-c", &cmd])
+        .own_group()
+        .streams_to(&out, &err);
     let caller = s.spawn(if remote { s.remote(call) } else { call });
     up.reached();
     let job: u32 = s.read("job.pid").trim().parse().unwrap();
@@ -793,6 +797,11 @@ fn ctrl_c(remote: bool) {
     until("the job to stop", || !alive(job));
     s.wait(caller);
     s.gone();
+    assert_eq!(
+        s.read("ctrl-c.err").lines_with("Do not retry in a loop"),
+        0,
+        "an interrupted call is not a machine that cannot be reached"
+    );
 }
 
 #[test]

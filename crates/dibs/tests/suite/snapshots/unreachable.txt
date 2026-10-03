@@ -119,12 +119,3 @@
 2|   a tailnet peer either, so tailscale has nothing to say about it.
 2|   ssh said: ssh: connect to host box-a port 22: Connection timed out
 2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
-
-== dibs --on box-a true  (a machine whose scratch cannot be written)
--> exit 70
-2| dibs: could not write the job's script to ~/.cache/dibs/run on box-a.
-2|   It is full, over quota, or read-only. Nothing can run there until it is not,
-2|   and that includes every command for looking into it.
-2|   Look:  DIBS_REMOTE_DIR=/dev/shm dibs --peek 'df -h ~/.cache/dibs/run; quota -s'
-2|   Work:  DIBS_REMOTE_DIR=/dev/shm dibs <command>
-2|   Tell the user. Do not delete anything on a shared machine to make room.

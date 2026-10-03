@@ -18,14 +18,16 @@ fn median(mut v: Vec<f64>) -> f64 {
     v[v.len() / 2]
 }
 
-/// The bytes the recording ssh was handed: its arguments and the script read ahead of the job.
+/// The bytes the recording ssh was handed: its arguments and everything on its stdin.
 fn bytes_sent(s: &Sandbox) -> usize {
     fs::read_dir(s.path("wire"))
         .unwrap()
         .flatten()
         .filter(|e| {
-            e.file_name().to_string_lossy().ends_with(".argv")
-                || e.file_name().to_string_lossy().ends_with(".b64")
+            let name = e.file_name().to_string_lossy().into_owned();
+            [".argv", ".frame", ".rest"]
+                .iter()
+                .any(|kind| name.ends_with(kind))
         })
         .map(|e| e.metadata().map(|m| m.len() as usize).unwrap_or(0))
         .sum()
@@ -35,7 +37,7 @@ fn bytes_sent(s: &Sandbox) -> usize {
 #[ignore]
 fn bytes_sent_per_call() {
     let s = wired();
-    say("bytes sent per call, over ssh to box-a: arguments and the script ahead of the job");
+    say("bytes sent per call, over ssh to box-a: arguments and all of ssh's stdin");
     let calls: [&[&str]; 5] = [
         &["--on", "box-a", "--label", "cost", "true"],
         &["--on", "box-a", "--bench", "--label", "cost", "true"],
@@ -47,7 +49,11 @@ fn bytes_sent_per_call() {
         for e in fs::read_dir(s.path("wire")).unwrap().flatten() {
             let _ = fs::remove_file(e.path());
         }
-        let out = s.dibs(args).env("WIRE_RUN", "1").run();
+        let out = s
+            .dibs(args)
+            .env("WIRE_RUN", "1")
+            .env("WIRE_STDIN", "1")
+            .run();
         assert_eq!(out.code, 0, "{args:?}: {}", out.all());
         say(&format!(
             "  {:>7} B  dibs {}",

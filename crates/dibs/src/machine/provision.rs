@@ -169,7 +169,7 @@ impl Provision<'_> {
         };
         let mut ssh = Command::new("ssh");
         ssh.args(Ssh::options()).arg(host).arg(line);
-        let die_with_me = !self.live.no_pdeathsig;
+        let die_with_me = true;
         // SAFETY: the closure makes async-signal-safe calls only.
         unsafe {
             ssh.pre_exec(move || {

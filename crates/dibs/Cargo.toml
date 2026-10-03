@@ -7,7 +7,6 @@ rust-version.workspace = true
 [dependencies]
 dibs-format.workspace = true
 dibs-runner.workspace = true
-flate2.workspace = true
 libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true

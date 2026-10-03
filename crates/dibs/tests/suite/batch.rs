@@ -223,7 +223,7 @@ fn a_killed_driver_with_no_parent_death_signal_still_takes_its_step_with_it() {
             hold.hold()
         )],
     );
-    let driver = s.spawn(s.dibs(["batch", &file]).env("DIBS_NO_PDEATHSIG", "1"));
+    let driver = s.spawn(s.dibs(["batch", &file]));
     up.reached();
     kill9(driver.pid);
     s.wait(driver);

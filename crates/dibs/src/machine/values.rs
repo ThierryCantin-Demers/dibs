@@ -1,13 +1,11 @@
 use crate::{
     caller::Caller,
-    cli::{BashQuoted, PortName, Service},
+    cli::{PortName, Service},
 };
 use dibs_format::{
     Alias, Label, Mode,
     wire::{self, Request},
 };
-use flate2::{Compression, write::GzEncoder};
-use std::{fmt::Write as _, io::Write as _};
 
 /// Where `--max` came from, which decides whether history may raise it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +37,7 @@ impl Card {
     }
 }
 
-/// One call's values, which the machine half reads ahead of its own code.
+/// One call's values, which the runner is sent as its request.
 #[derive(Debug, Clone)]
 pub struct CallValues {
     pub mode: Mode,
@@ -65,7 +63,7 @@ pub struct CallValues {
     pub new_series: bool,
 }
 
-/// How the machine half learns its caller is gone.
+/// How the runner learns its caller is gone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Watch {
     /// Nothing to watch: the caller's death reaches it some other way, or not at all.
@@ -129,83 +127,4 @@ impl CallValues {
             ready_within: u64::from(self.ready_within),
         }
     }
-
-    /// The values as assignments, then the machine half.
-    pub fn script(&self, watch: Watch) -> String {
-        let flag = |b: bool| if b { "1" } else { "0" };
-        let max_from = match self.max_from {
-            MaxFrom::Given => "given",
-            MaxFrom::Default => "default",
-        };
-        let twins = self.card.twins.to_string();
-        let max = self.max.to_string();
-        let wait = self.wait.map(|w| w.to_string()).unwrap_or_default();
-        let ready_within = self.ready_within.to_string();
-        let fingerprint = self.fingerprint.as_deref().unwrap_or_default();
-        let lease = watch.lease.to_string();
-        let values: [(&str, &str); 23] = [
-            ("MODE", self.mode.as_str()),
-            ("LABEL", self.label.as_str()),
-            ("WAIT", &wait),
-            ("MAXHOLD", &max),
-            ("VERBOSE", flag(self.verbose)),
-            ("JSON", flag(self.json)),
-            ("DEV_PCI", &self.card.pci),
-            ("DEV_RT", &self.card.runtimes),
-            ("DEV_CHIP", &self.card.chip),
-            ("DEV_TWINS", &twins),
-            ("STREAM", flag(self.stream)),
-            ("READY_WITHIN", &ready_within),
-            ("MAXFROM", max_from),
-            ("FINGERPRINT", fingerprint),
-            ("CMD", &self.command),
-            ("TTY", flag(self.tty)),
-            ("AGENT", &self.caller.name),
-            ("AGENT_ID", &self.caller.id),
-            ("DEV_NAME", &self.card.alias),
-            ("BATCH", &self.batch),
-            ("NO_WATCH", flag(watch.off)),
-            ("HOLD", flag(watch.hold)),
-            ("LEASE", &lease),
-        ];
-        let mut script = String::new();
-        for (name, value) in values {
-            let _ = writeln!(script, "{name}={}", BashQuoted(value));
-        }
-        let names: Vec<&str> = self.services.iter().map(|s| s.name.0.as_str()).collect();
-        let ready: Vec<&str> = self
-            .services
-            .iter()
-            .map(|s| s.ready.as_deref().unwrap_or_default())
-            .collect();
-        let commands: Vec<&str> = self.services.iter().map(|s| s.command.as_str()).collect();
-        let ports: Vec<&str> = self.ports.iter().map(|p| p.0.as_str()).collect();
-        for (name, members) in [
-            ("PORT_NAME", ports),
-            ("WITH_NAME", names),
-            ("WITH_READY", ready),
-            ("WITH_CMD", commands),
-        ] {
-            let members: Vec<String> = members
-                .iter()
-                .enumerate()
-                .map(|(i, m)| format!("[{i}]={}", BashQuoted(m)))
-                .collect();
-            let _ = writeln!(script, "declare -a {name}=({})", members.join(" "));
-        }
-        script.push_str(MACHINE_HALF);
-        script
-    }
-}
-
-/// `lib/machine`, the half of dibs every call ships to the machine it runs on, as it was when
-/// this binary was built.
-const MACHINE_HALF: &str = include_str!(concat!(env!("OUT_DIR"), "/machine-half.sh"));
-
-/// A script as it crosses ssh: compressed, then base64 on one line.
-pub fn encode(script: &str) -> String {
-    let mut gz = GzEncoder::new(Vec::new(), Compression::best());
-    let _ = gz.write_all(script.as_bytes());
-    let bytes = gz.finish().unwrap_or_default();
-    dibs_format::base64::encode(&bytes)
 }

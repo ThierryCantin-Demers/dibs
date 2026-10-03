@@ -1,24 +1,20 @@
-//! What a call sends to a machine, captured by an ssh that writes down its arguments and decodes
-//! the script ahead of the job's stream. A client that replaces the bash one has to send the same
-//! header and the same values, and the machine script after them unchanged.
+//! What a call sends to a machine, captured by an ssh that writes down its arguments and the
+//! request frame ahead of the job's stream.
 
 use crate::harness::*;
 use crate::recipes::{PARAMS, app, recipes};
 use crate::snapshot::*;
 use std::fs;
 
-/// `WIRE_RUN=1` runs the far side here, a host apiece under `WIRE_HOSTS`, else exits `WIRE_EXIT`.
+/// `WIRE_RUN=1` runs the far side here, a host apiece under `WIRE_HOSTS`, else exits `WIRE_EXIT`;
+/// `WIRE_STDIN=1` keeps all its stdin after the request too.
 /// `ssh -G` reaches no machine, so it answers as ssh would and is not recorded.
 const RECORDING_SSH: &str = r#"#!/bin/bash
 [ "$1" = -G ] && { echo "hostname ${2##*@}"; exit 0; }
 n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
 printf '%s\0' ssh "$@" > "$WIRE/$n.argv"
 cmd=${@: -1} host=${@: -2:1}
-count=$(printf '%s\n' "$cmd" | sed -n 's/.*count=\([0-9][0-9]*\).*/\1/p' | head -n 1)
-if [ -n "$count" ]; then
-    head -c "$count" > "$WIRE/$n.b64"
-    base64 -d < "$WIRE/$n.b64" | gzip -dc > "$WIRE/$n.payload"
-elif [[ $cmd == *'"$r" serve'* ]]; then
+if [[ $cmd == *'"$r" serve'* ]]; then
     IFS= read -r header
     head -c "${header#request }" > "$WIRE/$n.request"
     { printf '%s\n' "$header"; cat "$WIRE/$n.request"; } > "$WIRE/$n.frame"
@@ -31,7 +27,9 @@ if [ "${WIRE_RUN:-0}" = 1 ]; then
         export DIBS_LOCK_DIR=$far/lock DIBS_HISTORY=$far/history DIBS_LOG=$far/log DIBS_SCRATCH=$far/scratch
         mkdir -p "$DIBS_LOCK_DIR" "$DIBS_SCRATCH"
     fi
-    if [ -n "$count" ]; then exec bash -c "$cmd" < <(cat "$WIRE/$n.b64"; exec cat); fi
+    if [ -e "$WIRE/$n.frame" ] && [ "${WIRE_STDIN:-0}" = 1 ]; then
+        exec bash -c "$cmd" < <(cat "$WIRE/$n.frame"; exec tee "$WIRE/$n.rest")
+    fi
     if [ -e "$WIRE/$n.frame" ]; then exec bash -c "$cmd" < <(cat "$WIRE/$n.frame"; exec cat); fi
     exec bash -c "$cmd"
 fi
@@ -75,27 +73,8 @@ pub(crate) fn wired() -> Sandbox {
     s
 }
 
-/// lib/machine, as a call sends it after its values.
-fn machine_script() -> String {
-    let mut parts: Vec<_> = fs::read_dir(repo_root().join("lib/machine"))
-        .unwrap()
-        .flatten()
-        .map(|e| e.path())
-        .collect();
-    parts.sort();
-    parts
-        .iter()
-        .map(|p| fs::read_to_string(p).unwrap())
-        .collect()
-}
-
 fn wire_normal(s: &Sandbox) -> Normal {
     Normal::of(s)
-        .rule(r"count=[0-9]+", "count=<n>")
-        .rule(
-            r"\.dibs-payload\.[0-9]+\.[0-9]+\.sh",
-            ".dibs-payload.<pid>.<time>.sh",
-        )
         .rule(r"\b[0-9]+-[0-9]{16,}\b", "<token>")
         .rule(env!("DIBS_RUNNER_HASH"), "<hash>")
         .rule(r"local-[0-9a-f]{10}\b", "local-<key>")
@@ -113,41 +92,8 @@ fn wire_normal(s: &Sandbox) -> Normal {
         )
 }
 
-/// Reads a payload's values back the way the machine does, by running them, and prints each
-/// as `NAME`, NUL, value, NUL; an array's members as `NAME[i]`.
-const READ_VALUES: &str = r#"set -u
-. "$1"
-for name in $(sed -n 's/^\([A-Z_][A-Z_]*\)=.*/\1/p; s/^declare -a \([A-Z_][A-Z_]*\)=.*/\1/p' "$1"); do
-    if declare -p "$name" 2>/dev/null | grep -q '^declare -a'; then
-        declare -n members=$name
-        printf '%s\0%s\0' "$name[]" "${#members[@]}"
-        for i in "${!members[@]}"; do printf '%s\0%s\0' "$name[$i]" "${members[$i]}"; done
-        unset -n members
-    else
-        printf '%s\0%s\0' "$name" "${!name}"
-    fi
-done
-"#;
-
 /// The words a shell makes of a command, NUL-separated, as the machine's `bash -c` runs it.
 const WORDS: &str = r#"eval "set -- $1"; printf '%s\0' "$@""#;
-
-/// The values each mode that runs no job reads. A mode that runs one reads them all.
-fn read_by(mode: &str) -> Option<&'static [&'static str]> {
-    match mode {
-        "status" => Some(&["JSON", "MODE", "TTY", "VERBOSE"]),
-        "watch" => Some(&[
-            "JSON", "LABEL", "LEASE", "MODE", "NO_WATCH", "TTY", "VERBOSE",
-        ]),
-        "abi" => Some(&["MODE", "TTY"]),
-        "log" | "check" | "out" | "fetch" => Some(&["LABEL", "MODE", "TTY"]),
-        "kill" | "kill-force" => Some(&[
-            "AGENT", "AGENT_ID", "BATCH", "DEV_NAME", "LABEL", "MODE", "TTY",
-        ]),
-        "release" => Some(&["AGENT", "BATCH", "DEV_NAME", "MODE", "TTY", "VERBOSE"]),
-        _ => None,
-    }
-}
 
 /// How a call's command is compared.
 #[derive(Clone, Copy, PartialEq)]
@@ -249,16 +195,6 @@ impl<'a> Wire<'a> {
             out.push_str("  its command, for the login shell there:\n");
             out.push_str(&indent(&self.n.apply(c)));
         }
-        if let Ok(payload) = fs::read_to_string(wire.join(format!("{k}.payload"))) {
-            let script = machine_script();
-            let sent = payload.strip_suffix(script.as_str()).unwrap_or_else(|| {
-                panic!(
-                    "call {k} sent something other than lib/machine after its values:\n{payload}"
-                )
-            });
-            out.push_str("  the values the machine acts on, ahead of lib/machine:\n");
-            out.push_str(&indent(&self.n.apply(&self.values(sent, cmd))));
-        }
         if let Ok(request) = fs::read_to_string(wire.join(format!("{k}.request"))) {
             out.push_str("  the request the runner acts on:\n");
             out.push_str(&indent(&self.n.apply(&self.request(&request, cmd))));
@@ -290,37 +226,6 @@ impl<'a> Wire<'a> {
                 other => entries.push(format!("{name}: {other}\n")),
             }
         }
-        entries.sort();
-        entries.concat()
-    }
-
-    /// The values a payload carries, as the machine sees them once it has run them, by name.
-    fn values(&self, sent: &str, cmd: Cmd) -> String {
-        self.s.write("values.sh", sent);
-        let out = self
-            .s
-            .command("bash", ["-c", READ_VALUES, "_", &self.s.p("values.sh")])
-            .run();
-        assert_eq!(out.code, 0, "the values do not run: {}\n{sent}", out.stderr);
-        let fields: Vec<&str> = out.stdout.split('\0').collect();
-        let mode = fields
-            .chunks(2)
-            .find(|p| p[0] == "MODE")
-            .and_then(|p| p.get(1))
-            .copied()
-            .unwrap_or_default();
-        let read = read_by(mode);
-        let mut entries: Vec<String> = fields
-            .chunks(2)
-            .filter_map(|pair| {
-                let [name, value] = pair else { return None };
-                let base = name.split('[').next().unwrap_or(name);
-                if read.is_some_and(|r| !r.contains(&base)) {
-                    return None;
-                }
-                Some(self.entry(name, value, cmd))
-            })
-            .collect();
         entries.sort();
         entries.concat()
     }

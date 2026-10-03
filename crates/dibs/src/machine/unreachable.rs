@@ -194,16 +194,6 @@ impl Unreachable<'_> {
     }
 }
 
-/// The machine's scratch is full, which takes out every way of looking at why, so this says
-/// where to look and how to get working again.
-pub fn no_room(target: &Target) -> String {
-    let dir = Ssh::remote_dir().unwrap_or_else(|| "~/.cache/dibs/run".into());
-    format!(
-        "dibs: could not write the job's script to {dir} on {}.\n  It is full, over quota, or read-only. Nothing can run there until it is not,\n  and that includes every command for looking into it.\n  Look:  DIBS_REMOTE_DIR=/dev/shm dibs --peek 'df -h {dir}; quota -s'\n  Work:  DIBS_REMOTE_DIR=/dev/shm dibs <command>\n  Tell the user. Do not delete anything on a shared machine to make room.\n",
-        target.hostname
-    )
-}
-
 /// What a command printed on both streams, given at most `secs` before it is stopped.
 fn bounded(command: &mut Command, secs: u64) -> String {
     command

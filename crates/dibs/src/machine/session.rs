@@ -1,39 +1,20 @@
-use crate::{
-    machine::{
-        half::Half,
-        held::Holder,
-        interrupt::Interrupt,
-        lines::{Lines, Stream},
-        payload::{CallValues, Watch, encode},
-        served::{Deadline, Delivery, Served},
-        ssh::{Ssh, parent_death_signal},
-        target::Target,
-        unreachable::{Unreachable, no_room},
-    },
-    scratch::ScratchFile,
+use crate::machine::{
+    held::Holder,
+    interrupt::Interrupt,
+    lines::Stream,
+    served::{Deadline, Delivery, Served},
+    ssh::Ssh,
+    target::Target,
+    unreachable::Unreachable,
+    values::CallValues,
 };
 use dibs_format::Exit;
-use std::{
-    io::{self, Read as _, Write as _},
-    os::unix::process::{CommandExt as _, ExitStatusExt as _},
-    path::PathBuf,
-    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
-    sync::{
-        Arc, Mutex,
-        mpsc::{self, Receiver, RecvTimeoutError, Sender},
-    },
-    time::{Duration, Instant},
-};
+use std::{io, os::unix::process::ExitStatusExt as _, process::ExitStatus, time::Duration};
 
 /// A caller that says nothing for this long is gone, unless `DIBS_LEASE` says otherwise.
 const DEFAULT_LEASE_SECS: u64 = 120;
-/// How long the last output of a call that has ended is waited for, which a process it left
-/// behind may hold open.
-const AFTER_STOP: Duration = Duration::from_secs(1);
 /// ssh's own failure, never the command's.
 pub(crate) const SSH_FAILED: i32 = 255;
-/// What the far line exits with when it could not write the script.
-const SCRIPT_UNWRITTEN: i32 = 70;
 /// This computer, and whether every call stays on it.
 #[derive(Debug, Clone)]
 pub struct Here {
@@ -87,12 +68,10 @@ impl Reach {
 /// The caller's half of a job dying with it, from the environment.
 #[derive(Debug, Clone, Copy)]
 pub struct Liveness {
-    /// `DIBS_NO_LIVE=1`: the caller's own stdin follows the script instead of a channel.
+    /// `DIBS_NO_LIVE=1`: the runner does not watch the caller over the channel.
     pub no_live: bool,
     /// `DIBS_NO_WATCHDOG=1`: the machine does not watch the channel.
     pub no_watchdog: bool,
-    /// `DIBS_NO_PDEATHSIG=1`: nothing started here is signalled when this process dies.
-    pub no_pdeathsig: bool,
     pub lease: u64,
 }
 
@@ -101,48 +80,6 @@ pub struct Liveness {
 pub enum Message {
     /// A held command ended with this status, which is not the caller going away.
     Release(i32),
-}
-
-/// How the machine half is started: the process, then what its stdin is given.
-struct Launch {
-    command: Command,
-    /// The script, when it goes down stdin rather than in a file.
-    prelude: Option<String>,
-    feed: Feed,
-}
-
-/// What follows the script down the machine half's stdin.
-#[derive(Debug, Clone, Copy)]
-enum Feed {
-    /// Nothing: the script is all it reads.
-    Close,
-    /// Messages only, and the end when this process ends.
-    Quiet,
-    /// Messages, and a bare newline whenever this long passes without one.
-    Heartbeat(Duration),
-    /// This process's own stdin.
-    Stdin,
-}
-
-/// What the machine half is given besides its script.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Shape {
-    /// The command runs there.
-    Run,
-    /// rsync's far side: this process's stdin is the transfer, and nothing is watched.
-    Transfer,
-}
-
-/// Where the machine half's output goes.
-enum Streams {
-    Inherit,
-    /// Both piped back to this process.
-    Lines,
-    /// Stdout into a pipe this process reads, and stderr where it is sent.
-    Into {
-        stdout: io::PipeWriter,
-        stderr: Stdio,
-    },
 }
 
 /// Which of a machine half's streams an answer keeps.
@@ -171,12 +108,6 @@ pub struct Diagnosis {
     pub said: String,
 }
 
-/// The machine half of a call, started.
-pub struct Started {
-    pub child: Child,
-    pub channel: Sender<Message>,
-}
-
 impl Liveness {
     pub fn from_env() -> Liveness {
         let on = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
@@ -188,7 +119,6 @@ impl Liveness {
         Liveness {
             no_live: on("DIBS_NO_LIVE"),
             no_watchdog: on("DIBS_NO_WATCHDOG"),
-            no_pdeathsig: on("DIBS_NO_PDEATHSIG"),
             lease,
         }
     }
@@ -255,13 +185,9 @@ impl Session {
     /// The exit for a machine half's, and what to say about it.
     pub fn diagnose(&self, status: i32, target: &Target) -> Diagnosis {
         match (&self.route, status) {
-            (Route::Ssh { .. }, SSH_FAILED) => Diagnosis {
+            (Route::Ssh { .. }, SSH_FAILED) if !Interrupt::heard() => Diagnosis {
                 exit: i32::from(Exit::Unreachable.code()),
                 said: Unreachable { target }.diagnosis(),
-            },
-            (Route::Ssh { .. }, SCRIPT_UNWRITTEN) => Diagnosis {
-                exit: i32::from(Exit::NoRoom.code()),
-                said: no_room(target),
             },
             (_, exit) => Diagnosis {
                 exit,
@@ -272,12 +198,7 @@ impl Session {
 
     /// Runs a call whose command runs on the machine, and returns its exit.
     pub fn run(&self, values: &CallValues, live: Liveness) -> io::Result<i32> {
-        if Half::of(values) == Half::Runner {
-            return self.served(values, live).run(Delivery::Inherit);
-        }
-        let deferred = Interrupt::defer();
-        let started = self.start(values, live, Shape::Run, Streams::Inherit)?;
-        Session::wait(started, deferred).map(exit_code)
+        self.served(values, live).run(Delivery::Inherit)
     }
 
     fn served<'a>(&'a self, values: &'a CallValues, live: Liveness) -> Served<'a> {
@@ -297,51 +218,15 @@ impl Session {
         live: Liveness,
         on_line: &mut dyn FnMut(Stream, &[u8]),
     ) -> io::Result<i32> {
-        if Half::of(values) == Half::Runner {
-            return self.served(values, live).run(Delivery::Lines(on_line));
-        }
-        let deferred = Interrupt::defer();
-        let Started { mut child, channel } =
-            self.start(values, live, Shape::Run, Streams::Lines)?;
-        let lines = Lines::of(&mut child);
-        // The channel closes as the machine half ends, not when its output does: what it leaves
-        // watching the channel holds that output open until then.
-        let waiter = std::thread::spawn(move || {
-            let status = child.wait();
-            drop(channel);
-            status
-        });
-        lines.relay(on_line);
-        let status = waiter
-            .join()
-            .unwrap_or_else(|_| Err(io::Error::other("the wait for the machine half panicked")));
-        drop(deferred);
-        let status = status?;
-        Interrupt::pass_on(status);
-        Ok(exit_code(status))
+        self.served(values, live).run(Delivery::Lines(on_line))
     }
 
     /// rsync's far side, fed this process's stdin; the exit is the far side's.
     pub fn transfer(&self, values: &CallValues, live: Liveness) -> io::Result<i32> {
-        if Half::of(values) == Half::Runner {
-            return self.served(values, live).transfer();
-        }
-        let deferred = Interrupt::defer();
-        let started = self.start(values, live, Shape::Transfer, Streams::Inherit)?;
-        Session::wait(started, deferred).map(exit_code)
+        self.served(values, live).transfer()
     }
 
-    fn wait(started: Started, deferred: Interrupt) -> io::Result<ExitStatus> {
-        let mut child = started.child;
-        let status = child.wait();
-        drop(deferred);
-        drop(started.channel);
-        let status = status?;
-        Interrupt::pass_on(status);
-        Ok(status)
-    }
-
-    /// Starts the machine's side of a hold, which the runner serves.
+    /// Starts the machine's side of a hold.
     pub fn hold(&self, values: &CallValues, live: Liveness) -> Holder {
         Served::holder(self.clone(), values.clone(), live)
     }
@@ -353,201 +238,11 @@ impl Session {
         bound: Option<Duration>,
         kept: Kept,
     ) -> io::Result<Answer> {
-        if Half::of(values) == Half::Runner {
-            let live = Liveness::from_env();
-            return Served {
-                deadline: bound.map(Deadline::after),
-                ..self.served(values, live)
-            }
-            .ask(kept);
+        Served {
+            deadline: bound.map(Deadline::after),
+            ..self.served(values, Liveness::from_env())
         }
-        let (reader, writer) = io::pipe()?;
-        let stderr = match kept {
-            Kept::Stdout => Stdio::inherit(),
-            Kept::StdoutAlone => Stdio::null(),
-            Kept::Everything => Stdio::from(writer.try_clone()?),
-        };
-        let streams = Streams::Into {
-            stdout: writer,
-            stderr,
-        };
-        let live = Liveness::from_env();
-        let deadline = bound.map(|bound| Instant::now() + bound);
-        let left = || deadline.map(|d| d.saturating_duration_since(Instant::now()));
-        let Started { mut child, channel } = self.start(values, live, Shape::Run, streams)?;
-        let heard = Heard::read(reader);
-        let pid = child.id() as libc::pid_t;
-        let (tell, exited) = mpsc::channel();
-        std::thread::spawn(move || tell.send(child.wait()));
-        let status = match left() {
-            Some(left) => exited.recv_timeout(left).ok(),
-            None => exited.recv().ok(),
-        };
-        let exit = match status {
-            Some(status) => {
-                heard.until_closed(Some(left().map_or(AFTER_STOP, |l| l.min(AFTER_STOP))));
-                Some(exit_code(status?))
-            }
-            None => {
-                // SAFETY: the child is not reaped until the waiter's wait returns.
-                unsafe { libc::kill(pid, libc::SIGTERM) };
-                let _ = exited.recv();
-                heard.until_closed(Some(AFTER_STOP));
-                None
-            }
-        };
-        drop(channel);
-        Ok(Answer {
-            output: heard.taken(),
-            exit,
-        })
-    }
-
-    fn start(
-        &self,
-        values: &CallValues,
-        live: Liveness,
-        shape: Shape,
-        streams: Streams,
-    ) -> io::Result<Started> {
-        let Launch {
-            mut command,
-            prelude,
-            feed,
-        } = match &self.route {
-            Route::Here => Session::here(values)?,
-            Route::Ssh { host } => Session::over_ssh(host, values, live, shape),
-        };
-        let die_with_me = !live.no_pdeathsig;
-        // SAFETY: the closure makes async-signal-safe calls only.
-        unsafe {
-            command.pre_exec(move || {
-                if die_with_me {
-                    parent_death_signal();
-                }
-                Ok(())
-            });
-        }
-        command.stdin(Stdio::piped());
-        match streams {
-            Streams::Inherit => {}
-            Streams::Lines => {
-                command.stdout(Stdio::piped()).stderr(Stdio::piped());
-            }
-            Streams::Into { stdout, stderr } => {
-                command.stdout(stdout).stderr(stderr);
-            }
-        }
-        let mut child = command.spawn()?;
-        drop(command);
-        let stdin = child.stdin.take().expect("stdin was piped");
-        let (channel, messages) = mpsc::channel();
-        std::thread::spawn(move || relay(stdin, prelude, feed, messages));
-        Ok(Started { child, channel })
-    }
-
-    /// On this computer: the script on bash's stdin, which dies with this process, or, where
-    /// nothing signals a parent's death, from a file.
-    fn here(values: &CallValues) -> io::Result<Launch> {
-        if cfg!(target_os = "linux") {
-            let watch = Watch {
-                off: true,
-                hold: false,
-                lease: 0,
-            };
-            let mut bash = Command::new("bash");
-            bash.arg("-s");
-            return Ok(Launch {
-                command: bash,
-                prelude: Some(values.script(watch)),
-                feed: Feed::Close,
-            });
-        }
-        let watch = Watch {
-            off: false,
-            hold: false,
-            lease: 0,
-        };
-        let file = ScriptFile::write(&values.script(watch))?;
-        let mut bash = Command::new("bash");
-        bash.arg(file);
-        Ok(Launch {
-            command: bash,
-            prelude: None,
-            feed: Feed::Quiet,
-        })
-    }
-
-    fn over_ssh(host: &str, values: &CallValues, live: Liveness, shape: Shape) -> Launch {
-        let watching = match shape {
-            Shape::Run => !(live.no_live || live.no_watchdog),
-            Shape::Transfer => false,
-        };
-        let lease = if watching { live.lease } else { 0 };
-        let watch = Watch {
-            off: !watching,
-            hold: false,
-            lease,
-        };
-        let payload = encode(&values.script(watch));
-        let fed = shape == Shape::Transfer || live.no_live;
-        let feed = match (fed, lease) {
-            (true, _) => Feed::Stdin,
-            (false, 0) => Feed::Quiet,
-            (false, lease) => Feed::Heartbeat(Duration::from_millis(lease * 250)),
-        };
-        let mut ssh = Command::new("ssh");
-        ssh.args(Ssh::options())
-            .arg(host)
-            .arg(Ssh::far_line(payload.len()));
-        Launch {
-            command: ssh,
-            prelude: Some(payload),
-            feed,
-        }
-    }
-}
-
-/// Copies the script, then the channel, into the machine half's stdin, and closes it when told
-/// to or when this process ends.
-fn relay(mut stdin: ChildStdin, prelude: Option<String>, feed: Feed, messages: Receiver<Message>) {
-    if let Some(prelude) = prelude
-        && stdin.write_all(prelude.as_bytes()).is_err()
-    {
-        return;
-    }
-    let beat = match feed {
-        Feed::Close => return,
-        Feed::Stdin => {
-            // Not io::copy: its splice holds the pipe's lock while it waits on a socket, and
-            // the machine half's exit then blocks on that lock for good.
-            let mut chunk = [0u8; 8192];
-            let mut from = io::stdin().lock();
-            while let Ok(n @ 1..) = from.read(&mut chunk) {
-                if stdin.write_all(&chunk[..n]).is_err() {
-                    return;
-                }
-            }
-            return;
-        }
-        Feed::Quiet => None,
-        Feed::Heartbeat(every) => Some(every),
-    };
-    let lines = std::iter::from_fn(|| {
-        let next = match beat {
-            Some(every) => messages.recv_timeout(every),
-            None => messages.recv().map_err(|_| RecvTimeoutError::Disconnected),
-        };
-        match next {
-            Ok(Message::Release(status)) => Some(format!("release {status}\n")),
-            Err(RecvTimeoutError::Timeout) => Some("\n".to_string()),
-            Err(RecvTimeoutError::Disconnected) => None,
-        }
-    });
-    for line in lines {
-        if stdin.write_all(line.as_bytes()).is_err() {
-            return;
-        }
+        .ask(kept)
     }
 }
 
@@ -556,53 +251,4 @@ pub fn exit_code(status: ExitStatus) -> i32 {
     status
         .code()
         .unwrap_or_else(|| 128 + status.signal().unwrap_or_default())
-}
-
-/// What a pipe has carried so far, read on a thread of its own.
-struct Heard {
-    so_far: Arc<Mutex<Vec<u8>>>,
-    closed: Receiver<()>,
-}
-
-impl Heard {
-    fn read(mut pipe: io::PipeReader) -> Heard {
-        let so_far = Arc::new(Mutex::new(Vec::new()));
-        let (tell, closed) = mpsc::channel();
-        let into = Arc::clone(&so_far);
-        std::thread::spawn(move || {
-            let mut chunk = [0u8; 8192];
-            while let Ok(n @ 1..) = pipe.read(&mut chunk) {
-                into.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .extend_from_slice(&chunk[..n]);
-            }
-            let _ = tell.send(());
-        });
-        Heard { so_far, closed }
-    }
-
-    /// Waits for the pipe to close, or for so long.
-    fn until_closed(&self, within: Option<Duration>) {
-        let _ = match within {
-            Some(within) => self.closed.recv_timeout(within).ok(),
-            None => self.closed.recv().ok(),
-        };
-    }
-
-    fn taken(&self) -> Vec<u8> {
-        std::mem::take(&mut self.so_far.lock().unwrap_or_else(|e| e.into_inner()))
-    }
-}
-
-/// A script in `TMPDIR`, which the machine half removes when it ends.
-struct ScriptFile;
-
-impl ScriptFile {
-    fn write(script: &str) -> io::Result<PathBuf> {
-        let dir = std::env::var_os("TMPDIR")
-            .filter(|d| !d.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
-        ScratchFile::create(&dir, "dibs-hold-script", script.as_bytes())
-    }
 }

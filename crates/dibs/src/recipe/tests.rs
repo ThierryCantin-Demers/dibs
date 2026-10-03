@@ -336,6 +336,22 @@ fn the_fingerprint_follows_the_procedure_and_nothing_else() {
 }
 
 #[test]
+fn a_fingerprint_is_the_value_every_earlier_dibs_gave_it() {
+    let mut measured = step(Lock::Exclusive, "cargo bench");
+    measured.env.insert("KEY".into(), "value".into());
+    let recipe = Recipe {
+        source: Source::Repo,
+        needs: None,
+        isolation: Isolation::Machine,
+        params: BTreeMap::new(),
+        fresh: vec!["STORE".into()],
+        artifacts: Vec::new(),
+        steps: vec![step(Lock::Shared, "cargo build"), measured],
+    };
+    assert_eq!(recipe.fingerprint(), "d4619e399e5736a4");
+}
+
+#[test]
 fn isolation_defaults_to_the_whole_machine() {
     let r: Recipe = toml::from_str("[[step]]\nlock = \"shared\"\nrun = \"x\"").unwrap();
     assert_eq!(r.isolation, Isolation::Machine);

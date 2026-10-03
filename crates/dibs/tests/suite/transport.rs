@@ -59,34 +59,25 @@ fn a_command_arrives_as_written_whatever_it_quotes() {
 }
 
 #[test]
-fn the_jobs_exit_comes_back_and_nothing_is_left_on_the_machine() {
+fn the_jobs_exit_comes_back() {
     let s = Sandbox::new();
     assert_eq!(
         s.remote(s.dibs(["--label", "transport-exit", "exit 7"]))
             .code(),
-        7,
-        "the job's exit comes back"
-    );
-    assert_eq!(
-        fs::read_dir(s.path("remote-run")).unwrap().count(),
-        0,
-        "no script is left on the machine"
+        7
     );
 }
 
 #[test]
 fn a_dead_callers_job_is_noticed_through_the_stream() {
-    // Without the parent-death signal, the caller's death has to reach the far side as EOF on the
-    // stream the script and command arrived on.
+    // The caller's death reaches the far side as the end of the stream the request came on.
     let mut s = Sandbox::new();
     let (up, never) = (s.gate("up"), s.gate("never"));
-    let call = s
-        .remote(s.dibs([
-            "--label",
-            "transport-hangup",
-            &format!("{}; {}", up.signal(), never.hold()),
-        ]))
-        .env("DIBS_NO_PDEATHSIG", "1");
+    let call = s.remote(s.dibs([
+        "--label",
+        "transport-hangup",
+        &format!("{}; {}", up.signal(), never.hold()),
+    ]));
     let caller = s.spawn(call);
     up.reached();
     unsafe { libc::kill(caller.pid as i32, libc::SIGKILL) };
@@ -234,8 +225,12 @@ fn a_caller_that_goes_away_takes_the_whole_job_with_it() {
         &format!("sh {}\necho mid-done\n", s.p("grand.sh")),
     );
     let cmd = format!("bash {}; echo after", s.p("mid.sh"));
-    let script = s.machine_script(&[("LABEL", "gone-caller"), ("CMD", &cmd)]);
-    let (job, channel) = s.spawn_fed(s.command("bash", [script]));
+    let (job, mut channel) = s.spawn_fed(s.dibs(["__runner", "serve"]));
+    std::io::Write::write_all(
+        &mut channel,
+        watched_request_frame(Mode::Shared, "gone-caller", &cmd).as_bytes(),
+    )
+    .unwrap();
     ready.reached();
     let grandchild: u32 = s.read("grand.pid").trim().parse().unwrap();
     assert!(alive(grandchild), "the job reached its grandchild");
@@ -246,48 +241,6 @@ fn a_caller_that_goes_away_takes_the_whole_job_with_it() {
         "the grandchild is gone once the job has ended"
     );
     assert_eq!(s.holders(), 0, "and the lock with it");
-}
-
-#[test]
-fn a_transfer_still_preparing_is_stopped_when_its_session_ends() {
-    // rsync owns the stream and reads none of it while a new tree is seeded, so nothing there sees
-    // the caller go. The session the far half runs under does.
-    let mut s = Sandbox::new();
-    let (up, never) = (s.gate("up"), s.gate("never"));
-    let cmd = format!("{}; {}", up.signal(), never.hold());
-    let script = s.machine_script(&[
-        ("MODE", "rsh"),
-        ("LABEL", "send-gone"),
-        ("CMD", &cmd),
-        ("NO_WATCH", "1"),
-    ]);
-    let (session, _channel) =
-        s.spawn_fed(s.command("bash", ["-c", &format!("bash {script}; exit")]));
-    up.reached();
-    unsafe { libc::kill(session.pid as i32, libc::SIGKILL) };
-    s.wait(session);
-    s.log_line("caller-gone.*send-gone");
-    s.gone();
-}
-
-#[test]
-fn a_transfers_far_half_carries_its_stream_untouched() {
-    // rsync's transport never reaches the machine from here, so the far half is run as rsync would.
-    let s = Sandbox::new();
-    let script = s.machine_script(&[
-        ("MODE", "rsh"),
-        ("LABEL", "sync"),
-        ("CMD", "echo carried"),
-        ("NO_WATCH", "1"),
-    ]);
-    let out = s.command("bash", [script]).run();
-    assert_eq!(out.code, 0, "a transfer's far half exits with its command");
-    assert_eq!(out.stdout, "carried\n", "and carries its stream untouched");
-    assert_eq!(
-        out.stderr.lines_with("unbound variable"),
-        0,
-        "with nothing unbound on the way out"
-    );
 }
 
 #[test]
