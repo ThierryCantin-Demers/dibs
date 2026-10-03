@@ -11,14 +11,14 @@ fn check_reports_what_nothing_works_without() {
     let s = Sandbox::new();
     let check = s.dibs(["--check"]).run().stdout;
     assert_eq!(
-        check.lines_with("flock and timeout"),
+        check.lines_with("which every job runs under"),
         1,
-        "--check reports the tools nothing works without"
+        "--check reports the shell every job runs under"
     );
     assert_eq!(
-        check.lines_with("parsed the bootstrap"),
+        check.lines_with("the login shell started it"),
         1,
-        "it proves the bootstrap parsed by having run at all"
+        "it proves the bootstrap and the runner by having run at all"
     );
     assert_eq!(check.lines_with("    cpu   "), 1, "it names the cpu");
     // rocm-smi is installed on machines with no AMD GPU, prints a driver error, and exits 0:

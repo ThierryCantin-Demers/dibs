@@ -60,6 +60,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
       | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
+      | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
       |     [ -d "$old" ] || continue
@@ -289,6 +293,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
       | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
@@ -593,6 +601,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
       | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
+      | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
       |     [ -d "$old" ] || continue
@@ -731,6 +743,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
       | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
+      | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
       |     [ -d "$old" ] || continue
@@ -846,6 +862,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
       | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
+      | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
       |     [ -d "$old" ] || continue
@@ -956,6 +976,10 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
       | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
@@ -1189,6 +1213,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
       | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
@@ -1461,6 +1489,10 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
       | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
@@ -1800,6 +1832,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
       | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
+      | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
       |     [ -d "$old" ] || continue
@@ -2088,6 +2124,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
       | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
+      | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
       |     [ -d "$old" ] || continue
@@ -2357,6 +2397,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
       | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
+      | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
       |     [ -d "$old" ] || continue
@@ -2623,6 +2667,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
       | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
+      | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
       |     [ -d "$old" ] || continue
@@ -2853,6 +2901,10 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
       | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do
@@ -3105,6 +3157,10 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
       |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      | done
+      | for old in "$SCRATCH"/jobs/*; do
+      |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+      |     rm -rf "$old"
       | done
       | TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
       | for old in "$SCRATCH/target"/*; do

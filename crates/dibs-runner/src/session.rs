@@ -12,6 +12,7 @@ use crate::{
     lock::{Hold, Kind, Lock, LockDir},
     machine::{Machine, line_count},
     platform::{Host, Platform as _},
+    probe::Probe,
     queue::Queue,
     settings::Settings,
     sink::Sink,
@@ -135,6 +136,13 @@ impl Session {
             Mode::Log => return views.log(),
             Mode::Kill | Mode::KillForce => return kill().serve(),
             Mode::Release => return kill().release(),
+            Mode::Check => {
+                return Probe {
+                    machine: &machine,
+                    write: self.call.label().as_str() == "check-write",
+                }
+                .serve(&self.sink);
+            }
             _ => {}
         }
         let environment = match Environment::of(&machine, self.call.request.card.as_ref()) {
@@ -171,7 +179,9 @@ impl Session {
         };
         match self.call.mode() {
             Mode::Peek => self.peek(&at, &environment),
-            Mode::Shared | Mode::Bench | Mode::Rsh => self.run(&at, environment, channel),
+            Mode::Shared | Mode::Bench | Mode::Rsh | Mode::Gc => {
+                self.run(&at, environment, channel)
+            }
             Mode::Out => kept.out(self.call.label().as_str()),
             Mode::Fetch => kept.fetch(self.call.label().as_str()),
             mode => {
@@ -380,7 +390,7 @@ impl Session {
         let job_dir = at.machine.jobs().join(job.as_str());
         let log = (!transfer
             && fs::create_dir_all(&job_dir)
-                .and_then(|()| Session::write_command(&job_dir.join("cmd"), &request.command))
+                .and_then(|()| Session::write_command(&job_dir.join("cmd"), &self.call.work))
                 .is_ok())
         .then(|| job_dir.join("log"));
         if log.is_some() {
@@ -447,7 +457,7 @@ impl Session {
             }
             false => {
                 let command = held.as_ref().map(Held::command);
-                let command = command.as_deref().unwrap_or(&request.command);
+                let command = command.as_deref().unwrap_or(&self.call.work);
                 match Job::spawn(command, &environment, output, &self.sink) {
                     Ok(work) => {
                         state.stage = Stage::Running(work.pid);

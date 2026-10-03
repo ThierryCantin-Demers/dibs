@@ -27,6 +27,8 @@ impl Half {
                 | Mode::Kill
                 | Mode::KillForce
                 | Mode::Release
+                | Mode::Gc
+                | Mode::Check
         );
         match served {
             true => Half::Runner,

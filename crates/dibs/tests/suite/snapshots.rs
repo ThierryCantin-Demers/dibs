@@ -1029,6 +1029,7 @@ fn scratch_to_sweep(s: &Sandbox) -> String {
         ("target/demo", 100_000, "now"),
         ("target/demo-arm1", 300_000, "9 days ago"),
         ("tmp/left", 20_000, "30 days ago"),
+        ("jobs/20250901120000-1", 5_000, "30 days ago"),
         ("byhand", 10_000, "now"),
     ];
     for (dir, size, when) in sized {

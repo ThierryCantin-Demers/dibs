@@ -17,6 +17,15 @@ pub enum Slot {
     Holds(String),
 }
 
+/// A run of a file's blocks on the disk, in bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Extent {
+    pub physical: u64,
+    pub length: u64,
+    /// Another file's too, as after a reflink copy.
+    pub shared: bool,
+}
+
 /// What the runner asks of the operating system.
 pub trait Platform {
     /// Still in the process table, a zombie included. Another account's processes count, which
@@ -62,6 +71,24 @@ pub trait Platform {
 
     /// Its pid, age, owner and arguments, as `ps -o pid=,etime=,user=,args=` prints them.
     fn describe(pid: u32) -> Option<String>;
+
+    /// Whether files on this directory's filesystem can share blocks, as reflinks do on XFS and
+    /// btrfs.
+    fn shares_blocks(dir: &Path) -> bool;
+
+    /// Where a file's blocks lie on the disk; None where the system cannot say.
+    fn extents(file: &Path) -> Option<Vec<Extent>>;
+
+    /// `to` made a copy of `from` that shares its blocks; false where the system cannot.
+    fn reflink(from: &Path, to: &Path) -> bool;
+
+    /// The kind of filesystem a directory is on, as `df -T` names it.
+    fn filesystem(dir: &Path) -> Option<String>;
+
+    fn cpu_model() -> Option<String>;
+
+    /// A battery means a laptop, which throttles, shares memory between CPU and GPU, and moves.
+    fn on_battery() -> bool;
 
     /// The process and everything under it, parents before children, asked downward where the
     /// system can, so a look at a holder reads its own tree and not the whole process table.

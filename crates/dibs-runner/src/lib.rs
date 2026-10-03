@@ -5,6 +5,7 @@
 mod call;
 mod channel;
 mod clock;
+mod gc;
 mod history;
 mod job;
 mod kept;
@@ -12,6 +13,7 @@ mod kill;
 mod lock;
 mod machine;
 mod platform;
+mod probe;
 mod provision;
 mod queue;
 mod session;
@@ -26,8 +28,11 @@ pub fn main(args: &[String]) -> i32 {
     match args {
         [verb] if verb == "serve" => session::serve(),
         [verb, hash] if verb == "build" => provision::build(hash),
+        [verb, days, dry] if verb == "gc" => {
+            gc::Asked::parse(&format!("{days} {dry}")).sweep().run()
+        }
         _ => {
-            eprintln!("usage: dibs-runner serve | build <hash>");
+            eprintln!("usage: dibs-runner serve | build <hash> | gc <days|default> <0|1>");
             2
         }
     }

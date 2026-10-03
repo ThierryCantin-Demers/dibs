@@ -2,10 +2,9 @@
 -> exit 1
 1| dibs --check on <host>
 1| 
-1|   ok    bash <version>, and the login shell parsed the bootstrap
-1|   ok    flock and timeout present
+1|   ok    this dibs's runner is installed, and the login shell started it
+1|   ok    bash <version>, which every job runs under
 1|   ok    rsync <version>, so a tree can be sent here
-1|   ok    setpriv present, so a job dies with its caller
 1|   ok    the CPU of reaped children is counted, so idle detection sees a job's whole tree
 1|   warn  lock directory set explicitly: <root>/lockdir (only what set it will agree)
 1|   FAIL  scratch <root>/ro-scratch is not writable
@@ -25,10 +24,9 @@
 -> exit 1
 1| dibs --check on <host>
 1| 
-1|   ok    bash <version>, and the login shell parsed the bootstrap
-1|   ok    flock and timeout present
+1|   ok    this dibs's runner is installed, and the login shell started it
+1|   ok    bash <version>, which every job runs under
 1|   ok    rsync <version>, so a tree can be sent here
-1|   ok    setpriv present, so a job dies with its caller
 1|   ok    the CPU of reaped children is counted, so idle detection sees a job's whole tree
 1|   warn  lock directory set explicitly: <root>/lockdir (only what set it will agree)
 1|   FAIL  scratch <root>/ro-scratch is not writable

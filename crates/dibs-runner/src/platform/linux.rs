@@ -1,13 +1,49 @@
-use crate::platform::base::{Platform, Process, Slot, elapsed};
+use crate::platform::base::{Extent, Platform, Process, Slot, elapsed};
 use std::{
+    ffi::CString,
     fs,
-    os::unix::fs::MetadataExt as _,
+    os::{fd::AsRawFd as _, unix::ffi::OsStrExt as _, unix::fs::MetadataExt as _},
     path::{Path, PathBuf},
     sync::OnceLock,
 };
 
 /// Linux, read from `/proc` and `/sys`.
 pub struct Linux;
+
+/// `statfs`'s magic numbers for the filesystems whose files share blocks.
+const XFS: u32 = 0x5846_5342;
+const BTRFS: u32 = 0x9123_683e;
+/// `_IOW(0x94, 9, int)`.
+const FICLONE: libc::Ioctl = 0x4004_9409;
+/// `_IOWR('f', 11, struct fiemap)`.
+const FS_IOC_FIEMAP: libc::Ioctl = 0xc020_660b;
+const FIEMAP_EXTENT_LAST: u32 = 0x1;
+const FIEMAP_EXTENT_SHARED: u32 = 0x2000;
+/// Extents asked for at a time.
+const EXTENTS: usize = 64;
+
+/// `<linux/fiemap.h>`'s request, with room for `EXTENTS` answers.
+#[repr(C)]
+struct Fiemap {
+    start: u64,
+    length: u64,
+    flags: u32,
+    mapped: u32,
+    count: u32,
+    reserved: u32,
+    extents: [FiemapExtent; EXTENTS],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FiemapExtent {
+    logical: u64,
+    physical: u64,
+    length: u64,
+    reserved64: [u64; 2],
+    flags: u32,
+    reserved: [u32; 3],
+}
 
 /// The fields of `/proc/<pid>/stat` after the command, which may hold spaces and parentheses.
 struct Stat {
@@ -282,6 +318,97 @@ impl Platform for Linux {
             user_name(uid)
         ))
     }
+
+    fn shares_blocks(dir: &Path) -> bool {
+        let Ok(path) = CString::new(dir.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: statfs is plain data, which statfs fills from a NUL-terminated path.
+        let mut found: libc::statfs = unsafe { std::mem::zeroed() };
+        let read = unsafe { libc::statfs(path.as_ptr(), &mut found) };
+        read == 0 && matches!(found.f_type as u32, XFS | BTRFS)
+    }
+
+    fn reflink(from: &Path, to: &Path) -> bool {
+        let (Ok(source), Ok(copy)) = (fs::File::open(from), fs::File::create(to)) else {
+            return false;
+        };
+        // SAFETY: FICLONE reads the source descriptor and fills the copy's, both open here.
+        unsafe { libc::ioctl(copy.as_raw_fd(), FICLONE, source.as_raw_fd()) == 0 }
+    }
+
+    /// The longest mount point above the directory, as `/proc/self/mounts` lists them.
+    fn filesystem(dir: &Path) -> Option<String> {
+        let dir = dir.canonicalize().ok()?;
+        let mounts = fs::read_to_string("/proc/self/mounts").ok()?;
+        mounts
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split(' ');
+                let point = fields.nth(1)?.replace("\\040", " ");
+                let kind = fields.next()?;
+                dir.starts_with(&point)
+                    .then(|| (point.len(), kind.to_string()))
+            })
+            .max_by_key(|(len, _)| *len)
+            .map(|(_, kind)| kind)
+    }
+
+    fn cpu_model() -> Option<String> {
+        fs::read_to_string("/proc/cpuinfo")
+            .ok()?
+            .lines()
+            .find_map(|l| {
+                Some(
+                    l.strip_prefix("model name")?
+                        .split_once(": ")?
+                        .1
+                        .to_string(),
+                )
+            })
+    }
+
+    fn on_battery() -> bool {
+        fs::read_dir("/sys/class/power_supply")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with("BAT"))
+    }
+
+    fn extents(file: &Path) -> Option<Vec<Extent>> {
+        let opened = fs::File::open(file).ok()?;
+        let mut extents = Vec::new();
+        let mut start = 0;
+        let mut done = false;
+        while !done {
+            let mapped = Linux::map_from(&opened, start)?;
+            done = mapped.is_empty();
+            for extent in mapped {
+                extents.push(Extent {
+                    physical: extent.physical,
+                    length: extent.length,
+                    shared: extent.flags & FIEMAP_EXTENT_SHARED != 0,
+                });
+                start = extent.logical + extent.length;
+                done |= extent.flags & FIEMAP_EXTENT_LAST != 0;
+            }
+        }
+        Some(extents)
+    }
+}
+
+impl Linux {
+    /// One FIEMAP request from `start`: the extents mapped, the last flagged so.
+    fn map_from(file: &fs::File, start: u64) -> Option<Vec<FiemapExtent>> {
+        // SAFETY: Fiemap is plain data; FS_IOC_FIEMAP fills at most `count` extents of it.
+        let mut map: Fiemap = unsafe { std::mem::zeroed() };
+        map.start = start;
+        map.length = u64::MAX - start;
+        map.count = EXTENTS as u32;
+        let asked = unsafe { libc::ioctl(file.as_raw_fd(), FS_IOC_FIEMAP, &mut map) };
+        (asked == 0).then(|| map.extents[..(map.mapped as usize).min(EXTENTS)].to_vec())
+    }
 }
 
 /// Whether the kernel lists a process's children, which one built without
@@ -346,5 +473,35 @@ mod tests {
                 .iter()
                 .any(|p| p.pid == me && p.parent == std::os::unix::process::parent_id())
         );
+        assert!(Linux::children(me).is_some_and(|c| c.is_empty()));
+        assert!(Linux::describe(me).is_some_and(|d| d.starts_with(&format!("{me} "))));
+    }
+
+    #[test]
+    fn a_reflinked_copy_shares_the_blocks_of_its_original() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        if !Linux::shares_blocks(&dir) {
+            eprintln!("skipped: {} cannot share blocks", dir.display());
+            return;
+        }
+        let original = dir.join(format!("extents-{}", std::process::id()));
+        let copy = original.with_extension("copy");
+        let mut file = fs::File::create(&original).unwrap();
+        std::io::Write::write_all(&mut file, &vec![7u8; 256 * 1024]).unwrap();
+        file.sync_all().unwrap();
+        let own = Linux::extents(&original).unwrap();
+        assert!(own.iter().all(|e| !e.shared));
+        assert!(own.iter().map(|e| e.length).sum::<u64>() >= 256 * 1024);
+        let copied = std::process::Command::new("cp")
+            .arg("--reflink=always")
+            .arg(&original)
+            .arg(&copy)
+            .status()
+            .is_ok_and(|s| s.success());
+        if copied {
+            assert!(Linux::extents(&copy).unwrap().iter().all(|e| e.shared));
+        }
+        let _ = fs::remove_file(&original);
+        let _ = fs::remove_file(&copy);
     }
 }

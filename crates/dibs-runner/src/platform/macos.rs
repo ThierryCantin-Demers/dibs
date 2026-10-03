@@ -1,8 +1,10 @@
 use crate::{
-    platform::base::{Platform, Process, Slot},
+    platform::base::{Extent, Platform, Process, Slot},
     stop::Signals,
 };
 use std::{
+    ffi::{CStr, CString},
+    os::unix::ffi::OsStrExt as _,
     path::Path,
     process::{Command, Stdio},
 };
@@ -248,6 +250,40 @@ impl Platform for MacOs {
         // SAFETY: sysconf only reads a configuration value.
         let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
         u64::try_from(ticks).ok().filter(|t| *t > 0).unwrap_or(100)
+    }
+
+    /// APFS clones share blocks too, but nothing here asks which.
+    fn shares_blocks(_dir: &Path) -> bool {
+        false
+    }
+
+    fn extents(_file: &Path) -> Option<Vec<Extent>> {
+        None
+    }
+
+    fn reflink(_from: &Path, _to: &Path) -> bool {
+        false
+    }
+
+    fn filesystem(dir: &Path) -> Option<String> {
+        let path = CString::new(dir.as_os_str().as_bytes()).ok()?;
+        // SAFETY: statfs is plain data, which statfs fills from a NUL-terminated path.
+        let mut found: libc::statfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::statfs(path.as_ptr(), &mut found) } != 0 {
+            return None;
+        }
+        // SAFETY: statfs leaves f_fstypename NUL-terminated.
+        let name = unsafe { CStr::from_ptr(found.f_fstypename.as_ptr()) };
+        Some(name.to_string_lossy().into_owned())
+    }
+
+    fn cpu_model() -> Option<String> {
+        let model = output_of("sysctl", &["-n", "machdep.cpu.brand_string"]);
+        Some(model.trim().to_string()).filter(|m| !m.is_empty())
+    }
+
+    fn on_battery() -> bool {
+        output_of("pmset", &["-g", "batt"]).contains("InternalBattery")
     }
 
     /// Asked of ps, which costs a process; only Linux ever finds an orphan to describe.

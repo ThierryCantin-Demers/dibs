@@ -1,4 +1,4 @@
-use crate::clock::Moment;
+use crate::{clock::Moment, gc};
 use dibs_format::{BatchId, Event, JobId, Label, LockRecord, LogLine, Mode, wire::Request};
 use std::{fs::OpenOptions, io::Write as _, path::Path};
 
@@ -17,6 +17,8 @@ pub struct Call {
     pub batch_tag: Option<String>,
     /// The command on one line and cut short, as the records and the log carry it.
     pub one_line: String,
+    /// What the job runs: the request's command, or for `--gc` the sweep.
+    pub work: String,
     /// This process, which the records name.
     pub pid: u32,
 }
@@ -37,6 +39,12 @@ impl Call {
         if request.watch.hold {
             command = format!("held for a command run elsewhere: {command}");
         }
+        let mut work = request.command.clone();
+        if request.mode == Mode::Gc {
+            let asked = gc::Asked::parse(&request.command);
+            command = asked.named();
+            work = asked.command();
+        }
         Call {
             agent: match agent.is_empty() {
                 true => "?".into(),
@@ -45,6 +53,7 @@ impl Call {
             agent_id,
             batch_tag,
             one_line: command,
+            work,
             pid: std::process::id(),
             request,
         }

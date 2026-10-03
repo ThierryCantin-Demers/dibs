@@ -31,6 +31,10 @@ for old in "$SCRATCH"/ws/*/*; do
     echo "DIBS-GC $old" >&2
     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
 done
+for old in "$SCRATCH"/jobs/*; do
+    [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
+    rm -rf "$old"
+done
 TKEEP=${DIBS_TARGET_KEEP_DAYS:-5}
 for old in "$SCRATCH/target"/*; do
     [ -d "$old" ] || continue
@@ -1149,12 +1153,19 @@ mod tests {
         let (home, _, _) = sandbox("gc-local");
         let stale = home.join("scratch/ws/other/local-old");
         std::fs::create_dir_all(&stale).unwrap();
-        std::process::Command::new("touch")
-            .arg("-d")
-            .arg("400 days ago")
-            .arg(stale.join(".dibs-used"))
-            .status()
-            .unwrap();
+        let old_job = home.join("scratch/jobs/20250101000000-1");
+        let new_job = home.join("scratch/jobs/20260101000000-2");
+        for dir in [&old_job, &new_job] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        for dated in [stale.join(".dibs-used"), old_job.clone()] {
+            std::process::Command::new("touch")
+                .arg("-d")
+                .arg("400 days ago")
+                .arg(dated)
+                .status()
+                .unwrap();
+        }
         let left = targets(&home, "5", &setup_local_script("demo", "k", "c", None, &[]));
         assert!(!left.contains(&"abandoned".to_string()), "left {left:?}");
         assert!(
@@ -1164,6 +1175,10 @@ mod tests {
         assert!(
             !stale.exists(),
             "a stale tree of another repo must be collected"
+        );
+        assert!(
+            !old_job.exists() && new_job.exists(),
+            "and a job's directory past its clock, not one within it"
         );
         let _ = std::fs::remove_dir_all(&home);
     }

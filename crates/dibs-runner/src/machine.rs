@@ -15,6 +15,11 @@ pub struct Machine {
     pub scratch: PathBuf,
     /// Its name up to the first dot, as messages give it.
     pub host: String,
+    pub scope: Scope,
+    /// The lock directory every account meets in, where one can be made.
+    pub shared_lock_dir: PathBuf,
+    /// Where history and log are shared among accounts.
+    pub shared_state: PathBuf,
 }
 
 /// Whose lock directory it is.
@@ -78,6 +83,9 @@ impl Machine {
             log,
             scratch,
             host: short_hostname(),
+            scope,
+            shared_lock_dir: LockPlace::shared(),
+            shared_state,
         })
     }
 
@@ -100,10 +108,12 @@ struct LockPlace {
 impl LockPlace {
     /// The first of `DIBS_LOCK_DIR`, the shared directory when it can be written, the runtime
     /// directory, then `/tmp`.
+    fn shared() -> PathBuf {
+        PathBuf::from(var("DIBS_SHARED_LOCK_DIR").unwrap_or_else(|| "/dev/shm/dibs-lock".into()))
+    }
+
     fn find() -> LockPlace {
-        let shared = PathBuf::from(
-            var("DIBS_SHARED_LOCK_DIR").unwrap_or_else(|| "/dev/shm/dibs-lock".into()),
-        );
+        let shared = LockPlace::shared();
         // SAFETY: getuid cannot fail.
         let uid = unsafe { libc::getuid() };
         let (dir, scope) = match var("DIBS_LOCK_DIR") {

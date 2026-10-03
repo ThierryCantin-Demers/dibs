@@ -59,6 +59,11 @@ impl Moment {
         )
     }
 
+    /// `2026-10-01`, as `date +%F` prints it.
+    pub fn day(&self) -> String {
+        format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
+    }
+
     /// `12:00:00`, as `date +%H:%M:%S` prints it.
     pub fn clock(&self) -> String {
         format!("{:02}:{:02}:{:02}", self.hour, self.minute, self.second)
