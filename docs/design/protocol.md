@@ -106,9 +106,10 @@ one of them.
   holds `rw`, shared or exclusive. The contention test in the suite runs a bash job and a runner
   job against one directory, in both orders.
 - **Records.** `waiting.<pid>`, `holder.<pid>`, `batch.<pid>`, `cancelled.<id>` and the rest keep
-  their names and lines, written and read through `dibs-format`'s codecs. Either half prunes,
-  queues behind and bypasses the other's records, and `dibs --kill` signals a runner's tree as it
-  signals a script's.
+  their names and lines, written and read through `dibs-format`'s codecs, and listed in the order
+  of their file names, as the shell's glob lists them. Either half prunes, queues behind and
+  bypasses the other's records. `dibs --kill` sends TERM to the holder alone, runner or script,
+  which stops its own tree; `--force` sends KILL to the whole tree, deepest first.
 - **History, log and job directories.** The same columns and files, so estimates and `dibs out`
   read across both.
 - **What differs.** A runner's job is in its own process group, where a script's shared the
