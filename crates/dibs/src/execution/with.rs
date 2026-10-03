@@ -3,7 +3,7 @@ use super::{
         RunError, TreeScript, TreeSpec, announce_prepared, new_token, preparing,
         send_missing_gitdbs, sh, sync_prepared,
     },
-    jobs::{Jobs, Reported, Request},
+    jobs::{JobRequest, Jobs, Reported},
     refs::{arms, sides},
 };
 use crate::{
@@ -73,7 +73,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     });
     let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
     if args.device.is_some() {
-        let req = Request {
+        let req = JobRequest {
             label: &label,
             lock: Lock::Shared,
             device: args.device.as_deref(),
@@ -154,7 +154,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     }
     .script();
     let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
-    let setup = Request {
+    let setup = JobRequest {
         label: &setup_label,
         lock: Lock::Shared,
         device: None,
@@ -211,7 +211,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     if let Some(build) = &svc.build {
         eprintln!("dibs: building {name}");
         let build_label = format!("{label}:build");
-        let req = Request {
+        let req = JobRequest {
             label: &build_label,
             lock: Lock::Shared,
             device: args.device.as_deref(),

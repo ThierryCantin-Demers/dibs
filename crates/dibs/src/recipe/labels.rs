@@ -1,4 +1,4 @@
-use super::manifest::Step;
+use super::base::Step;
 
 pub(crate) fn run_label(
     repo: &str,

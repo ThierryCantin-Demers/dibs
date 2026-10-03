@@ -47,10 +47,10 @@ pub struct CallValues {
     pub verbose: bool,
     pub json: bool,
     pub card: Card,
-    /// `DIBS_STREAM`, as given, or `1` for `--stream`.
-    pub stream: String,
+    /// The whole output rather than its digest: `--stream`, or `DIBS_STREAM=1`.
+    pub stream: bool,
     pub ready_within: u32,
-    pub fingerprint: String,
+    pub fingerprint: Option<String>,
     pub command: String,
     pub tty: bool,
     pub caller: Caller,
@@ -82,6 +82,7 @@ impl CallValues {
         let max = self.max.to_string();
         let wait = self.wait.map(|w| w.to_string()).unwrap_or_default();
         let ready_within = self.ready_within.to_string();
+        let fingerprint = self.fingerprint.as_deref().unwrap_or_default();
         let lease = watch.lease.to_string();
         let values: [(&str, &str); 23] = [
             ("MODE", self.mode.as_str()),
@@ -94,10 +95,10 @@ impl CallValues {
             ("DEV_RT", &self.card.runtimes),
             ("DEV_CHIP", &self.card.chip),
             ("DEV_TWINS", &twins),
-            ("STREAM", &self.stream),
+            ("STREAM", flag(self.stream)),
             ("READY_WITHIN", &ready_within),
             ("MAXFROM", max_from),
-            ("FINGERPRINT", &self.fingerprint),
+            ("FINGERPRINT", fingerprint),
             ("CMD", &self.command),
             ("TTY", flag(self.tty)),
             ("AGENT", &self.caller.name),

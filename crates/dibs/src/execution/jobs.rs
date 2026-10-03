@@ -15,7 +15,7 @@ use std::{io::Write as _, time::Instant};
 /// What a run record names the layer its jobs ran on.
 pub const BACKEND: &str = "dibs";
 
-pub struct Request<'a> {
+pub struct JobRequest<'a> {
     pub label: &'a str,
     pub lock: Lock,
     /// The card to run on, named from the machine's inventory. Absent means the runtime
@@ -227,7 +227,7 @@ impl Jobs {
         Ok(MachineCall::new(&call, &caller)?.destination()?)
     }
 
-    pub fn run(&self, req: &Request, command: &str) -> JobOutcome {
+    pub fn run(&self, req: &JobRequest, command: &str) -> JobOutcome {
         self.read(req, command, Reader::new(Reading::Reported, &mut |_| {}))
             .outcome
     }
@@ -235,7 +235,7 @@ impl Jobs {
     /// Same, but the job's stdout comes back rather than going to the terminal. For setup steps
     /// that have to report where they put things; a benchmark's output must keep streaming to
     /// whoever asked for it.
-    pub fn run_capture(&self, req: &Request, command: &str) -> Reported {
+    pub fn run_capture(&self, req: &JobRequest, command: &str) -> Reported {
         self.read(req, command, Reader::new(Reading::Kept, &mut |_| {}))
     }
 
@@ -243,7 +243,7 @@ impl Jobs {
     /// which is collected and handed to `on_report` before anything after it is shown.
     pub fn run_reporting(
         &self,
-        req: &Request,
+        req: &JobRequest,
         command: &str,
         on_report: &mut dyn FnMut(&str),
     ) -> Reported {
@@ -252,7 +252,7 @@ impl Jobs {
 
     /// Whether the call would be refused on grounds decided here, without the machine: a machine
     /// that does not measure, or a label measured somewhere else.
-    pub fn preflight(&self, req: &Request) -> bool {
+    pub fn preflight(&self, req: &JobRequest) -> bool {
         let call = Call {
             preflight: true,
             ..self.call(req, "true")
@@ -264,7 +264,7 @@ impl Jobs {
     /// lock, its report read as `run_reporting` reads one.
     pub fn sync(
         &self,
-        req: &Request,
+        req: &JobRequest,
         args: &[String],
         before: &str,
         on_report: &mut dyn FnMut(&str),
@@ -300,7 +300,7 @@ impl Jobs {
         }
     }
 
-    fn read(&self, req: &Request, command: &str, mut reader: Reader) -> Reported {
+    fn read(&self, req: &JobRequest, command: &str, mut reader: Reader) -> Reported {
         let call = self.call(req, command);
         let exit = self.locked(
             &call,
@@ -332,7 +332,7 @@ impl Jobs {
         exit
     }
 
-    fn call(&self, req: &Request, command: &str) -> Call {
+    fn call(&self, req: &JobRequest, command: &str) -> Call {
         let lock = match req.lock {
             Lock::Exclusive => RunLock::Bench,
             Lock::Shared => RunLock::Shared,
@@ -378,7 +378,7 @@ mod tests {
         let job = RecipeJob::default();
         let jobs = Jobs::on(Some(MachineName::new("m")));
         let new_series = |lock, new_series| {
-            let req = Request {
+            let req = JobRequest {
                 label: "a/bench/x",
                 lock,
                 device: None,

@@ -1,6 +1,6 @@
 use crate::{
     call::{
-        base::{CallError, Fingerprint, LockedCall, holding},
+        base::{CallError, Fingerprint, LockedCall},
         machine::{Asked, MachineCall},
         origin::{Origin, RecipeJob},
         output::Output,
@@ -257,7 +257,7 @@ impl fmt::Display for Before<'_> {
 pub struct Rsh {
     stream: bool,
     label: Option<Label>,
-    fingerprint: String,
+    fingerprint: Option<String>,
     before: Option<PathBuf>,
     exit: Option<PathBuf>,
     command: Vec<String>,
@@ -271,6 +271,13 @@ impl Rsh {
     const BEFORE: &'static str = "--before";
     const FINGERPRINT: &'static str = "--fingerprint";
     const EXIT: &'static str = "--exit";
+    const FLAGS: [&'static str; 5] = [
+        Rsh::STREAM,
+        Rsh::LABEL,
+        Rsh::BEFORE,
+        Rsh::FINGERPRINT,
+        Rsh::EXIT,
+    ];
 
     /// Transfers, and writes its exit where the sync that started rsync reads it, since rsync
     /// may report the transport's failure as a stream error of its own.
@@ -297,27 +304,26 @@ impl Rsh {
         let mut rsh = Rsh {
             stream: false,
             label: None,
-            fingerprint: String::new(),
+            fingerprint: None,
             before: None,
             exit: None,
             command: Vec::new(),
         };
-        let mut words = words.iter();
-        let mut rest = loop {
-            match words.next()?.as_str() {
+        let mut words = words.iter().map(String::as_str).peekable();
+        while let Some(flag) = words.next_if(|w| Rsh::FLAGS.contains(w)) {
+            match flag {
                 Rsh::STREAM => rsh.stream = true,
                 Rsh::LABEL => rsh.label = Some(Label::new(words.next()?)),
-                Rsh::FINGERPRINT => rsh.fingerprint = words.next()?.clone(),
+                Rsh::FINGERPRINT => rsh.fingerprint = Some(words.next()?.to_string()),
                 Rsh::BEFORE => rsh.before = Some(PathBuf::from(words.next()?)),
                 Rsh::EXIT => rsh.exit = Some(PathBuf::from(words.next()?)),
-                first => break std::iter::once(first).chain(words.map(String::as_str)),
+                _ => return None,
             }
-        };
-        let first = rest.next()?;
-        if first == "-l" {
-            rest.nth(1)?;
         }
-        rsh.command = rest.map(str::to_string).collect();
+        if words.next()? == "-l" {
+            words.nth(1)?;
+        }
+        rsh.command = words.map(str::to_string).collect();
         Some(rsh)
     }
 
@@ -336,7 +342,7 @@ impl Rsh {
         let label = self.label.clone().unwrap_or_else(|| Label::new(SYNC_LABEL));
         let target = machine.target()?;
         let session = Session::new(&target, &machine.here);
-        if holding(&session.lock_at) {
+        if session.inside_hold() {
             return Err(CallError::InsideHold {
                 lock_at: session.lock_at,
             });
@@ -347,7 +353,7 @@ impl Rsh {
         }
         machine.somewhere(&target)?;
         let values = CallValues {
-            fingerprint: Fingerprint(&self.fingerprint).sent(),
+            fingerprint: self.fingerprint.as_deref().map(|f| Fingerprint(f).sent()),
             ..machine.values(
                 Asked {
                     mode: Mode::Rsh,

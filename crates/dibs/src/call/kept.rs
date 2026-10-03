@@ -9,7 +9,8 @@ use crate::{
 };
 use dibs_format::{Exit, JobId, Label, Mode};
 use std::{
-    io::Write,
+    fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -32,7 +33,7 @@ impl MachineCall<'_> {
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| OUT_LINES.into());
         let shown = match target {
-            Some(OutTarget::Job(job)) => return self.out_job(job, &lines),
+            Some(OutTarget::Job(job)) => return KeptJob::of(self, job).out(&lines),
             Some(OutTarget::Pid(pid)) => pid.to_string(),
             None => "all".into(),
         };
@@ -42,21 +43,50 @@ impl MachineCall<'_> {
         self.send(Asked::plain(Mode::Out, label), &at)
     }
 
-    fn out_job(&self, job: &JobId, lines: &str) -> Result<i32, CallError> {
-        let kept = self.kept(job);
-        let at = self.target()?;
+    /// `dibs --fetch`: a job's files, kept here and copied where asked.
+    pub fn fetch(
+        &self,
+        job: &JobId,
+        into: Option<&str>,
+        report: &mut dyn Write,
+    ) -> Result<i32, CallError> {
+        KeptJob::of(self, job).fetch(into, report)
+    }
+}
+
+/// A job's log and files as this computer keeps them, fetched from its machine the first time
+/// they are asked for, so they can be read after the machine is gone.
+struct KeptJob<'a> {
+    machine: &'a MachineCall<'a>,
+    job: &'a JobId,
+    dir: PathBuf,
+}
+
+impl<'a> KeptJob<'a> {
+    fn of(machine: &'a MachineCall<'a>, job: &'a JobId) -> KeptJob<'a> {
+        let dir = machine
+            .paths
+            .kept_jobs()
+            .unwrap_or_default()
+            .join(job.as_str());
+        KeptJob { machine, job, dir }
+    }
+
+    fn out(&self, lines: &str) -> Result<i32, CallError> {
+        let (machine, kept) = (self.machine, &self.dir);
+        let at = machine.target()?;
         if !kept.join("log").is_file() {
-            self.somewhere(&at)?;
-            if let Some(exit) = self.keep_log(job, &kept, &at)? {
+            machine.somewhere(&at)?;
+            if let Some(exit) = self.keep_log(&at)? {
                 return Ok(exit);
             }
         }
-        let text = std::fs::read(kept.join("log"))?;
+        let text = fs::read(kept.join("log"))?;
         let log = kept.join("log");
         print!(
             "{}",
             KeptLog {
-                head: &std::fs::read_to_string(kept.join("head")).unwrap_or_default(),
+                head: &fs::read_to_string(kept.join("head")).unwrap_or_default(),
                 log: &log,
                 bytes: text.len() as u64,
                 text: &String::from_utf8_lossy(&text),
@@ -67,40 +97,36 @@ impl MachineCall<'_> {
         Ok(0)
     }
 
-    /// Fetches a finished job's whole log into `kept`; the exit to give instead, when the
-    /// machine sent something else.
-    fn keep_log(&self, job: &JobId, kept: &Path, at: &Target) -> Result<Option<i32>, CallError> {
+    /// Fetches the finished job's whole log; the exit to give instead, when the machine sent
+    /// something else.
+    fn keep_log(&self, at: &Target) -> Result<Option<i32>, CallError> {
+        let (job, kept) = (self.job, &self.dir);
         let label = Label::new(format!("{job}.whole"));
-        let answer = self.capture(Asked::plain(Mode::Out, label), at)?;
+        let answer = self.machine.capture(Asked::plain(Mode::Out, label), at)?;
         let exit = answer.exit.unwrap_or_default();
         let raw = answer.output;
         let part = kept.with_extension("part");
-        let Some(whole) = WholeLog::read(&raw).filter(|_| std::fs::create_dir_all(&part).is_ok())
-        else {
-            std::io::stdout().write_all(&raw)?;
+        let Some(whole) = WholeLog::read(&raw).filter(|_| fs::create_dir_all(&part).is_ok()) else {
+            io::stdout().write_all(&raw)?;
             return Ok(Some(exit));
         };
-        std::fs::write(part.join("head"), whole.head)?;
-        std::fs::write(part.join("log"), whole.log)?;
-        std::fs::create_dir_all(kept)?;
-        std::fs::rename(part.join("head"), kept.join("head"))?;
-        std::fs::rename(part.join("log"), kept.join("log"))?;
-        let _ = std::fs::remove_dir_all(&part);
+        fs::write(part.join("head"), whole.head)?;
+        fs::write(part.join("log"), whole.log)?;
+        fs::create_dir_all(kept)?;
+        fs::rename(part.join("head"), kept.join("head"))?;
+        fs::rename(part.join("log"), kept.join("log"))?;
+        let _ = fs::remove_dir_all(&part);
         Ok(None)
     }
 
-    /// `dibs --fetch`: a job's files, kept here and copied where asked.
-    pub fn fetch(
-        &self,
-        job: &JobId,
-        into: Option<&str>,
-        report: &mut dyn Write,
-    ) -> Result<i32, CallError> {
-        let kept = self.kept(job).join("artifacts");
+    fn fetch(&self, into: Option<&str>, report: &mut dyn Write) -> Result<i32, CallError> {
+        let (machine, job) = (self.machine, self.job);
+        let kept = self.dir.join("artifacts");
         if !kept.is_dir() {
-            let at = self.target()?;
-            self.somewhere(&at)?;
-            let answer = self.capture(Asked::plain(Mode::Fetch, Label::new(job.as_str())), &at)?;
+            let at = machine.target()?;
+            machine.somewhere(&at)?;
+            let answer =
+                machine.capture(Asked::plain(Mode::Fetch, Label::new(job.as_str())), &at)?;
             let raw = answer.output;
             let Some(tar) = raw
                 .strip_prefix(FETCHED.as_bytes())
@@ -140,7 +166,7 @@ impl MachineCall<'_> {
             writeln!(report, "  and {} more", files.len() - FILES_LISTED)?;
         }
         if let Some(into) = into {
-            let copied = std::fs::create_dir_all(into).is_ok()
+            let copied = fs::create_dir_all(into).is_ok()
                 && Command::new("cp")
                     .arg("-a")
                     .arg(format!("{}/.", kept.display()))
@@ -153,14 +179,6 @@ impl MachineCall<'_> {
             writeln!(report, "dibs: copied into {into}")?;
         }
         Ok(0)
-    }
-
-    /// Where a job's log and files are kept on this computer.
-    fn kept(&self, job: &JobId) -> PathBuf {
-        self.paths
-            .kept_jobs()
-            .unwrap_or_default()
-            .join(job.as_str())
     }
 }
 
@@ -193,12 +211,12 @@ impl<'a> WholeLog<'a> {
 /// Unpacks a base64 tar into `into`, through a sibling directory so a failure leaves nothing.
 fn unpack(tar: &[u8], into: &Path) -> bool {
     let part = into.with_extension("part");
-    let _ = std::fs::remove_dir_all(&part);
+    let _ = fs::remove_dir_all(&part);
     let unpacked = decode(tar)
-        .is_some_and(|bytes| std::fs::create_dir_all(&part).is_ok() && untar(&bytes, &part))
-        && std::fs::rename(&part, into).is_ok();
+        .is_some_and(|bytes| fs::create_dir_all(&part).is_ok() && untar(&bytes, &part))
+        && fs::rename(&part, into).is_ok();
     if !unpacked {
-        let _ = std::fs::remove_dir_all(&part);
+        let _ = fs::remove_dir_all(&part);
     }
     unpacked
 }
@@ -225,7 +243,7 @@ fn files_under(dir: &Path) -> Vec<String> {
     let mut found = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(at) = pending.pop() {
-        for entry in std::fs::read_dir(&at).into_iter().flatten().flatten() {
+        for entry in fs::read_dir(&at).into_iter().flatten().flatten() {
             let path = entry.path();
             match entry.file_type() {
                 Ok(kind) if kind.is_dir() => pending.push(path),

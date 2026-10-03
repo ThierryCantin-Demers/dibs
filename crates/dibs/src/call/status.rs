@@ -8,7 +8,6 @@ use crate::{
     render::{Answered, Answers},
 };
 use dibs_format::{Exit, MachineName, Mode};
-use std::time::Duration;
 
 /// How long `dibs status` waits for each machine when it asks them all.
 const STATUS_POLL_SECS: u64 = 8;
@@ -32,10 +31,7 @@ impl MachineCall<'_> {
             json: self.call.json,
             ..Call::default()
         };
-        let bound = Bound {
-            within: poll_timeout(STATUS_POLL_SECS),
-            kept: Kept::Everything,
-        };
+        let bound = Bound::polled(STATUS_POLL_SECS, Kept::Everything);
         let answers = self.each(&names, |machine| {
             self.ask(
                 machine,
@@ -77,14 +73,4 @@ impl MachineCall<'_> {
                 .collect()
         })
     }
-}
-
-/// `DIBS_POLL_TIMEOUT`, or the caller's own default; 0 waits for as long as it takes.
-pub fn poll_timeout(default: u64) -> Option<Duration> {
-    let secs = std::env::var("DIBS_POLL_TIMEOUT")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|s| s.is_finite() && *s >= 0.0)
-        .unwrap_or(default as f64);
-    (secs > 0.0).then(|| Duration::from_secs_f64(secs))
 }

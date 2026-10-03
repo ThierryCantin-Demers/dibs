@@ -192,6 +192,22 @@ impl Target {
         Ok(())
     }
 
+    /// What a series is keyed on: where the job goes, so one machine reached by two names is one
+    /// series.
+    pub fn series_key(&self) -> String {
+        [
+            self.host.clone(),
+            self.machine
+                .as_ref()
+                .map(|m| m.to_string())
+                .unwrap_or_default(),
+            self.hostname.clone(),
+        ]
+        .into_iter()
+        .find(|m| !m.is_empty())
+        .unwrap_or_else(|| "?".into())
+    }
+
     pub fn pinned(&self) -> bool {
         matches!(self.named, Named::On | Named::DibsOn)
     }

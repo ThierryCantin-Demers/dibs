@@ -103,7 +103,7 @@ impl<'a> MachineCall<'a> {
         .values(asked.label.filed(), card, asked.command);
         Ok(match asked.streamed {
             true => CallValues {
-                stream: "1".into(),
+                stream: true,
                 ..values
             },
             false => values,
@@ -182,4 +182,19 @@ pub struct Bound {
     /// None waits for as long as it takes.
     pub within: Option<Duration>,
     pub kept: Kept,
+}
+
+impl Bound {
+    /// Within `DIBS_POLL_TIMEOUT` seconds, or `default`; 0 waits for as long as it takes.
+    pub fn polled(default: u64, kept: Kept) -> Bound {
+        let secs = std::env::var("DIBS_POLL_TIMEOUT")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|s| s.is_finite() && *s >= 0.0)
+            .unwrap_or(default as f64);
+        Bound {
+            within: (secs > 0.0).then(|| Duration::from_secs_f64(secs)),
+            kept,
+        }
+    }
 }

@@ -143,7 +143,7 @@ impl<'a> LockedCall<'a> {
             .device
             .as_ref()
             .map_or("none".to_string(), |d| d.to_string());
-        let machine = series_machine(&target);
+        let machine = target.series_key();
         let entry = Entry {
             label: label.as_str(),
             machine: &machine,
@@ -164,7 +164,7 @@ impl<'a> LockedCall<'a> {
         }
 
         let session = Session::new(&target, &here);
-        if matches!(self.mode, Mode::Shared | Mode::Bench) && holding(&session.lock_at) {
+        if matches!(self.mode, Mode::Shared | Mode::Bench) && session.inside_hold() {
             return Err(CallError::InsideHold {
                 lock_at: session.lock_at,
             });
@@ -177,7 +177,7 @@ impl<'a> LockedCall<'a> {
         let status = match (self.hold, &mut *output) {
             (true, _) => Hold {
                 command: self.command,
-                lock: self.mode.as_str(),
+                lock: self.mode,
                 at: session.at(&target, &here),
                 lock_at: session.lock_at.clone(),
                 reach: session.reach(&target, &here),
@@ -262,8 +262,8 @@ impl<'a> LockedCall<'a> {
                 Origin::Recipe(RecipeJob {
                     fingerprint: Some(fingerprint),
                     ..
-                }) => Fingerprint(fingerprint).sent(),
-                _ => String::new(),
+                }) => Some(Fingerprint(fingerprint).sent()),
+                _ => None,
             },
             ..values
         }
@@ -283,10 +283,7 @@ impl Request<'_> {
             Some(max) => (max, MaxFrom::Given),
             None => (default_max(self.mode), MaxFrom::Default),
         };
-        let stream = match self.call.stream {
-            true => "1".to_string(),
-            false => set("DIBS_STREAM").unwrap_or_else(|| "0".into()),
-        };
+        let stream = self.call.stream || set("DIBS_STREAM").is_some_and(|v| v == "1");
         let caller = match self.mode {
             Mode::Shared
             | Mode::Bench
@@ -312,7 +309,7 @@ impl Request<'_> {
             card,
             stream,
             ready_within: Run::default().ready_within,
-            fingerprint: String::new(),
+            fingerprint: None,
             command,
             tty: Output::Inherit.tty(),
             caller,
@@ -373,29 +370,6 @@ impl Environment {
 /// A variable that is set and not empty, as a shell's `${VAR:-}` tests it.
 fn set(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
-}
-
-/// Inside a `--hold` of this machine's lock, a call that takes it again queues behind the hold,
-/// which only ends when the call does.
-pub(crate) fn holding(lock_at: &str) -> bool {
-    let held = std::env::var("DIBS_HOLDING").unwrap_or_default();
-    format!(" {held} ").contains(&format!(" {lock_at} "))
-}
-
-/// Keyed on where the job goes, so one machine reached by two names is one series.
-fn series_machine(target: &Target) -> String {
-    [
-        target.host.clone(),
-        target
-            .machine
-            .as_ref()
-            .map(|m| m.to_string())
-            .unwrap_or_default(),
-        target.hostname.clone(),
-    ]
-    .into_iter()
-    .find(|m| !m.is_empty())
-    .unwrap_or_else(|| "?".into())
 }
 
 /// The name of the directory the call was made from, as the shell sees it.

@@ -2,7 +2,7 @@
 //! machine holding its build cache. A stale reading costs a worse queue, never a double booking.
 
 use crate::{
-    call::{Asked, Bound, MachineCall, poll_timeout},
+    call::{Asked, Bound, MachineCall},
     cli::Call,
     machine::Kept,
     render::Answered,
@@ -11,8 +11,7 @@ use dibs_format::{Exit, MachineName, Mode};
 use serde::Deserialize;
 use std::{
     collections::hash_map::RandomState,
-    fmt,
-    fmt::Write as _,
+    fmt::{self, Write as _},
     hash::{BuildHasher as _, Hasher as _},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
@@ -31,7 +30,7 @@ const UNMEASURED_PENALTY: u64 = 500;
 /// What placement reads of a machine's status.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Reading {
-    pub state: String,
+    pub state: LockState,
     pub cores: Option<u64>,
     pub load: Option<u64>,
     pub caches: Option<Vec<String>>,
@@ -39,10 +38,43 @@ pub struct Reading {
     pub clones: Option<Vec<String>>,
 }
 
+/// Who holds a machine's lock, as its status says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LockState {
+    Idle,
+    Shared,
+    Bench,
+    Busy,
+    Orphan,
+    /// One this client does not know, from a newer machine half.
+    #[serde(other)]
+    Other,
+}
+
+impl LockState {
+    fn as_str(self) -> &'static str {
+        match self {
+            LockState::Idle => "idle",
+            LockState::Shared => "shared",
+            LockState::Bench => "bench",
+            LockState::Busy => "busy",
+            LockState::Orphan => "orphan",
+            LockState::Other => "other",
+        }
+    }
+}
+
+impl fmt::Display for LockState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl Reading {
     /// Held exclusively, so it cannot start shared work.
     fn benchmarking(&self) -> bool {
-        self.state == Mode::Bench.as_str()
+        self.state == LockState::Bench
     }
 }
 
@@ -187,10 +219,7 @@ impl Placement<'_> {
             json: true,
             ..Call::default()
         };
-        let bound = Bound {
-            within: poll_timeout(PICK_POLL_SECS),
-            kept: Kept::StdoutAlone,
-        };
+        let bound = Bound::polled(PICK_POLL_SECS, Kept::StdoutAlone);
         let mut answers = self.machine.each(&asked, |name| {
             let status = Asked::plain(Mode::Status, self.machine.label());
             self.machine.ask(name, &flags, status, bound)
@@ -214,7 +243,6 @@ impl Placement<'_> {
             let Some(reading) = text
                 .lines()
                 .find_map(|line| serde_json::from_str::<Reading>(line).ok())
-                .filter(|r| !r.state.is_empty())
             else {
                 continue;
             };
@@ -331,11 +359,11 @@ fn coin() -> bool {
 mod tests {
     use super::*;
 
-    fn machine(name: &str, state: &str, load: u64) -> Candidate {
+    fn machine(name: &str, state: LockState, load: u64) -> Candidate {
         Candidate {
             name: MachineName::new(name),
             reading: Reading {
-                state: state.into(),
+                state,
                 cores: Some(1),
                 load: Some(load),
                 caches: Some(Vec::new()),
@@ -349,7 +377,10 @@ mod tests {
     #[test]
     fn the_least_loaded_machine_wins_and_a_benchmark_ranks_last() {
         let ranked = Ranking::default().place(
-            &[machine("a", "bench", 0), machine("b", "idle", 90)],
+            &[
+                machine("a", LockState::Bench, 0),
+                machine("b", LockState::Idle, 90),
+            ],
             || false,
         );
         assert_eq!(ranked.placed, Ok(MachineName::new("b")));
@@ -358,20 +389,22 @@ mod tests {
 
     #[test]
     fn the_cache_wins_over_load_and_a_missing_clone_is_dropped() {
-        let mut cached = machine("a", "idle", 80);
+        let mut cached = machine("a", LockState::Idle, 80);
         cached.reading.caches = Some(vec!["app".into()]);
         let ranking = Ranking {
             repo: Some("app".into()),
             ..Ranking::default()
         };
-        let ranked = ranking.place(&[cached, machine("b", "idle", 0)], || false);
+        let ranked = ranking.place(&[cached, machine("b", LockState::Idle, 0)], || false);
         assert_eq!(ranked.placed, Ok(MachineName::new("a")));
         let ranking = Ranking {
             repo: Some("absent".into()),
             ..Ranking::default()
         };
         assert_eq!(
-            ranking.place(&[machine("a", "idle", 0)], || false).placed,
+            ranking
+                .place(&[machine("a", LockState::Idle, 0)], || false)
+                .placed,
             Err(Unplaced::NoClone {
                 repo: "absent".into()
             })

@@ -31,7 +31,7 @@ const DEFAULT_CONNECT_TIMEOUT: &str = "10";
 const SSH_FAILED: i32 = 255;
 /// What the far line exits with when it could not write the script.
 const SCRIPT_UNWRITTEN: i32 = 70;
-/// The far side's `&&` continues a line the bash client split with a backslash.
+/// After the far line's `&&`, so the line a machine receives stays the same byte for byte.
 const CONTINUATION: &str = "             ";
 
 /// This computer, and whether every call stays on it.
@@ -99,6 +99,14 @@ pub struct Liveness {
 pub enum Message {
     /// A held command ended with this status, which is not the caller going away.
     Release(i32),
+}
+
+/// How the machine half is started: the process, then what its stdin is given.
+struct Launch {
+    command: Command,
+    /// The script, when it goes down stdin rather than in a file.
+    prelude: Option<String>,
+    feed: Feed,
 }
 
 /// What follows the script down the machine half's stdin.
@@ -189,6 +197,13 @@ impl Liveness {
 }
 
 impl Session {
+    /// Inside a `--hold` of this machine's lock, a call that takes it again queues behind the
+    /// hold, which only ends when the call does.
+    pub fn inside_hold(&self) -> bool {
+        let held = std::env::var("DIBS_HOLDING").unwrap_or_default();
+        format!(" {held} ").contains(&format!(" {} ", self.lock_at))
+    }
+
     pub fn new(target: &Target, here: &Here) -> Session {
         let me = here.name.to_ascii_lowercase();
         match me == target.hostname.to_ascii_lowercase() || here.local {
@@ -367,7 +382,11 @@ impl Session {
         streams: Streams,
     ) -> io::Result<Started> {
         let hold = shape == Shape::Hold;
-        let (mut command, prelude, feed) = match &self.route {
+        let Launch {
+            mut command,
+            prelude,
+            feed,
+        } = match &self.route {
             Route::Here => Session::here(values, hold)?,
             Route::Ssh { host } => Session::over_ssh(host, values, live, shape),
         };
@@ -408,7 +427,7 @@ impl Session {
 
     /// On this computer: the script on bash's stdin, which dies with this process, or, where
     /// nothing signals a parent's death or a hold needs the channel, from a file.
-    fn here(values: &CallValues, hold: bool) -> io::Result<(Command, String, Feed)> {
+    fn here(values: &CallValues, hold: bool) -> io::Result<Launch> {
         if !hold && cfg!(target_os = "linux") {
             let watch = Watch {
                 off: true,
@@ -417,7 +436,11 @@ impl Session {
             };
             let mut bash = Command::new("bash");
             bash.arg("-s");
-            return Ok((bash, values.script(watch), Feed::Close));
+            return Ok(Launch {
+                command: bash,
+                prelude: Some(values.script(watch)),
+                feed: Feed::Close,
+            });
         }
         let watch = Watch {
             off: false,
@@ -427,15 +450,14 @@ impl Session {
         let file = ScriptFile::write(&values.script(watch))?;
         let mut bash = Command::new("bash");
         bash.arg(file);
-        Ok((bash, String::new(), Feed::Quiet))
+        Ok(Launch {
+            command: bash,
+            prelude: None,
+            feed: Feed::Quiet,
+        })
     }
 
-    fn over_ssh(
-        host: &str,
-        values: &CallValues,
-        live: Liveness,
-        shape: Shape,
-    ) -> (Command, String, Feed) {
+    fn over_ssh(host: &str, values: &CallValues, live: Liveness, shape: Shape) -> Launch {
         let hold = shape == Shape::Hold;
         let watching = match shape {
             Shape::Hold => true,
@@ -459,7 +481,11 @@ impl Session {
         ssh.args(Ssh::options())
             .arg(host)
             .arg(Ssh::far_line(payload.len()));
-        (ssh, payload, feed)
+        Launch {
+            command: ssh,
+            prelude: Some(payload),
+            feed,
+        }
     }
 }
 
@@ -549,8 +575,10 @@ impl Ssh {
 
 /// Copies the script, then the channel, into the machine half's stdin, and closes it when told
 /// to or when this process ends.
-fn relay(mut stdin: ChildStdin, prelude: String, feed: Feed, messages: Receiver<Message>) {
-    if stdin.write_all(prelude.as_bytes()).is_err() {
+fn relay(mut stdin: ChildStdin, prelude: Option<String>, feed: Feed, messages: Receiver<Message>) {
+    if let Some(prelude) = prelude
+        && stdin.write_all(prelude.as_bytes()).is_err()
+    {
         return;
     }
     let beat = match feed {
@@ -570,16 +598,18 @@ fn relay(mut stdin: ChildStdin, prelude: String, feed: Feed, messages: Receiver<
         Feed::Quiet => None,
         Feed::Heartbeat(every) => Some(every),
     };
-    loop {
+    let lines = std::iter::from_fn(|| {
         let next = match beat {
             Some(every) => messages.recv_timeout(every),
             None => messages.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
-        let line = match next {
-            Ok(Message::Release(status)) => format!("release {status}\n"),
-            Err(RecvTimeoutError::Timeout) => "\n".to_string(),
-            Err(RecvTimeoutError::Disconnected) => return,
-        };
+        match next {
+            Ok(Message::Release(status)) => Some(format!("release {status}\n")),
+            Err(RecvTimeoutError::Timeout) => Some("\n".to_string()),
+            Err(RecvTimeoutError::Disconnected) => None,
+        }
+    });
+    for line in lines {
         if stdin.write_all(line.as_bytes()).is_err() {
             return;
         }

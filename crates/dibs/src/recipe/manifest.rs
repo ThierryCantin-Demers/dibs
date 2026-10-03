@@ -8,77 +8,19 @@
 //! procedure to a moment and make it progressively harder to rerun, which is the opposite of
 //! what putting it in the repo was for. The revisions belong to the run record.
 
-use super::refusals::RecipeError;
+use super::{base::Recipe, refusals::RecipeError};
 use dibs::paths::Paths;
-use dibs_format::{Lock, RunVerb};
+use dibs_format::RunVerb;
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
-fn default_source() -> Source {
-    Source::Repo
-}
-
 pub fn local_dir() -> PathBuf {
     Paths::from_env()
         .recipes()
         .unwrap_or_else(|| PathBuf::from("dibs/recipes"))
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Isolation {
-    /// Nothing else runs on the machine, the only isolation there is.
-    #[default]
-    Machine,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct Step {
-    pub lock: Lock,
-    pub run: String,
-    /// Exported before the command, since ssh forwards nothing from this side.
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-}
-
-/// One knob a recipe takes. Declaring them is what keeps the set of valid invocations
-/// enumerable, so `dibs list` can say what a recipe accepts instead of the caller reading it.
-#[derive(Debug, Deserialize, Clone, Default)]
-pub struct Param {
-    #[serde(default)]
-    pub default: Option<String>,
-    /// When it is not empty, a value outside it is refused rather than passed to the workload,
-    /// which is where a typo currently becomes a silently different measurement.
-    #[serde(default)]
-    pub choices: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct Recipe {
-    /// Filled in on load, never read from the file.
-    #[serde(skip, default = "default_source")]
-    pub source: Source,
-    /// Refused on load: nothing here can check what a machine has or route on it.
-    #[serde(default)]
-    pub(crate) needs: Option<String>,
-    #[serde(default)]
-    pub isolation: Isolation,
-    #[serde(default)]
-    pub params: BTreeMap<String, Param>,
-    /// Variables given a value unique to each run, such as one naming the store a tool keeps
-    /// autotune results in, which a run would otherwise share with the last run in its tree. A
-    /// value rather than a directory, since that is what a tool's knob takes.
-    #[serde(default)]
-    pub fresh: Vec<String>,
-    /// Files a step writes that the caller wants back, relative to the tree or under
-    /// `$CARGO_TARGET_DIR/`. Each step keeps those it wrote itself, never one an earlier run left.
-    #[serde(default)]
-    pub artifacts: Vec<String>,
-    #[serde(default, rename = "step")]
-    pub steps: Vec<Step>,
 }
 
 /// One server, and what it takes for something to be able to use it.
@@ -96,7 +38,7 @@ pub struct Serve {
 /// recipe: it measures nothing itself, and it lives exactly as long as the command using it.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Service {
-    #[serde(skip, default = "default_source")]
+    #[serde(skip)]
     pub source: Source,
     /// Run under the shared lock before anything is served, since a server must never compile:
     /// it would do so inside whatever lock the command using it holds.
@@ -186,11 +128,12 @@ impl Verb {
 }
 
 /// Where a recipe was found, so an override is visible rather than surprising.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Source {
     /// `.dibs.toml` in the repo being measured, for a repo that wants to carry its own. Not
     /// a destination recipes graduate to: a shared upstream repo gains nothing from one
     /// person's benchmark procedure, and the run record already carries the procedure itself.
+    #[default]
     Repo,
     /// `~/.config/dibs/recipes/<repo>.toml`, which can be a clone a team shares. A recipe in a
     /// shared upstream repo costs a pull request per change and gives every other contributor

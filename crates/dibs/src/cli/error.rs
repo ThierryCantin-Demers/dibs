@@ -1,8 +1,8 @@
 use dibs_format::Exit;
 use std::fmt;
 
-/// A command line dibs refuses, with exit 2. The message is printed as it is, prefix and all,
-/// since the bash client's refusals were not uniform and agents match their words.
+/// A command line dibs refuses, with exit 2. The message is printed as it is, prefix and all:
+/// refusals differ in shape, and agents match their words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliError {
     pub message: String,

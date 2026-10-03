@@ -25,6 +25,5 @@ pub use local::Destination;
 pub use machine::{Asked, Bound, MachineCall};
 pub use origin::{BatchStep, Origin, RecipeJob};
 pub use output::Output;
-pub use status::poll_timeout;
 pub use sync::{Rsh, Sync};
 pub use watched::{Starter, Watched};

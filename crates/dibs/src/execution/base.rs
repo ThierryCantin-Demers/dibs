@@ -1,6 +1,6 @@
 use super::pins;
 use super::{
-    jobs::{BACKEND, JobOutcome, Jobs, Reported, Request},
+    jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
     pins::{pin_spec, pins_of},
     record::{batch_of_caller, fetch_artifacts, measured_summary},
     refs::{Arm, arms, sent_from, short, sides},
@@ -327,7 +327,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     let mut pinned = Vec::with_capacity(pins.len());
     for (k, p) in pins.iter_mut().enumerate() {
         let env = env_of(k);
-        let setup = Request {
+        let setup = JobRequest {
             label: &calls[k].label,
             lock: Lock::Shared,
             device: None,
@@ -503,7 +503,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             break;
         }
         let env = env_of(k);
-        let setup = Request {
+        let setup = JobRequest {
             label: &calls[k].label,
             lock: Lock::Shared,
             // Preparing a worktree touches no GPU, so pinning it would only make the setup fail
@@ -568,7 +568,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             } => (arm, step, rep, setup),
         };
         let lock = rec.steps[step].lock;
-        let req = Request {
+        let req = JobRequest {
             label: &step_labels[step],
             lock,
             device: args.device.as_deref(),
@@ -791,7 +791,7 @@ pub(crate) fn refused_before_building(
         false => exclusive,
     };
     for i in asked {
-        let req = Request {
+        let req = JobRequest {
             label: &step_labels[i],
             lock: rec.steps[i].lock,
             device: args.device.as_deref(),
@@ -951,7 +951,7 @@ pub(crate) fn sync_prepared(
     from: &Path,
     setup: &str,
     key: &str,
-    req: &Request,
+    req: &JobRequest,
     on_report: &mut dyn FnMut(&str),
 ) -> Reported {
     let before = worktree::ahead(
@@ -1001,7 +1001,7 @@ pub(crate) fn announce_prepared(text: &str) {
 /// there is already right, and a cargo on the machine may be reading it.
 pub(crate) fn sync_gitdb(backend: &Jobs, from: &Path, to: &str) -> Result<(), String> {
     let args = gitdb_args(from, to);
-    let req = Request {
+    let req = JobRequest {
         label: "",
         lock: Lock::Shared,
         device: None,
@@ -1039,7 +1039,7 @@ pub(crate) fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
     // Always shared, and nothing is prepared for it, so it is placed like any other shared work.
     let backend = Jobs::placed(None, None)?;
     let out = backend.run(
-        &Request {
+        &JobRequest {
             label: "raw",
             lock: Lock::Shared,
             device: args.device.as_deref(),

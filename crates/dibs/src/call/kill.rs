@@ -2,7 +2,6 @@ use crate::{
     call::{
         base::CallError,
         machine::{Asked, Bound, MachineCall},
-        status::poll_timeout,
     },
     cli::{Call, KillTarget},
     machine::Kept,
@@ -74,10 +73,7 @@ impl Kill<'_> {
             "dibs: batch {batch} is not driven from this computer, so it is stopped on the machines: {}",
             named.join(" ")
         );
-        let bound = Bound {
-            within: poll_timeout(KILL_POLL_SECS),
-            kept: Kept::Everything,
-        };
+        let bound = Bound::polled(KILL_POLL_SECS, Kept::Everything);
         let answers = self.machine.each(&machines, |machine| {
             let asked = self.asked(batch.as_str());
             self.machine.ask(machine, &Call::default(), asked, bound)

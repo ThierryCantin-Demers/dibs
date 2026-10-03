@@ -1,6 +1,7 @@
 use super::{
+    base::{Isolation, Recipe, Step},
     labels::{label_steps, run_label},
-    manifest::{Isolation, Manifest, Recipe, Source, Step, Verb},
+    manifest::{Manifest, Source, Verb},
 };
 use dibs_format::Lock;
 use std::{collections::BTreeMap, path::Path};

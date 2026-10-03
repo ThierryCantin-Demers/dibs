@@ -6,7 +6,7 @@ use crate::{
     cli::{Command, Service},
     machine::{Interrupt, Message, Reach, Started, exit_code},
 };
-use dibs_format::Exit;
+use dibs_format::{Exit, Mode};
 use std::{
     fmt,
     io::{BufRead as _, BufReader, ErrorKind, Write as _},
@@ -31,8 +31,8 @@ const HOLDING: &str = "DIBS-HOLDING";
 /// What runs here while the lock is held.
 pub struct Hold<'a> {
     pub command: &'a Command,
-    /// The lock as the notice names it: `shared` or `bench`.
-    pub lock: &'a str,
+    /// The lock, as the notice names it: `shared` or `bench`.
+    pub lock: Mode,
     /// The machine as the notices name it.
     pub at: String,
     /// The lock's machine, lowercased, which a call inside the hold must not take again.
@@ -102,7 +102,7 @@ impl Hold<'_> {
         }
         eprintln!(
             "dibs: holding the {} lock on {}, running here: {}",
-            self.lock,
+            self.lock.as_str(),
             self.at,
             self.command.shell_string()
         );

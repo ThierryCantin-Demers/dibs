@@ -152,7 +152,7 @@ impl Parser {
         let mut at = 0;
         while let Some(word) = words.get(at) {
             let value = words.get(at + 1);
-            // A value flag takes the next word whatever it is, as the bash client did.
+            // A value flag takes the next word whatever it is: `--label -h` is a label.
             let need = |flag: &str| value.cloned().ok_or(CliError::needs_value(flag));
             let need_some = |flag: &str| {
                 value
