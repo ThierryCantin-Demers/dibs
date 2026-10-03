@@ -22,7 +22,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # A test target with test = false is left out of --all-targets.
-      - run: cargo clippy -p dibs-core --test live -- -D warnings
+      - run: cargo clippy -p dibs --test live -- -D warnings
 
   test:
     strategy:
