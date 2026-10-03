@@ -45,7 +45,7 @@ impl<'a> MachineCall<'a> {
     /// reach.
     pub fn new(call: &'a Call, caller: &'a Caller) -> Result<MachineCall<'a>, CallError> {
         let paths = Paths::from_env();
-        let fleet = Fleet::load(paths.inventory());
+        let fleet = Fleet::load(paths.inventory())?;
         let machine = MachineCall {
             call,
             caller,

@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 /// `dibs list <repo>`: its recipes, what each takes, and its services.
 pub(crate) fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
-    let dir = resolve_repo(&args.repo, &root_of(args))?;
+    let dir = resolve_repo(&args.repo, &root_of(args)?)?;
     let manifest = Manifest::load(&dir, &worktree::identity(&dir))?;
     for v in [Verb::Bench, Verb::Build, Verb::Test] {
         let listing = manifest.listing(v);

@@ -189,7 +189,7 @@ fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> 
 }
 
 pub(crate) fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
-    let found = resolve_repo(&args.repo, &root_of(args));
+    let found = root_of(args).and_then(|root| resolve_repo(&args.repo, &root));
     if args.verb == RecipeVerb::Shell {
         let repo = found
             .as_deref()

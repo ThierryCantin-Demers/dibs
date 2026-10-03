@@ -8,7 +8,7 @@ use dibs::{
     call::{LockedCall, Origin, Output, RecipeJob},
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run},
-    inventory::Inventory,
+    inventory::{Inventory, InventoryError},
     machine::Stream,
     paths::Paths,
 };
@@ -875,15 +875,18 @@ pub(crate) fn inventory_path() -> Option<PathBuf> {
 }
 
 /// The machines the inventory names, which are reached only through dibs.
-pub(crate) fn pool() -> std::collections::BTreeSet<String> {
-    inventory()
+pub(crate) fn pool() -> Result<BTreeSet<String>, InventoryError> {
+    Ok(inventory()?
         .map(|i| i.names().map(MachineName::to_string).collect())
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
-/// The inventory, when there is one that reads.
-pub(crate) fn inventory() -> Option<Inventory> {
-    Inventory::load(&inventory_path()?).ok().flatten()
+/// The inventory, when there is a file; one that does not read is an error.
+pub(crate) fn inventory() -> Result<Option<Inventory>, InventoryError> {
+    match inventory_path() {
+        Some(path) => Inventory::load(&path),
+        None => Ok(None),
+    }
 }
 
 /// Every repo with a recipes file.

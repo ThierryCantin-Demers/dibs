@@ -3,22 +3,26 @@ use dibs::cli::RecipeCall;
 use std::path::{Path, PathBuf};
 
 /// `--root`, or else where checkouts are looked up by default.
-pub(crate) fn root_of(args: &RecipeCall) -> PathBuf {
-    args.root.clone().unwrap_or_else(repo_root)
+pub(crate) fn root_of(args: &RecipeCall) -> Result<PathBuf, String> {
+    match &args.root {
+        Some(root) => Ok(root.clone()),
+        None => repo_root(),
+    }
 }
 
 /// Where a bare repo name is looked up. Everyone lays their checkouts out differently, so
 /// this is only a starting guess: DIBS_ROOT, then --root, then the directory you are in.
-pub(crate) fn repo_root() -> PathBuf {
+pub(crate) fn repo_root() -> Result<PathBuf, String> {
     if let Some(r) = std::env::var_os("DIBS_ROOT").filter(|r| !r.is_empty()) {
-        return PathBuf::from(r);
+        return Ok(PathBuf::from(r));
     }
     // A fresh non-interactive shell has no DIBS_ROOT, since it lives in the user's fish
     // config, so the inventory file may carry it: `root = "/home/me/prog"` at the top level.
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    crate::fleet::inventory()
+    Ok(crate::fleet::inventory()
+        .map_err(|e| e.to_string())?
         .and_then(|i| i.root(home.as_deref()))
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| PathBuf::from(".")))
 }
 
 pub(crate) fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {

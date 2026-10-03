@@ -410,6 +410,39 @@ fn a_machine_the_inventory_cannot_reach_refuses_every_path_before_anything_runs(
 }
 
 #[test]
+fn an_inventory_that_does_not_read_refuses_every_call_and_says_why() {
+    let mut s = Sandbox::new();
+    for (broken, why) in [
+        ("[machine.desk\nssh = \"desk\"\n", "TOML parse error"),
+        (
+            "[machine.desk]\nssh = \"desk\"\nmeasure = \"no\"\n",
+            "invalid type",
+        ),
+    ] {
+        s.machines(broken);
+        for words in [
+            ["--status"].as_slice(),
+            &["--machines"],
+            &["--label", "l", "true"],
+            &["runs"],
+        ] {
+            let out = s.dibs(words).run();
+            assert_eq!(
+                (
+                    out.code,
+                    out.stderr.lines_with(&s.p("machines.toml")),
+                    out.stderr.lines_with(why)
+                ),
+                (2, 1, 1),
+                "{words:?} names the file and what is wrong with it: {}",
+                out.all()
+            );
+        }
+    }
+    assert_eq!(s.log().lines_with("\tarrived\t"), 0, "and nothing ran");
+}
+
+#[test]
 fn a_machine_that_does_not_measure_refuses_a_benchmark() {
     // A machine that cannot produce a trustworthy number must not be able to produce one at all,
     // rather than everyone remembering not to ask it.

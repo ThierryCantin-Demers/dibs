@@ -9,6 +9,7 @@ use crate::{
     },
     caller::{Caller, short_hostname},
     cli::{Call, Command, PortName, Run, RunLock, Service},
+    inventory::InventoryError,
     machine::{
         CallValues, Card, Fleet, Here, Liveness, MaxFrom, Named, Session, Target, TargetEnv,
         TargetError, exit_code,
@@ -46,6 +47,7 @@ pub enum CallError {
         lock_at: String,
     },
     Unplaced(Unplaced),
+    Inventory(InventoryError),
     Io(std::io::Error),
 }
 
@@ -115,7 +117,7 @@ impl<'a> LockedCall<'a> {
     ) -> Result<i32, CallError> {
         let env = Environment::read();
         let paths = Paths::from_env();
-        let fleet = Fleet::load(paths.inventory());
+        let fleet = Fleet::load(paths.inventory())?;
         let here = Here {
             name: short_hostname(None),
             local: env.local,
@@ -440,6 +442,13 @@ impl fmt::Display for CallError {
                 )
             }
             CallError::Unplaced(e) => e.fmt(f),
+            CallError::Inventory(e) => {
+                writeln!(f, "dibs: {}", e.to_string().trim_end())?;
+                writeln!(
+                    f,
+                    "  Every call reads its machines from this file, so none runs until it reads."
+                )
+            }
             CallError::Io(e) => writeln!(f, "dibs: {e}"),
         }
     }
@@ -466,6 +475,12 @@ impl From<Moved> for CallError {
 impl From<Unplaced> for CallError {
     fn from(e: Unplaced) -> CallError {
         CallError::Unplaced(e)
+    }
+}
+
+impl From<InventoryError> for CallError {
+    fn from(e: InventoryError) -> CallError {
+        CallError::Inventory(e)
     }
 }
 

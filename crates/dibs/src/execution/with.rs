@@ -32,7 +32,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     if !args.pins.is_empty() {
         return Err("with does not take --pin; a recipe does".into());
     }
-    let dir = resolve_repo(&args.repo, &root_of(args))?;
+    let dir = resolve_repo(&args.repo, &root_of(args)?)?;
     let repo_name = worktree::identity(&dir);
     let manifest = Manifest::load(&dir, &repo_name)?;
     let name = args.recipe.as_deref().ok_or_else(|| {

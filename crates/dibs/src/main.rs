@@ -148,9 +148,9 @@ fn run(args: RecipeCall) -> Result<ExitCode, RunError> {
         return Ok(fleet::command(
             args.json,
             only,
-            &recipe::root_of(&args),
+            &recipe::root_of(&args)?,
             fleet::recipe_repos(),
-            &fleet::pool(),
+            &fleet::pool().map_err(|e| e.to_string())?,
         )?);
     }
 

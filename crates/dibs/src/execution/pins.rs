@@ -223,7 +223,7 @@ pub(crate) fn pins_of(
             repo: name,
             reference,
         } = pin_spec(p)?;
-        let pdir = resolve_repo(name, &root_of(args))?;
+        let pdir = resolve_repo(name, &root_of(args)?)?;
         let identity = worktree::identity(&pdir);
         if identity == repo {
             return Err(format!(

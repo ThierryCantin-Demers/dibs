@@ -1,4 +1,4 @@
-use crate::inventory::{Inventory, Machine};
+use crate::inventory::{Inventory, InventoryError, Machine};
 use dibs_format::{Exit, MachineName};
 use std::{fmt, path::PathBuf};
 
@@ -65,11 +65,13 @@ pub enum TargetError {
 }
 
 impl Fleet {
-    pub fn load(path: Option<PathBuf>) -> Fleet {
-        let inventory = path
-            .as_deref()
-            .and_then(|p| Inventory::load(p).ok().flatten());
-        Fleet { path, inventory }
+    /// No inventory when there is no file; a file that does not read is an error, never absent.
+    pub fn load(path: Option<PathBuf>) -> Result<Fleet, InventoryError> {
+        let inventory = match path.as_deref() {
+            Some(path) => Inventory::load(path)?,
+            None => None,
+        };
+        Ok(Fleet { path, inventory })
     }
 
     pub fn names(&self) -> Vec<MachineName> {
