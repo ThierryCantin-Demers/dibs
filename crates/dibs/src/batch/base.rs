@@ -92,16 +92,20 @@ pub(crate) fn state_dir() -> PathBuf {
 /// Where a step goes, resolved as the step's own call will resolve it. None when it names no
 /// machine and several could take it, which a shared step is placed from and a measurement is
 /// refused over.
-pub(crate) fn machine_of(step: &Step) -> Option<String> {
+pub(crate) fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String> {
     let call = Call {
-        on: step.on.as_deref().map(MachineName::new),
+        on: step
+            .on
+            .as_deref()
+            .map(MachineName::new)
+            .or(batch_on.cloned()),
         ..Call::default()
     };
     let caller = Caller::default();
     match MachineCall::new(&call, &caller).and_then(|machine| machine.destination()) {
         Ok(Destination::Named(machine)) => Some(machine.to_string()),
-        Ok(Destination::Unchosen) if step.on.is_none() => None,
-        _ => Some(step.on.clone().unwrap_or_else(|| "?".into())),
+        Ok(Destination::Unchosen) if call.on.is_none() => None,
+        _ => Some(call.on.map_or_else(|| "?".into(), |on| on.to_string())),
     }
 }
 
@@ -136,11 +140,18 @@ pub(crate) fn collect_old(dir: &Path) {
 pub struct Options {
     pub dry_run: bool,
     pub verbose: bool,
+    /// The machine of every step that names none of its own.
+    pub on: Option<MachineName>,
+    /// The session the batch belongs to, which alone may stop it without `--anyone`.
+    pub owner: Option<String>,
 }
 
 pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let steps = parse(text)?;
-    let named: Vec<Option<String>> = steps.iter().map(machine_of).collect();
+    let named: Vec<Option<String>> = steps
+        .iter()
+        .map(|s| machine_of(s, opts.on.as_ref()))
+        .collect();
     if let Some((s, _)) = steps
         .iter()
         .zip(&named)
@@ -165,7 +176,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let dir = root.join(&id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let _driving = Driver::claim(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    if let Ok(owner) = std::env::var("DIBS_BATCH_OWNER") {
+    if let Some(owner) = &opts.owner {
         let _ = std::fs::write(dir.join("owner"), owner);
     }
     eprint!(
@@ -224,7 +235,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
             let tx = tx.clone();
             let verbose = opts.verbose;
             let t = Instant::now();
-            match StepGuard::spawn(&step.line, &batch) {
+            match StepGuard::spawn(&step.line, &batch, opts.on.as_ref()) {
                 Ok(mut guarded) => {
                     running.insert(i, guarded.id());
                     std::thread::spawn(move || {

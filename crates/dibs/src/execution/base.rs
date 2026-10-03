@@ -202,7 +202,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         // Asked what the real run asks before it builds, so a card or a series it would refuse
         // is refused here, where someone reads the device line before measuring.
         if rec.steps.iter().any(|s| s.lock == Lock::Exclusive) || args.device.is_some() {
-            let backend = Jobs::on(destination(rec, &repo_name, name)?);
+            let backend = Jobs::on(destination(rec, &repo_name, name, &args)?);
             if refused_before_building(&backend, rec, &step_labels, &args) {
                 return Ok(ExitCode::from(Exit::Refused.code()));
             }
@@ -306,8 +306,8 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
 
     // A measurement's claim on the repo's build cache is the one that sticks, since it could not
     // move; a pinned call claims nothing, since the machines report the caches it leaves.
-    let backend = Jobs::on(destination(rec, &repo_name, name)?);
-    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
+    let backend = Jobs::on(destination(rec, &repo_name, name, &args)?);
+    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned(&args)) {
         affinity_set(&repo_name, m.as_str());
     }
     if refused_before_building(&backend, rec, &step_labels, &args) {
@@ -758,12 +758,17 @@ pub(crate) fn destination(
     rec: &recipe::Recipe,
     repo_name: &str,
     name: &str,
+    args: &RecipeCall,
 ) -> Result<Option<MachineName>, RunError> {
     if rec.steps.iter().all(|s| s.lock == Lock::Shared) {
-        let placed = Jobs::placed(affinity_get(repo_name).as_deref(), Some(repo_name))?;
+        let placed = Jobs::placed(
+            args.machine(),
+            affinity_get(repo_name).as_deref(),
+            Some(repo_name),
+        )?;
         return Ok(placed.machine);
     }
-    match Jobs::destination()? {
+    match Jobs::destination(args.machine())? {
         Destination::Named(m) => Ok(Some(m)),
         Destination::Unnamed => Ok(None),
         Destination::Unchosen => Err(format!(
@@ -1037,7 +1042,7 @@ pub(crate) fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
     )?;
     let command = args.command.as_deref().ok_or("raw needs -- <command>")?;
     // Always shared, and nothing is prepared for it, so it is placed like any other shared work.
-    let backend = Jobs::placed(None, None)?;
+    let backend = Jobs::placed(args.machine(), None, None)?;
     let out = backend.run(
         &JobRequest {
             label: "raw",

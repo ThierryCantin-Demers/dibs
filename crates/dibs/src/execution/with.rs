@@ -62,7 +62,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         .as_deref()
         .ok_or("with needs a command after --")?;
 
-    let backend = Jobs::on(match Jobs::destination()? {
+    let backend = Jobs::on(match Jobs::destination(args.machine())? {
         Destination::Named(m) => Some(m),
         Destination::Unnamed => None,
         Destination::Unchosen => {
@@ -127,7 +127,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         );
         return Ok(ExitCode::SUCCESS);
     }
-    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned()) {
+    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned(args)) {
         affinity_set(&repo_name, m.as_str());
     }
     eprintln!(

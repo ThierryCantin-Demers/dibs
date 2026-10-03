@@ -5,6 +5,7 @@ use dibs::{
     call::{BatchStep, Starter, Watched},
     machine::exit_code,
 };
+use dibs_format::MachineName;
 use std::{
     io,
     os::unix::process::CommandExt as _,
@@ -19,8 +20,15 @@ impl StepGuard {
 
     /// The driver's side: the guard of `line` started, leading a process group of its own, so a
     /// cancellation stops the step whole and a Ctrl-C at the driver's terminal reaches none of it.
-    pub(crate) fn spawn(line: &str, batch: &BatchStep) -> io::Result<Watched> {
+    pub(crate) fn spawn(
+        line: &str,
+        batch: &BatchStep,
+        on: Option<&MachineName>,
+    ) -> io::Result<Watched> {
         let mut guard = Command::new(std::env::current_exe()?);
+        if let Some(on) = on {
+            guard.env("DIBS_ON", on.as_str());
+        }
         guard
             .args([StepGuard::WORD, line])
             .envs(batch.vars())

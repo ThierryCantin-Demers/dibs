@@ -64,6 +64,40 @@ fn a_batch_runs_its_steps_in_order_and_prints_one_summary() {
 }
 
 #[test]
+fn an_on_before_the_batch_is_the_machine_of_every_step_that_names_none() {
+    let mut s = Sandbox::new();
+    s.machines(&format!(
+        "[machine.one]\nssh = \"one\"\nhostname = \"{0}\"\n\n[machine.two]\nssh = \"two\"\nhostname = \"{0}\"\n",
+        hostname()
+    ));
+    let file = batch_file(
+        &s,
+        "b-on",
+        &[
+            "[a] dibs --label batch-on 'echo on=$DIBS_ON'",
+            "[b] dibs --on two --label batch-on 'true'",
+        ],
+    );
+    let out = s.dibs(["--on", "one", "batch", &file]).run();
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.lines_matching(r"^a +one "),
+            out.stdout.lines_matching(r"^b +two ")
+        ),
+        (0, 1, 1),
+        "{}",
+        out.all()
+    );
+    let dir = capture(&out.stdout, r"^each step.s output: (.*)/<name>").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(format!("{dir}/a.out")).unwrap(),
+        "on=one\n",
+        "and a step's own calls are sent there"
+    );
+}
+
+#[test]
 fn a_failed_step_stops_the_batch_unless_it_says_cont() {
     let s = Sandbox::new();
     let file = batch_file(

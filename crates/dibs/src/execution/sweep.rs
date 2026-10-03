@@ -47,6 +47,8 @@ pub(crate) fn sweep_run(
         &batch::Options {
             dry_run: args.dry_run,
             verbose: args.verbose,
+            on: args.machine(),
+            owner: None,
         },
     )?;
     Ok(ExitCode::from(code.clamp(0, 255) as u8))

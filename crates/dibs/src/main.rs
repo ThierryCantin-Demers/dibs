@@ -80,11 +80,7 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             let caller = Caller::from_env();
             change_notice(&caller);
             reports::Notice { caller: &caller }.tell();
-            if call.verb == RecipeVerb::Batch {
-                // SAFETY: nothing has started a thread yet.
-                unsafe { std::env::set_var("DIBS_BATCH_OWNER", &caller.id) };
-            }
-            run(call)
+            run(call, &caller)
         }
         Invocation::Call(call) => {
             let caller = Caller::from_env();
@@ -118,20 +114,19 @@ fn change_notice(caller: &Caller) {
     }
 }
 
-fn run(args: RecipeCall) -> Result<ExitCode, RunError> {
+fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
     if args.there && args.verb != RecipeVerb::With {
         return Err(
             "--there belongs to with: it runs the command on the machine beside the repo's servers"
                 .into(),
         );
     }
-    // Every call this makes, and every step of a batch, reads the machine from here.
-    if let Some(m) = &args.on {
-        // SAFETY: nothing has started a thread yet; every thread this spawns comes after.
-        unsafe { std::env::set_var("DIBS_ON", m) };
-    }
     // Refused even by a verb that never reaches a machine, as every call naming one is.
-    MachineCall::new(&Call::default(), &Caller::default())?;
+    let on = Call {
+        on: args.machine(),
+        ..Call::default()
+    };
+    MachineCall::new(&on, caller)?;
 
     if args.verb == RecipeVerb::Batch {
         let text = match args.repo.as_str() {
@@ -144,6 +139,8 @@ fn run(args: RecipeCall) -> Result<ExitCode, RunError> {
             &batch::Options {
                 dry_run: args.dry_run,
                 verbose: args.verbose,
+                on: args.machine(),
+                owner: Some(caller.id.clone()),
             },
         )?;
         return Ok(ExitCode::from(code.clamp(0, 255) as u8));

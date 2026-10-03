@@ -195,9 +195,14 @@ impl Jobs {
     ///
     /// `prefer` names the machine already holding this repo's build cache; `repo` asks which
     /// machines hold it, which is what makes the first run for a repo land somewhere useful.
-    pub fn placed(prefer: Option<&str>, repo: Option<&str>) -> Result<Jobs, RunError> {
+    pub fn placed(
+        on: Option<MachineName>,
+        prefer: Option<&str>,
+        repo: Option<&str>,
+    ) -> Result<Jobs, RunError> {
         let call = Call {
             mode: Mode::Pick,
+            on,
             prefer: prefer.map(str::to_string),
             repo: repo.map(str::to_string),
             ..Call::default()
@@ -221,8 +226,11 @@ impl Jobs {
     /// The machine a call goes to with no ranking at all. Naming it matters even when there was
     /// no choice to make: a benchmark cannot be moved, so it is the one that decides where its
     /// repo's build cache belongs, and the record should say where it ran.
-    pub fn destination() -> Result<Destination, RunError> {
-        let call = Call::default();
+    pub fn destination(on: Option<MachineName>) -> Result<Destination, RunError> {
+        let call = Call {
+            on,
+            ..Call::default()
+        };
         let caller = Caller::default();
         Ok(MachineCall::new(&call, &caller)?.destination()?)
     }

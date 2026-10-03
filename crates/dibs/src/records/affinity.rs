@@ -1,5 +1,5 @@
 use crate::records::runs::now_secs;
-use dibs::paths::Paths;
+use dibs::{cli::RecipeCall, paths::Paths};
 use std::path::PathBuf;
 
 /// Which machine holds a repo's build cache. Kept beside the run record, on this side, since
@@ -72,10 +72,10 @@ pub(crate) fn affinity_set(repo: &str, machine: &str) {
     }
 }
 
-/// `--on` reaches here as DIBS_ON. A call sent to a named machine is not ranked, and says
-/// nothing about where the repo's cache belongs.
-pub(crate) fn pinned() -> bool {
-    std::env::var("DIBS_ON").is_ok_and(|m| !m.is_empty())
+/// A call sent to a named machine, by `--on` or `DIBS_ON`, is not ranked, and says nothing
+/// about where the repo's cache belongs.
+pub(crate) fn pinned(args: &RecipeCall) -> bool {
+    args.on.is_some() || std::env::var("DIBS_ON").is_ok_and(|m| !m.is_empty())
 }
 
 #[cfg(test)]

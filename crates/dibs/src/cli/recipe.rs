@@ -1,4 +1,5 @@
 use crate::cli::{CliError, Invocation, parse::Expansion, shell::ShellWord};
+use dibs_format::MachineName;
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
 /// The words after which the recipe layer reads the rest of the line.
@@ -134,6 +135,11 @@ pub struct RecipeCall {
 }
 
 impl RecipeCall {
+    /// The machine `--on` names.
+    pub fn machine(&self) -> Option<MachineName> {
+        self.on.as_deref().map(MachineName::new)
+    }
+
     /// Reads a recipe verb and what follows it; `on` is a `--on` given before the verb.
     pub(crate) fn parse(
         verb: RecipeVerb,
