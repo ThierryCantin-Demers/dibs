@@ -8,6 +8,7 @@ mod outcome;
 mod ports;
 mod reap;
 mod services;
+mod tree;
 
 pub use base::{Cap, Job, Output};
 pub use environment::{Environment, Unpinned};
@@ -16,3 +17,4 @@ pub use outcome::{Digest, Repeat, built, job_id};
 pub use ports::{PortRange, Ports};
 pub use reap::{reap, tree_below};
 pub use services::{Guard, Readiness, Services, Start};
+pub use tree::Tree;

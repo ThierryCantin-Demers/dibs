@@ -1,4 +1,5 @@
 //! Outputs pinned word for word; `UPDATE_SNAPSHOTS=<name>,<name>` or `=all` accepts a change.
+//! A duration a clock decides is pinned as `{1m10s}` or `{70}`, and matches within `TOLERANCE`.
 
 use crate::harness::{DIBS, Output, Sandbox, hostname, repo_root};
 use regex::Regex;
@@ -8,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 const SNAPSHOTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/suite/snapshots");
 const CONTEXT: usize = 3;
+/// Seconds a pinned duration may be off by: the time between a fixture and the call reading it.
+const TOLERANCE: u64 = 2;
 
 fn snapshot_path(name: &str) -> PathBuf {
     Path::new(SNAPSHOTS).join(format!("{name}.txt"))
@@ -23,7 +26,10 @@ fn accepting(name: &str) -> bool {
 pub fn snapshot(name: &str, text: &str) {
     let path = snapshot_path(name);
     let want = fs::read_to_string(&path).ok();
-    if want.as_deref() == Some(text) {
+    if want
+        .as_deref()
+        .is_some_and(|want| within_tolerance(want, text))
+    {
         return;
     }
     if accepting(name) {
@@ -40,6 +46,46 @@ pub fn snapshot(name: &str, text: &str) {
             "{name} differs from its snapshot, - as kept and + as printed now. UPDATE_SNAPSHOTS={name} cargo test accepts it.\n{}",
             diff(&want, text)
         ),
+    }
+}
+
+/// The same text, but for pinned durations within `TOLERANCE` of each other.
+fn within_tolerance(want: &str, got: &str) -> bool {
+    let pinned = Regex::new(r"\{([0-9]+[hms]?[0-9hms]*)\}").unwrap();
+    let unpinned = |text: &str| pinned.replace_all(text, "{}").into_owned();
+    let values = |text: &str| -> Vec<Option<u64>> {
+        pinned.captures_iter(text).map(|c| seconds(&c[1])).collect()
+    };
+    let (w, g) = (values(want), values(got));
+    unpinned(want) == unpinned(got)
+        && w.len() == g.len()
+        && w.iter().zip(&g).all(|pair| match pair {
+            (Some(a), Some(b)) => a.abs_diff(*b) <= TOLERANCE,
+            _ => false,
+        })
+}
+
+/// `70`, `1m10s` or `1h02m` in seconds.
+fn seconds(text: &str) -> Option<u64> {
+    let mut total = 0;
+    let mut number = String::new();
+    for c in text.chars() {
+        match c {
+            '0'..='9' => number.push(c),
+            'h' | 'm' | 's' => {
+                let n: u64 = std::mem::take(&mut number).parse().ok()?;
+                total += n * match c {
+                    'h' => 3600,
+                    'm' => 60,
+                    _ => 1,
+                };
+            }
+            _ => return None,
+        }
+    }
+    match number.is_empty() {
+        true => Some(total),
+        false => Some(total + number.parse::<u64>().ok()?),
     }
 }
 

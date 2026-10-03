@@ -126,7 +126,10 @@ one of them.
   job against one directory, in both orders.
 - **Records.** `waiting.<pid>`, `holder.<pid>`, `batch.<pid>`, `cancelled.<id>` and the rest keep
   their names and lines, written and read through `dibs-format`'s codecs, and listed in the order
-  of their file names, as the shell's glob lists them. Either half prunes, queues behind and
+  of their file names, as the shell's glob lists them. A runner's `waiting` and `holder` lines add
+  a tenth field, the job's id, after the nine a script writes; a runner reads lines of 6 to 10
+  fields. A script reads the tenth into its fingerprint, which only blurs that script's own
+  estimate key, so a field is only ever added at the end. Either half prunes, queues behind and
   bypasses the other's records. `dibs --kill` sends TERM to the holder alone, runner or script,
   which stops its own tree; `--force` sends KILL to the whole tree, deepest first.
 - **History, log and job directories.** The same columns and files, so estimates and `dibs out`

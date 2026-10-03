@@ -8,7 +8,7 @@
 -> exit 0
 1| box-a
 1|   dibs: BUSY, benchmark in progress
-1|     bench  busy  <dur>  pid <pid>   [no history for this one yet]
+1|     bench  busy  <dur>  pid <pid>  job <job>   [no history for this one yet]
 1|       read -r _ < <root>/f-busy
 1|       from session suite
 1| 

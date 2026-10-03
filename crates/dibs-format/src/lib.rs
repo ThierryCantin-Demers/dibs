@@ -10,6 +10,8 @@ mod ids;
 mod lines;
 mod mode;
 mod run;
+mod span;
+pub mod status;
 pub mod wire;
 
 pub use exit::Exit;
@@ -21,3 +23,4 @@ pub use lines::{
 };
 pub use mode::{Lock, Mode};
 pub use run::{ArmRecord, Outcome, Pair, Pairs, ProcedureStep, RunRecord, RunVerb, StepRecord};
+pub use span::Span;

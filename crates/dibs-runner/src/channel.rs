@@ -7,6 +7,7 @@ use std::{
     os::fd::{AsFd as _, AsRawFd as _},
     sync::Arc,
     thread,
+    time::{Duration, Instant},
 };
 
 /// The caller's side of the stream: the request, then what says it is still there.
@@ -56,12 +57,12 @@ impl Channel {
         }
     }
 
-    /// The next frame, the end of the stream, or silence for `within` seconds.
-    fn hear(&mut self, within: Option<u64>) -> Result<Heard, ChannelError> {
+    /// The next frame, the end of the stream, or silence for `within`.
+    fn hear(&mut self, within: Option<Duration>) -> Result<Heard, ChannelError> {
         let mut chunk = [0u8; 4096];
         let mut frame = self.unframer.next_frame().map_err(ChannelError::Frame)?;
         while frame.is_none() {
-            if within.is_some_and(|secs| !self.readable(secs)) {
+            if within.is_some_and(|span| !self.readable(span)) {
                 return Ok(Heard::Silent);
             }
             let wanted = self.unframer.wanted().min(chunk.len());
@@ -76,14 +77,14 @@ impl Channel {
         Ok(frame.map_or(Heard::Ended, Heard::Frame))
     }
 
-    /// Whether something arrives within so many seconds.
-    fn readable(&self, secs: u64) -> bool {
+    /// Whether something arrives within the span.
+    fn readable(&self, span: Duration) -> bool {
         let mut fd = libc::pollfd {
             fd: self.input.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         };
-        let millis = libc::c_int::try_from(secs.saturating_mul(1000)).unwrap_or(libc::c_int::MAX);
+        let millis = libc::c_int::try_from(span.as_millis()).unwrap_or(libc::c_int::MAX);
         // SAFETY: one pollfd, owned here, for the call's length.
         unsafe { libc::poll(&mut fd, 1, millis) > 0 }
     }
@@ -109,8 +110,26 @@ impl Channel {
     /// caller gone. A caller alive says something at least once a lease, and one that sleeps
     /// closes nothing. A hold ends with a release, which is its caller's command ending, not the
     /// caller going.
+    /// Listens until `until`; false once the caller has gone, its stream ended or silent for
+    /// longer than the lease since it was last `heard`.
+    pub fn attend(&mut self, until: Instant, lease: u64, heard: &mut Instant) -> bool {
+        let lease = Duration::from_secs(lease);
+        let mut present = true;
+        while present && Instant::now() < until {
+            present = match self.hear(Some(until.saturating_duration_since(Instant::now()))) {
+                Ok(Heard::Frame(_)) => {
+                    *heard = Instant::now();
+                    true
+                }
+                Ok(Heard::Silent) => lease.is_zero() || heard.elapsed() <= lease,
+                Ok(Heard::Ended) | Err(_) => false,
+            };
+        }
+        present
+    }
+
     pub fn watch(mut self, lease: u64, stopper: Arc<Stopper>, held: Option<Held>) {
-        let within = (lease > 0).then_some(lease);
+        let within = (lease > 0).then(|| Duration::from_secs(lease));
         thread::spawn(move || {
             let end = std::iter::repeat_with(|| self.hear(within))
                 .find_map(|heard| match (heard, &held) {

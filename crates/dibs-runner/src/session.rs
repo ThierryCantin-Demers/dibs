@@ -14,7 +14,9 @@ use crate::{
     queue::Queue,
     settings::Settings,
     sink::Sink,
+    status::Look,
     stop::{Signals, Stage, Stopper},
+    views::Views,
 };
 use dibs_format::{
     By, Event, HistoryLine, JobId, JobMeta, Mode,
@@ -25,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     thread,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 /// How long a peek's command is given to stop once its cap has passed, and a job's.
@@ -109,6 +111,24 @@ impl Session {
             self.sink.clone(),
         ));
         signals.listen(Arc::clone(&stopper));
+        let history = History::load(&machine.history);
+        let views = Views {
+            look: Look {
+                machine: &machine,
+                dir: &dir,
+                history: &history,
+                settings: &self.settings,
+                asking: self.call.pid,
+            },
+            sink: &self.sink,
+            request: &self.call.request,
+        };
+        match self.call.mode() {
+            Mode::Status => return views.status(),
+            Mode::Watch => return views.watch(channel),
+            Mode::Log => return views.log(),
+            _ => {}
+        }
         let environment = match Environment::of(&machine, self.call.request.card.as_ref()) {
             Ok(environment) => environment,
             Err(Unpinned(said)) => {
@@ -227,7 +247,8 @@ impl Session {
         };
         {
             let mut state = at.stopper.state();
-            at.dir.write(Kind::Waiting, &self.call.lock_record(start));
+            at.dir
+                .write(Kind::Waiting, &self.call.lock_record(start, &job));
             if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
                 let _ = fs::write(at.dir.file("batch", pid), format!("{batch}\n"));
             }
@@ -269,35 +290,75 @@ impl Session {
             Mode::Bench => Hold::Exclusive,
             _ => Hold::Shared,
         };
-        let taken = match queue.may_bypass(&self.settings) {
+        let look = Look {
+            machine: at.machine,
+            dir: at.dir,
+            history: &history,
+            settings: &self.settings,
+            asking: pid,
+        };
+        let shown = || look.text(&look.status(request.verbose), request.tty);
+        let deadline = request
+            .wait
+            .map(|wait| Instant::now() + Duration::from_secs(wait));
+        let passed = match queue.may_bypass(&self.settings) {
             true => {
                 let mut line = self.call.log_line(Event::Bypassed);
                 line.job = Some(job.clone());
                 journal.write(&line);
-                Ok(())
+                Ok(true)
             }
-            false => lock.pass_gate(),
-        }
-        .and_then(|()| {
-            if !lock.free(hold) {
-                self.sink.say(&queue.line());
+            false => lock.pass_gate(deadline),
+        };
+        let waited = passed.and_then(|passed| match passed {
+            true => {
+                if !lock.free(hold) {
+                    self.sink.say(&queue.line());
+                    if request.verbose {
+                        self.sink.say(&shown());
+                    }
+                }
+                lock.take(hold, deadline).map(|taken| match taken {
+                    true => Waited::Held,
+                    false => Waited::GaveUpAtLock,
+                })
             }
-            lock.take(hold)
+            false => Ok(Waited::GaveUpAtGate),
         });
+        let wait = request.wait.unwrap_or_default();
+        let gave_up = match waited {
+            Ok(Waited::Held) => None,
+            Ok(Waited::GaveUpAtLock) => Some(format!("dibs: still busy after {wait}s, gave up.\n")),
+            Ok(Waited::GaveUpAtGate) => Some(format!(
+                "dibs: busy, a benchmark is queued ahead of you. Gave up after {wait}s.\n"
+            )),
+            Err(e) => {
+                lock.leave_gate();
+                self.sink.say(&format!(
+                    "dibs: the lock in {} could not be taken: {e}. Nothing was run.\n",
+                    at.dir.path.display()
+                ));
+                at.dir.clear(pid);
+                return 71;
+            }
+        };
         lock.leave_gate();
-        if let Err(e) = taken {
-            self.sink.say(&format!(
-                "dibs: the lock in {} could not be taken: {e}. Nothing was run.\n",
-                at.dir.path.display()
-            ));
+        if let Some(said) = gave_up {
+            self.sink.say(&said);
+            self.sink.say(&shown());
+            let mut state = at.stopper.state();
             at.dir.clear(pid);
-            return 71;
+            let mut line = self.call.log_line(Event::Aborted);
+            line.job = Some(job.clone());
+            journal.write(&line);
+            state.logged_end = true;
+            return 75;
         }
 
         let acquired = Moment::epoch_now();
         let waited = acquired.saturating_sub(start);
         let mut state = at.stopper.state();
-        at.dir.hold(&self.call.lock_record(acquired));
+        at.dir.hold(&self.call.lock_record(acquired, &job));
         if waited >= SAY_ACQUIRED_AFTER {
             self.sink.say(&format!(
                 "dibs: acquired the {mode} lock after {}\n",
@@ -562,6 +623,14 @@ struct Place<'a> {
     machine: &'a Machine,
     dir: &'a LockDir,
     stopper: &'a Arc<Stopper>,
+}
+
+/// How waiting for the lock ended.
+enum Waited {
+    Held,
+    /// `--wait` passed while a benchmark queued ahead held the gate.
+    GaveUpAtGate,
+    GaveUpAtLock,
 }
 
 /// What a job was given besides its command.

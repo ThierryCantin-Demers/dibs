@@ -27,16 +27,16 @@
       "device": "gpu:card",
       "cmd": "the steady job",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {30},
       "cpu": <n>,
       "est": 100,
       "est_lo": 100,
       "est_hi": 100,
       "est_n": 3,
       "est_scope": "this",
-      "remaining": <n>,
+      "remaining": {70},
       "remaining_kind": "typical",
-      "idle_for": <n>,
+      "idle_for": {30},
       "idle_kind": "never",
       "batch": {
         "id": "<batch>",
@@ -47,7 +47,7 @@
         "elsewhere": 1,
         "next": "next ~5m00s, fresh (no history)",
         "far": "far",
-        "left": <n>,
+        "left": {690},
         "left_partial": true
       }
     }
@@ -62,8 +62,8 @@
       "device": "-",
       "cmd": "the first waiter",
       "arrived": <n>,
-      "waiting": <n>,
-      "eta": <n>
+      "waiting": {2},
+      "eta": {70}
     },
     {
       "position": 2,
@@ -74,8 +74,8 @@
       "device": "-",
       "cmd": "the second waiter",
       "arrived": <n>,
-      "waiting": <n>,
-      "eta": <n>
+      "waiting": {1},
+      "eta": {90}
     }
   ]
 }
@@ -97,7 +97,7 @@
       "device": "-",
       "cmd": "runs disagree",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {30},
       "cpu": <n>,
       "est": 0,
       "est_lo": 0,
@@ -105,9 +105,9 @@
       "est_n": 5,
       "est_scope": "this",
       "est_wide": true,
-      "remaining": <n>,
+      "remaining": {210},
       "remaining_kind": "bound",
-      "idle_for": <n>,
+      "idle_for": {30},
       "idle_kind": "never"
     },
     {
@@ -118,16 +118,16 @@
       "device": "-",
       "cmd": "ran once before",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {30},
       "cpu": <n>,
       "est": 120,
       "est_lo": 120,
       "est_hi": 120,
       "est_n": 1,
       "est_scope": "this",
-      "remaining": <n>,
+      "remaining": {90},
       "remaining_kind": "typical",
-      "idle_for": <n>,
+      "idle_for": {30},
       "idle_kind": "never"
     },
     {
@@ -138,14 +138,14 @@
       "device": "-",
       "cmd": "always instant",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {30},
       "cpu": <n>,
       "est": 0,
       "est_lo": 0,
       "est_hi": 0,
       "est_n": 3,
       "est_scope": "this",
-      "idle_for": <n>,
+      "idle_for": {30},
       "idle_kind": "never"
     },
     {
@@ -156,14 +156,14 @@
       "device": "-",
       "cmd": "an agent's new label",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {30},
       "cpu": <n>,
       "est": 20,
       "est_lo": 20,
       "est_hi": 20,
       "est_n": 3,
       "est_scope": "agent",
-      "idle_for": <n>,
+      "idle_for": {30},
       "idle_kind": "never"
     },
     {
@@ -174,7 +174,7 @@
       "device": "-",
       "cmd": "nothing known",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {30},
       "cpu": <n>,
       "est": 20,
       "est_lo": 0,
@@ -182,9 +182,9 @@
       "est_n": 21,
       "est_scope": "mode",
       "est_wide": true,
-      "remaining": <n>,
+      "remaining": {270},
       "remaining_kind": "bound",
-      "idle_for": <n>,
+      "idle_for": {30},
       "idle_kind": "never"
     },
     {
@@ -195,7 +195,7 @@
       "device": "-",
       "cmd": "other values",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {600},
       "cpu": <n>,
       "est": 20,
       "est_lo": 20,
@@ -203,7 +203,7 @@
       "est_n": 3,
       "est_scope": "this",
       "est_other_values": true,
-      "idle_for": <n>,
+      "idle_for": {600},
       "idle_kind": "never"
     },
     {
@@ -214,7 +214,7 @@
       "device": "-",
       "cmd": "far past its slowest",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {600},
       "cpu": <n>,
       "est": 20,
       "est_lo": 20,
@@ -222,7 +222,7 @@
       "est_n": 3,
       "est_scope": "this",
       "overrun": true,
-      "idle_for": <n>,
+      "idle_for": {600},
       "idle_kind": "never"
     },
     {
@@ -233,9 +233,9 @@
       "device": "-",
       "cmd": "rsync --server",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {5},
       "cpu": <n>,
-      "idle_for": <n>,
+      "idle_for": {5},
       "idle_kind": "never"
     },
     {
@@ -243,10 +243,10 @@
       "pid": <n>,
       "label": "six-fields",
       "agent": "an older dibs",
-      "device": "",
-      "cmd": "",
+      "device": "-",
+      "cmd": "its command",
       "started": <n>,
-      "elapsed": <n>,
+      "elapsed": {40},
       "cpu": <n>,
       "est": 20,
       "est_lo": 0,
@@ -254,9 +254,9 @@
       "est_n": 21,
       "est_scope": "mode",
       "est_wide": true,
-      "remaining": <n>,
+      "remaining": {260},
       "remaining_kind": "bound",
-      "idle_for": <n>,
+      "idle_for": {40},
       "idle_kind": "never"
     }
   ],

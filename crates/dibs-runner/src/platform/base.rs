@@ -50,4 +50,48 @@ pub trait Platform {
 
     /// Keeps the machine from sleeping until the process exits.
     fn stay_awake(pid: u32);
+
+    /// Its children; None where they cannot be listed without reading every process.
+    fn children(pid: u32) -> Option<Vec<u32>>;
+
+    /// What it and the children it has reaped have run on a CPU, in clock ticks.
+    fn cpu_ticks(pid: u32) -> Option<u64>;
+
+    /// Clock ticks per second, the unit `cpu_ticks` counts in.
+    fn clock_ticks() -> u64;
+
+    /// Its pid, age, owner and arguments, as `ps -o pid=,etime=,user=,args=` prints them.
+    fn describe(pid: u32) -> Option<String>;
+
+    /// The process and everything under it, parents before children, asked downward where the
+    /// system can, so a look at a holder reads its own tree and not the whole process table.
+    fn tree(root: u32) -> Vec<u32> {
+        let mut tree = vec![root];
+        let mut next = 0;
+        while let Some(&pid) = tree.get(next) {
+            next += 1;
+            let Some(children) = Self::children(pid) else {
+                tree = vec![root];
+                tree.extend(crate::job::tree_below(root, &Self::processes()));
+                return tree;
+            };
+            for child in children {
+                if !tree.contains(&child) {
+                    tree.push(child);
+                }
+            }
+        }
+        tree
+    }
+}
+
+/// `[[dd-]hh:]mm:ss`, as ps prints a process's elapsed time.
+pub fn elapsed(seconds: u64) -> String {
+    let (days, hours) = (seconds / 86400, seconds % 86400 / 3600);
+    let clock = format!("{:02}:{:02}", seconds % 3600 / 60, seconds % 60);
+    match (days, hours) {
+        (0, 0) => clock,
+        (0, hours) => format!("{hours:02}:{clock}"),
+        (days, hours) => format!("{days}-{hours:02}:{clock}"),
+    }
 }

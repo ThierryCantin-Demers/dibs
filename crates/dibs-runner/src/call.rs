@@ -1,5 +1,5 @@
 use crate::clock::Moment;
-use dibs_format::{BatchId, Event, Label, LockRecord, LogLine, Mode, wire::Request};
+use dibs_format::{BatchId, Event, JobId, Label, LockRecord, LogLine, Mode, wire::Request};
 use std::{fs::OpenOptions, io::Write as _, path::Path};
 
 /// How much of a command its records keep.
@@ -65,8 +65,8 @@ impl Call {
             .map(|tag| tag.split(' ').next().unwrap_or_default())
     }
 
-    /// The record that names this call in the lock directory, as of `start`.
-    pub fn lock_record(&self, start: u64) -> LockRecord {
+    /// The record that names this call and its job in the lock directory, as of `start`.
+    pub fn lock_record(&self, start: u64, job: &JobId) -> LockRecord {
         LockRecord {
             mode: self.mode(),
             pid: self.pid,
@@ -77,6 +77,7 @@ impl Call {
             device: self.request.card.as_ref().map(|c| c.alias.clone()),
             command: self.one_line.clone(),
             fingerprint: self.request.fingerprint.clone(),
+            job: Some(job.clone()),
         }
     }
 

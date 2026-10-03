@@ -135,15 +135,9 @@ fn a_watch_whose_caller_stops_answering_stops_redrawing() {
     let call = s.new_session([DIBS, "--watch", "2"]);
     let watched = s.path("watched");
     let caller = s.spawn(s.remote(call).env("DIBS_LEASE", "2").stdout_to(&watched));
-    let far = format!("^bash {}/.dibs-payload", s.p("remote-run"));
     let mut pid = 0;
     until("the watch to reach the machine", || {
-        let out = s.command("pgrep", ["-f", &far]).run().stdout;
-        pid = out
-            .lines()
-            .next()
-            .and_then(|l| l.trim().parse().ok())
-            .unwrap_or(0);
+        pid = s.runners().first().copied().unwrap_or(0);
         pid != 0
     });
     signal_group(caller.pid, libc::SIGSTOP);

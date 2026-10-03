@@ -33,8 +33,8 @@ impl Sink {
         }
     }
 
-    /// Bytes for the caller's stdout.
-    pub fn out(&self, bytes: &[u8]) {
+    /// Bytes for the caller's stdout; false once nobody reads them.
+    pub fn out(&self, bytes: &[u8]) -> bool {
         match self.kind {
             Kind::Frames => self.frame(Frame::Out(bytes.to_vec())),
             Kind::Plain => self.write(bytes),
@@ -50,7 +50,9 @@ impl Sink {
 
     pub fn err(&self, bytes: &[u8]) {
         match self.kind {
-            Kind::Frames => self.frame(Frame::Err(bytes.to_vec())),
+            Kind::Frames => {
+                self.frame(Frame::Err(bytes.to_vec()));
+            }
             Kind::Plain => {
                 let _ = io::stderr().write_all(bytes);
             }
@@ -59,7 +61,9 @@ impl Sink {
 
     pub fn record(&self, record: Record) {
         match (self.kind, record) {
-            (Kind::Frames, record) => self.frame(Frame::Record(record)),
+            (Kind::Frames, record) => {
+                self.frame(Frame::Record(record));
+            }
             (Kind::Plain, Record::Trailer(trailer)) => self.say(&format!("{trailer}\n")),
             (Kind::Plain, Record::Holding(_) | Record::Transferring) => {}
         }
@@ -72,13 +76,13 @@ impl Sink {
         }
     }
 
-    fn frame(&self, frame: Frame) {
-        self.write(&frame.encode());
+    fn frame(&self, frame: Frame) -> bool {
+        self.write(&frame.encode())
     }
 
-    /// A caller that has gone cannot be written to, which changes nothing here.
-    fn write(&self, bytes: &[u8]) {
+    /// Whether the bytes reached whoever reads stdout.
+    fn write(&self, bytes: &[u8]) -> bool {
         let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = out.write_all(bytes).and_then(|()| out.flush());
+        out.write_all(bytes).and_then(|()| out.flush()).is_ok()
     }
 }

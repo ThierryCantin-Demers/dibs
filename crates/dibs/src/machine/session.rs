@@ -129,8 +129,6 @@ enum Feed {
 enum Shape {
     /// The command runs there.
     Run,
-    /// The lock is held there for a command run here, and released down the channel.
-    Hold,
     /// rsync's far side: this process's stdin is the transfer, and nothing is watched.
     Transfer,
 }
@@ -138,8 +136,6 @@ enum Shape {
 /// Where the machine half's output goes.
 enum Streams {
     Inherit,
-    /// Stdout piped back to this process.
-    Piped,
     /// Both piped back to this process.
     Lines,
     /// Stdout into a pipe this process reads, and stderr where it is sent.
@@ -345,13 +341,9 @@ impl Session {
         Ok(status)
     }
 
-    /// Starts the machine's side of a hold.
-    pub fn hold(&self, values: &CallValues, live: Liveness) -> io::Result<Holder> {
-        if Half::of(values) == Half::Runner {
-            return Ok(Served::holder(self.clone(), values.clone(), live));
-        }
-        let started = self.start(values, live, Shape::Hold, Streams::Piped)?;
-        Ok(Holder::of_payload(started))
+    /// Starts the machine's side of a hold, which the runner serves.
+    pub fn hold(&self, values: &CallValues, live: Liveness) -> Holder {
+        Served::holder(self.clone(), values.clone(), live)
     }
 
     /// Runs a call and keeps what it prints, stopping it when a bound passes first.
@@ -418,23 +410,18 @@ impl Session {
         shape: Shape,
         streams: Streams,
     ) -> io::Result<Started> {
-        let hold = shape == Shape::Hold;
         let Launch {
             mut command,
             prelude,
             feed,
         } = match &self.route {
-            Route::Here => Session::here(values, hold)?,
+            Route::Here => Session::here(values)?,
             Route::Ssh { host } => Session::over_ssh(host, values, live, shape),
         };
-        let die_with_me = !live.no_pdeathsig && !matches!((&self.route, hold), (Route::Here, true));
+        let die_with_me = !live.no_pdeathsig;
         // SAFETY: the closure makes async-signal-safe calls only.
         unsafe {
             command.pre_exec(move || {
-                if hold {
-                    libc::signal(libc::SIGINT, libc::SIG_IGN);
-                    libc::signal(libc::SIGQUIT, libc::SIG_IGN);
-                }
                 if die_with_me {
                     parent_death_signal();
                 }
@@ -444,9 +431,6 @@ impl Session {
         command.stdin(Stdio::piped());
         match streams {
             Streams::Inherit => {}
-            Streams::Piped => {
-                command.stdout(Stdio::piped());
-            }
             Streams::Lines => {
                 command.stdout(Stdio::piped()).stderr(Stdio::piped());
             }
@@ -463,9 +447,9 @@ impl Session {
     }
 
     /// On this computer: the script on bash's stdin, which dies with this process, or, where
-    /// nothing signals a parent's death or a hold needs the channel, from a file.
-    fn here(values: &CallValues, hold: bool) -> io::Result<Launch> {
-        if !hold && cfg!(target_os = "linux") {
+    /// nothing signals a parent's death, from a file.
+    fn here(values: &CallValues) -> io::Result<Launch> {
+        if cfg!(target_os = "linux") {
             let watch = Watch {
                 off: true,
                 hold: false,
@@ -481,7 +465,7 @@ impl Session {
         }
         let watch = Watch {
             off: false,
-            hold,
+            hold: false,
             lease: 0,
         };
         let file = ScriptFile::write(&values.script(watch))?;
@@ -495,20 +479,18 @@ impl Session {
     }
 
     fn over_ssh(host: &str, values: &CallValues, live: Liveness, shape: Shape) -> Launch {
-        let hold = shape == Shape::Hold;
         let watching = match shape {
-            Shape::Hold => true,
             Shape::Run => !(live.no_live || live.no_watchdog),
             Shape::Transfer => false,
         };
         let lease = if watching { live.lease } else { 0 };
         let watch = Watch {
             off: !watching,
-            hold,
+            hold: false,
             lease,
         };
         let payload = encode(&values.script(watch));
-        let fed = shape == Shape::Transfer || (live.no_live && !hold);
+        let fed = shape == Shape::Transfer || live.no_live;
         let feed = match (fed, lease) {
             (true, _) => Feed::Stdin,
             (false, 0) => Feed::Quiet,

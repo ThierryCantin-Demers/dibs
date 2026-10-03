@@ -16,7 +16,9 @@ mod queue;
 mod session;
 mod settings;
 mod sink;
+mod status;
 mod stop;
+mod views;
 
 /// What `dibs-runner` does with its arguments, and the exit it gives.
 pub fn main(args: &[String]) -> i32 {

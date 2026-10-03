@@ -78,7 +78,9 @@ impl Job {
                 let mut child = bash.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
                 if let Some(out) = child.stdout.take() {
                     let sink = sink.clone();
-                    relays.push(Job::relay(out, move |bytes| sink.out(bytes)));
+                    relays.push(Job::relay(out, move |bytes| {
+                        sink.out(bytes);
+                    }));
                 }
                 if let Some(err) = child.stderr.take() {
                     let sink = sink.clone();

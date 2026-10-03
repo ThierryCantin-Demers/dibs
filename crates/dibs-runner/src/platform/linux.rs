@@ -1,4 +1,4 @@
-use crate::platform::base::{Platform, Process, Slot};
+use crate::platform::base::{Platform, Process, Slot, elapsed};
 use std::{
     fs,
     os::unix::fs::MetadataExt as _,
@@ -227,6 +227,96 @@ impl Platform for Linux {
     }
 
     fn stay_awake(_pid: u32) {}
+
+    fn children(pid: u32) -> Option<Vec<u32>> {
+        if !lists_children() {
+            return None;
+        }
+        let tasks = fs::read_dir(format!("/proc/{pid}/task"))
+            .into_iter()
+            .flatten();
+        Some(
+            tasks
+                .flatten()
+                .filter_map(|task| fs::read_to_string(task.path().join("children")).ok())
+                .flat_map(|list| {
+                    list.split_whitespace()
+                        .filter_map(|p| p.parse().ok())
+                        .collect::<Vec<u32>>()
+                })
+                .collect(),
+        )
+    }
+
+    fn cpu_ticks(pid: u32) -> Option<u64> {
+        let stat = Stat::of(pid)?;
+        (14..=17).map(|field| stat.number(field)).sum()
+    }
+
+    fn clock_ticks() -> u64 {
+        clock_ticks()
+    }
+
+    fn describe(pid: u32) -> Option<String> {
+        let started = Linux::started_at(pid)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let uid = fs::metadata(format!("/proc/{pid}")).ok()?.uid();
+        let args = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+        let args = String::from_utf8_lossy(&args)
+            .split('\0')
+            .filter(|a| !a.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let args = match args.is_empty() {
+            true => format!(
+                "[{}]",
+                first_line(format!("/proc/{pid}/comm")).unwrap_or_default()
+            ),
+            false => args,
+        };
+        Some(format!(
+            "{pid} {} {} {args}",
+            elapsed(now.saturating_sub(started)),
+            user_name(uid)
+        ))
+    }
+}
+
+/// Whether the kernel lists a process's children, which one built without
+/// `CONFIG_PROC_CHILDREN` cannot; `DIBS_NO_CHILDREN=1` reads the whole table instead.
+fn lists_children() -> bool {
+    static LISTS: OnceLock<bool> = OnceLock::new();
+    *LISTS.get_or_init(|| {
+        let me = std::process::id();
+        crate::settings::var("DIBS_NO_CHILDREN").is_none_or(|v| v != "1")
+            && Path::new(&format!("/proc/{me}/task/{me}/children")).exists()
+    })
+}
+
+/// The account's name, or its number where it has none.
+fn user_name(uid: u32) -> String {
+    let mut buffer = vec![0 as libc::c_char; 4096];
+    // SAFETY: passwd is plain data; getpwuid_r fills it and the buffer, both owned here.
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    let read = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut entry,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut found,
+        )
+    };
+    if read != 0 || found.is_null() {
+        return uid.to_string();
+    }
+    // SAFETY: getpwuid_r left pw_name pointing at a NUL-terminated name in the buffer.
+    unsafe { std::ffi::CStr::from_ptr(entry.pw_name) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg(test)]

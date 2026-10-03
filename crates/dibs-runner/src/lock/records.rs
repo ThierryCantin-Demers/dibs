@@ -18,6 +18,15 @@ pub struct LockDir {
     pub path: PathBuf,
 }
 
+/// Who holds `rw` this moment, as the kernel says.
+#[derive(Debug, Clone, Default)]
+pub struct Takers {
+    /// Some process can be seen holding it.
+    pub seen: bool,
+    /// Those that no record accounts for, outside the asking process's own group.
+    pub orphans: Vec<u32>,
+}
+
 /// The two records a job names itself by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -96,6 +105,28 @@ impl LockDir {
             if fs::read_to_string(&port).is_ok_and(|by| by.trim() == pid.to_string()) {
                 let _ = fs::remove_file(&port);
             }
+        }
+    }
+
+    /// Who holds `rw`. A process taking it and letting go at once is a client testing it, and the
+    /// asking process's own group is the invocation asking, so neither is an orphan.
+    pub fn takers(&self, asking: u32) -> Takers {
+        let mine = Host::group_of(asking);
+        let holding: Vec<u32> = Host::lock_holders(&self.rw())
+            .into_iter()
+            .filter(|&pid| Host::exists(pid))
+            .collect();
+        let orphans = holding
+            .iter()
+            .copied()
+            .filter(|&pid| mine.is_none() || Host::group_of(pid) != mine)
+            .filter(|&pid| {
+                !self.file("holder", pid).exists() && !self.file("waiting", pid).exists()
+            })
+            .collect();
+        Takers {
+            seen: !holding.is_empty(),
+            orphans,
         }
     }
 

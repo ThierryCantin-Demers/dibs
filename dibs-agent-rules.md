@@ -134,9 +134,10 @@ spoiled without it.
 
 ### Status, labels and names
 
-- `dibs status` says who holds each machine, who is queued and roughly how long, and never blocks;
-  `--on <machine>` narrows it to one. For a step of a batch it says which step of how many,
-  what is still to come on that machine, and how long the batch has left there, queue included.
+- `dibs status` says who holds each machine, and its job id, for `dibs out`; who is queued and
+  roughly how long; and never blocks. `--on <machine>` narrows it to one. For a step of a batch it
+  says which step of how many, what is still to come on that machine, and how long the batch has
+  left there, queue included.
   **Asked how long your work will take, run it rather than guessing.** The later calls of a script
   are invisible to it.
 - **Label the kind of work, not the run**: `--label yield-sweep`, never `yield-sweep-run3`. The

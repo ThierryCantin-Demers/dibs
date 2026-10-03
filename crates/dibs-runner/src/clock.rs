@@ -1,3 +1,4 @@
+pub use dibs_format::Span;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A moment in the machine's own zone, as its records and job ids spell it.
@@ -58,6 +59,11 @@ impl Moment {
         )
     }
 
+    /// `12:00:00`, as `date +%H:%M:%S` prints it.
+    pub fn clock(&self) -> String {
+        format!("{:02}:{:02}:{:02}", self.hour, self.minute, self.second)
+    }
+
     /// `20261001120000`, the start of a job id.
     pub fn compact(&self) -> String {
         format!(
@@ -67,31 +73,9 @@ impl Moment {
     }
 }
 
-/// A duration as every message here writes it: `42s`, `3m05s`, `1h02m`.
-pub struct Span(pub u64);
-
-impl std::fmt::Display for Span {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = self.0;
-        match s {
-            3600.. => write!(f, "{}h{:02}m", s / 3600, s % 3600 / 60),
-            60.. => write!(f, "{}m{:02}s", s / 60, s % 60),
-            _ => write!(f, "{s}s"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_span_reads_as_the_machine_half_wrote_it() {
-        assert_eq!(Span(0).to_string(), "0s");
-        assert_eq!(Span(59).to_string(), "59s");
-        assert_eq!(Span(185).to_string(), "3m05s");
-        assert_eq!(Span(3720).to_string(), "1h02m");
-    }
 
     #[test]
     fn a_moment_spells_itself_as_date_does() {

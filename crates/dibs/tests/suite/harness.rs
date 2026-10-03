@@ -407,6 +407,18 @@ impl Sandbox {
             .collect()
     }
 
+    /// The runners serving this sandbox's calls.
+    pub fn runners(&self) -> Vec<u32> {
+        self.own_pids()
+            .into_iter()
+            .filter(|pid| {
+                let args = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+                let args: Vec<&[u8]> = args.split(|b| *b == 0).collect();
+                args.contains(&b"__runner".as_slice()) && args.contains(&b"serve".as_slice())
+            })
+            .collect()
+    }
+
     /// This sandbox's processes and what each waits in, for a failure to show.
     pub fn processes(&self) -> String {
         let pids: Vec<String> = self.own_pids().iter().map(u32::to_string).collect();

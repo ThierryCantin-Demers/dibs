@@ -14,15 +14,15 @@ fn status_clock(n: Normal) -> Normal {
             r"(?m)^(  [a-z]+  \S+  )[0-9]+[hms][0-9hms]*(  pid )",
             "$1<dur>$2",
         )
-        .rule(r"(~|under )[0-9]+[hms][0-9hms]* left", "$1<dur> left")
+        .rule(r"(~|under )([0-9]+[hms][0-9hms]*) left", "$1{$2} left")
         .rule(r"waiting [0-9]+[hms][0-9hms]*", "waiting <dur>")
         .rule(
-            r"~[0-9]+[hms][0-9hms]* until it starts",
-            "~<dur> until it starts",
+            r"~([0-9]+[hms][0-9hms]*) until it starts",
+            "~{$1} until it starts",
         )
         .rule(
-            r"batch time left here: (over |~)[0-9]+[hms][0-9hms]*",
-            "batch time left here: $1<dur>",
+            r"batch time left here: (over |~)([0-9]+[hms][0-9hms]*)",
+            "batch time left here: $1{$2}",
         )
         .rule(
             r"IDLE: no CPU at all in [0-9hms]+",
@@ -36,8 +36,16 @@ fn status_clock(n: Normal) -> Normal {
         .pids()
 }
 
+/// The clocks and the machine's own numbers normalised, the durations pinned.
 fn json_clock(n: Normal) -> Normal {
-    n.rule(r#""(t|cores|load|pid|started|elapsed|cpu|cpu_rate|remaining|arrived|waiting|eta|left|idle_for)": -?[0-9]+"#, r#""$1": <n>"#)
+    n.rule(
+        r#""(t|cores|load|pid|started|cpu|arrived)": -?[0-9]+"#,
+        r#""$1": <n>"#,
+    )
+    .rule(
+        r#""(elapsed|cpu_rate|remaining|waiting|eta|left|idle_for)": ([0-9]+)"#,
+        r#""$1": {$2}"#,
+    )
 }
 
 /// Each call in turn, under the arguments it was given.
@@ -488,8 +496,8 @@ fn status_of_idle_and_writing_holders() {
 
 #[test]
 fn status_with_the_lock_taken_and_nothing_recorded() {
-    // Which process holds a lock is asked of the tool that lists a file's openers, and a stub
-    // that names none is a machine without that tool.
+    // The runner reads who holds the lock from the kernel, so stubs of the tools a bash machine
+    // half asked change nothing: a holder in the caller's own group is a client recording itself.
     let mut s = Sandbox::new();
     for tool in ["fuser", "lsof"] {
         s.write_exec(&format!("bin/{tool}"), "#!/bin/sh\nexit 1\n");

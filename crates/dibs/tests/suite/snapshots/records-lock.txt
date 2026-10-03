@@ -1,5 +1,5 @@
 == holder.<pid>, a recipe's measurement holding and a batch step queued behind it
-  9 fields
+  10 fields
   mode         bench
   pid          <pid>
   start        <epoch>
@@ -9,9 +9,10 @@
   device       cpu
   command      cd <root>/scratch/ws/app/<tree> && export CARGO_TARGET_DIR=<root>/scratch/target/app && { echo "DIBS-STATE ${DIBS_STATE:-}" read -r _ < "$REC_GATE"; }
   fingerprint  21eafeca56a1b2ba
+  job          <job>
 
 == waiting.<pid>, a recipe's measurement holding and a batch step queued behind it
-  9 fields
+  10 fields
   mode         shared
   pid          <pid>
   start        <epoch>
@@ -21,6 +22,7 @@
   device       -
   command      echo up > <root>/f-up; read -r _ < <root>/f-served
   fingerprint  
+  job          <job>
 
 == batch.<pid>, the plan of the batch the queued job is a step of
 <batch>	app/bench/held@cpu
@@ -32,7 +34,7 @@
 next	shared	rec-next	1
 
 == holder.<pid>, once the queued job holds the lock
-  9 fields
+  10 fields
   mode         shared
   pid          <pid>
   start        <epoch>
@@ -42,6 +44,7 @@ next	shared	rec-next	1
   device       -
   command      echo up > <root>/f-up; read -r _ < <root>/f-served
   fingerprint  
+  job          <job>
 
 == with.<pid>, once the queued job holds the lock
   3 fields
@@ -55,9 +58,12 @@ next	shared	rec-next	1
 
 == cpu.<pid>, the CPU sample a status leaves
   3 words: ticks, when it last worked, when sampled
+  ticks    <clock ticks, a whole number>
+  worked   - (never)
+  sampled  <a second since the epoch, within the last minute>
 
 == holder.<pid>, a hold
-  9 fields
+  10 fields
   mode         shared
   pid          <pid>
   start        <epoch>
@@ -67,6 +73,7 @@ next	shared	rec-next	1
   device       -
   command      held for a command run elsewhere: read -r _ < <root>/f-held
   fingerprint  
+  job          <job>
 
 == hold.<pid>, beside the hold's record
 <a fifo>

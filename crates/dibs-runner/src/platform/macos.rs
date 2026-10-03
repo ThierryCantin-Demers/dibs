@@ -10,6 +10,35 @@ use std::{
 /// macOS, read through libproc and the system's own tools.
 pub struct MacOs;
 
+/// Mach time units to nanoseconds, as `numer / denom`; libc's binding is deprecated.
+#[repr(C)]
+struct Timebase {
+    numer: u32,
+    denom: u32,
+}
+
+unsafe extern "C" {
+    fn mach_timebase_info(info: *mut Timebase) -> libc::c_int;
+}
+
+/// `<sys/proc_info.h>`'s flavor and layout for a descriptor's path, which libc does not carry.
+const PROC_PIDFDVNODEPATHINFO: libc::c_int = 2;
+
+#[repr(C)]
+struct FileInfo {
+    _open_flags: u32,
+    _status: u32,
+    _offset: libc::off_t,
+    _kind: i32,
+    _guard_flags: u32,
+}
+
+#[repr(C)]
+struct VnodeWithPath {
+    _file: FileInfo,
+    vnode: libc::vnode_info_path,
+}
+
 fn bsd_info(pid: u32) -> Option<libc::proc_bsdinfo> {
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
     // SAFETY: proc_bsdinfo is plain data, and proc_pidinfo writes at most `size` bytes into it.
@@ -76,13 +105,33 @@ impl Platform for MacOs {
             .collect()
     }
 
+    /// Through libproc, so a status costs no process per descriptor; a pipe or a socket has no
+    /// path to give.
     fn fd_path(pid: u32, fd: u32) -> Option<String> {
-        output_of(
-            "lsof",
-            &["-a", "-p", &pid.to_string(), "-d", &fd.to_string(), "-Fn"],
-        )
-        .lines()
-        .find_map(|line| line.strip_prefix('n').map(str::to_string))
+        let size = std::mem::size_of::<VnodeWithPath>() as libc::c_int;
+        // SAFETY: VnodeWithPath is plain data, and proc_pidfdinfo writes at most `size` bytes.
+        let mut info: VnodeWithPath = unsafe { std::mem::zeroed() };
+        let read = unsafe {
+            libc::proc_pidfdinfo(
+                pid as libc::c_int,
+                fd as libc::c_int,
+                PROC_PIDFDVNODEPATHINFO,
+                (&mut info as *mut VnodeWithPath).cast(),
+                size,
+            )
+        };
+        if read != size {
+            return None;
+        }
+        let path: Vec<u8> = info
+            .vnode
+            .vip_path
+            .iter()
+            .flatten()
+            .map(|c| *c as u8)
+            .take_while(|b| *b != 0)
+            .collect();
+        Some(String::from_utf8_lossy(&path).into_owned())
     }
 
     fn listening() -> Vec<u16> {
@@ -151,5 +200,63 @@ impl Platform for MacOs {
             .stderr(Stdio::null());
         Signals::unblocked(&mut caffeinate);
         let _ = caffeinate.spawn();
+    }
+
+    fn children(pid: u32) -> Option<Vec<u32>> {
+        let mut pids = vec![0 as libc::pid_t; 4096];
+        let bytes = (pids.len() * std::mem::size_of::<libc::pid_t>()) as libc::c_int;
+        // SAFETY: the buffer holds `bytes` bytes.
+        let found = unsafe {
+            libc::proc_listchildpids(pid as libc::pid_t, pids.as_mut_ptr().cast(), bytes)
+        };
+        let found = usize::try_from(found).ok()?;
+        pids.truncate(found.min(pids.len()));
+        Some(
+            pids.into_iter()
+                .filter_map(|p| u32::try_from(p).ok())
+                .filter(|p| *p > 0)
+                .collect(),
+        )
+    }
+
+    /// Reaped children's time is in the process's own rusage, in Mach time units.
+    fn cpu_ticks(pid: u32) -> Option<u64> {
+        // SAFETY: rusage_info_v2 is plain data, which proc_pid_rusage fills.
+        let mut usage: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
+        let read = unsafe {
+            libc::proc_pid_rusage(
+                pid as libc::c_int,
+                libc::RUSAGE_INFO_V2,
+                (&mut usage as *mut libc::rusage_info_v2).cast(),
+            )
+        };
+        if read != 0 {
+            return None;
+        }
+        let mut base = Timebase { numer: 1, denom: 1 };
+        // SAFETY: mach_timebase_info fills the struct it is given.
+        unsafe { mach_timebase_info(&mut base) };
+        let units = u128::from(usage.ri_user_time)
+            + u128::from(usage.ri_system_time)
+            + u128::from(usage.ri_child_user_time)
+            + u128::from(usage.ri_child_system_time);
+        let nanos = units * u128::from(base.numer.max(1)) / u128::from(base.denom.max(1));
+        u64::try_from(nanos * u128::from(MacOs::clock_ticks()) / 1_000_000_000).ok()
+    }
+
+    fn clock_ticks() -> u64 {
+        // SAFETY: sysconf only reads a configuration value.
+        let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        u64::try_from(ticks).ok().filter(|t| *t > 0).unwrap_or(100)
+    }
+
+    /// Asked of ps, which costs a process; only Linux ever finds an orphan to describe.
+    fn describe(pid: u32) -> Option<String> {
+        let said = output_of(
+            "ps",
+            &["-o", "pid=,etime=,user=,args=", "-p", &pid.to_string()],
+        );
+        let said = said.lines().next()?.trim().to_string();
+        (!said.is_empty()).then_some(said)
     }
 }

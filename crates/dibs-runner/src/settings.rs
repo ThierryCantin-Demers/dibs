@@ -29,13 +29,22 @@ pub struct Settings {
     pub repeat_window: u64,
     /// The ports `--port` is given from.
     pub ports: PortRange,
+    /// Seconds a holder may use no CPU before its status calls it idle.
+    pub idle_after: i64,
+    /// A holder whose output file was written within so many seconds is working, whatever its
+    /// CPU says: a compiler daemon such as sccache works outside the job's tree.
+    pub wrote_within: i64,
 }
 
 impl Settings {
     pub fn from_env() -> Settings {
         let number =
             |name: &str, default: u64| var(name).and_then(|v| v.parse().ok()).unwrap_or(default);
+        let signed =
+            |name: &str, default: i64| var(name).and_then(|v| v.parse().ok()).unwrap_or(default);
         Settings {
+            idle_after: signed("DIBS_IDLE_AFTER", 60),
+            wrote_within: signed("DIBS_WROTE_WITHIN", 120),
             bypass: var("DIBS_BYPASS").is_none_or(|v| v == "1"),
             patience: number("DIBS_PATIENCE", 60),
             quick: number("DIBS_QUICK", 10),

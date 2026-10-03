@@ -183,7 +183,7 @@ impl<'a> LockedCall<'a> {
                 reach: session.reach(&target, &here),
                 services: self.services,
             }
-            .run(session.hold(&values, live)?)?,
+            .run(session.hold(&values, live))?,
             (false, Output::Inherit) => session.run(&values, live)?,
             (false, Output::Lines(on_line)) => session.run_reading(&values, live, *on_line)?,
         };

@@ -2,10 +2,9 @@
 
 use crate::{
     clock::{Moment, Span},
-    job::tree_below,
+    job::Tree,
     lock::{Kind, LockDir},
     machine::Machine,
-    platform::{Host, Platform as _},
     settings::var,
     sink::Sink,
 };
@@ -123,7 +122,7 @@ impl Kept<'_> {
                 "{}  {}  pid {}  ({age})\n  from {}\n",
                 holder.mode, holder.label, holder.pid, holder.agent
             );
-            let mut files = written(holder.pid);
+            let mut files = Tree::of(holder.pid).written();
             if files.is_empty()
                 && let Some(log) = self.log_of(holder.pid)
             {
@@ -231,42 +230,6 @@ impl Kept<'_> {
     }
 }
 
-/// The regular files a process and everything under it write to on stdout or stderr, other
-/// than the channel it was started on and the job log dibs itself gave it.
-fn written(root: u32) -> Vec<PathBuf> {
-    let channel = Host::fd_path(root, 1);
-    let tree = std::iter::once(root).chain(tree_below(root, &Host::processes()));
-    let mut files: Vec<PathBuf> = Vec::new();
-    for pid in tree {
-        for fd in [1, 2] {
-            let Some(path) = Host::fd_path(pid, fd).filter(|p| p.starts_with('/')) else {
-                continue;
-            };
-            let file = PathBuf::from(&path);
-            if Some(&path) == channel.as_ref() || dibs_log(&file) || !file.is_file() {
-                continue;
-            }
-            if !files.contains(&file) {
-                files.push(file);
-            }
-        }
-    }
-    files
-}
-
-/// `.../jobs/<id>/log`, which dibs pointed the job at.
-fn dibs_log(file: &Path) -> bool {
-    let job = file.parent();
-    file.file_name().is_some_and(|n| n == "log")
-        && job
-            .and_then(Path::file_name)
-            .is_some_and(|n| n.to_string_lossy().contains('-'))
-        && job
-            .and_then(Path::parent)
-            .and_then(Path::file_name)
-            .is_some_and(|n| n == "jobs")
-}
-
 /// The last lines of a text, each shown under a bar.
 fn tail(text: &[u8], lines: usize) -> Vec<u8> {
     let body = text.strip_suffix(b"\n").unwrap_or(text);
@@ -307,12 +270,5 @@ mod tests {
         assert_eq!(tail(b"a\nb\nc\n", 2), b"  | b\n  | c\n");
         assert_eq!(tail(b"a\nb", 5), b"  | a\n  | b\n");
         assert!(tail(b"", 3).is_empty());
-    }
-
-    #[test]
-    fn only_a_job_log_dibs_gave_reads_as_dibs_own() {
-        assert!(dibs_log(Path::new("/s/jobs/20261002-120000-42/log")));
-        assert!(!dibs_log(Path::new("/s/jobs/x/log")));
-        assert!(!dibs_log(Path::new("/s/build/20261002-120000-42/log")));
     }
 }

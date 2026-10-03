@@ -18,18 +18,40 @@ pub struct Queue<'a> {
 /// When the jobs waiting now start, worked out in arrival order. Queued shared jobs do not stand
 /// in line behind one another: the shared lock admits them together, so the queue only advances
 /// at a benchmark, which waits for everything admitted before it.
-struct Eta {
+#[derive(Debug, Clone, Copy)]
+pub struct Eta {
     /// Seconds until the lock frees for the next benchmark, when `known`.
-    at: u64,
-    known: bool,
+    pub at: u64,
+    pub known: bool,
     /// The longest of the shared jobs admitted since, which a benchmark waits out too.
-    pending: u64,
-    pending_known: bool,
+    pub pending: u64,
+    pub pending_known: bool,
 }
 
 impl Eta {
+    /// The queue's start once the holders have gone, as their estimates say they will.
+    pub fn behind(
+        holders: &[LockRecord],
+        now: u64,
+        estimate: impl Fn(&LockRecord) -> Option<Estimate>,
+    ) -> Eta {
+        let mut eta = Eta {
+            at: 0,
+            known: true,
+            pending: 0,
+            pending_known: true,
+        };
+        for holder in holders {
+            match estimate(holder).and_then(|e| e.remaining(now.saturating_sub(holder.start))) {
+                Some(left) => eta.at = eta.at.max(left),
+                None => eta.known = false,
+            }
+        }
+        eta
+    }
+
     /// When a job of this mode and estimate would start; None when it cannot be said.
-    fn next(&mut self, mode: Mode, estimate: Option<Estimate>) -> Option<u64> {
+    pub fn next(&mut self, mode: Mode, estimate: Option<Estimate>) -> Option<u64> {
         if mode != Mode::Bench {
             match estimate {
                 Some(e) => self.pending = self.pending.max(e.median),
@@ -73,25 +95,9 @@ impl Queue<'_> {
         self.dir.prune();
         let now = Moment::epoch_now();
         let holders = self.dir.records(Kind::Holder);
-        let mut free = 0;
-        let mut known = true;
-        for holder in &holders {
-            match self
-                .estimate(holder)
-                .and_then(|e| e.remaining(now.saturating_sub(holder.start)))
-            {
-                Some(left) => free = free.max(left),
-                None => known = false,
-            }
-        }
         let mut waiting = self.dir.records(Kind::Waiting);
         waiting.sort_by_key(|w| w.start);
-        let mut eta = Eta {
-            at: free,
-            known,
-            pending: 0,
-            pending_known: true,
-        };
+        let mut eta = Eta::behind(&holders, now, |h| self.estimate(h));
         let mut ahead = 0;
         let mut mine = None;
         for waiter in &waiting {
@@ -103,7 +109,7 @@ impl Queue<'_> {
             ahead += 1;
         }
         if holders.is_empty() {
-            let orphans = self.orphans();
+            let orphans = self.dir.takers(self.call.pid).orphans;
             if !orphans.is_empty() {
                 let pids: String = orphans.iter().map(|p| format!(" {p}")).collect();
                 return format!(
@@ -129,19 +135,6 @@ impl Queue<'_> {
             line.push_str(&format!(", ~{} until it starts", Span(eta)));
         }
         format!("{line}. dibs status shows the queue.\n")
-    }
-
-    /// Processes holding `rw` that nothing on record accounts for, outside this call's own group.
-    fn orphans(&self) -> Vec<u32> {
-        let mine = Host::group_of(self.call.pid);
-        Host::lock_holders(&self.dir.rw())
-            .into_iter()
-            .filter(|&pid| Host::exists(pid))
-            .filter(|&pid| mine.is_none() || Host::group_of(pid) != mine)
-            .filter(|&pid| {
-                !self.dir.file("holder", pid).exists() && !self.dir.file("waiting", pid).exists()
-            })
-            .collect()
     }
 
     /// A quick shared job may go around a queued benchmark, while that has waited less than the

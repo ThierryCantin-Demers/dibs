@@ -1,3 +1,4 @@
+pub use dibs_format::status::Scope;
 use dibs_format::{HistoryLine, Label, Mode};
 use std::{
     fs::{self, OpenOptions},
@@ -12,17 +13,6 @@ const BOUND: usize = 1000;
 /// Every successful run's duration on this machine, which estimates are drawn from.
 pub struct History {
     lines: Vec<HistoryLine>,
-}
-
-/// Which key an estimate was drawn from, sharpest first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Scope {
-    /// This label, and this procedure where the job named one.
-    This,
-    /// What the agent's jobs in this mode usually take.
-    Agent,
-    /// What any job in this mode takes.
-    Mode,
 }
 
 /// What a job's history says it takes.

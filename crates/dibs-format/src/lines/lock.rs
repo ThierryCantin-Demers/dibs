@@ -1,5 +1,5 @@
 use crate::{
-    Alias, Label, Mode,
+    Alias, JobId, Label, Mode,
     lines::base::{Dashed, Field, Fields, LineError},
 };
 use std::{fmt, str::FromStr};
@@ -21,17 +21,19 @@ pub struct LockRecord {
     pub command: String,
     /// What the job's estimate is keyed by beside its label, for a recipe's job.
     pub fingerprint: Option<String>,
+    /// The job's directory, which `dibs out <job>` reads; a bash machine half names none.
+    pub job: Option<JobId>,
 }
 
 impl FromStr for LockRecord {
     type Err = LineError;
 
-    /// Reads the 9 fields written today, and the 6, 7 and 8 an older machine half wrote: one
-    /// without the agent's id, then without the card, then without the fingerprint.
+    /// Reads the 10 fields a runner writes, and the 9, 8, 7 and 6 a bash machine half wrote: one
+    /// without the job, then without the fingerprint, the card, then the agent's id.
     fn from_str(line: &str) -> Result<Self, Self::Err> {
         let mut f = Fields::of(line);
         let found = f.count();
-        if !(6..=9).contains(&found) {
+        if !(6..=10).contains(&found) {
             return Err(LineError::FieldCount {
                 record: "lock",
                 found,
@@ -50,6 +52,7 @@ impl FromStr for LockRecord {
             },
             command: f.text().to_string(),
             fingerprint: f.optional(),
+            job: f.optional().map(JobId::new),
         })
     }
 }
@@ -68,7 +71,11 @@ impl fmt::Display for LockRecord {
             Dashed(self.device.as_ref()),
             Field(&self.command),
             Field(self.fingerprint.as_deref().unwrap_or_default()),
-        )
+        )?;
+        match &self.job {
+            Some(job) => write!(f, "\t{}", Field(job.as_str())),
+            None => Ok(()),
+        }
     }
 }
 
@@ -115,6 +122,17 @@ mod tests {
         let eight: LockRecord = "bench\t7\t100\tl\tagent\tid\tgpu0\tcmd".parse().unwrap();
         assert_eq!(eight.device, Some(Alias::new("gpu0")));
         assert_eq!((eight.command.as_str(), eight.fingerprint), ("cmd", None));
+    }
+
+    #[test]
+    fn a_runners_record_names_its_job_after_the_nine_a_bash_reader_knows() {
+        let line = format!("{PLAIN_WAITER}\t20261001120000-4243");
+        let record: LockRecord = line.parse().unwrap();
+        assert_eq!(record.job, Some(JobId::new("20261001120000-4243")));
+        assert_eq!(record.fingerprint, None);
+        assert_eq!(record.to_string(), line);
+        let nine: LockRecord = PLAIN_WAITER.parse().unwrap();
+        assert_eq!(nine.job, None);
     }
 
     #[test]

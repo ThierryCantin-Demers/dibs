@@ -8,7 +8,7 @@ use crate::snapshot::*;
 use std::fs;
 use std::path::Path;
 
-const LOCK_FIELDS: [&str; 9] = [
+const LOCK_FIELDS: [&str; 10] = [
     "mode",
     "pid",
     "start",
@@ -18,6 +18,7 @@ const LOCK_FIELDS: [&str; 9] = [
     "device",
     "command",
     "fingerprint",
+    "job",
 ];
 const LOG_FIELDS: [&str; 12] = [
     "when", "event", "pid", "mode", "label", "queued", "ran", "exit", "command", "agent", "batch",
@@ -192,11 +193,28 @@ fn lock_records() {
     s.status();
     for (name, text) in lock_files(&s, "cpu") {
         let sample: Vec<&str> = text.split_whitespace().collect();
+        let recent = |word: &str| match word.parse::<u64>().is_ok_and(|at| at.abs_diff(now()) < 60)
+        {
+            true => "<a second since the epoch, within the last minute>".to_string(),
+            false => word.to_string(),
+        };
+        let shown = |at: usize, unit: &dyn Fn(&str) -> String| {
+            sample.get(at).map(|w| unit(w)).unwrap_or_default()
+        };
         t.section(
             &n.apply(&format!("{name}, the CPU sample a status leaves")),
             &format!(
-                "  {} words: ticks, when it last worked, when sampled\n",
-                sample.len()
+                "  {} words: ticks, when it last worked, when sampled\n  ticks    {}\n  worked   {}\n  sampled  {}\n",
+                sample.len(),
+                shown(0, &|w| match w.bytes().all(|b| b.is_ascii_digit()) {
+                    true => "<clock ticks, a whole number>".to_string(),
+                    false => w.to_string(),
+                }),
+                shown(1, &|w| match w {
+                    "-" => "- (never)".to_string(),
+                    w => recent(w),
+                }),
+                shown(2, &recent),
             ),
         );
     }

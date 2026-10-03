@@ -628,3 +628,32 @@ fn watch_redraws_on_its_interval_and_takes_no_lock() {
     );
     assert_eq!(s.holders(), 0, "and it takes no lock");
 }
+
+#[test]
+fn status_names_a_holders_job_which_out_reads() {
+    let mut s = Sandbox::new();
+    let g = s.gate("g");
+    let job = s.spawn(s.dibs([
+        "--label",
+        "named-job",
+        &format!("echo started; {}", g.hold()),
+    ]));
+    s.held(1);
+    let d = s.status_json();
+    let id = d["holders"][0]["job"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        s.dibs(["--status"])
+            .run()
+            .stdout
+            .contains(&format!("  job {id}")),
+        "the text names it beside the pid"
+    );
+    until("the job's log to say it started", || {
+        s.dibs(["out", &id]).run().stdout.contains("| started")
+    });
+    g.open();
+    s.wait(job);
+}
