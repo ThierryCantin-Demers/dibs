@@ -23,6 +23,8 @@ pub enum Output<'a> {
     Stream(&'a Path),
     /// To the caller alone, each stream as itself.
     Caller,
+    /// The runner's own three streams, a transfer's: stdin included, since rsync talks both ways.
+    Through,
 }
 
 /// How long a job may run, and how long it is given to stop once told to.
@@ -55,6 +57,7 @@ impl Job {
         environment.apply(&mut bash);
         let mut relays = Vec::new();
         let child = match output {
+            Output::Through => bash.stdin(Stdio::inherit()).spawn()?,
             Output::Log(log) => {
                 let file = Job::log_file(log)?;
                 bash.stderr(file.try_clone()?).stdout(file).spawn()?

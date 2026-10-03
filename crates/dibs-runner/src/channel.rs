@@ -4,7 +4,7 @@ use std::{
     fmt,
     fs::File,
     io::{self, Read as _},
-    os::fd::{AsRawFd as _, FromRawFd as _},
+    os::fd::{AsFd as _, AsRawFd as _},
     sync::Arc,
     thread,
 };
@@ -39,13 +39,13 @@ enum Gone {
 }
 
 impl Channel {
-    pub fn stdin() -> Channel {
-        // SAFETY: nothing else in the runner reads its stdin, which this takes over.
-        let input = unsafe { File::from_raw_fd(0) };
-        Channel {
-            input,
+    /// A copy of stdin, so dropping the channel leaves stdin to a transfer's job, which reads
+    /// what follows the request.
+    pub fn stdin() -> io::Result<Channel> {
+        Ok(Channel {
+            input: File::from(io::stdin().as_fd().try_clone_to_owned()?),
             unframer: Unframer::default(),
-        }
+        })
     }
 
     /// The first frame, which is the call.
@@ -64,7 +64,8 @@ impl Channel {
             if within.is_some_and(|secs| !self.readable(secs)) {
                 return Ok(Heard::Silent);
             }
-            match self.input.read(&mut chunk) {
+            let wanted = self.unframer.wanted().min(chunk.len());
+            match self.input.read(&mut chunk[..wanted]) {
                 Ok(0) => return Ok(Heard::Ended),
                 Ok(n) => self.unframer.feed(&chunk[..n]),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -85,6 +86,23 @@ impl Channel {
         let millis = libc::c_int::try_from(secs.saturating_mul(1000)).unwrap_or(libc::c_int::MAX);
         // SAFETY: one pollfd, owned here, for the call's length.
         unsafe { libc::poll(&mut fd, 1, millis) > 0 }
+    }
+
+    /// A transfer's stdin is rsync's, which reads none of it while it prepares a tree, so its
+    /// caller is watched through stdout instead: whoever reads it, sshd or the client, closing it
+    /// is the caller gone.
+    pub fn hangup(stopper: Arc<Stopper>) {
+        thread::spawn(move || {
+            let mut fd = libc::pollfd {
+                fd: libc::STDOUT_FILENO,
+                events: 0,
+                revents: 0,
+            };
+            let gone = libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
+            // SAFETY: one pollfd, owned here; with no events asked for, only a hangup wakes it.
+            while unsafe { libc::poll(&mut fd, 1, -1) } < 1 || fd.revents & gone == 0 {}
+            stopper.caller_gone(&Gone::Ended.to_string());
+        });
     }
 
     /// Watches the stream on a thread of its own: its end, or silence past the lease, is the

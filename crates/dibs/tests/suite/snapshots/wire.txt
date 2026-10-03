@@ -466,74 +466,56 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 == dibs --on box-a --sync -a ./x ':~/y'
 -> exit 0
 call 1: rsync --mkpath -a ./x 'dibs@box-a:~/y'
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD: rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 
-    HOLD: 0
-    JSON: 0
-    LABEL: sync
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 0
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: null
+    json: false
+    label: sync
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 
 == dibs --on box-a --label sent --sync --checksum ':~/y/' ./x/
 -> exit 0
 call 1: rsync --mkpath --checksum 'dibs@box-a:~/y/' ./x/
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD: rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 
-    HOLD: 0
-    JSON: 0
-    LABEL: sent
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 0
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: null
+    json: false
+    label: sent
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 
 == dibs --on box-a --label several printf '%s|' "it's" 'a b' '$HOME'
 -> exit 0

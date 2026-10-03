@@ -10,6 +10,9 @@ pub enum Record {
     Trailer(Trailer),
     /// The lock is held for a command the client runs, with the ports picked for it.
     Holding(Vec<Picked>),
+    /// A transfer's request was read: from here on both streams are rsync's, raw, and the call's
+    /// exit is the runner's own.
+    Transferring,
 }
 
 /// A `--port` name and the port the machine picked for it.

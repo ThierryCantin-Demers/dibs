@@ -12,8 +12,12 @@ use dibs_format::{
     wire::{Frame, Picked, Record, Unframer},
 };
 use std::{
-    io::{self, BufRead as _, BufReader, Read, Write as _},
-    os::unix::process::CommandExt as _,
+    fs::File,
+    io::{self, BufRead as _, BufReader, Read, Write},
+    os::{
+        fd::{AsFd as _, AsRawFd as _},
+        unix::process::CommandExt as _,
+    },
     path::PathBuf,
     process::{ChildStdin, Command, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
@@ -181,6 +185,94 @@ impl Served<'_> {
         Launch { command, watch }
     }
 
+    /// rsync's far side: the request, then this process's own stdin and stdout carried raw both
+    /// ways, but only once the runner says it has read the request, so a runner that is not
+    /// there yet is built first without a byte of rsync's stream lost.
+    pub fn transfer(&self) -> io::Result<i32> {
+        let deferred = Interrupt::defer();
+        let carried = match self.carry()? {
+            Answer::Missing => {
+                let provision = Provision {
+                    session: self.session,
+                    live: self.live,
+                };
+                let delivery = &mut Delivery::Inherit;
+                match provision.through_newest(delivery)? {
+                    Installed::Done => match self.carry()? {
+                        Answer::Exit(code) => code,
+                        Answer::Missing => provision.failed(delivery),
+                    },
+                    Installed::NoneThere => provision.none_there(delivery),
+                    Installed::Unreached => SSH_FAILED,
+                    Installed::Failed | Installed::NoLockTaker | Installed::Unlockable => {
+                        provision.failed(delivery)
+                    }
+                }
+            }
+            Answer::Exit(code) => code,
+        };
+        drop(deferred);
+        Ok(carried)
+    }
+
+    fn carry(&self) -> io::Result<Answer> {
+        let Launch { mut command, .. } = self.launch();
+        let watch = Watch {
+            off: true,
+            hold: false,
+            lease: 0,
+        };
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        drop(command);
+        let mut stdin = child.stdin.take().expect("stdin was piped");
+        let mut stdout = child.stdout.take().expect("stdout was piped");
+        let request = Frame::Request(Box::new(self.values.request(watch))).encode();
+        let said = stdin.write_all(&request).ok().and_then(|()| {
+            let mut unframer = Unframer::default();
+            let mut chunk = [0u8; 256];
+            let mut frame = None;
+            while frame.is_none() {
+                let wanted = unframer.wanted().min(chunk.len());
+                let n = stdout.read(&mut chunk[..wanted]).ok().filter(|n| *n > 0)?;
+                unframer.feed(&chunk[..n]);
+                frame = unframer.next_frame().ok()?;
+            }
+            frame
+        });
+        let Some(Frame::Record(Record::Transferring)) = said else {
+            drop(stdin);
+            let status = child.wait()?;
+            Interrupt::pass_on(status);
+            return Ok(match (said, exit_code(status)) {
+                (None, MISSING) => Answer::Missing,
+                (_, code) => Answer::Exit(code),
+            });
+        };
+        // Unbuffered copies of this process's own: stdout's line buffering would hold rsync's
+        // bytes back until a newline happened along. rsync leaves its transport's stdout
+        // non-blocking, which a plain copy would take for the stream's end.
+        let from = File::from(io::stdin().as_fd().try_clone_to_owned()?);
+        let to = File::from(io::stdout().as_fd().try_clone_to_owned()?);
+        for stream in [&from, &to] {
+            let fd = stream.as_raw_fd();
+            // SAFETY: fcntl reads and sets the flags of a descriptor owned here.
+            unsafe {
+                let flags = libc::fcntl(fd, libc::F_GETFL);
+                if flags >= 0 && flags & libc::O_NONBLOCK != 0 {
+                    libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK);
+                }
+            }
+        }
+        thread::spawn(move || pass_through(from, stdin));
+        pass_through(stdout, to);
+        let status = child.wait()?;
+        Interrupt::pass_on(status);
+        Ok(Answer::Exit(exit_code(status)))
+    }
+
     fn attempt(&self, delivery: &mut Delivery) -> io::Result<Answer> {
         let Launch { mut command, watch } = self.launch();
         let lines = matches!(delivery, Delivery::Lines(_));
@@ -326,6 +418,17 @@ impl Delivery<'_> {
     }
 }
 
+/// Bytes from one stream to the other as they come, until either ends. Read and written plainly:
+/// `io::copy` splices between a socket and a pipe, and rsync's first bytes never arrived that way.
+fn pass_through(mut from: impl Read, mut to: impl Write) {
+    let mut chunk = vec![0u8; 64 * 1024];
+    while let Ok(n @ 1..) = from.read(&mut chunk) {
+        if to.write_all(&chunk[..n]).is_err() {
+            return;
+        }
+    }
+}
+
 /// The request, then a release when one is sent and a beat whenever so long passes without
 /// one, until every sender is gone: the runner's end, and a hold's release.
 fn feed(
@@ -376,7 +479,10 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
                 }
                 Frame::Record(Record::Holding(ports)) => Heard::Holding(ports),
                 Frame::Exit(code) => Heard::Exit(code),
-                Frame::Request(_) | Frame::Beat | Frame::Release(_) => continue,
+                Frame::Request(_)
+                | Frame::Beat
+                | Frame::Release(_)
+                | Frame::Record(Record::Transferring) => continue,
             };
             if tell.send(heard).is_err() {
                 return;

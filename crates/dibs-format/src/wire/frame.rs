@@ -120,6 +120,21 @@ impl Unframer {
         Frame::decode(kind, payload).map(Some)
     }
 
+    /// How many more bytes the next frame needs: one at a time until its header is in, then the
+    /// rest of it exactly. A reader that takes no more than this never takes what follows the
+    /// frame, which a transfer's raw stream does.
+    pub fn wanted(&self) -> usize {
+        let window = &self.carried[..self.carried.len().min(HEADER_MAX)];
+        let Some(end) = window.iter().position(|b| *b == b'\n') else {
+            return 1;
+        };
+        let length = String::from_utf8_lossy(&window[..end])
+            .split_once(' ')
+            .and_then(|(_, length)| length.parse::<usize>().ok())
+            .unwrap_or_default();
+        (end + 1 + length).saturating_sub(self.carried.len()).max(1)
+    }
+
     /// Whether part of a frame is still waiting for the rest.
     pub fn is_empty(&self) -> bool {
         self.carried.is_empty()
@@ -219,6 +234,23 @@ mod tests {
             }
         }
         assert_eq!(read, every_kind());
+    }
+
+    #[test]
+    fn a_reader_taking_what_is_wanted_leaves_what_follows_the_frame() {
+        let mut stream = Frame::Request(Box::new(request())).encode();
+        stream.extend_from_slice(b"rsync's own bytes");
+        let mut unframer = Unframer::default();
+        let mut at = 0;
+        let mut frame = None;
+        while frame.is_none() {
+            let end = (at + unframer.wanted()).min(stream.len());
+            unframer.feed(&stream[at..end]);
+            at = end;
+            frame = unframer.next_frame().unwrap();
+        }
+        assert_eq!(frame, Some(Frame::Request(Box::new(request()))));
+        assert_eq!(&stream[at..], b"rsync's own bytes");
     }
 
     #[test]

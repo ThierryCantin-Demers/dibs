@@ -16,7 +16,7 @@ impl Half {
     pub fn of(values: &CallValues) -> Half {
         let served = match values.mode {
             Mode::Peek => true,
-            Mode::Shared | Mode::Bench => values.wait.is_none() && !values.verbose,
+            Mode::Shared | Mode::Bench | Mode::Rsh => values.wait.is_none() && !values.verbose,
             _ => false,
         };
         match served {

@@ -7,7 +7,7 @@ use crate::{
     },
     caller::Caller,
     cli::{BashQuoted, Call, Command as Words},
-    machine::{CallValues, Interrupt, Lines, Liveness, Route, Session, Target, exit_code},
+    machine::{CallValues, Interrupt, Lines, Liveness, Relayed, Route, Session, Target, exit_code},
     paths::Paths,
     scratch::ScratchFile,
 };
@@ -134,24 +134,25 @@ impl Sync<'_> {
             });
         }
         let deferred = Interrupt::defer();
-        let status = match output {
-            Output::Inherit => rsync.status(),
-            Output::Lines(on_line) => rsync
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .and_then(|mut child| {
-                    Lines::of(&mut child).relay(*on_line);
-                    child.wait()
-                }),
-        };
+        if let Output::Lines(_) = output {
+            rsync.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
+        let mut child = rsync.spawn()?;
+        let relayed = Relayed::to(child.id());
+        if let Output::Lines(on_line) = output {
+            Lines::of(&mut child).relay(*on_line);
+        }
+        let status = child.wait();
         drop(deferred);
         let status = exit_code(status?);
-        Ok(match (status, transport.exit()) {
+        let exit = match (status, transport.exit()) {
             (0, _) => 0,
             (_, Some(code @ (64..=78))) => code,
             (status, _) => status,
-        })
+        };
+        drop(transport);
+        relayed.pass_on();
+        Ok(exit)
     }
 
     fn label(&self) -> Label {
@@ -364,7 +365,7 @@ impl Rsh {
                 &target,
             )?
         };
-        let status = exit_code(session.transfer(&values, Liveness::from_env())?);
+        let status = session.transfer(&values, Liveness::from_env())?;
         Ok(session.exit(status, &target))
     }
 }

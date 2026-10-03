@@ -187,3 +187,47 @@ fn the_transports_files_are_private_and_named_where_nobody_can_plant_one() {
     );
     assert!(!fs::exists(exit_file).unwrap(), "and gone once the sync is");
 }
+
+#[test]
+fn a_sync_told_to_stop_stops_rsync_before_it_goes() {
+    for (signal, code) in [(libc::SIGTERM, 143), (libc::SIGHUP, 129)] {
+        let mut s = Sandbox::new();
+        s.machines("[machine.box]\nssh = \"dibs@box\"\nhostname = \"box\"\n");
+        let (up, got, release, never) = (
+            s.gate("up"),
+            s.gate("got"),
+            s.gate("release"),
+            s.gate("never"),
+        );
+        s.write_exec(
+            "fakersync/rsync",
+            &format!(
+                "#!/bin/bash\n\
+                 case $1 in --help|--version) echo 'rsync  version 3.2.7  --mkpath'; exit 0 ;; esac\n\
+                 trap '{}; {}; exit 20' TERM HUP\n\
+                 {}\n\
+                 {{ {}; }} &\n\
+                 wait $!\n",
+                got.signal(),
+                release.hold(),
+                up.signal(),
+                never.hold()
+            ),
+        );
+        let sync = s.spawn(
+            s.dibs(["--on", "box", "--sync", "./x", ":~/y"])
+                .env("DIBS_LOCAL", "0")
+                .env("PATH", format!("{}:{}", s.p("fakersync"), s.var("PATH"))),
+        );
+        up.reached();
+        unsafe { libc::kill(sync.pid as i32, signal) };
+        got.reached();
+        assert!(
+            alive(sync.pid),
+            "rsync is told, and the sync waits for it to stop"
+        );
+        release.open();
+        assert_eq!(s.wait(sync), code, "and then goes as it was told to");
+        never.open();
+    }
+}

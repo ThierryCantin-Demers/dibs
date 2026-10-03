@@ -2,6 +2,10 @@
 //! beside every other and none of them reads or writes the real ones. Nothing here reaches a real
 //! machine: `DIBS_LOCAL=1` by default, and an ssh that fails at once for any name.
 
+use dibs_format::{
+    Label, Mode,
+    wire::{Frame, MaxFrom, Request, Watch},
+};
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -60,6 +64,36 @@ pub fn prebuilt_runner() -> String {
 /// A pid that stays alive for the whole test, for records that prune would drop otherwise.
 pub fn live_pid() -> u32 {
     std::process::id()
+}
+
+/// What a client sends `dibs __runner serve` first: the call, unwatched, as a request frame.
+pub fn request_frame(mode: Mode, label: &str, command: &str) -> String {
+    let request = Request {
+        mode,
+        label: Label::new(label),
+        command: command.into(),
+        wait: None,
+        max: 0,
+        max_from: MaxFrom::Given,
+        verbose: false,
+        json: false,
+        stream: false,
+        tty: false,
+        card: None,
+        fingerprint: None,
+        agent: "session suite".into(),
+        agent_id: "local_suite".into(),
+        batch: None,
+        watch: Watch {
+            off: true,
+            hold: false,
+            lease: 0,
+        },
+        ports: Vec::new(),
+        services: Vec::new(),
+        ready_within: 0,
+    };
+    String::from_utf8(Frame::Request(Box::new(request)).encode()).unwrap()
 }
 
 pub struct Sandbox {

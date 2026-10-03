@@ -14,7 +14,7 @@ mod unreachable;
 
 pub use half::Half;
 pub use held::{Held, Holder, Release};
-pub use interrupt::Interrupt;
+pub use interrupt::{Interrupt, Relayed};
 pub use lines::{Lines, Stream};
 pub use payload::{CallValues, Card, MaxFrom, Watch, decode, encode};
 pub use provision::{Installed, Provision};

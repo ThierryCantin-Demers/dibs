@@ -324,11 +324,14 @@ impl Session {
         Ok(exit_code(status))
     }
 
-    /// rsync's far side, fed this process's stdin.
-    pub fn transfer(&self, values: &CallValues, live: Liveness) -> io::Result<ExitStatus> {
+    /// rsync's far side, fed this process's stdin; the exit is the far side's.
+    pub fn transfer(&self, values: &CallValues, live: Liveness) -> io::Result<i32> {
+        if Half::of(values) == Half::Runner {
+            return self.served(values, live).transfer();
+        }
         let deferred = Interrupt::defer();
         let started = self.start(values, live, Shape::Transfer, Streams::Inherit)?;
-        Session::wait(started, deferred)
+        Session::wait(started, deferred).map(exit_code)
     }
 
     fn wait(started: Started, deferred: Interrupt) -> io::Result<ExitStatus> {

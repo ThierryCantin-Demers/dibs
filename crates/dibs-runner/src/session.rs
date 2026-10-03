@@ -44,12 +44,24 @@ const SERVICE_FAILED: i32 = 77;
 /// Longer than the coarsest tick a file's time is stamped by.
 const FILE_TICK: Duration = Duration::from_millis(11);
 
-/// One request in, frames out, the exit.
+/// One request in, frames out, the exit. A transfer's request is followed by rsync's own stream
+/// both ways, so after saying it has read it the runner frames nothing, and exits with the call.
 pub fn serve() -> i32 {
     let signals = Signals::block();
     let sink = Sink::frames();
-    let mut channel = Channel::stdin();
+    let mut channel = match Channel::stdin() {
+        Ok(channel) => channel,
+        Err(e) => {
+            sink.say(&format!("dibs-runner: stdin could not be read: {e}\n"));
+            sink.exit(2);
+            return 2;
+        }
+    };
     let code = match channel.request() {
+        Ok(request) if request.mode == Mode::Rsh => {
+            sink.record(Record::Transferring);
+            return Session::new(request, Sink::plain()).serve(None, signals);
+        }
         Ok(request) => Session::new(request, sink.clone()).serve(Some(channel), signals),
         Err(e) => {
             sink.say(&format!("dibs-runner: {e}\n"));
@@ -124,7 +136,7 @@ impl Session {
         };
         match self.call.mode() {
             Mode::Peek => self.peek(&at, &environment),
-            Mode::Shared | Mode::Bench => self.run(&at, environment, channel),
+            Mode::Shared | Mode::Bench | Mode::Rsh => self.run(&at, environment, channel),
             mode => {
                 self.sink
                     .say(&format!("dibs-runner: no {mode} call is served here\n"));
@@ -223,6 +235,10 @@ impl Session {
         {
             channel.watch(request.watch.lease, Arc::clone(at.stopper), held.clone());
         }
+        let transfer = mode == Mode::Rsh;
+        if transfer {
+            Channel::hangup(Arc::clone(at.stopper));
+        }
 
         let lock = match Lock::open(at.dir) {
             Ok(lock) => lock,
@@ -284,14 +300,16 @@ impl Session {
             environment.set("DIBS_STATE", Host::machine_state());
         }
         let job_dir = at.machine.jobs().join(job.as_str());
-        let log = fs::create_dir_all(&job_dir)
-            .and_then(|()| Session::write_command(&job_dir.join("cmd"), &request.command))
-            .is_ok()
-            .then(|| job_dir.join("log"));
+        let log = (!transfer
+            && fs::create_dir_all(&job_dir)
+                .and_then(|()| Session::write_command(&job_dir.join("cmd"), &request.command))
+                .is_ok())
+        .then(|| job_dir.join("log"));
         if log.is_some() {
             environment.set("DIBS_JOB", job.to_string());
         }
         let output = match (&log, request.stream) {
+            _ if transfer => Output::Through,
             (Some(log), true) => Output::Stream(log),
             (Some(log), false) => Output::Log(log),
             (None, _) => Output::Caller,

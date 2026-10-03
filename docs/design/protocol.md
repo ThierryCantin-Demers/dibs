@@ -44,6 +44,18 @@ The runner's own stderr carries only what is not a frame, a panic for instance, 
 passes it through with ssh's. A call whose runner ends without an `exit` frame exits with the
 runner's status.
 
+### A transfer
+
+`dibs --sync` runs rsync here with `dibs __rsh` as its transport, which reaches the runner with a
+request of mode `rsh`. Both streams after it are rsync's own, so the runner reads the request to
+its last byte and no further, answers with one `transferring` record, and frames nothing after
+it: its messages go to stderr as text, and its exit is the call's. The client carries its own
+stdin and stdout across only once that record has arrived, so a runner that has to be built
+first loses none of rsync's stream. The job's stdin is the runner's, and since rsync reads none
+of it while it prepares a tree, the runner watches its stdout instead: whoever reads it closing
+it is the caller gone. `TERM` and `HUP` to `dibs --sync` are passed to rsync, and dibs ends of
+the signal once rsync has.
+
 ### Liveness
 
 - The end of the runner's stdin means the caller is gone. So does silence longer than the

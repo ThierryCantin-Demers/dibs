@@ -112,19 +112,17 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs bench <root>/app@local gate --on box-a
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/gate:send
       | 1	3
       | app/bench/gate	shared	app_bench_gate	1
       | app/bench/gate	bench	app_bench_gate	1
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | DIBS_PKGS_TOKEN=<token>
@@ -322,29 +320,22 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 6bc29855bfd0b3e9
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_gate_send
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
   the request the runner acts on:
     agent: session suite
@@ -425,18 +416,16 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs shell <root>/app@local --reason 'a look' --on box-a -- 'cat a.txt'
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/shell:send
       | 1	2
       | app/shell	shared	app_shell	1
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | DIBS_PKGS_TOKEN=<token>
@@ -634,29 +623,22 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: ae20812789dc44ec
-    HOLD: 0
-    JSON: 0
-    LABEL: app_shell_send
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: ae20812789dc44ec
+    json: false
+    label: app_shell_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
   the request the runner acts on:
     agent: session suite
@@ -1027,14 +1009,11 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs bench <root>/app@origin/main..local gate --on box-a --reps 1
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/gate:send (base)
       | 1	6
       | app/bench/gate (base)	shared	app_bench_gate	1
@@ -1042,7 +1021,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | app/bench/gate (local)	shared	app_bench_gate	1
       | app/bench/gate (base)	bench	app_bench_gate	1
       | app/bench/gate (local)	bench	app_bench_gate	1
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | DIBS_PKGS_TOKEN=<token>
@@ -1240,29 +1220,22 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 6bc29855bfd0b3e9
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_gate_send
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
   the request the runner acts on:
     agent: session suite
@@ -1310,20 +1283,18 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     watch.hold: false
     watch.lease: 120
     watch.off: false
-call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/gate:send (local)
       | 3	6
       | app/bench/gate (local)	shared	app_bench_gate	1
       | app/bench/gate (base)	bench	app_bench_gate	1
       | app/bench/gate (local)	bench	app_bench_gate	1
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | DIBS_PKGS_TOKEN=<token>
@@ -1521,29 +1492,22 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 6bc29855bfd0b3e9
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_gate_send
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
   the request the runner acts on:
     agent: session suite
@@ -1659,18 +1623,16 @@ call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs bench <root>/app@local art --on box-a --artifacts <root>/got
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/bench/art:send
       | 1	2
       | app/bench/art	bench	app_bench_art	1
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | DIBS_PKGS_TOKEN=<token>
@@ -1868,29 +1830,22 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 29dcff772dc1e4fa
-    HOLD: 0
-    JSON: 0
-    LABEL: app_bench_art_send
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 29dcff772dc1e4fa
+    json: false
+    label: app_bench_art_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
   the request the runner acts on:
     agent: session suite
@@ -1944,15 +1899,13 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs with <root>/app@local servers --on box-a -- true
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | DIBS_PKGS_TOKEN=<token>
@@ -2150,29 +2103,22 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 
-    HOLD: 0
-    JSON: 0
-    LABEL: app_with_servers_send
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: null
+    json: false
+    label: app_with_servers_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
   the request the runner acts on:
     agent: session suite
@@ -2222,15 +2168,13 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs with <root>/app@local servers --there --on box-a -- true
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | DIBS_PKGS_TOKEN=<token>
@@ -2428,29 +2372,22 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 
-    HOLD: 0
-    JSON: 0
-    LABEL: app_with_servers_send
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: null
+    json: false
+    label: app_with_servers_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
   the request the runner acts on:
     agent: session suite
@@ -2500,19 +2437,17 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs build <root>/app@local p --on box-a --pin <root>/lib@local
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/build/p:pin (<root>/lib)
       | 1	3
       | app/build/p:send	rsh	app_build_p_send	1
       | app/build/p	shared	app_build_p	1
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | set -eu
@@ -2703,41 +2638,32 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 70e532912455d091
-    HOLD: 0
-    JSON: 0
-    LABEL: app_build_p_pin
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p_pin
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/build/p:send
       | 2	3
       | app/build/p	shared	app_build_p	1
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | DIBS_PKGS_TOKEN=<token>
@@ -2943,29 +2869,22 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 70e532912455d091
-    HOLD: 0
-    JSON: 0
-    LABEL: app_build_p_send
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
   the request the runner acts on:
     agent: session suite
@@ -2994,18 +2913,16 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs build app@local p --on box-a  (a git dependency the machine lacks)
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH:
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
       | <batch>	app/build/p:send
       | 1	2
       | app/build/p	shared	app_build_p	1
-    CMD:
+    card: null
+    command:
       | __dibs_report=$(mktemp "${TMPDIR:-/tmp}/dibs-prepare.XXXXXX") || exit 70
       | (
       | DIBS_PKGS_TOKEN=<token>
@@ -3207,61 +3124,45 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | echo DIBS-READY >&2
       | cd -- "${__dibs_wt%/*}" || exit 3
       | rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 70e532912455d091
-    HOLD: 0
-    JSON: 0
-    LABEL: app_build_p_send
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    AGENT: session suite
-    AGENT_ID: local_suite
-    BATCH: 
-    CMD: rsync --server <what this rsync asks of its far side>
-    DEV_CHIP: 
-    DEV_NAME: 
-    DEV_PCI: 
-    DEV_RT: 
-    DEV_TWINS: 1
-    FINGERPRINT: 
-    HOLD: 0
-    JSON: 0
-    LABEL: sync
-    LEASE: 0
-    MAXFROM: default
-    MAXHOLD: 3600
-    MODE: rsh
-    NO_WATCH: 1
-    PORT_NAME: an array of 0
-    READY_WITHIN: 300
-    STREAM: 1
-    TTY: 0
-    VERBOSE: 0
-    WAIT: 
-    WITH_CMD: an array of 0
-    WITH_NAME: an array of 0
-    WITH_READY: an array of 0
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: null
+    json: false
+    label: sync
+    max: 3600
+    max_from: default
+    mode: rsh
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
 call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
   the request the runner acts on:
     agent: session suite

@@ -1,4 +1,5 @@
 use crate::harness::*;
+use dibs_format::Mode;
 use std::fs;
 use std::time::Duration;
 
@@ -293,4 +294,39 @@ fn a_transfers_far_half_carries_its_stream_untouched() {
         0,
         "with nothing unbound on the way out"
     );
+}
+
+#[test]
+fn a_runners_transfer_carries_rsyncs_stream_untouched_once_it_says_so() {
+    let s = Sandbox::new();
+    let request = request_frame(Mode::Rsh, "sync", "cat");
+    let out = s
+        .dibs(["__runner", "serve"])
+        .stdin(&format!("{request}rsync's own bytes\n"))
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(
+        out.stdout, "record 14\n\"transferring\"rsync's own bytes\n",
+        "the runner says it read the request, and then frames nothing"
+    );
+    s.log_line("finished\t[0-9]+\trsh\tsync\t");
+}
+
+#[test]
+fn a_runners_transfer_still_preparing_is_stopped_when_its_reader_goes() {
+    let mut s = Sandbox::new();
+    let (up, never, go) = (s.gate("up"), s.gate("never"), s.gate("go"));
+    let command = format!("{}; {}", up.signal(), never.hold());
+    s.write("request", &request_frame(Mode::Rsh, "send-gone", &command));
+    let job = s.spawn(s.sh(&format!(
+        "dibs __runner serve < {} | {{ head -c 1 >/dev/null; {}; }}",
+        s.p("request"),
+        go.hold()
+    )));
+    up.reached();
+    s.held(1);
+    go.open();
+    s.wait(job);
+    s.log_line("caller-gone.*send-gone");
+    s.gone();
 }
