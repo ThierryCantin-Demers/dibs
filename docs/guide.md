@@ -649,6 +649,10 @@ Also `bypass`, `idle_after`, `wrote_within`, `peek_warn`, `digest_head`, `digest
 and `no_children`. The file comes first, then the variable, which only a call on this computer
 can set, then the default.
 
+`machine_series = true` has the machine hold each label's measurements to one card, whoever runs
+them, from the file `cards` beside its history; without it, each laptop holds only its own runs to
+a card. It refuses jobs, so it is off until everyone has updated.
+
 ## How the lock behaves
 
 A shared holder blocks a benchmark and a benchmark blocks everything, because a compile running

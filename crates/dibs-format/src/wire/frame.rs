@@ -186,6 +186,7 @@ mod tests {
             ports: vec!["api".into()],
             services: Vec::new(),
             ready_within: 300,
+            new_series: false,
         }
     }
 

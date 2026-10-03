@@ -14,6 +14,7 @@ use crate::{
     platform::{Host, Platform as _},
     probe::Probe,
     queue::Queue,
+    series::Binding,
     settings::Settings,
     sink::Sink,
     status::Look,
@@ -248,6 +249,16 @@ impl Session {
         let journal = Journal {
             path: &at.machine.log,
         };
+        let binding = (mode == Mode::Bench && !request.watch.hold && self.settings.machine_series)
+            .then(|| Binding {
+                path: at.machine.history.with_file_name("cards"),
+                call: &self.call,
+                host: &at.machine.host,
+            });
+        if let Some(Err(refused)) = binding.as_ref().map(Binding::check) {
+            self.sink.say(&refused);
+            return 2;
+        }
         let start = Moment::epoch_now();
         let job = job_id(start, pid);
         let held = match request.watch.hold {
@@ -518,6 +529,11 @@ impl Session {
         journal.trim(LOG_BOUND, LOG_KEPT);
         if status == 124 {
             self.overran(max);
+        }
+        if status == 0
+            && let Some(binding) = &binding
+        {
+            binding.record();
         }
         if status == 0 {
             History::append(

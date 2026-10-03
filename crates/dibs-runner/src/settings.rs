@@ -93,6 +93,8 @@ pub struct Settings {
     pub keep_days: u64,
     /// Days a build cache is kept unused: a compiler refills it, which a worktree is not.
     pub target_keep_days: u64,
+    /// The machine holds every label's measurements to one card, whoever runs them.
+    pub machine_series: bool,
 }
 
 impl Settings {
@@ -112,6 +114,7 @@ impl Settings {
             wrote_within: signed("DIBS_WROTE_WITHIN", 120),
             keep_days: number("DIBS_KEEP_DAYS", 14),
             target_keep_days: number("DIBS_TARGET_KEEP_DAYS", 5),
+            machine_series: setting("DIBS_MACHINE_SERIES").is_some_and(|v| v == "1"),
             bypass: setting("DIBS_BYPASS").is_none_or(|v| v == "1"),
             patience: number("DIBS_PATIENCE", 60),
             quick: number("DIBS_QUICK", 10),

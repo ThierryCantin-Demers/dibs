@@ -314,6 +314,7 @@ impl Request<'_> {
             batch,
             ports: Vec::new(),
             services: Vec::new(),
+            new_series: self.call.new_series,
         }
     }
 

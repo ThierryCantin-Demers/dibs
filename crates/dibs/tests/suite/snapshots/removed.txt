@@ -16,6 +16,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []

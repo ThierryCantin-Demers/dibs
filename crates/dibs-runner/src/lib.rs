@@ -16,6 +16,7 @@ mod platform;
 mod probe;
 mod provision;
 mod queue;
+mod series;
 mod session;
 mod settings;
 pub mod shared;

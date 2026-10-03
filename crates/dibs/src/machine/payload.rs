@@ -61,6 +61,8 @@ pub struct CallValues {
     pub batch: String,
     pub ports: Vec<PortName>,
     pub services: Vec<Service>,
+    /// `--new-series`.
+    pub new_series: bool,
 }
 
 /// How the machine half learns its caller is gone.
@@ -113,6 +115,7 @@ impl CallValues {
                 hold: watch.hold,
                 lease: watch.lease,
             },
+            new_series: self.new_series,
             ports: self.ports.iter().map(|p| p.0.clone()).collect(),
             services: self
                 .services

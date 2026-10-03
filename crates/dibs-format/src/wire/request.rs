@@ -35,6 +35,8 @@ pub struct Request {
     pub services: Vec<Service>,
     /// Seconds the services have to be ready in.
     pub ready_within: u64,
+    /// The measurement starts its label's series on this machine again, on its card.
+    pub new_series: bool,
 }
 
 /// A server run on the machine for one call.

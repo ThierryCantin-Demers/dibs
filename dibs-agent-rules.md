@@ -183,9 +183,9 @@ spoiled without it.
   a forgotten `--on` is exactly that line. Keep the plain label for new work; `-kd` and `-mg`
   suffixes are not needed.
 - On one machine, every run under one label must name the same card, so dibs refuses a second card
-  and says what the first was. To move a label to another card on purpose, pass `--new-series`:
-  its series on that machine starts again instead of mixing. A recipe takes it too, and is checked
-  before it builds anything.
+  and says what the first was and whoever ran it. To move a label to another card on purpose, pass
+  `--new-series`: its series on that machine starts again instead of mixing. A recipe takes it too,
+  and is checked before it builds anything.
 - `dibs bench ... --dry-run` prints which card it would use. On a measurement worth keeping, read
   that line first.
 - Never set `CUDA_VISIBLE_DEVICES` yourself. dibs sets it from the alias, resolved on the machine

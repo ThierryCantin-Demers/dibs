@@ -92,6 +92,7 @@ pub fn request_frame(mode: Mode, label: &str, command: &str) -> String {
         ports: Vec::new(),
         services: Vec::new(),
         ready_within: 0,
+        new_series: false,
     };
     String::from_utf8(Frame::Request(Box::new(request)).encode()).unwrap()
 }

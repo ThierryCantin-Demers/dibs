@@ -259,3 +259,37 @@ fn the_machines_settings_file_comes_before_its_environment() {
         out.stdout
     );
 }
+
+#[test]
+fn a_machine_holding_series_refuses_another_card_whoever_runs_it() {
+    let s = Sandbox::new();
+    let cards = s.path("cards");
+    fs::write(&cards, "#dibs-cards 1\nmoved\tgpu:x\tsomeone else\t1\t2\n").unwrap();
+    let run = |extra: &[&str], on: bool| {
+        let mut args = vec!["--bench", "--label", "moved"];
+        args.extend(extra);
+        args.push("true");
+        let call = s.dibs(args).env("DIBS_SERIES_CHECK", "0");
+        match on {
+            true => call.env("DIBS_MACHINE_SERIES", "1").run(),
+            false => call.run(),
+        }
+    };
+    assert_eq!(run(&[], false).code, 0, "off until the machine turns it on");
+    let refused = run(&[], true);
+    assert_eq!(refused.code, 2, "{}", refused.stderr);
+    assert_eq!(
+        refused.stderr.lines_with("before:  gpu:x, by someone else"),
+        1,
+        "and says who measured it before"
+    );
+    assert_eq!(run(&["--new-series"], true).code, 0);
+    assert_eq!(
+        fs::read_to_string(&cards)
+            .unwrap()
+            .lines_with("moved\tnone\t"),
+        1,
+        "--new-series binds it to this run's card"
+    );
+    assert_eq!(run(&[], true).code, 0, "which the next run keeps to");
+}

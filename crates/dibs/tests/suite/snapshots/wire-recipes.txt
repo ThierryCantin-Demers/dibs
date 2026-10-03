@@ -103,6 +103,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -334,6 +335,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -378,6 +380,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -411,6 +414,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 7200
     max_from: default
     mode: bench
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -641,6 +645,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -666,6 +671,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -786,6 +792,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -905,6 +912,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1020,6 +1028,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1254,6 +1263,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1301,6 +1311,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1530,6 +1541,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1575,6 +1587,7 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1609,6 +1622,7 @@ call 5: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 7200
     max_from: default
     mode: bench
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1642,6 +1656,7 @@ call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 7200
     max_from: default
     mode: bench
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1872,6 +1887,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1914,6 +1930,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 7200
     max_from: default
     mode: bench
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -1937,6 +1954,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: fetch
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -2164,6 +2182,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -2187,6 +2206,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -2210,6 +2230,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: ["api"]
     ready_within: 300
     services: [{"command":"cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { read -r _ < \"$WIRE_NEVER\"; }","name":"api","ready":null}]
@@ -2437,6 +2458,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -2460,6 +2482,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -2483,6 +2506,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: ["api"]
     ready_within: 300
     services: [{"command":"cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { read -r _ < \"$WIRE_NEVER\"; }","name":"api","ready":null}]
@@ -2707,6 +2731,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -2942,6 +2967,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -2967,6 +2993,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -3201,6 +3228,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -3224,6 +3252,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 3600
     max_from: default
     mode: rsh
+    new_series: false
     ports: []
     ready_within: 300
     services: []
@@ -3249,6 +3278,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     max: 1800
     max_from: default
     mode: shared
+    new_series: false
     ports: []
     ready_within: 300
     services: []
