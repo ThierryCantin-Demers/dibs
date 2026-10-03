@@ -64,11 +64,13 @@ fn the_runners_workspace_builds_as_the_workspace_does() {
     }
 }
 
-/// A cargo that builds nothing: it checks it was run in the tree, then puts the runner this suite
-/// runs where cargo would have built it.
+/// A cargo that builds nothing: it checks it was run in the tree, under the shared lock and named
+/// by a holder, then puts the runner this suite runs where cargo would have built it.
 const FAKE_CARGO: &str = r#"#!/bin/bash
 [ "$*" = "build --locked --release" ] || { echo "cargo: not the build expected: $*" >&2; exit 2; }
 [ -f Cargo.lock ] && [ -f install.sh ] && [ -f crates/dibs-runner/src/lib.rs ] || { echo "cargo: no runner tree here" >&2; exit 101; }
+perl -MFcntl=:flock -e 'open(my $f, ">>", $ARGV[0]) or exit 0; exit(flock($f, LOCK_EX | LOCK_NB) ? 1 : 0)' "$DIBS_LOCK_DIR/rw" || { echo "cargo: built outside the lock" >&2; exit 101; }
+grep -qs "dibs-runner" "$DIBS_LOCK_DIR"/holder.* || { echo "cargo: no holder names the build" >&2; exit 101; }
 [ -z "${FAIL_BUILD:-}" ] || { echo "error: could not compile dibs-runner" >&2; exit 101; }
 mkdir -p "${CARGO_TARGET_DIR:-target}/release"
 cp "$PREBUILT" "${CARGO_TARGET_DIR:-target}/release/dibs-runner"
@@ -172,4 +174,68 @@ fn check_installs_the_first_runner_on_a_machine_with_none() {
         "{}",
         after.all()
     );
+}
+
+#[test]
+fn the_first_build_queues_behind_a_benchmark() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, false);
+    let (up, hold) = (s.gate("up"), s.gate("hold"));
+    let bench = s.spawn(s.dibs([
+        "--bench",
+        "--label",
+        "measured",
+        &format!("{}; {}", up.signal(), hold.hold()),
+    ]));
+    up.reached();
+    s.held(1);
+    let check = s.spawn(s.remote(s.dibs(["--check"])));
+    s.until_records("the first build queued", || {
+        s.records("waiting").iter().any(|r| r[3] == "dibs-runner")
+    });
+    assert!(!installed(&s), "nothing is built beside the benchmark");
+    hold.open();
+    assert_eq!(s.wait(bench), 0);
+    s.wait(check);
+    assert!(installed(&s), "the build ran once the benchmark let go");
+    assert_eq!(
+        (s.holders(), s.waiters()),
+        (0, 0),
+        "and its records went with it"
+    );
+}
+
+/// Every command on the suite's PATH but perl, linked into one directory.
+fn tools_without_perl(s: &Sandbox) -> String {
+    let tools = s.path("noperl");
+    fs::create_dir_all(&tools).unwrap();
+    let path = std::env::var("PATH").unwrap_or_default();
+    for entry in path
+        .split(':')
+        .filter_map(|dir| fs::read_dir(dir).ok())
+        .flatten()
+    {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("perl") && !tools.join(&name).exists() {
+            let _ = std::os::unix::fs::symlink(entry.path(), tools.join(&name));
+        }
+    }
+    tools.display().to_string()
+}
+
+#[test]
+fn a_machine_without_perl_gets_no_first_build_outside_the_lock() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, false);
+    let tools = tools_without_perl(&s);
+    if !s.exists("noperl/setsid") {
+        skip("the fake ssh needs setsid or perl");
+        return;
+    }
+    s.set("PATH", format!("{}:{}:{tools}", s.p("bin"), s.p("nossh")));
+    let out = s.remote(s.dibs(["--check"])).run();
+    assert_eq!(out.code, 72, "{}", out.all());
+    assert_eq!(out.stderr.lines_with("has no perl"), 1, "{}", out.stderr);
+    assert!(!installed(&s), "nothing was built");
 }

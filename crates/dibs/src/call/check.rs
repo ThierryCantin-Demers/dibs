@@ -34,6 +34,9 @@ impl MachineCall<'_> {
         match provision.ensure(&mut delivery)? {
             Installed::Done | Installed::Unreached => {}
             Installed::NoneThere | Installed::Failed => return Ok(provision.failed(&mut delivery)),
+            unlocked @ (Installed::NoLockTaker | Installed::Unlockable) => {
+                return Ok(provision.unlocked(unlocked, &mut delivery));
+            }
         }
         if !self.call.write {
             return self.send(Asked::plain(Mode::Check, Label::new("check")), &target);

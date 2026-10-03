@@ -110,7 +110,9 @@ impl Served<'_> {
                 Answer::Missing => Ok(provision.failed(delivery)),
             },
             Installed::NoneThere => Ok(provision.none_there(delivery)),
-            Installed::Failed => Ok(provision.failed(delivery)),
+            Installed::Failed | Installed::NoLockTaker | Installed::Unlockable => {
+                Ok(provision.failed(delivery))
+            }
             Installed::Unreached => Ok(SSH_FAILED),
         }
     }

@@ -83,8 +83,11 @@ runner's status.
   same bytes. A build that finds its version already installed when it gets the lock stops there.
 - **A machine with no runner at all** refuses the call with exit 72, naming `dibs --check`.
 - **`dibs --check <machine>`** installs the first runner: it streams the tree into a shell line that
-  runs the same `install.sh`. No runner exists yet to take the lock, so this one build runs outside
-  it; a person runs `--check` before a machine's first use.
+  runs the same `install.sh`. No runner exists yet to take the lock, so perl takes it: its `flock`
+  is `flock(2)` on Linux and macOS, the gate and `rw` are taken as a runner takes them, the build
+  is a shared holder labelled `dibs-runner`, and `rw` stays open in the build, so the lock lasts
+  as long as the build does. A machine without perl is refused with exit 72, and one whose lock
+  directory cannot be written with 71: a first build never runs unlocked.
 - **A build that fails** exits 72 with its output, and nothing runs. Exit 72 is for telling the
   person: the machine needs cargo, network to crates.io once per dependency, and a toolchain at
   the workspace's `rust-version`.

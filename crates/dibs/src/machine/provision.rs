@@ -29,7 +29,60 @@ pub enum Installed {
     Failed,
     /// ssh could not reach it, which the call's own diagnosis explains.
     Unreached,
+    /// No perl there to take the lock for a first build, so nothing was built.
+    NoLockTaker,
+    /// Its lock directory cannot be written.
+    Unlockable,
 }
+
+/// What the first build's line exits with when it cannot take the lock.
+const UNLOCKABLE: i32 = 71;
+const NO_LOCK_TAKER: i32 = 73;
+
+/// The first build, as `sh -c` reads it with the hash as `$1`: the lock directory found as the
+/// runner finds it, the gate and `rw` taken through perl's `flock`, which is `flock(2)` as the
+/// runner's is, and the build run with `rw` still open, so the lock lasts as long as the build.
+/// Fish reads it inside single quotes too, so it holds no single quote and no doubled backslash.
+const FIRST_BUILD: &str = r#"h=$1 d=$HOME/.cache/dibs/runner
+command -v perl >/dev/null 2>&1 || exit 73
+sd=${DIBS_SHARED_LOCK_DIR:-/dev/shm/dibs-lock}
+if [ -n "${DIBS_LOCK_DIR:-}" ]; then l=$DIBS_LOCK_DIR
+elif [ -d "$sd" ] && [ -w "$sd" ]; then l=$sd; umask 002
+else l=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/dibs-lock; fi
+mkdir -p "$l" 2>/dev/null || { l=/tmp/dibs-lock-$(id -u); mkdir -p "$l"; }
+: > "$l/.writable.$$" 2>/dev/null || exit 71
+rm -f "$l/.writable.$$"
+exec perl /dev/fd/3 "$l" "$d" "$h" 3<<"PERL"
+use Fcntl qw(:DEFAULT :flock);
+my ($l, $d, $h) = @ARGV;
+sub record {
+    open(my $f, ">", "$l/waiting.$$") or return;
+    print $f join(chr(9), "shared", $$, time, "dibs-runner", "dibs --check", "", "-", "the first build of dibs-runner $h", ""), chr(10);
+    close($f);
+}
+sub unlockable { unlink("$l/waiting.$$"); exit 71; }
+open(my $g, ">>", "$l/gate") or exit 71;
+open(my $r, ">>", "$l/rw") or exit 71;
+record();
+flock($g, LOCK_EX) or unlockable();
+unless (flock($r, LOCK_SH | LOCK_NB)) {
+    print STDERR "dibs: the machine is busy, so the first build waits for its shared lock.", chr(10);
+    flock($r, LOCK_SH) or unlockable();
+}
+close($g);
+record();
+rename("$l/waiting.$$", "$l/holder.$$");
+fcntl($r, F_SETFD, 0);
+exec("sh", "-c", q{exec 3<&-; l=$1 d=$2 s=$2/.src.$$
+rm -rf "$s" && mkdir -p "$s" && cd "$s" && tar -xzf - && PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$d/.target sh install.sh "$3"
+e=$?
+cd / && rm -rf "$s"
+rm -f "$l/holder.$$"
+exit $e}, "sh", $l, $d, $h);
+unlink("$l/holder.$$");
+exit 1;
+PERL
+"#;
 
 impl Provision<'_> {
     /// Built by the newest runner already there, as a shared job, unless it is there already.
@@ -42,7 +95,7 @@ impl Provision<'_> {
     }
 
     /// `dibs --check`: the runner there, building the first one if the machine has none. No
-    /// runner exists then to take the lock, so that one build runs outside it.
+    /// runner exists then to take the lock, so that build takes it through perl.
     pub fn ensure(&self, delivery: &mut Delivery) -> io::Result<Installed> {
         if self.session.route == Route::Here {
             return Ok(Installed::Done);
@@ -50,7 +103,7 @@ impl Provision<'_> {
         match self.install(&Provision::newest_line(), delivery)? {
             Installed::NoneThere => {
                 delivery.say(&format!(
-                    "dibs: installing dibs's runner on {}, a first build, which runs outside the lock because nothing there can take it yet.\n",
+                    "dibs: installing dibs's runner on {}, a first build, as a shared job.\n",
                     self.session.name
                 ));
                 self.install(&Provision::first_line(), delivery)
@@ -66,6 +119,26 @@ impl Provision<'_> {
             self.session.name
         ));
         i32::from(Exit::NoRunner.code())
+    }
+
+    /// Says why a first build could not take the lock, and gives the exit for it.
+    pub fn unlocked(&self, installed: Installed, delivery: &mut Delivery) -> i32 {
+        let name = &self.session.name;
+        match installed {
+            Installed::NoLockTaker => {
+                delivery.say(&format!(
+                    "dibs: {name} has no perl, which takes the lock for the first build of dibs's runner, so nothing was built.\n  \
+                     A build outside the lock would run beside whatever is measured there. Install perl, then run dibs --check {name} again.\n"
+                ));
+                i32::from(Exit::NoRunner.code())
+            }
+            _ => {
+                delivery.say(&format!(
+                    "dibs: the lock directory on {name} cannot be written, so the first build of dibs's runner took no lock and nothing was built.\n"
+                ));
+                i32::from(Exit::NoLock.code())
+            }
+        }
     }
 
     pub fn none_there(&self, delivery: &mut Delivery) -> i32 {
@@ -84,12 +157,9 @@ impl Provision<'_> {
         )
     }
 
-    /// Unpacks the tree from stdin and runs its own install script.
+    /// Takes the shared lock, then unpacks the tree from stdin and runs its own install script.
     fn first_line() -> String {
-        format!(
-            "sh -c 'd=$HOME/.cache/dibs/runner; s=$d/.src.$$; rm -rf \"$s\" && mkdir -p \"$s\" && cd \"$s\" && tar -xzf - && PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$d/.target sh install.sh {}; e=$?; cd / && rm -rf \"$s\"; exit $e'",
-            Runner::HASH
-        )
+        format!("sh -c '{FIRST_BUILD}' sh {}", Runner::HASH)
     }
 
     /// Runs a line there with the tree on its stdin, its output passed on as it comes.
@@ -159,7 +229,22 @@ impl Provision<'_> {
             0 => Installed::Done,
             MISSING => Installed::NoneThere,
             SSH_FAILED => Installed::Unreached,
+            NO_LOCK_TAKER => Installed::NoLockTaker,
+            UNLOCKABLE => Installed::Unlockable,
             _ => Installed::Failed,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_build_reads_the_same_inside_single_quotes_in_every_shell() {
+        assert!(!FIRST_BUILD.contains('\''));
+        assert!(!FIRST_BUILD.contains("\\\\"));
+        assert!(FIRST_BUILD.contains(&format!("exit {NO_LOCK_TAKER}")));
+        assert!(FIRST_BUILD.contains(&format!("exit {UNLOCKABLE}")));
     }
 }
