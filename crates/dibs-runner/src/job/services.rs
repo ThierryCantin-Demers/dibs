@@ -249,6 +249,11 @@ impl Services {
     pub fn status(&self, at: usize) -> i32 {
         self.list[at].status.get().copied().unwrap_or(1)
     }
+
+    /// The first service that has already ended.
+    pub fn ended(&self) -> Option<usize> {
+        self.list.iter().position(|s| s.status.get().is_some())
+    }
 }
 
 impl Guard {

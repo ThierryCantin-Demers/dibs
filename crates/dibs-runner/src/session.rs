@@ -463,7 +463,9 @@ impl Session {
     }
 
     /// Waits for the job, with its services watched: one that ends first stops the job, and the
-    /// call ends 77. A hold's caller learns here that the lock is held, and on which ports.
+    /// call ends 77. A service found ended once the job has is taken to have ended first, as a
+    /// shell's `wait -n` takes the earlier of two children already gone. A hold's caller learns
+    /// here that the lock is held, and on which ports.
     fn work(&self, work: Job, cap: Option<Cap>, holding: bool, hosted: &mut Hosted) -> i32 {
         let guard = hosted.services.as_mut().map(|s| s.guard(work.pid));
         if holding {
@@ -471,7 +473,10 @@ impl Session {
                 .record(Record::Holding(hosted.ports.picked.clone()));
         }
         let status = work.wait(cap);
-        match (guard.and_then(Guard::over), hosted.services.as_mut()) {
+        let ended = guard
+            .and_then(Guard::over)
+            .or_else(|| hosted.services.as_ref().and_then(Services::ended));
+        match (ended, hosted.services.as_mut()) {
             (Some(at), Some(services)) => {
                 let code = services.status(at);
                 services.failed(

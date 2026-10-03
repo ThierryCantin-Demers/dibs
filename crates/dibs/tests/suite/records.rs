@@ -438,6 +438,8 @@ fn job_directories() {
     let n = records_normal(&s).rule(r"(?m)^(    (queued|ran) = )[0-9]+$", "$1<s>");
     let mut t = Transcript::default();
     let scratch = s.path("scratch");
+    std::os::unix::fs::symlink(s.gate("never").path, scratch.join("never")).unwrap();
+    let serving = r#"srv=echo serving; read -r _ < "$DIBS_SCRATCH/never""#;
     let runs: [(&str, &[&str]); 4] = [
         (
             "a job that printed to both streams",
@@ -446,7 +448,7 @@ fn job_directories() {
         ("a job that failed", &["--label", "rec-fails", "exit 3"]),
         (
             "a job with a service",
-            &["--label", "rec-with", "--with", "srv=echo serving", "true"],
+            &["--label", "rec-with", "--with", serving, "true"],
         ),
         (
             "a benchmark that compiled nothing",

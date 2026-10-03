@@ -4,7 +4,7 @@
 use crate::{
     call::watched::{Starter, Watched},
     cli::{Command, Service},
-    machine::{Held, Holder, Interrupt, Reach, exit_code},
+    machine::{Held, Holder, Interrupt, Reach, Relayed, exit_code},
 };
 use dibs_format::{Exit, Mode, wire::Picked};
 use std::{
@@ -322,9 +322,12 @@ impl Guard {
                 stop_early(&at, pid);
             }
         });
+        // Told to stop, the guard goes only once its command has, so nothing it ran outlives it.
+        let relayed = Relayed::to(pid);
         let status = running.wait().map(exit_code).unwrap_or(1);
         drop(interrupt);
         done.store(true, Ordering::SeqCst);
+        relayed.pass_on();
         status
     }
 }

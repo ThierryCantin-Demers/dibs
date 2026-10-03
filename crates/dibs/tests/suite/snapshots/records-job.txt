@@ -28,7 +28,7 @@
     agent = session suite
     lines = 0
 
-== jobs/<job>, a job with a service: dibs --label rec-with --with 'srv=echo serving' true
+== jobs/<job>, a job with a service: dibs --label rec-with --with 'srv=echo serving; read -r _ < "$DIBS_SCRATCH/never"' true
   cmd
     | true
   log
@@ -37,8 +37,8 @@
     label = rec-with
     queued = <s>
     ran = <s>
-    exit = 77
-    by = dibs
+    exit = 0
+    by = command
     agent = session suite
     lines = 0
   with-srv.log
