@@ -152,25 +152,21 @@ impl Manifest {
     /// The layer that is normally `local_dir()`, passed in: a variable set for one test is read
     /// by every other test thread of the process.
     pub fn load_from(dir: &Path, repo: &str, local_dir: &Path) -> Result<Manifest, RecipeError> {
-        let (m, found) = Manifest::layers(dir, repo, local_dir)?;
-        if !found {
-            return Err(RecipeError::NoRecipes {
-                repo: repo.to_string(),
-                in_repo: dir.join(".dibs.toml"),
-                local: local_dir.join(format!("{repo}.toml")),
-            });
-        }
-        Ok(m)
+        Manifest::layers(dir, repo, local_dir)?.ok_or_else(|| RecipeError::NoRecipes {
+            repo: repo.to_string(),
+            in_repo: dir.join(".dibs.toml"),
+            local: local_dir.join(format!("{repo}.toml")),
+        })
     }
 
     /// For work in a tree that runs no recipe, where a repo declaring nothing is not an error.
     pub fn load_any(dir: &Path, repo: &str) -> Result<Manifest, RecipeError> {
-        Manifest::layers(dir, repo, &local_dir()).map(|(m, _)| m)
+        Ok(Manifest::layers(dir, repo, &local_dir())?.unwrap_or_default())
     }
 
-    fn layers(dir: &Path, repo: &str, local_dir: &Path) -> Result<(Manifest, bool), RecipeError> {
-        let mut m = Manifest::default();
-        let mut found = false;
+    /// None when neither layer has a file.
+    fn layers(dir: &Path, repo: &str, local_dir: &Path) -> Result<Option<Manifest>, RecipeError> {
+        let mut found: Option<Manifest> = None;
         for (path, src) in [
             (dir.join(".dibs.toml"), Source::Repo),
             (local_dir.join(format!("{repo}.toml")), Source::Local),
@@ -191,10 +187,11 @@ impl Manifest {
                 .map(Tree::check)
                 .transpose()
                 .map_err(at)?;
-            m.absorb(parsed, src);
-            found = true;
+            found
+                .get_or_insert_with(Manifest::default)
+                .absorb(parsed, src);
         }
-        Ok((m, found))
+        Ok(found)
     }
 
     fn refuse_needs(&self) -> Result<(), String> {
