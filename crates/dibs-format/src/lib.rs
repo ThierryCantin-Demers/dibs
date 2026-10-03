@@ -3,6 +3,7 @@
 //! Each line codec reads every shape a released dibs has written and writes the shape the
 //! machines write today, byte for byte, so a client and a machine on different versions agree.
 
+pub mod base64;
 mod exit;
 mod friction;
 mod ids;

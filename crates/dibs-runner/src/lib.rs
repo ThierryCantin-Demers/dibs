@@ -7,6 +7,7 @@ mod channel;
 mod clock;
 mod history;
 mod job;
+mod kept;
 mod lock;
 mod machine;
 mod platform;

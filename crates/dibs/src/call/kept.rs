@@ -4,10 +4,10 @@ use crate::{
         machine::{Asked, MachineCall},
     },
     cli::OutTarget,
-    machine::{Target, decode},
+    machine::Target,
     render::{Indented, KeptLog},
 };
-use dibs_format::{Exit, JobId, Label, Mode};
+use dibs_format::{Exit, JobId, Label, Mode, base64};
 use std::{
     fs,
     io::{self, Write},
@@ -212,7 +212,7 @@ impl<'a> WholeLog<'a> {
 fn unpack(tar: &[u8], into: &Path) -> bool {
     let part = into.with_extension("part");
     let _ = fs::remove_dir_all(&part);
-    let unpacked = decode(tar)
+    let unpacked = base64::decode(tar)
         .is_some_and(|bytes| fs::create_dir_all(&part).is_ok() && untar(&bytes, &part))
         && fs::rename(&part, into).is_ok();
     if !unpacked {

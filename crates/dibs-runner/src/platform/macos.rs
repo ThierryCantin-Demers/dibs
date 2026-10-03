@@ -76,6 +76,15 @@ impl Platform for MacOs {
             .collect()
     }
 
+    fn fd_path(pid: u32, fd: u32) -> Option<String> {
+        output_of(
+            "lsof",
+            &["-a", "-p", &pid.to_string(), "-d", &fd.to_string(), "-Fn"],
+        )
+        .lines()
+        .find_map(|line| line.strip_prefix('n').map(str::to_string))
+    }
+
     fn listening() -> Vec<u16> {
         output_of("netstat", &["-anp", "tcp"])
             .lines()

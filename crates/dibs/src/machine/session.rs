@@ -5,7 +5,7 @@ use crate::{
         interrupt::Interrupt,
         lines::{Lines, Stream},
         payload::{CallValues, Watch, encode},
-        served::{Delivery, Served},
+        served::{Deadline, Delivery, Served},
         ssh::{Ssh, parent_death_signal},
         target::Target,
         unreachable::{Unreachable, no_room},
@@ -290,6 +290,7 @@ impl Session {
             values,
             live,
             holding: None,
+            deadline: None,
         }
     }
 
@@ -360,6 +361,14 @@ impl Session {
         bound: Option<Duration>,
         kept: Kept,
     ) -> io::Result<Answer> {
+        if Half::of(values) == Half::Runner {
+            let live = Liveness::from_env();
+            return Served {
+                deadline: bound.map(Deadline::after),
+                ..self.served(values, live)
+            }
+            .ask(kept);
+        }
         let (reader, writer) = io::pipe()?;
         let stderr = match kept {
             Kept::Stdout => Stdio::inherit(),

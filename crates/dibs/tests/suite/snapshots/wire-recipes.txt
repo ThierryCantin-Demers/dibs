@@ -1888,14 +1888,29 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     watch.hold: false
     watch.lease: 120
     watch.off: false
-call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    LABEL: <job>
-    MODE: fetch
-    TTY: 0
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: false
+    label: <job>
+    max: 1800
+    max_from: default
+    mode: fetch
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs with <root>/app@local servers --on box-a -- true
 -> exit 0

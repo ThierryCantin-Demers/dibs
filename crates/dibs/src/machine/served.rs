@@ -4,7 +4,7 @@ use crate::machine::{
     lines::Stream,
     payload::{CallValues, Watch},
     provision::{Installed, Provision},
-    session::{Liveness, Message, Route, SSH_FAILED, Session, exit_code},
+    session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Session, exit_code},
     ssh::{Ssh, parent_death_signal},
 };
 use dibs_format::{
@@ -20,9 +20,13 @@ use std::{
     },
     path::PathBuf,
     process::{ChildStdin, Command, Stdio},
-    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// What a far shell exits with when the runner for this source is not there.
@@ -80,6 +84,41 @@ pub struct Served<'a> {
     pub live: Liveness,
     /// A hold's: told once the lock is held, with what releases it.
     pub holding: Option<Sender<Held>>,
+    /// When an asked call is stopped, and whether it was.
+    pub deadline: Option<Deadline>,
+}
+
+/// A bound on a call that is asked rather than run: past it, the call is stopped.
+#[derive(Debug, Clone)]
+pub struct Deadline {
+    at: Instant,
+    passed: Arc<AtomicBool>,
+}
+
+impl Deadline {
+    pub fn after(bound: Duration) -> Deadline {
+        Deadline {
+            at: Instant::now() + bound,
+            passed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn passed(&self) -> bool {
+        self.passed.load(Ordering::SeqCst)
+    }
+
+    /// Stops the process at the deadline, unless `ended` says first that it has gone.
+    fn watch(&self, pid: u32, ended: Receiver<()>) {
+        let left = self.at.saturating_duration_since(Instant::now());
+        let passed = Arc::clone(&self.passed);
+        thread::spawn(move || {
+            if let Err(RecvTimeoutError::Timeout) = ended.recv_timeout(left) {
+                passed.store(true, Ordering::SeqCst);
+                // SAFETY: the process is not reaped before `ended` closes.
+                unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+            }
+        });
+    }
 }
 
 /// What reached this side from the runner.
@@ -114,14 +153,33 @@ impl Served<'_> {
                 values: &values,
                 live,
                 holding: Some(tell),
+                deadline: None,
             }
             .run(Delivery::Inherit)
         });
         Holder { held, ended }
     }
 
+    /// Runs the call and keeps what it prints; the exit is None when its deadline passed first.
+    pub fn ask(&self, kept: Kept) -> io::Result<Answer> {
+        let mut output = Vec::new();
+        let mut on_line = |stream: Stream, bytes: &[u8]| match (stream, kept) {
+            (Stream::Out, _) | (Stream::Err, Kept::Everything) => output.extend_from_slice(bytes),
+            (Stream::Err, Kept::Stdout) => {
+                let _ = io::stderr().write_all(bytes);
+            }
+            (Stream::Err, Kept::StdoutAlone) => {}
+        };
+        let exit = self.run(Delivery::Lines(&mut on_line))?;
+        let passed = self.deadline.as_ref().is_some_and(Deadline::passed);
+        Ok(Answer {
+            output,
+            exit: (!passed).then_some(exit),
+        })
+    }
+
     fn answer(&self, delivery: &mut Delivery) -> io::Result<i32> {
-        if let Answer::Exit(code) = self.attempt(delivery)? {
+        if let Attempted::Exit(code) = self.attempt(delivery)? {
             return Ok(code);
         }
         let provision = Provision {
@@ -130,8 +188,8 @@ impl Served<'_> {
         };
         match provision.through_newest(delivery)? {
             Installed::Done => match self.attempt(delivery)? {
-                Answer::Exit(code) => Ok(code),
-                Answer::Missing => Ok(provision.failed(delivery)),
+                Attempted::Exit(code) => Ok(code),
+                Attempted::Missing => Ok(provision.failed(delivery)),
             },
             Installed::NoneThere => Ok(provision.none_there(delivery)),
             Installed::Failed | Installed::NoLockTaker | Installed::Unlockable => {
@@ -191,7 +249,7 @@ impl Served<'_> {
     pub fn transfer(&self) -> io::Result<i32> {
         let deferred = Interrupt::defer();
         let carried = match self.carry()? {
-            Answer::Missing => {
+            Attempted::Missing => {
                 let provision = Provision {
                     session: self.session,
                     live: self.live,
@@ -199,8 +257,8 @@ impl Served<'_> {
                 let delivery = &mut Delivery::Inherit;
                 match provision.through_newest(delivery)? {
                     Installed::Done => match self.carry()? {
-                        Answer::Exit(code) => code,
-                        Answer::Missing => provision.failed(delivery),
+                        Attempted::Exit(code) => code,
+                        Attempted::Missing => provision.failed(delivery),
                     },
                     Installed::NoneThere => provision.none_there(delivery),
                     Installed::Unreached => SSH_FAILED,
@@ -209,13 +267,13 @@ impl Served<'_> {
                     }
                 }
             }
-            Answer::Exit(code) => code,
+            Attempted::Exit(code) => code,
         };
         drop(deferred);
         Ok(carried)
     }
 
-    fn carry(&self) -> io::Result<Answer> {
+    fn carry(&self) -> io::Result<Attempted> {
         let Launch { mut command, .. } = self.launch();
         let watch = Watch {
             off: true,
@@ -247,8 +305,8 @@ impl Served<'_> {
             let status = child.wait()?;
             Interrupt::pass_on(status);
             return Ok(match (said, exit_code(status)) {
-                (None, MISSING) => Answer::Missing,
-                (_, code) => Answer::Exit(code),
+                (None, MISSING) => Attempted::Missing,
+                (_, code) => Attempted::Exit(code),
             });
         };
         // Unbuffered copies of this process's own: stdout's line buffering would hold rsync's
@@ -270,10 +328,10 @@ impl Served<'_> {
         pass_through(stdout, to);
         let status = child.wait()?;
         Interrupt::pass_on(status);
-        Ok(Answer::Exit(exit_code(status)))
+        Ok(Attempted::Exit(exit_code(status)))
     }
 
-    fn attempt(&self, delivery: &mut Delivery) -> io::Result<Answer> {
+    fn attempt(&self, delivery: &mut Delivery) -> io::Result<Attempted> {
         let Launch { mut command, watch } = self.launch();
         let lines = matches!(delivery, Delivery::Lines(_));
         command.stdin(Stdio::piped()).stdout(Stdio::piped());
@@ -300,9 +358,14 @@ impl Served<'_> {
             thread::spawn(move || read_lines(err, tell))
         });
         drop(tell);
+        let (gone, ended) = mpsc::channel::<()>();
+        if let Some(deadline) = &self.deadline {
+            deadline.watch(child.id(), ended);
+        }
         let waiter = thread::spawn(move || {
             let status = child.wait();
             drop(channel);
+            drop(gone);
             status
         });
         let mut exit = None;
@@ -338,10 +401,10 @@ impl Served<'_> {
             .join()
             .unwrap_or_else(|_| Err(io::Error::other("the wait for the runner panicked")))?;
         Ok(match exit {
-            Some(code) => Answer::Exit(code),
-            None if Interrupt::heard() => Answer::Exit(i32::from(Exit::Interrupted.code())),
-            None if !any && exit_code(status) == MISSING => Answer::Missing,
-            None => Answer::Exit(exit_code(status)),
+            Some(code) => Attempted::Exit(code),
+            None if Interrupt::heard() => Attempted::Exit(i32::from(Exit::Interrupted.code())),
+            None if !any && exit_code(status) == MISSING => Attempted::Missing,
+            None => Attempted::Exit(exit_code(status)),
         })
     }
 }
@@ -353,7 +416,7 @@ struct Launch {
 }
 
 /// How an attempt ended.
-enum Answer {
+enum Attempted {
     Exit(i32),
     /// The machine has no runner for this source.
     Missing,

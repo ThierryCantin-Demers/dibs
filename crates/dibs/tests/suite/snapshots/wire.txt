@@ -302,58 +302,133 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs --on box-a --out
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    LABEL: all.40
-    MODE: out
-    TTY: 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: false
+    label: all.40
+    max: 1800
+    max_from: default
+    mode: out
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs --on box-a --out 4242
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    LABEL: 4242.40
-    MODE: out
-    TTY: 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: false
+    label: 4242.40
+    max: 1800
+    max_from: default
+    mode: out
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs --on box-a --out <job>
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    LABEL: <job>.whole
-    MODE: out
-    TTY: 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: false
+    label: <job>.whole
+    max: 1800
+    max_from: default
+    mode: out
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs --on box-a --fetch <job>
 -> exit 1
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    LABEL: <job>
-    MODE: fetch
-    TTY: 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: false
+    label: <job>
+    max: 1800
+    max_from: default
+    mode: fetch
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs --on box-a --fetch <job> ./got
 -> exit 1
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a
-  its command, for the login shell there:
-    mkdir -p $HOME/.cache/dibs/run 2>/dev/null; dd bs=1 count=<n> 2>/dev/null | base64 -d | gzip -dc > $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh &&              exec bash  $HOME/.cache/dibs/run/.dibs-payload.<pid>.<time>.sh
-    exit 70
-  the values the machine acts on, ahead of lib/machine:
-    LABEL: <job>
-    MODE: fetch
-    TTY: 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'\'''
+  the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: false
+    label: <job>
+    max: 1800
+    max_from: default
+    mode: fetch
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
 
 == dibs --on box-a --release
 -> exit 0

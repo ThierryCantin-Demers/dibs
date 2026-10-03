@@ -7,6 +7,7 @@ use crate::{
         Cap, Digest, Environment, Guard, Held, Job, Output, Ports, Readiness, Repeat, Services,
         Start, Unpinned, built, job_id,
     },
+    kept::Kept,
     lock::{Hold, Kind, Lock, LockDir},
     machine::{Machine, line_count},
     platform::{Host, Platform as _},
@@ -134,9 +135,17 @@ impl Session {
             dir: &dir,
             stopper: &stopper,
         };
+        let kept = Kept {
+            machine: &machine,
+            dir: &dir,
+            sink: &self.sink,
+            tty: self.call.request.tty,
+        };
         match self.call.mode() {
             Mode::Peek => self.peek(&at, &environment),
             Mode::Shared | Mode::Bench | Mode::Rsh => self.run(&at, environment, channel),
+            Mode::Out => kept.out(self.call.label().as_str()),
+            Mode::Fetch => kept.fetch(self.call.label().as_str()),
             mode => {
                 self.sink
                     .say(&format!("dibs-runner: no {mode} call is served here\n"));

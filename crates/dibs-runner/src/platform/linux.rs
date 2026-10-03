@@ -136,6 +136,12 @@ impl Platform for Linux {
             .collect()
     }
 
+    fn fd_path(pid: u32, fd: u32) -> Option<String> {
+        fs::read_link(format!("/proc/{pid}/fd/{fd}"))
+            .ok()
+            .map(|p| p.display().to_string())
+    }
+
     fn listening() -> Vec<u16> {
         ["/proc/net/tcp", "/proc/net/tcp6"]
             .iter()

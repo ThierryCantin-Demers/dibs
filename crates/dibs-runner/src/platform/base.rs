@@ -34,6 +34,9 @@ pub trait Platform {
     /// Every process on the machine.
     fn processes() -> Vec<Process>;
 
+    /// What a process's descriptor points at: a path, or something that is not one.
+    fn fd_path(pid: u32, fd: u32) -> Option<String>;
+
     /// The TCP ports something listens on.
     fn listening() -> Vec<u16>;
 

@@ -15,7 +15,7 @@ impl Half {
     /// One with `--wait` or `-v` needs the status display, which the runner does not print yet.
     pub fn of(values: &CallValues) -> Half {
         let served = match values.mode {
-            Mode::Peek => true,
+            Mode::Peek | Mode::Out | Mode::Fetch => true,
             Mode::Shared | Mode::Bench | Mode::Rsh => values.wait.is_none() && !values.verbose,
             _ => false,
         };
