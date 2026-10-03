@@ -264,7 +264,9 @@ impl Parser {
                     at += 1;
                 }
                 "--label" => {
-                    self.call.label = Some(Label::new(need("--label")?));
+                    self.call.label = Some(need("--label")?)
+                        .filter(|label| !label.is_empty())
+                        .map(Label::new);
                     at += 1;
                 }
                 "--new-series" => self.call.new_series = true,

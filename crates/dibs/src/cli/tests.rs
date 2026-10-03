@@ -348,6 +348,14 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
                 ..call(run(RunLock::Shared, &["x"]))
             })
         }),
+        (vec!["--label", "", "x"], of(run(RunLock::Shared, &["x"]))),
+        (
+            vec!["--label", "", "--gc"],
+            of(Mode::Gc {
+                days: None,
+                dry_run: false,
+            }),
+        ),
         (
             vec![
                 "--hold",
