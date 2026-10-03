@@ -516,7 +516,8 @@ impl Sandbox {
             .collect();
         parts.sort();
         script.extend(parts.iter().map(|p| fs::read_to_string(p).unwrap()));
-        let path = self.path("payload");
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let path = self.path(&format!("payload.{}", NEXT.fetch_add(1, Ordering::Relaxed)));
         fs::write(&path, script).unwrap();
         path.display().to_string()
     }

@@ -7,6 +7,7 @@ mod baselines;
 mod batch;
 mod cli;
 mod client;
+mod contention;
 mod hold;
 mod identity;
 mod lock;
