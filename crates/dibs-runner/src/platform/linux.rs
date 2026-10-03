@@ -417,7 +417,7 @@ fn lists_children() -> bool {
     static LISTS: OnceLock<bool> = OnceLock::new();
     *LISTS.get_or_init(|| {
         let me = std::process::id();
-        crate::settings::var("DIBS_NO_CHILDREN").is_none_or(|v| v != "1")
+        crate::settings::setting("DIBS_NO_CHILDREN").is_none_or(|v| v != "1")
             && Path::new(&format!("/proc/{me}/task/{me}/children")).exists()
     })
 }

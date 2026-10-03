@@ -239,3 +239,23 @@ fn a_machine_without_perl_gets_no_first_build_outside_the_lock() {
     assert_eq!(out.stderr.lines_with("has no perl"), 1, "{}", out.stderr);
     assert!(!installed(&s), "nothing was built");
 }
+
+#[test]
+fn the_machines_settings_file_comes_before_its_environment() {
+    let s = Sandbox::new();
+    s.write(
+        "home/.config/dibs/machine.toml",
+        "# the sweep's clock\nkeep_days = 3\n",
+    );
+    let out = s
+        .dibs(["--gc", "--dry-run"])
+        .env("DIBS_KEEP_DAYS", "9")
+        .run();
+    assert_eq!(
+        out.stdout
+            .lines_with("job logs and artifacts, removed after 3 days"),
+        1,
+        "{}",
+        out.stdout
+    );
+}

@@ -629,6 +629,26 @@ most 30 seconds before it is reported busy instead. The report, or `--json`, say
 
 It exits 1 when anything is missing or a machine could not be probed.
 
+## A machine's own settings
+
+How long a benchmark lets quick jobs go around it, how long scratch is kept and the rest are the
+machine's policy, not a caller's: ssh forwards no environment. They live in
+`~/.config/dibs/machine.toml` in the account dibs runs as there, one `name = value` a line, each
+named as its variable without `DIBS_`:
+
+```toml
+patience = 60          # seconds a queued benchmark lets quick jobs go around it
+quick = 10             # what a job's own history must say it takes, at most, to go around
+keep_days = 14         # worktrees, job directories and temporary files
+target_keep_days = 5   # build caches
+ports = "20000-29999"  # what --port picks from
+```
+
+Also `bypass`, `idle_after`, `wrote_within`, `peek_warn`, `digest_head`, `digest_tail`,
+`repeat_window`, `scratch`, `lock_dir`, `shared_lock_dir`, `shared_state_dir`, `history`, `log`
+and `no_children`. The file comes first, then the variable, which only a call on this computer
+can set, then the default.
+
 ## How the lock behaves
 
 A shared holder blocks a benchmark and a benchmark blocks everything, because a compile running

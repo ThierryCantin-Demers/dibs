@@ -115,7 +115,7 @@ impl Asked {
 
     /// The sweep, with the machine's own clocks unless days were given.
     pub fn sweep(&self) -> Sweep {
-        let settings = Settings::from_env();
+        let settings = Settings::load();
         let machine = Machine::set_up().ok();
         Sweep {
             scratch: machine

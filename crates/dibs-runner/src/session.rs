@@ -89,7 +89,7 @@ impl Session {
         Session {
             call: Call::of(request),
             sink,
-            settings: Settings::from_env(),
+            settings: Settings::load(),
         }
     }
 
