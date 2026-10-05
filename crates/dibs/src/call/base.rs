@@ -11,8 +11,8 @@ use crate::{
     cli::{Call, Command, PortName, Run, RunLock, Service},
     inventory::InventoryError,
     machine::{
-        CallValues, Card, Fleet, Here, Liveness, MaxFrom, Named, Session, Target, TargetEnv,
-        TargetError,
+        CallValues, Card, Delivery, Fleet, Here, Liveness, MaxFrom, Named, Session, Target,
+        TargetEnv, TargetError,
     },
     paths::Paths,
     placement::{Placement, Unplaced},
@@ -185,7 +185,12 @@ impl<'a> LockedCall<'a> {
             }
             .run(session.hold(&values, live))?,
             (false, Output::Inherit) => session.run(&values, live)?,
-            (false, Output::Lines(on_line)) => session.run_reading(&values, live, *on_line)?,
+            (false, Output::Lines(on_line)) => {
+                session.run_reading(&values, live, Delivery::Lines(*on_line))?
+            }
+            (false, Output::Listening(listener)) => {
+                session.run_reading(&values, live, Delivery::Listening(*listener))?
+            }
         };
 
         if self.bench()
@@ -263,6 +268,10 @@ impl<'a> LockedCall<'a> {
                 }) => Some(Fingerprint(fingerprint).sent()),
                 _ => None,
             },
+            tree: match self.origin {
+                Origin::Recipe(job) => job.tree.clone(),
+                Origin::Words => None,
+            },
             ..values
         }
     }
@@ -315,6 +324,7 @@ impl Request<'_> {
             ports: Vec::new(),
             services: Vec::new(),
             new_series: self.call.new_series,
+            tree: None,
         }
     }
 

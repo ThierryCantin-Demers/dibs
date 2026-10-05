@@ -202,7 +202,7 @@ fn a_recipe_at_a_ref_runs_in_one_job() {
     );
     assert_eq!(
         s.log()
-            .lines_matching(r#"	arrived	.*	app_shell	.*	# echo "in \$PWD"; cat a.txt "#),
+            .lines_matching(r#"	arrived	.*	app_shell	.*	echo "in \$PWD"; cat a.txt	"#),
         1,
         "and the log shows the step's command rather than the setup's"
     );

@@ -19,7 +19,7 @@ use dibs::{
 };
 use dibs_format::{
     Alias, ArmRecord, Exit, MachineName, Outcome, Pairs, ProcedureStep, RunRecord, RunVerb,
-    StepRecord,
+    StepRecord, wire,
 };
 use std::{collections::BTreeMap, fmt, path::Path, process::ExitCode};
 
@@ -129,10 +129,9 @@ pub(crate) fn preparing(
 /// A tree on its way to the machine, and what it became there.
 pub(crate) struct Tree {
     pub(crate) token: String,
-    pub(crate) script: String,
-    pub(crate) gitdbs: Vec<gitdeps::Db>,
+    pub(crate) plan: TreePlan,
     pub(crate) local: Option<worktree::Local>,
-    pub(crate) prepared: Option<worktree::Prepared>,
+    pub(crate) prepared: Option<wire::Prepared>,
 }
 
 pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
@@ -320,8 +319,9 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     let env_of = |k: usize| RecipeJob {
         batch: batch::recipe_env(&own_batch, &calls, k),
         fingerprint: Some(fingerprint.clone()),
+        tree: None,
     };
-    let mut announce = |text: &str| announce_prepared(text);
+    let mut announce = |prepared: &wire::Prepared| announce_prepared(prepared);
 
     // The pinned trees go first: the patch names where they landed.
     let mut pinned = Vec::with_capacity(pins.len());
@@ -334,6 +334,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             job: &env,
             max: None,
             new_series: false,
+            tree: None,
         };
         let fresh = Manifest::load_any(&p.dir, &p.repo)?;
         let lock = p.checkout.as_mut().and_then(|c| c.lock.take());
@@ -341,7 +342,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             .checkout
             .as_ref()
             .map_or(p.dir.as_path(), |c| c.dir.as_path());
-        let TreeScript { script, gitdbs } = TreeSpec {
+        let plan = TreeSpec {
             dir: from,
             repo_name: &p.repo,
             reference: &p.reference,
@@ -352,8 +353,8 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             nest: None,
             fresh: fresh.tree_fresh(),
         }
-        .script();
-        let text = match &p.local {
+        .plan();
+        let reported = match &p.local {
             Some(l) => {
                 match &p.checkout {
                     Some(c) => eprintln!(
@@ -374,39 +375,53 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                         }
                     ),
                 }
-                let Reported { outcome: out, text } =
-                    sync_prepared(&backend, from, &script, &l.key, &setup, &mut announce);
+                let send = JobRequest {
+                    tree: Some(plan.tree(wire::Then::Transfer)),
+                    ..setup
+                };
+                let reported = sync_prepared(&backend, from, &l.key, &send, &mut announce);
                 drop(lock);
-                if !text.contains("DIBS-READY") || out.status != 0 {
+                if reported.prepared.is_none() || reported.outcome.status != 0 {
                     return Err(RunError::call(
-                        out.status,
+                        reported.outcome.status,
                         format!(
                             "could not send the pinned {} from {} (exit {})",
                             p.repo,
                             from.display(),
-                            out.status
+                            reported.outcome.status
                         ),
                     ));
                 }
-                text
+                reported
             }
             None => {
                 eprintln!("dibs: pinning {}@{}", p.repo, p.reference);
-                let Reported { outcome: out, text } = backend.run_capture(&setup, &script);
-                if out.status != 0 {
+                let prepare = JobRequest {
+                    tree: Some(plan.tree(wire::Then::Nothing)),
+                    ..setup
+                };
+                let title = preparing_title(&p.repo, &p.reference);
+                let reported = backend.run_reporting(&prepare, &title, &mut |_| {});
+                if reported.outcome.status != 0 {
                     return Err(RunError::call(
-                        out.status,
+                        reported.outcome.status,
                         format!(
                             "could not prepare the pinned {}@{} (exit {})",
-                            p.repo, p.reference, out.status
+                            p.repo, p.reference, reported.outcome.status
                         ),
                     ));
                 }
-                text
+                reported
             }
         };
-        send_missing_gitdbs(&backend, &text, &gitdbs);
-        pinned.push(worktree::parse(&text)?);
+        let Some(prepared) = reported.prepared else {
+            return Err(RunError::call(
+                Exit::Setup.status(),
+                "the worktree setup did not report a path; see its output above".into(),
+            ));
+        };
+        send_missing_gitdbs(&backend, &prepared, &plan.gitdbs);
+        pinned.push(prepared);
     }
     let nest = (!pins.is_empty()).then(|| {
         worktree::Nest::new(pins::config(
@@ -449,7 +464,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         };
         eprintln!("{lead}{}", preparing(&repo_name, arm, local.as_ref(), &dir));
         let reference = arm.fetch.as_deref().unwrap_or("local");
-        let TreeScript { script, gitdbs } = TreeSpec {
+        let plan = TreeSpec {
             dir: arm.dir(&dir),
             repo_name: &repo_name,
             reference,
@@ -460,12 +475,11 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             nest: nest.as_ref(),
             fresh: &tree_fresh,
         }
-        .script();
+        .plan();
         slot += usize::from(arm.fetch.is_some());
         trees.push(Tree {
             token,
-            script,
-            gitdbs,
+            plan,
             local,
             prepared: None,
         });
@@ -512,26 +526,28 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             job: &env,
             max: None,
             new_series: false,
+            tree: None,
         };
         let (arm, step, rep, fold) = match job {
             Job::Send(a) => {
                 let t = &mut trees[a];
                 let key = &t.local.as_ref().expect("a sent tree is local").key;
-                let Reported { outcome: out, text } = sync_prepared(
-                    &backend,
-                    arms[a].dir(&dir),
-                    &t.script,
-                    key,
-                    &setup,
-                    &mut announce,
-                );
+                let send = JobRequest {
+                    tree: Some(t.plan.tree(wire::Then::Transfer)),
+                    ..setup
+                };
+                let Reported {
+                    outcome: out,
+                    prepared,
+                    ..
+                } = sync_prepared(&backend, arms[a].dir(&dir), key, &send, &mut announce);
                 checkout_locks[a] = None;
-                if !text.contains("DIBS-READY") {
+                let Some(prepared) = prepared else {
                     return Err(RunError::call(
                         out.status,
                         format!("could not prepare {} (exit {})", what(a), out.status),
                     ));
-                }
+                };
                 if out.status != 0 {
                     return Err(RunError::call(
                         out.status,
@@ -542,22 +558,31 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                         ),
                     ));
                 }
-                t.prepared = Some(worktree::parse(&text)?);
-                send_missing_gitdbs(&backend, &text, &t.gitdbs);
+                send_missing_gitdbs(&backend, &prepared, &t.plan.gitdbs);
+                t.prepared = Some(prepared);
                 continue;
             }
             Job::Setup(a) => {
                 let t = &mut trees[a];
-                let Reported { outcome: out, text } = backend.run_capture(&setup, &t.script);
-                if out.status != 0 {
+                let prepare = JobRequest {
+                    tree: Some(t.plan.tree(wire::Then::Nothing)),
+                    ..setup
+                };
+                let title = preparing_title(&repo_name, arms[a].fetch.as_deref().unwrap_or(""));
+                let Reported {
+                    outcome: out,
+                    prepared,
+                    ..
+                } = backend.run_reporting(&prepare, &title, &mut |_| {});
+                let Some(prepared) = prepared.filter(|_| out.status == 0) else {
                     return Err(RunError::call(
                         out.status,
                         format!("could not prepare {} (exit {})", what(a), out.status),
                     ));
-                }
-                announce(&text);
-                t.prepared = Some(worktree::parse(&text)?);
-                send_missing_gitdbs(&backend, &text, &t.gitdbs);
+                };
+                announce(&prepared);
+                send_missing_gitdbs(&backend, &prepared, &t.plan.gitdbs);
+                t.prepared = Some(prepared);
                 continue;
             }
             Job::Step {
@@ -575,6 +600,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             job: &env,
             max: args.max,
             new_series: args.new_series,
+            tree: None,
         };
         // One cache per repo, exported rather than left to each recipe to remember. The output
         // needs no file of its own: dibs keeps every job's log under its job id, and a path named
@@ -602,19 +628,25 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 step + 1,
                 rec.steps.len()
             );
-            let command = worktree::ahead(&t.script, worktree::Then::Step, &rec.steps[step].run)
-                + &format!("{{ {run}; }}");
-            let Reported { outcome: out, text } =
-                backend.run_reporting(&req, &command, &mut announce);
-            if !text.contains("DIBS-READY") && !text.contains("DIBS-HELD") {
+            let folded = JobRequest {
+                tree: Some(t.plan.tree(wire::Then::Step)),
+                ..req
+            };
+            let Reported {
+                outcome: out,
+                text,
+                prepared,
+            } = backend.run_reporting(&folded, &run, &mut announce);
+            let Some(prepared) = prepared else {
                 return Err(RunError::call(
                     out.status,
                     format!("could not prepare {} (exit {})", what(arm), out.status),
                 ));
-            }
-            t.prepared = Some(worktree::parse(&text)?);
-            send_missing_gitdbs(&backend, &text, &t.gitdbs);
-            if text.contains("DIBS-READY") {
+            };
+            send_missing_gitdbs(&backend, &prepared, &t.plan.gitdbs);
+            let waited = held(&prepared);
+            t.prepared = Some(prepared);
+            if !waited {
                 steps.push(record(&out, &text));
                 if out.status != 0 {
                     failed = Some(out.status);
@@ -626,11 +658,10 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             .prepared
             .as_ref()
             .expect("an arm is prepared before its steps run");
-        let cd = format!(
-            "cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}",
-            sh(&p.worktree),
-            sh(&p.target)
-        );
+        let there = JobRequest {
+            tree: Some(in_tree(p)),
+            ..req
+        };
         eprintln!(
             "dibs: {}step {}/{} [{lock:?}]",
             tag(arm, rep),
@@ -642,7 +673,8 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         let Reported {
             outcome: out,
             text: report,
-        } = backend.run_reporting(&req, &cd, &mut |_| {});
+            ..
+        } = backend.run_reporting(&there, &run, &mut |_| {});
         // The machine has said why; a refusal is not a run, so it leaves no record.
         if report.lines().any(|l| l == "DIBS-REFUSED") {
             return Ok(ExitCode::from(Exit::TargetRebuilt.code()));
@@ -658,13 +690,12 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     }
     fetch_artifacts(&backend, &steps, args.artifacts_to.as_deref(), compared);
 
-    let pinned_revisions: Vec<(String, String)> =
-        pinned.iter().flat_map(|p| p.revisions.clone()).collect();
+    let revision = |p: &wire::Prepared| (p.revision.repo.clone(), p.revision.sha.clone());
+    let pinned_revisions: Vec<(String, String)> = pinned.iter().map(revision).collect();
     let prepared = |a: usize| trees[a].prepared.as_ref();
     let revisions_of = |a: usize| -> Vec<(String, String)> {
         prepared(a)
-            .map(|p| p.revisions.clone())
-            .unwrap_or_default()
+            .map(revision)
             .into_iter()
             .chain(pinned_revisions.iter().cloned())
             .collect()
@@ -717,7 +748,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         },
         seeded: prepared(0)
             .filter(|_| !compared)
-            .and_then(|p| p.seeded.clone()),
+            .and_then(|p| p.seeded.as_ref().map(|s| s.from.clone())),
         refs: compared.then(|| args.reference.clone()).flatten(),
         arms: match compared {
             false => Vec::new(),
@@ -728,7 +759,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     name: arm.name.clone(),
                     fetched: arm.fetch.clone(),
                     revisions: revisions_of(a).into(),
-                    seeded: prepared(a).and_then(|p| p.seeded.clone()),
+                    seeded: prepared(a).and_then(|p| p.seeded.as_ref().map(|s| s.from.clone())),
                 })
                 .collect(),
         },
@@ -803,6 +834,7 @@ pub(crate) fn refused_before_building(
             job: &RecipeJob::default(),
             max: None,
             new_series: args.new_series,
+            tree: None,
         };
         if !backend.preflight(&req) {
             return true;
@@ -866,29 +898,75 @@ pub(crate) struct TreeSpec<'a> {
     pub(crate) fresh: &'a [String],
 }
 
-/// The script that prepares a tree on the machine, and the git databases it may need sent.
-pub(crate) struct TreeScript {
-    pub(crate) script: String,
+/// A tree as the machine is asked to lay it out, and the git databases it may need sent.
+pub(crate) struct TreePlan {
+    pub(crate) prepare: wire::Prepare,
     pub(crate) gitdbs: Vec<gitdeps::Db>,
 }
 
 impl TreeSpec<'_> {
-    pub(crate) fn script(&self) -> TreeScript {
+    pub(crate) fn plan(&self) -> TreePlan {
         let lock = lockfile(self.dir, self.local.is_none().then_some(self.reference));
-        let gitdbs = gitdeps::local(
-            &gitdeps::cargo_home(),
-            &gitdeps::pinned(lock.as_deref().unwrap_or("")),
-        );
-        let (repo, nest, fresh) = (self.repo_name, self.nest, self.fresh);
-        let script =
-            worktree::packages_script(lock.as_deref().unwrap_or(""), self.signature, self.token)
-                + &match self.local {
-                    Some(l) => worktree::setup_local_script(repo, &l.key, &l.content, nest, fresh),
-                    None => worktree::setup_script(repo, self.reference, self.slot, nest, fresh),
-                }
-                + &gitdeps::check_script(&gitdbs);
-        TreeScript { script, gitdbs }
+        let lock = lock.as_deref().unwrap_or("");
+        let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock));
+        let lines = worktree::packages(lock, self.signature);
+        let prepare = wire::Prepare {
+            repo: self.repo_name.to_string(),
+            source: match self.local {
+                Some(l) => wire::Source::Local {
+                    key: l.key.clone(),
+                    content: l.content.clone(),
+                },
+                None => wire::Source::Fetched {
+                    reference: self.reference.to_string(),
+                    slot: self.slot as u32,
+                },
+            },
+            nest: self.nest.map(|n| wire::Nest {
+                name: n.name.clone(),
+                config: n.config.clone(),
+            }),
+            fresh: self.fresh.to_vec(),
+            packages: (!lines.is_empty()).then(|| wire::Packages {
+                token: self.token.to_string(),
+                lines,
+            }),
+            gitdbs: gitdbs
+                .iter()
+                .map(|db| wire::GitDb {
+                    name: db.name.clone(),
+                    commit: db.commit.clone(),
+                })
+                .collect(),
+        };
+        TreePlan { prepare, gitdbs }
     }
+}
+
+impl TreePlan {
+    /// Laid out at the head of a job, which then does `then`.
+    pub(crate) fn tree(&self, then: wire::Then) -> wire::Tree {
+        wire::Tree {
+            place: wire::Place::Prepare(self.prepare.clone()),
+            then,
+        }
+    }
+}
+
+/// A step in a tree laid out before.
+pub(crate) fn in_tree(prepared: &wire::Prepared) -> wire::Tree {
+    wire::Tree {
+        place: wire::Place::At(wire::At {
+            worktree: prepared.worktree.clone(),
+            target: prepared.target.clone(),
+        }),
+        then: wire::Then::Step,
+    }
+}
+
+/// What a job that only lays out a tree runs, which `--status` and `--log` show of it.
+pub(crate) fn preparing_title(repo: &str, reference: &str) -> String {
+    format!("# prepare {repo}@{reference}")
 }
 
 /// The lockfile of the tree here, or of a ref in its history.
@@ -919,23 +997,37 @@ pub(crate) fn new_token() -> String {
     )
 }
 
-pub(crate) fn send_missing_gitdbs(backend: &Jobs, text: &str, gitdbs: &[gitdeps::Db]) {
-    let gitdeps::Missing {
-        gitdb: Some(remote),
-        gone,
-    } = gitdeps::missing(text, gitdbs)
-    else {
+pub(crate) fn send_missing_gitdbs(
+    backend: &Jobs,
+    prepared: &wire::Prepared,
+    gitdbs: &[gitdeps::Db],
+) {
+    let Some(asked) = &prepared.gitdbs else {
         return;
     };
-    for db in gone {
+    for missing in &asked.missing {
+        let Some(db) = gitdbs
+            .iter()
+            .find(|d| d.name == missing.name && d.commit == missing.commit)
+        else {
+            continue;
+        };
         eprintln!(
             "dibs: sending {} at {:.8}, which the machine does not have and may not be able to fetch",
             db.name, db.commit
         );
-        if let Err(e) = sync_gitdb(backend, &db.path, &format!("{remote}/{}", db.name)) {
+        if let Err(e) = sync_gitdb(backend, &db.path, &format!("{}/{}", asked.dir, db.name)) {
             eprintln!("dibs: {e}; the build will try to fetch it itself");
         }
     }
+}
+
+/// Whether a step's tree waits for a git dependency to be sent before it can build.
+pub(crate) fn held(prepared: &wire::Prepared) -> bool {
+    prepared
+        .gitdbs
+        .as_ref()
+        .is_some_and(|g| !g.missing.is_empty())
 }
 
 /// Prepares the worktree and sends the local tree into it, as one job under one lock.
@@ -954,50 +1046,44 @@ pub(crate) fn send_missing_gitdbs(backend: &Jobs, text: &str, gitdbs: &[gitdeps:
 pub(crate) fn sync_prepared(
     backend: &Jobs,
     from: &Path,
-    setup: &str,
     key: &str,
     req: &JobRequest,
-    on_report: &mut dyn FnMut(&str),
+    on_prepared: &mut dyn FnMut(&wire::Prepared),
 ) -> Reported {
-    let before = worktree::ahead(
-        setup,
-        worktree::Then::Transfer,
-        &format!("prepare, then receive {}", from.display()),
-    );
     let args: Vec<String> = worktree::SYNC_ARGS
         .iter()
         .map(|a| a.to_string())
         .chain([format!("{}/", from.display()), format!(":local-{key}/")])
         .collect();
-    backend.sync(req, &args, &before, on_report)
+    backend.sync(req, &args, on_prepared)
 }
 
-pub(crate) fn announce_prepared(text: &str) {
-    let Ok(prepared) = worktree::parse(text) else {
+pub(crate) fn announce_prepared(prepared: &wire::Prepared) {
+    eprintln!("dibs: {}", prepared.worktree);
+    let Some(seeded) = &prepared.seeded else {
         return;
     };
-    eprintln!("dibs: {}", prepared.worktree);
-    if let (Some(from), Some(mine), Some((have, of))) =
-        (&prepared.seeded, prepared.reseeded, prepared.seed_shared)
-    {
+    let from = &seeded.from;
+    if let (Some(mine), Some(shared)) = (prepared.reseeded, seeded.shared) {
         eprintln!(
-            "dibs: this tree's target had built {mine} of the {of} groups in its lockfile and {from} has {have}, so the tree now starts from {from}'s"
+            "dibs: this tree's target had built {mine} of the {} groups in its lockfile and {from} has {}, so the tree now starts from {from}'s",
+            shared.of, shared.have
         );
         return;
     }
-    if let Some(from) = &prepared.seeded {
-        match prepared.seed_shared {
-            Some((have, of)) => eprintln!(
-                "dibs: target directory copied from {from}, whose builds match {have} of the {of} groups in this tree's lockfile{}",
-                if prepared.seeded_sources {
-                    ", with its sources so unchanged crates stay built"
-                } else {
-                    ""
-                }
-            ),
-            None => eprintln!(
-                "dibs: target directory copied from {from}, so only what differs rebuilds"
-            ),
+    match seeded.shared {
+        Some(shared) => eprintln!(
+            "dibs: target directory copied from {from}, whose builds match {} of the {} groups in this tree's lockfile{}",
+            shared.have,
+            shared.of,
+            if seeded.sources {
+                ", with its sources so unchanged crates stay built"
+            } else {
+                ""
+            }
+        ),
+        None => {
+            eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds")
         }
     }
 }
@@ -1013,8 +1099,9 @@ pub(crate) fn sync_gitdb(backend: &Jobs, from: &Path, to: &str) -> Result<(), St
         job: &RecipeJob::default(),
         max: None,
         new_series: false,
+        tree: None,
     };
-    match backend.sync(&req, &args, "", &mut |_| {}).outcome.status {
+    match backend.sync(&req, &args, &mut |_| {}).outcome.status {
         0 => Ok(()),
         _ => Err(format!("sending {} failed", from.display())),
     }
@@ -1051,6 +1138,7 @@ pub(crate) fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
             job: &RecipeJob::default(),
             max: args.max,
             new_series: args.new_series,
+            tree: None,
         },
         command,
     );

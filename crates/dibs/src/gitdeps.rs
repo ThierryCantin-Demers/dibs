@@ -94,49 +94,6 @@ pub fn local(cargo_home: &Path, pins: &[(String, String)]) -> Vec<Db> {
     out
 }
 
-/// Shell for the setup job: names each commit the machine lacks, and where its cargo keeps
-/// them. Every command is guarded, because the setup runs under `set -e`.
-pub fn check_script(dbs: &[Db]) -> String {
-    if dbs.is_empty() {
-        return String::new();
-    }
-    let mut s =
-        String::from("GITDB=${CARGO_HOME:-$HOME/.cargo}/git/db\necho \"DIBS-GITDB $GITDB\"\n");
-    for db in dbs {
-        s.push_str(&format!(
-            "git -C \"$GITDB/{n}\" cat-file -e '{c}^{{commit}}' 2>/dev/null || echo 'DIBS-GITMISSING {n} {c}'\n",
-            n = db.name,
-            c = db.commit
-        ));
-    }
-    s
-}
-
-/// The machine's cache directory and which of `dbs` it reported missing.
-pub fn missing<'a>(setup_output: &str, dbs: &'a [Db]) -> Missing<'a> {
-    let mut gitdb = None;
-    let mut out = Vec::new();
-    for line in setup_output.lines() {
-        if let Some(v) = line.strip_prefix("DIBS-GITDB ") {
-            gitdb = Some(v.trim().to_string());
-        } else if let Some(v) = line.strip_prefix("DIBS-GITMISSING ") {
-            let mut it = v.split_whitespace();
-            if let (Some(n), Some(c)) = (it.next(), it.next())
-                && let Some(db) = dbs.iter().find(|d| d.name == n && d.commit == c)
-            {
-                out.push(db);
-            }
-        }
-    }
-    Missing { gitdb, gone: out }
-}
-
-/// What a machine said of its git cache: where it is, and which databases it lacks.
-pub struct Missing<'a> {
-    pub gitdb: Option<String>,
-    pub gone: Vec<&'a Db>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,40 +198,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             names,
             vec!["widget-0123456789abcdef", "widget-fedcba9876543210"]
         );
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn the_machine_reports_only_what_it_lacks() {
-        let (root, commit) = home("remote");
-        let dbs = local(
-            &root.join("cargo"),
-            &[("widget".to_string(), commit.clone())],
-        );
-        let absent = Db {
-            name: "other-0123456789abcdef".into(),
-            path: root.clone(),
-            commit: "e".repeat(40),
-        };
-        let all = vec![dbs[0].clone(), absent.clone()];
-        let script = format!("set -eu\n{}", check_script(&all));
-        let out = Command::new("bash")
-            .args(["-c", &script])
-            .env("CARGO_HOME", root.join("cargo"))
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let text = String::from_utf8_lossy(&out.stdout);
-        let Missing { gitdb, gone } = missing(&text, &all);
-        assert_eq!(
-            gitdb.as_deref(),
-            Some(root.join("cargo/git/db").to_str().unwrap())
-        );
-        assert_eq!(gone, vec![&absent]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

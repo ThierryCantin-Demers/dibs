@@ -1,4 +1,4 @@
-use crate::job::PortRange;
+use crate::{job::PortRange, tree::Reflinks};
 use std::{
     collections::HashMap,
     env, fmt, fs,
@@ -286,6 +286,10 @@ pub struct Settings {
     pub keep_days: u64,
     /// Days a build cache is kept unused: a compiler refills it, which a worktree is not.
     pub target_keep_days: u64,
+    /// Seconds a new tree waits for a sibling's build that will leave it more of its lockfile.
+    pub seed_wait: u64,
+    /// How a seed shares blocks; `DIBS_REFLINK`, read from the environment alone, is a test's.
+    pub reflinks: Reflinks,
     /// The machine holds every label's measurements to one card, whoever runs them.
     pub machine_series: bool,
 }
@@ -307,6 +311,8 @@ impl Settings {
             wrote_within: signed("DIBS_WROTE_WITHIN", 120),
             keep_days: number("DIBS_KEEP_DAYS", 14),
             target_keep_days: number("DIBS_TARGET_KEEP_DAYS", 5),
+            seed_wait: number("DIBS_SEED_WAIT", 900),
+            reflinks: Reflinks::of(var("DIBS_REFLINK").as_deref()),
             machine_series: setting("DIBS_MACHINE_SERIES").is_some_and(|v| v == "1"),
             bypass: setting("DIBS_BYPASS").is_none_or(|v| v == "1"),
             patience: number("DIBS_PATIENCE", 60),

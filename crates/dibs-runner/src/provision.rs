@@ -127,6 +127,7 @@ pub fn build(hash: &str) -> i32 {
         services: Vec::new(),
         ready_within: 0,
         new_series: false,
+        tree: None,
     };
     let code = Session::new(request, sink)
         .with_temporary(vec![source.clone(), archive.clone()])

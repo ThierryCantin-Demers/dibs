@@ -96,7 +96,6 @@ impl Dispatch<'_> {
             Words::Sync(args) => Sync {
                 machine: &machine()?,
                 args,
-                before: "",
                 origin: Origin::Words,
             }
             .answer(),

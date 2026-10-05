@@ -37,7 +37,7 @@ Every message, both ways, is one frame: a header line, then the payload.
 | `release` | to the runner | a held command's exit, in decimal: the end of a hold, not the caller going away |
 | `out` | to the client | bytes for the caller's stdout |
 | `err` | to the client | bytes for the caller's stderr |
-| `record` | to the client | a fact as JSON: the job's trailer, which the client prints on stderr, or that a hold's lock is held, with the ports picked for it |
+| `record` | to the client | a fact as JSON: the job's trailer, which the client prints on stderr, that a hold's lock is held, with the ports picked for it, or the tree laid out ahead of the job's command |
 | `exit` | to the client, last | the call's exit, in decimal |
 
 The runner's own stderr carries only what is not a frame, a panic for instance, and the client
@@ -56,6 +56,23 @@ of it while it prepares a tree, the runner watches its stdout instead: whoever r
 it is the caller gone. macOS cannot tell that by polling, so there its parent exiting is, the
 process ssh started for the call or the client on this computer. `TERM` and `HUP` to
 `dibs --sync` are passed to rsync, and dibs ends of the signal once rsync has.
+
+### A tree
+
+A recipe's request names the tree its job runs in: one laid out before, or one the runner lays
+out at the head of the job, once it holds the lock and before the command, so a recipe pays for
+one place in the queue rather than two. It fetches a ref into a ref of its own, never through
+the clone's one `FETCH_HEAD`, adds the commit's worktree or makes a sent tree's directory, seeds
+a new target from a sibling's, stages the lockfile's packages beside it, sweeps what nobody has
+used, and asks cargo's git cache which pinned commits it lacks. The layout under the scratch and
+its markers (`.dibs-used`, `.dibs-tree`, `.dibs-packages`, `.prepare.lock`) are the ones a bash
+prepare left, so no build cache is rebuilt. What it laid out comes back as a `prepared` record;
+what it says goes where the job's output goes. A step waiting for a git dependency exits 3 with
+`by=dibs` before its command, as does a prepare that fails. The command then runs in the
+worktree with the target as `CARGO_TARGET_DIR`, or, for a transfer, in the directory the
+transfer names the worktree in. A transfer with a tree is framed until it is laid out: the
+`prepared` record, then `transferring`, after which the runner frames nothing; `dibs __rsh`
+writes the record to a file the sync that started rsync reads.
 
 ### Liveness
 
@@ -187,5 +204,6 @@ one of them.
   script's, and the group is swept when the job ends or its runner dies. A runner does not sweep
   old job directories as a job starts: that belongs to `--gc`. A runner keeps the pids it would
   stop in memory, so it writes no `work.<pid>`, which only the script that wrote one ever read.
-  A script reads `DIBS_PATIENCE` and `DIBS_QUICK` from its environment alone, so until every
+  A runner lays a recipe's tree out itself, so a job's log holds none of a prepare's `DIBS-`
+  lines. A script reads `DIBS_PATIENCE` and `DIBS_QUICK` from its environment alone, so until every
   client has switched, `/etc/dibs/runner.toml` leaves them at their defaults.

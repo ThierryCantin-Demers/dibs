@@ -1,3 +1,5 @@
+use dibs_format::wire::Tree;
+
 /// Who makes a call.
 #[derive(Debug, Clone, Copy)]
 pub enum Origin<'a> {
@@ -16,6 +18,8 @@ pub struct RecipeJob {
     pub batch: Option<BatchStep>,
     /// The bound recipe's, which its duration is filed under beside the label.
     pub fingerprint: Option<String>,
+    /// The tree it runs in, prepared at its head when it is not yet.
+    pub tree: Option<Tree>,
 }
 
 /// Which batch a call is a step of and what is still to come, so the machine can say how long

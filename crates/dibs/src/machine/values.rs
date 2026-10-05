@@ -61,6 +61,8 @@ pub struct CallValues {
     pub services: Vec<Service>,
     /// `--new-series`.
     pub new_series: bool,
+    /// The tree a recipe's job runs in.
+    pub tree: Option<wire::Tree>,
 }
 
 /// How the runner learns its caller is gone.
@@ -124,6 +126,7 @@ impl CallValues {
                     ready: s.ready.clone().filter(|r| !r.is_empty()),
                 })
                 .collect(),
+            tree: self.tree.clone(),
             ready_within: u64::from(self.ready_within),
         }
     }

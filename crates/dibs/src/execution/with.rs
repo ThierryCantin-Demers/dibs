@@ -1,9 +1,9 @@
 use super::{
     base::{
-        RunError, TreeScript, TreeSpec, announce_prepared, new_token, preparing,
+        RunError, TreeSpec, announce_prepared, new_token, preparing, preparing_title,
         send_missing_gitdbs, sh, sync_prepared,
     },
-    jobs::{JobRequest, Jobs, Reported},
+    jobs::{JobRequest, Jobs},
     refs::{arms, sides},
 };
 use crate::{
@@ -18,7 +18,7 @@ use dibs::{
         Call, CliError, Command as ShellCommand, Mode, PortName, RecipeCall, Run, RunLock, Service,
     },
 };
-use dibs_format::{Alias, Exit, Label, MachineName};
+use dibs_format::{Alias, Exit, Label, MachineName, wire};
 use std::process::ExitCode;
 
 /// A repo's servers, running on the machine under one lock while the command runs here: a
@@ -80,6 +80,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             job: &RecipeJob::default(),
             max: None,
             new_series: false,
+            tree: None,
         };
         if !backend.preflight(&req) {
             return Ok(ExitCode::from(Exit::Refused.code()));
@@ -141,7 +142,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         .as_deref()
         .and_then(worktree::build_signature)
         .unwrap_or_default();
-    let TreeScript { script, gitdbs } = TreeSpec {
+    let plan = TreeSpec {
         dir: &from,
         repo_name: &repo_name,
         reference,
@@ -152,7 +153,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         nest: None,
         fresh: manifest.tree_fresh(),
     }
-    .script();
+    .plan();
     let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
     let setup = JobRequest {
         label: &setup_label,
@@ -161,44 +162,59 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         job: &RecipeJob::default(),
         max: None,
         new_series: false,
+        tree: None,
     };
-    let mut announce = |text: &str| announce_prepared(text);
-    let text = match &local {
+    let reported = match &local {
         Some(l) => {
-            let Reported { outcome: out, text } =
-                sync_prepared(&backend, &from, &script, &l.key, &setup, &mut announce);
+            let send = JobRequest {
+                tree: Some(plan.tree(wire::Then::Transfer)),
+                ..setup
+            };
+            let reported = sync_prepared(&backend, &from, &l.key, &send, &mut announce_prepared);
             if let Some(c) = &mut arm.checkout {
                 c.lock = None;
             }
-            if !text.contains("DIBS-READY") || out.status != 0 {
+            if reported.prepared.is_none() || reported.outcome.status != 0 {
                 return Err(RunError::call(
-                    out.status,
+                    reported.outcome.status,
                     format!(
                         "could not prepare {repo_name} from {} (exit {})",
                         from.display(),
-                        out.status
+                        reported.outcome.status
                     ),
                 ));
             }
-            text
+            reported
         }
         None => {
-            let Reported { outcome: out, text } = backend.run_capture(&setup, &script);
-            if out.status != 0 {
+            let prepare = JobRequest {
+                tree: Some(plan.tree(wire::Then::Nothing)),
+                ..setup
+            };
+            let title = preparing_title(&repo_name, reference);
+            let reported = backend.run_reporting(&prepare, &title, &mut |_| {});
+            if reported.outcome.status != 0 {
                 return Err(RunError::call(
-                    out.status,
+                    reported.outcome.status,
                     format!(
                         "could not prepare {repo_name}@{reference} (exit {})",
-                        out.status
+                        reported.outcome.status
                     ),
                 ));
             }
-            announce(&text);
-            text
+            if let Some(prepared) = &reported.prepared {
+                announce_prepared(prepared);
+            }
+            reported
         }
     };
-    let prepared = worktree::parse(&text)?;
-    send_missing_gitdbs(&backend, &text, &gitdbs);
+    let Some(prepared) = reported.prepared else {
+        return Err(RunError::call(
+            Exit::Setup.status(),
+            "the worktree setup did not report a path; see its output above".into(),
+        ));
+    };
+    send_missing_gitdbs(&backend, &prepared, &plan.gitdbs);
 
     // In the tree, with the repo's build cache, exactly as a recipe step runs.
     let in_tree = |run: &str| {
@@ -218,6 +234,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             job: &RecipeJob::default(),
             max: None,
             new_series: false,
+            tree: None,
         };
         let build = match worktree::build_signature(build) {
             Some(_) => worktree::claiming(build),

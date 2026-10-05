@@ -4,7 +4,7 @@
 2| dibs: preparing app from <root>/app (clean)
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| job <job>  shared  app_build_p_send  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (4 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
 2| dibs: step 1/1 [Shared]
 2| job <job>  shared  app_build_p  queued <s>  ran <s>  exit 0  by=command
 2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
@@ -18,7 +18,7 @@
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| dibs: target directory copied from app-local-<key>, so only what differs rebuilds
 2| job <job>  shared  app_bench_gate_send  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (6 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
 2| dibs: step 1/2 [Shared]
 2| job <job>  shared  app_bench_gate  queued <s>  ran <s>  exit 0  by=command  built=1
 2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
@@ -43,13 +43,13 @@
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| dibs: target directory copied from app-local-<key>, so only what differs rebuilds
 2| job <job>  shared  app_bench_gate_send  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (6 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
 2| dibs: base: step 1/2 [Shared]
 2| job <job>  shared  app_bench_gate  queued <s>  ran <s>  exit 0  by=command  built=1
 2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| job <job>  shared  app_bench_gate_send  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (4 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
 2| dibs: local: step 1/2 [Shared]
 2| job <job>  shared  app_bench_gate  queued <s>  ran <s>  exit 0  by=command  built=1
 2|   log <host>:<root>/scratch/jobs/<job>/log  (3 lines)  dibs --on <host> --out <job>
@@ -89,7 +89,7 @@
 2| dibs: preparing app from <root>/app (clean)
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| job <job>  shared  app_bench_gate_send  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (4 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
 2| dibs: step 1/2 [Shared]
 2| job <job>  shared  app_bench_gate  queued <s>  ran <s>  exit 0  by=command  built=1
 2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>

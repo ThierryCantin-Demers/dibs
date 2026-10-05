@@ -13,7 +13,7 @@ mod values;
 
 pub use held::{Held, Holder, Release};
 pub use interrupt::{Interrupt, Relayed};
-pub use lines::{Lines, Stream};
+pub use lines::{Lines, Listener, Stream};
 pub use provision::{Installed, Provision};
 pub use served::{Delivery, RUNNER_WORD, Runner};
 pub use session::{

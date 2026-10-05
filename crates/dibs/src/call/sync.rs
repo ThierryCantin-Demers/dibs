@@ -11,7 +11,10 @@ use crate::{
     paths::Paths,
     scratch::ScratchFile,
 };
-use dibs_format::{Exit, Label, Mode};
+use dibs_format::{
+    Exit, Label, Mode,
+    wire::{Prepared, Tree},
+};
 use std::{
     fmt, io,
     os::unix::process::CommandExt as _,
@@ -25,8 +28,8 @@ const SYNC_LABEL: &str = "sync";
 pub struct Sync<'a> {
     pub machine: &'a MachineCall<'a>,
     pub args: &'a [String],
-    /// Lines the machine runs ahead of the transfer, under the same lock.
-    pub before: &'a str,
+    /// A recipe's sync is laid out by the machine ahead of the transfer, under the same lock,
+    /// from its job's tree.
     pub origin: Origin<'a>,
 }
 
@@ -82,8 +85,7 @@ impl Sync<'_> {
             .iter()
             .map(|a| BashQuoted(a.strip_prefix(&machine_side).unwrap_or(a)).to_string())
             .collect();
-        let script = format!("{}rsync {}", Before(self.before), quoted.join(" "));
-        let command = Words(vec![script]);
+        let command = Words(vec![format!("rsync {}", quoted.join(" "))]);
         let call = Call {
             label: Some(self.label()),
             ..self.machine.call.clone()
@@ -134,15 +136,22 @@ impl Sync<'_> {
             });
         }
         let deferred = Interrupt::defer();
-        if let Output::Lines(_) = output {
+        if !matches!(output, Output::Inherit) {
             rsync.stdout(Stdio::piped()).stderr(Stdio::piped());
         }
         let mut child = rsync.spawn()?;
         let relayed = Relayed::to(child.id());
-        if let Output::Lines(on_line) = output {
-            Lines::of(&mut child).relay(*on_line);
+        match output {
+            Output::Lines(on_line) => Lines::of(&mut child).relay(*on_line),
+            Output::Listening(listener) => {
+                Lines::of(&mut child).relay(&mut |stream, line| listener.line(stream, line))
+            }
+            Output::Inherit => {}
         }
         let status = child.wait();
+        if let Some(prepared) = transport.prepared() {
+            output.prepared(&prepared);
+        }
         drop(deferred);
         let status = exit_code(status?);
         let exit = match (status, transport.exit()) {
@@ -165,11 +174,18 @@ impl Sync<'_> {
 }
 
 /// What a sync hands the transport rsync starts, which is a process of its own: the files it
-/// reads its lines ahead from and writes its exit to, removed when the sync ends.
+/// reads the tree to lay out from, and writes its exit and the tree it laid out to, removed when
+/// the sync ends.
 struct Transport<'a> {
     sync: &'a Sync<'a>,
     exit: PathBuf,
-    before: Option<PathBuf>,
+    tree: Option<TreeFiles>,
+}
+
+/// The tree a transport asks the machine to lay out, and where it writes what was laid out.
+struct TreeFiles {
+    asked: PathBuf,
+    prepared: PathBuf,
 }
 
 impl<'a> Transport<'a> {
@@ -180,14 +196,17 @@ impl<'a> Transport<'a> {
         let mut transport = Transport {
             sync,
             exit: ScratchFile::create(&dir, ".rsh-exit", b"")?,
-            before: None,
+            tree: None,
         };
-        if !sync.before.is_empty() {
-            transport.before = Some(ScratchFile::create(
-                &dir,
-                ".rsh-before",
-                sync.before.as_bytes(),
-            )?);
+        if let Origin::Recipe(RecipeJob {
+            tree: Some(tree), ..
+        }) = sync.origin
+        {
+            let asked = serde_json::to_vec(tree).map_err(io::Error::other)?;
+            transport.tree = Some(TreeFiles {
+                asked: ScratchFile::create(&dir, ".rsh-tree", &asked)?,
+                prepared: ScratchFile::create(&dir, ".rsh-prepared", b"")?,
+            });
         }
         Ok(transport)
     }
@@ -212,8 +231,13 @@ impl<'a> Transport<'a> {
                 Fingerprint(fingerprint).sent(),
             ]);
         }
-        if let Some(before) = &self.before {
-            words.extend([Rsh::BEFORE.to_string(), before.display().to_string()]);
+        if let Some(tree) = &self.tree {
+            words.extend([
+                Rsh::TREE.to_string(),
+                tree.asked.display().to_string(),
+                Rsh::PREPARED.to_string(),
+                tree.prepared.display().to_string(),
+            ]);
         }
         words.extend([Rsh::EXIT.to_string(), self.exit.display().to_string()]);
         Ok(words
@@ -221,6 +245,12 @@ impl<'a> Transport<'a> {
             .map(|w| Rsync::word(w))
             .collect::<Vec<_>>()
             .join(" "))
+    }
+
+    /// The tree the machine laid out, as the transport wrote it down.
+    fn prepared(&self) -> Option<Prepared> {
+        let tree = self.tree.as_ref()?;
+        serde_json::from_slice(&std::fs::read(&tree.prepared).ok()?).ok()
     }
 
     fn exit(&self) -> Option<i32> {
@@ -235,20 +265,9 @@ impl<'a> Transport<'a> {
 impl Drop for Transport<'_> {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.exit);
-        if let Some(before) = &self.before {
-            let _ = std::fs::remove_file(before);
-        }
-    }
-}
-
-/// Lines run ahead of a transfer, each ending in a newline.
-struct Before<'a>(&'a str);
-
-impl fmt::Display for Before<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0.trim_end_matches('\n') {
-            "" => Ok(()),
-            lines => writeln!(f, "{lines}"),
+        if let Some(tree) = &self.tree {
+            let _ = std::fs::remove_file(&tree.asked);
+            let _ = std::fs::remove_file(&tree.prepared);
         }
     }
 }
@@ -259,7 +278,8 @@ pub struct Rsh {
     stream: bool,
     label: Option<Label>,
     fingerprint: Option<String>,
-    before: Option<PathBuf>,
+    tree: Option<PathBuf>,
+    prepared: Option<PathBuf>,
     exit: Option<PathBuf>,
     command: Vec<String>,
 }
@@ -269,13 +289,15 @@ impl Rsh {
     pub const WORD: &'static str = "__rsh";
     const STREAM: &'static str = "--stream";
     const LABEL: &'static str = "--label";
-    const BEFORE: &'static str = "--before";
+    const TREE: &'static str = "--tree";
+    const PREPARED: &'static str = "--prepared";
     const FINGERPRINT: &'static str = "--fingerprint";
     const EXIT: &'static str = "--exit";
-    const FLAGS: [&'static str; 5] = [
+    const FLAGS: [&'static str; 6] = [
         Rsh::STREAM,
         Rsh::LABEL,
-        Rsh::BEFORE,
+        Rsh::TREE,
+        Rsh::PREPARED,
         Rsh::FINGERPRINT,
         Rsh::EXIT,
     ];
@@ -306,7 +328,8 @@ impl Rsh {
             stream: false,
             label: None,
             fingerprint: None,
-            before: None,
+            tree: None,
+            prepared: None,
             exit: None,
             command: Vec::new(),
         };
@@ -316,7 +339,8 @@ impl Rsh {
                 Rsh::STREAM => rsh.stream = true,
                 Rsh::LABEL => rsh.label = Some(Label::new(words.next()?)),
                 Rsh::FINGERPRINT => rsh.fingerprint = Some(words.next()?.to_string()),
-                Rsh::BEFORE => rsh.before = Some(PathBuf::from(words.next()?)),
+                Rsh::TREE => rsh.tree = Some(PathBuf::from(words.next()?)),
+                Rsh::PREPARED => rsh.prepared = Some(PathBuf::from(words.next()?)),
                 Rsh::EXIT => rsh.exit = Some(PathBuf::from(words.next()?)),
                 _ => return None,
             }
@@ -329,17 +353,22 @@ impl Rsh {
     }
 
     fn transfer(&self, caller: &Caller) -> Result<i32, CallError> {
-        let before = match &self.before {
-            Some(path) => std::fs::read_to_string(path)
-                .map_err(|e| CallError::Io(io::Error::other(format!("{}: {e}", path.display()))))?,
-            None => String::new(),
+        let tree: Option<Tree> = match &self.tree {
+            Some(path) => Some(
+                std::fs::read(path)
+                    .and_then(|asked| serde_json::from_slice(&asked).map_err(io::Error::other))
+                    .map_err(|e| {
+                        CallError::Io(io::Error::other(format!("{}: {e}", path.display())))
+                    })?,
+            ),
+            None => None,
         };
         let call = Call {
             stream: self.stream,
             ..Call::default()
         };
         let machine = MachineCall::new(&call, caller)?;
-        let command = format!("{}{}", Before(&before), self.command.join(" "));
+        let command = self.command.join(" ");
         let label = self.label.clone().unwrap_or_else(|| Label::new(SYNC_LABEL));
         let target = machine.target()?;
         let session = Session::new(&target, &machine.here);
@@ -355,6 +384,7 @@ impl Rsh {
         machine.somewhere(&target)?;
         let values = CallValues {
             fingerprint: self.fingerprint.as_deref().map(|f| Fingerprint(f).sent()),
+            tree,
             ..machine.values(
                 Asked {
                     mode: Mode::Rsh,
@@ -365,7 +395,7 @@ impl Rsh {
                 &target,
             )?
         };
-        let status = session.transfer(&values, Liveness::from_env())?;
+        let status = session.transfer(&values, Liveness::from_env(), self.prepared.as_deref())?;
         Ok(session.exit(status, &target))
     }
 }

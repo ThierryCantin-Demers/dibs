@@ -1,4 +1,4 @@
-use crate::{Alias, Label, Mode};
+use crate::{Alias, Label, Mode, wire::Tree};
 use serde::{Deserialize, Serialize};
 
 /// One call, as the runner is asked to make it.
@@ -37,6 +37,9 @@ pub struct Request {
     pub ready_within: u64,
     /// The measurement starts its label's series on this machine again, on its card.
     pub new_series: bool,
+    /// The tree the job runs in, prepared at its head when it is not yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<Tree>,
 }
 
 /// A server run on the machine for one call.

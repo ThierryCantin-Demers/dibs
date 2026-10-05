@@ -9,7 +9,7 @@ use crate::{
     platform::{Host, Platform as _},
     queue::Queue,
     series::Binding,
-    session::{base::Session, ended::Ended},
+    session::{base::Session, ended::Ended, laid::Laid},
     status::Look,
     stop::{Stage, State, Stopper},
 };
@@ -84,6 +84,8 @@ pub(super) struct Hosted {
     pub(super) services: Option<Services>,
     /// A port or a service failed the call, which ends with 77.
     pub(super) failed: bool,
+    /// Who gave the status when the job's tree ended the call before its command.
+    pub(super) laid: Option<By>,
 }
 
 impl Hosted {
@@ -355,7 +357,24 @@ impl Session {
             ports,
             services: None,
             failed: false,
+            laid: None,
         };
+        if let Some(tree) = &request.tree
+            && hosted.ports.complete()
+        {
+            state.stage = Stage::Preparing(None);
+            drop(state);
+            let laid = self.lay_out(at, tree, &mut environment, output);
+            state = at.stopper.state();
+            if let Laid::Done { status, by } = laid {
+                drop(state);
+                if let Some(log) = &begun.log {
+                    let _ = fs::OpenOptions::new().create(true).append(true).open(log);
+                }
+                hosted.laid = Some(by);
+                return (status, hosted);
+            }
+        }
         if !hosted.ports.complete() {
             self.sink.say(&format!(
                 "dibs: no free port in {} on {}, so the command did not run.\n",
@@ -475,6 +494,7 @@ impl Session {
         }
         let ended = end.begun.log.as_ref().map(|log| {
             let by = match Exit::of_code(status) {
+                _ if !cancelled && let Some(by) = end.hosted.laid => by,
                 Some(Exit::Overran) if end.max > 0 => By::Dibs,
                 Some(Exit::Cancelled) if cancelled => By::Dibs,
                 Some(Exit::ServiceFailed) if end.hosted.failed => By::Dibs,

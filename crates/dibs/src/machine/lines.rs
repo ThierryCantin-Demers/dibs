@@ -1,8 +1,17 @@
+use dibs_format::wire::Prepared;
 use std::{
     io::{BufRead as _, BufReader, Read},
     process::{Child, ChildStderr, ChildStdout},
     sync::mpsc,
 };
+
+/// What reads a call's output a line at a time, and the facts its runner tells besides it.
+pub trait Listener {
+    fn line(&mut self, stream: Stream, bytes: &[u8]);
+
+    /// The job's tree, laid out ahead of its command.
+    fn prepared(&mut self, prepared: &Prepared);
+}
 
 /// Which of a child's streams a line came on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

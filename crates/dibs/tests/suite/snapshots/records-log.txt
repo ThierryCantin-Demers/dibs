@@ -8,7 +8,7 @@
   queued       -
   ran          -
   exit         -
-  command      # echo hi <then its prepare>
+  command      echo hi
   agent        session suite
   batch        -
   job          <job>
@@ -23,7 +23,7 @@
   queued       <s>
   ran          <s>
   exit         0
-  command      # echo hi <then its prepare>
+  command      echo hi
   agent        session suite
   batch        -
   job          <job>

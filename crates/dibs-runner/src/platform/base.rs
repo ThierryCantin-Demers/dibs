@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// One process, as the tree under a job is walked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +49,9 @@ pub trait Platform {
 
     /// What a process's descriptor points at: a path, or something that is not one.
     fn fd_path(pid: u32, fd: u32) -> Option<String>;
+
+    /// The directory a process works in; None where the system will not say.
+    fn cwd(pid: u32) -> Option<PathBuf>;
 
     /// The TCP ports something listens on.
     fn listening() -> Vec<u16>;

@@ -10,21 +10,6 @@ use crate::snapshot::*;
 use crate::wire::wired;
 use std::fs;
 
-/// A cp that copies where it is asked to share blocks, and a runner told to, so a new tree is
-/// seeded whatever the disk under the sandbox.
-fn copies_for_reflinks(s: &mut Sandbox) {
-    let cp = s.command("bash", ["-c", "type -P cp"]).run().stdout;
-    s.write_exec(
-        "cow/cp",
-        &format!(
-            "#!/bin/bash\nargs=()\nfor a; do [ \"$a\" = --reflink=always ] || args+=(\"$a\"); done\nexec {} \"${{args[@]}}\"\n",
-            cp.trim()
-        ),
-    );
-    s.set("PATH", format!("{}:{}", s.p("cow"), s.var("PATH")));
-    s.set("DIBS_REFLINK", "copy");
-}
-
 /// The lockfile with `extra` more git packages, each a line of the tree's package list.
 fn lock_with(extra: usize) -> String {
     let mut lock = LOCK.to_string();
@@ -59,7 +44,8 @@ fn said(s: &Sandbox, n: &Normal, out: &Output) -> String {
 #[test]
 fn the_scratch_seeds_reseeds_pins_and_fresh_paths_leave() {
     let mut s = Sandbox::new();
-    copies_for_reflinks(&mut s);
+    // Reflinks made plain copies, so a new tree is seeded on any disk.
+    s.set("DIBS_REFLINK", "copy");
     let dir = app(&s);
     s.write_exec(
         "home/.cargo/bin/cargo",

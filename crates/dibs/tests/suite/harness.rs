@@ -117,6 +117,7 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         services: Vec::new(),
         ready_within: 0,
         new_series: false,
+        tree: None,
     }
 }
 

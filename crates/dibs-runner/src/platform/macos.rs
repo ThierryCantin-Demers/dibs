@@ -5,7 +5,7 @@ use crate::{
 use std::{
     ffi::{CStr, CString},
     os::unix::ffi::OsStrExt as _,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -142,6 +142,11 @@ impl Platform for MacOs {
 
     /// Through libproc, so a status costs no process per descriptor; a pipe or a socket has no
     /// path to give.
+    /// Not read: with no /proc, a tree in use here is told by its marker's age alone.
+    fn cwd(_pid: u32) -> Option<PathBuf> {
+        None
+    }
+
     fn fd_path(pid: u32, fd: u32) -> Option<String> {
         let size = std::mem::size_of::<VnodeWithPath>() as libc::c_int;
         // SAFETY: VnodeWithPath is plain data, and proc_pidfdinfo writes at most `size` bytes.

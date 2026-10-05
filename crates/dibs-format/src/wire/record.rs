@@ -1,4 +1,4 @@
-use crate::{By, JobId, Label, Mode};
+use crate::{By, JobId, Label, Mode, wire::Prepared};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -13,6 +13,8 @@ pub enum Record {
     /// A transfer's request was read: from here on both streams are rsync's, raw, and the call's
     /// exit is the runner's own.
     Transferring,
+    /// The job's tree is laid out, ahead of its command.
+    Prepared(Box<Prepared>),
 }
 
 /// A `--port` name and the port the machine picked for it.

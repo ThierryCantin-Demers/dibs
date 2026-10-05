@@ -13,6 +13,8 @@ pub struct Environment {
     vars: BTreeMap<&'static str, String>,
     /// `DIBS_PORT_<NAME>`, one per `--port`.
     ports: BTreeMap<String, String>,
+    /// Where the command starts, when not where the runner did.
+    dir: Option<PathBuf>,
 }
 
 /// A card the job cannot be pinned to, so it does not run: running it on whichever card is
@@ -54,6 +56,7 @@ impl Environment {
         Ok(Environment {
             vars,
             ports: BTreeMap::new(),
+            dir: None,
         })
     }
 
@@ -88,6 +91,17 @@ impl Environment {
     pub fn apply(&self, command: &mut Command) {
         command.envs(&self.vars);
         command.envs(&self.ports);
+        if let Some(dir) = &self.dir {
+            command.current_dir(dir);
+        }
+    }
+
+    /// The command started in `dir`, with `target` as its build cache.
+    pub fn in_tree(&mut self, dir: PathBuf, target: Option<String>) {
+        self.dir = Some(dir);
+        if let Some(target) = target {
+            self.set("CARGO_TARGET_DIR", target);
+        }
     }
 }
 

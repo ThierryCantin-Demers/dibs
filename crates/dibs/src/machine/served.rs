@@ -1,7 +1,7 @@
 use crate::machine::{
     held::{Held, Holder, Release},
     interrupt::Interrupt,
-    lines::Stream,
+    lines::{Listener, Stream},
     provision::{Installed, Provision},
     session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Session, exit_code},
     ssh::{Ssh, parent_death_signal},
@@ -9,7 +9,7 @@ use crate::machine::{
 };
 use dibs_format::{
     Exit,
-    wire::{Frame, Picked, Record, Unframer},
+    wire::{Frame, Picked, Prepared, Record, Unframer},
 };
 use std::{
     fs::File,
@@ -18,7 +18,7 @@ use std::{
         fd::{AsFd as _, AsRawFd as _},
         unix::process::CommandExt as _,
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{ChildStdin, Command, Stdio},
     sync::{
         Arc,
@@ -74,6 +74,8 @@ pub enum Delivery<'a> {
     Inherit,
     /// Read here a line at a time.
     Lines(&'a mut dyn FnMut(Stream, &[u8])),
+    /// Read here a line at a time, with the facts the runner tells besides.
+    Listening(&'a mut dyn Listener),
 }
 
 /// A call the runner serves, from this side: the request goes in as a frame, and what comes back
@@ -128,6 +130,7 @@ pub(super) enum Heard {
     /// A line the runner or ssh wrote on stderr, outside any frame.
     Line(Vec<u8>),
     Holding(Vec<Picked>),
+    Prepared(Box<Prepared>),
     Exit(i32),
     Broken(String),
 }
@@ -249,9 +252,9 @@ impl Served<'_> {
     /// rsync's far side: the request, then this process's own stdin and stdout carried raw both
     /// ways, but only once the runner says it has read the request, so a runner that is not
     /// there yet is built first without a byte of rsync's stream lost.
-    pub fn transfer(&self) -> io::Result<i32> {
+    pub fn transfer(&self, prepared: Option<&Path>) -> io::Result<i32> {
         let deferred = Interrupt::defer();
-        let carried = match self.carry()? {
+        let carried = match self.carry(prepared)? {
             Attempted::Missing => {
                 let provision = Provision {
                     session: self.session,
@@ -259,7 +262,7 @@ impl Served<'_> {
                 };
                 let delivery = &mut Delivery::Inherit;
                 match provision.through_newest(delivery)? {
-                    Installed::Done => match self.carry()? {
+                    Installed::Done => match self.carry(prepared)? {
                         Attempted::Exit(code) => code,
                         Attempted::Missing => provision.failed(delivery),
                     },
@@ -276,7 +279,9 @@ impl Served<'_> {
         Ok(carried)
     }
 
-    fn carry(&self) -> io::Result<Attempted> {
+    /// Frames until the runner says the transfer is under way: what it says on the way, and the
+    /// tree it lays out first, which is written to `prepared`.
+    fn carry(&self, prepared: Option<&Path>) -> io::Result<Attempted> {
         let Launch { mut command, .. } = self.launch();
         let watch = Watch {
             off: true,
@@ -294,15 +299,38 @@ impl Served<'_> {
         let said = stdin.write_all(&request).ok().and_then(|()| {
             let mut unframer = Unframer::default();
             let mut chunk = [0u8; 256];
-            let mut frame = None;
-            while frame.is_none() {
+            let mut last = None;
+            while !matches!(
+                last,
+                Some(Frame::Record(Record::Transferring) | Frame::Exit(_))
+            ) {
                 let wanted = unframer.wanted().min(chunk.len());
                 let n = stdout.read(&mut chunk[..wanted]).ok().filter(|n| *n > 0)?;
                 unframer.feed(&chunk[..n]);
-                frame = unframer.next_frame().ok()?;
+                let Some(frame) = unframer.next_frame().ok()? else {
+                    continue;
+                };
+                match &frame {
+                    Frame::Err(bytes) => {
+                        let _ = io::stderr().write_all(bytes);
+                    }
+                    Frame::Record(Record::Prepared(laid)) => {
+                        if let (Some(path), Ok(json)) = (prepared, serde_json::to_vec(laid)) {
+                            let _ = std::fs::write(path, json);
+                        }
+                    }
+                    _ => {}
+                }
+                last = Some(frame);
             }
-            frame
+            last
         });
+        if let Some(Frame::Exit(code)) = said {
+            drop(stdin);
+            let status = child.wait()?;
+            Interrupt::pass_on(status);
+            return Ok(Attempted::Exit(code));
+        }
         let Some(Frame::Record(Record::Transferring)) = said else {
             drop(stdin);
             let status = child.wait()?;
@@ -388,6 +416,7 @@ impl Served<'_> {
                         });
                     }
                 }
+                Heard::Prepared(prepared) => delivery.prepared(&prepared),
                 Heard::Exit(code) => exit = Some(code),
                 Heard::Broken(why) => {
                     delivery.say(&format!("dibs: the runner's answer broke off: {why}\n"))
@@ -434,40 +463,35 @@ pub(super) struct LineBuffers {
 
 impl Delivery<'_> {
     pub(super) fn give(&mut self, stream: Stream, bytes: &[u8], buffers: &mut LineBuffers) {
-        match self {
-            Delivery::Inherit => {
-                let _ = match stream {
-                    Stream::Out => io::stdout()
-                        .write_all(bytes)
-                        .and_then(|()| io::stdout().flush()),
-                    Stream::Err => io::stderr().write_all(bytes),
-                };
-            }
-            Delivery::Lines(on_line) => {
-                let held = match stream {
-                    Stream::Out => &mut buffers.out,
-                    Stream::Err => &mut buffers.err,
-                };
-                held.extend_from_slice(bytes);
-                let complete = held
-                    .iter()
-                    .rposition(|b| *b == b'\n')
-                    .map_or(0, |at| at + 1);
-                let lines: Vec<u8> = held.drain(..complete).collect();
-                for line in lines.split_inclusive(|b| *b == b'\n') {
-                    on_line(stream, line);
-                }
-            }
+        if let Delivery::Inherit = self {
+            let _ = match stream {
+                Stream::Out => io::stdout()
+                    .write_all(bytes)
+                    .and_then(|()| io::stdout().flush()),
+                Stream::Err => io::stderr().write_all(bytes),
+            };
+            return;
+        }
+        let held = match stream {
+            Stream::Out => &mut buffers.out,
+            Stream::Err => &mut buffers.err,
+        };
+        held.extend_from_slice(bytes);
+        let complete = held
+            .iter()
+            .rposition(|b| *b == b'\n')
+            .map_or(0, |at| at + 1);
+        let lines: Vec<u8> = held.drain(..complete).collect();
+        for line in lines.split_inclusive(|b| *b == b'\n') {
+            self.line(stream, line);
         }
     }
 
     /// What is left of a last line without its end.
     pub(super) fn flush(&mut self, buffers: &mut LineBuffers) {
-        if let Delivery::Lines(on_line) = self {
-            for (stream, held) in [(Stream::Out, &buffers.out), (Stream::Err, &buffers.err)] {
-                if !held.is_empty() {
-                    on_line(stream, held);
-                }
+        for (stream, held) in [(Stream::Out, &buffers.out), (Stream::Err, &buffers.err)] {
+            if !held.is_empty() {
+                self.line(stream, held);
             }
         }
     }
@@ -475,11 +499,25 @@ impl Delivery<'_> {
     pub fn say(&mut self, text: &str) {
         match self {
             Delivery::Inherit => eprint!("{text}"),
-            Delivery::Lines(on_line) => {
+            _ => {
                 for line in text.split_inclusive('\n') {
-                    on_line(Stream::Err, line.as_bytes());
+                    self.line(Stream::Err, line.as_bytes());
                 }
             }
+        }
+    }
+
+    fn line(&mut self, stream: Stream, line: &[u8]) {
+        match self {
+            Delivery::Inherit => {}
+            Delivery::Lines(on_line) => on_line(stream, line),
+            Delivery::Listening(listener) => listener.line(stream, line),
+        }
+    }
+
+    fn prepared(&mut self, prepared: &Prepared) {
+        if let Delivery::Listening(listener) = self {
+            listener.prepared(prepared);
         }
     }
 }
@@ -544,6 +582,7 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
                     Heard::Err(format!("{trailer}\n").into_bytes())
                 }
                 Frame::Record(Record::Holding(ports)) => Heard::Holding(ports),
+                Frame::Record(Record::Prepared(prepared)) => Heard::Prepared(prepared),
                 Frame::Exit(code) => Heard::Exit(code),
                 Frame::Request(_)
                 | Frame::Beat

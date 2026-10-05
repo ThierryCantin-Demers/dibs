@@ -1,14 +1,17 @@
 use dibs_format::wire::{Frame, Record};
 use std::{
     io::{self, Write as _},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 /// Where a call's output goes: frames to a client, one at a time whichever thread writes one,
-/// or plain text to whoever ran `build`.
+/// or plain text to whoever ran `build`, or to rsync once a transfer is under way.
 #[derive(Clone)]
 pub struct Sink {
-    kind: Kind,
+    plain: Arc<AtomicBool>,
     out: Arc<Mutex<io::Stdout>>,
 }
 
@@ -21,21 +24,34 @@ enum Kind {
 impl Sink {
     pub fn frames() -> Sink {
         Sink {
-            kind: Kind::Frames,
+            plain: Arc::new(AtomicBool::new(false)),
             out: Arc::new(Mutex::new(io::stdout())),
         }
     }
 
     pub fn plain() -> Sink {
         Sink {
-            kind: Kind::Plain,
+            plain: Arc::new(AtomicBool::new(true)),
             out: Arc::new(Mutex::new(io::stdout())),
+        }
+    }
+
+    /// A transfer's last frame: from here on stdout is rsync's, and the call's exit its own.
+    pub fn transferring(&self) {
+        self.record(Record::Transferring);
+        self.plain.store(true, Ordering::SeqCst);
+    }
+
+    fn kind(&self) -> Kind {
+        match self.plain.load(Ordering::SeqCst) {
+            true => Kind::Plain,
+            false => Kind::Frames,
         }
     }
 
     /// Bytes for the caller's stdout; false once nobody reads them.
     pub fn out(&self, bytes: &[u8]) -> bool {
-        match self.kind {
+        match self.kind() {
             Kind::Frames => self.frame(Frame::Out(bytes.to_vec())),
             Kind::Plain => self.write(bytes),
         }
@@ -49,7 +65,7 @@ impl Sink {
     }
 
     pub fn err(&self, bytes: &[u8]) {
-        match self.kind {
+        match self.kind() {
             Kind::Frames => {
                 self.frame(Frame::Err(bytes.to_vec()));
             }
@@ -60,18 +76,18 @@ impl Sink {
     }
 
     pub fn record(&self, record: Record) {
-        match (self.kind, record) {
+        match (self.kind(), record) {
             (Kind::Frames, record) => {
                 self.frame(Frame::Record(record));
             }
             (Kind::Plain, Record::Trailer(trailer)) => self.say(&format!("{trailer}\n")),
-            (Kind::Plain, Record::Holding(_) | Record::Transferring) => {}
+            (Kind::Plain, Record::Holding(_) | Record::Transferring | Record::Prepared(_)) => {}
         }
     }
 
     /// The call's exit, the last frame it sends.
     pub fn exit(&self, code: i32) {
-        if self.kind == Kind::Frames {
+        if self.kind() == Kind::Frames {
             self.frame(Frame::Exit(code));
         }
     }
@@ -79,7 +95,7 @@ impl Sink {
     /// The exit of a call being stopped, which ends however its caller is: never behind a relay
     /// that holds stdout, nor behind a reader that stopped reading.
     pub fn exit_without_waiting(&self, code: i32) {
-        if self.kind != Kind::Frames {
+        if self.kind() != Kind::Frames {
             return;
         }
         let Ok(mut out) = self.out.try_lock() else {

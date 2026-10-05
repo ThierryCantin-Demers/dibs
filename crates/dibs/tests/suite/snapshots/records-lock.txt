@@ -7,7 +7,7 @@
   agent        session suite
   agent id     local_suite
   device       cpu
-  command      cd <root>/scratch/ws/app/<tree> && export CARGO_TARGET_DIR=<root>/scratch/target/app && { echo "DIBS-STATE ${DIBS_STATE:-}" read -r _ < "$REC_GATE"; }
+  command      echo "DIBS-STATE ${DIBS_STATE:-}" read -r _ < "$REC_GATE"
   fingerprint  21eafeca56a1b2ba
   job          <job>
 

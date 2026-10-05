@@ -104,12 +104,9 @@ impl Job {
         Ok(Job::watched(child, relays, tether))
     }
 
+    /// Appended to, since what laid out the job's tree wrote there first.
     fn log_file(path: &Path) -> io::Result<File> {
-        OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)
+        OpenOptions::new().create(true).append(true).open(path)
     }
 
     fn relay(

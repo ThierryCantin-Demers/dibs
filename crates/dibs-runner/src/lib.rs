@@ -25,6 +25,7 @@ pub mod shared;
 mod sink;
 mod status;
 mod stop;
+mod tree;
 mod views;
 
 pub use provision::{BUILD_MAX, Source};

@@ -28,7 +28,8 @@ const PEEK_GRACE: Duration = Duration::from_secs(5);
 const RUNS_FOR_A_CAP: usize = 3;
 
 /// One request in, frames out, the exit. A transfer's request is followed by rsync's own stream
-/// both ways, so after saying it has read it the runner frames nothing, and exits with the call.
+/// both ways, so once it says the transfer starts the runner frames nothing, and exits with the
+/// call.
 pub fn serve() -> i32 {
     let signals = Signals::block();
     let sink = Sink::frames();
@@ -41,9 +42,13 @@ pub fn serve() -> i32 {
         }
     };
     let code = match channel.request() {
-        Ok(request) if request.mode == Mode::Rsh => {
+        Ok(request) if request.mode == Mode::Rsh && request.tree.is_none() => {
             sink.record(Record::Transferring);
             return Session::new(request, Sink::plain()).serve(Caller::Stdout, signals);
+        }
+        // Framed until its tree is laid out, which says so before the transfer starts.
+        Ok(request) if request.mode == Mode::Rsh => {
+            Session::new(request, sink.clone()).serve(Caller::Stdout, signals)
         }
         Ok(request) => Session::new(request, sink.clone()).serve(Caller::Channel(channel), signals),
         Err(e) => {

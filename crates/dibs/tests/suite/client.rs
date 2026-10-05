@@ -72,16 +72,8 @@ fn placement_and_status_across_machines() {
 #[test]
 fn a_recipe_run_says_what_it_does() {
     let mut s = Sandbox::new();
-    // A cp that copies where it is asked to share blocks, so a new tree is seeded on any disk.
-    let cp = s.command("bash", ["-c", "type -P cp"]).run().stdout;
-    s.write_exec(
-        "cow/cp",
-        &format!(
-            "#!/bin/bash\nargs=()\nfor a; do [ \"$a\" = --reflink=always ] || args+=(\"$a\"); done\nexec {} \"${{args[@]}}\"\n",
-            cp.trim()
-        ),
-    );
-    s.set("PATH", format!("{}:{}", s.p("cow"), s.var("PATH")));
+    // Reflinks made plain copies, so a new tree is seeded on any disk.
+    s.set("DIBS_REFLINK", "copy");
     s.machines(INVENTORY);
     let dir = app(&s);
     s.write_exec(

@@ -78,6 +78,7 @@ fn wire_normal(s: &Sandbox) -> Normal {
         .rule(r"\b[0-9]+-[0-9]{16,}\b", "<token>")
         .rule(env!("DIBS_RUNNER_HASH"), "<hash>")
         .rule(r"local-[0-9a-f]{10}\b", "local-<key>")
+        .rule(r#""key":"[0-9a-f]{10}""#, r#""key":"<key>""#)
         .rule(
             r"(local:[0-9a-f]{7,12})(\+dirty)?-[0-9a-f]{12}\b",
             "local:<sha>$2-<content>",

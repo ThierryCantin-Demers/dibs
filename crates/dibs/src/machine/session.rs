@@ -1,7 +1,6 @@
 use crate::machine::{
     held::Holder,
     interrupt::Interrupt,
-    lines::Stream,
     served::{Deadline, Delivery, Served},
     ssh::Ssh,
     target::Target,
@@ -9,7 +8,9 @@ use crate::machine::{
     values::CallValues,
 };
 use dibs_format::Exit;
-use std::{io, os::unix::process::ExitStatusExt as _, process::ExitStatus, time::Duration};
+use std::{
+    io, os::unix::process::ExitStatusExt as _, path::Path, process::ExitStatus, time::Duration,
+};
 
 /// A caller that says nothing for this long is gone, unless `DIBS_LEASE` says otherwise.
 const DEFAULT_LEASE_SECS: u64 = 120;
@@ -216,14 +217,20 @@ impl Session {
         &self,
         values: &CallValues,
         live: Liveness,
-        on_line: &mut dyn FnMut(Stream, &[u8]),
+        delivery: Delivery,
     ) -> io::Result<i32> {
-        self.served(values, live).run(Delivery::Lines(on_line))
+        self.served(values, live).run(delivery)
     }
 
     /// rsync's far side, fed this process's stdin; the exit is the far side's.
-    pub fn transfer(&self, values: &CallValues, live: Liveness) -> io::Result<i32> {
-        self.served(values, live).transfer()
+    /// The tree the machine lays out first, when the call has one, is written to `prepared`.
+    pub fn transfer(
+        &self,
+        values: &CallValues,
+        live: Liveness,
+        prepared: Option<&Path>,
+    ) -> io::Result<i32> {
+        self.served(values, live).transfer(prepared)
     }
 
     /// Starts the machine's side of a hold.

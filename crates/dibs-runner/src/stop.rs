@@ -23,6 +23,8 @@ pub enum Stage {
     Peeking(u32),
     /// Its records are written and it waits for the lock.
     Queued,
+    /// It holds the lock, and its tree is being laid out, by the command named when one runs.
+    Preparing(Option<u32>),
     /// It holds the lock, and its services are starting.
     Starting,
     Running(u32),
@@ -91,7 +93,7 @@ impl Stopper {
         let mut state = self.state();
         if !matches!(
             state.stage,
-            Stage::Queued | Stage::Starting | Stage::Running(_)
+            Stage::Queued | Stage::Preparing(_) | Stage::Starting | Stage::Running(_)
         ) {
             return;
         }
@@ -108,7 +110,9 @@ impl Stopper {
 
     fn abort(&self, state: &mut State, code: i32) -> ! {
         let work = match state.stage {
-            Stage::Peeking(work) | Stage::Running(work) => Some(work),
+            Stage::Peeking(work) | Stage::Running(work) | Stage::Preparing(Some(work)) => {
+                Some(work)
+            }
             _ => None,
         };
         let stopped: Vec<u32> = work.into_iter().chain(state.services.clone()).collect();
@@ -117,7 +121,11 @@ impl Stopper {
         }
         if matches!(
             state.stage,
-            Stage::Queued | Stage::Starting | Stage::Running(_) | Stage::Finishing
+            Stage::Queued
+                | Stage::Preparing(_)
+                | Stage::Starting
+                | Stage::Running(_)
+                | Stage::Finishing
         ) {
             self.dir.clear(self.call.pid);
             if !state.logged_end {

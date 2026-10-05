@@ -123,7 +123,7 @@ exit  call
 1| dibs: no such ref in app: no-such-ref
 2| dibs: preparing app@no-such-ref
 2| dibs: step 1/3 [Shared], with the setup ahead of it
-2| job <job>  shared  app_bench_stolen.1  queued <s>  ran <s>  exit 3  by=command
+2| job <job>  shared  app_bench_stolen.1  queued <s>  ran <s>  exit 3  by=dibs
 2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
 2| dibs: could not prepare app@no-such-ref (exit 3)
 
@@ -137,7 +137,7 @@ exit  call
 2| dibs: step 1/3 [Shared], with the setup ahead of it
 2| dibs: <root>/scratch/ws/app/<sha>
 2| job <job>  shared  app_bench_stolen.1  queued <s>  ran <s>  exit 0  by=command  built=nothing
-2|   log <host>:<root>/scratch/jobs/<job>/log  (6 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
 2|   built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary.
 2| dibs: step 2/3 [Shared]
 2| job <job>  shared  app_bench_stolen.2  queued <s>  ran <s>  exit 0  by=command

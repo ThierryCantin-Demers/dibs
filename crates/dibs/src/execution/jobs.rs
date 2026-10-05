@@ -1,15 +1,18 @@
 //! The jobs a recipe runs: locked calls made in this process, whose output is read here for the
-//! trailer and for what a setup reports ahead of its command.
+//! trailer and for the tree the machine lays out ahead of its command.
 
 use crate::{execution::RunError, recipe::Lock};
 use dibs::{
     call::{CallError, Destination, LockedCall, MachineCall, Origin, Output, RecipeJob, Sync},
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run, RunLock},
-    machine::{Interrupt, Stream},
+    machine::{Interrupt, Listener, Stream},
     placement::Placement,
 };
-use dibs_format::{Alias, JobId, Label, MachineName, StepRecord};
+use dibs_format::{
+    Alias, JobId, Label, MachineName, StepRecord,
+    wire::{Prepared, Tree},
+};
 use std::{io::Write as _, time::Instant};
 
 /// What a run record names the layer its jobs ran on.
@@ -27,6 +30,8 @@ pub struct JobRequest<'a> {
     pub max: Option<u64>,
     /// A measurement that starts its label's series on this machine again, on another card.
     pub new_series: bool,
+    /// The tree it runs in, laid out at its head when it is not yet.
+    pub tree: Option<Tree>,
 }
 
 pub struct JobOutcome {
@@ -36,10 +41,21 @@ pub struct JobOutcome {
     pub trailer: Option<Trailer>,
 }
 
-/// A job's outcome, and the `DIBS-` lines it reported, or its whole stdout when that was kept.
+/// A job's outcome, the `DIBS-` lines it reported, and the tree the machine laid out for it.
 pub struct Reported {
     pub outcome: JobOutcome,
     pub text: String,
+    pub prepared: Option<Prepared>,
+}
+
+impl JobRequest<'_> {
+    /// What the machine is told of the job besides its command.
+    fn recipe_job(&self) -> RecipeJob {
+        RecipeJob {
+            tree: self.tree.clone(),
+            ..self.job.clone()
+        }
+    }
 }
 
 impl JobOutcome {
@@ -90,58 +106,23 @@ impl Trailer {
     }
 }
 
-/// What a job's output is read for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reading {
-    /// Passed through, apart from the `DIBS-` lines a setup reports and the trailer.
-    Reported,
-    /// Stdout kept whole, stderr passed through.
-    Kept,
-}
-
 /// A job's output as it arrives: passed through, with what the recipe layer reads kept aside.
 struct Reader<'a> {
-    reading: Reading,
-    on_report: &'a mut dyn FnMut(&str),
+    on_prepared: &'a mut dyn FnMut(&Prepared),
     text: String,
-    told: bool,
+    prepared: Option<Prepared>,
     trailer: Option<Trailer>,
     start: Instant,
 }
 
 impl<'a> Reader<'a> {
-    fn new(reading: Reading, on_report: &'a mut dyn FnMut(&str)) -> Reader<'a> {
+    fn new(on_prepared: &'a mut dyn FnMut(&Prepared)) -> Reader<'a> {
         Reader {
-            reading,
-            on_report,
+            on_prepared,
             text: String::new(),
-            told: false,
+            prepared: None,
             trailer: None,
             start: Instant::now(),
-        }
-    }
-
-    fn line(&mut self, stream: Stream, line: &[u8]) {
-        if self.reading == Reading::Kept {
-            match stream {
-                Stream::Out => self.text.push_str(&String::from_utf8_lossy(line)),
-                Stream::Err => Reader::pass(stream, line),
-            }
-            return;
-        }
-        if stream == Stream::Err {
-            Trailer::read(String::from_utf8_lossy(line).trim_end(), &mut self.trailer);
-        }
-        if !line.starts_with(b"DIBS-") {
-            return Reader::pass(stream, line);
-        }
-        let text = String::from_utf8_lossy(line);
-        let text = text.trim_end();
-        self.text.push_str(text);
-        self.text.push('\n');
-        if !self.told && (text == "DIBS-READY" || text == "DIBS-HELD") {
-            self.told = true;
-            (self.on_report)(&self.text);
         }
     }
 
@@ -159,18 +140,35 @@ impl<'a> Reader<'a> {
     }
 
     fn reported(self, status: i32) -> Reported {
-        let trailer = match self.reading {
-            Reading::Reported => self.trailer,
-            Reading::Kept => None,
-        };
         Reported {
             outcome: JobOutcome {
                 status,
                 seconds: self.start.elapsed().as_secs(),
-                trailer,
+                trailer: self.trailer,
             },
             text: self.text,
+            prepared: self.prepared,
         }
+    }
+}
+
+impl Listener for Reader<'_> {
+    /// Passed through, apart from the trailer, read on the way, and the `DIBS-` lines a step's
+    /// wrapper reports, kept aside.
+    fn line(&mut self, stream: Stream, line: &[u8]) {
+        if stream == Stream::Err {
+            Trailer::read(String::from_utf8_lossy(line).trim_end(), &mut self.trailer);
+        }
+        if !line.starts_with(b"DIBS-") {
+            return Reader::pass(stream, line);
+        }
+        self.text.push_str(String::from_utf8_lossy(line).trim_end());
+        self.text.push('\n');
+    }
+
+    fn prepared(&mut self, prepared: &Prepared) {
+        (self.on_prepared)(prepared);
+        self.prepared = Some(prepared.clone());
     }
 }
 
@@ -236,26 +234,18 @@ impl Jobs {
     }
 
     pub fn run(&self, req: &JobRequest, command: &str) -> JobOutcome {
-        self.read(req, command, Reader::new(Reading::Reported, &mut |_| {}))
-            .outcome
+        self.read(req, command, Reader::new(&mut |_| {})).outcome
     }
 
-    /// Same, but the job's stdout comes back rather than going to the terminal. For setup steps
-    /// that have to report where they put things; a benchmark's output must keep streaming to
-    /// whoever asked for it.
-    pub fn run_capture(&self, req: &JobRequest, command: &str) -> Reported {
-        self.read(req, command, Reader::new(Reading::Kept, &mut |_| {}))
-    }
-
-    /// Output streams as `run`'s does, except the report of a setup run ahead of the command,
-    /// which is collected and handed to `on_report` before anything after it is shown.
+    /// Output streams as `run`'s does, and the tree the machine lays out at the job's head is
+    /// handed to `on_prepared` before anything after it is shown.
     pub fn run_reporting(
         &self,
         req: &JobRequest,
         command: &str,
-        on_report: &mut dyn FnMut(&str),
+        on_prepared: &mut dyn FnMut(&Prepared),
     ) -> Reported {
-        self.read(req, command, Reader::new(Reading::Reported, on_report))
+        self.read(req, command, Reader::new(on_prepared))
     }
 
     /// Whether the call would be refused on grounds decided here, without the machine: a machine
@@ -268,27 +258,24 @@ impl Jobs {
         Jobs::exit(self.locked(&call, req.job, &mut Output::Inherit)) == 0
     }
 
-    /// rsync between here and the machine, with `before` run there first under the same shared
-    /// lock, its report read as `run_reporting` reads one.
+    /// rsync between here and the machine, with the request's tree laid out there first under
+    /// the same shared lock, and handed to `on_prepared` as `run_reporting` hands one.
     pub fn sync(
         &self,
         req: &JobRequest,
         args: &[String],
-        before: &str,
-        on_report: &mut dyn FnMut(&str),
+        on_prepared: &mut dyn FnMut(&Prepared),
     ) -> Reported {
-        let mut reader = Reader::new(Reading::Reported, on_report);
+        let mut reader = Reader::new(on_prepared);
         let call = self.call(req, "");
+        let job = req.recipe_job();
         let exit = MachineCall::new(&call, &self.caller).and_then(|machine| {
             Sync {
                 machine: &machine,
                 args,
-                before,
-                origin: Origin::Recipe(req.job),
+                origin: Origin::Recipe(&job),
             }
-            .answer_into(&mut Output::Lines(&mut |stream, line| {
-                reader.line(stream, line)
-            }))
+            .answer_into(&mut Output::Listening(&mut reader))
         });
         reader.reported(Jobs::exit(exit))
     }
@@ -312,8 +299,8 @@ impl Jobs {
         let call = self.call(req, command);
         let exit = self.locked(
             &call,
-            req.job,
-            &mut Output::Lines(&mut |stream, line| reader.line(stream, line)),
+            &req.recipe_job(),
+            &mut Output::Listening(&mut reader),
         );
         reader.reported(Jobs::exit(exit))
     }
@@ -393,6 +380,7 @@ mod tests {
                 job: &job,
                 max: None,
                 new_series,
+                tree: None,
             };
             jobs.call(&req, "cmd").new_series
         };
