@@ -66,7 +66,8 @@
 1|   --pin <repo>@<ref>   build against that repo's tree instead of the revision the lockfile
 1|                names: @local sends your checkout of it, unpushed changes included, and a ref
 1|                is fetched. dibs points cargo at it with a [patch] outside the tree, checks
-1|                after the build that cargo used it, and records its revision. Repeatable
+1|                after the build that cargo used it, and records its revision. Repeatable, and
+1|                shell takes it too. <repo> may be a path, such as a worktree
 1|   --artifacts <dir>   copy the files the recipe's `artifacts` name into dir, at their paths
 1|                in the tree, under <arm>/r<rep>/ when there are several. They are fetched and
 1|                kept beside each job's log either way
