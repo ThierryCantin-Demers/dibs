@@ -1822,20 +1822,29 @@ const LABEL_DERIVED: &str = "derived so that every run of one piece of\n  work l
 
 /// A shell's own words are refused before its tree is looked for, so one try finds them all out.
 fn refuse_shell_words(args: &Args, repo: &str) -> Result<(), String> {
+    let mut wrong = Vec::new();
     if args.reason.is_none() {
-        return Err("shell needs --reason. Most of what gets run is neither a build nor a benchmark,\n             and knowing what those were is how the next recipe gets written.".into());
+        wrong.push("needs --reason <why>: most of what gets run is neither a build nor a benchmark,\n  and knowing what those were is how the next recipe gets written".to_string());
     }
-    if args.command.is_none() {
-        return Err("shell needs -- <command>".into());
+    match (&args.command, &args.recipe) {
+        (None, Some(word)) => wrong.push(format!("needs -- before its command: '{word}' after the repo would be a recipe's name")),
+        (None, None) => wrong.push("needs -- <command>".to_string()),
+        _ => {}
     }
     if args.params.contains_key("label") {
         let label = run_label(repo, "shell", None, args.device.as_deref());
-        return Err(format!(
-            "shell takes no --label: its durations are filed under {label}, {LABEL_DERIVED} A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so."
+        wrong.push(format!(
+            "takes no --label: its durations are filed under {label}, {LABEL_DERIVED} A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so"
         ));
     }
-    Ok(())
+    match wrong.as_slice() {
+        [] => Ok(()),
+        [one] => Err(format!("shell {one}.\n  usage: {SHELL_USAGE}")),
+        all => Err(format!("shell {}.\n  usage: {SHELL_USAGE}", all.join(";\n  and "))),
+    }
 }
+
+const SHELL_USAGE: &str = "dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>";
 
 fn resolve(args: &Args) -> Result<Resolved, String> {
     let found = resolve_repo(&args.repo, &args.root);
