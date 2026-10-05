@@ -30,7 +30,8 @@ for old in "$SCRATCH"/ws/*/*; do
     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
     echo "DIBS-GC $old" >&2
-    git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+    git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+        echo "dibs: could not remove all of $old; the next sweep tries again" >&2
 done
 for old in "$SCRATCH"/jobs/*; do
     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -47,8 +48,14 @@ for old in "$SCRATCH/target"/*; do
     fi
     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+    busy=0
+    for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+        flock -n -x "$lock" true || { busy=1; break; }
+    done
+    [ "$busy" = 0 ] || continue
     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-    rm -rf "$old"
+    # A sweep is someone else's housekeeping, and must never be why this tree did not arrive.
+    rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
 done
 "#;
 
@@ -1144,6 +1151,61 @@ mod tests {
         assert!(
             left.contains(&"demo".to_string()),
             "the one being used must survive"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_sweep_that_cannot_remove_a_target_still_prepares_the_tree() {
+        let (home, _, _) = sandbox("gc-stuck");
+        let stuck = home.join("scratch/target/stuck/sub");
+        std::fs::create_dir_all(&stuck).unwrap();
+        std::fs::write(stuck.join("f"), "").unwrap();
+        let bash = |cmd: String| {
+            std::process::Command::new("bash")
+                .arg("-c")
+                .arg(cmd)
+                .status()
+                .unwrap()
+        };
+        bash(format!(
+            "touch -d '400 days ago' {0}/../.dibs-used && chmod 500 {0}",
+            stuck.display()
+        ));
+        let left = targets(&home, "5", &setup_local_script("demo", "k", "c", None, &[]));
+        assert!(
+            left.contains(&"demo-local-k".to_string()),
+            "the tree is prepared: {left:?}"
+        );
+        bash(format!("chmod 700 {}", stuck.display()));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_sweep_leaves_a_target_a_build_holds() {
+        let (home, _, _) = sandbox("gc-held");
+        let held = home.join("scratch/target/held");
+        std::fs::create_dir_all(held.join("debug")).unwrap();
+        let lock = held.join("debug/.cargo-lock");
+        std::fs::write(&lock, "").unwrap();
+        std::process::Command::new("touch")
+            .arg("-d")
+            .arg("400 days ago")
+            .arg(held.join(".dibs-used"))
+            .status()
+            .unwrap();
+        let build = std::fs::File::open(&lock).unwrap();
+        build.lock_shared().unwrap();
+        let left = targets(&home, "5", &setup_local_script("demo", "k", "c", None, &[]));
+        assert!(
+            left.contains(&"held".to_string()),
+            "a target a build holds is not swept: {left:?}"
+        );
+        drop(build);
+        let left = targets(&home, "5", &setup_local_script("demo", "k", "c", None, &[]));
+        assert!(
+            !left.contains(&"held".to_string()),
+            "and goes once the build has: {left:?}"
         );
         let _ = std::fs::remove_dir_all(&home);
     }

@@ -58,7 +58,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -73,8 +74,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | git -C "$SRC" worktree prune
       | echo "DIBS-WT $WT"
@@ -293,7 +299,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -308,8 +315,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
@@ -603,7 +615,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -618,8 +631,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
@@ -747,7 +765,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -762,8 +781,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | git -C "$SRC" worktree prune
       | echo "DIBS-WT $WT"
@@ -867,7 +891,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -882,8 +907,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | git -C "$SRC" worktree prune
       | echo "DIBS-WT $WT"
@@ -983,7 +1013,8 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -998,8 +1029,13 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | git -C "$SRC" worktree prune
       | echo "DIBS-WT $WT"
@@ -1221,7 +1257,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -1236,8 +1273,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
@@ -1499,7 +1541,8 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -1514,8 +1557,13 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
@@ -1845,7 +1893,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -1860,8 +1909,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
@@ -2140,7 +2194,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -2155,8 +2210,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
@@ -2416,7 +2476,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -2431,8 +2492,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
@@ -2689,7 +2755,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -2704,8 +2771,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
@@ -2925,7 +2997,8 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -2940,8 +3013,13 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
@@ -3183,7 +3261,8 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     if [ ! -e "$old/.dibs-used" ]; then touch "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
       |     echo "DIBS-GC $old" >&2
-      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old"
+      |     git -C "$old" worktree remove --force "$old" 2>/dev/null || rm -rf "$old" 2>/dev/null ||
+      |         echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | for old in "$SCRATCH"/jobs/*; do
       |     [ -n "$(find "$old" -maxdepth 0 -mtime +"$KEEP" 2>/dev/null)" ] || continue
@@ -3198,8 +3277,13 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       |     fi
       |     if [ ! -e "$old/.dibs-used" ]; then echo swept > "$old/.dibs-used"; continue; fi
       |     [ -n "$(find "$old/.dibs-used" -maxdepth 0 -mtime +"$TKEEP" 2>/dev/null)" ] || continue
+      |     busy=0
+      |     for lock in $(find "$old" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      |         flock -n -x "$lock" true || { busy=1; break; }
+      |     done
+      |     [ "$busy" = 0 ] || continue
       |     echo "DIBS-GC $old ($(du -sh "$old" 2>/dev/null | cut -f1))" >&2
-      |     rm -rf "$old"
+      |     rm -rf "$old" 2>/dev/null || echo "dibs: could not remove all of $old; the next sweep tries again" >&2
       | done
       | echo "DIBS-WT $WT"
       | echo "DIBS-TARGET $TARGET"
