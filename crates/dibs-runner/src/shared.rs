@@ -57,11 +57,14 @@ impl SharedFile<'_> {
         }
         let mut name = self.path.as_os_str().to_owned();
         name.push(".lock");
-        OpenOptions::new()
+        let path = PathBuf::from(name);
+        let writable = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(false)
-            .open(PathBuf::from(name))
+            .open(&path);
+        // Another account made it without group write, and flock takes a file opened to read.
+        writable.or_else(|_| File::open(&path))
     }
 
     /// A name beside the file that no other writer, in this process or another, uses.
@@ -80,6 +83,7 @@ impl SharedFile<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
     fn a_rewrite_replaces_the_file_and_an_append_adds_to_it() {
@@ -101,6 +105,21 @@ mod tests {
             2,
             "the file and its lock, no temporary: {left:?}"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_lock_file_another_account_made_unwritable_still_locks() {
+        let dir = std::env::temp_dir().join(format!("dibs-shared-ro-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("log");
+        let lock = dir.join("log.lock");
+        fs::write(&lock, "").unwrap();
+        fs::set_permissions(&lock, fs::Permissions::from_mode(0o444)).unwrap();
+        let file = SharedFile { path: &path };
+        file.append("a").unwrap();
+        file.rewrite(|text| Some(format!("{text}b\n"))).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a\nb\n");
         let _ = fs::remove_dir_all(&dir);
     }
 }

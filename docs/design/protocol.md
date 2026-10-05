@@ -161,10 +161,11 @@ one of them.
   which stops its own tree; `--force` sends KILL to the whole tree, deepest first.
 - **History, log and job directories.** The same columns and files, so estimates and `dibs out`
   read across both. A runner appends to `history` and `log` holding `<file>.lock` shared, and
-  rewrites either only holding it exclusively, by rename: past 4000 lines `history` keeps each
-  label's newest 50 runs, and past 20000 `log` keeps its last 10000. A script appends with no
-  lock and still cuts `history` to its last 500 lines, which only shortens it.
+  rewrites either only holding it exclusively, by rename; a lock file another account made
+  without group write is opened to read, which `flock` takes as well. Past 4000 lines `history`
+  keeps each label's newest 50 runs, and past 20000 `log` keeps its last 10000. A script appends
+  with no lock and still cuts `history` to its last 500 lines, which only shortens it.
 - **What differs.** A runner's job is in its own process group, where a script's shared the
-  script's, and the group is swept when the job ends or its runner dies. A runner does not sweep old job directories as a job starts: that belongs to `--gc`.
-  A runner keeps the pids it would stop in memory, so it writes no `work.<pid>`, which only the
-  script that wrote one ever read.
+  script's, and the group is swept when the job ends or its runner dies. A runner does not sweep
+  old job directories as a job starts: that belongs to `--gc`. A runner keeps the pids it would
+  stop in memory, so it writes no `work.<pid>`, which only the script that wrote one ever read.
