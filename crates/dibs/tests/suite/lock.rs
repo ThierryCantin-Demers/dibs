@@ -207,6 +207,7 @@ fn a_quick_job_goes_around_a_queued_benchmark() {
     s.held(1);
     let b = s.spawn(s.dibs(["--bench", "--label", "blocked", &blocked.hold()]));
     s.queued(1);
+    s.gate_taken();
 
     fn patient(s: &Sandbox, label: &str, gate: &Gate, patience: &str) -> Call {
         s.dibs(["--label", label, &gate.hold()])

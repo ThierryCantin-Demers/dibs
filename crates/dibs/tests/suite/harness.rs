@@ -403,6 +403,16 @@ impl Sandbox {
         self.until_records(&format!("{n} waiter(s)"), || self.waiters() >= n);
     }
 
+    /// Waits for a queued benchmark to hold the gate, which it takes after writing its record.
+    pub fn gate_taken(&self) {
+        let gate = fs::File::open(self.lockdir().join("gate")).unwrap();
+        self.until_records("the queued benchmark to take the gate", || {
+            let free = gate.try_lock().is_ok();
+            let _ = gate.unlock();
+            !free
+        });
+    }
+
     pub fn gone(&self) {
         self.until_records("every holder to go", || self.holders() == 0);
     }

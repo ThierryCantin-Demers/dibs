@@ -2,7 +2,6 @@
 //! exclude the other through the lock files alone.
 
 use crate::harness::*;
-use std::fs::File;
 
 /// Which half of dibs takes the lock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,16 +99,6 @@ fn a_runners_shared_job_holds_off_a_payloads_benchmark() {
     excludes(Half::Runner, Half::Payload, false);
 }
 
-/// Waits for a queued benchmark to hold the gate, which it takes after writing its record.
-fn gate_taken(s: &Sandbox) {
-    let gate = File::open(s.lockdir().join("gate")).unwrap();
-    s.until_records("the queued benchmark to take the gate", || {
-        let free = gate.try_lock().is_ok();
-        let _ = gate.unlock();
-        !free
-    });
-}
-
 /// One half's benchmark queued behind a shared holder keeps the gate, so the other half's shared
 /// job waits behind it, though it could share the lock with the holder.
 fn a_queued_benchmark_keeps_the_gate(bench: Half, shared: Half) {
@@ -133,7 +122,7 @@ fn a_queued_benchmark_keeps_the_gate(bench: Half, shared: Half) {
     let measure = format!("{}; {}", measured.signal(), measuring.hold());
     let queued = start(&mut s, bench, true, "measure", &measure);
     s.queued(1);
-    gate_taken(&s);
+    s.gate_taken();
     let late = start(&mut s, shared, false, "late", &after.signal());
     s.queued(2);
     assert_eq!(
@@ -189,7 +178,7 @@ fn a_quick_job_goes_around(bench: Half, quick: Half) {
     s.held(1);
     let queued = start(&mut s, bench, true, "measure", &measuring.hold());
     s.queued(1);
-    gate_taken(&s);
+    s.gate_taken();
     let around_and_hold = format!("{}; {}", around.signal(), quick_hold.hold());
     let goes = call(&s, quick, false, "quickie", &around_and_hold)
         .env("DIBS_PATIENCE", "600")
