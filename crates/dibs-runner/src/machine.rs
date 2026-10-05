@@ -1,7 +1,7 @@
 use crate::settings::{home, var};
 use std::{
     ffi::CString,
-    fs, io,
+    fs,
     os::unix::ffi::OsStrExt as _,
     path::{Path, PathBuf},
 };
@@ -169,9 +169,4 @@ pub fn short_hostname() -> String {
     let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
     let full = String::from_utf8_lossy(&name[..end]).into_owned();
     full.split('.').next().unwrap_or_default().to_string()
-}
-
-/// Lines in a file, as `wc -l` counts them.
-pub fn line_count(path: &Path) -> io::Result<usize> {
-    Ok(fs::read(path)?.iter().filter(|b| **b == b'\n').count())
 }

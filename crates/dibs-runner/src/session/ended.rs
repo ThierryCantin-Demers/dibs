@@ -1,5 +1,5 @@
 use crate::{
-    job::{Digest, Repeat, built},
+    job::{Digest, LogRead, Repeat},
     machine::Machine,
     session::{base::Session, run::Hosted},
 };
@@ -15,7 +15,8 @@ pub(super) struct Ended<'a> {
     pub(super) machine: &'a Machine,
     pub(super) job: &'a JobId,
     pub(super) log: &'a PathBuf,
-    pub(super) lines: usize,
+    /// Read once, under the lock, for `meta` and the trailer.
+    pub(super) read: LogRead,
     pub(super) job_dir: &'a PathBuf,
     pub(super) hosted: &'a Hosted,
     pub(super) waited: u64,
@@ -36,7 +37,7 @@ impl Ended<'_> {
             exit: self.status,
             by: self.by,
             agent: call.agent.clone(),
-            lines: self.lines as u64,
+            lines: self.read.lines as u64,
         };
         let _ = fs::write(self.job_dir.join("meta"), meta.to_string());
     }
@@ -47,22 +48,21 @@ impl Ended<'_> {
         let session = self.session;
         let call = &session.call;
         let host = &self.machine.host;
-        let lines = self.lines;
-        let text = fs::read(self.log).unwrap_or_default();
+        let lines = self.read.lines;
         if !call.request.stream {
             session.sink.out(
                 &Digest {
-                    log: &text,
+                    path: self.log,
+                    lines,
                     head: session.settings.digest_head,
                     tail: session.settings.digest_tail,
                     host,
                     job: self.job,
-                    path: self.log,
                 }
                 .text(),
             );
         }
-        let built = built(&text);
+        let built = self.read.built;
         session.sink.record(Record::Trailer(Trailer {
             job: self.job.clone(),
             mode: call.mode(),
