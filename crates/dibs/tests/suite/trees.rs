@@ -152,6 +152,17 @@ fn the_scratch_seeds_reseeds_pins_and_fresh_paths_leave() {
         &["bench", &local, "gate"],
     );
     s.write("app-topk/Cargo.lock", &lock_with(12));
+    // A tree prepared minutes ago may be about to be entered, so only an older one is reseeded.
+    let topk_target = format!("scratch/target/app-local-{}", short_hash(&s.p("app-topk")));
+    s.command(
+        "touch",
+        [
+            "-d",
+            "1 hour ago",
+            &s.p(&format!("{topk_target}/.dibs-used")),
+        ],
+    )
+    .run();
     step(
         &mut t,
         "the second checkout, which has built far less of it, is reseeded",

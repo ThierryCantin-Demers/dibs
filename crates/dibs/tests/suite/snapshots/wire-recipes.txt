@@ -209,7 +209,12 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }
@@ -525,7 +530,12 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }
@@ -1167,7 +1177,12 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }
@@ -1451,7 +1466,12 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }
@@ -1803,7 +1823,12 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }
@@ -2104,7 +2129,12 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }
@@ -2386,7 +2416,12 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }
@@ -2665,7 +2700,12 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }
@@ -2899,7 +2939,12 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }
@@ -3171,7 +3216,12 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
       | own=
       | busy=0
-      | for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+      | [ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+      | for cwd in /proc/[0-9]*/cwd; do
+      |     [ "$busy" = 0 ] || break
+      |     case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+      | done
+      | [ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
       |     exec {fd}<"$lock"
       |     own="$own $fd"
       |     flock -n -x "$fd" || { busy=1; break; }

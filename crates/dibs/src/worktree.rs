@@ -138,13 +138,20 @@ done <<< "$ranked"
 /// An existing tree whose target has built clearly less of its lockfile than a sibling has, as
 /// every tree has once a dependency moves, takes that sibling's target and sources as a new tree
 /// would, and the sync after it rewrites what differs. Never while a build holds its target, and
-/// its own stay in place until the copy has landed.
+/// its own stay in place until the copy has landed. Moved aside, a tree is missing for a moment, so
+/// never one prepared minutes ago, which another call's job may be about to enter, nor one a
+/// process works in.
 const RESEED: &str = r#"mine=0
 [ -f "$TARGET/.dibs-packages" ] && mine=$(LC_ALL=C comm -12 "$DIBS_PKGS" "$TARGET/.dibs-packages" | wc -l)
 FLOOR=$(( mine + ($(wc -l < "$DIBS_PKGS") + 9) / 10 ))
 own=
 busy=0
-for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
+[ -n "$(find "$TARGET/.dibs-used" -maxdepth 0 -mmin -15 2>/dev/null)" ] && busy=1
+for cwd in /proc/[0-9]*/cwd; do
+    [ "$busy" = 0 ] || break
+    case $(readlink "$cwd" 2>/dev/null) in "$WT"|"$WT"/*|"$TARGET"|"$TARGET"/*) busy=1 ;; esac
+done
+[ "$busy" = 1 ] || for lock in $(find "$TARGET" -maxdepth 3 -name .cargo-lock 2>/dev/null); do
     exec {fd}<"$lock"
     own="$own $fd"
     flock -n -x "$fd" || { busy=1; break; }
@@ -2265,11 +2272,73 @@ mod local_tests {
         std::fs::write(t.join(format!("debug/deps/lib{key}.rlib")), "artifact\n").unwrap();
         std::fs::write(t.join("debug/.cargo-lock"), "").unwrap();
         std::fs::write(t.join(".dibs-used"), "").unwrap();
+        Command::new("touch")
+            .arg("-d")
+            .arg("1 hour ago")
+            .arg(t.join(".dibs-used"))
+            .status()
+            .unwrap();
         std::fs::write(t.join(".dibs-packages"), packages_of(lock)).unwrap();
         let ws = scratch.join(format!("ws/demo/local-{key}"));
         std::fs::create_dir_all(&ws).unwrap();
         std::fs::write(ws.join(file), "source\n").unwrap();
         t
+    }
+
+    #[test]
+    fn a_tree_prepared_moments_ago_or_worked_in_is_never_moved_aside() {
+        let scratch = tmp("reseed-busy");
+        tree(&scratch, "moved", LOCK_A, "theirs.rs");
+        let mine = tree(
+            &scratch,
+            "mine",
+            &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"),
+            "mine.rs",
+        );
+        std::fs::write(mine.join(".dibs-used"), "").unwrap();
+        let p = parse(&prepare_local_with(
+            &scratch,
+            "mine",
+            None,
+            "reflinks",
+            LOCK_A,
+            "t1",
+            &[],
+        ))
+        .unwrap();
+        assert_eq!(
+            p.reseeded, None,
+            "another call's job may be about to enter a tree prepared a moment ago"
+        );
+        Command::new("touch")
+            .arg("-d")
+            .arg("1 hour ago")
+            .arg(mine.join(".dibs-used"))
+            .status()
+            .unwrap();
+        let ws = scratch.join("ws/demo/local-mine");
+        let mut worker = Command::new("sh")
+            .arg("-c")
+            .arg("read -r _")
+            .current_dir(&ws)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let p = parse(&prepare_local_with(
+            &scratch,
+            "mine",
+            None,
+            "reflinks",
+            LOCK_A,
+            "t2",
+            &[],
+        ))
+        .unwrap();
+        let _ = worker.kill();
+        let _ = worker.wait();
+        assert_eq!(p.reseeded, None, "and a process working in it is using it");
+        assert!(ws.join("mine.rs").exists(), "so it keeps its own");
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
