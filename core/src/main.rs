@@ -2268,12 +2268,21 @@ mod tests {
     // tree and never a git database, so dibs's own send must not set it off.
     #[test]
     fn a_git_database_is_sent_without_its_mtimes() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("dibs-gitdb-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let fake = dir.join("dibs");
-        std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > {}/args\n", dir.display())).unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Written by another process: a fork from a parallel test would hold this one's write
+        // descriptor across the exec below, which then fails with ETXTBSY.
+        let script = format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > {}/args\n", dir.display());
+        let mut writer = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("cat > \"$0\" && chmod 755 \"$0\"")
+            .arg(&fake)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(&mut writer.stdin.take().unwrap(), script.as_bytes()).unwrap();
+        assert!(writer.wait().unwrap().success());
         let backend = Dibs { program: fake.display().to_string(), machine: None };
         sync_gitdb(&backend, &dir, "db").unwrap();
         let args = std::fs::read_to_string(dir.join("args")).unwrap();
