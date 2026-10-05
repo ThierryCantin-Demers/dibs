@@ -92,7 +92,8 @@ dibs batch <file|->                   a list of dibs command lines as one submis
   --pin <repo>@<ref>  build against that repo's tree instead of the revision the lockfile
             names: @local sends your checkout of it, unpushed changes included, and a ref
             is fetched. dibs points cargo at it with a [patch] outside the tree, checks
-            after the build that cargo used it, and records its revision. Repeatable
+            after the build that cargo used it, and records its revision. Repeatable, and
+            shell takes it too. <repo> may be a path, such as a worktree
   --artifacts <dir>  copy the files the recipe's `artifacts` name into dir, at their paths
             in the tree, under <arm>/r<rep>/ when there are several. They are fetched and
             kept beside each job's log either way
