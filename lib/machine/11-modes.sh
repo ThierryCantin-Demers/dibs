@@ -289,7 +289,7 @@ case "$MODE" in
             [ -e "$f" ] || continue
             [ "${f##*.}" = "$target" ] && found=$f
         done
-        [ -n "$found" ] || { echo "Nothing holding or queued with pid $target." >&2; show >&2; exit 1; }
+        [ -n "$found" ] || kill_leftover "$target" "$anyone"
         IFS=$'\t' read -r mode pid start label agent who dev cmd fp < "$found"
         if ! still_the_same "$pid" "$found"; then
             rm -f "$found"

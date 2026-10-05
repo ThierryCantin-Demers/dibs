@@ -58,8 +58,8 @@ if [ -n "$JOBLOG" ]; then
         done < <(find "$SCRATCH/jobs" -mindepth 1 -maxdepth 1 -type d -mmin -$(( window / 60 + 1 )) 2>/dev/null | sort)
         [ -n "$prev" ] && echo "  this exact command already failed here: job $prev. Unchanged, it failed the same way." >&2
     fi
-    printf 'mode\t%s\nlabel\t%s\nqueued\t%s\nran\t%s\nexit\t%s\nby\t%s\nagent\t%s\nlines\t%s\n' \
-        "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$AGENT" "$lines" > "$JOBDIR/meta"
+    printf 'mode\t%s\nlabel\t%s\nqueued\t%s\nran\t%s\nexit\t%s\nby\t%s\nagent\t%s\nlines\t%s\nwho\t%s\n' \
+        "$MODE" "$LABEL" "$WAITED" "$RUNTIME" "$STATUS" "$by" "$AGENT" "$lines" "$AGENT_ID" > "$JOBDIR/meta"
 fi
 if [ "$(wc -l < "$LOG" 2>/dev/null || echo 0)" -gt 20000 ]; then
     tail -10000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"

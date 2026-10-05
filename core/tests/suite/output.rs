@@ -198,6 +198,23 @@ fn an_overrun_takes_what_its_job_left_running_with_it() {
 }
 
 #[test]
+fn kill_stops_what_an_ended_job_left_running() {
+    let s = Sandbox::new();
+    let gate = s.gate("left");
+    let pidfile = s.p("left.pid");
+    let cmd = format!("bash -c 'trap \"\" TERM; echo $$ > {pidfile}; {}' > /dev/null 2>&1 &", gate.hold());
+    let out = s.dibs(["--max", "0", "--label", "leaves", &cmd]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    until("the leftover to start", || !s.read("left.pid").trim().is_empty());
+    let pid: u32 = s.read("left.pid").trim().parse().unwrap();
+    let out = s.dibs(["--kill", &pid.to_string(), "--anyone"]).run();
+    assert_eq!((out.code, out.stdout.lines_with("left running by job")), (0, 1), "{}", out.all());
+    until("the leftover to go", || !alive(pid));
+    let out = s.dibs(["--kill", &pid.to_string()]).run();
+    assert_eq!((out.code, out.stderr.lines_with("nothing was stopped")), (1, 1), "and a pid nothing owns says so: {}", out.all());
+}
+
+#[test]
 fn a_label_whose_history_runs_long_gets_a_cap_from_it() {
     // A suite that always runs past the default cap was killed as an overrun every time.
     let s = Sandbox::new();

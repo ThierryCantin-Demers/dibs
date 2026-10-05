@@ -176,6 +176,42 @@ sweep_group() {   # pgid
     kill -KILL -- -"$1" 2>/dev/null
 }
 
+# A process that outlived its job holds no lock, so no record names it; its environment still
+# names the job, and the job's meta whose it was. Exits either way.
+kill_leftover() {   # pid anyone
+    local job meta label who agent tree victim round
+    job=$(tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null | sed -n 's/^DIBS_JOB=//p')
+    meta=${DIBS_SCRATCH:-$HOME/.cache/dibs}/jobs/$job/meta
+    if [ -z "$job" ]; then
+        echo "dibs: nothing was stopped: pid $1 holds no lock here, waits for none, and no dibs job started it." >&2
+        show >&2; exit 1
+    fi
+    if [ ! -f "$meta" ]; then
+        echo "dibs: nothing was stopped: pid $1 belongs to job $job, which is still running. Stop the job:" >&2
+        echo "  dibs --kill <its pid in dibs status>" >&2
+        exit 1
+    fi
+    label=$(awk -F'\t' '$1=="label"{print $2}' "$meta")
+    agent=$(awk -F'\t' '$1=="agent"{print $2}' "$meta")
+    who=$(awk -F'\t' '$1=="who"{print $2}' "$meta")
+    if [ -z "$2" ] && { case "$who" in shell-*) true ;; *) [ -n "$who" ] && [ -n "$AGENT_ID" ] && [ "$who" != "$AGENT_ID" ] ;; esac; }; then
+        echo "dibs: pid $1 was left running by job $job ($label), which belonged to ${agent:-$who}." >&2
+        echo "  If you know it should stop:  dibs --kill $1 --anyone" >&2
+        exit 2
+    fi
+    tree="$1 $(tree_below "$1")"
+    for victim in $(printf '%s\n' $tree | tac); do kill -TERM "$victim" 2>/dev/null; done
+    for round in $(seq 20); do
+        kill -0 $tree 2>/dev/null || break
+        sleep 0.25
+    done
+    kill -KILL $tree 2>/dev/null
+    CMD_ONE="killed what job $job ($label) left running: pid $1"
+    log_event killed
+    echo "Stopped pid $1 and what it started, left running by job $job ($label) after the job had ended."
+    exit 0
+}
+
 # The lock is released the moment a job exits, and a grandchild still running then runs unlocked
 # beside the next measurement, so everything below goes first, then what was named: TERM, and
 # KILL ten seconds later for whatever ignores it.
