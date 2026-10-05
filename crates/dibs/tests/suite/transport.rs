@@ -277,3 +277,29 @@ fn a_runners_transfer_still_preparing_is_stopped_when_its_reader_goes() {
     s.log_line("caller-gone.*send-gone");
     s.gone();
 }
+
+#[test]
+fn a_runner_whose_caller_reads_nothing_lets_the_lock_go_and_ends_when_told() {
+    let mut s = Sandbox::new();
+    let never = s.gate("never");
+    // Its digest, forty lines of 4 KiB, is more than a pipe holds.
+    let flood = "for i in $(seq 1 50); do printf '%04096d\\n' 0; done";
+    s.write("request", &request_frame(Mode::Shared, "unread", flood));
+    let job = s.spawn(s.sh(&format!(
+        "dibs __runner serve {RUNNER_HASH} < {} | {}",
+        s.p("request"),
+        never.hold()
+    )));
+    let finished = |s: &Sandbox| capture(&s.log(), r"finished\t([0-9]+)\tshared\tunread\t");
+    until("the job to finish", || finished(&s).is_some());
+    until("the lock to go before the caller is told", || {
+        s.holders() == 0
+    });
+    let runner: u32 = finished(&s).unwrap().parse().unwrap();
+    assert!(alive(runner), "the runner still waits to be read");
+    // SAFETY: kill only signals the runner this test started.
+    unsafe { libc::kill(runner as i32, libc::SIGTERM) };
+    until("the runner to end, told to", || !alive(runner));
+    never.open();
+    s.wait(job);
+}

@@ -67,7 +67,9 @@ the signal once rsync has.
   finishes as for any other end.
 - `TERM`, `HUP` and `INT` to the runner stop the job's tree the same way and exit 143, 129 or 130.
   The runner handles them from before it writes its first record, so a signal at any moment either
-  stops a job that has started or prevents it from starting.
+  stops a job that has started or prevents it from starting. It sends the `exit` frame only if
+  that waits for nothing, so a caller that stopped reading cannot keep it from ending; and it
+  lets the lock go before it sends the digest and the trailer, which such a caller can hold up.
 - The job runs in a process group of its own, with stdin from `/dev/null`, and never inherits the
   lock descriptors or the channel, which are all opened close-on-exec. So does each `--with`
   server, which is stopped with the job, and with the runner however it ends.

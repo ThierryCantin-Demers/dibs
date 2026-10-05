@@ -118,8 +118,9 @@ impl Stopper {
                 Journal { path: &self.log }.write(&line);
             }
         }
-        self.sink.exit(code);
-        std::process::exit(code)
+        self.sink.exit_without_waiting(code);
+        // SAFETY: _exit ends the process without flushing a stdout another thread may hold.
+        unsafe { libc::_exit(code) }
     }
 }
 

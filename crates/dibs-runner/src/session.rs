@@ -523,7 +523,7 @@ impl Session {
             journal.write(&line);
             state.logged_end = true;
         }
-        if let Some(log) = &log {
+        let ended = log.as_ref().map(|log| {
             let by = match status {
                 124 if max > 0 => By::Dibs,
                 76 if cancelled => By::Dibs,
@@ -540,6 +540,7 @@ impl Session {
                 at,
                 job: &job,
                 log,
+                lines: line_count(log).unwrap_or_default(),
                 job_dir: &job_dir,
                 hosted: &hosted,
                 waited,
@@ -547,12 +548,11 @@ impl Session {
                 status,
                 by,
             }
-            .report();
+        });
+        if let Some(ended) = &ended {
+            ended.keep();
         }
         journal.trim(LOG_BOUND, LOG_KEPT);
-        if status == 124 {
-            self.overran(max);
-        }
         if status == 0
             && let Some(binding) = &binding
         {
@@ -572,6 +572,13 @@ impl Session {
         }
         at.dir.clear(pid);
         drop(lock);
+        // Told only once the lock is let go: a caller that stopped reading cannot hold it.
+        if let Some(ended) = &ended {
+            ended.report();
+        }
+        if status == 124 {
+            self.overran(max);
+        }
         status
     }
 
@@ -715,6 +722,7 @@ struct Ended<'a> {
     at: &'a Place<'a>,
     job: &'a JobId,
     log: &'a PathBuf,
+    lines: usize,
     job_dir: &'a PathBuf,
     hosted: &'a Hosted,
     waited: u64,
@@ -724,13 +732,29 @@ struct Ended<'a> {
 }
 
 impl Ended<'_> {
+    /// What `dibs out` reads back about the job, beside its log.
+    fn keep(&self) {
+        let call = &self.session.call;
+        let meta = JobMeta {
+            mode: call.mode(),
+            label: call.label().clone(),
+            queued: self.waited,
+            ran: self.ran,
+            exit: self.status,
+            by: self.by,
+            agent: call.agent.clone(),
+            lines: self.lines as u64,
+        };
+        let _ = fs::write(self.job_dir.join("meta"), meta.to_string());
+    }
+
     /// The digest, then the trailer and what follows it: the same shape every time, on stderr,
     /// where a pipe on the caller's side cannot cut it off.
     fn report(&self) {
         let session = self.session;
         let call = &session.call;
         let host = &self.at.machine.host;
-        let lines = line_count(self.log).unwrap_or_default();
+        let lines = self.lines;
         let text = fs::read(self.log).unwrap_or_default();
         if !call.request.stream {
             session.sink.out(
@@ -784,17 +808,6 @@ impl Ended<'_> {
             ));
         }
         session.sink.say(&after);
-        let meta = JobMeta {
-            mode: call.mode(),
-            label: call.label().clone(),
-            queued: self.waited,
-            ran: self.ran,
-            exit: self.status,
-            by: self.by,
-            agent: call.agent.clone(),
-            lines: lines as u64,
-        };
-        let _ = fs::write(self.job_dir.join("meta"), meta.to_string());
     }
 }
 

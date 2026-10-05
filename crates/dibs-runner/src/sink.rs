@@ -76,6 +76,25 @@ impl Sink {
         }
     }
 
+    /// The exit of a call being stopped, which ends however its caller is: never behind a relay
+    /// that holds stdout, nor behind a reader that stopped reading.
+    pub fn exit_without_waiting(&self, code: i32) {
+        if self.kind != Kind::Frames {
+            return;
+        }
+        let Ok(mut out) = self.out.try_lock() else {
+            return;
+        };
+        // SAFETY: fcntl sets a flag on this process's stdout, which it is about to leave.
+        unsafe {
+            let flags = libc::fcntl(libc::STDOUT_FILENO, libc::F_GETFL);
+            if flags >= 0 {
+                libc::fcntl(libc::STDOUT_FILENO, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            }
+        }
+        let _ = out.write_all(&Frame::Exit(code).encode());
+    }
+
     fn frame(&self, frame: Frame) -> bool {
         self.write(&frame.encode())
     }

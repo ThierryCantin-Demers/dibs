@@ -71,16 +71,28 @@ pub fn live_pid() -> u32 {
 
 /// What a client sends `dibs __runner serve` first: the call, unwatched, as a request frame.
 pub fn request_frame(mode: Mode, label: &str, command: &str) -> String {
-    frame_of(mode, label, command, true)
+    frame(request(mode, label, command))
 }
 
 /// The same, with the runner watching its stdin, whose end is the caller gone.
 pub fn watched_request_frame(mode: Mode, label: &str, command: &str) -> String {
-    frame_of(mode, label, command, false)
+    let request = request(mode, label, command);
+    frame(Request {
+        watch: Watch {
+            off: false,
+            ..request.watch
+        },
+        ..request
+    })
 }
 
-fn frame_of(mode: Mode, label: &str, command: &str, unwatched: bool) -> String {
-    let request = Request {
+pub fn frame(request: Request) -> String {
+    String::from_utf8(Frame::Request(Box::new(request)).encode()).unwrap()
+}
+
+/// A call as a client sends it, unwatched.
+pub fn request(mode: Mode, label: &str, command: &str) -> Request {
+    Request {
         mode,
         label: Label::new(label),
         command: command.into(),
@@ -97,7 +109,7 @@ fn frame_of(mode: Mode, label: &str, command: &str, unwatched: bool) -> String {
         agent_id: "local_suite".into(),
         batch: None,
         watch: Watch {
-            off: unwatched,
+            off: true,
             hold: false,
             lease: 0,
         },
@@ -105,8 +117,7 @@ fn frame_of(mode: Mode, label: &str, command: &str, unwatched: bool) -> String {
         services: Vec::new(),
         ready_within: 0,
         new_series: false,
-    };
-    String::from_utf8(Frame::Request(Box::new(request)).encode()).unwrap()
+    }
 }
 
 pub struct Sandbox {
