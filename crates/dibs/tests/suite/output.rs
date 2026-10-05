@@ -387,6 +387,20 @@ fn a_label_whose_history_runs_long_gets_a_cap_from_it() {
 }
 
 #[test]
+fn only_a_job_gets_a_cap_from_its_history() {
+    let s = Sandbox::new();
+    s.history("gc\tdibs-gc\t1500\tx\ngc\tdibs-gc\t1500\tx\ngc\tdibs-gc\t1500\tx\n");
+    let swept = s.dibs(["--gc", "--dry-run"]).run();
+    assert_eq!(swept.code, 0, "{}", swept.all());
+    assert_eq!(
+        swept.stderr.lines_with("may hold"),
+        0,
+        "a sweep keeps its mode's cap, however long its history: {}",
+        swept.stderr
+    );
+}
+
+#[test]
 fn the_cap_comes_from_the_same_procedure() {
     // One recipe on two backends is one label and two costs, and a cap taken from the cheap one
     // kills the dear one at 124. The recipe layer names the procedure it is about to run.

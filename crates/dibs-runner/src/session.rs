@@ -631,11 +631,13 @@ impl Session {
     }
 
     /// `--max`, raised to twice what 90% of this job's own runs took when nobody chose it, so work
-    /// that always runs long is not killed at its mode's default.
+    /// that always runs long is not killed at its mode's default. Only a shared job or a
+    /// benchmark: a transfer and a sweep keep their mode's cap.
     fn cap(&self, history: &History) -> u64 {
         let request = &self.call.request;
         let max = request.max;
-        if request.max_from != MaxFrom::Default || request.watch.hold || max == 0 {
+        let a_job = matches!(self.call.mode(), Mode::Shared | Mode::Bench);
+        if !a_job || request.max_from != MaxFrom::Default || request.watch.hold || max == 0 {
             return max;
         }
         let Some(estimate) = history.estimate(Key {
