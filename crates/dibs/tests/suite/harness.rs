@@ -190,6 +190,7 @@ impl Sandbox {
             ("DIBS_LOG", at("log")),
             ("DIBS_SERIES", at("series")),
             ("DIBS_SEEN", at("seen")),
+            ("DIBS_MACHINE_SETTINGS", at("etc/runner.toml")),
             ("DIBS_SCRATCH", at("scratch")),
             ("CLAUDE_CODE_HOST_SESSION_ID", "local_suite".into()),
         ] {

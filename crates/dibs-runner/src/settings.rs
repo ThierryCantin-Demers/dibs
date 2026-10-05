@@ -16,24 +16,31 @@ pub fn home() -> PathBuf {
     PathBuf::from(var("HOME").unwrap_or_else(|| "/".into()))
 }
 
-/// A machine setting by its variable's name: the machine's settings file, where `DIBS_PATIENCE`
-/// is `patience`, then the environment, which ssh forwards nothing to, so only a call on this
-/// computer sets it. Where the lock and the shared files are comes from the environment alone.
+/// A machine setting by its variable's name, where `DIBS_PATIENCE` is `patience` in a file: the
+/// account's settings file, then the machine's, then the environment, which ssh forwards nothing
+/// to, so only a call on this computer sets it. What every account must read alike comes from
+/// the machine's file alone, and where the lock and the shared files are from the environment.
 pub fn setting(name: &str) -> Option<String> {
-    let key = Key::of(name);
-    let file = match key.map(|key| key.setter) {
-        Some(Setter::File) => SettingsFile::once().get(name),
+    let files = SettingsFiles::once();
+    let from_files = match Key::of(name).map(|key| key.setter) {
+        Some(Setter::Machine) => files.machine.get(name),
+        Some(Setter::Account) => files.account.get(name).or_else(|| files.machine.get(name)),
         Some(Setter::Environment) | None => None,
     };
-    file.or_else(|| var(name))
+    from_files.or_else(|| var(name))
 }
 
-/// What the settings file names and may not set, each said on every call until it is gone.
-pub fn refused() -> &'static [Refused] {
-    &SettingsFile::once().refused
+/// What the settings files name and may not set, each said on every call until it is gone.
+pub fn refused() -> impl Iterator<Item = &'static Refused> {
+    SettingsFiles::once().both().flat_map(|file| &file.refused)
 }
 
-/// A name the settings file may hold, and who may set it.
+/// What the settings files name that nothing reads, which `dibs --check` lists.
+pub fn unknown() -> impl Iterator<Item = &'static Unknown> {
+    SettingsFiles::once().both().flat_map(|file| &file.unknown)
+}
+
+/// A name a settings file may hold, and who may set it.
 #[derive(Debug, Clone, Copy)]
 struct Key {
     name: &'static str,
@@ -42,50 +49,50 @@ struct Key {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Setter {
-    /// The settings file, then the environment.
-    File,
+    /// The machine's file, which every account reads alike, then the environment: one account's
+    /// `quick = 600` would send its jobs around everyone's benchmarks.
+    Machine,
+    /// The account's file, then the machine's, then the environment.
+    Account,
     /// The environment alone, which everything that takes the lock on the machine reads it from:
     /// a file that moved it would split who excludes whom.
     Environment,
 }
 
+/// Which file a settings file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Whose {
+    Machine,
+    Account,
+}
+
 impl Key {
     const ALL: [Key; 21] = [
-        Key::file("bypass"),
-        Key::file("quick"),
-        Key::file("patience"),
-        Key::file("machine_series"),
-        Key::file("peek_warn"),
-        Key::file("digest_head"),
-        Key::file("digest_tail"),
-        Key::file("repeat_window"),
-        Key::file("ports"),
-        Key::file("idle_after"),
-        Key::file("wrote_within"),
-        Key::file("keep_days"),
-        Key::file("target_keep_days"),
-        Key::file("seed_wait"),
-        Key::file("no_children"),
-        Key::environment("lock_dir"),
-        Key::environment("shared_lock_dir"),
-        Key::environment("shared_state_dir"),
-        Key::environment("history"),
-        Key::environment("log"),
-        Key::environment("scratch"),
+        Key::of_setter("bypass", Setter::Machine),
+        Key::of_setter("quick", Setter::Machine),
+        Key::of_setter("patience", Setter::Machine),
+        Key::of_setter("machine_series", Setter::Machine),
+        Key::of_setter("peek_warn", Setter::Account),
+        Key::of_setter("digest_head", Setter::Account),
+        Key::of_setter("digest_tail", Setter::Account),
+        Key::of_setter("repeat_window", Setter::Account),
+        Key::of_setter("ports", Setter::Account),
+        Key::of_setter("idle_after", Setter::Account),
+        Key::of_setter("wrote_within", Setter::Account),
+        Key::of_setter("keep_days", Setter::Account),
+        Key::of_setter("target_keep_days", Setter::Account),
+        Key::of_setter("seed_wait", Setter::Account),
+        Key::of_setter("no_children", Setter::Account),
+        Key::of_setter("lock_dir", Setter::Environment),
+        Key::of_setter("shared_lock_dir", Setter::Environment),
+        Key::of_setter("shared_state_dir", Setter::Environment),
+        Key::of_setter("history", Setter::Environment),
+        Key::of_setter("log", Setter::Environment),
+        Key::of_setter("scratch", Setter::Environment),
     ];
 
-    const fn file(name: &'static str) -> Key {
-        Key {
-            name,
-            setter: Setter::File,
-        }
-    }
-
-    const fn environment(name: &'static str) -> Key {
-        Key {
-            name,
-            setter: Setter::Environment,
-        }
+    const fn of_setter(name: &'static str, setter: Setter) -> Key {
+        Key { name, setter }
     }
 
     /// The key a variable or a file's name gives, as `DIBS_PATIENCE` and `patience` both do.
@@ -96,60 +103,124 @@ impl Key {
             .to_ascii_lowercase();
         Key::ALL.into_iter().find(|key| key.name == name)
     }
-}
 
-/// A key the settings file names and may not set, which is ignored.
-#[derive(Debug, Clone)]
-pub struct Refused {
-    file: PathBuf,
-    key: &'static str,
-}
-
-impl fmt::Display for Refused {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{} sets {}, which only the environment sets, since everything that takes the lock here reads it there. It is ignored.",
-            self.file.display(),
-            self.key
+    fn set_in(&self, whose: Whose) -> bool {
+        matches!(
+            (self.setter, whose),
+            (Setter::Machine, Whose::Machine) | (Setter::Account, _)
         )
     }
 }
 
-/// `~/.config/dibs/machine.toml` in the account the runner runs as: flat `name = value` lines.
+/// A key a settings file names and may not set, which is ignored.
+#[derive(Debug, Clone)]
+pub struct Refused {
+    file: PathBuf,
+    key: Key,
+}
+
+impl fmt::Display for Refused {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let (file, key) = (self.file.display(), self.key.name);
+        match self.key.setter {
+            Setter::Environment => write!(
+                f,
+                "{file} sets {key}, which only the environment sets, since everything that takes the lock here reads it there. It is ignored."
+            ),
+            Setter::Machine | Setter::Account => write!(
+                f,
+                "{file} sets {key}, which only {} sets, so that every account here reads the same. It is ignored.",
+                SettingsFiles::machine_path().display()
+            ),
+        }
+    }
+}
+
+/// A line of a settings file that sets nothing dibs reads: a misspelt key, or a table.
+#[derive(Debug, Clone)]
+pub struct Unknown {
+    file: PathBuf,
+    line: String,
+}
+
+impl fmt::Display for Unknown {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{} holds {:?}, which sets nothing dibs reads",
+            self.file.display(),
+            self.line
+        )
+    }
+}
+
+/// The machine's settings file and the account's.
+struct SettingsFiles {
+    machine: SettingsFile,
+    account: SettingsFile,
+}
+
+impl SettingsFiles {
+    fn once() -> &'static SettingsFiles {
+        static FILES: OnceLock<SettingsFiles> = OnceLock::new();
+        FILES.get_or_init(|| SettingsFiles {
+            machine: SettingsFile::load(&SettingsFiles::machine_path(), Whose::Machine),
+            account: SettingsFile::load(&SettingsFiles::account_path(), Whose::Account),
+        })
+    }
+
+    /// `/etc/dibs/runner.toml`, which only root writes and every account reads.
+    fn machine_path() -> PathBuf {
+        PathBuf::from(
+            var("DIBS_MACHINE_SETTINGS").unwrap_or_else(|| "/etc/dibs/runner.toml".into()),
+        )
+    }
+
+    /// `~/.config/dibs/runner.toml` in the account the runner runs as.
+    fn account_path() -> PathBuf {
+        var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home().join(".config"))
+            .join("dibs/runner.toml")
+    }
+
+    fn both(&'static self) -> impl Iterator<Item = &'static SettingsFile> {
+        [&self.machine, &self.account].into_iter()
+    }
+}
+
+/// One settings file: flat `name = value` lines, `#` comments, and what it may not set or names
+/// to no purpose.
 struct SettingsFile {
     values: HashMap<String, String>,
     refused: Vec<Refused>,
+    unknown: Vec<Unknown>,
 }
 
 impl SettingsFile {
-    fn once() -> &'static SettingsFile {
-        static FILE: OnceLock<SettingsFile> = OnceLock::new();
-        FILE.get_or_init(SettingsFile::load)
+    fn load(path: &Path, whose: Whose) -> SettingsFile {
+        let text = fs::read_to_string(path).unwrap_or_default();
+        SettingsFile::parse(path, &text, whose)
     }
 
-    fn load() -> SettingsFile {
-        let dir = var("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".config"));
-        let path = dir.join("dibs/machine.toml");
-        let text = fs::read_to_string(&path).unwrap_or_default();
-        SettingsFile::parse(&path, &text)
-    }
-
-    fn parse(path: &Path, text: &str) -> SettingsFile {
+    fn parse(path: &Path, text: &str, whose: Whose) -> SettingsFile {
         let mut file = SettingsFile {
             values: HashMap::new(),
             refused: Vec::new(),
+            unknown: Vec::new(),
         };
-        for line in text.lines() {
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             let Some((name, value)) = line.split_once('=') else {
+                file.unknown.push(Unknown {
+                    file: path.to_path_buf(),
+                    line: line.to_string(),
+                });
                 continue;
             };
             let name = name.trim();
-            if name.starts_with('#') || name.is_empty() {
-                continue;
-            }
             let value = value.trim();
             let value = match value.strip_prefix('"') {
                 Some(quoted) => quoted.split('"').next().unwrap_or_default().to_string(),
@@ -166,24 +237,25 @@ impl SettingsFile {
                 _ => value,
             };
             match Key::of(name) {
-                Some(key) if key.setter == Setter::Environment => file.refused.push(Refused {
-                    file: path.to_path_buf(),
-                    key: key.name,
-                }),
-                _ => {
-                    file.values.insert(name.to_string(), value);
+                Some(key) if key.set_in(whose) => {
+                    file.values.insert(key.name.to_string(), value);
                 }
+                Some(key) => file.refused.push(Refused {
+                    file: path.to_path_buf(),
+                    key,
+                }),
+                None => file.unknown.push(Unknown {
+                    file: path.to_path_buf(),
+                    line: line.to_string(),
+                }),
             }
         }
         file
     }
 
     fn get(&self, name: &str) -> Option<String> {
-        let key = name
-            .strip_prefix("DIBS_")
-            .unwrap_or(name)
-            .to_ascii_lowercase();
-        self.values.get(&key).filter(|v| !v.is_empty()).cloned()
+        let key = Key::of(name)?;
+        self.values.get(key.name).filter(|v| !v.is_empty()).cloned()
     }
 }
 
@@ -255,10 +327,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_file_names_a_setting_as_its_variable_without_the_prefix() {
+    fn a_file_names_a_setting_as_its_variable_without_the_prefix() {
         let file = SettingsFile::parse(
-            Path::new("machine.toml"),
+            Path::new("runner.toml"),
             "# a comment\npatience = 30  # seconds\nports = \"20000-20999\"\nbypass = false\n",
+            Whose::Machine,
         );
         assert_eq!(file.get("DIBS_PATIENCE").as_deref(), Some("30"));
         assert_eq!(file.get("DIBS_PORTS").as_deref(), Some("20000-20999"));
@@ -267,14 +340,41 @@ mod tests {
     }
 
     #[test]
-    fn the_file_cannot_move_the_lock_or_the_shared_files() {
+    fn no_file_can_move_the_lock_or_the_shared_files() {
+        for whose in [Whose::Machine, Whose::Account] {
+            let file = SettingsFile::parse(
+                Path::new("runner.toml"),
+                "lock_dir = /elsewhere\nscratch = /big\nhistory = /h\nkeep_days = 5\n",
+                whose,
+            );
+            let refused: Vec<&str> = file.refused.iter().map(|r| r.key.name).collect();
+            assert_eq!(refused, ["lock_dir", "scratch", "history"], "{whose:?}");
+            assert_eq!(file.get("DIBS_LOCK_DIR"), None);
+            assert_eq!(file.get("DIBS_KEEP_DAYS").as_deref(), Some("5"));
+        }
+    }
+
+    #[test]
+    fn what_every_account_must_read_alike_is_the_machines_file_alone() {
+        let text = "quick = 600\npatience = 9000\nbypass = true\nmachine_series = false\n";
+        let account = SettingsFile::parse(Path::new("runner.toml"), text, Whose::Account);
+        let refused: Vec<&str> = account.refused.iter().map(|r| r.key.name).collect();
+        assert_eq!(refused, ["quick", "patience", "bypass", "machine_series"]);
+        assert_eq!(account.get("DIBS_QUICK"), None);
+        let machine = SettingsFile::parse(Path::new("runner.toml"), text, Whose::Machine);
+        assert!(machine.refused.is_empty());
+        assert_eq!(machine.get("DIBS_QUICK").as_deref(), Some("600"));
+    }
+
+    #[test]
+    fn a_line_that_sets_nothing_is_kept_to_be_named() {
         let file = SettingsFile::parse(
-            Path::new("machine.toml"),
-            "lock_dir = /elsewhere\nscratch = /big\nhistory = /h\nquick = 5\n",
+            Path::new("runner.toml"),
+            "[runner]\nquik = 5\nkeep_days = 3\n",
+            Whose::Account,
         );
-        let refused: Vec<&str> = file.refused.iter().map(|r| r.key).collect();
-        assert_eq!(refused, ["lock_dir", "scratch", "history"]);
-        assert_eq!(file.get("DIBS_LOCK_DIR"), None);
-        assert_eq!(file.get("DIBS_QUICK").as_deref(), Some("5"));
+        let unknown: Vec<&str> = file.unknown.iter().map(|u| u.line.as_str()).collect();
+        assert_eq!(unknown, ["[runner]", "quik = 5"]);
+        assert_eq!(file.get("DIBS_KEEP_DAYS").as_deref(), Some("3"));
     }
 }

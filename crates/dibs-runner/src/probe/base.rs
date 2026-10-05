@@ -3,7 +3,7 @@ use crate::{
     machine::{Machine, Scope},
     platform::{Host, Platform as _},
     probe::Gpus,
-    settings::{home, refused},
+    settings::{home, refused, unknown},
     sink::Sink,
     stop::Signals,
 };
@@ -90,6 +90,9 @@ impl Probe<'_> {
             .ok("the CPU of reaped children is counted, so idle detection sees a job's whole tree");
         for refused in refused() {
             report.bad(&refused.to_string());
+        }
+        for unknown in unknown() {
+            report.warn(&unknown.to_string());
         }
         self.lock_dir(&mut report);
         self.scratch(&mut report);

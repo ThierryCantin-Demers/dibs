@@ -139,6 +139,22 @@ process ssh started for the call or the client on this computer. `TERM` and `HUP
   workspace locks. After a dependency changes, copy the workspace `Cargo.lock` into an unpacked
   tree and run `cargo metadata --offline` there, which drops what the runner does not use.
 
+## A machine's settings
+
+A runner reads its policy from two files of flat `name = value` lines, each name a variable's
+without `DIBS_`, then from its environment, then its defaults.
+
+- **`/etc/dibs/runner.toml`**, which only root writes and every account reads, alone sets what
+  every account must read alike: `bypass`, `quick`, `patience` and `machine_series`. One
+  account's `quick = 600` would otherwise send its jobs around everyone's benchmarks.
+  `DIBS_MACHINE_SETTINGS` names another file, for a test.
+- **`~/.config/dibs/runner.toml`** in the account a runner runs as sets the rest, over the same
+  names in the machine's file.
+- **Where the lock and the shared files are** (`lock_dir`, `shared_lock_dir`, `shared_state_dir`,
+  `history`, `log`, `scratch`) comes from the environment alone.
+- A key a file may not set is ignored, and named on every call and by `dibs --check`, which also
+  names every line that sets nothing a runner reads.
+
 ## What a runner and a bash payload share
 
 On switch day both run on one machine at once: a client that has updated sends requests to a
@@ -170,3 +186,5 @@ one of them.
   script's, and the group is swept when the job ends or its runner dies. A runner does not sweep
   old job directories as a job starts: that belongs to `--gc`. A runner keeps the pids it would
   stop in memory, so it writes no `work.<pid>`, which only the script that wrote one ever read.
+  A script reads `DIBS_PATIENCE` and `DIBS_QUICK` from its environment alone, so until every
+  client has switched, `/etc/dibs/runner.toml` leaves them at their defaults.

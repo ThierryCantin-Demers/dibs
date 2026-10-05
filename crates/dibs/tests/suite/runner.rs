@@ -545,10 +545,11 @@ fn a_machine_without_perl_gets_no_first_build_outside_the_lock() {
 }
 
 #[test]
-fn the_machines_settings_file_comes_before_its_environment() {
+fn the_accounts_settings_file_comes_before_the_machines_and_its_environment() {
     let s = Sandbox::new();
+    s.write("etc/runner.toml", "keep_days = 7\n");
     s.write(
-        "home/.config/dibs/machine.toml",
+        "home/.config/dibs/runner.toml",
         "# the sweep's clock\nkeep_days = 3\n",
     );
     let out = s
@@ -565,10 +566,47 @@ fn the_machines_settings_file_comes_before_its_environment() {
 }
 
 #[test]
+fn how_quick_a_job_must_be_to_go_around_is_the_machines_alone() {
+    let mut s = Sandbox::new();
+    s.write("etc/runner.toml", "quick = 5\n");
+    s.write(
+        "home/.config/dibs/runner.toml",
+        "quick = 600\n[runner]\nquik = 600\n",
+    );
+    s.history("shared\ttens\t10\nshared\ttens\t10\nshared\ttens\t10\n");
+    let (anchor, blocked, tens) = (s.gate("anchor"), s.gate("blocked"), s.gate("tens"));
+    let a = s.spawn(s.dibs(["--label", "anchor", &anchor.hold()]));
+    s.held(1);
+    let b = s.spawn(s.dibs(["--bench", "--label", "blocked", &blocked.hold()]));
+    s.queued(1);
+    let t = s.spawn(s.dibs(["--label", "tens", &tens.hold()]));
+    s.queued(2);
+    assert_eq!(
+        (s.holders(), s.waiters()),
+        (1, 2),
+        "a ten-second job waits, which this account's quick = 600 would have sent around"
+    );
+    let check = s.dibs(["--check"]).run();
+    for said in [
+        "sets quick, which only",
+        "holds \"[runner]\"",
+        "holds \"quik = 600\"",
+    ] {
+        assert_eq!(check.stdout.lines_with(said), 1, "{said}: {}", check.stdout);
+    }
+    anchor.open();
+    blocked.open();
+    tens.open();
+    for job in [a, b, t] {
+        assert_eq!(s.wait(job), 0);
+    }
+}
+
+#[test]
 fn the_settings_file_cannot_move_the_lock() {
     let s = Sandbox::new();
     s.write(
-        "home/.config/dibs/machine.toml",
+        "home/.config/dibs/runner.toml",
         &format!("lock_dir = \"{}\"\n", s.p("elsewhere")),
     );
     let out = s.dibs(["--label", "held", "echo ran"]).run();
