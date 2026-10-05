@@ -363,6 +363,26 @@ fn the_machines_settings_file_comes_before_its_environment() {
 }
 
 #[test]
+fn the_settings_file_cannot_move_the_lock() {
+    let s = Sandbox::new();
+    s.write(
+        "home/.config/dibs/machine.toml",
+        &format!("lock_dir = \"{}\"\n", s.p("elsewhere")),
+    );
+    let out = s.dibs(["--label", "held", "echo ran"]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert!(
+        !s.exists("elsewhere"),
+        "no lock was taken where the file says"
+    );
+    s.log_line("finished\t[0-9]+\tshared\theld\t");
+    let refused = "sets lock_dir, which only the environment sets";
+    assert_eq!(out.stderr.lines_with(refused), 1, "{}", out.stderr);
+    let check = s.dibs(["--check"]).run();
+    assert_eq!(check.stdout.lines_with(refused), 1, "{}", check.stdout);
+}
+
+#[test]
 fn a_machine_holding_series_refuses_another_card_whoever_runs_it() {
     let s = Sandbox::new();
     let cards = s.path("cards");

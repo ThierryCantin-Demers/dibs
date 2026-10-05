@@ -3,7 +3,7 @@ use crate::{
     machine::{Machine, Scope},
     platform::{Host, Platform as _},
     probe::Gpus,
-    settings::home,
+    settings::{home, refused},
     sink::Sink,
     stop::Signals,
 };
@@ -88,6 +88,9 @@ impl Probe<'_> {
         }
         report
             .ok("the CPU of reaped children is counted, so idle detection sees a job's whole tree");
+        for refused in refused() {
+            report.bad(&refused.to_string());
+        }
         self.lock_dir(&mut report);
         self.scratch(&mut report);
         let history = &machine.history;

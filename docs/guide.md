@@ -642,9 +642,14 @@ ports = "20000-29999"  # what --port picks from
 ```
 
 Also `bypass`, `idle_after`, `wrote_within`, `peek_warn`, `digest_head`, `digest_tail`,
-`repeat_window`, `scratch`, `lock_dir`, `shared_lock_dir`, `shared_state_dir`, `history`, `log`
-and `no_children`. The file comes first, then the variable, which only a call on this computer
-can set, then the default.
+`repeat_window`, `seed_wait` and `no_children`. The file comes first, then the variable, which
+only a call on this computer can set, then the default.
+
+Where the lock and the shared files are is not policy: `DIBS_LOCK_DIR`, `DIBS_SHARED_LOCK_DIR`,
+`DIBS_SHARED_STATE_DIR`, `DIBS_HISTORY`, `DIBS_LOG` and `DIBS_SCRATCH` come from the environment
+alone, which everything that takes the lock on the machine reads, so one account cannot split
+who excludes whom. A file that names one is told so on every call and by `dibs --check`, and
+ignored.
 
 `machine_series = true` has the machine hold each label's measurements to one card, whoever runs
 them, from the file `cards` beside its history; without it, each laptop holds only its own runs to

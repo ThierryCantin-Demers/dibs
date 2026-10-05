@@ -130,8 +130,8 @@ runner, one that has not still ships `lib/machine`. They meet only in files, and
 one of them.
 
 - **The lock.** The same directory, resolved in the same order (`DIBS_LOCK_DIR`, then
-  `/dev/shm/dibs-lock` when it can be written, then the runtime directory, then `/tmp`), and the
-  same two files. Both take them with `flock(2)`, which `flock(1)` uses: everyone passes through
+  `/dev/shm/dibs-lock` when it can be written, then the runtime directory, then `/tmp`) from the
+  environment alone, which a runner's settings file cannot change, and the same two files. Both take them with `flock(2)`, which `flock(1)` uses: everyone passes through
   `gate` exclusively, an exclusive caller keeps holding `gate` while it waits for `rw`, and the job
   holds `rw`, shared or exclusive. The contention test in the suite runs a bash job and a runner
   job against one directory, in both orders, the bash side being master's `lib/machine` as old

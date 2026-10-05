@@ -15,7 +15,7 @@ use crate::{
     probe::Probe,
     queue::Queue,
     series::Binding,
-    settings::Settings,
+    settings::{self, Settings},
     sink::Sink,
     status::Look,
     stop::{Signals, Stage, Stopper},
@@ -97,6 +97,11 @@ impl Session {
     /// Runs the call to its end; the caller's channel, where it has one, is watched while it is
     /// queued and runs.
     pub fn serve(&self, channel: Option<Channel>, signals: Signals) -> i32 {
+        if self.call.mode() != Mode::Check {
+            for refused in settings::refused() {
+                self.sink.say(&format!("dibs: {refused}\n"));
+            }
+        }
         let machine = match Machine::set_up() {
             Ok(machine) => machine,
             Err(unwritable) => {

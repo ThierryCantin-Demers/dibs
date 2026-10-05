@@ -1,4 +1,4 @@
-use crate::settings::{home, setting, var};
+use crate::settings::{home, var};
 use std::{
     ffi::CString,
     fs, io,
@@ -57,10 +57,9 @@ impl Machine {
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".local/state"))
             .join("dibs");
-        let shared_state = PathBuf::from(
-            setting("DIBS_SHARED_STATE_DIR").unwrap_or_else(|| "/var/lib/dibs".into()),
-        );
-        let (history, log) = match (setting("DIBS_HISTORY"), setting("DIBS_LOG")) {
+        let shared_state =
+            PathBuf::from(var("DIBS_SHARED_STATE_DIR").unwrap_or_else(|| "/var/lib/dibs".into()));
+        let (history, log) = match (var("DIBS_HISTORY"), var("DIBS_LOG")) {
             (None, None) if writable_dir(&shared_state) => {
                 (shared_state.join("history"), shared_state.join("log"))
             }
@@ -74,7 +73,7 @@ impl Machine {
                 let _ = fs::create_dir_all(dir);
             }
         }
-        let scratch = setting("DIBS_SCRATCH")
+        let scratch = var("DIBS_SCRATCH")
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".cache/dibs"));
         let _ = fs::create_dir_all(scratch.join("tmp"));
@@ -110,16 +109,14 @@ impl LockPlace {
     /// The first of `DIBS_LOCK_DIR`, the shared directory when it can be written, the runtime
     /// directory, then `/tmp`.
     fn shared() -> PathBuf {
-        PathBuf::from(
-            setting("DIBS_SHARED_LOCK_DIR").unwrap_or_else(|| "/dev/shm/dibs-lock".into()),
-        )
+        PathBuf::from(var("DIBS_SHARED_LOCK_DIR").unwrap_or_else(|| "/dev/shm/dibs-lock".into()))
     }
 
     fn find() -> LockPlace {
         let shared = LockPlace::shared();
         // SAFETY: getuid cannot fail.
         let uid = unsafe { libc::getuid() };
-        let (dir, scope) = match setting("DIBS_LOCK_DIR") {
+        let (dir, scope) = match var("DIBS_LOCK_DIR") {
             Some(dir) => (PathBuf::from(dir), Scope::Explicit),
             None if writable_dir(&shared) => (shared, Scope::Shared),
             None => (
