@@ -345,8 +345,15 @@ pub fn wait(repo: &str) -> Result<Vec<String>, String> {
         if short >= SHORT_LIVES {
             return Err(format!("gh webhook forward keeps stopping as soon as it starts:\n{}", said.trim()));
         }
-        eprintln!("dibs: gh webhook forward stopped, so it is started again. It said: {}", said.trim().lines().last().unwrap_or("nothing"));
+        eprintln!("dibs: gh webhook forward stopped, so it is started again. It said: {}", stop_reason(&said));
     }
+}
+
+/// gh prints its usage after an error, so the last line it wrote is a flag's description.
+fn stop_reason(said: &str) -> &str {
+    let mut lines = said.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = lines.clone().next().unwrap_or("nothing");
+    lines.find(|l| l.to_ascii_lowercase().starts_with("error")).unwrap_or(first)
 }
 
 pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, String> {
@@ -361,6 +368,14 @@ pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stopped_forwarder_is_reported_by_its_error_not_its_usage() {
+        let said = "Error: websocket closed\nUsage:\n  forward --events=<types>\n  -U, --url string   Address of the local server\n";
+        assert_eq!(stop_reason(said), "Error: websocket closed");
+        assert_eq!(stop_reason("\n  connection reset\n"), "connection reset");
+        assert_eq!(stop_reason(""), "nothing");
+    }
 
     fn keys() -> Keys {
         Keys { path: PathBuf::new(), set: BTreeSet::new(), fresh: false }
