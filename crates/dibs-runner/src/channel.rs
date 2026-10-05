@@ -1,4 +1,8 @@
-use crate::{job::Held, stop::Stopper};
+use crate::{
+    job::Held,
+    platform::{Host, Platform as _},
+    stop::Stopper,
+};
 use dibs_format::wire::{Frame, FrameError, Request, Unframer};
 use std::{
     fmt,
@@ -107,19 +111,11 @@ impl Channel {
         unsafe { libc::poll(&mut fd, 1, millis) > 0 }
     }
 
-    /// A transfer's stdin is rsync's, which reads none of it while it prepares a tree, so its
-    /// caller is watched through stdout instead: whoever reads it, sshd or the client, closing it
-    /// is the caller gone.
+    /// A transfer's stdin is rsync's, which reads none of it while it prepares a tree, and a
+    /// build's is its tree, so their caller is watched another way.
     pub fn hangup(stopper: Arc<Stopper>) {
         thread::spawn(move || {
-            let mut fd = libc::pollfd {
-                fd: libc::STDOUT_FILENO,
-                events: 0,
-                revents: 0,
-            };
-            let gone = libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
-            // SAFETY: one pollfd, owned here; with no events asked for, only a hangup wakes it.
-            while unsafe { libc::poll(&mut fd, 1, -1) } < 1 || fd.revents & gone == 0 {}
+            Host::await_caller_gone();
             stopper.caller_gone(&Gone::Ended.to_string());
         });
     }

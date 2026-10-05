@@ -9,6 +9,10 @@ pub struct Process {
 
 /// What a PCI slot holds now.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "only Linux reads a slot")
+)]
 pub enum Slot {
     /// This machine cannot say.
     Unreadable,
@@ -90,6 +94,10 @@ pub trait Platform {
     /// A battery means a laptop, which throttles, shares memory between CPU and GPU, and moves.
     fn on_battery() -> bool;
 
+    /// Returns once this process's caller has gone, for a call whose stdin carries something
+    /// else: whoever reads its stdout closing it, or its parent, ssh's or the client's, exiting.
+    fn await_caller_gone();
+
     /// The process and everything under it, parents before children, asked downward where the
     /// system can, so a look at a holder reads its own tree and not the whole process table.
     fn tree(root: u32) -> Vec<u32> {
@@ -113,6 +121,7 @@ pub trait Platform {
 }
 
 /// `[[dd-]hh:]mm:ss`, as ps prints a process's elapsed time.
+#[cfg(target_os = "linux")]
 pub fn elapsed(seconds: u64) -> String {
     let (days, hours) = (seconds / 86400, seconds % 86400 / 3600);
     let clock = format!("{:02}:{:02}", seconds % 3600 / 60, seconds % 60);

@@ -376,6 +376,18 @@ impl Platform for Linux {
             .any(|e| e.file_name().to_string_lossy().starts_with("BAT"))
     }
 
+    /// A pipe's write end polled for nothing wakes only with an error once its reader has gone.
+    fn await_caller_gone() {
+        let mut fd = libc::pollfd {
+            fd: libc::STDOUT_FILENO,
+            events: 0,
+            revents: 0,
+        };
+        let gone = libc::POLLERR | libc::POLLHUP | libc::POLLNVAL;
+        // SAFETY: one pollfd, owned here; with no events asked for, only a hangup wakes it.
+        while unsafe { libc::poll(&mut fd, 1, -1) } < 1 || fd.revents & gone == 0 {}
+    }
+
     fn extents(file: &Path) -> Option<Vec<Extent>> {
         let opened = fs::File::open(file).ok()?;
         let mut extents = Vec::new();

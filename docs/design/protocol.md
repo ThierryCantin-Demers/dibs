@@ -53,8 +53,9 @@ it: its messages go to stderr as text, and its exit is the call's. The client ca
 stdin and stdout across only once that record has arrived, so a runner that has to be built
 first loses none of rsync's stream. The job's stdin is the runner's, and since rsync reads none
 of it while it prepares a tree, the runner watches its stdout instead: whoever reads it closing
-it is the caller gone. `TERM` and `HUP` to `dibs --sync` are passed to rsync, and dibs ends of
-the signal once rsync has.
+it is the caller gone. macOS cannot tell that by polling, so there its parent exiting is, the
+process ssh started for the call or the client on this computer. `TERM` and `HUP` to
+`dibs --sync` are passed to rsync, and dibs ends of the signal once rsync has.
 
 ### Liveness
 

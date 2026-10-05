@@ -41,20 +41,53 @@ struct VnodeWithPath {
     vnode: libc::vnode_info_path,
 }
 
-fn bsd_info(pid: u32) -> Option<libc::proc_bsdinfo> {
-    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
-    // SAFETY: proc_bsdinfo is plain data, and proc_pidinfo writes at most `size` bytes into it.
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let read = unsafe {
-        libc::proc_pidinfo(
+/// Bytes enough for a `struct kinfo_proc`, 648 on both architectures.
+const KINFO_PROC_ROOM: usize = 1024;
+
+impl MacOs {
+    /// What any account may read of any process, a zombie included. `PROC_PIDTBSDINFO` reads
+    /// only this account's, which would take another account's live job for one gone.
+    fn short_info(pid: u32) -> Option<libc::proc_bsdshortinfo> {
+        let size = std::mem::size_of::<libc::proc_bsdshortinfo>() as libc::c_int;
+        // SAFETY: proc_bsdshortinfo is plain data, and proc_pidinfo writes at most `size` bytes.
+        let mut info: libc::proc_bsdshortinfo = unsafe { std::mem::zeroed() };
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDT_SHORTBSDINFO,
+                0,
+                (&mut info as *mut libc::proc_bsdshortinfo).cast(),
+                size,
+            )
+        };
+        (read == size).then_some(info)
+    }
+
+    /// When it started, which the short info leaves out: `sysctl(KERN_PROC_PID)` answers any
+    /// account, and its `kinfo_proc` begins with `p_starttime`, whose seconds are an `i64`.
+    fn start_time(pid: u32) -> Option<u64> {
+        let mut name = [
+            libc::CTL_KERN,
+            libc::KERN_PROC,
+            libc::KERN_PROC_PID,
             pid as libc::c_int,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&mut info as *mut libc::proc_bsdinfo).cast(),
-            size,
-        )
-    };
-    (read == size).then_some(info)
+        ];
+        let mut answer = [0u8; KINFO_PROC_ROOM];
+        let mut length = answer.len();
+        // SAFETY: sysctl writes at most `length` bytes into the buffer, and says how many.
+        let failed = unsafe {
+            libc::sysctl(
+                name.as_mut_ptr(),
+                name.len() as libc::c_uint,
+                answer.as_mut_ptr().cast(),
+                &mut length,
+                std::ptr::null_mut(),
+                0,
+            )
+        } != 0;
+        let seconds = answer.get(..8).filter(|_| !failed && length >= 16)?;
+        u64::try_from(i64::from_ne_bytes(seconds.try_into().ok()?)).ok()
+    }
 }
 
 /// What a tool printed, empty when it could not run.
@@ -70,19 +103,19 @@ fn output_of(program: &str, args: &[&str]) -> String {
 
 impl Platform for MacOs {
     fn exists(pid: u32) -> bool {
-        bsd_info(pid).is_some()
+        MacOs::short_info(pid).is_some()
     }
 
     fn running(pid: u32) -> bool {
-        bsd_info(pid).is_some_and(|i| i.pbi_status != libc::SZOMB)
+        MacOs::short_info(pid).is_some_and(|i| i.pbsi_status != libc::SZOMB)
     }
 
     fn started_at(pid: u32) -> Option<u64> {
-        bsd_info(pid).map(|i| i.pbi_start_tvsec)
+        MacOs::start_time(pid)
     }
 
     fn group_of(pid: u32) -> Option<u32> {
-        bsd_info(pid).map(|i| i.pbi_pgid)
+        MacOs::short_info(pid).map(|i| i.pbsi_pgid)
     }
 
     fn processes() -> Vec<Process> {
@@ -101,7 +134,7 @@ impl Platform for MacOs {
                 let pid = u32::try_from(pid).ok()?;
                 Some(Process {
                     pid,
-                    parent: bsd_info(pid)?.pbi_ppid,
+                    parent: MacOs::short_info(pid)?.pbsi_ppid,
                 })
             })
             .collect()
@@ -284,6 +317,38 @@ impl Platform for MacOs {
 
     fn on_battery() -> bool {
         output_of("pmset", &["-g", "batt"]).contains("InternalBattery")
+    }
+
+    /// A pipe polled for nothing never wakes here, so the parent's exit is what is waited on: the
+    /// process ssh started for the call, or the client on this computer.
+    fn await_caller_gone() {
+        // SAFETY: getppid cannot fail.
+        let parent = unsafe { libc::getppid() };
+        if parent <= 1 {
+            return;
+        }
+        // SAFETY: one kqueue, watching one pid for its exit; a parent already gone comes back
+        // as an event flagged EV_ERROR, which is as much an answer.
+        unsafe {
+            let queue = libc::kqueue();
+            if queue < 0 {
+                return;
+            }
+            let change = libc::kevent {
+                ident: parent as usize,
+                filter: libc::EVFILT_PROC,
+                flags: libc::EV_ADD | libc::EV_ONESHOT,
+                fflags: libc::NOTE_EXIT,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            };
+            let mut event = change;
+            while libc::kevent(queue, &change, 1, &mut event, 1, std::ptr::null()) < 0
+                && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+            {
+            }
+            libc::close(queue);
+        }
     }
 
     /// Asked of ps, which costs a process; only Linux ever finds an orphan to describe.

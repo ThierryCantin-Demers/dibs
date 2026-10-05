@@ -296,6 +296,7 @@ pub fn output_of(program: &str, args: &[&str]) -> Option<String> {
 }
 
 /// Whether a program is on `PATH`.
+#[cfg(target_os = "linux")]
 pub fn on_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| {
         std::env::split_paths(&path).any(|dir| {

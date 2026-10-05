@@ -36,6 +36,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST }}
+          components: clippy
+      # The lint job runs on Linux, so code behind cfg(target_os = "macos") is linted only here.
+      - name: Lints on macOS
+        if: runner.os == 'macOS'
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: The tools dibs runs on Linux
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y rsync psmisc

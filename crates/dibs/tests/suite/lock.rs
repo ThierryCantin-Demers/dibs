@@ -481,6 +481,8 @@ fn a_lock_directory_it_cannot_write_is_refused_rather_than_run_around() {
 
 /// Holds the lock the way the remains of a session that has gone would: from a session of its
 /// own, since held from here it would share a process group with every `--status` asked.
+/// Only Linux says which process holds an flock, so only there is an orphan found.
+#[cfg(target_os = "linux")]
 fn orphan(s: &mut Sandbox, mode: &str, up: &Gate, release: &Gate) -> Job {
     let script =
         format!("exec 8>\"$1/rw\"; flock {mode} 8; printf 'up\\n' > \"$2\"; read -r _ < \"$3\"");
@@ -497,6 +499,7 @@ fn orphan(s: &mut Sandbox, mode: &str, up: &Gate, release: &Gate) -> Job {
     s.spawn(call)
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn an_orphaned_lock_names_what_holds_it() {
     let mut s = Sandbox::new();
@@ -537,6 +540,7 @@ fn an_orphaned_lock_names_what_holds_it() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn an_orphaned_lock_is_reclaimed_not_only_named() {
     let mut s = Sandbox::new();
