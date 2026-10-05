@@ -46,8 +46,8 @@ impl Runner {
     /// The line the login shell there runs, which fish, bash and dash read alike.
     fn far_line() -> String {
         format!(
-            "sh -c 'r=$HOME/.cache/dibs/runner/{}/dibs-runner; [ -x \"$r\" ] || exit {MISSING}; exec \"$r\" serve'",
-            Runner::HASH
+            "sh -c 'r=$HOME/.cache/dibs/runner/{hash}/dibs-runner; [ -x \"$r\" ] || exit {MISSING}; exec \"$r\" serve {hash}'",
+            hash = Runner::HASH
         )
     }
 
@@ -63,7 +63,7 @@ impl Runner {
             }
             false => Command::new(&exe),
         };
-        command.args([RUNNER_WORD, "serve"]);
+        command.args([RUNNER_WORD, "serve", Runner::HASH]);
         command
     }
 }

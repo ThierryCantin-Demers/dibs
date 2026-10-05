@@ -74,7 +74,7 @@ record();
 rename("$l/waiting.$$", "$l/holder.$$");
 fcntl($r, F_SETFD, 0);
 exec("sh", "-c", q{exec 3<&-; l=$1 d=$2 s=$2/.src.$$
-rm -rf "$s" && mkdir -p "$s" && cd "$s" && tar -xzf - && PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$d/.target sh install.sh "$3"
+rm -rf "$s" && mkdir -p "$s" && cd "$s" && tar -xmzf - && PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$d/.target sh install.sh "$3"
 e=$?
 cd / && rm -rf "$s"
 rm -f "$l/holder.$$"
@@ -153,7 +153,7 @@ impl Provision<'_> {
     fn newest_line() -> String {
         let hash = Runner::HASH;
         format!(
-            "sh -c 'd=$HOME/.cache/dibs/runner; [ -x \"$d/{hash}/dibs-runner\" ] && exit 0; r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || exit {MISSING}; exec \"$r\" build {hash}'"
+            "sh -c 'd=$HOME/.cache/dibs/runner; [ \"$(\"$d/{hash}/dibs-runner\" hash 2>/dev/null)\" = {hash} ] && exit 0; r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || exit {MISSING}; exec \"$r\" build {hash}'"
         )
     }
 

@@ -9,14 +9,14 @@ on the machine. The types are in `crates/dibs-format`.
 The client starts the runner and talks to it over the runner's stdin and stdout.
 
 - **On this computer** (`DIBS_LOCAL=1`, or the machine is this one): the client runs its own binary
-  as `dibs __runner serve`. The client links the runner, so the two are always the same source and
-  nothing is installed. It is a child process rather than a function call, because the runner's pid
-  is what the lock records name and what `dibs --kill` signals, and one client can make several
-  calls at once.
+  as `dibs __runner serve <hash>`. The client links the runner, so the two are always the same
+  source and nothing is installed. It is a child process rather than a function call, because the
+  runner's pid is what the lock records name and what `dibs --kill` signals, and one client can
+  make several calls at once.
 - **Over ssh:** the client asks the login shell there, whichever it is, to run
 
   ```
-  sh -c 'r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve'
+  sh -c 'r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve <hash>'
   ```
 
   fish, bash and dash all read that line the same way. Nothing is written on the machine to run a
@@ -83,6 +83,11 @@ the signal once rsync has.
 - A client only ever runs the runner at its own hash. There is no version field and no
   negotiation: the frames can change in any commit, because no runner ever reads a frame from a
   client built from other source.
+- A runner knows its own hash: `install.sh` gives it to cargo as `DIBS_RUNNER_HASH`, which
+  `dibs-format` compiles in, so a new hash rebuilds every crate of the tree whatever its files'
+  times say. `dibs-runner hash` prints it. `serve <hash>` for a hash not its own says so on stderr
+  and exits 125 before it reads a byte, so the client takes it for missing and has its own built
+  over it. A runner a client links knows the client's hash.
 - The one interface every runner keeps is `dibs-runner build <hash>`: the tree as a gzipped tar on
   stdin, text on stdout and stderr, exit 0 once `<hash>` is installed.
 
@@ -91,12 +96,15 @@ the signal once rsync has.
 - **A version missing on a machine** shows as exit 125 with no frame. The client then runs the
   newest runner already there (`ls -t`) as `build <hash>`, fed the tree. That runner takes the
   shared lock as an ordinary job, labelled `dibs-runner`, which unpacks the tree in
-  `~/.cache/dibs/runner/.src.<hash>.<pid>` and runs the tree's own `install.sh`:
-  `cargo build --locked --release` into `~/.cache/dibs/runner/.target`, which every version
-  shares, then a rename into `~/.cache/dibs/runner/<hash>/dibs-runner`. The client shows the
-  build on stderr and then makes its call again, once.
+  `~/.cache/dibs/runner/.src.<hash>.<pid>` with the time of unpacking on every file (the tree is
+  packed with none, and cargo judges freshness by those times) and runs the tree's own
+  `install.sh`: `cargo build --locked --release` into `~/.cache/dibs/runner/.target`, which every
+  version shares, then, once the binary cargo made names `<hash>`, a rename into
+  `~/.cache/dibs/runner/<hash>/dibs-runner`. The client shows the build on stderr and then makes
+  its call again, once.
 - **Two clients building one version** both build; the rename makes the last one win, with the
-  same bytes. A build that finds its version already installed when it gets the lock stops there.
+  same bytes. A build that finds a runner naming its hash already installed when it gets the lock
+  stops there.
 - **A machine with no runner at all** refuses the call with exit 72, naming `dibs --check`.
 - **`dibs --check <machine>`** installs the first runner: it streams the tree into a shell line that
   runs the same `install.sh`. No runner exists yet to take the lock, so perl takes it: its `flock`

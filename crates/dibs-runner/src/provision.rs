@@ -12,6 +12,51 @@ use std::{
 /// How long a build of the runner may hold the shared lock.
 const BUILD_MAX: u64 = 1800;
 const HASH_DIGITS: usize = 16;
+/// What the far shell exits with for a missing runner, so the client builds its own over this one.
+const NOT_THIS_SOURCE: i32 = 125;
+
+/// The runner source this was built from, by the hash that names it: empty for a runner built by
+/// hand, which then serves no call.
+#[derive(Debug, Clone, Copy)]
+pub struct Source<'a> {
+    pub hash: &'a str,
+}
+
+impl Source<'_> {
+    pub fn serves(&self, asked: &str) -> bool {
+        !self.hash.is_empty() && self.hash == asked
+    }
+
+    /// Refuses before reading a byte of the request, which a client of other source wrote.
+    pub fn refuse(&self, asked: &str) -> i32 {
+        eprintln!(
+            "dibs-runner: this is the runner of {}, not of {asked}, so it serves no call for {asked}.",
+            self.described()
+        );
+        NOT_THIS_SOURCE
+    }
+
+    /// `dibs-runner hash`, which a build checks before it installs what cargo made.
+    pub fn name(&self) -> i32 {
+        match self.hash.is_empty() {
+            true => {
+                eprintln!("dibs-runner: {}", self.described());
+                1
+            }
+            false => {
+                println!("{}", self.hash);
+                0
+            }
+        }
+    }
+
+    fn described(&self) -> &str {
+        match self.hash.is_empty() {
+            true => "no source, since install.sh did not build it",
+            false => self.hash,
+        }
+    }
+}
 
 /// `dibs-runner build <hash>`: the tree on stdin, built under the shared lock as an ordinary job
 /// and installed where a call for that hash looks. The one interface every runner keeps, so the
@@ -40,8 +85,8 @@ pub fn build(hash: &str) -> i32 {
         return 70;
     }
     let command = format!(
-        "[ -x {installed} ] && {{ echo 'dibs-runner {hash} is installed already.'; exit 0; }}\n\
-         cd {source} && tar -xzf {archive} && CARGO_TARGET_DIR={target} sh install.sh {hash}",
+        "[ \"$({installed} hash 2>/dev/null)\" = {hash} ] && {{ echo 'dibs-runner {hash} is installed already.'; exit 0; }}\n\
+         cd {source} && tar -xmzf {archive} && CARGO_TARGET_DIR={target} sh install.sh {hash}",
         installed = quoted(&runners.join(hash).join("dibs-runner")),
         source = quoted(&source),
         archive = quoted(&archive),
@@ -82,4 +127,22 @@ pub fn build(hash: &str) -> i32 {
 /// A path as one word for the shell.
 fn quoted(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_runner_serves_calls_for_its_own_source_alone() {
+        let built = Source {
+            hash: "0123456789abcdef",
+        };
+        assert!(built.serves("0123456789abcdef"));
+        assert!(!built.serves("fedcba9876543210"));
+        assert!(
+            !Source { hash: "" }.serves(""),
+            "nor does one built by hand"
+        );
+    }
 }

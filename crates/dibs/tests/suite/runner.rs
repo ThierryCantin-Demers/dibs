@@ -1,7 +1,7 @@
 //! The runner's own tree, which machines build: it has to agree with the workspace it comes from.
 
 use crate::harness::*;
-use std::{collections::BTreeSet, fs};
+use std::{collections::BTreeSet, fs, time::Duration};
 
 fn toml(rel: &str) -> toml::Table {
     let path = repo_root().join(rel);
@@ -158,6 +158,91 @@ fn a_machine_with_no_runner_refuses_the_call_and_says_how_to_install_one() {
         0,
         "and nothing reached the lock"
     );
+}
+
+/// The source of a runner left under this build's hash by a cargo that copied a stale binary.
+const OTHER_SOURCE: &str = "0000000000000000";
+
+/// A runner of other source: it names that source, and serves no call for this one.
+fn stale_runner() -> String {
+    format!(
+        "#!/bin/sh\ncase $1 in\nhash) echo {OTHER_SOURCE} ;;\n\
+         serve) echo \"dibs-runner: this is the runner of {OTHER_SOURCE}, not of $2.\" >&2; exit 125 ;;\n\
+         *) exec '{DIBS}' __runner \"$@\" ;;\nesac\n"
+    )
+}
+
+#[test]
+fn a_runner_of_other_source_under_this_hash_is_built_over() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, false);
+    s.write_exec(&format!("home/{}", runner_path()), &stale_runner());
+    let out = s.remote(s.dibs(["--label", "after", "echo ran"])).run();
+    assert_eq!(
+        (out.code, out.stdout.lines_with("ran")),
+        (0, 1),
+        "{}",
+        out.all()
+    );
+    let named = s
+        .command(&s.p(&format!("home/{}", runner_path())), ["hash"])
+        .run();
+    assert_eq!(named.stdout.trim_end(), RUNNER_HASH, "{}", out.all());
+}
+
+#[test]
+fn a_build_that_makes_a_runner_of_other_source_installs_nothing() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, true);
+    s.write_exec("prebuilt", &stale_runner());
+    let out = s.remote(s.dibs(["--label", "never", "echo ran"])).run();
+    assert_eq!(out.code, 72, "{}", out.all());
+    assert_eq!(
+        out.stderr
+            .lines_with(&format!("runner of {OTHER_SOURCE} where")),
+        1,
+        "{}",
+        out.stderr
+    );
+    assert!(!installed(&s));
+}
+
+/// The tree this build carries, as it goes to a machine.
+const SOURCE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runner-source.tar.gz"));
+
+#[test]
+#[ignore = "builds the runner twice with the real cargo, which CI's runner-build job does"]
+fn a_second_source_is_built_into_the_target_the_first_left() {
+    let mut s = Sandbox::new();
+    s.real_cargo();
+    fs::remove_file(s.path(&format!("home/{}", runner_path()))).unwrap();
+    fs::write(s.path("first.tar.gz"), SOURCE).unwrap();
+    let repacked = s
+        .sh("mkdir second && tar -xzf first.tar.gz -C second \
+             && echo '// a second source' >> second/crates/dibs-format/src/lib.rs \
+             && TZ=UTC find second -exec touch -t 197001010000 {} + \
+             && tar -czf second.tar.gz -C second .")
+        .run();
+    assert_eq!(repacked.code, 0, "{}", repacked.all());
+    let second = format!("{:016x}", u64::from_str_radix(RUNNER_HASH, 16).unwrap() ^ 1);
+    for (hash, tree) in [
+        (RUNNER_HASH, "first.tar.gz"),
+        (second.as_str(), "second.tar.gz"),
+    ] {
+        let built = s
+            .sh(&format!("dibs __runner build {hash} < {tree}"))
+            .within(Duration::from_secs(1800))
+            .run();
+        assert_eq!(built.code, 0, "{}", built.all());
+        let runner = s.p(&format!("home/.cache/dibs/runner/{hash}/dibs-runner"));
+        let named = s.command(&runner, ["hash"]).run();
+        assert_eq!(
+            named.stdout.trim_end(),
+            hash,
+            "what is installed for {hash} was built from it: {}",
+            built.all()
+        );
+    }
 }
 
 #[test]

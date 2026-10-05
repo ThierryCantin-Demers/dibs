@@ -1617,20 +1617,9 @@ fn a_recipes_artifacts_come_back_by_themselves() {
 #[test]
 fn a_pin_builds_against_another_trees_unpushed_changes() {
     // With a real cargo: what is checked is that cargo reads the patch dibs puts above the tree.
-    // The toolchain's own cargo, ahead of any wrapper on PATH, since a wrapper that gates builds
-    // expects the real home and session and hangs under the sandbox's.
     let mut s = Sandbox::new();
     let app = app(&s);
-    let real_home = std::env::var("HOME").unwrap();
-    if s.var("RUSTUP_HOME").is_empty() {
-        s.set("RUSTUP_HOME", format!("{real_home}/.rustup"));
-    }
-    let toolchain = format!("{real_home}/.cargo/bin");
-    if std::path::Path::new(&format!("{toolchain}/cargo")).exists() {
-        let path = s.var("PATH");
-        let (ours, rest) = path.split_once(':').unwrap();
-        s.set("PATH", format!("{ours}:{toolchain}:{rest}"));
-    }
+    s.real_cargo();
     s.git(".", &["init", "-q", "--bare", "lib.git"]);
     s.git(".", &["clone", "-q", "lib.git", "lib"]);
     s.git("lib", &["checkout", "-q", "-b", "main"]);

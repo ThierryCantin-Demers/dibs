@@ -48,12 +48,12 @@ pub fn now() -> u64 {
         .as_secs()
 }
 
+/// The hash of the runner source this build carries, which names the runner it calls.
+pub const RUNNER_HASH: &str = env!("DIBS_RUNNER_HASH");
+
 /// Where a machine keeps the runner for this build, under its home.
 pub fn runner_path() -> String {
-    format!(
-        ".cache/dibs/runner/{}/dibs-runner",
-        env!("DIBS_RUNNER_HASH")
-    )
+    format!(".cache/dibs/runner/{RUNNER_HASH}/dibs-runner")
 }
 
 /// The runner this build links, as a machine would have built it: the binary serves it.
@@ -196,6 +196,21 @@ impl Sandbox {
             root,
             env,
             children: Vec::new(),
+        }
+    }
+
+    /// The toolchain's own cargo, ahead of any wrapper on PATH, since a wrapper that gates builds
+    /// expects the real home and session and hangs under the sandbox's.
+    pub fn real_cargo(&mut self) {
+        let real_home = std::env::var("HOME").unwrap();
+        if self.var("RUSTUP_HOME").is_empty() {
+            self.set("RUSTUP_HOME", format!("{real_home}/.rustup"));
+        }
+        let toolchain = format!("{real_home}/.cargo/bin");
+        if Path::new(&format!("{toolchain}/cargo")).exists() {
+            let path = self.var("PATH");
+            let (ours, rest) = path.split_once(':').unwrap();
+            self.set("PATH", format!("{ours}:{toolchain}:{rest}"));
         }
     }
 

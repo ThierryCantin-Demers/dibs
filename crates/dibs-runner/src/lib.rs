@@ -1,6 +1,7 @@
 //! The machine half of dibs: it takes the lock and runs the job. A client reaches it as
-//! `dibs-runner serve` over ssh, or links it and runs it as `dibs __runner serve`, and builds the
-//! next version through `dibs-runner build <hash>`; `docs/design/protocol.md` says how.
+//! `dibs-runner serve <hash>` over ssh, or links it and runs it as `dibs __runner serve <hash>`,
+//! and builds the next version through `dibs-runner build <hash>`; `docs/design/protocol.md` says
+//! how.
 
 mod call;
 mod channel;
@@ -25,16 +26,24 @@ mod status;
 mod stop;
 mod views;
 
+pub use provision::Source;
+
 /// What `dibs-runner` does with its arguments, and the exit it gives.
-pub fn main(args: &[String]) -> i32 {
+pub fn main(args: &[String], source: Source) -> i32 {
     match args {
-        [verb] if verb == "serve" => session::serve(),
+        [verb, asked] if verb == "serve" => match source.serves(asked) {
+            true => session::serve(),
+            false => source.refuse(asked),
+        },
+        [verb] if verb == "hash" => source.name(),
         [verb, hash] if verb == "build" => provision::build(hash),
         [verb, days, dry] if verb == "gc" => {
             gc::Asked::parse(&format!("{days} {dry}")).sweep().run()
         }
         _ => {
-            eprintln!("usage: dibs-runner serve | build <hash> | gc <days|default> <0|1>");
+            eprintln!(
+                "usage: dibs-runner serve <hash> | hash | build <hash> | gc <days|default> <0|1>"
+            );
             2
         }
     }

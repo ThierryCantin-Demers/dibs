@@ -225,7 +225,7 @@ fn a_caller_that_goes_away_takes_the_whole_job_with_it() {
         &format!("sh {}\necho mid-done\n", s.p("grand.sh")),
     );
     let cmd = format!("bash {}; echo after", s.p("mid.sh"));
-    let (job, mut channel) = s.spawn_fed(s.dibs(["__runner", "serve"]));
+    let (job, mut channel) = s.spawn_fed(s.dibs(["__runner", "serve", RUNNER_HASH]));
     std::io::Write::write_all(
         &mut channel,
         watched_request_frame(Mode::Shared, "gone-caller", &cmd).as_bytes(),
@@ -248,7 +248,7 @@ fn a_runners_transfer_carries_rsyncs_stream_untouched_once_it_says_so() {
     let s = Sandbox::new();
     let request = request_frame(Mode::Rsh, "sync", "cat");
     let out = s
-        .dibs(["__runner", "serve"])
+        .dibs(["__runner", "serve", RUNNER_HASH])
         .stdin(&format!("{request}rsync's own bytes\n"))
         .run();
     assert_eq!(out.code, 0, "{}", out.all());
@@ -266,7 +266,7 @@ fn a_runners_transfer_still_preparing_is_stopped_when_its_reader_goes() {
     let command = format!("{}; {}", up.signal(), never.hold());
     s.write("request", &request_frame(Mode::Rsh, "send-gone", &command));
     let job = s.spawn(s.sh(&format!(
-        "dibs __runner serve < {} | {{ head -c 1 >/dev/null; {}; }}",
+        "dibs __runner serve {RUNNER_HASH} < {} | {{ head -c 1 >/dev/null; {}; }}",
         s.p("request"),
         go.hold()
     )));

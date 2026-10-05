@@ -17,10 +17,11 @@ use dibs::{
     call::{Dispatch, Guard, MachineCall, Rsh},
     caller::Caller,
     cli::{Call, Help, Invocation, Mode, RecipeCall, RecipeVerb},
-    machine::RUNNER_WORD,
+    machine::{RUNNER_WORD, Runner},
     paths::Paths,
     update::{Build, ChangeNotice},
 };
+use dibs_runner::Source;
 use execution::RunError;
 use records::{friction, runs};
 use std::{path::Path, process::ExitCode};
@@ -46,7 +47,9 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         }
         [flag] if flag == "--version" => return Ok(version()),
         [word, rest @ ..] if word == RUNNER_WORD => {
-            return Ok(ExitCode::from(dibs_runner::main(rest).rem_euclid(256) as u8));
+            return Ok(ExitCode::from(
+                dibs_runner::main(rest, Source { hash: Runner::HASH }).rem_euclid(256) as u8,
+            ));
         }
         [word, rest @ ..] if word == Rsh::WORD => {
             return Ok(ExitCode::from(Rsh::serve(rest).rem_euclid(256) as u8));
