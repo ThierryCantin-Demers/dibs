@@ -204,6 +204,18 @@ fn the_trailer_counts_what_cargo_compiled() {
         1,
         "in words"
     );
+    let checked = s
+        .dibs([
+            "--label",
+            "j5c",
+            &format!("echo '    Checking a v1'; {finished}"),
+        ])
+        .run();
+    assert_eq!(
+        checked.stderr.lines_with("built=1"),
+        1,
+        "a check or clippy counts the crates it checked"
+    );
     let other = s
         .dibs(["--label", "j5b", "echo '    Finished the sweep'"])
         .run();

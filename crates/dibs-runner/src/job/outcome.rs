@@ -62,7 +62,11 @@ pub fn built(log: &[u8]) -> Option<Built> {
     if !finished {
         return None;
     }
-    let compiled = text.lines().filter(|l| starting(l, "Compiling ")).count() as u64;
+    // check and clippy print Checking for each crate they look at, and compile none.
+    let compiled = text
+        .lines()
+        .filter(|l| starting(l, "Compiling ") || starting(l, "Checking "))
+        .count() as u64;
     Some(match compiled {
         0 => Built::Nothing,
         n => Built::Crates(n),
