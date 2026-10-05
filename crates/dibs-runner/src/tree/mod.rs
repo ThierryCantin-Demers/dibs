@@ -3,10 +3,13 @@
 
 mod base;
 mod builds;
+mod clocks;
 mod copy;
+mod gc;
 mod git;
 mod glob;
 mod packages;
+mod runners;
 mod seed;
 mod step;
 mod sweep;
@@ -15,5 +18,6 @@ mod tests;
 
 pub use base::Trees;
 pub use copy::{Copier, Reflinks};
+pub use gc::{Asked, human};
 pub use git::Commands;
 pub use step::Stepping;

@@ -307,7 +307,11 @@ repo would otherwise fail the build after it had queued. Files are only added, n
 Worktrees and target directories are both collected, by every prepare, local or fetched, across
 every repo on the machine. A worktree goes after `DIBS_KEEP_DAYS` (14) unused. A target directory
 goes after `DIBS_TARGET_KEEP_DAYS` (5): disk is what runs out first on a machine, and a
-compilation cache makes refilling one cheap.
+compilation cache makes refilling one cheap, except while a build holds it. The same sweep, with
+the same clocks, is what `dibs --gc` runs. It also collects the runners built on the machine: a
+version a later one replaced and that nobody has installed for `DIBS_KEEP_DAYS`, since a client
+that has not updated builds its own again, what a build that died left, and the target their
+builds share once unused for `DIBS_TARGET_KEEP_DAYS`; never while a build of one runs.
 
 ## What is filling the machine
 

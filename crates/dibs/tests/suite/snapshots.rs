@@ -1050,7 +1050,16 @@ fn scratch_to_sweep(s: &Sandbox) -> String {
 fn gc() {
     let s = Sandbox::new();
     let g = scratch_to_sweep(&s);
+    // A runner a later one replaced long ago, and what a build that died left.
+    let old = "home/.cache/dibs/runner/0000000000000000/dibs-runner";
+    s.write_exec(old, "#!/bin/sh\n");
+    s.command("touch", ["-d", "400 days ago", &s.p(old)]).run();
+    s.write(
+        "home/.cache/dibs/runner/.src.0000000000000000.42/Cargo.toml",
+        "",
+    );
     let n = Normal::of(&s)
+        .literal(env!("DIBS_RUNNER_HASH"), "<hash>")
         .clocked()
         .rule(r"\b[0-9]+(\.[0-9])?[KMG]\b", "<size>")
         .rule(

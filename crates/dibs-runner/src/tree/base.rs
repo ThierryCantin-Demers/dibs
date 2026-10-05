@@ -2,16 +2,18 @@ use crate::{
     platform::{Host, Platform as _},
     tree::{
         builds::Builds,
+        clocks::Clocks,
         copy::{Copier, empty, touch},
         git::{Commands, answer, said},
         packages::{Cache, Lines},
+        runners::Runners,
         seed::Seed,
         sweep::Sweep,
     },
 };
 use dibs_format::{
     Exit,
-    wire::{GitDb, GitDbs, Nest, Prepare, Prepared, Revision, Seeded, Source},
+    wire::{GitDb, GitDbs, Nest, Prepare, Prepared, Revision, SOURCE_HASH, Seeded, Source},
 };
 use std::{
     fs, io,
@@ -431,10 +433,16 @@ impl Trees<'_> {
     fn sweep(&self, worktree: &Path, target: &Path) {
         Sweep {
             scratch: self.scratch,
-            keep_days: self.keep_days,
-            target_keep_days: self.target_keep_days,
+            clocks: Clocks {
+                keep_days: self.keep_days,
+                target_keep_days: self.target_keep_days,
+            },
             worktree,
             target,
+            runners: &Runners {
+                dir: self.home.join(".cache/dibs/runner"),
+                own: SOURCE_HASH.map(str::to_string),
+            },
             commands: &self.commands,
             say: self.say,
         }

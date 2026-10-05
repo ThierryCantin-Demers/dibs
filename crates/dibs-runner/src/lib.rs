@@ -6,7 +6,6 @@
 mod call;
 mod channel;
 mod clock;
-mod gc;
 mod history;
 mod itself;
 mod job;
@@ -41,7 +40,7 @@ pub fn main(args: &[String], source: Source) -> i32 {
         [verb] if verb == job::Tether::WORD => job::Tether::serve(),
         [verb, hash] if verb == "build" => provision::build(hash),
         [verb, days, dry] if verb == "gc" => {
-            gc::Asked::parse(&format!("{days} {dry}")).sweep().run()
+            tree::Asked::parse(&format!("{days} {dry}")).sweep().run()
         }
         _ => {
             eprintln!(

@@ -1,4 +1,4 @@
-use crate::{clock::Moment, gc, shared::SharedFile};
+use crate::{clock::Moment, shared::SharedFile, tree};
 use dibs_format::{BatchId, Event, JobId, Label, LockRecord, LogLine, Mode, wire::Request};
 use std::path::Path;
 
@@ -41,7 +41,7 @@ impl Call {
         }
         let mut work = request.command.clone();
         if request.mode == Mode::Gc {
-            let asked = gc::Asked::parse(&request.command);
+            let asked = tree::Asked::parse(&request.command);
             command = asked.named();
             work = asked.command();
         }

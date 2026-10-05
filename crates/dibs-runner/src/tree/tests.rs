@@ -798,3 +798,45 @@ fn a_build_that_still_takes_a_pinned_crate_from_git_is_said() {
             .contains("  cubecl from git+https://example.invalid/cubecl?rev=a#a\n")
     );
 }
+
+#[test]
+fn a_sweep_collects_replaced_runners_and_dead_builds_but_never_beside_a_build() {
+    let m = Machine::new();
+    let runners = m.p("home/.cache/dibs/runner");
+    for hash in ["0000000000000000", "1111111111111111", "2222222222222222"] {
+        fs::create_dir_all(runners.join(hash)).unwrap();
+        fs::write(runners.join(hash).join("dibs-runner"), "").unwrap();
+    }
+    aged(&runners.join("0000000000000000/dibs-runner"));
+    aged(&runners.join("1111111111111111/dibs-runner"));
+    fs::create_dir_all(runners.join(".src.2222222222222222.7")).unwrap();
+    // Held by a process of its own: a lock this test held could linger in a parallel test's fork.
+    let mut build = Command::new("flock")
+        .arg(runners.join(".build.lock"))
+        .args(["-c", "echo held; read -r _"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut held = String::new();
+    std::io::BufRead::read_line(
+        &mut std::io::BufReader::new(build.stdout.take().unwrap()),
+        &mut held,
+    )
+    .unwrap();
+    m.prepared(&local("k", &[]));
+    assert!(
+        runners.join(".src.2222222222222222.7").exists(),
+        "nothing goes while a build runs"
+    );
+    drop(build.stdin.take());
+    build.wait().unwrap();
+    m.prepared(&local("k", &[]));
+    assert!(!runners.join("0000000000000000").exists());
+    assert!(!runners.join("1111111111111111").exists());
+    assert!(
+        runners.join("2222222222222222").exists(),
+        "the newest stays"
+    );
+    assert!(!runners.join(".src.2222222222222222.7").exists());
+}

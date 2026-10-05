@@ -8,6 +8,10 @@ use crate::{
     machine::Machine,
     platform::{Host, Platform as _},
     settings::{Settings, home},
+    tree::{
+        clocks::{Clocks, Fate, Removal, used},
+        runners::Runners,
+    },
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -24,8 +28,6 @@ const DAY: u64 = 86400;
 const LISTED: usize = 20;
 /// Directories under scratch that dibs makes; anything else is somebody's and never removed.
 const DIBS_OWN: [&str; 7] = ["ws", "target", "jobs", "tmp", "out", "runner", "run"];
-/// The marker a prepare leaves, whose time is when a tree was last used.
-const USED: &str = ".dibs-used";
 
 /// One sweep of a scratch directory.
 pub struct Sweep {
@@ -148,6 +150,7 @@ impl Sweep {
         self.bulk(now, "job logs and artifacts", &jobs, &mut tally);
         let leftovers = [entries(&scratch.join("tmp")), entries(&scratch.join("out"))].concat();
         self.bulk(now, "leftover temporary files", &leftovers, &mut tally);
+        self.runners(now, &mut tally);
         self.others(now, &mut tally);
         match self.dry {
             true => say(&format!(
@@ -176,15 +179,19 @@ impl Sweep {
         0
     }
 
-    fn past(&self, now: u64, when: u64, clock: u64) -> bool {
-        now.saturating_sub(when) / DAY > clock
+    fn clocks(&self) -> Clocks {
+        Clocks {
+            keep_days: self.keep,
+            target_keep_days: self.target_keep,
+        }
     }
 
-    fn verdict(&self, past: bool) -> &'static str {
-        match (past, self.dry) {
-            (false, _) => "",
-            (true, true) => "   would remove",
-            (true, false) => "   removed",
+    fn verdict(&self, fate: Fate) -> &'static str {
+        match (fate, self.dry) {
+            (Fate::Held, _) => "   held by a build",
+            (Fate::Past, true) => "   would remove",
+            (Fate::Past, false) => "   removed",
+            _ => "",
         }
     }
 
@@ -199,31 +206,21 @@ impl Sweep {
         let sizes = measure(&trees, tally);
         let mut rows = Rows::default();
         let mut pruned = Vec::new();
+        let removal = Removal {
+            commands: None,
+            say: &say,
+        };
         for tree in &trees {
-            let marker = tree.join(USED);
-            if !marker.exists() {
-                let _ = fs::write(&marker, "");
-            }
+            let fate = self.clocks().tree(tree, now);
             let used = used(tree, now);
             let kib = sizes.get(tree).copied().unwrap_or_default();
-            let past = self.past(now, used, self.keep);
+            let past = fate == Fate::Past;
             if past && self.dry {
                 tally.would += kib;
             } else if past {
-                let removed = Command::new("git")
-                    .arg("-C")
-                    .arg(tree)
-                    .args(["worktree", "remove", "--force"])
-                    .arg(tree)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .is_ok_and(|s| s.success());
-                if !removed {
-                    let _ = fs::remove_dir_all(tree);
+                if removal.tree(tree) {
+                    tally.freed += kib;
                 }
-                tally.freed += kib;
                 if let Some(repo) = tree.parent().and_then(Path::file_name) {
                     pruned.push(repo.to_owned());
                 }
@@ -236,7 +233,7 @@ impl Sweep {
                     self.shown(tree),
                     size(kib),
                     ago(now, used),
-                    self.verdict(past)
+                    self.verdict(fate)
                 ),
             });
         }
@@ -276,19 +273,25 @@ impl Sweep {
             tally.total = before + together;
         }
         let mut rows = Rows::default();
+        let removal = Removal {
+            commands: None,
+            say: &say,
+        };
         for cache in &caches {
-            let marker = cache.join(USED);
-            if !marker.exists() {
-                let _ = fs::write(&marker, "swept\n");
+            let fate = self.clocks().cache(cache, now);
+            if fate == Fate::Hollow {
+                if !self.dry {
+                    removal.hollow(cache);
+                }
+                continue;
             }
             let used = used(cache, now);
             let own = sharing.as_ref().and_then(|s| s.own.get(cache).copied());
             let kib = own.unwrap_or_else(|| sizes.get(cache).copied().unwrap_or_default());
-            let past = self.past(now, used, self.target_keep);
+            let past = fate == Fate::Past;
             if past && self.dry {
                 tally.would += kib;
-            } else if past {
-                let _ = fs::remove_dir_all(cache);
+            } else if past && removal.path(cache) {
                 tally.freed += kib;
             }
             let own = own
@@ -302,7 +305,7 @@ impl Sweep {
                     self.shown(cache),
                     size(sizes.get(cache).copied().unwrap_or_default()),
                     ago(now, used),
-                    self.verdict(past)
+                    self.verdict(fate)
                 ),
             });
         }
@@ -346,11 +349,11 @@ impl Sweep {
             match self.dry {
                 true => tally.would += k,
                 false => {
-                    let gone = match meta.is_dir() {
-                        true => fs::remove_dir_all(path),
-                        false => fs::remove_file(path),
+                    let removal = Removal {
+                        commands: None,
+                        say: &say,
                     };
-                    if gone.is_ok() {
+                    if removal.path(path) {
                         tally.freed += k;
                     }
                 }
@@ -376,6 +379,58 @@ impl Sweep {
             },
             size(kib)
         ));
+    }
+
+    /// The runners built here: a version a later one replaced and nobody has installed for the
+    /// keep, what a build that died left, and the target their builds share once unused for the
+    /// cache's keep. Judged holding the build lock, and passed over while a build runs.
+    fn runners(&self, now: u64, tally: &mut Tally) {
+        let runners = Runners::here();
+        if !runners.dir.is_dir() {
+            return;
+        }
+        let Some(judged) = runners.judged(&self.clocks(), now) else {
+            say("  runners: a build of one is running, so none is collected now\n");
+            return;
+        };
+        let paths: Vec<PathBuf> = judged.entries.iter().map(|e| e.path.clone()).collect();
+        let sizes = measure(&paths, tally);
+        let removal = Removal {
+            commands: None,
+            say: &say,
+        };
+        let mut rows = Rows::default();
+        for entry in &judged.entries {
+            let kib = sizes.get(&entry.path).copied().unwrap_or_default();
+            let fate = match entry.past {
+                true => Fate::Past,
+                false => Fate::Kept,
+            };
+            if entry.past && self.dry {
+                tally.would += kib;
+            } else if entry.past && removal.path(&entry.path) {
+                tally.freed += kib;
+            }
+            rows.push(Row {
+                kib,
+                past: entry.past,
+                line: format!(
+                    "    {:<40} {:>7}{}",
+                    entry
+                        .path
+                        .strip_prefix(&runners.dir)
+                        .unwrap_or(&entry.path)
+                        .display(),
+                    size(kib),
+                    self.verdict(fate)
+                ),
+            });
+        }
+        say(&rows.out(&format!(
+            "  runners in {}, replaced ones removed after {} days",
+            runners.dir.display(),
+            self.keep
+        )));
     }
 
     /// Nothing dibs made, so nothing dibs deletes: a directory written by hand may be the only
@@ -582,13 +637,6 @@ fn allocated(path: &Path, seen: &mut HashSet<(u64, u64)>) -> u64 {
         false => 0,
     };
     meta.blocks() + below
-}
-
-/// When a tree was last used: its marker's time, else its own.
-fn used(dir: &Path, now: u64) -> u64 {
-    fs::metadata(dir.join(USED))
-        .or_else(|_| fs::metadata(dir))
-        .map_or(now, |m| m.mtime().max(0) as u64)
 }
 
 /// KiB as the sizes a person acts on.

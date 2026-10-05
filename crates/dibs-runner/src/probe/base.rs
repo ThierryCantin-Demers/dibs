@@ -327,7 +327,7 @@ fn available(dir: &Path) -> String {
     if unsafe { libc::statvfs(path.as_ptr(), &mut found) } != 0 {
         return "?".into();
     }
-    crate::gc::human(found.f_bavail as u64 * found.f_frsize as u64)
+    crate::tree::human(found.f_bavail as u64 * found.f_frsize as u64)
 }
 
 /// The repos under `~/prog` a worktree can be prepared from.
