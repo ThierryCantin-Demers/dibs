@@ -81,7 +81,13 @@ impl Sink {
                 self.frame(Frame::Record(record));
             }
             (Kind::Plain, Record::Trailer(trailer)) => self.say(&format!("{trailer}\n")),
-            (Kind::Plain, Record::Holding(_) | Record::Transferring | Record::Prepared(_)) => {}
+            (
+                Kind::Plain,
+                Record::Holding(_)
+                | Record::Transferring
+                | Record::Prepared(_)
+                | Record::Stepped(_),
+            ) => {}
         }
     }
 

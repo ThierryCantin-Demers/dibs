@@ -41,7 +41,11 @@ impl Lines {
         self.0.intersection(&other.0).count() as u64
     }
 
-    fn text(&self) -> String {
+    pub fn extend(&mut self, other: Lines) {
+        self.0.extend(other.0);
+    }
+
+    pub fn text(&self) -> String {
         self.0.iter().map(|l| format!("{l}\n")).collect()
     }
 }
@@ -80,7 +84,11 @@ impl Cache<'_> {
 
     /// This prepare's lockfile beside the target.
     pub fn stage(&self, token: &str, lines: &Lines) -> io::Result<()> {
-        fs::write(self.dir.join(format!("{PENDING}{token}")), lines.text())
+        fs::write(self.staged_by(token), lines.text())
+    }
+
+    pub fn staged_by(&self, token: &str) -> PathBuf {
+        self.dir.join(format!("{PENDING}{token}"))
     }
 
     /// The staged lockfiles whose builds never succeeded, gone after a day.

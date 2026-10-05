@@ -523,8 +523,8 @@ fn a_timed_client_holds_the_machine_alone_against_the_server_it_built() {
         .run();
     assert_eq!(
         out.code,
-        77,
-        "a server another tree has built over since is refused: {}",
+        78,
+        "a server another tree has built over since is refused before it starts: {}",
         out.all()
     );
     let out = s

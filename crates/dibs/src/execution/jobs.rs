@@ -11,7 +11,7 @@ use dibs::{
 };
 use dibs_format::{
     Alias, JobId, Label, MachineName, StepRecord,
-    wire::{Prepared, Tree},
+    wire::{Prepared, Stepped, Tree},
 };
 use std::{io::Write as _, time::Instant};
 
@@ -41,11 +41,11 @@ pub struct JobOutcome {
     pub trailer: Option<Trailer>,
 }
 
-/// A job's outcome, the `DIBS-` lines it reported, and the tree the machine laid out for it.
+/// A job's outcome, the tree the machine laid out for it, and what it did around a step.
 pub struct Reported {
     pub outcome: JobOutcome,
-    pub text: String,
     pub prepared: Option<Prepared>,
+    pub stepped: Option<Stepped>,
 }
 
 impl JobRequest<'_> {
@@ -109,8 +109,8 @@ impl Trailer {
 /// A job's output as it arrives: passed through, with what the recipe layer reads kept aside.
 struct Reader<'a> {
     on_prepared: &'a mut dyn FnMut(&Prepared),
-    text: String,
     prepared: Option<Prepared>,
+    stepped: Option<Stepped>,
     trailer: Option<Trailer>,
     start: Instant,
 }
@@ -119,8 +119,8 @@ impl<'a> Reader<'a> {
     fn new(on_prepared: &'a mut dyn FnMut(&Prepared)) -> Reader<'a> {
         Reader {
             on_prepared,
-            text: String::new(),
             prepared: None,
+            stepped: None,
             trailer: None,
             start: Instant::now(),
         }
@@ -146,29 +146,28 @@ impl<'a> Reader<'a> {
                 seconds: self.start.elapsed().as_secs(),
                 trailer: self.trailer,
             },
-            text: self.text,
             prepared: self.prepared,
+            stepped: self.stepped,
         }
     }
 }
 
 impl Listener for Reader<'_> {
-    /// Passed through, apart from the trailer, read on the way, and the `DIBS-` lines a step's
-    /// wrapper reports, kept aside.
+    /// Passed through, the trailer read on the way.
     fn line(&mut self, stream: Stream, line: &[u8]) {
         if stream == Stream::Err {
             Trailer::read(String::from_utf8_lossy(line).trim_end(), &mut self.trailer);
         }
-        if !line.starts_with(b"DIBS-") {
-            return Reader::pass(stream, line);
-        }
-        self.text.push_str(String::from_utf8_lossy(line).trim_end());
-        self.text.push('\n');
+        Reader::pass(stream, line);
     }
 
     fn prepared(&mut self, prepared: &Prepared) {
         (self.on_prepared)(prepared);
         self.prepared = Some(prepared.clone());
+    }
+
+    fn stepped(&mut self, stepped: &Stepped) {
+        self.stepped = Some(stepped.clone());
     }
 }
 

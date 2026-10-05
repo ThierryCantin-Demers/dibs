@@ -1,4 +1,4 @@
-use dibs_format::wire::Prepared;
+use dibs_format::wire::{Prepared, Stepped};
 use std::{
     io::{BufRead as _, BufReader, Read},
     process::{Child, ChildStderr, ChildStdout},
@@ -11,6 +11,9 @@ pub trait Listener {
 
     /// The job's tree, laid out ahead of its command.
     fn prepared(&mut self, prepared: &Prepared);
+
+    /// What was done around a recipe step's command.
+    fn stepped(&mut self, stepped: &Stepped);
 }
 
 /// Which of a child's streams a line came on.

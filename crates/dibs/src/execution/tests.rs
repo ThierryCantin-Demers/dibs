@@ -1,19 +1,19 @@
 use super::{
-    base::{gitdb_args, step_command},
+    base::{gitdb_args, step_plan},
     refs::{Side, sides},
     schedule::{Job, jobs_of, schedule},
     sweep::{sweep_points, sweep_text},
 };
 use crate::recipe::{Isolation, Recipe, Step, label_steps};
 use crate::{
-    batch, provenance,
+    batch,
     recipe::{self, Lock, Resolved, Verb},
-    worktree,
 };
 use dibs::cli::Invocation;
 use dibs::cli::RecipeCall;
+use dibs_format::wire;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -176,16 +176,29 @@ fn a_build_claims_its_target_and_the_measurement_after_it_checks_the_claim() {
         step(Lock::Exclusive, "cargo bench"),
     ])
     .rec;
+    let build = step_plan(&rec, 0, "t", "t", false, None);
+    assert_eq!(build.command, "cargo build --release");
     assert_eq!(
-        step_command(&rec, 0, "t", "t", false),
-        worktree::claiming(&worktree::recording("cargo build --release", "t"))
+        build.around,
+        wire::Step {
+            claim: true,
+            record: Some("t".into()),
+            ..wire::Step::default()
+        }
     );
-    let measured = provenance::stated(&worktree::recording("cargo bench", "t"));
+    let measured = wire::Step {
+        record: Some("t".into()),
+        state: true,
+        ..wire::Step::default()
+    };
     assert_eq!(
-        step_command(&rec, 1, "t", "t", false),
-        worktree::checked(&measured)
+        step_plan(&rec, 1, "t", "t", false, None).around,
+        wire::Step {
+            check: true,
+            ..measured.clone()
+        }
     );
-    assert_eq!(step_command(&rec, 1, "t", "t", true), measured);
+    assert_eq!(step_plan(&rec, 1, "t", "t", true, None).around, measured);
 }
 
 // Nothing was built into the target, so whatever claimed it last says nothing about this run.
@@ -197,8 +210,33 @@ fn a_measurement_after_no_build_is_not_checked() {
     ])
     .rec;
     assert_eq!(
-        step_command(&rec, 1, "t", "t", false),
-        provenance::stated("./bench.sh")
+        step_plan(&rec, 1, "t", "t", false, None).around,
+        wire::Step {
+            state: true,
+            ..wire::Step::default()
+        }
+    );
+}
+
+#[test]
+fn only_a_shared_build_against_pins_checks_they_took() {
+    let rec = resolved(vec![
+        step(Lock::Shared, "cargo build --release"),
+        step(Lock::Exclusive, "cargo bench"),
+    ])
+    .rec;
+    let names: BTreeSet<String> = ["serde".to_string()].into();
+    assert_eq!(
+        step_plan(&rec, 0, "t", "t", false, Some(&names))
+            .around
+            .pinned,
+        ["serde"]
+    );
+    assert!(
+        step_plan(&rec, 1, "t", "t", false, Some(&names))
+            .around
+            .pinned
+            .is_empty()
     );
 }
 
@@ -364,12 +402,15 @@ fn a_fresh_variable_has_one_value_per_run_in_every_step() {
     rec.fresh = vec!["CUBECL_ENVIRONMENT".into()];
     for i in 0..2 {
         assert!(
-            step_command(&rec, i, "t1", "t1", false)
+            step_plan(&rec, i, "t1", "t1", false, None)
+                .command
                 .starts_with("export CUBECL_ENVIRONMENT=dibs-t1; ")
         );
     }
     assert!(
-        step_command(&rec, 1, "t2", "t2", false).starts_with("export CUBECL_ENVIRONMENT=dibs-t2; ")
+        step_plan(&rec, 1, "t2", "t2", false, None)
+            .command
+            .starts_with("export CUBECL_ENVIRONMENT=dibs-t2; ")
     );
 }
 

@@ -1,13 +1,11 @@
 //! The `dibs` command: one grammar, then the recipe layer, a friction report, or a call.
 
-mod artifacts;
 mod batch;
 mod execution;
 mod fleet;
 mod git;
 mod gitdeps;
 mod lockfile;
-mod provenance;
 mod recipe;
 mod records;
 mod reports;

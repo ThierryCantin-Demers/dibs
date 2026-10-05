@@ -1,6 +1,6 @@
 use super::{
     base::{
-        RunError, TreeSpec, announce_prepared, new_token, preparing, preparing_title,
+        RunError, TreeSpec, announce_prepared, in_tree, new_token, preparing, preparing_title,
         send_missing_gitdbs, sh, sync_prepared,
     },
     jobs::{JobRequest, Jobs},
@@ -12,7 +12,7 @@ use crate::{
     worktree,
 };
 use dibs::{
-    call::{Destination, Dispatch, RecipeJob},
+    call::{Destination, LockedCall, Origin, RecipeJob},
     caller::Caller,
     cli::{
         Call, CliError, Command as ShellCommand, Mode, PortName, RecipeCall, Run, RunLock, Service,
@@ -216,8 +216,8 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     };
     send_missing_gitdbs(&backend, &prepared, &plan.gitdbs);
 
-    // In the tree, with the repo's build cache, exactly as a recipe step runs.
-    let in_tree = |run: &str| {
+    // A server and a command run there are started in the tree, with the repo's build cache.
+    let in_tree_shell = |run: &str| {
         format!(
             "cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}",
             sh(&prepared.worktree),
@@ -234,13 +234,15 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             job: &RecipeJob::default(),
             max: None,
             new_series: false,
-            tree: None,
+            tree: Some(wire::Tree {
+                step: Some(wire::Step {
+                    claim: worktree::build_signature(build).is_some(),
+                    ..wire::Step::default()
+                }),
+                ..in_tree(&prepared)
+            }),
         };
-        let build = match worktree::build_signature(build) {
-            Some(_) => worktree::claiming(build),
-            None => build.clone(),
-        };
-        let out = backend.run(&req, &in_tree(&build));
+        let out = backend.run(&req, build);
         if out.status != 0 {
             return Ok(ExitCode::from(out.status.clamp(1, 255) as u8));
         }
@@ -254,7 +256,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             .as_deref()
             .and_then(worktree::build_signature)
             .is_some();
-    let run = match served(svc, args, command, guarded, &in_tree) {
+    let run = match served(svc, args, command, &in_tree_shell) {
         Ok(run) => run,
         Err(e) => {
             eprintln!("{e}");
@@ -262,18 +264,31 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         }
     };
     let call = Call {
-        mode: Mode::Run(run),
+        mode: Mode::Run(run.clone()),
         on: backend.machine.clone(),
         label: Some(Label::new(&label)),
         max: args.max,
         device: args.device.as_deref().map(Alias::new),
         ..Call::default()
     };
-    let code = Dispatch {
-        call: &call,
-        caller: &Caller::from_env(),
-    }
-    .exit();
+    // Timed, the servers are refused before they start when another tree has built over them.
+    let job = RecipeJob {
+        tree: Some(wire::Tree {
+            step: Some(wire::Step {
+                check: guarded,
+                ..wire::Step::default()
+            }),
+            ..in_tree(&prepared)
+        }),
+        ..RecipeJob::default()
+    };
+    let code = LockedCall::run_of(&run)
+        .made_by(Origin::Recipe(&job))
+        .run(&call, &Caller::from_env())
+        .unwrap_or_else(|e| {
+            eprint!("{e}");
+            e.exit()
+        });
     Ok(ExitCode::from(code.rem_euclid(256) as u8))
 }
 
@@ -282,7 +297,6 @@ pub(crate) fn served(
     svc: &recipe::Service,
     args: &RecipeCall,
     command: &str,
-    guarded: bool,
     in_tree: &dyn Fn(&str) -> String,
 ) -> Result<Run, CliError> {
     let mut ports = Vec::new();
@@ -291,13 +305,9 @@ pub(crate) fn served(
     }
     let mut services = Vec::new();
     for serve in &svc.serves {
-        let run = match guarded {
-            true => worktree::checked(&serve.run),
-            false => serve.run.clone(),
-        };
         services.push(Service::declared(
             &serve.name,
-            &in_tree(&run),
+            &in_tree(&serve.run),
             serve.ready.as_deref(),
             &services,
         )?);

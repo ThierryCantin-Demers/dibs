@@ -5,8 +5,10 @@ mod base;
 mod builds;
 mod copy;
 mod git;
+mod glob;
 mod packages;
 mod seed;
+mod step;
 mod sweep;
 #[cfg(test)]
 mod tests;
@@ -14,3 +16,4 @@ mod tests;
 pub use base::Trees;
 pub use copy::{Copier, Reflinks};
 pub use git::Commands;
+pub use step::Stepping;

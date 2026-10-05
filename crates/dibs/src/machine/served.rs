@@ -9,7 +9,7 @@ use crate::machine::{
 };
 use dibs_format::{
     Exit,
-    wire::{Frame, Picked, Prepared, Record, Unframer},
+    wire::{Frame, Picked, Prepared, Record, Stepped, Unframer},
 };
 use std::{
     fs::File,
@@ -131,6 +131,7 @@ pub(super) enum Heard {
     Line(Vec<u8>),
     Holding(Vec<Picked>),
     Prepared(Box<Prepared>),
+    Stepped(Stepped),
     Exit(i32),
     Broken(String),
 }
@@ -417,6 +418,7 @@ impl Served<'_> {
                     }
                 }
                 Heard::Prepared(prepared) => delivery.prepared(&prepared),
+                Heard::Stepped(stepped) => delivery.stepped(&stepped),
                 Heard::Exit(code) => exit = Some(code),
                 Heard::Broken(why) => {
                     delivery.say(&format!("dibs: the runner's answer broke off: {why}\n"))
@@ -520,6 +522,12 @@ impl Delivery<'_> {
             listener.prepared(prepared);
         }
     }
+
+    fn stepped(&mut self, stepped: &Stepped) {
+        if let Delivery::Listening(listener) = self {
+            listener.stepped(stepped);
+        }
+    }
 }
 
 /// Bytes from one stream to the other as they come, until either ends. Read and written plainly:
@@ -583,6 +591,7 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
                 }
                 Frame::Record(Record::Holding(ports)) => Heard::Holding(ports),
                 Frame::Record(Record::Prepared(prepared)) => Heard::Prepared(prepared),
+                Frame::Record(Record::Stepped(stepped)) => Heard::Stepped(stepped),
                 Frame::Exit(code) => Heard::Exit(code),
                 Frame::Request(_)
                 | Frame::Beat

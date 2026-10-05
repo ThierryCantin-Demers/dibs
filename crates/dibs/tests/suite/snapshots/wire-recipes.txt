@@ -19,6 +19,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":null,"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
     verbose: false
@@ -68,25 +69,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | 2	3
       | app/bench/gate	bench	app_bench_gate	1
     card: null
-    command:
-      | (
-      |     flock 8
-      |     if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
-      |         find . -name .git -prune -o -type f -exec touch -c -- {} +
-      |         printf '%s\n' "$PWD" > "$CARGO_TARGET_DIR/.dibs-tree"
-      |         echo "dibs: this tree did not make the last build in $CARGO_TARGET_DIR, so cargo rebuilds its crates" >&2
-      |     fi
-      | ) 8>"$CARGO_TARGET_DIR/.dibs-tree.lock"
-      | ( cargo build --release ); rc=$?
-      | staged="$CARGO_TARGET_DIR/.dibs-packages.pending.<token>"
-      | if [ "$rc" = 0 ] && [ -s "$staged" ]; then
-      |     (
-      |         flock 9
-      |         { cat "$CARGO_TARGET_DIR/.dibs-packages" 2>/dev/null || true; cat "$staged"; } | LC_ALL=C sort -u > "$CARGO_TARGET_DIR/.dibs-packages.new.$$" &&
-      |             mv "$CARGO_TARGET_DIR/.dibs-packages.new.$$" "$CARGO_TARGET_DIR/.dibs-packages" && rm -f "$staged"
-      |     ) 9>"$CARGO_TARGET_DIR/.dibs-packages.lock"
-      | fi
-      | exit $rc
+    command: cargo build --release
     fingerprint: 6bc29855bfd0b3e9
     json: false
     label: app_bench_gate
@@ -99,6 +82,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":true,"pinned":[],"record":"<token>","state":false}
     tree.then: "step"
     tty: false
     verbose: false
@@ -114,15 +98,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | <batch>	app/bench/gate
       | 3	3
     card: null
-    command:
-      | if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
-      |     echo DIBS-REFUSED
-      |     echo "dibs: refused to measure: another tree built into $CARGO_TARGET_DIR after this one did, so the binary there may be that tree's." >&2
-      |     echo "  Run it again, which rebuilds this tree first, or pass --anyway to measure what is there." >&2
-      |     exit 78
-      | fi
-      | echo "DIBS-STATE ${DIBS_STATE:-}"
-      | echo measured
+    command: echo measured
     fingerprint: 6bc29855bfd0b3e9
     json: false
     label: app_bench_gate
@@ -135,6 +111,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":true,"claim":false,"pinned":[],"record":null,"state":true}
     tree.then: "step"
     tty: false
     verbose: false
@@ -195,6 +172,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
     verbose: false
@@ -228,6 +206,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":null,"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
     verbose: false
@@ -260,6 +239,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":null,"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
     verbose: false
@@ -288,6 +268,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":null,"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
     verbose: false
@@ -343,25 +324,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | app/bench/gate (base)	bench	app_bench_gate	1
       | app/bench/gate (local)	bench	app_bench_gate	1
     card: null
-    command:
-      | (
-      |     flock 8
-      |     if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
-      |         find . -name .git -prune -o -type f -exec touch -c -- {} +
-      |         printf '%s\n' "$PWD" > "$CARGO_TARGET_DIR/.dibs-tree"
-      |         echo "dibs: this tree did not make the last build in $CARGO_TARGET_DIR, so cargo rebuilds its crates" >&2
-      |     fi
-      | ) 8>"$CARGO_TARGET_DIR/.dibs-tree.lock"
-      | ( cargo build --release ); rc=$?
-      | staged="$CARGO_TARGET_DIR/.dibs-packages.pending.<token>"
-      | if [ "$rc" = 0 ] && [ -s "$staged" ]; then
-      |     (
-      |         flock 9
-      |         { cat "$CARGO_TARGET_DIR/.dibs-packages" 2>/dev/null || true; cat "$staged"; } | LC_ALL=C sort -u > "$CARGO_TARGET_DIR/.dibs-packages.new.$$" &&
-      |             mv "$CARGO_TARGET_DIR/.dibs-packages.new.$$" "$CARGO_TARGET_DIR/.dibs-packages" && rm -f "$staged"
-      |     ) 9>"$CARGO_TARGET_DIR/.dibs-packages.lock"
-      | fi
-      | exit $rc
+    command: cargo build --release
     fingerprint: 6bc29855bfd0b3e9
     json: false
     label: app_bench_gate
@@ -374,6 +337,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":true,"pinned":[],"record":"<token>","state":false}
     tree.then: "step"
     tty: false
     verbose: false
@@ -422,25 +386,7 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | app/bench/gate (base)	bench	app_bench_gate	1
       | app/bench/gate (local)	bench	app_bench_gate	1
     card: null
-    command:
-      | (
-      |     flock 8
-      |     if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
-      |         find . -name .git -prune -o -type f -exec touch -c -- {} +
-      |         printf '%s\n' "$PWD" > "$CARGO_TARGET_DIR/.dibs-tree"
-      |         echo "dibs: this tree did not make the last build in $CARGO_TARGET_DIR, so cargo rebuilds its crates" >&2
-      |     fi
-      | ) 8>"$CARGO_TARGET_DIR/.dibs-tree.lock"
-      | ( cargo build --release ); rc=$?
-      | staged="$CARGO_TARGET_DIR/.dibs-packages.pending.<token>"
-      | if [ "$rc" = 0 ] && [ -s "$staged" ]; then
-      |     (
-      |         flock 9
-      |         { cat "$CARGO_TARGET_DIR/.dibs-packages" 2>/dev/null || true; cat "$staged"; } | LC_ALL=C sort -u > "$CARGO_TARGET_DIR/.dibs-packages.new.$$" &&
-      |             mv "$CARGO_TARGET_DIR/.dibs-packages.new.$$" "$CARGO_TARGET_DIR/.dibs-packages" && rm -f "$staged"
-      |     ) 9>"$CARGO_TARGET_DIR/.dibs-packages.lock"
-      | fi
-      | exit $rc
+    command: cargo build --release
     fingerprint: 6bc29855bfd0b3e9
     json: false
     label: app_bench_gate
@@ -453,6 +399,7 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":true,"pinned":[],"record":"<token>","state":false}
     tree.then: "step"
     tty: false
     verbose: false
@@ -469,15 +416,7 @@ call 5: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | 5	6
       | app/bench/gate (local)	bench	app_bench_gate	1
     card: null
-    command:
-      | if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
-      |     echo DIBS-REFUSED
-      |     echo "dibs: refused to measure: another tree built into $CARGO_TARGET_DIR after this one did, so the binary there may be that tree's." >&2
-      |     echo "  Run it again, which rebuilds this tree first, or pass --anyway to measure what is there." >&2
-      |     exit 78
-      | fi
-      | echo "DIBS-STATE ${DIBS_STATE:-}"
-      | echo measured
+    command: echo measured
     fingerprint: 6bc29855bfd0b3e9
     json: false
     label: app_bench_gate
@@ -490,6 +429,7 @@ call 5: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":true,"claim":false,"pinned":[],"record":null,"state":true}
     tree.then: "step"
     tty: false
     verbose: false
@@ -505,15 +445,7 @@ call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | <batch>	app/bench/gate (local)
       | 6	6
     card: null
-    command:
-      | if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
-      |     echo DIBS-REFUSED
-      |     echo "dibs: refused to measure: another tree built into $CARGO_TARGET_DIR after this one did, so the binary there may be that tree's." >&2
-      |     echo "  Run it again, which rebuilds this tree first, or pass --anyway to measure what is there." >&2
-      |     exit 78
-      | fi
-      | echo "DIBS-STATE ${DIBS_STATE:-}"
-      | echo measured
+    command: echo measured
     fingerprint: 6bc29855bfd0b3e9
     json: false
     label: app_bench_gate
@@ -526,6 +458,7 @@ call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":true,"claim":false,"pinned":[],"record":null,"state":true}
     tree.then: "step"
     tty: false
     verbose: false
@@ -573,24 +506,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | <batch>	app/bench/art
       | 2	2
     card: null
-    command:
-      | ( echo "DIBS-STATE ${DIBS_STATE:-}"
-      | mkdir -p results && echo measured > results/new.json ); __dibs_rc=$?
-      | __dibs_ref=${DIBS_SCRATCH:-$HOME/.cache/dibs}/jobs/${DIBS_JOB:-}/cmd
-      | if [ -n "${DIBS_JOB:-}" ] && [ -f "$__dibs_ref" ]; then
-      |     __dibs_n=0
-      |     shopt -s globstar nullglob
-      |     for __dibs_f in results/*.json; do
-      |         [ -f "$__dibs_f" ] && [ -n "$(find "$__dibs_f" -maxdepth 0 -newer "$__dibs_ref" 2>/dev/null)" ] || continue
-      |         __dibs_rel=${__dibs_f#"$CARGO_TARGET_DIR"/}
-      |         [ "$__dibs_rel" = "$__dibs_f" ] || __dibs_rel=target/$__dibs_rel
-      |         mkdir -p "${__dibs_ref%/cmd}/artifacts/$(dirname "$__dibs_rel")" &&
-      |             cp -p "$__dibs_f" "${__dibs_ref%/cmd}/artifacts/$__dibs_rel" && __dibs_n=$((__dibs_n + 1))
-      |     done
-      |     shopt -u globstar nullglob
-      |     [ "$__dibs_n" = 0 ] || echo "DIBS-ARTIFACTS $__dibs_n"
-      | fi
-      | exit $__dibs_rc
+    command: mkdir -p results && echo measured > results/new.json
     fingerprint: 29dcff772dc1e4fa
     json: false
     label: app_bench_art
@@ -603,6 +519,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":["results/*.json"],"check":false,"claim":false,"pinned":[],"record":null,"state":true}
     tree.then: "step"
     tty: false
     verbose: false
@@ -669,7 +586,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
-    command: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { true; }
+    command: true
     fingerprint: null
     json: false
     label: app_with_servers_build
@@ -681,6 +598,9 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: []
     stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
     tty: false
     verbose: false
     wait: null
@@ -705,6 +625,9 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: [{"command":"cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { read -r _ < \"$WIRE_NEVER\"; }","name":"api","ready":null}]
     stream: false
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
     tty: false
     verbose: false
     wait: null
@@ -746,7 +669,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
-    command: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { true; }
+    command: true
     fingerprint: null
     json: false
     label: app_with_servers_build
@@ -758,6 +681,9 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: []
     stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
     tty: false
     verbose: false
     wait: null
@@ -782,6 +708,9 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: [{"command":"cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { read -r _ < \"$WIRE_NEVER\"; }","name":"api","ready":null}]
     stream: false
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
     tty: false
     verbose: false
     wait: null
@@ -871,6 +800,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>-pin-<hash>","worktree":"<root>/scratch/ws/app/pin-<hash>/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
     verbose: false
@@ -955,6 +885,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
     verbose: false

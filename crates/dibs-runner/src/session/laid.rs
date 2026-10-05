@@ -1,13 +1,14 @@
 use crate::{
     job::{Environment, Output},
+    platform::{Host, Platform as _},
     session::{base::Session, run::Place},
     settings::{home, var},
     stop::Stage,
-    tree::{Commands, Copier, Trees},
+    tree::{Commands, Copier, Stepping, Trees},
 };
 use dibs_format::{
-    By, Exit, Mode,
-    wire::{Place as Where, Record, Then, Tree},
+    By, Exit, Mode, Pair, Pairs,
+    wire::{Place as Where, Record, Step, Stepped, Then, Tree},
 };
 use std::{
     fs::OpenOptions,
@@ -18,10 +19,23 @@ use std::{
 
 /// What a job's tree came to before its command.
 pub(super) enum Laid {
-    /// The command runs, in the tree when there is one.
-    Run,
+    /// The command runs, in the tree when there is one, where a recipe step is a step.
+    Run(Option<Spot>),
     /// Nothing more runs: the prepare was the job, failed, or waits for a git dependency.
     Done { status: i32, by: By },
+}
+
+/// A recipe step about to run: refused, or running with the machine's state when it is a
+/// measurement.
+pub(super) enum Begins {
+    Refused,
+    Runs(Option<Pairs>),
+}
+
+/// Where a recipe step runs: its tree, and the target it builds into.
+pub(super) struct Spot {
+    pub(super) worktree: PathBuf,
+    pub(super) target: PathBuf,
 }
 
 impl Session {
@@ -36,7 +50,10 @@ impl Session {
         let prepare = match &tree.place {
             Where::At(laid) => {
                 environment.in_tree(PathBuf::from(&laid.worktree), Some(laid.target.clone()));
-                return Laid::Run;
+                return Laid::Run(Some(Spot {
+                    worktree: PathBuf::from(&laid.worktree),
+                    target: PathBuf::from(&laid.target),
+                }));
             }
             Where::Prepare(prepare) => prepare,
         };
@@ -92,8 +109,11 @@ impl Session {
                 }
             }
             Then::Step => {
-                environment.in_tree(worktree, Some(prepared.target));
-                Laid::Run
+                environment.in_tree(worktree.clone(), Some(prepared.target.clone()));
+                Laid::Run(Some(Spot {
+                    worktree,
+                    target: PathBuf::from(prepared.target),
+                }))
             }
             // The transfer names the tree's directory, so a tree never prepared cannot turn
             // `--delete` on wherever the job happened to start.
@@ -105,13 +125,70 @@ impl Session {
                 if self.call.mode() == Mode::Rsh {
                     self.sink.transferring();
                 }
-                Laid::Run
+                Laid::Run(None)
             }
         }
     }
 
+    /// What comes before a step's command: a measurement refused where another tree has built
+    /// since, the machine's state, and a build's claim on its target.
+    pub(super) fn step_begins(&self, step: &Step, stepping: &Stepping) -> Begins {
+        if step.check && stepping.refused() {
+            self.sink.record(Record::Stepped(Stepped {
+                refused: true,
+                ..Stepped::default()
+            }));
+            return Begins::Refused;
+        }
+        let state = step.state.then(|| {
+            Pairs(
+                Host::machine_state()
+                    .split_whitespace()
+                    .filter_map(|kv| kv.split_once('='))
+                    .filter(|(_, value)| !value.is_empty())
+                    .map(|(name, value)| Pair {
+                        name: name.to_string(),
+                        value: value.to_string(),
+                    })
+                    .collect(),
+            )
+        });
+        if step.claim {
+            stepping.claim();
+        }
+        Begins::Runs(state)
+    }
+
+    /// What comes after it: a build's lockfile recorded once it succeeded, the files it kept,
+    /// and the pin check, which ends the step 3 when a pin did not take. Whether dibs gave the
+    /// status.
+    pub(super) fn step_ends(
+        &self,
+        step: &Step,
+        stepping: &Stepping,
+        status: &mut i32,
+        state: Option<Pairs>,
+    ) -> bool {
+        if let Some(token) = &step.record
+            && *status == 0
+        {
+            stepping.record(token);
+        }
+        let artifacts = stepping.keep(&step.artifacts);
+        let unpinned = !step.pinned.is_empty() && stepping.unpinned(&step.pinned);
+        if unpinned {
+            *status = Exit::Setup.status();
+        }
+        self.sink.record(Record::Stepped(Stepped {
+            refused: false,
+            state,
+            artifacts,
+        }));
+        unpinned
+    }
+
     /// What a prepare says, where the job's own output goes.
-    fn told(&self, output: Output, text: &str) {
+    pub(super) fn told(&self, output: Output, text: &str) {
         if text.is_empty() {
             return;
         }

@@ -1,6 +1,6 @@
 use crate::{
     job::Environment,
-    tree::{Commands, Copier, Reflinks, Trees},
+    tree::{Commands, Copier, Reflinks, Stepping, Trees},
 };
 use dibs_format::{
     Exit,
@@ -638,4 +638,163 @@ fn the_machine_says_which_git_databases_it_lacks() {
     assert!(gitdbs.dir.ends_with("home/.cargo/git/db"));
     assert_eq!(gitdbs.missing, vec![asked("gone-0123456789abcdef")]);
     assert_eq!(m.prepared(&local("k", &[])).gitdbs, None);
+}
+
+/// A tree whose source is a year old, its target claimed by `claimed_by`, and what was said.
+struct Stepped {
+    machine: Machine,
+    worktree: PathBuf,
+    target: PathBuf,
+    said: RefCell<String>,
+}
+
+impl Stepped {
+    fn new(claimed_by: Option<&str>) -> Stepped {
+        let machine = Machine::new();
+        let worktree = machine.sources("k", "lib.rs");
+        aged(&worktree.join("lib.rs"));
+        let target = machine.p("scratch/target/demo-local-k");
+        fs::create_dir_all(&target).unwrap();
+        let mine = worktree.display().to_string();
+        if let Some(by) = claimed_by {
+            let by = if by == "this" { mine.as_str() } else { by };
+            fs::write(target.join(".dibs-tree"), format!("{by}\n")).unwrap();
+        }
+        Stepped {
+            machine,
+            worktree,
+            target,
+            said: RefCell::new(String::new()),
+        }
+    }
+
+    fn with<T>(&self, job_dir: Option<&Path>, act: impl FnOnce(&Stepping) -> T) -> T {
+        let say = |text: &str| self.said.borrow_mut().push_str(text);
+        act(&Stepping {
+            worktree: &self.worktree,
+            target: &self.target,
+            job_dir,
+            say: &say,
+        })
+    }
+
+    fn lib_age(&self) -> u64 {
+        fs::metadata(self.worktree.join("lib.rs"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .elapsed()
+            .unwrap_or_default()
+            .as_secs()
+    }
+}
+
+#[test]
+fn a_build_after_another_tree_s_dates_this_tree_s_sources_after_it() {
+    let s = Stepped::new(Some("/another/tree"));
+    s.with(None, |step| step.claim());
+    assert!(s.said.borrow().contains("did not make the last build"));
+    assert!(s.lib_age() < 3600);
+    assert_eq!(
+        fs::read_to_string(s.target.join(".dibs-tree")).unwrap(),
+        format!("{}\n", s.worktree.display())
+    );
+}
+
+// A rerun of one tree compiles nothing and is right to, so nothing is redated for it.
+#[test]
+fn a_build_after_the_same_tree_s_leaves_its_sources_alone() {
+    let s = Stepped::new(Some("this"));
+    s.with(None, |step| step.claim());
+    assert!(s.said.borrow().is_empty());
+    assert!(s.lib_age() > 86400 * 300);
+}
+
+#[test]
+fn a_measurement_runs_only_where_its_own_tree_made_the_last_build() {
+    for (claimed_by, refused) in [
+        (Some("this"), false),
+        (Some("/another/tree"), true),
+        (None, true),
+    ] {
+        let s = Stepped::new(claimed_by);
+        assert_eq!(
+            s.with(None, |step| step.refused()),
+            refused,
+            "{claimed_by:?}"
+        );
+        assert_eq!(
+            s.said.borrow().contains("refused to measure"),
+            refused,
+            "{claimed_by:?}"
+        );
+    }
+}
+
+#[test]
+fn a_build_records_only_what_its_own_prepare_staged_and_keeps_what_was_there() {
+    let s = Stepped::new(None);
+    fs::write(s.target.join(".dibs-packages"), "old\n").unwrap();
+    fs::write(s.target.join(".dibs-packages.pending.t1"), "aaa\nbbb\n").unwrap();
+    fs::write(s.target.join(".dibs-packages.pending.t2"), "ccc\n").unwrap();
+    s.with(None, |step| step.record("t1"));
+    assert_eq!(
+        fs::read_to_string(s.target.join(".dibs-packages")).unwrap(),
+        "aaa\nbbb\nold\n"
+    );
+    assert!(!s.target.join(".dibs-packages.pending.t1").exists());
+    assert!(s.target.join(".dibs-packages.pending.t2").exists());
+    s.with(None, |step| step.record("gone"));
+    assert_eq!(
+        fs::read_to_string(s.target.join(".dibs-packages")).unwrap(),
+        "aaa\nbbb\nold\n",
+        "a build with nothing staged records nothing"
+    );
+}
+
+#[test]
+fn a_step_keeps_the_files_it_wrote_and_none_an_earlier_run_left() {
+    let s = Stepped::new(None);
+    let job = s.machine.p("scratch/jobs/j1");
+    fs::create_dir_all(&job).unwrap();
+    fs::create_dir_all(s.worktree.join("results")).unwrap();
+    fs::write(s.worktree.join("results/old.json"), "old").unwrap();
+    aged(&s.worktree.join("results/old.json"));
+    fs::write(job.join("cmd"), "x").unwrap();
+    aged(&job.join("cmd"));
+    run(&job, "touch -d '1 minute ago' cmd");
+    fs::write(s.worktree.join("results/new.json"), "new").unwrap();
+    fs::create_dir_all(s.target.join("criterion/gemm")).unwrap();
+    fs::write(s.target.join("criterion/gemm/estimates.json"), "e").unwrap();
+    let kept = s.with(Some(&job), |step| {
+        step.keep(&lines(&[
+            "results/*.json",
+            "$CARGO_TARGET_DIR/criterion/**/estimates.json",
+        ]))
+    });
+    assert_eq!(kept, Some(2));
+    assert!(job.join("artifacts/results/new.json").exists());
+    assert!(
+        job.join("artifacts/target/criterion/gemm/estimates.json")
+            .exists()
+    );
+    assert!(!job.join("artifacts/results/old.json").exists());
+    assert_eq!(s.with(Some(&job), |step| step.keep(&[])), None);
+}
+
+#[test]
+fn a_build_that_still_takes_a_pinned_crate_from_git_is_said() {
+    let s = Stepped::new(None);
+    fs::write(
+        s.worktree.join("Cargo.lock"),
+        "[[package]]\nname = \"cubecl\"\nversion = \"0.1.0\"\nsource = \"git+https://example.invalid/cubecl?rev=a#a\"\n\n[[package]]\nname = \"cubek\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    assert!(!s.with(None, |step| step.unpinned(&lines(&["cubek"]))));
+    assert!(s.with(None, |step| step.unpinned(&lines(&["cubecl"]))));
+    assert!(
+        s.said
+            .borrow()
+            .contains("  cubecl from git+https://example.invalid/cubecl?rev=a#a\n")
+    );
 }

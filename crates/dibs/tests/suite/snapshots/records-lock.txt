@@ -7,7 +7,7 @@
   agent        session suite
   agent id     local_suite
   device       cpu
-  command      echo "DIBS-STATE ${DIBS_STATE:-}" read -r _ < "$REC_GATE"
+  command      read -r _ < "$REC_GATE"
   fingerprint  21eafeca56a1b2ba
   job          <job>
 

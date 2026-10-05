@@ -24,7 +24,7 @@
 2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
 2| dibs: step 2/2 [Exclusive]
 2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
 
 == dibs bench <root>/app@origin/main..local gate --reps 2
 -> exit 0
@@ -55,16 +55,16 @@
 2|   log <host>:<root>/scratch/jobs/<job>/log  (3 lines)  dibs --on <host> --out <job>
 2| dibs: base: rep 1/2, step 2/2 [Exclusive]
 2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
 2| dibs: local: rep 1/2, step 2/2 [Exclusive]
 2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
 2| dibs: local: rep 2/2, step 2/2 [Exclusive]
 2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
 2| dibs: base: rep 2/2, step 2/2 [Exclusive]
 2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
 2| dibs: measured, each rep's exclusive seconds and the jobs with its output:
 2|   base   app@local:<sha>-<sha>  <dur> <dur>  jobs <job> <job>
 2|   local  app@local:<sha>-<sha>  <dur> <dur>  jobs <job> <job>
@@ -95,10 +95,10 @@
 2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
 2| dibs: rep 1/2, step 2/2 [Exclusive]
 2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
 2| dibs: rep 2/2, step 2/2 [Exclusive]
 2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
 2| dibs: measured, each rep's exclusive seconds and the jobs with its output:
 2|   local  app@local:<sha>-<sha>  <dur> <dur>  jobs <job> <job>
 

@@ -1,4 +1,7 @@
-use crate::{By, JobId, Label, Mode, wire::Prepared};
+use crate::{
+    By, JobId, Label, Mode,
+    wire::{Prepared, Stepped},
+};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -15,6 +18,8 @@ pub enum Record {
     Transferring,
     /// The job's tree is laid out, ahead of its command.
     Prepared(Box<Prepared>),
+    /// What was done around a recipe step's command, before its trailer.
+    Stepped(Stepped),
 }
 
 /// A `--port` name and the port the machine picked for it.

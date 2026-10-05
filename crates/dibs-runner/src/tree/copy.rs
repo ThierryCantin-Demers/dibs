@@ -103,7 +103,7 @@ impl Copier {
 }
 
 /// `to` given the times `of` holds, by its path, which needs no permission to read it.
-fn dated(to: &Path, of: &fs::Metadata) -> io::Result<()> {
+pub fn dated(to: &Path, of: &fs::Metadata) -> io::Result<()> {
     let path = CString::new(to.as_os_str().as_bytes())?;
     let times = [
         libc::timespec {
@@ -117,6 +117,16 @@ fn dated(to: &Path, of: &fs::Metadata) -> io::Result<()> {
     ];
     // SAFETY: utimensat reads a NUL-terminated path and two timespecs, both alive here.
     match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) } {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
+/// `touch -c`: an existing file dated now, by its path.
+pub fn now(path: &Path) -> io::Result<()> {
+    let path = CString::new(path.as_os_str().as_bytes())?;
+    // SAFETY: utimensat reads a NUL-terminated path; null times mean now.
+    match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) } {
         0 => Ok(()),
         _ => Err(io::Error::last_os_error()),
     }

@@ -148,30 +148,6 @@ pub fn config(pins: &[PinnedTree]) -> String {
     s
 }
 
-/// A build step that fails when cargo still takes a patched crate from where it took it before,
-/// which is what a pin whose versions do not satisfy the requirement looks like: a build that
-/// succeeds against the published code.
-pub fn checked(run: &str, names: &BTreeSet<String>) -> String {
-    let names: Vec<&str> = names.iter().map(String::as_str).collect();
-    format!(
-        r#"( {run} ); __dibs_rc=$?
-__dibs_left=$(awk -v names=" {names} " '
-    function out() {{ if (n != "" && s != "" && index(names, " " n " ")) print "  " n " from " s }}
-    /^\[\[package\]\]/ {{ out(); n = ""; s = "" }}
-    /^name = / {{ n = $3; gsub(/"/, "", n) }}
-    /^source = / {{ s = $3; gsub(/"/, "", s) }}
-    END {{ out() }}' Cargo.lock 2>/dev/null)
-if [ -n "$__dibs_left" ]; then
-    echo "dibs: the pin did not take. cargo still builds these from where they came before:" >&2
-    echo "$__dibs_left" >&2
-    echo "  Most often the pinned tree's version does not meet the requirement the dependency states." >&2
-    exit 3
-fi
-exit $__dibs_rc"#,
-        names = names.join(" ")
-    )
-}
-
 /// `--pin <repo>@<ref>`, both halves named.
 pub(crate) struct PinSpec<'a> {
     pub(crate) repo: &'a str,
@@ -393,38 +369,5 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             }])
             .starts_with("[patch.crates-io]\nserde = { path = \"/t\" }")
         );
-    }
-
-    #[test]
-    fn a_build_that_still_takes_a_pinned_crate_from_git_fails() {
-        let dir = std::env::temp_dir().join(format!("dibs-pin-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Cargo.lock"), LOCK).unwrap();
-        let names: BTreeSet<String> = ["cubecl".to_string()].into();
-        let run = |names: &BTreeSet<String>| {
-            std::process::Command::new("bash")
-                .arg("-c")
-                .arg(checked("true", names))
-                .current_dir(&dir)
-                .output()
-                .unwrap()
-        };
-        let out = run(&names);
-        assert_eq!(
-            out.status.code(),
-            Some(3),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(
-            String::from_utf8_lossy(&out.stderr)
-                .contains("cubecl from git+https://github.com/tracel-ai/cubecl")
-        );
-        assert_eq!(
-            run(&["cubek".to_string()].into()).status.code(),
-            Some(0),
-            "a path crate is what a pin leaves"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

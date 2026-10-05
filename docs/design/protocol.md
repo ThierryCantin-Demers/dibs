@@ -70,7 +70,11 @@ prepare left, so no build cache is rebuilt. What it laid out comes back as a `pr
 what it says goes where the job's output goes. A step waiting for a git dependency exits 3 with
 `by=dibs` before its command, as does a prepare that fails. The command then runs in the
 worktree with the target as `CARGO_TARGET_DIR`, or, for a transfer, in the directory the
-transfer names the worktree in. A transfer with a tree is framed until it is laid out: the
+transfer names the worktree in. Around a recipe step's command the runner refuses a measurement
+whose target another tree built into since (exit 78, `by=dibs`), reads the machine's state,
+claims the target for a build's tree, records a successful build's lockfile, keeps the files the
+step names, and checks that a pin took (exit 3, `by=dibs`), and says what it did in a `stepped`
+record before the trailer. A transfer with a tree is framed until it is laid out: the
 `prepared` record, then `transferring`, after which the runner frames nothing; `dibs __rsh`
 writes the record to a file the sync that started rsync reads.
 

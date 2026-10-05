@@ -8,7 +8,7 @@ use super::{
     sweep::{sweep_points, sweep_run},
 };
 use crate::{
-    artifacts, batch, gitdeps, provenance,
+    batch, gitdeps,
     recipe::{self, Lock, Manifest, RecipeError, Resolved, resolve},
     records::{affinity_get, affinity_set, now_secs, pinned, write_record},
     worktree,
@@ -21,7 +21,12 @@ use dibs_format::{
     Alias, ArmRecord, Exit, MachineName, Outcome, Pairs, ProcedureStep, RunRecord, RunVerb,
     StepRecord, wire,
 };
-use std::{collections::BTreeMap, fmt, path::Path, process::ExitCode};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    path::Path,
+    process::ExitCode,
+};
 
 /// What stops a recipe run, said as its `Display` in full, and the exit it ends with.
 #[derive(Debug)]
@@ -610,15 +615,14 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             1 => t.token.clone(),
             _ => format!("{}-r{}", t.token, rep.unwrap_or(1)),
         };
-        let run = step_command(rec, step, &t.token, &fresh, args.anyway);
-        let run = match (&patched, worktree::build_signature(&rec.steps[step].run)) {
-            (Some(names), Some(_)) if lock == Lock::Shared => pins::checked(&run, names),
-            _ => run,
-        };
-        let record = |out: &JobOutcome, report: &str| StepRecord {
+        let StepPlan {
+            command: run,
+            around,
+        } = step_plan(rec, step, &t.token, &fresh, args.anyway, patched.as_ref());
+        let record = |out: &JobOutcome, stepped: Option<&wire::Stepped>| StepRecord {
             arm: compared.then(|| arms[arm].name.clone()),
             rep: rep.filter(|_| args.reps > 1),
-            artifacts: artifacts::kept(report),
+            artifacts: stepped.and_then(|s| s.artifacts),
             ..out.step_record(lock)
         };
         if fold {
@@ -629,12 +633,15 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 rec.steps.len()
             );
             let folded = JobRequest {
-                tree: Some(t.plan.tree(wire::Then::Step)),
+                tree: Some(wire::Tree {
+                    step: Some(around.clone()),
+                    ..t.plan.tree(wire::Then::Step)
+                }),
                 ..req
             };
             let Reported {
                 outcome: out,
-                text,
+                stepped,
                 prepared,
             } = backend.run_reporting(&folded, &run, &mut announce);
             let Some(prepared) = prepared else {
@@ -647,7 +654,17 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             let waited = held(&prepared);
             t.prepared = Some(prepared);
             if !waited {
-                steps.push(record(&out, &text));
+                if stepped.as_ref().is_some_and(|s| s.refused) {
+                    return Ok(ExitCode::from(Exit::TargetRebuilt.code()));
+                }
+                if let Some(read) = stepped
+                    .as_ref()
+                    .and_then(|s| s.state.clone())
+                    .filter(|read| !read.is_empty())
+                {
+                    state = read;
+                }
+                steps.push(record(&out, stepped.as_ref()));
                 if out.status != 0 {
                     failed = Some(out.status);
                 }
@@ -659,7 +676,10 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             .as_ref()
             .expect("an arm is prepared before its steps run");
         let there = JobRequest {
-            tree: Some(in_tree(p)),
+            tree: Some(wire::Tree {
+                step: Some(around),
+                ..in_tree(p)
+            }),
             ..req
         };
         eprintln!(
@@ -672,18 +692,21 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         // being invisible inside a script that holds the machine exclusively.
         let Reported {
             outcome: out,
-            text: report,
+            stepped,
             ..
         } = backend.run_reporting(&there, &run, &mut |_| {});
         // The machine has said why; a refusal is not a run, so it leaves no record.
-        if report.lines().any(|l| l == "DIBS-REFUSED") {
+        if stepped.as_ref().is_some_and(|s| s.refused) {
             return Ok(ExitCode::from(Exit::TargetRebuilt.code()));
         }
-        let read = provenance::state_of(&report);
-        if !read.is_empty() {
+        if let Some(read) = stepped
+            .as_ref()
+            .and_then(|s| s.state.clone())
+            .filter(|read| !read.is_empty())
+        {
             state = read;
         }
-        steps.push(record(&out, &report));
+        steps.push(record(&out, stepped.as_ref()));
         if out.status != 0 {
             failed = Some(out.status);
         }
@@ -843,30 +866,24 @@ pub(crate) fn refused_before_building(
     false
 }
 
-/// What step `i` runs in its tree. A build claims the target for this tree, and a measurement
-/// after one refuses a target some other tree has built into since, unless told `anyway`.
-/// `token` is the tree's prepare, whose package list a build records; `fresh` is this run's.
-pub(crate) fn step_command(
+/// What step `i` runs in its tree, and what the machine does around it. A build claims the
+/// target for this tree, and a measurement after one refuses a target some other tree has built
+/// into since, unless told `anyway`. `token` is the tree's prepare, whose package list a build
+/// records; `fresh` is this run's. A shared build against pins checks they took.
+pub(crate) fn step_plan(
     rec: &recipe::Recipe,
     i: usize,
     token: &str,
     fresh: &str,
     anyway: bool,
-) -> String {
+    pinned: Option<&BTreeSet<String>>,
+) -> StepPlan {
     let step = &rec.steps[i];
-    let run = match (worktree::build_signature(&step.run), step.lock) {
-        (Some(_), Lock::Shared) => worktree::claiming(&worktree::recording(&step.run, token)),
-        (Some(_), Lock::Exclusive) => worktree::recording(&step.run, token),
-        (None, _) => step.run.clone(),
-    };
+    let builds = worktree::build_signature(&step.run).is_some();
     let built = rec.steps[..i]
         .iter()
         .any(|s| s.lock == Lock::Shared && worktree::build_signature(&s.run).is_some());
-    let run = match step.lock {
-        Lock::Exclusive if built && !anyway => worktree::checked(&provenance::stated(&run)),
-        Lock::Exclusive => provenance::stated(&run),
-        Lock::Shared => run,
-    };
+    let measured = step.lock == Lock::Exclusive;
     // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop in the
     // step as well as the first word of it.
     let exports: String = fresh_values(rec, fresh)
@@ -874,7 +891,29 @@ pub(crate) fn step_command(
         .chain(&step.env)
         .map(|(k, v)| format!("export {k}={}; ", sh(v)))
         .collect();
-    artifacts::collecting(&format!("{exports}{run}"), &rec.artifacts)
+    StepPlan {
+        command: format!("{exports}{}", step.run),
+        around: wire::Step {
+            claim: builds && step.lock == Lock::Shared,
+            record: builds.then(|| token.to_string()),
+            check: measured && built && !anyway,
+            state: measured,
+            artifacts: rec.artifacts.clone(),
+            pinned: match pinned {
+                Some(names) if builds && step.lock == Lock::Shared => {
+                    names.iter().cloned().collect()
+                }
+                _ => Vec::new(),
+            },
+        },
+    }
+}
+
+/// A step's command, and what the machine does around it.
+#[derive(Debug, PartialEq)]
+pub(crate) struct StepPlan {
+    pub(crate) command: String,
+    pub(crate) around: wire::Step,
 }
 
 /// One value per run for each of the recipe's `fresh` variables, the same in every step of it.
@@ -949,6 +988,7 @@ impl TreePlan {
         wire::Tree {
             place: wire::Place::Prepare(self.prepare.clone()),
             then,
+            step: None,
         }
     }
 }
@@ -961,6 +1001,7 @@ pub(crate) fn in_tree(prepared: &wire::Prepared) -> wire::Tree {
             target: prepared.target.clone(),
         }),
         then: wire::Then::Step,
+        step: None,
     }
 }
 

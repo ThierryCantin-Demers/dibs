@@ -9,9 +9,14 @@ use crate::{
     platform::{Host, Platform as _},
     queue::Queue,
     series::Binding,
-    session::{base::Session, ended::Ended, laid::Laid},
+    session::{
+        base::Session,
+        ended::Ended,
+        laid::{Begins, Laid},
+    },
     status::Look,
     stop::{Stage, State, Stopper},
+    tree::Stepping,
 };
 use dibs_format::{By, Event, Exit, HistoryLine, JobId, Mode, wire::Record};
 use std::{
@@ -76,6 +81,15 @@ struct Acquired {
 pub(super) struct Begun {
     pub(super) dir: PathBuf,
     pub(super) log: Option<PathBuf>,
+}
+
+impl Begun {
+    /// The log made when nothing was written to it, so `dibs out` finds one.
+    fn touch_log(&self) {
+        if let Some(log) = &self.log {
+            let _ = fs::OpenOptions::new().create(true).append(true).open(log);
+        }
+    }
 }
 
 /// What a job was given besides its command.
@@ -359,6 +373,7 @@ impl Session {
             failed: false,
             laid: None,
         };
+        let mut spot = None;
         if let Some(tree) = &request.tree
             && hosted.ports.complete()
         {
@@ -366,13 +381,34 @@ impl Session {
             drop(state);
             let laid = self.lay_out(at, tree, &mut environment, output);
             state = at.stopper.state();
-            if let Laid::Done { status, by } = laid {
-                drop(state);
-                if let Some(log) = &begun.log {
-                    let _ = fs::OpenOptions::new().create(true).append(true).open(log);
+            match laid {
+                Laid::Run(at) => spot = at,
+                Laid::Done { status, by } => {
+                    drop(state);
+                    begun.touch_log();
+                    hosted.laid = Some(by);
+                    return (status, hosted);
                 }
-                hosted.laid = Some(by);
-                return (status, hosted);
+            }
+        }
+        let say = |text: &str| self.told(output, text);
+        let step = request.tree.as_ref().and_then(|t| t.step.as_ref());
+        let stepping = spot.as_ref().map(|spot| Stepping {
+            worktree: &spot.worktree,
+            target: &spot.target,
+            job_dir: begun.log.as_ref().map(|_| begun.dir.as_path()),
+            say: &say,
+        });
+        let mut measured = None;
+        if let (Some(step), Some(stepping)) = (step, &stepping) {
+            match self.step_begins(step, stepping) {
+                Begins::Refused => {
+                    drop(state);
+                    begun.touch_log();
+                    hosted.laid = Some(By::Dibs);
+                    return (Exit::TargetRebuilt.status(), hosted);
+                }
+                Begins::Runs(state) => measured = state,
             }
         }
         if !hosted.ports.complete() {
@@ -410,9 +446,7 @@ impl Session {
         let status = match hosted.failed {
             true => {
                 drop(state);
-                if let Some(log) = &begun.log {
-                    let _ = fs::OpenOptions::new().create(true).append(true).open(log);
-                }
+                begun.touch_log();
                 Exit::ServiceFailed.status()
             }
             false => {
@@ -434,6 +468,12 @@ impl Session {
         };
         if let Some(services) = &mut hosted.services {
             services.stop();
+        }
+        let mut status = status;
+        if let (Some(step), Some(stepping)) = (step, &stepping)
+            && self.step_ends(step, stepping, &mut status, measured)
+        {
+            hosted.laid = Some(By::Dibs);
         }
         (status, hosted)
     }
@@ -498,12 +538,6 @@ impl Session {
                 Some(Exit::Overran) if end.max > 0 => By::Dibs,
                 Some(Exit::Cancelled) if cancelled => By::Dibs,
                 Some(Exit::ServiceFailed) if end.hosted.failed => By::Dibs,
-                Some(Exit::TargetRebuilt)
-                    if fs::read_to_string(log)
-                        .is_ok_and(|l| l.lines().any(|l| l == "DIBS-REFUSED")) =>
-                {
-                    By::Dibs
-                }
                 _ => By::Command,
             };
             Ended {

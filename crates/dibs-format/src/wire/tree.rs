@@ -1,3 +1,4 @@
+use crate::Pairs;
 use serde::{Deserialize, Serialize};
 
 /// The tree a job runs in: prepared at its head under its lock, or one prepared before.
@@ -5,6 +6,39 @@ use serde::{Deserialize, Serialize};
 pub struct Tree {
     pub place: Place,
     pub then: Then,
+    /// What the runner does around a recipe step's command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<Step>,
+}
+
+/// What surrounds a recipe step's command in its tree.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Step {
+    /// A shared build claims the target for its tree, dating the tree's sources after the
+    /// artifacts another tree left there.
+    pub claim: bool,
+    /// A build: the prepare whose staged lockfile joins the target's record once it exits 0.
+    pub record: Option<String>,
+    /// A measurement after a build: refused when another tree has built into the target since,
+    /// since the binary there may be that tree's.
+    pub check: bool,
+    /// A measurement, which records the state the machine was in.
+    pub state: bool,
+    /// Files the step keeps beside its log: paths in the tree, or under `$CARGO_TARGET_DIR/`.
+    pub artifacts: Vec<String>,
+    /// Crates a pin replaces, which must no longer come from where they came before.
+    pub pinned: Vec<String>,
+}
+
+/// What the runner did around a step's command.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stepped {
+    /// The measurement was refused before it ran.
+    pub refused: bool,
+    /// The machine's state as the measurement started, values it had none for left out.
+    pub state: Option<Pairs>,
+    /// How many files the step kept, when it kept any.
+    pub artifacts: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
