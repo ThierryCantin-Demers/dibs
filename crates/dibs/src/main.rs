@@ -9,7 +9,6 @@ mod lockfile;
 mod recipe;
 mod records;
 mod reports;
-mod worktree;
 
 use dibs::{
     call::{Dispatch, Guard, MachineCall, Rsh},

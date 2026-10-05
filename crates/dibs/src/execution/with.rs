@@ -9,7 +9,6 @@ use super::{
 use crate::{
     recipe::{self, Lock, Manifest, resolve_repo, root_of, run_label},
     records::{affinity_set, pinned},
-    worktree,
 };
 use dibs::{
     call::{Destination, LockedCall, Origin, RecipeJob},
@@ -33,7 +32,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         return Err("with does not take --pin; a recipe does".into());
     }
     let dir = resolve_repo(&args.repo, &root_of(args)?)?;
-    let repo_name = worktree::identity(&dir);
+    let repo_name = super::identity(&dir);
     let manifest = Manifest::load(&dir, &repo_name)?;
     let name = args.recipe.as_deref().ok_or_else(|| {
         format!(
@@ -140,7 +139,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let signature = svc
         .build
         .as_deref()
-        .and_then(worktree::build_signature)
+        .and_then(super::build_signature)
         .unwrap_or_default();
     let plan = TreeSpec {
         dir: &from,
@@ -236,7 +235,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             new_series: false,
             tree: Some(wire::Tree {
                 step: Some(wire::Step {
-                    claim: worktree::build_signature(build).is_some(),
+                    claim: super::build_signature(build).is_some(),
                     ..wire::Step::default()
                 }),
                 ..in_tree(&prepared)
@@ -254,7 +253,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         && svc
             .build
             .as_deref()
-            .and_then(worktree::build_signature)
+            .and_then(super::build_signature)
             .is_some();
     let run = match served(svc, args, command, &in_tree_shell) {
         Ok(run) => run,

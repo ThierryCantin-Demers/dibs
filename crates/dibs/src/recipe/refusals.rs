@@ -4,7 +4,7 @@ use super::{
     manifest::{Manifest, Source, Verb},
     repo::{resolve_repo, root_of},
 };
-use crate::worktree;
+use crate::execution;
 use dibs::cli::{RecipeCall, RecipeVerb};
 use dibs_format::Lock;
 use std::{collections::BTreeMap, fmt, path::PathBuf};
@@ -96,12 +96,12 @@ pub(crate) fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
     if args.verb == RecipeVerb::Shell {
         let repo = found
             .as_deref()
-            .map(worktree::identity)
+            .map(execution::identity)
             .unwrap_or_else(|_| args.repo.clone());
         refuse_shell_words(args, &repo)?;
     }
     let dir = found?;
-    let repo_name = worktree::identity(&dir);
+    let repo_name = execution::identity(&dir);
     let manifest = if args.verb == RecipeVerb::Shell {
         Manifest::load_any(&dir, &repo_name)?
     } else {

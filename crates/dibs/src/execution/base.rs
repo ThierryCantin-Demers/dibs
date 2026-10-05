@@ -11,7 +11,6 @@ use crate::{
     batch, gitdeps,
     recipe::{self, Lock, Manifest, RecipeError, Resolved, resolve},
     records::{affinity_get, affinity_set, now_secs, pinned, write_record},
-    worktree,
 };
 use dibs::{
     call::{CallError, Destination, RecipeJob},
@@ -99,12 +98,7 @@ impl From<RecipeError> for RunError {
 }
 
 /// What is about to be prepared, for the person reading along.
-pub(crate) fn preparing(
-    repo: &str,
-    arm: &Arm,
-    local: Option<&worktree::Local>,
-    dir: &Path,
-) -> String {
+pub(crate) fn preparing(repo: &str, arm: &Arm, local: Option<&super::Local>, dir: &Path) -> String {
     match (&arm.checkout, local) {
         (Some(c), _) => format!(
             "{repo} at {}{}",
@@ -135,7 +129,7 @@ pub(crate) fn preparing(
 pub(crate) struct Tree {
     pub(crate) token: String,
     pub(crate) plan: TreePlan,
-    pub(crate) local: Option<worktree::Local>,
+    pub(crate) local: Option<super::Local>,
     pub(crate) prepared: Option<wire::Prepared>,
 }
 
@@ -227,7 +221,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     sent_from(c, arm.note.as_deref(), &c.dir.display().to_string())
                 ),
                 (None, None) => {
-                    let l = worktree::local(&dir)?;
+                    let l = super::local(&dir)?;
                     println!("{head}local {} from {}", l.content, dir.display());
                     println!(
                         "            {}",
@@ -429,7 +423,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         pinned.push(prepared);
     }
     let nest = (!pins.is_empty()).then(|| {
-        worktree::Nest::new(pins::config(
+        super::Nest::new(pins::config(
             &pins
                 .iter()
                 .zip(&pinned)
@@ -445,7 +439,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     let signature = rec
         .steps
         .iter()
-        .find_map(|st| worktree::build_signature(&st.run))
+        .find_map(|st| super::build_signature(&st.run))
         .unwrap_or_default();
     let mut slot = 0;
     let mut trees = Vec::with_capacity(arms.len());
@@ -730,7 +724,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         when: now_secs(),
         label,
         repo: repo_name.clone(),
-        variant: worktree::variant(&dir, &repo_name),
+        variant: super::variant(&dir, &repo_name),
         // shell borrows Build's machinery but is not a build, and a record that says
         // otherwise is a record that misleads whoever reads it later.
         verb: match shell_reason {
@@ -879,10 +873,10 @@ pub(crate) fn step_plan(
     pinned: Option<&BTreeSet<String>>,
 ) -> StepPlan {
     let step = &rec.steps[i];
-    let builds = worktree::build_signature(&step.run).is_some();
+    let builds = super::build_signature(&step.run).is_some();
     let built = rec.steps[..i]
         .iter()
-        .any(|s| s.lock == Lock::Shared && worktree::build_signature(&s.run).is_some());
+        .any(|s| s.lock == Lock::Shared && super::build_signature(&s.run).is_some());
     let measured = step.lock == Lock::Exclusive;
     // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop in the
     // step as well as the first word of it.
@@ -929,11 +923,11 @@ pub(crate) struct TreeSpec<'a> {
     pub(crate) dir: &'a Path,
     pub(crate) repo_name: &'a str,
     pub(crate) reference: &'a str,
-    pub(crate) local: Option<&'a worktree::Local>,
+    pub(crate) local: Option<&'a super::Local>,
     pub(crate) signature: &'a str,
     pub(crate) token: &'a str,
     pub(crate) slot: usize,
-    pub(crate) nest: Option<&'a worktree::Nest>,
+    pub(crate) nest: Option<&'a super::Nest>,
     pub(crate) fresh: &'a [String],
 }
 
@@ -948,7 +942,7 @@ impl TreeSpec<'_> {
         let lock = lockfile(self.dir, self.local.is_none().then_some(self.reference));
         let lock = lock.as_deref().unwrap_or("");
         let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock));
-        let lines = worktree::packages(lock, self.signature);
+        let lines = super::packages(lock, self.signature);
         let prepare = wire::Prepare {
             repo: self.repo_name.to_string(),
             source: match self.local {
@@ -1091,7 +1085,7 @@ pub(crate) fn sync_prepared(
     req: &JobRequest,
     on_prepared: &mut dyn FnMut(&wire::Prepared),
 ) -> Reported {
-    let args: Vec<String> = worktree::SYNC_ARGS
+    let args: Vec<String> = super::SYNC_ARGS
         .iter()
         .map(|a| a.to_string())
         .chain([format!("{}/", from.display()), format!(":local-{key}/")])

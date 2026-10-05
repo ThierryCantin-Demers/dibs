@@ -10,7 +10,6 @@ use crate::{
     git::Git,
     lockfile::Package,
     recipe::{resolve_repo, root_of},
-    worktree,
 };
 use dibs::cli::RecipeCall;
 use std::{
@@ -176,8 +175,8 @@ pub(crate) struct Pinned {
     pub(crate) reference: String,
     pub(crate) dir: PathBuf,
     /// The tree sent, when one is: the one at `dir`, or a checkout of a commit the machine cannot fetch.
-    pub(crate) local: Option<worktree::Local>,
-    pub(crate) checkout: Option<worktree::Checkout>,
+    pub(crate) local: Option<super::Local>,
+    pub(crate) checkout: Option<super::Checkout>,
     pub(crate) note: Option<String>,
     pub(crate) crates: BTreeMap<String, String>,
     pub(crate) lock: Option<String>,
@@ -200,7 +199,7 @@ pub(crate) fn pins_of(
             reference,
         } = pin_spec(p)?;
         let pdir = resolve_repo(name, &root_of(args)?)?;
-        let identity = worktree::identity(&pdir);
+        let identity = super::identity(&pdir);
         if identity == repo {
             return Err(format!(
                 "--pin {p}: that is the repo being built; name its tree with {repo}@<ref> instead"
@@ -211,19 +210,19 @@ pub(crate) fn pins_of(
         }
         let (local, checkout, note, crates, lock) = match reference {
             "local" => (
-                Some(worktree::local(&pdir)?),
+                Some(super::local(&pdir)?),
                 None,
                 None,
                 local_crates(&pdir)?,
                 lockfile(&pdir, None),
             ),
             _ => {
-                let (sha, seen, ahead) = worktree::as_fetched(&pdir, reference)
+                let (sha, seen, ahead) = super::as_fetched(&pdir, reference)
                     .ok_or_else(|| format!("--pin {p}: no {reference} in {}", pdir.display()))?;
                 let (crates, lock) = (ref_crates(&pdir, &sha)?, lockfile(&pdir, Some(&sha)));
-                match ahead.or_else(|| worktree::unfetchable(&pdir, &sha)) {
+                match ahead.or_else(|| super::unfetchable(&pdir, &sha)) {
                     Some(why) => {
-                        let c = worktree::checkout(&pdir, &identity, &sha, Some(why))?;
+                        let c = super::checkout(&pdir, &identity, &sha, Some(why))?;
                         (
                             Some(c.local()?),
                             Some(c),

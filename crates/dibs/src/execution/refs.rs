@@ -1,4 +1,4 @@
-use crate::worktree;
+use crate::git::Git;
 use std::path::Path;
 
 /// What `@<ref>` names, before anything is looked up.
@@ -85,7 +85,7 @@ pub(crate) struct Arm {
     /// How its commit was found, for a person to check.
     pub(crate) note: Option<String>,
     /// A commit sent from a checkout of its own rather than fetched.
-    pub(crate) checkout: Option<worktree::Checkout>,
+    pub(crate) checkout: Option<super::Checkout>,
 }
 
 impl Arm {
@@ -94,10 +94,10 @@ impl Arm {
         self.checkout.as_ref().map_or(checkout, |c| c.dir.as_path())
     }
 
-    pub(crate) fn local(&self, checkout: &Path) -> Result<worktree::Local, String> {
+    pub(crate) fn local(&self, checkout: &Path) -> Result<super::Local, String> {
         match &self.checkout {
             Some(c) => c.local(),
-            None => worktree::local(checkout),
+            None => super::local(checkout),
         }
     }
 
@@ -110,7 +110,7 @@ impl Arm {
 }
 
 /// `, <note>, sent from <from> since <why>`, as much of it as there is, to follow the commit.
-pub(crate) fn sent_from(c: &worktree::Checkout, note: Option<&str>, from: &str) -> String {
+pub(crate) fn sent_from(c: &super::Checkout, note: Option<&str>, from: &str) -> String {
     format!(
         "{}, sent from {from}{}",
         note.map(|n| format!(", {n}")).unwrap_or_default(),
@@ -144,7 +144,7 @@ pub(crate) fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, S
                 });
                 continue;
             }
-            Side::Ref(r) => match worktree::as_fetched(dir, r) {
+            Side::Ref(r) => match super::as_fetched(dir, r) {
                 Some((sha, seen, ahead)) => (
                     sha,
                     r.clone(),
@@ -162,11 +162,11 @@ pub(crate) fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, S
                 }
             },
             Side::Pinned(r) => {
-                let sha = worktree::commit(dir, r)?;
+                let sha = super::commit(dir, r)?;
                 (sha.clone(), sha, None, None)
             }
             Side::Base(a, b) => {
-                let (sha, upstream) = worktree::merge_base(dir, &here(a), &here(b))?;
+                let (sha, upstream) = super::merge_base(dir, &here(a), &here(b))?;
                 let note = match upstream {
                     Some(u) => format!("where {b} left {u}, since {a} is behind it"),
                     None => format!("where {b} left {a}"),
@@ -176,14 +176,14 @@ pub(crate) fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, S
         };
         let why = match s.sent() {
             true => None,
-            false => ahead.or_else(|| worktree::unfetchable(dir, &sha)),
+            false => ahead.or_else(|| super::unfetchable(dir, &sha)),
         };
         arms.push(match s.sent() || why.is_some() {
             true => Arm {
                 name,
                 fetch: None,
                 note,
-                checkout: Some(worktree::checkout(dir, repo, &sha, why)?),
+                checkout: Some(super::checkout(dir, repo, &sha, why)?),
             },
             // A ref is fetched by name, so how it stands here says nothing of what the machine takes.
             false => Arm {
@@ -204,4 +204,115 @@ pub(crate) fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, S
         ));
     }
     Ok(arms)
+}
+
+/// The commit `name` is here, in full.
+pub fn commit(dir: &std::path::Path, name: &str) -> Result<String, String> {
+    Git(dir)
+        .run(&["rev-parse", "--verify", "-q", &format!("{name}^{{commit}}")])
+        .map(|s| s.trim().to_string())
+        .map_err(|_| format!("no {name} in {}", dir.display()))
+}
+
+/// Where `tip` left `from`: the commit an A/B of `from..tip` measures `tip` against. A local branch
+/// that is behind its upstream would put that point too early and credit `tip` with commits it
+/// merely did not have, so the upstream is asked too and the later of the two answers wins.
+/// Returns the commit and, when the upstream decided it, the upstream's name.
+pub fn merge_base(
+    dir: &std::path::Path,
+    from: &str,
+    tip: &str,
+) -> Result<(String, Option<String>), String> {
+    let tip = commit(dir, tip)?;
+    let own = commit(dir, from)?;
+    let base = |c: &str| {
+        Git(dir)
+            .run(&["merge-base", c, &tip])
+            .map(|s| s.trim().to_string())
+    };
+    let mine = base(&own)
+        .map_err(|_| format!("{from} and {tip:.8} share no history in {}", dir.display()))?;
+    let upstream = Git(dir)
+        .run(&[
+            "rev-parse",
+            "--abbrev-ref",
+            "-q",
+            &format!("{from}@{{upstream}}"),
+        ])
+        .ok()
+        .map(|s| s.trim().to_string());
+    let theirs = upstream
+        .as_deref()
+        .and_then(|u| Some((u.to_string(), base(&commit(dir, u).ok()?).ok()?)));
+    match theirs {
+        Some((u, b))
+            if b != mine
+                && Git(dir)
+                    .run(&["merge-base", "--is-ancestor", &mine, &b])
+                    .is_ok() =>
+        {
+            Ok((b, Some(u)))
+        }
+        _ => Ok((mine, None)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A local main behind origin/main puts the base before the branch's real fork point, and the
+    // branch is then credited with everything main gained in between.
+    #[test]
+    fn a_merge_base_is_taken_from_the_upstream_when_the_branch_is_behind_it() {
+        let home = std::env::temp_dir().join(format!("dibs-mb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let sh = |cmd: &str| -> String {
+            let o = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(cmd)
+                .current_dir(&home)
+                .output()
+                .unwrap();
+            assert!(
+                o.status.success(),
+                "{cmd}: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        sh("git init -q --bare origin.git && git clone -q origin.git r 2>/dev/null");
+        let r = home.join("r");
+        let git = |cmd: &str| {
+            sh(&format!(
+                "cd r && git -c user.email=a@b -c user.name=t {cmd}"
+            ))
+        };
+        git("checkout -q -b main");
+        git("commit -q --allow-empty -m c1");
+        git("push -q -u origin main");
+        let c1 = git("rev-parse HEAD");
+        git("commit -q --allow-empty -m c2");
+        git("push -q origin main");
+        let c2 = git("rev-parse HEAD");
+        git("reset -q --hard HEAD~1");
+        git("checkout -q -b feat origin/main");
+        git("commit -q --allow-empty -m f1");
+        assert_eq!(
+            merge_base(&r, "main", "feat").unwrap(),
+            (c2.clone(), Some("origin/main".to_string()))
+        );
+        assert_eq!(
+            merge_base(&r, "origin/main", "HEAD").unwrap(),
+            (c2.clone(), None)
+        );
+        assert_eq!(
+            merge_base(&r, &c1, "feat").unwrap(),
+            (c1, None),
+            "a commit has no upstream to ask"
+        );
+        assert!(merge_base(&r, "no-such", "feat").is_err());
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }
