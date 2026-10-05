@@ -361,19 +361,35 @@ enum Stop {
     CallerGone,
 }
 
+/// Which build: the first, which perl locks, or one a runner already there makes.
+enum Build {
+    First,
+    ByNewest,
+}
+
 #[test]
 fn a_first_build_told_to_stop_takes_its_whole_build_with_it() {
-    first_build_stopped(Stop::Killed);
+    build_stopped(Build::First, Stop::Killed);
 }
 
 #[test]
 fn a_first_build_whose_caller_goes_takes_its_whole_build_with_it() {
-    first_build_stopped(Stop::CallerGone);
+    build_stopped(Build::First, Stop::CallerGone);
 }
 
-fn first_build_stopped(stop: Stop) {
+#[test]
+fn a_build_told_to_stop_takes_its_whole_build_with_it() {
+    build_stopped(Build::ByNewest, Stop::Killed);
+}
+
+#[test]
+fn a_build_whose_caller_goes_takes_its_whole_build_with_it() {
+    build_stopped(Build::ByNewest, Stop::CallerGone);
+}
+
+fn build_stopped(build: Build, stop: Stop) {
     let mut s = Sandbox::new();
-    without_this_runner(&mut s, false);
+    without_this_runner(&mut s, matches!(build, Build::ByNewest));
     let (up, never) = (s.gate("up"), s.gate("never"));
     s.write(
         "also.sh",
@@ -385,7 +401,11 @@ fn first_build_stopped(stop: Stop) {
         ),
     );
     s.set("CARGO_ALSO", s.p("also.sh"));
-    let check = s.spawn(s.remote(s.dibs(["--check"])));
+    let call = match build {
+        Build::First => s.dibs(["--check"]),
+        Build::ByNewest => s.dibs(["--label", "after", "echo ran"]),
+    };
+    let check = s.spawn(s.remote(call));
     up.reached();
     let cargo: u32 = s.read("cargo.pid").trim().parse().unwrap();
     match stop {
@@ -400,18 +420,21 @@ fn first_build_stopped(stop: Stop) {
         },
     }
     s.wait(check);
-    until("the build's own processes to go", || !alive(cargo));
-    assert_eq!(
-        (s.holders(), s.waiters(), installed(&s)),
-        (0, 0, false),
-        "the lock and the records went with it, and nothing was installed"
+    let sent = || {
+        fs::read_dir(s.path("home/.cache/dibs/runner"))
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.starts_with(".src.") || name.starts_with(".tree.")
+            })
+            .count()
+    };
+    until(
+        "the build, its records and the tree it was sent to go",
+        || !alive(cargo) && s.holders() == 0 && s.waiters() == 0 && sent() == 0,
     );
-    let sources = fs::read_dir(s.path("home/.cache/dibs/runner"))
-        .unwrap()
-        .flatten()
-        .filter(|e| e.file_name().to_string_lossy().starts_with(".src."))
-        .count();
-    assert_eq!(sources, 0, "nor is the unpacked tree left behind");
+    assert!(!installed(&s), "and nothing was installed");
 }
 
 /// Every command on the suite's PATH but perl, linked into one directory.

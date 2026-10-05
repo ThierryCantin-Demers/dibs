@@ -16,6 +16,24 @@ pub struct Channel {
     unframer: Unframer,
 }
 
+/// How the runner hears whether its caller is still there.
+pub enum Caller {
+    /// Frames on stdin: beats, a release, and its end.
+    Channel(Channel),
+    /// Whoever reads stdout closing it: a transfer's and a build's, whose stdin carries rsync's
+    /// stream or a tree.
+    Stdout,
+}
+
+impl Caller {
+    pub fn channel(self) -> Option<Channel> {
+        match self {
+            Caller::Channel(channel) => Some(channel),
+            Caller::Stdout => None,
+        }
+    }
+}
+
 /// Why no request could be read.
 #[derive(Debug)]
 pub enum ChannelError {

@@ -1,6 +1,6 @@
 use crate::{
     call::{Call, Journal, one_line},
-    channel::Channel,
+    channel::{Caller, Channel},
     clock::{Moment, Span},
     history::{History, Key, Scope},
     job::{
@@ -66,9 +66,9 @@ pub fn serve() -> i32 {
     let code = match channel.request() {
         Ok(request) if request.mode == Mode::Rsh => {
             sink.record(Record::Transferring);
-            return Session::new(request, Sink::plain()).serve(None, signals);
+            return Session::new(request, Sink::plain()).serve(Caller::Stdout, signals);
         }
-        Ok(request) => Session::new(request, sink.clone()).serve(Some(channel), signals),
+        Ok(request) => Session::new(request, sink.clone()).serve(Caller::Channel(channel), signals),
         Err(e) => {
             sink.say(&format!("dibs-runner: {e}\n"));
             2
@@ -83,6 +83,8 @@ pub struct Session {
     call: Call,
     sink: Sink,
     settings: Settings,
+    /// What was made for this call alone, which goes with it however it ends.
+    temporary: Vec<PathBuf>,
 }
 
 impl Session {
@@ -91,12 +93,17 @@ impl Session {
             call: Call::of(request),
             sink,
             settings: Settings::load(),
+            temporary: Vec::new(),
         }
+    }
+
+    pub fn with_temporary(self, temporary: Vec<PathBuf>) -> Session {
+        Session { temporary, ..self }
     }
 
     /// Runs the call to its end; the caller's channel, where it has one, is watched while it is
     /// queued and runs.
-    pub fn serve(&self, channel: Option<Channel>, signals: Signals) -> i32 {
+    pub fn serve(&self, caller: Caller, signals: Signals) -> i32 {
         if self.call.mode() != Mode::Check {
             for refused in settings::refused() {
                 self.sink.say(&format!("dibs: {refused}\n"));
@@ -112,12 +119,15 @@ impl Session {
         let dir = LockDir {
             path: machine.lock_dir.clone(),
         };
-        let stopper = Arc::new(Stopper::new(
-            self.call.clone(),
-            dir.clone(),
-            machine.log.clone(),
-            self.sink.clone(),
-        ));
+        let stopper = Arc::new(
+            Stopper::new(
+                self.call.clone(),
+                dir.clone(),
+                machine.log.clone(),
+                self.sink.clone(),
+            )
+            .with_temporary(self.temporary.clone()),
+        );
         signals.listen(Arc::clone(&stopper));
         let history = History::load(&machine.history);
         let views = Views {
@@ -138,7 +148,7 @@ impl Session {
         };
         match self.call.mode() {
             Mode::Status => return views.status(),
-            Mode::Watch => return views.watch(channel),
+            Mode::Watch => return views.watch(caller.channel()),
             Mode::Log => return views.log(),
             Mode::Kill | Mode::KillForce => return kill().serve(),
             Mode::Release => return kill().release(),
@@ -185,9 +195,7 @@ impl Session {
         };
         match self.call.mode() {
             Mode::Peek => self.peek(&at, &environment),
-            Mode::Shared | Mode::Bench | Mode::Rsh | Mode::Gc => {
-                self.run(&at, environment, channel)
-            }
+            Mode::Shared | Mode::Bench | Mode::Rsh | Mode::Gc => self.run(&at, environment, caller),
             Mode::Out => kept.out(self.call.label().as_str()),
             Mode::Fetch => kept.fetch(self.call.label().as_str()),
             mode => {
@@ -247,7 +255,7 @@ impl Session {
     }
 
     /// A shared job or a benchmark: queue, take the lock, run the job, and say how it went.
-    fn run(&self, at: &Place, mut environment: Environment, channel: Option<Channel>) -> i32 {
+    fn run(&self, at: &Place, mut environment: Environment, caller: Caller) -> i32 {
         let request = &self.call.request;
         let mode = self.call.mode();
         let pid = self.call.pid;
@@ -294,15 +302,14 @@ impl Session {
         }
         let history = History::load(&at.machine.history);
         let max = self.cap(&history);
-        if let Some(channel) = channel
-            && !request.watch.off
-        {
-            channel.watch(request.watch.lease, Arc::clone(at.stopper), held.clone());
+        match caller {
+            Caller::Channel(channel) if !request.watch.off => {
+                channel.watch(request.watch.lease, Arc::clone(at.stopper), held.clone())
+            }
+            Caller::Channel(_) => {}
+            Caller::Stdout => Channel::hangup(Arc::clone(at.stopper)),
         }
         let transfer = mode == Mode::Rsh;
-        if transfer {
-            Channel::hangup(Arc::clone(at.stopper));
-        }
 
         let lock = match Lock::open(at.dir) {
             Ok(lock) => lock,

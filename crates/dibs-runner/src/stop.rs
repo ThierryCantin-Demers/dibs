@@ -6,6 +6,7 @@ use crate::{
 };
 use dibs_format::{Event, JobId};
 use std::{
+    fs,
     os::unix::process::CommandExt as _,
     path::PathBuf,
     process::Command,
@@ -48,6 +49,8 @@ pub struct Stopper {
     dir: LockDir,
     log: PathBuf,
     sink: Sink,
+    /// What was made for the call alone, removed when it is stopped.
+    temporary: Vec<PathBuf>,
 }
 
 impl Stopper {
@@ -63,7 +66,12 @@ impl Stopper {
             dir,
             log,
             sink,
+            temporary: Vec::new(),
         }
+    }
+
+    pub fn with_temporary(self, temporary: Vec<PathBuf>) -> Stopper {
+        Stopper { temporary, ..self }
     }
 
     /// The call's state, held: nothing stops the call until the guard goes.
@@ -117,6 +125,9 @@ impl Stopper {
                 line.job = state.job.clone();
                 Journal { path: &self.log }.write(&line);
             }
+        }
+        for path in &self.temporary {
+            let _ = fs::remove_dir_all(path).or_else(|_| fs::remove_file(path));
         }
         self.sink.exit_without_waiting(code);
         // SAFETY: _exit ends the process without flushing a stdout another thread may hold.

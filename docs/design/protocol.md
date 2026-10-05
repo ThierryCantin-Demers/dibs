@@ -109,7 +109,9 @@ the signal once rsync has.
   `install.sh`: `cargo build --locked --release` into `~/.cache/dibs/runner/.target`, which every
   version shares, then, once the binary cargo made names `<hash>`, a rename into
   `~/.cache/dibs/runner/<hash>/dibs-runner`. The client shows the build on stderr and then makes
-  its call again, once.
+  its call again, once. The build's stdin is the tree, so it watches its caller as a transfer
+  does, through stdout; stopped either way, or by `TERM`, `HUP` or `INT`, it removes the tree it
+  was sent and the unpacked copy.
 - **Two clients building one version** both build; the rename makes the last one win, with the
   same bytes. A build that finds a runner naming its hash already installed when it gets the lock
   stops there.
