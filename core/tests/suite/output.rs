@@ -96,6 +96,8 @@ fn the_trailer_counts_what_cargo_compiled() {
     assert_eq!(nothing.stderr.lines_with("built=nothing"), 1, "and says when it compiled nothing");
     assert_eq!(nothing.stderr.lines_with("integer expected"), 0, "and counting nothing is not an error");
     assert_eq!(nothing.stderr.lines_with("measures the previous binary"), 1, "in words");
+    let checked = s.dibs(["--label", "j5c", &format!("echo '    Checking a v1'; {finished}")]).run();
+    assert_eq!(checked.stderr.lines_with("built=1"), 1, "a check or clippy counts the crates it checked");
     let other = s.dibs(["--label", "j5b", "echo '    Finished the sweep'"]).run();
     assert_eq!(other.stderr.lines_with("built="), 0, "a line that only starts like cargo's is not cargo");
 }

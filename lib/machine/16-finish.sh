@@ -26,7 +26,8 @@ if [ -n "$JOBLOG" ]; then
     # log rather than the command, since what runs cargo may be a runner the command starts.
     built=""
     if grep -q '^ *Finished .*target(s) in ' "$JOBLOG" 2>/dev/null; then
-        n=$(grep -c '^ *Compiling ' "$JOBLOG" 2>/dev/null); n=${n:-0}
+        # check and clippy print Checking for each crate they look at, and compile none.
+        n=$(grep -Ec '^ *(Compiling|Checking) ' "$JOBLOG" 2>/dev/null); n=${n:-0}
         [ "$n" -gt 0 ] && built="  built=$n" || built="  built=nothing"
     fi
     printf 'job %s  %s  %s  queued %ss  ran %ss  exit %s  by=%s%s\n' \
