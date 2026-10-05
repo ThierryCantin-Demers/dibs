@@ -137,7 +137,7 @@ case "$MODE" in
         # Said before the bytes move, because a transfer to the wrong machine is not something
         # you find out about afterwards: it succeeds, exit 0, and the files are somewhere
         # nobody will look. One line on stderr, so it cannot get into rsync's own output.
-        printf 'dibs: syncing with %s%s\n' "$HOST" \
+        printf 'dibs: syncing with %s%s once its lock is held; the files are read then, not now\n' "$HOST" \
             "$([ -n "$MACHINE" ] && [ "$MACHINE" != "$HOST" ] && printf ' (%s)' "$MACHINE")" >&2
         # rsync collects its transport's exit without waiting for it, and the transport's pipe
         # closes a moment before it has exited, so a machine it could not reach can come back
