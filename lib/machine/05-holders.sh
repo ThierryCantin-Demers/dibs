@@ -163,6 +163,19 @@ tree_below() {   # pid; its descendants, parents before children, the pid itself
         }'
 }
 
+# timeout puts the job in a group of its own and waits only for its child, so whatever survives
+# its TERM, a test binary that handles the signal or anything the job left running, outlives it.
+sweep_group() {   # pgid
+    local round
+    kill -0 -- -"$1" 2>/dev/null || return 0
+    kill -TERM -- -"$1" 2>/dev/null
+    for round in $(seq 20); do
+        kill -0 -- -"$1" 2>/dev/null || return 0
+        sleep 0.25
+    done
+    kill -KILL -- -"$1" 2>/dev/null
+}
+
 # The lock is released the moment a job exits, and a grandchild still running then runs unlocked
 # beside the next measurement, so everything below goes first, then what was named: TERM, and
 # KILL ten seconds later for whatever ignores it.

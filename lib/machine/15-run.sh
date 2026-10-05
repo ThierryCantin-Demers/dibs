@@ -89,6 +89,8 @@ else
         wait "$WORK"
         STATUS=$?
     fi
+    # Without timeout the job shares this script's group, which has the lock in it.
+    { [ "$MODE" = rsh ] || [ "$MAXHOLD" -gt 0 ]; } && sweep_group "$WORK"
 fi
 [ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ] && STATUS=76
 if [ -n "$TEE" ]; then
