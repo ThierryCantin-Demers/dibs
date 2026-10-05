@@ -244,6 +244,30 @@ fn a_caller_that_goes_away_takes_the_whole_job_with_it() {
 }
 
 #[test]
+fn a_peek_whose_caller_goes_takes_its_command_with_it() {
+    let mut s = Sandbox::new();
+    let (ready, block) = (s.gate("ready"), s.gate("block"));
+    let cmd = format!(
+        "echo $$ > {}; {}; {}",
+        s.p("peek.pid"),
+        ready.signal(),
+        block.hold()
+    );
+    let (job, mut channel) = s.spawn_fed(s.dibs(["__runner", "serve", RUNNER_HASH]));
+    std::io::Write::write_all(
+        &mut channel,
+        watched_request_frame(Mode::Peek, "gone-peek", &cmd).as_bytes(),
+    )
+    .unwrap();
+    ready.reached();
+    let peeking: u32 = s.read("peek.pid").trim().parse().unwrap();
+    assert!(alive(peeking), "the peek's command runs");
+    drop(channel);
+    s.wait(job);
+    assert!(!alive(peeking), "and goes with its caller");
+}
+
+#[test]
 fn a_runners_transfer_carries_rsyncs_stream_untouched_once_it_says_so() {
     let s = Sandbox::new();
     let request = request_frame(Mode::Rsh, "sync", "cat");

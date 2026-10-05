@@ -176,7 +176,7 @@ impl Session {
             tty: self.call.request.tty,
         };
         match self.call.mode() {
-            Mode::Peek => self.peek(&at, &environment),
+            Mode::Peek => self.peek(&at, &environment, caller),
             Mode::Shared | Mode::Bench | Mode::Rsh | Mode::Gc => self.run(&at, environment, caller),
             Mode::Out => kept.out(self.call.label().as_str()),
             Mode::Fetch => kept.fetch(self.call.label().as_str()),
@@ -190,8 +190,14 @@ impl Session {
 
     /// A peek runs beside whatever is measured, with no lock, and every one is logged: the log has
     /// to say what ran beside which run.
-    fn peek(&self, at: &Place, environment: &Environment) -> i32 {
+    fn peek(&self, at: &Place, environment: &Environment, caller: Caller) -> i32 {
         let request = &self.call.request;
+        // A command that writes nothing would otherwise outlive its caller to its cap.
+        if let Caller::Channel(channel) = caller
+            && !request.watch.off
+        {
+            channel.watch(request.watch.lease, Arc::clone(at.stopper), None);
+        }
         let start = Moment::epoch_now();
         let cap = (request.max > 0).then(|| Cap {
             after: Duration::from_secs(request.max),

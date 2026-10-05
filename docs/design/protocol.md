@@ -84,9 +84,9 @@ writes the record to a file the sync that started rsync reads.
   request's lease. Over ssh the client beats every quarter lease (120 s unless `DIBS_LEASE` says);
   on this computer the lease is 0 and only the end counts, which a `SIGKILL` of the client
   produces too.
-- A caller gone while queued takes its call out of the queue at once. One gone while its job runs
-  has the job's whole tree stopped, deepest first, `KILL` for what outlives `TERM`; the runner then
-  finishes as for any other end.
+- A caller gone while queued takes its call out of the queue at once. One gone while its job, or
+  its peek's command, runs has its whole tree stopped, deepest first, `KILL` for what outlives
+  `TERM`; the runner then finishes as for any other end.
 - `TERM`, `HUP` and `INT` to the runner stop the job's tree the same way and exit 143, 129 or 130.
   The runner handles them from before it writes its first record, so a signal at any moment either
   stops a job that has started or prevents it from starting. It sends the `exit` frame only if

@@ -93,7 +93,11 @@ impl Stopper {
         let mut state = self.state();
         if !matches!(
             state.stage,
-            Stage::Queued | Stage::Preparing(_) | Stage::Starting | Stage::Running(_)
+            Stage::Queued
+                | Stage::Preparing(_)
+                | Stage::Starting
+                | Stage::Running(_)
+                | Stage::Peeking(_)
         ) {
             return;
         }
@@ -102,7 +106,7 @@ impl Stopper {
         line.job = state.job.clone();
         Journal { path: &self.log }.write(&line);
         match state.stage {
-            Stage::Running(work) => reap(&[work]),
+            Stage::Running(work) | Stage::Peeking(work) => reap(&[work]),
             Stage::Starting => reap(&state.services),
             _ => self.abort(&mut state, 128 + libc::SIGTERM),
         }
