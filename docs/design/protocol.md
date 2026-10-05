@@ -72,7 +72,13 @@ the signal once rsync has.
   lets the lock go before it sends the digest and the trailer, which such a caller can hold up.
 - The job runs in a process group of its own, with stdin from `/dev/null`, and never inherits the
   lock descriptors or the channel, which are all opened close-on-exec. So does each `--with`
-  server, which is stopped with the job, and with the runner however it ends.
+  server, which is stopped with the job.
+- Each such group is tethered to its runner: `dibs-runner tether <group>`, a process in a group of
+  its own, waits for the runner's end of a pipe to close, then sends the group `TERM`, and `KILL`
+  10 s later, until nothing is left in it. The runner closes it once the job's first process has
+  ended and waits for the sweep, so nothing the job left running outlives the call or the lock; a
+  runner killed outright, by `KILL` or for memory, closes it too. What leaves the group, as a
+  daemon that starts a session of its own does, is not swept.
 - A hold's job waits on the fifo `hold.<pid>` for its caller's `release`. The client starts the
   runner, or ssh, ignoring `INT` and `QUIT`, and the runner leaves a signal it was started
   ignoring ignored, so Ctrl-C reaches only the command run here.
@@ -155,6 +161,6 @@ one of them.
   label's newest 50 runs, and past 20000 `log` keeps its last 10000. A script appends with no
   lock and still cuts `history` to its last 500 lines, which only shortens it.
 - **What differs.** A runner's job is in its own process group, where a script's shared the
-  script's. A runner does not sweep old job directories as a job starts: that belongs to `--gc`.
+  script's, and the group is swept when the job ends or its runner dies. A runner does not sweep old job directories as a job starts: that belongs to `--gc`.
   A runner keeps the pids it would stop in memory, so it writes no `work.<pid>`, which only the
   script that wrote one ever read.

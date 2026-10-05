@@ -8,6 +8,7 @@ mod channel;
 mod clock;
 mod gc;
 mod history;
+mod itself;
 mod job;
 mod kept;
 mod kill;
@@ -36,13 +37,14 @@ pub fn main(args: &[String], source: Source) -> i32 {
             false => source.refuse(asked),
         },
         [verb] if verb == "hash" => source.name(),
+        [verb, group] if verb == job::Tether::WORD => job::Tether::serve(group),
         [verb, hash] if verb == "build" => provision::build(hash),
         [verb, days, dry] if verb == "gc" => {
             gc::Asked::parse(&format!("{days} {dry}")).sweep().run()
         }
         _ => {
             eprintln!(
-                "usage: dibs-runner serve <hash> | hash | build <hash> | gc <days|default> <0|1>"
+                "usage: dibs-runner serve <hash> | hash | build <hash> | gc <days|default> <0|1> | tether <group>"
             );
             2
         }

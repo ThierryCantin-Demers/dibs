@@ -4,6 +4,7 @@
 
 use crate::{
     clock::Moment,
+    itself::Itself,
     machine::Machine,
     platform::{Host, Platform as _},
     settings::{Settings, home},
@@ -25,8 +26,6 @@ const LISTED: usize = 20;
 const DIBS_OWN: [&str; 7] = ["ws", "target", "jobs", "tmp", "out", "runner", "run"];
 /// The marker a prepare leaves, whose time is when a tree was last used.
 const USED: &str = ".dibs-used";
-/// The word the client's own binary serves the runner under.
-const RUNNER_WORD: &str = "__runner";
 
 /// One sweep of a scratch directory.
 pub struct Sweep {
@@ -98,11 +97,7 @@ impl Asked {
 
     /// The job that sweeps: this runner again, as it was started.
     pub fn command(&self) -> String {
-        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("dibs-runner"));
-        let mut words = vec![exe.display().to_string()];
-        if std::env::args().nth(1).as_deref() == Some(RUNNER_WORD) {
-            words.push(RUNNER_WORD.to_string());
-        }
+        let mut words = Itself::words();
         words.push("gc".to_string());
         words.push(self.days.map_or("default".to_string(), |d| d.to_string()));
         words.push(u8::from(self.dry).to_string());

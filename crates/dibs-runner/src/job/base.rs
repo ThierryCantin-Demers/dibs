@@ -1,4 +1,11 @@
-use crate::{job::environment::Environment, sink::Sink, stop::Signals};
+use crate::{
+    job::{
+        environment::Environment,
+        tether::{Group, Tether},
+    },
+    sink::Sink,
+    stop::Signals,
+};
 use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Write as _},
@@ -39,6 +46,8 @@ pub struct Job {
     pub pid: u32,
     exited: mpsc::Receiver<io::Result<ExitStatus>>,
     relays: Vec<JoinHandle<()>>,
+    /// None only where its sweeper could not be started.
+    tether: Option<Tether>,
 }
 
 impl Job {
@@ -116,6 +125,7 @@ impl Job {
 
     fn watched(mut child: Child, relays: Vec<JoinHandle<()>>) -> Job {
         let pid = child.id();
+        let tether = Tether::to(Group(pid)).ok();
         let (tell, exited) = mpsc::channel();
         thread::spawn(move || {
             let _ = tell.send(child.wait());
@@ -124,6 +134,7 @@ impl Job {
             pid,
             exited,
             relays,
+            tether,
         }
     }
 
@@ -144,12 +155,12 @@ impl Job {
                             KILLED
                         }
                     };
-                    self.join_relays();
+                    self.end();
                     return status;
                 }
             },
         };
-        self.join_relays();
+        self.end();
         match status {
             Some(Ok(status)) => exit_code(status),
             _ => 1,
@@ -168,7 +179,12 @@ impl Job {
         unsafe { libc::kill(-(self.pid as libc::pid_t), signal) };
     }
 
-    fn join_relays(self) {
+    /// Whatever the job left running in its group goes before its output is taken as finished,
+    /// since what is left may hold the output open, and before the lock goes.
+    fn end(self) {
+        if let Some(tether) = self.tether {
+            tether.sweep();
+        }
         for relay in self.relays {
             let _ = relay.join();
         }

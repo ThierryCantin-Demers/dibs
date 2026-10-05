@@ -303,3 +303,64 @@ fn a_runner_whose_caller_reads_nothing_lets_the_lock_go_and_ends_when_told() {
     never.open();
     s.wait(job);
 }
+
+#[test]
+fn a_job_goes_with_a_runner_killed_outright() {
+    let mut s = Sandbox::new();
+    let (up, never) = (s.gate("up"), s.gate("never"));
+    s.write(
+        "grand.sh",
+        &format!(
+            "echo $$ > {}; {}; {}\n",
+            s.p("grand.pid"),
+            up.signal(),
+            never.hold()
+        ),
+    );
+    let command = format!(
+        "sh {} & echo $$ > {}; {}",
+        s.p("grand.sh"),
+        s.p("job.pid"),
+        never.hold()
+    );
+    s.write(
+        "request",
+        &request_frame(Mode::Shared, "orphaned", &command),
+    );
+    let call = s.spawn(s.sh(&format!(
+        "dibs __runner serve {RUNNER_HASH} < {}",
+        s.p("request")
+    )));
+    up.reached();
+    until("the job to say who it is", || s.exists("job.pid"));
+    let job: u32 = s.read("job.pid").trim().parse().unwrap();
+    let grand: u32 = s.read("grand.pid").trim().parse().unwrap();
+    let runner: u32 = s.records("holder")[0][1].parse().unwrap();
+    // SAFETY: kill only signals the runner this test started.
+    unsafe { libc::kill(runner as i32, libc::SIGKILL) };
+    s.wait(call);
+    until(
+        "the job and what it started to go with their runner",
+        || !alive(job) && !alive(grand),
+    );
+}
+
+#[test]
+fn what_a_job_leaves_running_goes_before_the_call_ends() {
+    let s = Sandbox::new();
+    let (started, never) = (s.gate("started"), s.gate("never"));
+    s.write(
+        "grand.sh",
+        &format!(
+            "echo $$ > {}; {}; {}\n",
+            s.p("grand.pid"),
+            started.signal(),
+            never.hold()
+        ),
+    );
+    let command = format!("sh {} & {}; echo started", s.p("grand.sh"), started.hold());
+    let out = s.dibs(["--label", "leaves", &command]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let grand: u32 = s.read("grand.pid").trim().parse().unwrap();
+    assert!(!alive(grand), "what the job backgrounded is gone with it");
+}
