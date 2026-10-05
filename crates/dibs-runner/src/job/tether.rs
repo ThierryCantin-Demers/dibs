@@ -1,8 +1,8 @@
 use crate::{itself::Itself, stop::Signals};
 use std::{
     io::{self, PipeWriter, Read as _},
-    os::unix::process::CommandExt as _,
-    process::{Child, Stdio},
+    os::{fd::AsRawFd as _, unix::process::CommandExt as _},
+    process::{Child, Command, Stdio},
     thread,
     time::Duration,
 };
@@ -27,11 +27,12 @@ pub struct Group(pub u32);
 impl Tether {
     pub const WORD: &str = "tether";
 
-    pub fn to(group: Group) -> io::Result<Tether> {
+    /// Started before the job it ties, so no moment of the job's runs untied.
+    pub fn start() -> io::Result<Tether> {
         let (sweeper_end, runner_end) = io::pipe()?;
         let mut command = Itself::command();
         command
-            .args([Tether::WORD, &group.0.to_string()])
+            .arg(Tether::WORD)
             .stdin(sweeper_end)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -44,21 +45,38 @@ impl Tether {
         })
     }
 
+    /// The job, in a group of its own, names that group to the tether between its fork and its
+    /// exec, so a runner killed at any moment after the fork leaves it tied.
+    pub fn tie(&self, job: &mut Command) {
+        let Some(fd) = self.runner_end.as_ref().map(|end| end.as_raw_fd()) else {
+            return;
+        };
+        // SAFETY: the closure makes async-signal-safe calls only, on a descriptor open until exec.
+        unsafe {
+            job.pre_exec(move || {
+                let group = libc::getpid().to_ne_bytes();
+                libc::write(fd, group.as_ptr().cast(), group.len());
+                Ok(())
+            });
+        }
+    }
+
     /// Sweeps what is left in the group, and returns once it is gone.
     pub fn sweep(mut self) {
         drop(self.runner_end.take());
         let _ = self.sweeper.wait();
     }
 
-    /// `dibs-runner tether <group>`: waits for the runner's end of stdin to close, then sweeps.
-    pub fn serve(group: &str) -> i32 {
-        let Ok(group) = group.parse() else {
-            eprintln!("dibs-runner: {group:?} is not a process group");
-            return 2;
-        };
+    /// `dibs-runner tether`: the group, then the end of stdin, which is the runner's end closing.
+    pub fn serve() -> i32 {
+        let mut stdin = io::stdin();
+        let mut group = [0u8; size_of::<libc::pid_t>()];
+        if stdin.read_exact(&mut group).is_err() {
+            return 0;
+        }
         let mut byte = [0u8; 1];
-        while let Ok(1..) = io::stdin().read(&mut byte) {}
-        Group(group).sweep();
+        while let Ok(1..) = stdin.read(&mut byte) {}
+        Group(libc::pid_t::from_ne_bytes(group) as u32).sweep();
         0
     }
 }

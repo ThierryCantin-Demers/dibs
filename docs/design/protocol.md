@@ -74,12 +74,13 @@ process ssh started for the call or the client on this computer. `TERM` and `HUP
 - The job runs in a process group of its own, with stdin from `/dev/null`, and never inherits the
   lock descriptors or the channel, which are all opened close-on-exec. So does each `--with`
   server, which is stopped with the job.
-- Each such group is tethered to its runner: `dibs-runner tether <group>`, a process in a group of
-  its own, waits for the runner's end of a pipe to close, then sends the group `TERM`, and `KILL`
-  10 s later, until nothing is left in it. The runner closes it once the job's first process has
-  ended and waits for the sweep, so nothing the job left running outlives the call or the lock; a
-  runner killed outright, by `KILL` or for memory, closes it too. What leaves the group, as a
-  daemon that starts a session of its own does, is not swept.
+- Each such group is tethered to its runner: `dibs-runner tether`, a process in a group of its
+  own started before the job, reads the job's group from a pipe, which the job writes between its
+  fork and its exec, then waits for the runner's end of the pipe to close, and sends the group
+  `TERM`, and `KILL` 10 s later, until nothing is left in it. The runner closes it once the job's
+  first process has ended and waits for the sweep, so nothing the job left running outlives the
+  call or the lock; a runner killed outright at any moment, by `KILL` or for memory, closes it
+  too. What leaves the group, as a daemon that starts a session of its own does, is not swept.
 - A hold's job waits on the fifo `hold.<pid>` for its caller's `release`. The client starts the
   runner, or ssh, ignoring `INT` and `QUIT`, and the runner leaves a signal it was started
   ignoring ignored, so Ctrl-C reaches only the command run here.

@@ -1,8 +1,5 @@
 use crate::{
-    job::{
-        environment::Environment,
-        tether::{Group, Tether},
-    },
+    job::{environment::Environment, tether::Tether},
     sink::Sink,
     stop::Signals,
 };
@@ -64,6 +61,10 @@ impl Job {
             .process_group(0);
         Signals::unblocked(&mut bash);
         environment.apply(&mut bash);
+        let tether = Tether::start().ok();
+        if let Some(tether) = &tether {
+            tether.tie(&mut bash);
+        }
         let mut relays = Vec::new();
         let child = match output {
             Output::Through => bash.stdin(Stdio::inherit()).spawn()?,
@@ -100,7 +101,7 @@ impl Job {
         };
         // It holds this side's copy of the pipe, whose end is what ends the relay.
         drop(bash);
-        Ok(Job::watched(child, relays))
+        Ok(Job::watched(child, relays, tether))
     }
 
     fn log_file(path: &Path) -> io::Result<File> {
@@ -123,9 +124,8 @@ impl Job {
         })
     }
 
-    fn watched(mut child: Child, relays: Vec<JoinHandle<()>>) -> Job {
+    fn watched(mut child: Child, relays: Vec<JoinHandle<()>>, tether: Option<Tether>) -> Job {
         let pid = child.id();
-        let tether = Tether::to(Group(pid)).ok();
         let (tell, exited) = mpsc::channel();
         thread::spawn(move || {
             let _ = tell.send(child.wait());
