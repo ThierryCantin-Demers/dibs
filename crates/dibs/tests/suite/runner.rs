@@ -160,6 +160,23 @@ fn a_machine_with_no_runner_refuses_the_call_and_says_how_to_install_one() {
     );
 }
 
+#[test]
+fn a_question_within_a_bound_builds_no_runner() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, true);
+    s.machines("[machine.box-a]\nssh = \"dibs@box-a\"\nhostname = \"box-a\"\n");
+    let out = s.remote(s.dibs(["status", "--all"])).run();
+    assert_eq!(
+        out.all()
+            .lines_with("no runner for this dibs yet, so it was not asked"),
+        1,
+        "{}",
+        out.all()
+    );
+    assert!(!installed(&s), "nothing was built");
+    assert_eq!(s.log().lines_with("dibs-runner"), 0, "nor queued");
+}
+
 /// The source of a runner left under this build's hash by a cargo that copied a stale binary.
 const OTHER_SOURCE: &str = "0000000000000000";
 

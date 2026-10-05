@@ -186,6 +186,9 @@ impl Served<'_> {
             session: self.session,
             live: self.live,
         };
+        if self.deadline.is_some() {
+            return Ok(provision.not_for_a_question(delivery));
+        }
         match provision.through_newest(delivery)? {
             Installed::Done => match self.attempt(delivery)? {
                 Attempted::Exit(code) => Ok(code),

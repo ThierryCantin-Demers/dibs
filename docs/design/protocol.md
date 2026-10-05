@@ -105,6 +105,9 @@ the signal once rsync has.
 - **Two clients building one version** both build; the rename makes the last one win, with the
   same bytes. A build that finds a runner naming its hash already installed when it gets the lock
   stops there.
+- **A question asked within a bound** (every machine's status, placement, a batch's kill on every
+  machine) builds nothing, since a build queues behind whatever holds the machine: it says the
+  machine has no runner for this dibs yet, and exits 72.
 - **A machine with no runner at all** refuses the call with exit 72, naming `dibs --check`.
 - **`dibs --check <machine>`** installs the first runner: it streams the tree into a shell line that
   runs the same `install.sh`. No runner exists yet to take the lock, so perl takes it: its `flock`

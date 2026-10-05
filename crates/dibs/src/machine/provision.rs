@@ -149,6 +149,16 @@ impl Provision<'_> {
         i32::from(Exit::NoRunner.code())
     }
 
+    /// A question asked within a bound builds nothing: the build would queue behind whatever
+    /// holds the machine, for as long as that takes.
+    pub fn not_for_a_question(&self, delivery: &mut Delivery) -> i32 {
+        let name = &self.session.name;
+        delivery.say(&format!(
+            "dibs: {name} has no runner for this dibs yet, so it was not asked. A call that runs there builds it first, and so does:  dibs --check {name}\n"
+        ));
+        i32::from(Exit::NoRunner.code())
+    }
+
     /// Exits 0 when the runner is there, and otherwise has the newest one build it.
     fn newest_line() -> String {
         let hash = Runner::HASH;
