@@ -118,11 +118,11 @@ while read -r rank n building src; do
                     {fresh} && mv -T "$WT.seed.$$" "$WT" 2>/dev/null; then
                     echo "DIBS-SEED-SOURCES"
                 fi
-                rm -rf "$WT.seed.$$" ;;
+                rm -rf "$WT.seed.$$" 2>/dev/null || true ;;
         esac
     fi
     for fd in $fds; do exec {fd}<&-; done
-    rm -rf "$TARGET.seed.$$"
+    rm -rf "$TARGET.seed.$$" 2>/dev/null || true
     [ -d "$TARGET" ] && break
 done <<< "$ranked"
 "#;
@@ -153,7 +153,7 @@ if [ "$busy" = 0 ] && mv -T "$TARGET" "$TARGET.old.$$"; then
 {seed}    fi
     if [ -d "$TARGET" ]; then
         echo "DIBS-RESEED $mine"
-        rm -rf "$TARGET.old.$$" "$WT.old.$$"
+        rm -rf "$TARGET.old.$$" "$WT.old.$$" 2>/dev/null || echo "dibs: could not remove all of what the reseed replaced; the next sweep takes it" >&2
     else
         if [ -d "$WT.old.$$" ]; then
             rm -rf "$WT"
@@ -1697,6 +1697,21 @@ mod local_tests {
         std::fs::create_dir_all(&ws).unwrap();
         std::fs::write(ws.join(file), "source\n").unwrap();
         t
+    }
+
+    #[test]
+    fn a_reseed_that_cannot_remove_what_it_replaced_still_prepares_the_tree() {
+        let scratch = tmp("reseed-stuck");
+        tree(&scratch, "moved", LOCK_A, "theirs.rs");
+        let mine = tree(&scratch, "mine", &LOCK_A.replace("rev=aaa#aaa", "rev=bbb#bbb"), "mine.rs");
+        let stuck = mine.join("stuck");
+        std::fs::create_dir_all(&stuck).unwrap();
+        std::fs::write(stuck.join("f"), "").unwrap();
+        Command::new("chmod").arg("500").arg(&stuck).status().unwrap();
+        let out = prepare_local_with(&scratch, "mine", None, "reflinks", LOCK_A, "t1", &[]);
+        Command::new("sh").arg("-c").arg(format!("chmod -R u+w {}/target", scratch.display())).status().unwrap();
+        assert_eq!(parse(&out).unwrap().reseeded, Some(1), "the tree is reseeded and prepared: {out}");
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
