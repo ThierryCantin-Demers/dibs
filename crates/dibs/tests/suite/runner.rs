@@ -437,6 +437,44 @@ fn build_stopped(build: Build, stop: Stop) {
     assert!(!installed(&s), "and nothing was installed");
 }
 
+#[test]
+fn builds_of_two_runners_take_turns_with_the_target_they_share() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, false);
+    fs::write(s.path("tree.tar.gz"), SOURCE).unwrap();
+    let (up, hold) = (s.gate("up"), s.gate("hold"));
+    s.write(
+        "also.sh",
+        &format!(
+            "mkdir {first} 2>/dev/null || {{ echo second-start >> {order}; exit 0; }}\n\
+             echo first-start >> {order}; {}; {}; echo first-end >> {order}\n",
+            up.signal(),
+            hold.hold(),
+            first = s.p("first"),
+            order = s.p("order"),
+        ),
+    );
+    s.set("CARGO_ALSO", s.p("also.sh"));
+    let tree = s.p("tree.tar.gz");
+    let build = |hash: &str| format!("dibs __runner build {hash} < {tree}");
+    let first = s.spawn(s.sh(&build(RUNNER_HASH)));
+    up.reached();
+    let other = format!("{:016x}", u64::from_str_radix(RUNNER_HASH, 16).unwrap() ^ 1);
+    let (out, err) = (s.path("second.out"), s.path("second.err"));
+    let second = s.spawn(s.sh(&build(&other)).streams_to(&out, &err));
+    until("the second build to wait its turn", || {
+        fs::read_to_string(&err).is_ok_and(|e| e.contains("this one waits for it"))
+    });
+    hold.open();
+    assert_eq!(s.wait(first), 0);
+    s.wait(second);
+    assert_eq!(
+        s.read("order"),
+        "first-start\nfirst-end\nsecond-start\n",
+        "the second build's cargo ran once the first had installed"
+    );
+}
+
 /// Every command on the suite's PATH but perl, linked into one directory.
 fn tools_without_perl(s: &Sandbox) -> String {
     let tools = s.path("noperl");

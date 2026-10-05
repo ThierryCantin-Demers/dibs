@@ -4,7 +4,7 @@ use dibs_format::{
     wire::{MaxFrom, Request, Watch},
 };
 use std::{
-    fs,
+    fs::{self, File, OpenOptions},
     io::{self, Read as _},
     path::Path,
 };
@@ -74,6 +74,16 @@ pub fn build(hash: &str) -> i32 {
         return 2;
     }
     let runners = home().join(".cache/dibs/runner");
+    let _one_at_a_time = match BuildLock::take(&runners, &sink) {
+        Ok(lock) => lock,
+        Err(e) => {
+            sink.say(&format!(
+                "dibs-runner: {} could not be locked: {e}\n",
+                runners.join(BuildLock::FILE).display()
+            ));
+            return 70;
+        }
+    };
     let pid = std::process::id();
     let archive = runners.join(format!(".tree.{hash}.{pid}.tar.gz"));
     let source = runners.join(format!(".src.{hash}.{pid}"));
@@ -124,6 +134,32 @@ pub fn build(hash: &str) -> i32 {
     let _ = fs::remove_dir_all(&source);
     let _ = fs::remove_file(&archive);
     code
+}
+
+/// One build of the runner at a time on a machine, held from before its turn in the queue to its
+/// install: cargo lets its own lock go before `install.sh` copies the binary out of the target
+/// every version shares, so another version's build could replace it in between.
+struct BuildLock {
+    _held: File,
+}
+
+impl BuildLock {
+    const FILE: &str = ".build.lock";
+
+    fn take(runners: &Path, sink: &Sink) -> io::Result<BuildLock> {
+        fs::create_dir_all(runners)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(runners.join(BuildLock::FILE))?;
+        if file.try_lock().is_err() {
+            sink.say(
+                "dibs-runner: another build of the runner is running here; this one waits for it.\n",
+            );
+            file.lock()?;
+        }
+        Ok(BuildLock { _held: file })
+    }
 }
 
 /// A path as one word for the shell.

@@ -41,10 +41,11 @@ const UNLOCKABLE: i32 = 71;
 const NO_LOCK_TAKER: i32 = 73;
 
 /// The first build, as `sh -c` reads it with the hash and the cap as `$1` and `$2`: the lock
-/// directory found as the runner finds it, and the gate and `rw` taken through perl's `flock`,
-/// which is `flock(2)` as the runner's is. Perl holds `rw`, close-on-exec, for as long as the build
-/// runs in a process group of its own, which it stops on TERM, HUP or INT, at the cap, or when its
-/// caller goes. Fish reads it inside single quotes too, so it holds no single quote and no doubled
+/// directory found as the runner finds it, then the build lock every build of the runner takes
+/// first, the gate and `rw`, all through perl's `flock`, which is `flock(2)` as the runner's is.
+/// Perl holds `rw`, close-on-exec, for as long as the build runs in a process group of its own,
+/// which it stops on TERM, HUP or INT, at the cap, or when its caller goes. Fish reads it
+/// inside single quotes too, so it holds no single quote and no doubled
 /// backslash.
 const FIRST_BUILD: &str = r#"h=$1 m=$2 d=$HOME/.cache/dibs/runner
 command -v perl >/dev/null 2>&1 || exit 73
@@ -55,6 +56,7 @@ else l=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/dibs-lock; fi
 mkdir -p "$l" 2>/dev/null || { l=/tmp/dibs-lock-$(id -u); mkdir -p "$l"; }
 : > "$l/.writable.$$" 2>/dev/null || exit 71
 rm -f "$l/.writable.$$"
+mkdir -p "$d" || exit 1
 exec perl /dev/fd/3 "$l" "$d" "$h" "$m" 3<<"PERL"
 use Fcntl qw(:DEFAULT :flock);
 use POSIX qw(:sys_wait_h setpgid);
@@ -67,6 +69,11 @@ sub record {
     close($f);
 }
 sub unlockable { unlink("$l/waiting.$$"); exit 71; }
+open(my $one, ">>", "$d/.build.lock") or exit 1;
+unless (flock($one, LOCK_EX | LOCK_NB)) {
+    print STDERR "dibs: another build of dibs-runner is running there; this one waits for it.", chr(10);
+    flock($one, LOCK_EX) or exit 1;
+}
 open(my $g, ">>", "$l/gate") or exit 71;
 open(my $r, ">>", "$l/rw") or exit 71;
 record();

@@ -112,9 +112,11 @@ the signal once rsync has.
   its call again, once. The build's stdin is the tree, so it watches its caller as a transfer
   does, through stdout; stopped either way, or by `TERM`, `HUP` or `INT`, it removes the tree it
   was sent and the unpacked copy.
-- **Two clients building one version** both build; the rename makes the last one win, with the
-  same bytes. A build that finds a runner naming its hash already installed when it gets the lock
-  stops there.
+- **Builds take turns.** Every build of the runner on a machine, the first included, holds
+  `~/.cache/dibs/runner/.build.lock` exclusively from before it queues for the shared lock until
+  it has installed, since cargo lets its own lock go before `install.sh` copies the binary out of
+  the target every version shares. A build that finds a runner naming its hash already installed
+  when its turn comes stops there.
 - **A question asked within a bound** (every machine's status, placement, a batch's kill on every
   machine) builds nothing, since a build queues behind whatever holds the machine: it says the
   machine has no runner for this dibs yet, and exits 72.
