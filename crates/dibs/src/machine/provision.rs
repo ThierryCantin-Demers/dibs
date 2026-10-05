@@ -5,6 +5,7 @@ use crate::machine::{
     ssh::{Ssh, parent_death_signal},
 };
 use dibs_format::Exit;
+use dibs_runner::BUILD_MAX;
 use std::{
     io::{self, BufRead as _, BufReader, Read, Write as _},
     os::unix::process::CommandExt as _,
@@ -39,11 +40,13 @@ pub enum Installed {
 const UNLOCKABLE: i32 = 71;
 const NO_LOCK_TAKER: i32 = 73;
 
-/// The first build, as `sh -c` reads it with the hash as `$1`: the lock directory found as the
-/// runner finds it, the gate and `rw` taken through perl's `flock`, which is `flock(2)` as the
-/// runner's is, and the build run with `rw` still open, so the lock lasts as long as the build.
-/// Fish reads it inside single quotes too, so it holds no single quote and no doubled backslash.
-const FIRST_BUILD: &str = r#"h=$1 d=$HOME/.cache/dibs/runner
+/// The first build, as `sh -c` reads it with the hash and the cap as `$1` and `$2`: the lock
+/// directory found as the runner finds it, and the gate and `rw` taken through perl's `flock`,
+/// which is `flock(2)` as the runner's is. Perl holds `rw`, close-on-exec, for as long as the build
+/// runs in a process group of its own, which it stops on TERM, HUP or INT, at the cap, or when its
+/// caller goes. Fish reads it inside single quotes too, so it holds no single quote and no doubled
+/// backslash.
+const FIRST_BUILD: &str = r#"h=$1 m=$2 d=$HOME/.cache/dibs/runner
 command -v perl >/dev/null 2>&1 || exit 73
 sd=${DIBS_SHARED_LOCK_DIR:-/dev/shm/dibs-lock}
 if [ -n "${DIBS_LOCK_DIR:-}" ]; then l=$DIBS_LOCK_DIR
@@ -52,9 +55,12 @@ else l=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/dibs-lock; fi
 mkdir -p "$l" 2>/dev/null || { l=/tmp/dibs-lock-$(id -u); mkdir -p "$l"; }
 : > "$l/.writable.$$" 2>/dev/null || exit 71
 rm -f "$l/.writable.$$"
-exec perl /dev/fd/3 "$l" "$d" "$h" 3<<"PERL"
+exec perl /dev/fd/3 "$l" "$d" "$h" "$m" 3<<"PERL"
 use Fcntl qw(:DEFAULT :flock);
-my ($l, $d, $h) = @ARGV;
+use POSIX qw(:sys_wait_h setpgid);
+use IO::Poll qw(POLLERR POLLHUP);
+use File::Path qw(remove_tree);
+my ($l, $d, $h, $m) = @ARGV;
 sub record {
     open(my $f, ">", "$l/waiting.$$") or return;
     print $f join(chr(9), "shared", $$, time, "dibs-runner", "dibs --check", "", "-", "the first build of dibs-runner $h", ""), chr(10);
@@ -72,15 +78,39 @@ unless (flock($r, LOCK_SH | LOCK_NB)) {
 close($g);
 record();
 rename("$l/waiting.$$", "$l/holder.$$");
-fcntl($r, F_SETFD, 0);
-exec("sh", "-c", q{exec 3<&-; l=$1 d=$2 s=$2/.src.$$
-rm -rf "$s" && mkdir -p "$s" && cd "$s" && tar -xmzf - && PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$d/.target sh install.sh "$3"
-e=$?
-cd / && rm -rf "$s"
-rm -f "$l/holder.$$"
-exit $e}, "sh", $l, $d, $h);
+my $pid = fork();
+unless (defined($pid)) { unlink("$l/holder.$$"); exit 1; }
+if ($pid == 0) {
+    setpgid(0, 0);
+    exec("sh", "-c", q{exec 3<&-; s=$1/.src.$$
+rm -rf "$s" && mkdir -p "$s" && cd "$s" && tar -xmzf - && PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$1/.target sh install.sh "$2"}, "sh", $d, $h);
+    POSIX::_exit(127);
+}
+setpgid($pid, $pid);
+my ($stop, $at) = ("", 0);
+sub stop { ($stop, $at) = ($_[0], time) unless $stop; kill($_[1], -$pid); }
+$SIG{TERM} = sub { stop("TERM", "TERM") };
+$SIG{HUP} = sub { stop("HUP", "HUP") };
+$SIG{INT} = sub { stop("INT", "INT") };
+$SIG{ALRM} = sub { stop("ALRM", "TERM") };
+$SIG{CHLD} = sub {};
+alarm($m);
+my $out = IO::Poll->new;
+$out->mask(*STDOUT => POLLERR | POLLHUP);
+while (waitpid($pid, WNOHANG) == 0) {
+    $out->poll(1);
+    if ($out->events(*STDOUT)) { $out->remove(*STDOUT); stop("gone", "TERM"); }
+    kill("KILL", -$pid) if $stop && time - $at > 30;
+}
+my $st = $?;
+alarm(0);
+kill("KILL", -$pid);
+remove_tree("$d/.src.$pid");
 unlink("$l/holder.$$");
-exit 1;
+print STDERR "dibs: the first build of dibs-runner ran past $m seconds, so it was stopped.", chr(10) if $stop eq "ALRM";
+my %code = (TERM => 143, HUP => 129, INT => 130, ALRM => 124, gone => 1);
+exit($code{$stop}) if $stop;
+exit(($st & 127) ? 128 + ($st & 127) : $st >> 8);
 PERL
 "#;
 
@@ -169,7 +199,7 @@ impl Provision<'_> {
 
     /// Takes the shared lock, then unpacks the tree from stdin and runs its own install script.
     fn first_line() -> String {
-        format!("sh -c '{FIRST_BUILD}' sh {}", Runner::HASH)
+        format!("sh -c '{FIRST_BUILD}' sh {} {BUILD_MAX}", Runner::HASH)
     }
 
     /// Runs a line there with the tree on its stdin, its output passed on as it comes.

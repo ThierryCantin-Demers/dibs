@@ -111,10 +111,13 @@ the signal once rsync has.
 - **A machine with no runner at all** refuses the call with exit 72, naming `dibs --check`.
 - **`dibs --check <machine>`** installs the first runner: it streams the tree into a shell line that
   runs the same `install.sh`. No runner exists yet to take the lock, so perl takes it: its `flock`
-  is `flock(2)` on Linux and macOS, the gate and `rw` are taken as a runner takes them, the build
-  is a shared holder labelled `dibs-runner`, and `rw` stays open in the build, so the lock lasts
-  as long as the build does. A machine without perl is refused with exit 72, and one whose lock
-  directory cannot be written with 71: a first build never runs unlocked.
+  is `flock(2)` on Linux and macOS, the gate and `rw` are taken as a runner takes them, and perl
+  is a shared holder labelled `dibs-runner`. It keeps `rw` to itself, close-on-exec, so nothing
+  the build leaves running holds the lock, and runs the build in a process group of its own,
+  which it waits for, stops on `TERM`, `HUP` or `INT` (`dibs --kill` sends it `TERM`), at the
+  build's cap of 1800 s, or when its caller goes, then sweeps with `KILL`. A machine without perl
+  is refused with exit 72, and one whose lock directory cannot be written with 71: a first build
+  never runs unlocked.
 - **A build that fails** exits 72 with its output, and nothing runs. Exit 72 is for telling the
   person: the machine needs cargo, network to crates.io once per dependency, and a toolchain at
   the workspace's `rust-version`.

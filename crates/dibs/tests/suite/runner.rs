@@ -65,13 +65,15 @@ fn the_runners_workspace_builds_as_the_workspace_does() {
 }
 
 /// A cargo that builds nothing: it checks it was run in the tree, under the shared lock and named
-/// by a holder, then puts the runner this suite runs where cargo would have built it.
+/// by a holder, runs `$CARGO_ALSO` where a test gives one, then puts the runner this suite runs
+/// where cargo would have built it.
 const FAKE_CARGO: &str = r#"#!/bin/bash
 [ "$*" = "build --locked --release" ] || { echo "cargo: not the build expected: $*" >&2; exit 2; }
 [ -f Cargo.lock ] && [ -f install.sh ] && [ -f crates/dibs-runner/src/lib.rs ] || { echo "cargo: no runner tree here" >&2; exit 101; }
 perl -MFcntl=:flock -e 'open(my $f, ">>", $ARGV[0]) or exit 0; exit(flock($f, LOCK_EX | LOCK_NB) ? 1 : 0)' "$DIBS_LOCK_DIR/rw" || { echo "cargo: built outside the lock" >&2; exit 101; }
 grep -qs "dibs-runner" "$DIBS_LOCK_DIR"/holder.* || { echo "cargo: no holder names the build" >&2; exit 101; }
 [ -z "${FAIL_BUILD:-}" ] || { echo "error: could not compile dibs-runner" >&2; exit 101; }
+[ -z "${CARGO_ALSO:-}" ] || bash "$CARGO_ALSO"
 mkdir -p "${CARGO_TARGET_DIR:-target}/release"
 cp "$PREBUILT" "${CARGO_TARGET_DIR:-target}/release/dibs-runner"
 "#;
@@ -305,6 +307,111 @@ fn the_first_build_queues_behind_a_benchmark() {
         (0, 0),
         "and its records went with it"
     );
+}
+
+#[test]
+fn what_the_first_build_leaves_running_holds_no_lock() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, false);
+    let (escaped, daemon) = (s.gate("escaped"), s.gate("daemon"));
+    s.write(
+        "daemon.sh",
+        &format!(
+            "echo $$ > {}; {}; {}\n",
+            s.p("daemon.pid"),
+            escaped.signal(),
+            daemon.hold()
+        ),
+    );
+    s.write(
+        "also.sh",
+        &format!(
+            "perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' bash {} </dev/null >/dev/null 2>&1 &\n{}\n",
+            s.p("daemon.sh"),
+            escaped.hold()
+        ),
+    );
+    s.set("CARGO_ALSO", s.p("also.sh"));
+    let out = s.remote(s.dibs(["--check"])).run();
+    assert!(installed(&s), "{}", out.all());
+    let left: u32 = s.read("daemon.pid").trim().parse().unwrap();
+    assert!(alive(left), "the daemon outlived the build");
+    let measured = s
+        .dibs([
+            "--bench",
+            "--wait",
+            "2",
+            "--label",
+            "after",
+            "echo measured",
+        ])
+        .run();
+    assert_eq!(
+        measured.code,
+        0,
+        "a daemon the build started, as sccache starts one, keeps no lock: {}",
+        measured.all()
+    );
+    daemon.open();
+}
+
+/// How a first build is stopped while cargo runs.
+enum Stop {
+    Killed,
+    CallerGone,
+}
+
+#[test]
+fn a_first_build_told_to_stop_takes_its_whole_build_with_it() {
+    first_build_stopped(Stop::Killed);
+}
+
+#[test]
+fn a_first_build_whose_caller_goes_takes_its_whole_build_with_it() {
+    first_build_stopped(Stop::CallerGone);
+}
+
+fn first_build_stopped(stop: Stop) {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, false);
+    let (up, never) = (s.gate("up"), s.gate("never"));
+    s.write(
+        "also.sh",
+        &format!(
+            "echo $$ > {}; {}; {}\n",
+            s.p("cargo.pid"),
+            up.signal(),
+            never.hold()
+        ),
+    );
+    s.set("CARGO_ALSO", s.p("also.sh"));
+    let check = s.spawn(s.remote(s.dibs(["--check"])));
+    up.reached();
+    let cargo: u32 = s.read("cargo.pid").trim().parse().unwrap();
+    match stop {
+        Stop::Killed => {
+            let holder = s.pid_of("dibs-runner");
+            let killed = s.dibs(["--kill", &holder.to_string(), "--anyone"]).run();
+            assert_eq!(killed.code, 0, "{}", killed.all());
+        }
+        // SAFETY: kill only signals the client this test started.
+        Stop::CallerGone => unsafe {
+            libc::kill(check.pid as i32, libc::SIGKILL);
+        },
+    }
+    s.wait(check);
+    until("the build's own processes to go", || !alive(cargo));
+    assert_eq!(
+        (s.holders(), s.waiters(), installed(&s)),
+        (0, 0, false),
+        "the lock and the records went with it, and nothing was installed"
+    );
+    let sources = fs::read_dir(s.path("home/.cache/dibs/runner"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".src."))
+        .count();
+    assert_eq!(sources, 0, "nor is the unpacked tree left behind");
 }
 
 /// Every command on the suite's PATH but perl, linked into one directory.

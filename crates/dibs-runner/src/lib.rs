@@ -26,7 +26,7 @@ mod status;
 mod stop;
 mod views;
 
-pub use provision::Source;
+pub use provision::{BUILD_MAX, Source};
 
 /// What `dibs-runner` does with its arguments, and the exit it gives.
 pub fn main(args: &[String], source: Source) -> i32 {

@@ -10,7 +10,7 @@ use std::{
 };
 
 /// How long a build of the runner may hold the shared lock.
-const BUILD_MAX: u64 = 1800;
+pub const BUILD_MAX: u64 = 1800;
 const HASH_DIGITS: usize = 16;
 /// What the far shell exits with for a missing runner, so the client builds its own over this one.
 const NOT_THIS_SOURCE: i32 = 125;
