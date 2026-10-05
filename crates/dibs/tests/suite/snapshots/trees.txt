@@ -1,0 +1,590 @@
+== a working tree keeps a cache a fresh path names: dibs build <root>/app@local store
+-> exit 0
+2| dibs: preparing app from <root>/app (clean)
+2| dibs: <root>/scratch/ws/app/local-<app>
+2| dibs: step 1/1 [Shared]
+recorded revisions: {"app":"local:<sha>-<content>"}
+jobs/  (2 job directories)
+out/
+target/
+  app-local-<app>/
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+      cache/
+        store
+
+== and builds: dibs bench <root>/app@local gate
+-> exit 0
+1| dibs: this tree did not make the last build in <root>/scratch/target/app-local-<app>, so cargo rebuilds its crates
+2| dibs: preparing app from <root>/app (clean)
+2| dibs: <root>/scratch/ws/app/local-<app>
+2| dibs: step 1/2 [Shared]
+2| dibs: step 2/2 [Exclusive]
+recorded revisions: {"app":"local:<sha>-<content>"}
+jobs/  (5 job directories)
+out/
+target/
+  app-local-<app>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+      cache/
+        store
+
+== a second checkout starts from the first, without the fresh path: dibs bench <root>/app-topk@local gate
+-> exit 0
+2| dibs: preparing app from <root>/app-topk (clean)
+2| dibs: <root>/scratch/ws/app/local-<app-topk>
+2| dibs: target directory copied from app-local-<app>, whose builds match 2 of the 2 groups in this tree's lockfile, with its sources so unchanged crates stay built
+2| dibs: step 1/2 [Shared]
+2| dibs: step 2/2 [Exclusive]
+recorded revisions: {"app":"local:<sha>-<content>"}
+recorded seeded: "app-local-<app>"
+jobs/  (8 job directories)
+out/
+target/
+  app-local-<app-topk>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app-topk>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    local-<app-topk>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+      cache/
+        store
+
+== two fetched arms, the second seeded: dibs bench <root>/app@main,decoy gate
+-> exit 0
+1| dibs: this tree did not make the last build in <root>/scratch/target/app, so cargo rebuilds its crates
+1| dibs: this tree did not make the last build in <root>/scratch/target/app-arm1, so cargo rebuilds its crates
+2| dibs: comparing 2 arms of app, measured main decoy
+2| dibs: main: step 1/2 [Shared], with the setup ahead of it
+2| dibs: <root>/scratch/ws/app/<main>
+2| dibs: decoy: step 1/2 [Shared], with the setup ahead of it
+2| dibs: <root>/scratch/ws/app/<decoy>
+2| dibs: target directory copied from app-local-<app-topk>, whose builds match 2 of the 2 groups in this tree's lockfile
+2| dibs: main: step 2/2 [Exclusive]
+2| dibs: decoy: step 2/2 [Exclusive]
+2| dibs: measured, each rep's exclusive seconds and the jobs with its output:
+recorded revisions: {}
+recorded arms: [{"fetched":"main","name":"main","revisions":{"app":"<main>"}},{"fetched":"decoy","name":"decoy","revisions":{"app":"<decoy>"},"seeded":"app-local-<app-topk>"}]
+jobs/  (12 job directories)
+out/
+target/
+  app/
+    .dibs-tree:
+      | <root>/scratch/ws/app/<main>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-arm1/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/<decoy>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app-topk>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app-topk>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .prepare.lock  (empty)
+    <decoy>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<decoy>
+      .gitignore
+      Cargo.lock
+      a.txt
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app-topk>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+      cache/
+        store
+
+== the working tree moves to a new lockfile and builds it: dibs bench <root>/app@local gate
+-> exit 0
+2| dibs: preparing app from <root>/app (uncommitted changes included)
+2| dibs: <root>/scratch/ws/app/local-<app>
+2| dibs: step 1/2 [Shared]
+2| dibs: step 2/2 [Exclusive]
+recorded revisions: {"app":"local:<sha>+dirty-<content>"}
+jobs/  (15 job directories)
+out/
+target/
+  app/
+    .dibs-tree:
+      | <root>/scratch/ws/app/<main>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-arm1/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/<decoy>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app-topk>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app-topk>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>/
+    .dibs-packages:
+      | 05f40301e445
+      | 09500a29b589
+      | 136e9494866b
+      | 4393089f9365
+      | 4bcc0302b845
+      | 5633d9eeae25
+      | 5f7e39c16453
+      | 791b0c5685df
+      | 7cea54bf0d67
+      | 9a3bc3e7b81c
+      | a427ecc069b0
+      | b2bac97260c6
+      | b74e5b21b919
+      | fa6f04eeef68
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .prepare.lock  (empty)
+    <decoy>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<decoy>
+      .gitignore
+      Cargo.lock
+      a.txt
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app-topk>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+      cache/
+        store
+
+== the second checkout, which has built far less of it, is reseeded: dibs bench <root>/app-topk@local gate
+-> exit 0
+2| dibs: preparing app from <root>/app-topk (uncommitted changes included)
+2| dibs: <root>/scratch/ws/app/local-<app-topk>
+2| dibs: this tree's target had built 2 of the 14 groups in its lockfile and app-local-<app> has 14, so the tree now starts from app-local-<app>'s
+2| dibs: step 1/2 [Shared]
+2| dibs: step 2/2 [Exclusive]
+recorded revisions: {"app":"local:<sha>+dirty-<content>"}
+recorded seeded: "app-local-<app>"
+jobs/  (18 job directories)
+out/
+target/
+  app/
+    .dibs-tree:
+      | <root>/scratch/ws/app/<main>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-arm1/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/<decoy>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app-topk>/
+    .dibs-packages:
+      | 05f40301e445
+      | 09500a29b589
+      | 136e9494866b
+      | 4393089f9365
+      | 4bcc0302b845
+      | 5633d9eeae25
+      | 5f7e39c16453
+      | 791b0c5685df
+      | 7cea54bf0d67
+      | 9a3bc3e7b81c
+      | a427ecc069b0
+      | b2bac97260c6
+      | b74e5b21b919
+      | fa6f04eeef68
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app-topk>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>/
+    .dibs-packages:
+      | 05f40301e445
+      | 09500a29b589
+      | 136e9494866b
+      | 4393089f9365
+      | 4bcc0302b845
+      | 5633d9eeae25
+      | 5f7e39c16453
+      | 791b0c5685df
+      | 7cea54bf0d67
+      | 9a3bc3e7b81c
+      | a427ecc069b0
+      | b2bac97260c6
+      | b74e5b21b919
+      | fa6f04eeef68
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .prepare.lock  (empty)
+    <decoy>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<decoy>
+      .gitignore
+      Cargo.lock
+      a.txt
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app-topk>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+      cache/
+        store
+
+== a pinned tree, nested under its config: dibs build <root>/app@local p --pin <root>/lib@local
+-> exit 0
+2| dibs: pinning lib from <root>/lib (clean)
+2| dibs: <root>/scratch/ws/lib/local-<lib>
+2| dibs: preparing app from <root>/app (uncommitted changes included)
+2| dibs: <root>/scratch/ws/app/pin-<hash>/local-<app>
+2| dibs: target directory copied from app-local-<app-topk>, whose builds match 0 of the 14 groups in this tree's lockfile, with its sources so unchanged crates stay built
+2| dibs: step 1/1 [Shared]
+recorded revisions: {"app":"local:<sha>+dirty-<content>","lib":"local:<sha>-<content>"}
+recorded seeded: "app-local-<app-topk>"
+jobs/  (21 job directories)
+out/
+target/
+  app/
+    .dibs-tree:
+      | <root>/scratch/ws/app/<main>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-arm1/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/<decoy>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app-topk>/
+    .dibs-packages:
+      | 05f40301e445
+      | 09500a29b589
+      | 136e9494866b
+      | 4393089f9365
+      | 4bcc0302b845
+      | 5633d9eeae25
+      | 5f7e39c16453
+      | 791b0c5685df
+      | 7cea54bf0d67
+      | 9a3bc3e7b81c
+      | a427ecc069b0
+      | b2bac97260c6
+      | b74e5b21b919
+      | fa6f04eeef68
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app-topk>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>/
+    .dibs-packages:
+      | 05f40301e445
+      | 09500a29b589
+      | 136e9494866b
+      | 4393089f9365
+      | 4bcc0302b845
+      | 5633d9eeae25
+      | 5f7e39c16453
+      | 791b0c5685df
+      | 7cea54bf0d67
+      | 9a3bc3e7b81c
+      | a427ecc069b0
+      | b2bac97260c6
+      | b74e5b21b919
+      | fa6f04eeef68
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>-pin-<hash>/
+    .dibs-packages:
+      | 05f40301e445
+      | 09500a29b589
+      | 136e9494866b
+      | 4393089f9365
+      | 4bcc0302b845
+      | 5633d9eeae25
+      | 5f7e39c16453
+      | 791b0c5685df
+      | 7cea54bf0d67
+      | 9a3bc3e7b81c
+      | a427ecc069b0
+      | b2bac97260c6
+      | b74e5b21b919
+      | fa6f04eeef68
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 0565c5e522d0
+      | 1f1267a549d1
+      | 3c3d21c6434c
+      | 643f60fb9c7c
+      | 666bf15ebb3d
+      | 8664972c69a3
+      | 9f239bd54498
+      | a798d4d5582f
+      | aa196c1e0700
+      | bf3501368495
+      | dc6a6a446783
+      | e647759d43e5
+      | ee6642adffbd
+      | fd3ee3e4cdd6
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/pin-<hash>/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  lib-local-<lib>/
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .prepare.lock  (empty)
+    <decoy>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<decoy>
+      .gitignore
+      Cargo.lock
+      a.txt
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app-topk>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+      cache/
+        store
+    pin-<hash>/
+      .cargo/
+        config.toml:
+          | [patch.crates-io]
+          | serde = { path = "<root>/scratch/ws/lib/local-<lib>" }
+      .dibs-used  (empty)
+      local-<app>/
+        .dibs-used  (empty)
+        .dibs.toml
+        .gitignore
+        Cargo.lock
+        a.txt
+  lib/
+    local-<lib>/
+      .dibs-used  (empty)
+      Cargo.toml
+      src/
+        lib.rs

@@ -1,0 +1,111 @@
+== before
+jobs before, apart from those dibs ran: abandoned recent
+jobs/  (2 job directories)
+target/
+  abandoned/
+    .dibs-used  (empty)
+    release/
+      app
+  held/
+    .dibs-used  (empty)
+    debug/
+      .cargo-lock
+  recent/
+    .dibs-used  (empty)
+  stuck/
+    .dibs-used  (empty)
+    sub/
+      f
+  swept-only/
+    .dibs-used:
+      | swept
+  unmarked/
+    release/
+ws/
+  app/
+    abandoned/
+      .dibs-used  (empty)
+    recent/
+      .dibs-used  (empty)
+  other/
+    abandoned/
+      .dibs-used  (empty)
+      f
+    unmarked/
+
+== after a prepare, while a build holds one old target: dibs build app@local p
+-> exit 0
+1| dibs: could not remove all of <root>/scratch/target/stuck; the next sweep tries again
+2| dibs: preparing app from <root>/app (clean)
+2| dibs: <root>/scratch/ws/app/local-<key>
+2| dibs: step 1/1 [Shared]
+recorded revisions: {"app":"local:<sha>-<content>"}
+jobs after, apart from those dibs ran: recent
+jobs/  (3 job directories)
+out/
+target/
+  app-local-<key>/
+    .dibs-used  (empty)
+  held/
+    .dibs-used  (empty)
+    debug/
+      .cargo-lock
+  recent/
+    .dibs-used  (empty)
+  stuck/
+    sub/
+      f
+  unmarked/
+    .dibs-used:
+      | swept
+    release/
+tmp/
+ws/
+  app/
+    local-<key>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      a.txt
+    recent/
+      .dibs-used  (empty)
+  other/
+    unmarked/
+      .dibs-used  (empty)
+
+== after another, once nothing holds it and the stuck one can go: dibs build app@local p
+-> exit 0
+2| dibs: preparing app from <root>/app (clean)
+2| dibs: <root>/scratch/ws/app/local-<key>
+2| dibs: step 1/1 [Shared]
+recorded revisions: {"app":"local:<sha>-<content>"}
+jobs after, apart from those dibs ran: recent
+jobs/  (5 job directories)
+out/
+target/
+  app-local-<key>/
+    .dibs-used  (empty)
+  recent/
+    .dibs-used  (empty)
+  stuck/
+    .dibs-used:
+      | swept
+    sub/
+      f
+  unmarked/
+    .dibs-used:
+      | swept
+    release/
+tmp/
+ws/
+  app/
+    local-<key>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      a.txt
+    recent/
+      .dibs-used  (empty)
+  other/
+    unmarked/
+      .dibs-used  (empty)

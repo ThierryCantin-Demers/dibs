@@ -27,5 +27,6 @@ mod snapshots;
 mod status;
 mod sync;
 mod transport;
+mod trees;
 mod update;
 mod wire;

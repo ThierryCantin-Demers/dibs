@@ -9,9 +9,9 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const LOCK: &str = "[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"widget\"\nversion = \"0.2.0\"\nsource = \"git+https://example.invalid/widget?rev=abc#abc\"\n";
+pub(crate) const LOCK: &str = "[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"widget\"\nversion = \"0.2.0\"\nsource = \"git+https://example.invalid/widget?rev=abc#abc\"\n";
 
-fn short_hash(text: &str) -> String {
+pub(crate) fn short_hash(text: &str) -> String {
     Sha256::digest(text.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -20,50 +20,52 @@ fn short_hash(text: &str) -> String {
 }
 
 /// Each path under `root` and what it is, with the contents of the files dibs writes itself.
-fn tree(root: &Path, n: &Normal) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut entries: Vec<(String, PathBuf)> = fs::read_dir(root)
+pub(crate) fn tree(root: &Path, n: &Normal) -> Vec<String> {
+    let entries: Vec<(String, PathBuf)> = fs::read_dir(root)
         .map(|d| {
             d.flatten()
                 .map(|e| (n.apply(&e.file_name().to_string_lossy()), e.path()))
                 .collect()
         })
         .unwrap_or_default();
-    entries.sort();
-    for (name, p) in entries {
-        let meta = fs::symlink_metadata(&p).unwrap();
-        if meta.is_dir() {
-            if name == "jobs" {
-                let n = fs::read_dir(&p).map(|d| d.count()).unwrap_or(0);
-                out.push(format!("{name}/  ({n} job directories)"));
-                continue;
-            }
-            out.push(format!("{name}/"));
-            out.extend(tree(&p, n).into_iter().map(|l| format!("  {l}")));
-        } else if meta.file_type().is_symlink() {
-            out.push(format!(
-                "{name} -> {}",
-                fs::read_link(&p).unwrap().display()
-            ));
-        } else if std::os::unix::fs::FileTypeExt::is_fifo(&meta.file_type()) {
-            out.push(format!("{name}  (a fifo)"));
-        } else {
-            let text = fs::read_to_string(&p).unwrap_or_default();
-            let ours = (name.starts_with(".dibs-")
-                || name.starts_with(".packages.")
-                || matches!(name.as_str(), ".prepare.lock" | "config.toml" | ".git"))
-                && !name.ends_with(".toml.lock");
-            match (ours, text.is_empty()) {
-                (true, true) => out.push(format!("{name}  (empty)")),
-                (true, false) => {
-                    out.push(format!("{name}:"));
-                    out.extend(text.lines().map(|l| format!("  | {l}")));
-                }
-                (false, _) => out.push(name),
-            }
+    // Sorted by name, then as shown, so two files whose names normalise alike keep one order.
+    let mut shown: Vec<(&String, Vec<String>)> = entries
+        .iter()
+        .map(|(name, p)| (name, entry(name, p, n)))
+        .collect();
+    shown.sort();
+    shown.into_iter().flat_map(|(_, lines)| lines).collect()
+}
+
+fn entry(name: &str, p: &Path, n: &Normal) -> Vec<String> {
+    let meta = fs::symlink_metadata(p).unwrap();
+    if meta.is_dir() {
+        if name == "jobs" {
+            let n = fs::read_dir(p).map(|d| d.count()).unwrap_or(0);
+            return vec![format!("{name}/  ({n} job directories)")];
         }
+        let mut out = vec![format!("{name}/")];
+        out.extend(tree(p, n).into_iter().map(|l| format!("  {l}")));
+        return out;
     }
-    out
+    if meta.file_type().is_symlink() {
+        return vec![format!("{name} -> {}", fs::read_link(p).unwrap().display())];
+    }
+    if std::os::unix::fs::FileTypeExt::is_fifo(&meta.file_type()) {
+        return vec![format!("{name}  (a fifo)")];
+    }
+    let text = fs::read_to_string(p).unwrap_or_default();
+    let ours = (name.starts_with(".dibs-")
+        || name.starts_with(".packages.")
+        || matches!(name, ".prepare.lock" | "config.toml" | ".git"))
+        && !name.ends_with(".toml.lock");
+    match (ours, text.is_empty()) {
+        (true, true) => vec![format!("{name}  (empty)")],
+        (true, false) => std::iter::once(format!("{name}:"))
+            .chain(text.lines().map(|l| format!("  | {l}")))
+            .collect(),
+        (false, _) => vec![name.to_string()],
+    }
 }
 
 #[test]

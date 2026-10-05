@@ -1,0 +1,383 @@
+//! What prepares leave beyond the plain cases `prepares.rs` pins: a tree seeded from a sibling
+//! and reseeded when its lockfile moves, a pinned tree and its config, a recipe's `fresh` paths,
+//! the sweep a prepare makes of old trees, targets and jobs, and a git database sent ahead of a
+//! build. Each section also holds what the client said of the tree and recorded of it.
+
+use crate::harness::*;
+use crate::prepares::{LOCK, short_hash, tree};
+use crate::recipes::{PARAMS, app, recipes};
+use crate::snapshot::*;
+use crate::wire::wired;
+use std::fs;
+
+/// A cp that copies where it is asked to share blocks, and a runner told to, so a new tree is
+/// seeded whatever the disk under the sandbox.
+fn copies_for_reflinks(s: &mut Sandbox) {
+    let cp = s.command("bash", ["-c", "type -P cp"]).run().stdout;
+    s.write_exec(
+        "cow/cp",
+        &format!(
+            "#!/bin/bash\nargs=()\nfor a; do [ \"$a\" = --reflink=always ] || args+=(\"$a\"); done\nexec {} \"${{args[@]}}\"\n",
+            cp.trim()
+        ),
+    );
+    s.set("PATH", format!("{}:{}", s.p("cow"), s.var("PATH")));
+    s.set("DIBS_REFLINK", "copy");
+}
+
+/// The lockfile with `extra` more git packages, each a line of the tree's package list.
+fn lock_with(extra: usize) -> String {
+    let mut lock = LOCK.to_string();
+    for i in 0..extra {
+        lock += &format!(
+            "\n[[package]]\nname = \"g{i}\"\nversion = \"0.1.0\"\nsource = \"git+https://example.invalid/g{i}?rev=r{i}#r{i}\"\n"
+        );
+    }
+    lock
+}
+
+/// What the client said of the trees it prepared, and the tree facts of the run it recorded.
+fn said(s: &Sandbox, n: &Normal, out: &Output) -> String {
+    let mut text = format!("-> exit {}\n", out.code);
+    for (mark, stream) in [("1|", &out.stdout), ("2|", &out.stderr)] {
+        for line in stream.lines().filter(|l| l.starts_with("dibs: ")) {
+            text += &format!("{mark} {}\n", n.apply(line));
+        }
+    }
+    let runs = s.read("home/.local/state/dibs/runs.jsonl");
+    if let Some(last) = runs.lines().last() {
+        let run: serde_json::Value = serde_json::from_str(last).unwrap();
+        for key in ["revisions", "seeded", "arms"] {
+            if let Some(v) = run.get(key) {
+                text += &format!("recorded {key}: {}\n", n.apply(&v.to_string()));
+            }
+        }
+    }
+    text
+}
+
+#[test]
+fn the_scratch_seeds_reseeds_pins_and_fresh_paths_leave() {
+    let mut s = Sandbox::new();
+    copies_for_reflinks(&mut s);
+    let dir = app(&s);
+    s.write_exec(
+        "home/.cargo/bin/cargo",
+        "#!/bin/bash\necho \"   Compiling app v0.1.0\"\necho \"    Finished \\`release\\` profile [optimized] target(s) in 0.01s\"\n",
+    );
+    s.write("app/.gitignore", "target\ncache\n");
+    s.write("app/Cargo.lock", LOCK);
+    recipes(
+        &s,
+        &format!(
+            "{PARAMS}\n[build.store]\n  [[build.store.step]]\n  lock = \"shared\"\n  run = \"mkdir -p cache && echo kept > cache/store\"\n\n[bench.gate]\n  [[bench.gate.step]]\n  lock = \"shared\"\n  run = \"cargo build --release\"\n  [[bench.gate.step]]\n  lock = \"exclusive\"\n  run = \"echo measured\"\n\n[tree]\nfresh = [\"cache\"]\n"
+        ),
+    );
+    s.git("app", &["add", "-A"]);
+    s.git("app", &["commit", "-qm", "recipes and a lockfile"]);
+    s.git("app", &["push", "-q", "origin", "HEAD:main"]);
+    let main = s.git("app", &["rev-parse", "HEAD"]);
+    s.git("app", &["checkout", "-q", "-b", "decoy"]);
+    s.write("app/a.txt", "decoy\n");
+    s.git("app", &["commit", "-qam", "decoy"]);
+    s.git("app", &["push", "-q", "origin", "decoy"]);
+    let decoy = s.git("app", &["rev-parse", "HEAD"]);
+    s.git("app", &["checkout", "-q", "-"]);
+    s.git("app", &["worktree", "add", "-q", &s.p("app-topk")]);
+    s.git(".", &["init", "-q", "lib"]);
+    s.write(
+        "lib/Cargo.toml",
+        "[package]\nname = \"serde\"\nversion = \"1.0.0\"\n",
+    );
+    s.write("lib/src/lib.rs", "");
+    s.git("lib", &["add", "-A"]);
+    s.git("lib", &["commit", "-qm", "lib"]);
+
+    let mut n = Normal::of(&s);
+    for (path, name) in [
+        (dir.clone(), "app"),
+        (s.p("app-topk"), "app-topk"),
+        (s.p("lib"), "lib"),
+    ] {
+        n = n.literal(
+            &format!("local-{}", short_hash(&path)),
+            &format!("local-<{name}>"),
+        );
+    }
+    n = n
+        .literal(&main[..12], "<main>")
+        .literal(&decoy[..12], "<decoy>")
+        .rule(r"\b[0-9]+-[0-9]{16,}\b", "<token>")
+        .rule(r"pin-[0-9a-f]{10}\b", "pin-<hash>")
+        .rule(
+            r"(local:[0-9a-f]{7,12})(\+dirty)?-[0-9a-f]{12}\b",
+            "local:<sha>$2-<content>",
+        );
+    let (local, topk) = (format!("{dir}@local"), format!("{}@local", s.p("app-topk")));
+    let lib = format!("{}@local", s.p("lib"));
+    let both = format!("{dir}@main,decoy");
+    let mut t = Transcript::default();
+    let step = |t: &mut Transcript, what: &str, args: &[&str]| {
+        let out = s.dibs(args).run();
+        assert_eq!(out.code, 0, "{what}: {}", out.all());
+        t.section(
+            &format!("{what}: dibs {}", n.apply(&typed(args))),
+            &format!(
+                "{}{}\n",
+                said(&s, &n, &out),
+                n.apply(&tree(&s.path("scratch"), &n).join("\n"))
+            ),
+        );
+    };
+    step(
+        &mut t,
+        "a working tree keeps a cache a fresh path names",
+        &["build", &local, "store"],
+    );
+    step(&mut t, "and builds", &["bench", &local, "gate"]);
+    step(
+        &mut t,
+        "a second checkout starts from the first, without the fresh path",
+        &["bench", &topk, "gate"],
+    );
+    step(
+        &mut t,
+        "two fetched arms, the second seeded",
+        &["bench", &both, "gate"],
+    );
+    s.write("app/Cargo.lock", &lock_with(12));
+    step(
+        &mut t,
+        "the working tree moves to a new lockfile and builds it",
+        &["bench", &local, "gate"],
+    );
+    s.write("app-topk/Cargo.lock", &lock_with(12));
+    step(
+        &mut t,
+        "the second checkout, which has built far less of it, is reseeded",
+        &["bench", &topk, "gate"],
+    );
+    step(
+        &mut t,
+        "a pinned tree, nested under its config",
+        &["build", &local, "p", "--pin", &lib],
+    );
+    snapshot("trees", t.text());
+}
+
+#[test]
+fn the_scratch_a_prepare_sweeps() {
+    let s = Sandbox::new();
+    let dir = app(&s);
+    recipes(&s, PARAMS);
+    s.git("app", &["add", "-A"]);
+    s.git("app", &["commit", "-qm", "recipes"]);
+    let scratch = s.path("scratch");
+    let old = |rel: &str| {
+        let p = scratch.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        if !p.exists() {
+            fs::write(&p, "").unwrap();
+        }
+        s.command("touch", ["-d", "400 days ago", &p.display().to_string()])
+            .run();
+    };
+    for d in [
+        "ws/app/recent",
+        "ws/other/unmarked",
+        "target/unmarked/release",
+        "target/recent",
+        "jobs/recent",
+    ] {
+        fs::create_dir_all(scratch.join(d)).unwrap();
+    }
+    fs::write(scratch.join("ws/app/recent/.dibs-used"), "").unwrap();
+    fs::write(scratch.join("target/recent/.dibs-used"), "").unwrap();
+    old("ws/app/abandoned/.dibs-used");
+    old("ws/other/abandoned/f");
+    old("ws/other/abandoned/.dibs-used");
+    old("target/abandoned/release/app");
+    old("target/abandoned/.dibs-used");
+    fs::create_dir_all(scratch.join("target/swept-only")).unwrap();
+    fs::write(scratch.join("target/swept-only/.dibs-used"), "swept\n").unwrap();
+    old("target/held/debug/.cargo-lock");
+    old("target/held/.dibs-used");
+    old("target/stuck/sub/f");
+    old("target/stuck/.dibs-used");
+    fs::create_dir_all(scratch.join("jobs/abandoned")).unwrap();
+    s.command(
+        "touch",
+        [
+            "-d",
+            "400 days ago",
+            &scratch.join("jobs/abandoned").display().to_string(),
+        ],
+    )
+    .run();
+    s.command(
+        "chmod",
+        [
+            "500",
+            &scratch.join("target/stuck/sub").display().to_string(),
+        ],
+    )
+    .run();
+    let n = Normal::of(&s)
+        .rule(r"local-[0-9a-f]{10}\b", "local-<key>")
+        .rule(
+            r"(local:[0-9a-f]{7,12})(\+dirty)?-[0-9a-f]{12}\b",
+            "local:<sha>$2-<content>",
+        );
+    let jobs = |when: &str| {
+        let mut names: Vec<String> = fs::read_dir(scratch.join("jobs"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| !name.chars().next().is_some_and(|c| c.is_ascii_digit()))
+            .collect();
+        names.sort();
+        format!(
+            "jobs {when}, apart from those dibs ran: {}\n",
+            names.join(" ")
+        )
+    };
+    let mut t = Transcript::default();
+    t.section(
+        "before",
+        &format!(
+            "{}{}\n",
+            jobs("before"),
+            n.apply(&tree(&scratch, &n).join("\n"))
+        ),
+    );
+    let lock = scratch.join("target/held/debug/.cargo-lock");
+    let build = fs::File::open(&lock).unwrap();
+    build.lock_shared().unwrap();
+    let local = format!("{dir}@local");
+    let out = s.dibs(["build", &local, "p"]).run();
+    t.section(
+        "after a prepare, while a build holds one old target: dibs build app@local p",
+        &format!(
+            "{}{}{}\n",
+            said(&s, &n, &out),
+            jobs("after"),
+            n.apply(&tree(&scratch, &n).join("\n"))
+        ),
+    );
+    drop(build);
+    s.command(
+        "chmod",
+        [
+            "700",
+            &scratch.join("target/stuck/sub").display().to_string(),
+        ],
+    )
+    .run();
+    let out = s.dibs(["build", &local, "p"]).run();
+    t.section(
+        "after another, once nothing holds it and the stuck one can go: dibs build app@local p",
+        &format!(
+            "{}{}{}\n",
+            said(&s, &n, &out),
+            jobs("after"),
+            n.apply(&tree(&scratch, &n).join("\n"))
+        ),
+    );
+    snapshot("trees-gc", t.text());
+}
+
+#[test]
+fn a_git_database_the_machine_lacks_is_sent_ahead_of_the_build() {
+    let s = wired();
+    let dir = app(&s);
+    recipes(&s, PARAMS);
+    s.git(".", &["init", "-q", "dep"]);
+    s.write("dep/src/lib.rs", "");
+    s.git("dep", &["add", "-A"]);
+    s.git("dep", &["commit", "-qm", "dep"]);
+    let commit = s.git("dep", &["rev-parse", "HEAD"]);
+    s.git(
+        ".",
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            "dep",
+            "home/.cargo/git/db/dep-0123456789abcdef",
+        ],
+    );
+    s.write(
+        "app/Cargo.lock",
+        &format!("[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"dep\"\nversion = \"1.0.0\"\nsource = \"git+https://example.invalid/dep.git#{commit}\"\n"),
+    );
+    s.git("app", &["add", "-A"]);
+    s.git("app", &["commit", "-qm", "a git dependency"]);
+    s.git("app", &["push", "-q", "origin", "HEAD:main"]);
+    s.git("app", &["update-ref", "refs/heads/main", "HEAD"]);
+    let main = s.git("app", &["rev-parse", "HEAD"]);
+    let n = Normal::of(&s)
+        .literal(&commit[..8], "<commit>")
+        .literal(&main[..12], "<main>")
+        .rule(r"local-[0-9a-f]{10}\b", "local-<key>")
+        .rule(
+            r"(local:[0-9a-f]{7,12})(\+dirty)?-[0-9a-f]{12}\b",
+            "local:<sha>$2-<content>",
+        );
+    let held = |far: &str| {
+        let db = s.path(far).join("git/db");
+        let has = s
+            .command(
+                "git",
+                [
+                    "-C",
+                    &db.join("dep-0123456789abcdef").display().to_string(),
+                    "cat-file",
+                    "-e",
+                    &format!("{commit}^{{commit}}"),
+                ],
+            )
+            .run()
+            .code
+            == 0;
+        let mut names: Vec<String> = fs::read_dir(&db)
+            .map(|d| {
+                d.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        format!(
+            "the machine's git databases: {}\nit holds the pinned commit: {has}\n",
+            names.join(" ")
+        )
+    };
+    let mut t = Transcript::default();
+    for (what, reference, far) in [
+        (
+            "a fetched ref whose lockfile pins a commit the machine lacks, so its step waits",
+            "main",
+            "far-a",
+        ),
+        (
+            "a working tree of the same lockfile, sent to another machine home",
+            "local",
+            "far-b",
+        ),
+        ("again, once the machine has it", "local", "far-b"),
+    ] {
+        let tree = format!("{dir}@{reference}");
+        let args = ["build", tree.as_str(), "p", "--on", "box-a"];
+        let out = s
+            .dibs(args)
+            .env("WIRE_RUN", "1")
+            .env("WIRE_FAR_CARGO_HOME", s.p(far))
+            .run();
+        assert_eq!(out.code, 0, "{what}: {}", out.all());
+        t.section(
+            &format!("{what}: dibs {}", n.apply(&typed(&args))),
+            &format!("{}{}", said(&s, &n, &out), held(far)),
+        );
+    }
+    snapshot("trees-gitdb", t.text());
+}
