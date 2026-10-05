@@ -57,11 +57,12 @@ struct TreeFile {
 }
 
 impl RunnerTree {
-    const WATCHED: [&str; 4] = [
+    const WATCHED: [&str; 5] = [
         "crates/dibs-runner/src",
         "crates/dibs-runner/provision",
-        "crates/dibs-format/src",
         "crates/dibs-runner/Cargo.toml",
+        "crates/dibs-format/src",
+        "crates/dibs-format/Cargo.toml",
     ];
 
     fn of(clone: &Path) -> RunnerTree {

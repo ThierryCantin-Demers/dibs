@@ -1,7 +1,12 @@
 //! The runner's own tree, which machines build: it has to agree with the workspace it comes from.
 
 use crate::harness::*;
-use std::{collections::BTreeSet, fs, time::Duration};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 fn toml(rel: &str) -> toml::Table {
     let path = repo_root().join(rel);
@@ -37,6 +42,35 @@ fn the_runners_lock_file_pins_what_the_workspace_does() {
         "the runner's tree pins {strays:?}, which the workspace does not. Copy Cargo.lock into an \
          unpacked tree, run cargo metadata --offline there, and keep the lock file it leaves"
     );
+}
+
+#[test]
+fn a_change_to_any_file_of_the_runners_tree_repacks_it() {
+    let output = Path::new(env!("OUT_DIR")).join("../output");
+    let output = fs::read_to_string(&output).unwrap();
+    let watched: Vec<PathBuf> = output
+        .lines()
+        .filter_map(|line| line.strip_prefix("cargo:rerun-if-changed="))
+        .map(PathBuf::from)
+        .collect();
+    let s = Sandbox::new();
+    fs::write(s.path("tree.tar.gz"), SOURCE).unwrap();
+    let listed = s.sh("tar -tzf tree.tar.gz").run();
+    assert_eq!(listed.code, 0, "{}", listed.all());
+    let root = repo_root().canonicalize().unwrap();
+    for packed in listed.stdout.lines() {
+        let from = match packed {
+            "Cargo.toml" => "crates/dibs-runner/provision/workspace.toml",
+            "Cargo.lock" => "crates/dibs-runner/provision/Cargo.lock",
+            "install.sh" => "crates/dibs-runner/provision/install.sh",
+            other => other,
+        };
+        let file = root.join(from);
+        assert!(
+            watched.iter().any(|w| file.starts_with(w)),
+            "{from} is packed into the runner's tree, but a change to it would not repack the tree"
+        );
+    }
 }
 
 #[test]
