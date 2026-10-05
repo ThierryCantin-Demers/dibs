@@ -76,6 +76,11 @@ impl Exit {
         }
     }
 
+    /// The code as a process status.
+    pub fn status(self) -> i32 {
+        i32::from(self.code())
+    }
+
     /// The exit dibs gives with this code, if it gives one.
     pub fn of_code(code: i32) -> Option<Exit> {
         Exit::ALL.into_iter().find(|e| i32::from(e.code()) == code)
