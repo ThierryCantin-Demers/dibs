@@ -8,7 +8,7 @@ use crate::{
     settings::var,
     sink::Sink,
 };
-use dibs_format::{JobMeta, base64};
+use dibs_format::{Exit, JobMeta, base64};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -68,7 +68,7 @@ impl Kept<'_> {
                 asked.target,
                 jobs.display()
             ));
-            return 1;
+            return Exit::Failed.status();
         }
         let meta = fs::read_to_string(dir.join("meta"))
             .ok()
@@ -189,14 +189,14 @@ impl Kept<'_> {
         if !dir.is_dir() {
             self.sink
                 .say(&format!("no job {job} under {}\n", jobs.display()));
-            return 1;
+            return Exit::Failed.status();
         }
         let files = dir.join("artifacts");
         if !files.is_dir() {
             self.sink.say(&format!(
                 "job {job} kept no files: its recipe names no artifacts, or it wrote none of them\n"
             ));
-            return 3;
+            return Exit::Setup.status();
         }
         let size = apparent_size(&files);
         if size > FILES_MAX {
@@ -205,7 +205,7 @@ impl Kept<'_> {
                  dibs --sync -a :{}/ ./\n",
                 files.display()
             ));
-            return 2;
+            return Exit::Refused.status();
         }
         let tar = Command::new("tar")
             .arg("-C")

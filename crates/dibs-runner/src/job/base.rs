@@ -3,6 +3,7 @@ use crate::{
     sink::Sink,
     stop::Signals,
 };
+use dibs_format::Exit;
 use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Write as _},
@@ -15,7 +16,6 @@ use std::{
 };
 
 /// The status a job that overran its cap ends with, as `timeout` gives it.
-const OVERRAN: i32 = 124;
 const KILLED: i32 = 128 + libc::SIGKILL;
 
 /// Where a job's output goes.
@@ -145,7 +145,7 @@ impl Job {
                 Err(_) => {
                     self.signal_group(libc::SIGTERM);
                     let status = match self.exited.recv_timeout(cap.grace) {
-                        Ok(_) => OVERRAN,
+                        Ok(_) => Exit::Overran.status(),
                         Err(_) => {
                             self.signal_group(libc::SIGKILL);
                             let _ = self.exited.recv();
@@ -160,7 +160,7 @@ impl Job {
         self.end();
         match status {
             Some(Ok(status)) => exit_code(status),
-            _ => 1,
+            _ => Exit::Failed.status(),
         }
     }
 

@@ -10,7 +10,7 @@ use crate::{
     sink::Sink,
     status::Look,
 };
-use dibs_format::{Event, Label, LockRecord, Mode};
+use dibs_format::{Event, Exit, Label, LockRecord, Mode};
 use std::{fs, thread, time::Duration};
 
 /// How long apart the two readings of an orphaned lock are: a client tests the lock by taking it
@@ -110,7 +110,7 @@ impl Kill<'_> {
                 target.name,
                 self.shown()
             ));
-            return 1;
+            return Exit::Failed.status();
         };
         let pid = record.pid;
         let held = Span(Moment::epoch_now().saturating_sub(record.start));
@@ -121,7 +121,7 @@ impl Kill<'_> {
                  something else now. The record is gone and nothing was signalled.\n",
                 record.mode, record.label
             ));
-            return 1;
+            return Exit::Failed.status();
         }
         match self.refused(&record, target.anyone) {
             Some(Refusal::Someone) => {
@@ -131,7 +131,7 @@ impl Kill<'_> {
                      know it should stop, say so:  dibs --kill {pid} --anyone\n",
                     record.mode, record.label, record.agent
                 ));
-                return 2;
+                return Exit::Refused.status();
             }
             Some(Refusal::Account) => {
                 self.sink.say(&format!(
@@ -143,7 +143,7 @@ impl Kill<'_> {
                     record.label,
                     record.agent_id.as_deref().unwrap_or_default()
                 ));
-                return 2;
+                return Exit::Refused.status();
             }
             None => {}
         }
@@ -239,7 +239,7 @@ impl Kill<'_> {
                  dibs --kill {id} --anyone\n",
                 record.label, record.agent
             ));
-            return 2;
+            return Exit::Refused.status();
         }
         let _ = fs::write(self.dir().path.join(format!("cancelled.{id}")), "");
         let mut line = self.call.log_line(Event::Cancelled);

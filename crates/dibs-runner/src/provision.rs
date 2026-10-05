@@ -1,6 +1,6 @@
 use crate::{channel::Caller, session::Session, settings::home, sink::Sink, stop::Signals};
 use dibs_format::{
-    Label, Mode,
+    Exit, Label, Mode,
     wire::{MaxFrom, Request, Watch},
 };
 use std::{
@@ -66,12 +66,12 @@ pub fn build(hash: &str) -> i32 {
     let sink = Sink::plain();
     if hash.len() != HASH_DIGITS || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
         sink.say(&format!("dibs-runner: {hash:?} is not a runner's hash\n"));
-        return 2;
+        return Exit::Refused.status();
     }
     let mut tree = Vec::new();
     if io::stdin().read_to_end(&mut tree).is_err() || tree.is_empty() {
         sink.say("dibs-runner: no tree arrived on stdin to build\n");
-        return 2;
+        return Exit::Refused.status();
     }
     let runners = home().join(".cache/dibs/runner");
     let _one_at_a_time = match BuildLock::take(&runners, &sink) {
@@ -81,7 +81,7 @@ pub fn build(hash: &str) -> i32 {
                 "dibs-runner: {} could not be locked: {e}\n",
                 runners.join(BuildLock::FILE).display()
             ));
-            return 70;
+            return Exit::NoRoom.status();
         }
     };
     let pid = std::process::id();
@@ -92,7 +92,7 @@ pub fn build(hash: &str) -> i32 {
             "dibs-runner: the tree could not be kept in {}: {e}\n",
             runners.display()
         ));
-        return 70;
+        return Exit::NoRoom.status();
     }
     let command = format!(
         "[ \"$({installed} hash 2>/dev/null)\" = {hash} ] && {{ echo 'dibs-runner {hash} is installed already.'; exit 0; }}\n\
