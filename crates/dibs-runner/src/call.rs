@@ -3,7 +3,7 @@ use dibs_format::{BatchId, Event, JobId, Label, LockRecord, LogLine, Mode, wire:
 use std::path::Path;
 
 /// How much of a command its records keep.
-const ONE_LINE: usize = 200;
+pub const ONE_LINE: usize = 200;
 const NAME: usize = 48;
 
 /// A request, with what the machine derives from it before it acts.
@@ -25,14 +25,14 @@ pub struct Call {
 
 impl Call {
     pub fn of(request: Request) -> Call {
-        let agent = one_line(&request.agent, NAME);
-        let agent_id = one_line(&request.agent_id, NAME);
+        let agent = request.agent.one_line(NAME);
+        let agent_id = request.agent_id.one_line(NAME);
         let batch_tag = request
             .batch
             .as_deref()
             .filter(|b| !b.is_empty())
             .map(|b| b.lines().next().unwrap_or_default().replace('\t', " "));
-        let mut command = one_line(&request.command, ONE_LINE);
+        let mut command = request.command.one_line(ONE_LINE);
         if request.command.len() > ONE_LINE {
             command.push_str(" …");
         }
@@ -118,15 +118,22 @@ impl Call {
     }
 }
 
-/// Free text on one line, cut to at most `bytes` bytes on a character's boundary.
-pub fn one_line(text: &str, bytes: usize) -> String {
-    let mut line = text.replace(['\n', '\t'], " ");
-    let mut end = line.len().min(bytes);
-    while !line.is_char_boundary(end) {
-        end -= 1;
+/// Free text as a record's one field holds it.
+pub trait OneLine {
+    /// On one line, cut to at most `bytes` bytes on a character's boundary.
+    fn one_line(&self, bytes: usize) -> String;
+}
+
+impl OneLine for str {
+    fn one_line(&self, bytes: usize) -> String {
+        let mut line = self.replace(['\n', '\t'], " ");
+        let mut end = line.len().min(bytes);
+        while !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        line.truncate(end);
+        line
     }
-    line.truncate(end);
-    line
 }
 
 /// The machine's log: every arrival and every end, so a job that was killed or wedged still
@@ -160,8 +167,8 @@ mod tests {
 
     #[test]
     fn a_command_is_one_line_cut_on_a_character() {
-        assert_eq!(one_line("a\tb\nc", 10), "a b c");
-        assert_eq!(one_line("é", 1), "");
-        assert_eq!(one_line("abcdef", 3), "abc");
+        assert_eq!("a\tb\nc".one_line(10), "a b c");
+        assert_eq!("é".one_line(1), "");
+        assert_eq!("abcdef".one_line(3), "abc");
     }
 }

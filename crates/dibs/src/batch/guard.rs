@@ -1,11 +1,8 @@
 //! A batch step's guard: it runs the step's line, and stops the step's whole process group the
 //! moment the driver is gone, however the driver went.
 
-use dibs::{
-    call::{BatchStep, Starter, Watched},
-    machine::exit_code,
-};
-use dibs_format::MachineName;
+use dibs::call::{BatchStep, Starter, Watched};
+use dibs_format::{Exit, MachineName};
 use std::{
     io,
     os::unix::process::CommandExt as _,
@@ -54,6 +51,6 @@ impl StepGuard {
             // SAFETY: signals this process's own group, which holds the step and nothing else.
             unsafe { libc::kill(0, libc::SIGTERM) };
         });
-        step.wait().map(exit_code).unwrap_or(1)
+        step.wait().map(Exit::shell_status).unwrap_or(1)
     }
 }

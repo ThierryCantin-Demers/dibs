@@ -16,7 +16,7 @@ use crate::{
 use std::{
     collections::{HashMap, HashSet},
     ffi::CString,
-    fs,
+    fmt, fs,
     io::{self, Write as _},
     os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _},
     path::{Path, PathBuf},
@@ -119,7 +119,7 @@ impl Asked {
                 .as_ref()
                 .map_or_else(|| home().join(".cache/dibs"), |m| m.scratch.clone()),
             prog: home().join("prog"),
-            host: crate::machine::short_hostname(),
+            host: crate::machine::short_hostname(None),
             keep: self.days.unwrap_or(settings.keep_days),
             target_keep: self.days.unwrap_or(settings.target_keep_days),
             dry: self.dry,
@@ -131,7 +131,7 @@ impl Sweep {
     pub fn run(&self) -> i32 {
         let scratch = &self.scratch;
         if !scratch.is_dir() {
-            say(&format!(
+            Sweep::say(&format!(
                 "dibs: nothing at {} to sweep.\n",
                 scratch.display()
             ));
@@ -139,38 +139,38 @@ impl Sweep {
         }
         let now = Moment::epoch_now();
         let mut tally = Tally::default();
-        say(&format!(
+        Sweep::say(&format!(
             "dibs --gc on {}, under {}\n",
             self.host,
             scratch.display()
         ));
         self.worktrees(now, &mut tally);
         self.caches(now, &mut tally);
-        let jobs = entries(&scratch.join("jobs"));
+        let jobs = scratch.join("jobs").entries();
         self.bulk(now, "job logs and artifacts", &jobs, &mut tally);
-        let leftovers = [entries(&scratch.join("tmp")), entries(&scratch.join("out"))].concat();
+        let leftovers = [scratch.join("tmp").entries(), scratch.join("out").entries()].concat();
         self.bulk(now, "leftover temporary files", &leftovers, &mut tally);
         self.runners(now, &mut tally);
         self.others(now, &mut tally);
         match self.dry {
-            true => say(&format!(
+            true => Sweep::say(&format!(
                 "  {} of {} is past its clock and would go. Run it without --dry-run.\n",
-                size(tally.would),
-                size(tally.total)
+                Kib(tally.would),
+                Kib(tally.total)
             )),
-            false => say(&format!(
+            false => Sweep::say(&format!(
                 "  reclaimed {} of {}\n",
-                size(tally.freed),
-                size(tally.total)
+                Kib(tally.freed),
+                Kib(tally.total)
             )),
         }
         let mut mounts = Vec::new();
         for dir in [scratch.clone(), scratch.join("target")] {
             if let Some(free) = Free::of(&dir).filter(|f| !mounts.contains(&f.mount)) {
-                say(&format!(
+                Sweep::say(&format!(
                     "  {} free of {} on {}\n",
-                    human(free.available),
-                    human(free.size),
+                    Bytes(free.available),
+                    Bytes(free.size),
                     free.mount.display()
                 ));
                 mounts.push(free.mount);
@@ -198,17 +198,20 @@ impl Sweep {
     /// A worktree is git's to remove, and one git has lost is a plain directory; the clone it was
     /// added from keeps a registration either way, which the prune clears.
     fn worktrees(&self, now: u64, tally: &mut Tally) {
-        let trees: Vec<PathBuf> = entries(&self.scratch.join("ws"))
+        let trees: Vec<PathBuf> = self
+            .scratch
+            .join("ws")
+            .entries()
             .iter()
-            .flat_map(|repo| entries(repo))
+            .flat_map(|repo| repo.entries())
             .filter(|tree| tree.is_dir())
             .collect();
-        let sizes = measure(&trees, tally);
+        let sizes = tally.measure(&trees);
         let mut rows = Rows::default();
         let mut pruned = Vec::new();
         let removal = Removal {
             commands: None,
-            say: &say,
+            say: &Sweep::say,
         };
         for tree in &trees {
             let fate = self.clocks().tree(tree, now);
@@ -231,13 +234,13 @@ impl Sweep {
                 line: format!(
                     "    {:<40} {:>7}  used {}{}",
                     self.shown(tree),
-                    size(kib),
-                    ago(now, used),
+                    Kib(kib),
+                    Sweep::ago(now, used),
                     self.verdict(fate)
                 ),
             });
         }
-        say(&rows.out(&format!(
+        Sweep::say(&rows.out(&format!(
             "  worktrees, removed after {} days unused",
             self.keep
         )));
@@ -259,12 +262,13 @@ impl Sweep {
     /// both; where the filesystem shares blocks, each cache's own are what removing it frees.
     fn caches(&self, now: u64, tally: &mut Tally) {
         let target = self.scratch.join("target");
-        let caches: Vec<PathBuf> = entries(&target)
+        let caches: Vec<PathBuf> = target
+            .entries()
             .into_iter()
             .filter(|c| c.is_dir())
             .collect();
         let before = tally.total;
-        let sizes = measure(&caches, tally);
+        let sizes = tally.measure(&caches);
         let sharing = Host::shares_blocks(&target).then(|| Sharing::of(&caches));
         let together = sharing
             .as_ref()
@@ -275,7 +279,7 @@ impl Sweep {
         let mut rows = Rows::default();
         let removal = Removal {
             commands: None,
-            say: &say,
+            say: &Sweep::say,
         };
         for cache in &caches {
             let fate = self.clocks().cache(cache, now);
@@ -295,7 +299,7 @@ impl Sweep {
                 tally.freed += kib;
             }
             let own = own
-                .map(|own| format!("  own {:>7}", size(own)))
+                .map(|own| format!("  own {:>7}", Kib(own)))
                 .unwrap_or_default();
             rows.push(Row {
                 kib,
@@ -303,26 +307,26 @@ impl Sweep {
                 line: format!(
                     "    {:<40} {:>7}{own}  used {}{}",
                     self.shown(cache),
-                    size(sizes.get(cache).copied().unwrap_or_default()),
-                    ago(now, used),
+                    Kib(sizes.get(cache).copied().unwrap_or_default()),
+                    Sweep::ago(now, used),
                     self.verdict(fate)
                 ),
             });
         }
-        let mount = mount_of(&target)
+        let mount = Free::mount_of(&target)
             .map(|m| m.display().to_string())
             .unwrap_or_default();
-        say(&rows.out(&format!(
+        Sweep::say(&rows.out(&format!(
             "  build caches on {mount}, removed after {} days unused",
             self.target_keep
         )));
         if let (Some(sharing), Some(together)) = (&sharing, together)
             && !sharing.own.is_empty()
         {
-            say(&format!(
+            Sweep::say(&format!(
                 "    together {} on the disk: own is what removing that cache alone frees, and {} is shared among them\n",
-                size(together),
-                size(sharing.shared)
+                Kib(together),
+                Kib(sharing.shared)
             ));
         }
     }
@@ -330,7 +334,7 @@ impl Sweep {
     /// Counted rather than listed: they are alike and there are hundreds, and the one anybody
     /// wants is found by its id with `dibs out`.
     fn bulk(&self, now: u64, what: &str, paths: &[PathBuf], tally: &mut Tally) {
-        let sizes = measure(paths, tally);
+        let sizes = tally.measure(paths);
         let (mut count, mut kib, mut past, mut past_kib, mut oldest) = (0, 0, 0, 0, 0);
         for path in paths {
             let Ok(meta) = fs::symlink_metadata(path) else {
@@ -351,7 +355,7 @@ impl Sweep {
                 false => {
                     let removal = Removal {
                         commands: None,
-                        say: &say,
+                        say: &Sweep::say,
                     };
                     if removal.path(path) {
                         tally.freed += k;
@@ -364,20 +368,17 @@ impl Sweep {
         }
         let ending = match (past, self.dry) {
             (0, _) => ", none past its clock".to_string(),
-            (_, true) => format!(
-                ", {past} past it holding {}, which would go",
-                size(past_kib)
-            ),
-            (_, false) => format!(", removed {past} holding {}", size(past_kib)),
+            (_, true) => format!(", {past} past it holding {}, which would go", Kib(past_kib)),
+            (_, false) => format!(", removed {past} holding {}", Kib(past_kib)),
         };
-        say(&format!(
+        Sweep::say(&format!(
             "  {what}, removed after {} days: {count} {}, {}, oldest {oldest} days{ending}\n",
             self.keep,
             match count {
                 1 => "entry",
                 _ => "entries",
             },
-            size(kib)
+            Kib(kib)
         ));
     }
 
@@ -390,14 +391,14 @@ impl Sweep {
             return;
         }
         let Some(judged) = runners.judged(&self.clocks(), now) else {
-            say("  runners: a build of one is running, so none is collected now\n");
+            Sweep::say("  runners: a build of one is running, so none is collected now\n");
             return;
         };
         let paths: Vec<PathBuf> = judged.entries.iter().map(|e| e.path.clone()).collect();
-        let sizes = measure(&paths, tally);
+        let sizes = tally.measure(&paths);
         let removal = Removal {
             commands: None,
-            say: &say,
+            say: &Sweep::say,
         };
         let mut rows = Rows::default();
         for entry in &judged.entries {
@@ -421,12 +422,12 @@ impl Sweep {
                         .strip_prefix(&runners.dir)
                         .unwrap_or(&entry.path)
                         .display(),
-                    size(kib),
+                    Kib(kib),
                     self.verdict(fate)
                 ),
             });
         }
-        say(&rows.out(&format!(
+        Sweep::say(&rows.out(&format!(
             "  runners in {}, replaced ones removed after {} days",
             runners.dir.display(),
             self.keep
@@ -436,7 +437,9 @@ impl Sweep {
     /// Nothing dibs made, so nothing dibs deletes: a directory written by hand may be the only
     /// copy of somebody's work. Sized and dated, so they can be asked.
     fn others(&self, now: u64, tally: &mut Tally) {
-        let others: Vec<PathBuf> = entries(&self.scratch)
+        let others: Vec<PathBuf> = self
+            .scratch
+            .entries()
             .into_iter()
             .filter(|p| {
                 p.file_name()
@@ -446,7 +449,7 @@ impl Sweep {
         if others.is_empty() {
             return;
         }
-        let sizes = measure(&others, tally);
+        let sizes = tally.measure(&others);
         let mut rows = Rows::default();
         for other in &others {
             let kib = sizes.get(other).copied().unwrap_or_default();
@@ -457,12 +460,12 @@ impl Sweep {
                 line: format!(
                     "    {:<40} {:>7}  written {}",
                     self.shown(other),
-                    size(kib),
-                    ago(now, written)
+                    Kib(kib),
+                    Sweep::ago(now, written)
                 ),
             });
         }
-        say(&rows.out("  not dibs's, never removed by this"));
+        Sweep::say(&rows.out("  not dibs's, never removed by this"));
     }
 
     /// A path as it is under scratch.
@@ -500,7 +503,7 @@ impl Rows {
         if rest > 0 {
             said.push_str(&format!(
                 "    and {rest} more holding {}, none of it past its clock\n",
-                size(rest_kib)
+                Kib(rest_kib)
             ));
         }
         said
@@ -516,7 +519,7 @@ impl Sharing {
         for cache in caches {
             let mut seen = HashSet::new();
             let mut alone = 0;
-            for file in files(cache) {
+            for file in cache.files() {
                 let Ok(meta) = fs::symlink_metadata(&file) else {
                     continue;
                 };
@@ -560,124 +563,148 @@ impl Free {
         Some(Free {
             available: found.f_bavail as u64 * unit,
             size: found.f_blocks as u64 * unit,
-            mount: mount_of(dir)?,
+            mount: Free::mount_of(dir)?,
         })
     }
 }
 
-/// Where the filesystem holding a directory is mounted: the highest directory above it on the
-/// same device.
-fn mount_of(dir: &Path) -> Option<PathBuf> {
-    let dir = dir.canonicalize().ok()?;
-    let device = fs::metadata(&dir).ok()?.dev();
-    let mut mount = dir.clone();
-    for above in dir.ancestors().skip(1) {
-        match fs::metadata(above) {
-            Ok(meta) if meta.dev() == device => mount = above.to_path_buf(),
-            _ => break,
-        }
-    }
-    Some(mount)
-}
-
-/// The entries of a directory, sorted as the shell's glob lists them.
-fn entries(dir: &Path) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .collect();
-    found.sort();
-    found
-}
-
-/// Every regular file below a directory.
-fn files(dir: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(next) = pending.pop() {
-        for entry in fs::read_dir(&next).into_iter().flatten().flatten() {
-            match entry.file_type() {
-                Ok(kind) if kind.is_dir() => pending.push(entry.path()),
-                Ok(kind) if kind.is_file() => found.push(entry.path()),
-                _ => {}
+impl Free {
+    /// Where the filesystem holding a directory is mounted: the highest directory above it on
+    /// the same device.
+    fn mount_of(dir: &Path) -> Option<PathBuf> {
+        let dir = dir.canonicalize().ok()?;
+        let device = fs::metadata(&dir).ok()?.dev();
+        let mut mount = dir.clone();
+        for above in dir.ancestors().skip(1) {
+            match fs::metadata(above) {
+                Ok(meta) if meta.dev() == device => mount = above.to_path_buf(),
+                _ => break,
             }
         }
+        Some(mount)
     }
-    found
 }
 
-/// What `du -sk` gives each path, a file linked twice counted once, added to the total.
-fn measure(paths: &[PathBuf], tally: &mut Tally) -> HashMap<PathBuf, u64> {
-    let mut seen = HashSet::new();
-    let sizes: HashMap<PathBuf, u64> = paths
-        .iter()
-        .map(|path| (path.clone(), allocated(path, &mut seen).div_ceil(2)))
-        .collect();
-    tally.total += sizes.values().sum::<u64>();
-    sizes
+/// What a directory holds, as the sweep reads it.
+trait Contents {
+    /// Its entries, sorted as the shell's glob lists them.
+    fn entries(&self) -> Vec<PathBuf>;
+    /// Every regular file below it.
+    fn files(&self) -> Vec<PathBuf>;
 }
 
-/// 512-byte blocks allocated under a path, its own included.
-fn allocated(path: &Path, seen: &mut HashSet<(u64, u64)>) -> u64 {
-    let Ok(meta) = fs::symlink_metadata(path) else {
-        return 0;
-    };
-    if meta.nlink() > 1 && !meta.is_dir() && !seen.insert((meta.dev(), meta.ino())) {
-        return 0;
-    }
-    let below: u64 = match meta.is_dir() {
-        true => fs::read_dir(path)
+impl Contents for Path {
+    fn entries(&self) -> Vec<PathBuf> {
+        let mut found: Vec<PathBuf> = fs::read_dir(self)
             .into_iter()
             .flatten()
             .flatten()
-            .map(|e| allocated(&e.path(), seen))
-            .sum(),
-        false => 0,
-    };
-    meta.blocks() + below
+            .map(|e| e.path())
+            .collect();
+        found.sort();
+        found
+    }
+
+    fn files(&self) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        let mut pending = vec![self.to_path_buf()];
+        while let Some(next) = pending.pop() {
+            for entry in fs::read_dir(&next).into_iter().flatten().flatten() {
+                match entry.file_type() {
+                    Ok(kind) if kind.is_dir() => pending.push(entry.path()),
+                    Ok(kind) if kind.is_file() => found.push(entry.path()),
+                    _ => {}
+                }
+            }
+        }
+        found
+    }
+}
+
+impl Tally {
+    /// What `du -sk` gives each path, a file linked twice counted once, added to the total.
+    fn measure(&mut self, paths: &[PathBuf]) -> HashMap<PathBuf, u64> {
+        let mut seen = HashSet::new();
+        let sizes: HashMap<PathBuf, u64> = paths
+            .iter()
+            .map(|path| (path.clone(), Tally::allocated(path, &mut seen).div_ceil(2)))
+            .collect();
+        self.total += sizes.values().sum::<u64>();
+        sizes
+    }
+
+    /// 512-byte blocks allocated under a path, its own included.
+    fn allocated(path: &Path, seen: &mut HashSet<(u64, u64)>) -> u64 {
+        let Ok(meta) = fs::symlink_metadata(path) else {
+            return 0;
+        };
+        if meta.nlink() > 1 && !meta.is_dir() && !seen.insert((meta.dev(), meta.ino())) {
+            return 0;
+        }
+        let below: u64 = match meta.is_dir() {
+            true => fs::read_dir(path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| Tally::allocated(&e.path(), seen))
+                .sum(),
+            false => 0,
+        };
+        meta.blocks() + below
+    }
 }
 
 /// KiB as the sizes a person acts on.
-fn size(kib: u64) -> String {
-    match kib {
-        1_048_576.. => format!("{}.{}G", kib / 1_048_576, kib % 1_048_576 * 10 / 1_048_576),
-        1024.. => format!("{}M", kib / 1024),
-        _ => format!("{kib}K"),
+struct Kib(u64);
+
+impl fmt::Display for Kib {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kib = self.0;
+        f.pad(&match kib {
+            1_048_576.. => format!("{}.{}G", kib / 1_048_576, kib % 1_048_576 * 10 / 1_048_576),
+            1024.. => format!("{}M", kib / 1024),
+            _ => format!("{kib}K"),
+        })
     }
 }
 
 /// Bytes as `df -h` gives them, rounded up.
-pub fn human(bytes: u64) -> String {
-    if bytes < 1024 {
-        return bytes.to_string();
-    }
-    let units = ['K', 'M', 'G', 'T', 'P', 'E'];
-    let mut value = bytes as f64 / 1024.0;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < units.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    match (value * 10.0).ceil() / 10.0 {
-        tenths if tenths < 10.0 => format!("{tenths:.1}{}", units[unit]),
-        _ => format!("{}{}", value.ceil(), units[unit]),
+pub struct Bytes(pub u64);
+
+impl fmt::Display for Bytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes = self.0;
+        if bytes < 1024 {
+            return f.pad(&bytes.to_string());
+        }
+        let units = ['K', 'M', 'G', 'T', 'P', 'E'];
+        let mut value = bytes as f64 / 1024.0;
+        let mut unit = 0;
+        while value >= 1024.0 && unit < units.len() - 1 {
+            value /= 1024.0;
+            unit += 1;
+        }
+        f.pad(&match (value * 10.0).ceil() / 10.0 {
+            tenths if tenths < 10.0 => format!("{tenths:.1}{}", units[unit]),
+            _ => format!("{}{}", value.ceil(), units[unit]),
+        })
     }
 }
 
-fn ago(now: u64, when: u64) -> String {
-    match now.saturating_sub(when) / DAY {
-        0 => "today".to_string(),
-        1 => "yesterday".to_string(),
-        days => format!("{days} days ago"),
+impl Sweep {
+    fn ago(now: u64, when: u64) -> String {
+        match now.saturating_sub(when) / DAY {
+            0 => "today".to_string(),
+            1 => "yesterday".to_string(),
+            days => format!("{days} days ago"),
+        }
     }
-}
 
-/// A section as it is ready, for whoever reads the job's output as it comes.
-fn say(text: &str) {
-    let mut out = io::stdout().lock();
-    let _ = out.write_all(text.as_bytes()).and_then(|()| out.flush());
+    /// A section as it is ready, for whoever reads the job's output as it comes.
+    fn say(text: &str) {
+        let mut out = io::stdout().lock();
+        let _ = out.write_all(text.as_bytes()).and_then(|()| out.flush());
+    }
 }
 
 #[cfg(test)]
@@ -686,12 +713,12 @@ mod tests {
 
     #[test]
     fn sizes_read_as_the_sweep_has_always_printed_them() {
-        assert_eq!(size(512), "512K");
-        assert_eq!(size(2048), "2M");
-        assert_eq!(size(1_572_864), "1.5G");
-        assert_eq!(human(10 * 1024 * 1024 * 1024 + 1), "11G");
-        assert_eq!(human(9 * 1024 * 1024 * 1024 + 1), "9.1G");
-        assert_eq!(ago(DAY * 3, 0), "3 days ago");
+        assert_eq!(Kib(512).to_string(), "512K");
+        assert_eq!(Kib(2048).to_string(), "2M");
+        assert_eq!(Kib(1_572_864).to_string(), "1.5G");
+        assert_eq!(Bytes(10 * 1024 * 1024 * 1024 + 1).to_string(), "11G");
+        assert_eq!(Bytes(9 * 1024 * 1024 * 1024 + 1).to_string(), "9.1G");
+        assert_eq!(Sweep::ago(DAY * 3, 0), "3 days ago");
     }
 
     #[test]

@@ -27,6 +27,7 @@ mod stop;
 mod tree;
 mod views;
 
+pub use machine::short_hostname;
 pub use provision::{BUILD_MAX, Source};
 
 /// What `dibs-runner` does with its arguments, and the exit it gives.

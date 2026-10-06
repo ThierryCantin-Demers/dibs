@@ -8,9 +8,7 @@ use crate::machine::{
     values::CallValues,
 };
 use dibs_format::Exit;
-use std::{
-    io, os::unix::process::ExitStatusExt as _, path::Path, process::ExitStatus, time::Duration,
-};
+use std::{io, path::Path, time::Duration};
 
 /// A caller that says nothing for this long is gone, unless `DIBS_LEASE` says otherwise.
 const DEFAULT_LEASE_SECS: u64 = 120;
@@ -251,11 +249,4 @@ impl Session {
         }
         .ask(kept)
     }
-}
-
-/// The exit a shell reports for a process: its code, or 128 and the signal that ended it.
-pub fn exit_code(status: ExitStatus) -> i32 {
-    status
-        .code()
-        .unwrap_or_else(|| 128 + status.signal().unwrap_or_default())
 }

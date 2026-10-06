@@ -7,7 +7,7 @@ use dibs_format::Exit;
 use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Write as _},
-    os::unix::process::{CommandExt as _, ExitStatusExt as _},
+    os::unix::process::CommandExt as _,
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
     sync::mpsc,
@@ -159,7 +159,7 @@ impl Job {
         };
         self.end();
         match status {
-            Some(Ok(status)) => exit_code(status),
+            Some(Ok(status)) => Exit::shell_status(status),
             _ => Exit::Failed.status(),
         }
     }
@@ -186,11 +186,4 @@ impl Job {
             let _ = relay.join();
         }
     }
-}
-
-/// The exit a shell reports for a process: its code, or 128 and the signal that ended it.
-pub fn exit_code(status: ExitStatus) -> i32 {
-    status
-        .code()
-        .unwrap_or_else(|| 128 + status.signal().unwrap_or_default())
 }

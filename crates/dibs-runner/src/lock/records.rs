@@ -133,7 +133,7 @@ impl LockDir {
     /// Drops what dead jobs left: a record outlives its process only when that was killed outright.
     pub fn prune(&self) {
         for file in self.named("cancelled") {
-            if age(&file).is_some_and(|a| a > CANCELLED_FOR) {
+            if RecordFile(&file).age().is_some_and(|a| a > CANCELLED_FOR) {
                 let _ = fs::remove_file(&file);
             }
         }
@@ -147,13 +147,13 @@ impl LockDir {
             }
         }
         for file in [self.named("holder"), self.named("waiting")].concat() {
-            if !pid_of(&file).is_some_and(|pid| still_the_same(pid, &file)) {
+            if !RecordFile(&file).alive() {
                 let _ = fs::remove_file(&file);
             }
         }
         for prefix in ["cpu", "batch", "hold", "with"] {
             for file in self.named(prefix) {
-                if !pid_of(&file).is_some_and(Host::exists) {
+                if !RecordFile(&file).pid().is_some_and(Host::exists) {
                     let _ = fs::remove_file(&file);
                 }
             }
@@ -161,31 +161,43 @@ impl LockDir {
     }
 }
 
-/// The pid a record's name ends in.
-pub fn pid_of(file: &Path) -> Option<u32> {
-    file.extension()?.to_str()?.parse().ok()
-}
+/// A record's file in the lock directory, named `<kind>.<pid>`.
+#[derive(Debug, Clone, Copy)]
+pub struct RecordFile<'a>(pub &'a Path);
 
-fn age(file: &Path) -> Option<Duration> {
-    fs::metadata(file)
-        .ok()?
-        .modified()
-        .ok()
-        .and_then(|m| SystemTime::now().duration_since(m).ok())
-}
+impl RecordFile<'_> {
+    /// The pid its name ends in.
+    pub fn pid(self) -> Option<u32> {
+        self.0.extension()?.to_str()?.parse().ok()
+    }
 
-/// Whether the pid still names the process that wrote the record: a pid comes round in days on a
-/// busy machine, and a record left by a job killed outright would name whoever has it by then.
-pub fn still_the_same(pid: u32, record: &Path) -> bool {
-    let Some(began) = Host::started_at(pid) else {
-        return false;
-    };
-    let Some(wrote) = fs::metadata(record)
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|m| m.duration_since(SystemTime::UNIX_EPOCH).ok())
-    else {
-        return true;
-    };
-    began <= wrote.as_secs() + SAME_PROCESS_SLACK
+    fn age(self) -> Option<Duration> {
+        fs::metadata(self.0)
+            .ok()?
+            .modified()
+            .ok()
+            .and_then(|m| SystemTime::now().duration_since(m).ok())
+    }
+
+    /// Whether the pid still names the process that wrote it: a pid comes round in days on a
+    /// busy machine, and a record left by a job killed outright would name whoever has it by
+    /// then.
+    pub fn written_by(self, pid: u32) -> bool {
+        let Some(began) = Host::started_at(pid) else {
+            return false;
+        };
+        let Some(wrote) = fs::metadata(self.0)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|m| m.duration_since(SystemTime::UNIX_EPOCH).ok())
+        else {
+            return true;
+        };
+        began <= wrote.as_secs() + SAME_PROCESS_SLACK
+    }
+
+    /// Whether the process that wrote it is still there.
+    fn alive(self) -> bool {
+        self.pid().is_some_and(|pid| self.written_by(pid))
+    }
 }

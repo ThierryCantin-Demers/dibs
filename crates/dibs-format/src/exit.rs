@@ -1,3 +1,5 @@
+use std::{os::unix::process::ExitStatusExt as _, process::ExitStatus};
+
 /// Every exit dibs gives of its own. A command's own status passes through unchanged, so a code
 /// here can also be a command's, and the trailer's `by=` is what tells them apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -79,6 +81,13 @@ impl Exit {
     /// The code as a process status.
     pub fn status(self) -> i32 {
         i32::from(self.code())
+    }
+
+    /// The status a shell reports for a process that ended: its code, or 128 and the signal.
+    pub fn shell_status(status: ExitStatus) -> i32 {
+        status
+            .code()
+            .unwrap_or_else(|| 128 + status.signal().unwrap_or_default())
     }
 
     /// The exit dibs gives with this code, if it gives one.

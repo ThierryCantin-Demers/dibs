@@ -60,7 +60,7 @@ impl Machine {
         let shared_state =
             PathBuf::from(var("DIBS_SHARED_STATE_DIR").unwrap_or_else(|| "/var/lib/dibs".into()));
         let (history, log) = match (var("DIBS_HISTORY"), var("DIBS_LOG")) {
-            (None, None) if writable_dir(&shared_state) => {
+            (None, None) if shared_state.writable_dir() => {
                 (shared_state.join("history"), shared_state.join("log"))
             }
             (history, log) => (
@@ -82,7 +82,7 @@ impl Machine {
             history,
             log,
             scratch,
-            host: short_hostname(),
+            host: short_hostname(None),
             scope,
             shared_lock_dir: LockPlace::shared(),
             shared_state,
@@ -118,7 +118,7 @@ impl LockPlace {
         let uid = unsafe { libc::getuid() };
         let (dir, scope) = match var("DIBS_LOCK_DIR") {
             Some(dir) => (PathBuf::from(dir), Scope::Explicit),
-            None if writable_dir(&shared) => (shared, Scope::Shared),
+            None if shared.writable_dir() => (shared, Scope::Shared),
             None => (
                 PathBuf::from(var("XDG_RUNTIME_DIR").unwrap_or_else(|| format!("/run/user/{uid}")))
                     .join("dibs-lock"),
@@ -151,22 +151,32 @@ impl Unwritable {
     }
 }
 
-fn writable_dir(dir: &Path) -> bool {
-    let Ok(path) = CString::new(dir.as_os_str().as_bytes()) else {
-        return false;
-    };
-    // SAFETY: access only reads the path.
-    dir.is_dir() && unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0
+/// A directory this account may write in.
+pub trait WritableDir {
+    fn writable_dir(&self) -> bool;
 }
 
-/// `hostname -s`.
-pub fn short_hostname() -> String {
-    let mut name = [0u8; 256];
-    // SAFETY: gethostname writes at most the buffer's length.
-    if unsafe { libc::gethostname(name.as_mut_ptr().cast(), name.len()) } != 0 {
-        return String::new();
+impl WritableDir for Path {
+    fn writable_dir(&self) -> bool {
+        let Ok(path) = CString::new(self.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: access only reads the path.
+        self.is_dir() && unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0
     }
-    let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
-    let full = String::from_utf8_lossy(&name[..end]).into_owned();
+}
+
+/// A computer's name up to its first dot, as `hostname -s` prints it: the one `given`, or this
+/// computer's own.
+pub fn short_hostname(given: Option<String>) -> String {
+    let full = given.unwrap_or_else(|| {
+        let mut name = [0u8; 256];
+        // SAFETY: gethostname writes at most the buffer's length.
+        if unsafe { libc::gethostname(name.as_mut_ptr().cast(), name.len()) } != 0 {
+            return String::new();
+        }
+        let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
+        String::from_utf8_lossy(&name[..end]).into_owned()
+    });
     full.split('.').next().unwrap_or_default().to_string()
 }

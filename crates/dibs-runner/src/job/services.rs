@@ -1,5 +1,5 @@
 use crate::{
-    call::one_line,
+    call::OneLine as _,
     job::{Cap, Environment, Job, Output, ports::Ports, reap},
     sink::Sink,
 };
@@ -100,7 +100,7 @@ impl Services {
                     record.push_str(&format!(
                         "{}\t{pid}\t{}\n",
                         spec.name,
-                        one_line(&spec.command, RECORD_COMMAND)
+                        spec.command.one_line(RECORD_COMMAND)
                     ));
                 }
                 Service {

@@ -18,6 +18,6 @@ mod tests;
 
 pub use base::Trees;
 pub use copy::{Copier, Mark, Reflinks};
-pub use gc::{Asked, human};
+pub use gc::{Asked, Bytes};
 pub use git::Commands;
 pub use step::Stepping;

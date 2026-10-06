@@ -1,7 +1,7 @@
 use crate::machine::{
     lines::Stream,
     served::{Delivery, LineBuffers, MISSING, Runner},
-    session::{Liveness, Route, SSH_FAILED, Session, exit_code},
+    session::{Liveness, Route, SSH_FAILED, Session},
     ssh::{Ssh, parent_death_signal},
 };
 use dibs_format::Exit;
@@ -272,7 +272,7 @@ impl Provision<'_> {
         for reader in readers {
             let _ = reader.join();
         }
-        Ok(match exit_code(child.wait()?) {
+        Ok(match Exit::shell_status(child.wait()?) {
             0 => Installed::Done,
             MISSING => Installed::NoneThere,
             SSH_FAILED => Installed::Unreached,

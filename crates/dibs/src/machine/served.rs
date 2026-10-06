@@ -3,7 +3,7 @@ use crate::machine::{
     interrupt::Interrupt,
     lines::{Listener, Stream},
     provision::{Installed, Provision},
-    session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Session, exit_code},
+    session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Session},
     ssh::{Ssh, parent_death_signal},
     values::{CallValues, Watch},
 };
@@ -336,7 +336,7 @@ impl Served<'_> {
             drop(stdin);
             let status = child.wait()?;
             Interrupt::pass_on(status);
-            return Ok(match (said, exit_code(status)) {
+            return Ok(match (said, Exit::shell_status(status)) {
                 (None, MISSING) => Attempted::Missing,
                 (_, code) => Attempted::Exit(code),
             });
@@ -360,7 +360,7 @@ impl Served<'_> {
         pass_through(stdout, to);
         let status = child.wait()?;
         Interrupt::pass_on(status);
-        Ok(Attempted::Exit(exit_code(status)))
+        Ok(Attempted::Exit(Exit::shell_status(status)))
     }
 
     fn attempt(&self, delivery: &mut Delivery) -> io::Result<Attempted> {
@@ -437,8 +437,8 @@ impl Served<'_> {
         Ok(match exit {
             Some(code) => Attempted::Exit(code),
             None if Interrupt::heard() => Attempted::Exit(i32::from(Exit::Interrupted.code())),
-            None if !any && exit_code(status) == MISSING => Attempted::Missing,
-            None => Attempted::Exit(exit_code(status)),
+            None if !any && Exit::shell_status(status) == MISSING => Attempted::Missing,
+            None => Attempted::Exit(Exit::shell_status(status)),
         })
     }
 }

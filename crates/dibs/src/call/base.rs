@@ -7,7 +7,7 @@ use crate::{
         output::Output,
         series::{Entry, Moved, Series, stayed_put},
     },
-    caller::{Caller, short_hostname},
+    caller::Caller,
     cli::{Call, Command, PortName, Run, RunLock, Service},
     inventory::InventoryError,
     machine::{
@@ -18,6 +18,7 @@ use crate::{
     placement::{Placement, Unplaced},
 };
 use dibs_format::{Exit, Label, Mode};
+use dibs_runner::short_hostname;
 use std::{
     fmt,
     os::unix::fs::MetadataExt as _,

@@ -7,7 +7,7 @@ use crate::{
     },
     caller::Caller,
     cli::{BashQuoted, Call, Command as Words},
-    machine::{CallValues, Interrupt, Lines, Liveness, Relayed, Route, Session, Target, exit_code},
+    machine::{CallValues, Interrupt, Lines, Liveness, Relayed, Route, Session, Target},
     paths::Paths,
     scratch::ScratchFile,
 };
@@ -156,7 +156,7 @@ impl Sync<'_> {
             output.prepared(&prepared);
         }
         drop(deferred);
-        let status = exit_code(status?);
+        let status = Exit::shell_status(status?);
         let exit = match (status, transport.exit()) {
             (0, _) => 0,
             (_, Some(code @ (64..=78))) => code,

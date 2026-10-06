@@ -1,5 +1,5 @@
 use crate::{
-    call::{Call, Journal, one_line},
+    call::{Call, Journal, ONE_LINE, OneLine as _},
     channel::{Caller, Channel},
     clock::{Moment, Span},
     history::{History, Key, Scope},
@@ -26,6 +26,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 const PEEK_GRACE: Duration = Duration::from_secs(5);
 /// History needs this many runs of a job before it may raise the job's cap.
 const RUNS_FOR_A_CAP: usize = 3;
+/// How much of a command a refusal's log line keeps after the words that say why.
+const REFUSED_LINE: usize = 160;
 
 /// One request in, frames out, the exit. A transfer's request is followed by rsync's own stream
 /// both ways, so once it says the transfer starts the runner frames nothing, and exits with the
@@ -160,7 +162,7 @@ impl Session {
             let mut line = self.call.log_line(Event::Refused);
             line.command = format!(
                 "refused, batch cancelled: {}",
-                one_line(&self.call.request.command, 160)
+                self.call.request.command.one_line(REFUSED_LINE)
             );
             Journal { path: &machine.log }.write(&line);
             return Exit::Cancelled.status();
@@ -224,7 +226,7 @@ impl Session {
             let mut line = self.call.log_line(event);
             line.ran = Some(took);
             line.exit = Some(status);
-            let command = one_line(&request.command, 200);
+            let command = request.command.one_line(ONE_LINE);
             if !command.is_empty() {
                 line.command = command;
             }

@@ -1,6 +1,6 @@
 use crate::{
     clock::Moment,
-    machine::{Machine, Scope},
+    machine::{Machine, Scope, WritableDir as _},
     platform::{Host, Platform as _},
     probe::Gpus,
     settings::{Settings, home},
@@ -217,7 +217,7 @@ impl Probe<'_> {
     fn scratch(&self, report: &mut Report) {
         let scratch = &self.machine.scratch;
         let kind = Host::filesystem(scratch).unwrap_or_default();
-        if !writable(scratch) {
+        if !scratch.writable_dir() {
             report.bad(&format!("scratch {} is not writable", scratch.display()));
         } else if kind == "tmpfs" {
             report.bad(&format!(
@@ -234,7 +234,7 @@ impl Probe<'_> {
             ));
         }
         let target = scratch.join("target");
-        if !target.is_dir() || !writable(&target) {
+        if !target.is_dir() || !target.writable_dir() {
             return;
         }
         let probe = target.join(".dibs-reflink-check");
@@ -311,13 +311,6 @@ pub fn on_path(program: &str) -> bool {
     })
 }
 
-fn writable(dir: &Path) -> bool {
-    CString::new(dir.as_os_str().as_bytes()).is_ok_and(|path| {
-        // SAFETY: access only reads the path.
-        dir.is_dir() && unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0
-    })
-}
-
 /// Free space as `df -h` gives it.
 fn available(dir: &Path) -> String {
     let Ok(path) = CString::new(dir.as_os_str().as_bytes()) else {
@@ -328,7 +321,7 @@ fn available(dir: &Path) -> String {
     if unsafe { libc::statvfs(path.as_ptr(), &mut found) } != 0 {
         return "?".into();
     }
-    crate::tree::human(found.f_bavail as u64 * found.f_frsize as u64)
+    crate::tree::Bytes(found.f_bavail as u64 * found.f_frsize as u64).to_string()
 }
 
 /// The repos under `~/prog` a worktree can be prepared from.

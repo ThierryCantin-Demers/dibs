@@ -1,11 +1,12 @@
 use crate::{
     call::base::{CallError, Request},
-    caller::{Caller, short_hostname},
+    caller::Caller,
     cli::Call,
     machine::{Answer, CallValues, Card, Fleet, Here, Kept, Liveness, Session, Target, TargetEnv},
     paths::Paths,
 };
 use dibs_format::{Label, MachineName, Mode};
+use dibs_runner::short_hostname;
 use std::time::Duration;
 
 /// A call in a mode the machine half answers itself, rather than by running a command there.

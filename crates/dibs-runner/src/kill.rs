@@ -5,7 +5,7 @@ use crate::{
     call::{Call, Journal},
     clock::{Deadline, Moment, Span},
     job::{reap, tree_below},
-    lock::{Kind, Lock, LockDir, pid_of, still_the_same},
+    lock::{Kind, Lock, LockDir, RecordFile},
     platform::{Host, Platform as _},
     sink::Sink,
     status::Look,
@@ -120,7 +120,7 @@ impl Kill<'_> {
         };
         let pid = record.pid;
         let held = Span(Moment::epoch_now().saturating_sub(record.start));
-        if !still_the_same(pid, &file) {
+        if !RecordFile(&file).written_by(pid) {
             let _ = fs::remove_file(&file);
             self.sink.say(&format!(
                 "dibs: {} {} ended without clearing its record, and pid {pid} belongs to\n  \
@@ -274,7 +274,7 @@ impl Kill<'_> {
                     .and_then(|plan| Some(plan.lines().next()?.split('\t').next()? == id))
                     .unwrap_or(false)
             })
-            .filter_map(|file| pid_of(&file))
+            .filter_map(|file| RecordFile(&file).pid())
             .collect();
         let steps: Vec<Step> = jobs
             .iter()

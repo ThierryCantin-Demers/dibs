@@ -1,5 +1,6 @@
 //! Who is calling: the session a job belongs to, and the name a person knows it by.
 
+use dibs_runner::short_hostname;
 use std::{ffi::OsString, path::PathBuf};
 
 /// The longest name a record carries.
@@ -87,21 +88,6 @@ impl Caller {
             })
             .collect()
     }
-}
-
-/// This computer's name up to its first dot, as `hostname -s` prints it.
-pub fn short_hostname(given: Option<String>) -> String {
-    let full = given.unwrap_or_else(|| {
-        let mut buf = [0u8; 256];
-        // SAFETY: the buffer outlives the call and its length is passed with it.
-        let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
-        let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
-        match ok {
-            true => String::from_utf8_lossy(&buf[..end]).into_owned(),
-            false => String::new(),
-        }
-    });
-    full.split('.').next().unwrap_or_default().to_string()
 }
 
 /// POSIX `cksum`: a CRC-32 over the bytes and then their length.
