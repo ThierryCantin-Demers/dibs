@@ -327,6 +327,23 @@ fn concurrent_prepares_of_one_commit_all_succeed() {
 }
 
 #[test]
+fn a_tree_a_stopped_checkout_left_is_checked_out_again() {
+    let m = Machine::new().with_clone();
+    let wt = PathBuf::from(m.prepared(&fetched("main", 0)).worktree);
+    // What a checkout killed partway leaves: some of its files, no index, and git's own lock.
+    let index = run(&wt, "git rev-parse --git-path index");
+    fs::remove_file(wt.join(index)).unwrap();
+    let locked = run(&wt, "git rev-parse --git-path locked");
+    fs::write(wt.join(locked), "initializing\n").unwrap();
+    fs::remove_file(wt.join("f")).unwrap();
+    let (prepared, said) = m.prepare(&fetched("main", 0));
+    assert_eq!(prepared.unwrap().worktree, wt.display().to_string());
+    assert!(said.contains("was left half checked out"), "{said}");
+    assert_eq!(run(&wt, "git status --porcelain -uno"), "");
+    assert_eq!(fs::read_to_string(wt.join("f")).unwrap(), "one\n");
+}
+
+#[test]
 fn a_later_arm_builds_into_a_target_of_its_own_seeded_without_a_claim() {
     let m = Machine::new().with_clone();
     m.prepared(&fetched("main", 0));

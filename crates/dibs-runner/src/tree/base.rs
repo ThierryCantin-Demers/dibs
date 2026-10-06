@@ -4,7 +4,7 @@ use crate::{
     tree::{
         builds::{Builds, Held},
         clocks::Clocks,
-        copy::{Copier, empty, touch},
+        copy::{Copier, empty, remove_all, touch},
         git::{Commands, answer, said},
         packages::{Cache, Lines},
         runners::Runners,
@@ -264,8 +264,22 @@ impl Trees<'_> {
             "could not lock the repo's trees",
         )?;
         if worktree.join(".git").exists() {
-            drop(lock);
-            return Ok(());
+            if !self.half_checked_out(worktree) {
+                drop(lock);
+                return Ok(());
+            }
+            (self.say)(&format!(
+                "dibs: {} was left half checked out, so it is checked out again\n",
+                worktree.display()
+            ));
+            let mut remove = std::process::Command::new("git");
+            remove
+                .arg("-C")
+                .arg(source)
+                .args(["worktree", "remove", "--force", "--force"])
+                .arg(worktree);
+            let _ = self.commands.output(remove);
+            remove_all(worktree);
         }
         let add = |commands: &Commands| {
             let mut git = std::process::Command::new("git");
@@ -388,6 +402,16 @@ impl Trees<'_> {
         };
         drop(held);
         seeded.map(|seeded| Reseeded { seeded, mine })
+    }
+
+    /// A tree a stopped `git worktree add` left: git writes the index once every file is out, so
+    /// one without it was cut short. Never one a process works in.
+    fn half_checked_out(&self, worktree: &Path) -> bool {
+        let index = answer(
+            self.commands
+                .git(worktree, &["rev-parse", "--git-path", "index"]),
+        );
+        index.is_some_and(|index| !worktree.join(index).exists()) && !worked_in(&[worktree])
     }
 
     /// A sent tree to this prepare alone, from deciding what it starts from until its target is
