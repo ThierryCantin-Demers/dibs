@@ -5,7 +5,7 @@ use crate::{
     session::{base::Visit, run::Place},
     settings::{home, var},
     stop::Stage,
-    tree::{Commands, Copier, Stepping, Trees},
+    tree::{BuildMark, Commands, Copier, Stepping, Trees},
 };
 use dibs_format::{
     By, Exit, Mode, Pair, Pairs,
@@ -30,7 +30,13 @@ pub(super) enum Laid {
 /// measurement.
 pub(super) enum Begins {
     Refused,
-    Runs(Option<Pairs>),
+    Runs(Running),
+}
+
+/// A step's command running: the machine's state when it is a measurement, and a build's mark.
+pub(super) struct Running {
+    pub(super) state: Option<Pairs>,
+    pub(super) mark: Option<BuildMark>,
 }
 
 /// Where a recipe step runs: its tree, and the target it builds into.
@@ -163,7 +169,10 @@ impl Visit {
         if step.claim {
             stepping.claim();
         }
-        Begins::Runs(state)
+        Begins::Runs(Running {
+            state,
+            mark: step.record.as_ref().and_then(|_| stepping.building()),
+        })
     }
 
     /// What comes after it: a build's lockfile recorded once it succeeded, the files it kept,
@@ -174,8 +183,11 @@ impl Visit {
         step: &Step,
         stepping: &Stepping,
         status: &mut i32,
-        state: Option<Pairs>,
+        running: Running,
     ) -> bool {
+        if let Some(mark) = running.mark {
+            mark.ended(*status);
+        }
         if let Some(token) = &step.record
             && *status == 0
         {
@@ -188,7 +200,7 @@ impl Visit {
         }
         self.sink.record(Record::Stepped(Stepped {
             refused: false,
-            state,
+            state: running.state,
             artifacts,
         }));
         unpinned

@@ -83,7 +83,11 @@ transfer names the worktree in. Around a recipe step's command the runner refuse
 whose target another tree built into since (exit 78, `by=dibs`), reads the machine's state,
 claims the target for a build's tree, records a successful build's lockfile, keeps the files the
 step names, and checks that a pin took (exit 3, `by=dibs`), and says what it did in a `stepped`
-record before the trailer. A transfer with a tree is framed until it is laid out: the
+record before the trailer. A build marks its target with `.dibs-building.<pid>`, held shared
+while it runs and removed when it ends on its own; one stopped, at its cap or by a signal, leaves
+it unheld, and the next build there removes the `incremental` and `.fingerprint` entries newer
+than it, since rustc reuses a stopped session's state and links with symbols missing. A bash
+build does the same. A transfer with a tree is framed until it is laid out: the
 `prepared` record, then `transferring`, after which the runner frames nothing; `dibs __rsh`
 writes the record to a file the sync that started rsync reads.
 

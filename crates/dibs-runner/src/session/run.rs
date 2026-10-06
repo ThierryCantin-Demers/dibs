@@ -396,7 +396,7 @@ impl Visit {
             job_dir: begun.log.as_ref().map(|_| begun.dir.as_path()),
             say: &say,
         });
-        let mut measured = None;
+        let mut running = None;
         if let (Some(step), Some(stepping)) = (step, &stepping) {
             match self.step_begins(step, stepping) {
                 Begins::Refused => {
@@ -405,7 +405,7 @@ impl Visit {
                     hosted.laid = Some(By::Dibs);
                     return (Exit::TargetRebuilt.status(), hosted);
                 }
-                Begins::Runs(state) => measured = state,
+                Begins::Runs(started) => running = Some(started),
             }
         }
         if !hosted.ports.complete() {
@@ -472,7 +472,8 @@ impl Visit {
         }
         let mut status = status;
         if let (Some(step), Some(stepping)) = (step, &stepping)
-            && self.step_ends(step, stepping, &mut status, measured)
+            && let Some(running) = running
+            && self.step_ends(step, stepping, &mut status, running)
         {
             hosted.laid = Some(By::Dibs);
         }

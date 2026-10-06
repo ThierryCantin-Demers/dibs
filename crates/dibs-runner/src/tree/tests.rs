@@ -1204,3 +1204,61 @@ fn a_runner_version_is_kept_by_its_use_however_long_ago_it_was_installed() {
         "a version used since stays"
     );
 }
+
+#[test]
+fn a_build_after_one_stopped_partway_rebuilds_what_that_one_touched() {
+    let s = Stepped::new(Some("this"));
+    let dir = |p: &str| {
+        fs::create_dir_all(s.target.join(p)).unwrap();
+        s.target.join(p)
+    };
+    let dated = |p: &Path, when: &str| {
+        run(
+            Path::new("/"),
+            &format!("touch -d '{when}' '{}'", p.display()),
+        )
+    };
+    let kept = [
+        dir("release/incremental/old-1"),
+        dir("x86_64-unknown-linux-gnu/release/.fingerprint/old-1"),
+    ];
+    let stopped = [
+        dir("release/incremental/half-2"),
+        dir("x86_64-unknown-linux-gnu/release/.fingerprint/half-2"),
+    ];
+    let mark = s.target.join(".dibs-building.1");
+    fs::write(&mark, "").unwrap();
+    dated(&mark, "30 minutes ago");
+    for d in &kept {
+        dated(d, "1 hour ago");
+    }
+    let running = s.target.join(".dibs-building.2");
+    fs::write(&running, "").unwrap();
+    dated(&running, "2 hours ago");
+    let build = Building::holding(&running);
+    let mine = s.with(None, |step| step.building()).unwrap();
+    build.done();
+    assert!(
+        stopped.iter().all(|d| !d.exists()),
+        "what the stopped build touched goes"
+    );
+    assert!(
+        kept.iter().all(|d| d.exists()),
+        "what it did not touch stays"
+    );
+    assert!(
+        !mark.exists() && running.exists(),
+        "its mark goes, and a running build's does not"
+    );
+    assert!(s.said.borrow().contains("was stopped partway"));
+    let own = s
+        .target
+        .join(format!(".dibs-building.{}", std::process::id()));
+    mine.ended(0);
+    assert!(
+        !own.exists(),
+        "a build that ended on its own leaves no mark"
+    );
+    s.with(None, |step| step.building()).unwrap().ended(143);
+    assert!(own.exists(), "one stopped leaves its mark");
+}

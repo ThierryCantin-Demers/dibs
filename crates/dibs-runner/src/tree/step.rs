@@ -1,8 +1,10 @@
 use crate::tree::{
-    copy::{Mark, dated, now},
+    clocks::Contents as _,
+    copy::{Mark, dated, now, remove_all},
     glob::Glob,
     packages::{Cache, Lines, RECORD},
 };
+use dibs_format::Exit;
 use std::{
     fs::{self, File},
     path::{Path, PathBuf},
@@ -14,6 +16,29 @@ const CLAIM: &str = ".dibs-tree";
 const STARTED: &str = "cmd";
 /// What a pattern under the target starts with, as a recipe writes it.
 const UNDER_TARGET: &str = "$CARGO_TARGET_DIR/";
+/// What a build leaves in its target while it runs, ahead of the runner's pid.
+const BUILDING: &str = ".dibs-building.";
+/// What rustc and cargo keep per crate, under `<profile>` and `<triple>/<profile>`.
+const PER_CRATE: [&str; 2] = ["incremental", ".fingerprint"];
+/// A status above this is a signal's: 128 and its number.
+const SIGNALLED: i32 = 128;
+
+/// A build's mark in its target, held shared while the build runs: one nobody holds was left by a
+/// build stopped partway.
+pub struct BuildMark {
+    mark: PathBuf,
+    _held: File,
+}
+
+impl BuildMark {
+    /// A build that ended on its own takes its mark away; one stopped, at its cap or by a signal,
+    /// leaves it for the next build to find unheld.
+    pub fn ended(self, status: i32) {
+        if status != Exit::Overran.status() && status <= SIGNALLED {
+            let _ = fs::remove_file(&self.mark);
+        }
+    }
+}
 
 /// A recipe step's command in its tree: what is done before it and after it.
 pub struct Stepping<'a> {
@@ -60,6 +85,56 @@ impl Stepping<'_> {
         );
         (self.say)(&format!(
             "dibs: this tree did not make the last build in {}, so cargo rebuilds its crates\n",
+            self.target.display()
+        ));
+    }
+
+    /// This build's mark, after what a build stopped partway touched is put out of reach: rustc
+    /// reuses a stopped session's incremental state, and the result links with symbols missing,
+    /// so those crates are built again from nothing.
+    pub fn building(&self) -> Option<BuildMark> {
+        for mark in self.target.entries() {
+            let stopped = mark
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(BUILDING));
+            if stopped
+                && let Ok(unheld) = File::open(&mark)
+                && unheld.try_lock().is_ok()
+            {
+                self.forget_since(&mark);
+            }
+        }
+        let mark = self
+            .target
+            .join(format!("{BUILDING}{}", std::process::id()));
+        let file = File::create(&mark).ok()?;
+        file.lock_shared().ok()?;
+        Some(BuildMark { mark, _held: file })
+    }
+
+    /// What each crate kept that is newer than a stopped build's mark, removed, and the mark.
+    fn forget_since(&self, mark: &Path) {
+        let Ok(since) = fs::metadata(mark).and_then(|m| m.modified()) else {
+            return;
+        };
+        let profiles = self.target.entries().into_iter().flat_map(|top| {
+            let mut below = top.entries();
+            below.push(top);
+            below
+        });
+        for kept in profiles.flat_map(|profile| PER_CRATE.map(|dir| profile.join(dir))) {
+            for entry in kept.entries() {
+                if fs::metadata(&entry)
+                    .and_then(|m| m.modified())
+                    .is_ok_and(|at| at > since)
+                {
+                    remove_all(&entry);
+                }
+            }
+        }
+        let _ = fs::remove_file(mark);
+        (self.say)(&format!(
+            "dibs: a build in {} was stopped partway, so the crates it touched are built again\n",
             self.target.display()
         ));
     }

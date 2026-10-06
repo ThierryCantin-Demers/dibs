@@ -22,4 +22,4 @@ pub use copy::{Copier, Mark, Reflinks};
 pub use gc::{Asked, Bytes};
 pub use git::Commands;
 pub use runners::Runners;
-pub use step::Stepping;
+pub use step::{BuildMark, Stepping};
