@@ -5,7 +5,7 @@
 //! `[patch]`, in a config file above the tree rather than in it: the tree stays what was sent.
 //! A pinned build still gets a tree of its own, since resolving the patch rewrites the lockfile.
 
-use super::{base::lockfile, refs::Arm};
+use super::{refs::Arm, trees::lockfile};
 use crate::{
     git::Git,
     lockfile::Package,

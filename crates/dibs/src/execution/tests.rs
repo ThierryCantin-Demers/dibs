@@ -1,8 +1,9 @@
 use super::{
-    base::{gitdb_args, step_plan},
+    base::step_plan,
     refs::{Side, sides},
     schedule::{Job, jobs_of, schedule},
     sweep::{sweep_points, sweep_text},
+    trees::gitdb_args,
 };
 use crate::recipe::{Isolation, Recipe, Step, label_steps};
 use crate::{

@@ -1,10 +1,11 @@
 use super::{
-    base::{
-        RunError, TreeSpec, announce_prepared, in_tree, new_token, preparing, preparing_title,
-        send_missing_gitdbs, sh, sync_prepared,
-    },
+    base::{RunError, preparing, sh},
     jobs::{JobRequest, Jobs},
     refs::{arms, sides},
+    trees::{
+        TreeSpec, announce_prepared, in_tree, new_token, preparing_title, send_missing_gitdbs,
+        sync_prepared,
+    },
 };
 use crate::{
     recipe::{self, Lock, Manifest, resolve_repo, root_of, run_label},

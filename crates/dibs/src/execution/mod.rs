@@ -21,5 +21,5 @@ pub(crate) use local::{
 };
 pub(crate) use refs::{commit, merge_base};
 pub(crate) use schedule::recipe_jobs;
-pub(crate) use trees::{Nest, SYNC_ARGS};
+pub(crate) use trees::Nest;
 pub(crate) use with::with_service;
