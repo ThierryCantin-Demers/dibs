@@ -294,20 +294,30 @@ pub fn split_words(line: &str) -> Result<Vec<String>, BadLine> {
         match c {
             '\'' => {
                 in_word = true;
-                loop {
-                    match chars.next() {
-                        Some('\'') => break,
-                        Some(x) => cur.push(x),
-                        None => return Err(BadLine::SingleQuote),
+                let mut closed = false;
+                for x in chars.by_ref() {
+                    match x {
+                        '\'' => {
+                            closed = true;
+                            break;
+                        }
+                        x => cur.push(x),
                     }
+                }
+                if !closed {
+                    return Err(BadLine::SingleQuote);
                 }
             }
             '"' => {
                 in_word = true;
-                loop {
-                    match chars.next() {
-                        Some('"') => break,
-                        Some('\\') => match chars.next() {
+                let mut closed = false;
+                while let Some(x) = chars.next() {
+                    match x {
+                        '"' => {
+                            closed = true;
+                            break;
+                        }
+                        '\\' => match chars.next() {
                             Some(x @ ('"' | '\\' | '$' | '`')) => cur.push(x),
                             Some(x) => {
                                 cur.push('\\');
@@ -315,9 +325,11 @@ pub fn split_words(line: &str) -> Result<Vec<String>, BadLine> {
                             }
                             None => return Err(BadLine::DoubleQuote),
                         },
-                        Some(x) => cur.push(x),
-                        None => return Err(BadLine::DoubleQuote),
+                        x => cur.push(x),
                     }
+                }
+                if !closed {
+                    return Err(BadLine::DoubleQuote);
                 }
             }
             '\\' => {

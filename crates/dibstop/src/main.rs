@@ -69,15 +69,12 @@ fn run(
     tx: Sender<Msg>,
     app: &mut App,
 ) -> std::io::Result<()> {
-    loop {
+    let mut quit = false;
+    while !quit {
         terminal.draw(|f| ui::draw(f, app))?;
         if event::poll(INPUT_POLL)? {
             match event::read()? {
-                Event::Key(k) if k.kind == KeyEventKind::Press => {
-                    if app.on_key(k.code, &tx) {
-                        return Ok(());
-                    }
-                }
+                Event::Key(k) if k.kind == KeyEventKind::Press => quit = app.on_key(k.code, &tx),
                 Event::Mouse(m) => app.on_mouse(m.kind, m.row),
                 _ => {}
             }
@@ -87,4 +84,5 @@ fn run(
         }
         app.retry_ended(&tx);
     }
+    Ok(())
 }
