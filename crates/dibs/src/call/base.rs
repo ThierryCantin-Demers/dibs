@@ -279,7 +279,7 @@ impl<'a> LockedCall<'a> {
 }
 
 /// A call's values before its mode adds its own, as every mode sends them.
-pub(crate) struct Request<'a> {
+pub struct Request<'a> {
     pub mode: Mode,
     pub call: &'a Call,
     pub caller: &'a Caller,
@@ -339,7 +339,7 @@ impl Request<'_> {
 }
 
 /// What a job's duration is filed under beside its label.
-pub(crate) struct Fingerprint<'a>(pub &'a str);
+pub struct Fingerprint<'a>(pub &'a str);
 
 impl Fingerprint<'_> {
     pub fn sent(&self) -> String {

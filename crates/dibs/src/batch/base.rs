@@ -4,11 +4,11 @@ use super::{
     plan::{Pending, pending_of, plan, step_env},
     summary::summary,
 };
-use crate::execution::recipe_jobs;
-use dibs::{
+use crate::{
     call::{Destination, Driver, MachineCall},
     caller::Caller,
     cli::Call,
+    execution::recipe_jobs,
     paths::Paths,
 };
 use dibs_format::{Exit, MachineName};
@@ -85,14 +85,14 @@ pub fn jobs(stderr: &str) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn state_dir() -> PathBuf {
+pub fn state_dir() -> PathBuf {
     Paths::from_env().batches().unwrap_or_default()
 }
 
 /// Where a step goes, resolved as the step's own call will resolve it. None when it names no
 /// machine and several could take it, which a shared step is placed from and a measurement is
 /// refused over.
-pub(crate) fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String> {
+pub fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String> {
     let call = Call {
         on: step
             .on
@@ -119,7 +119,7 @@ pub fn batch_id() -> String {
     format!("{stamp}-{}", std::process::id())
 }
 
-pub(crate) fn collect_old(dir: &Path) {
+pub fn collect_old(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -321,7 +321,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
 }
 
 /// A command may exit 76 of its own accord, so only dibs saying so makes it a cancellation.
-pub(crate) fn was_cancelled(stderr: &str) -> bool {
+pub fn was_cancelled(stderr: &str) -> bool {
     stderr.contains("was cancelled with dibs --kill")
         || stderr.lines().any(|l| {
             l.starts_with("job ")
@@ -331,12 +331,12 @@ pub(crate) fn was_cancelled(stderr: &str) -> bool {
 
 /// A step is its own process group, so the signal reaches the dibs call under it and that call's
 /// death reaches the machine, which stops the job and releases its lock.
-pub(crate) fn stop(pid: u32) {
+pub fn stop(pid: u32) {
     // SAFETY: signals the step's process group, which its guard leads.
     unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
 }
 
-pub(crate) fn copy(
+pub fn copy(
     from: Option<impl std::io::Read + Send + 'static>,
     to: PathBuf,
     echo: Option<String>,

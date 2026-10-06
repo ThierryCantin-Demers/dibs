@@ -1,9 +1,8 @@
-use crate::execution;
-use dibs::cli::RecipeCall;
+use crate::{cli::RecipeCall, execution};
 use std::path::{Path, PathBuf};
 
 /// `--root`, or else where checkouts are looked up by default.
-pub(crate) fn root_of(args: &RecipeCall) -> Result<PathBuf, String> {
+pub fn root_of(args: &RecipeCall) -> Result<PathBuf, String> {
     match &args.root {
         Some(root) => Ok(root.clone()),
         None => repo_root(),
@@ -12,7 +11,7 @@ pub(crate) fn root_of(args: &RecipeCall) -> Result<PathBuf, String> {
 
 /// Where a bare repo name is looked up. Everyone lays their checkouts out differently, so
 /// this is only a starting guess: DIBS_ROOT, then --root, then the directory you are in.
-pub(crate) fn repo_root() -> Result<PathBuf, String> {
+pub fn repo_root() -> Result<PathBuf, String> {
     if let Some(r) = std::env::var_os("DIBS_ROOT").filter(|r| !r.is_empty()) {
         return Ok(PathBuf::from(r));
     }
@@ -25,7 +24,7 @@ pub(crate) fn repo_root() -> Result<PathBuf, String> {
         .unwrap_or_else(|| PathBuf::from(".")))
 }
 
-pub(crate) fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
+pub fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
     let direct = PathBuf::from(repo);
     if direct.join(".dibs.toml").exists() || direct.join(".git").exists() {
         return canon(direct);
@@ -58,7 +57,7 @@ pub(crate) fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-pub(crate) fn canon(p: PathBuf) -> Result<PathBuf, String> {
+pub fn canon(p: PathBuf) -> Result<PathBuf, String> {
     p.canonicalize()
         .map_err(|e| format!("{}: {e}", p.display()))
 }

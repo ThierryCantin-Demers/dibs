@@ -1,13 +1,14 @@
 //! The jobs a recipe runs: locked calls made in this process, whose output is read here for the
 //! trailer and for the tree the machine lays out ahead of its command.
 
-use crate::{execution::RunError, recipe::Lock};
-use dibs::{
+use crate::{
     call::{CallError, Destination, LockedCall, MachineCall, Origin, Output, RecipeJob, Sync},
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run, RunLock},
+    execution::RunError,
     machine::{Interrupt, Listener, Stream},
     placement::Placement,
+    recipe::Lock,
 };
 use dibs_format::{
     Alias, JobId, Label, MachineName, StepRecord,

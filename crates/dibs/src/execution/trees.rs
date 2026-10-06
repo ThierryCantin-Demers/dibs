@@ -13,8 +13,7 @@ use super::{
     build::hex,
     jobs::{JobRequest, Jobs, Reported},
 };
-use crate::{gitdeps, recipe::Lock};
-use dibs::call::RecipeJob;
+use crate::{call::RecipeJob, gitdeps, recipe::Lock};
 use dibs_format::wire;
 use sha2::{Digest, Sha256};
 use std::path::Path;

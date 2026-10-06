@@ -1,26 +1,19 @@
 //! The `dibs` command: one grammar, then the recipe layer, a friction report, or a call.
 
-mod batch;
-mod execution;
-mod fleet;
-mod git;
-mod gitdeps;
-mod lockfile;
-mod recipe;
-mod records;
-mod reports;
-
 use dibs::{
+    batch,
     call::{Dispatch, Guard, MachineCall, Rsh},
     caller::Caller,
     cli::{Call, Help, Invocation, Mode, RecipeCall, RecipeVerb},
+    execution::{self, RunError},
+    fleet,
     machine::{RUNNER_WORD, Runner},
-    paths::Paths,
+    recipe,
+    records::{self, friction, runs},
+    reports,
     update::{Build, ChangeNotice},
 };
 use dibs_runner::Source;
-use execution::RunError;
-use records::{friction, runs};
 use std::{path::Path, process::ExitCode};
 
 fn main() -> ExitCode {
@@ -82,14 +75,14 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         Invocation::Friction(friction) => reports::friction_verb(friction),
         Invocation::Recipe(call) => {
             let caller = Caller::from_env();
-            change_notice(&caller);
+            ChangeNotice::tell_once(&caller);
             reports::Notice { caller: &caller }.tell();
             run(call, &caller)
         }
         Invocation::Call(call) => {
             let caller = Caller::from_env();
             if call.mode != Mode::Update {
-                change_notice(&caller);
+                ChangeNotice::tell_once(&caller);
                 reports::Notice { caller: &caller }.tell();
             }
             let code = Dispatch {
@@ -110,12 +103,6 @@ fn version() -> ExitCode {
         Build::COMMIT.unwrap_or("commit unknown")
     );
     ExitCode::SUCCESS
-}
-
-fn change_notice(caller: &Caller) {
-    if let Some(seen) = Paths::from_env().seen() {
-        ChangeNotice::of_this_build(seen).tell(caller);
-    }
 }
 
 fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {

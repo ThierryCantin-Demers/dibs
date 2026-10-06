@@ -2,13 +2,16 @@ use super::{
     base::{RunError, sh},
     refs::sides,
 };
-use crate::{batch, recipe::resolve};
-use dibs::cli::{RecipeCall, Sweep};
+use crate::{
+    batch,
+    cli::{RecipeCall, Sweep},
+    recipe::resolve,
+};
 use std::{collections::BTreeMap, process::ExitCode};
 
 /// Every combination `--sweep` asks for, each a complete set of values for one run. Without a
 /// sweep this is the one point the call already described.
-pub(crate) fn sweep_points(args: &RecipeCall) -> Vec<BTreeMap<String, String>> {
+pub fn sweep_points(args: &RecipeCall) -> Vec<BTreeMap<String, String>> {
     let mut points = vec![args.params.clone()];
     for Sweep { name, values } in &args.sweep {
         points = points
@@ -25,7 +28,7 @@ pub(crate) fn sweep_points(args: &RecipeCall) -> Vec<BTreeMap<String, String>> {
     points
 }
 
-pub(crate) fn sweep_run(
+pub fn sweep_run(
     args: &RecipeCall,
     points: &[BTreeMap<String, String>],
 ) -> Result<ExitCode, RunError> {
@@ -56,7 +59,7 @@ pub(crate) fn sweep_run(
 
 /// The batch a sweep becomes: one ordinary dibs call per point, named by what makes it that
 /// point, in the order the sweep was written.
-pub(crate) fn sweep_text(args: &RecipeCall, points: &[BTreeMap<String, String>]) -> String {
+pub fn sweep_text(args: &RecipeCall, points: &[BTreeMap<String, String>]) -> String {
     let target = match &args.reference {
         Some(r) => format!("{}@{r}", args.repo),
         None => args.repo.clone(),
@@ -109,7 +112,7 @@ pub(crate) fn sweep_text(args: &RecipeCall, points: &[BTreeMap<String, String>])
 }
 
 /// What the summary calls one point: the values that make it that point.
-pub(crate) fn point_name(args: &RecipeCall, p: &BTreeMap<String, String>) -> String {
+pub fn point_name(args: &RecipeCall, p: &BTreeMap<String, String>) -> String {
     let slug = |v: &str| {
         v.chars()
             .map(|c| {

@@ -5,8 +5,8 @@
 use crate::{
     execution::{build::hex, refs::commit},
     git::Git,
+    paths::Paths,
 };
-use dibs::paths::Paths;
 use dibs_runner::shared::SharedFile;
 use sha2::{Digest, Sha256};
 

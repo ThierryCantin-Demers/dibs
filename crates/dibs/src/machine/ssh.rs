@@ -15,7 +15,7 @@ impl Ssh {
 
     /// No TTY, so nothing downstream believes it is interactive, and a machine that stops
     /// answering is given up on after about two minutes.
-    pub(crate) fn options() -> Vec<String> {
+    pub fn options() -> Vec<String> {
         [
             "BatchMode=yes".to_string(),
             "LogLevel=ERROR".into(),
@@ -45,10 +45,10 @@ impl Ssh {
 
 /// The kernel signals the child when this process dies, SIGKILL included.
 #[cfg(target_os = "linux")]
-pub(crate) fn parent_death_signal() {
+pub fn parent_death_signal() {
     // SAFETY: prctl with these arguments only sets a flag on the calling process.
     unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) };
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn parent_death_signal() {}
+pub fn parent_death_signal() {}

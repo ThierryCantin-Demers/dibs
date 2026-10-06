@@ -132,7 +132,7 @@ pub fn packages(lock: &str, signature: &str) -> Vec<String> {
 }
 
 /// Bytes as lowercase hex.
-pub(crate) fn hex(b: &[u8]) -> String {
+pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 

@@ -13,7 +13,7 @@ use std::{io, path::Path, time::Duration};
 /// A caller that says nothing for this long is gone, unless `DIBS_LEASE` says otherwise.
 const DEFAULT_LEASE_SECS: u64 = 120;
 /// ssh's own failure, never the command's.
-pub(crate) const SSH_FAILED: i32 = 255;
+pub const SSH_FAILED: i32 = 255;
 /// This computer, and whether every call stays on it.
 #[derive(Debug, Clone)]
 pub struct Here {

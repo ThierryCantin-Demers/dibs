@@ -8,15 +8,13 @@ use super::{
     },
 };
 use crate::{
-    recipe::{self, Lock, Manifest, resolve_repo, root_of, run_label},
-    records::{affinity_set, pinned},
-};
-use dibs::{
     call::{Destination, LockedCall, Origin, RecipeJob},
     caller::Caller,
     cli::{
         Call, CliError, Command as ShellCommand, Mode, PortName, RecipeCall, Run, RunLock, Service,
     },
+    recipe::{self, Lock, Manifest, resolve_repo, root_of, run_label},
+    records::{affinity_set, pinned},
 };
 use dibs_format::{Alias, Exit, Label, MachineName, wire};
 use std::process::ExitCode;
@@ -24,7 +22,7 @@ use std::process::ExitCode;
 /// A repo's servers, running on the machine under one lock while the command runs here: a
 /// dashboard, a client, a test suite driving them over the network. It ends by becoming that
 /// dibs call rather than waiting on one, so the command keeps this terminal.
-pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
+pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let sides = sides(args.reference.as_deref())?;
     if sides.len() > 1 {
         return Err("with runs against one tree, so it takes one ref".into());
@@ -293,7 +291,7 @@ pub(crate) fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
 }
 
 /// The call `with` ends in: its servers, its ports and the command, held here unless `--there`.
-pub(crate) fn served(
+pub fn served(
     svc: &recipe::Service,
     args: &RecipeCall,
     command: &str,

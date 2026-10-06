@@ -226,6 +226,13 @@ pub struct ChangeNotice {
 }
 
 impl ChangeNotice {
+    /// Told to a session once, where this computer keeps what each session has seen.
+    pub fn tell_once(caller: &Caller) {
+        if let Some(seen) = Paths::from_env().seen() {
+            ChangeNotice::of_this_build(seen).tell(caller);
+        }
+    }
+
     pub fn of_this_build(seen: PathBuf) -> ChangeNotice {
         ChangeNotice {
             seen,

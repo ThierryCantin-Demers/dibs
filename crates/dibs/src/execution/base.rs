@@ -12,12 +12,10 @@ use super::{
 };
 use crate::{
     batch,
-    recipe::{self, Lock, Manifest, RecipeError, Resolved, resolve},
-    records::{affinity_get, affinity_set, now_secs, pinned, write_record},
-};
-use dibs::{
     call::{CallError, Destination, RecipeJob},
     cli::{RecipeCall, ShellWord},
+    recipe::{self, Lock, Manifest, RecipeError, Resolved, resolve},
+    records::{affinity_get, affinity_set, now_secs, pinned, write_record},
 };
 use dibs_format::{
     Alias, ArmRecord, Exit, MachineName, Outcome, Pairs, ProcedureStep, RunRecord, RunVerb,
@@ -32,7 +30,7 @@ use std::{
 
 /// What stops a recipe run, said as its `Display` in full, and the exit it ends with.
 #[derive(Debug)]
-pub(crate) enum RunError {
+pub enum RunError {
     /// Refused here: exit 2.
     Refused(String),
     /// A call the run made failed. Its exit passes on, so an unreachable machine reads as 69 to
@@ -43,11 +41,11 @@ pub(crate) enum RunError {
 }
 
 impl RunError {
-    pub(crate) fn call(exit: i32, why: String) -> RunError {
+    pub fn call(exit: i32, why: String) -> RunError {
         RunError::Call { exit, why }
     }
 
-    pub(crate) fn exit(&self) -> u8 {
+    pub fn exit(&self) -> u8 {
         let refused = Exit::Refused.code();
         let exit = match self {
             RunError::Refused(_) => return refused,
@@ -101,7 +99,7 @@ impl From<RecipeError> for RunError {
 }
 
 /// What is about to be prepared, for the person reading along.
-pub(crate) fn preparing(repo: &str, arm: &Arm, local: Option<&super::Local>, dir: &Path) -> String {
+pub fn preparing(repo: &str, arm: &Arm, local: Option<&super::Local>, dir: &Path) -> String {
     match (&arm.checkout, local) {
         (Some(c), _) => format!(
             "{repo} at {}{}",
@@ -129,14 +127,14 @@ pub(crate) fn preparing(repo: &str, arm: &Arm, local: Option<&super::Local>, dir
 }
 
 /// A tree on its way to the machine, and what it became there.
-pub(crate) struct Tree {
-    pub(crate) token: String,
-    pub(crate) plan: TreePlan,
-    pub(crate) local: Option<super::Local>,
-    pub(crate) prepared: Option<wire::Prepared>,
+pub struct Tree {
+    pub token: String,
+    pub plan: TreePlan,
+    pub local: Option<super::Local>,
+    pub prepared: Option<wire::Prepared>,
 }
 
-pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
+pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     let points = sweep_points(&args);
     if points.len() > 1 {
         return sweep_run(&args, &points);
@@ -805,7 +803,7 @@ pub(crate) fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
 /// A recipe with any exclusive step is a measurement, and a measurement goes where it is told:
 /// its history keys on the machine, and bindings that would make moving one safe do not exist
 /// yet. So only a wholly shared recipe, which is every build and test, is placed.
-pub(crate) fn destination(
+pub fn destination(
     rec: &recipe::Recipe,
     repo_name: &str,
     name: &str,
@@ -833,7 +831,7 @@ pub(crate) fn destination(
 /// Whether the wrapper refuses a measured step, or the first step when a card is named, on what it
 /// decides without the machine. A shared recipe's card is otherwise checked by the first step that
 /// carries it, after the tree and its dependencies have been sent.
-pub(crate) fn refused_before_building(
+pub fn refused_before_building(
     backend: &Jobs,
     rec: &recipe::Recipe,
     step_labels: &[String],
@@ -867,7 +865,7 @@ pub(crate) fn refused_before_building(
 /// target for this tree, and a measurement after one refuses a target some other tree has built
 /// into since, unless told `anyway`. `token` is the tree's prepare, whose package list a build
 /// records; `fresh` is this run's. A shared build against pins checks they took.
-pub(crate) fn step_plan(
+pub fn step_plan(
     rec: &recipe::Recipe,
     i: usize,
     token: &str,
@@ -908,26 +906,26 @@ pub(crate) fn step_plan(
 
 /// A step's command, and what the machine does around it.
 #[derive(Debug, PartialEq)]
-pub(crate) struct StepPlan {
-    pub(crate) command: String,
-    pub(crate) around: wire::Step,
+pub struct StepPlan {
+    pub command: String,
+    pub around: wire::Step,
 }
 
 /// One value per run for each of the recipe's `fresh` variables, the same in every step of it.
-pub(crate) fn fresh_values(rec: &recipe::Recipe, token: &str) -> BTreeMap<String, String> {
+pub fn fresh_values(rec: &recipe::Recipe, token: &str) -> BTreeMap<String, String> {
     rec.fresh
         .iter()
         .map(|v| (v.clone(), format!("dibs-{token}")))
         .collect()
 }
 
-pub(crate) fn sh(s: &str) -> String {
+pub fn sh(s: &str) -> String {
     ShellWord(s).to_string()
 }
 
 /// `dibs raw`: nothing prepared and nothing looked up, the last resort, and recorded so that
 /// being a last resort is visible rather than assumed.
-pub(crate) fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
+pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let reason = args.reason.as_deref().ok_or(
         "raw needs --reason. It is recorded, and a reason that keeps recurring is what\n             specifies the next recipe. If this fits a recipe, use the recipe instead.",
     )?;

@@ -4,14 +4,14 @@ use super::{
 };
 use crate::{
     batch,
+    cli::RecipeCall,
     recipe::{self, Lock, Resolved, resolve},
 };
-use dibs::cli::RecipeCall;
 use dibs_format::Mode;
 
 /// One job of a recipe run, in the order they are sent.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Job {
+pub enum Job {
     /// The local tree sent and prepared, in one transfer.
     Send(usize),
     /// A fetched tree prepared on its own, since the step after it may not carry it.
@@ -29,7 +29,7 @@ pub(crate) enum Job {
 /// Every arm is built before any is measured, then each rep measures them all, the order reversed
 /// every other rep: A B B A cancels a drift linear in time, such as a card warming up, which
 /// A B A B credits to B. Without an exclusive step the whole recipe repeats.
-pub(crate) fn schedule(local: &[bool], steps: &[recipe::Step], reps: u32) -> Vec<Job> {
+pub fn schedule(local: &[bool], steps: &[recipe::Step], reps: u32) -> Vec<Job> {
     let first = steps
         .iter()
         .position(|s| s.lock == Lock::Exclusive)
@@ -75,7 +75,7 @@ pub(crate) fn schedule(local: &[bool], steps: &[recipe::Step], reps: u32) -> Vec
 /// a local tree, or the first step when it is shared. Its own job would be a second round trip and
 /// a second place in the queue. An exclusive first step keeps its setup apart, or a fetch would run
 /// inside the hold.
-pub(crate) fn jobs_of(
+pub fn jobs_of(
     r: &Resolved,
     sides: &[Side],
     local: &[bool],
@@ -129,7 +129,7 @@ pub(crate) fn jobs_of(
 
 /// The jobs a recipe line in a batch will make, so the batch's plan can estimate them. None
 /// when the line does not resolve here, which leaves that step without an estimate.
-pub(crate) fn recipe_jobs(args: &RecipeCall) -> Option<Vec<batch::Pending>> {
+pub fn recipe_jobs(args: &RecipeCall) -> Option<Vec<batch::Pending>> {
     let r = resolve(args).ok()?;
     let pins = args
         .pins

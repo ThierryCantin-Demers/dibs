@@ -141,7 +141,7 @@ impl RecipeCall {
     }
 
     /// Reads a recipe verb and what follows it; `on` is a `--on` given before the verb.
-    pub(crate) fn parse(
+    pub fn parse(
         verb: RecipeVerb,
         words: &[String],
         on: Option<String>,

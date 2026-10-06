@@ -4,14 +4,16 @@ use super::{
     manifest::{Manifest, Source, Verb},
     repo::{resolve_repo, root_of},
 };
-use crate::execution;
-use dibs::cli::{RecipeCall, RecipeVerb};
+use crate::{
+    cli::{RecipeCall, RecipeVerb},
+    execution,
+};
 use dibs_format::Lock;
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
 /// Why a recipe cannot be read or run as asked, said as its `Display`.
 #[derive(Debug)]
-pub(crate) enum RecipeError {
+pub enum RecipeError {
     /// A recipes file that cannot be read, does not parse, or declares what is refused.
     File { path: PathBuf, why: String },
     /// Neither the repo nor this computer's recipes say anything about it.
@@ -57,17 +59,17 @@ impl From<&str> for RecipeError {
 
 /// A recipe invocation resolved as far as it can be without a machine: which recipe, and the
 /// labels its jobs are filed under.
-pub(crate) struct Resolved {
-    pub(crate) dir: PathBuf,
-    pub(crate) repo_name: String,
-    pub(crate) verb: Verb,
-    pub(crate) name: String,
-    pub(crate) rec: Recipe,
-    pub(crate) label: String,
-    pub(crate) step_labels: Vec<String>,
-    pub(crate) shell_reason: Option<String>,
-    pub(crate) params: BTreeMap<String, String>,
-    pub(crate) tree_fresh: Vec<String>,
+pub struct Resolved {
+    pub dir: PathBuf,
+    pub repo_name: String,
+    pub verb: Verb,
+    pub name: String,
+    pub rec: Recipe,
+    pub label: String,
+    pub step_labels: Vec<String>,
+    pub shell_reason: Option<String>,
+    pub params: BTreeMap<String, String>,
+    pub tree_fresh: Vec<String>,
 }
 
 const LABEL_DERIVED: &str =
@@ -101,7 +103,7 @@ fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> 
     }
 }
 
-pub(crate) fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
+pub fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
     let found = root_of(args).and_then(|root| resolve_repo(&args.repo, &root));
     if args.verb == RecipeVerb::Shell {
         let repo = found

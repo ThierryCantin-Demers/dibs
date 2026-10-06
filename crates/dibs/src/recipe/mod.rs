@@ -11,15 +11,15 @@ mod repo;
 mod tests;
 
 #[cfg(test)]
-pub(crate) use base::Isolation;
-pub(crate) use base::{Recipe, Step};
-pub(crate) use dibs_format::Lock;
+pub use base::Isolation;
+pub use base::{Recipe, Step};
+pub use dibs_format::Lock;
 #[cfg(test)]
-pub(crate) use labels::label_steps;
-pub(crate) use labels::run_label;
-pub(crate) use listing::list;
-pub(crate) use manifest::{Manifest, Service, local_dir};
+pub use labels::label_steps;
+pub use labels::run_label;
+pub use listing::list;
+pub use manifest::{Manifest, Service, local_dir};
 #[cfg(test)]
-pub(crate) use manifest::{Source, Verb};
-pub(crate) use refusals::{RecipeError, Resolved, resolve};
-pub(crate) use repo::{resolve_repo, root_of};
+pub use manifest::{Source, Verb};
+pub use refusals::{RecipeError, Resolved, resolve};
+pub use repo::{resolve_repo, root_of};

@@ -43,7 +43,7 @@ pub struct Recipe {
     pub source: Source,
     /// Refused on load: nothing here can check what a machine has or route on it.
     #[serde(default)]
-    pub(crate) needs: Option<String>,
+    pub needs: Option<String>,
     #[serde(default)]
     pub isolation: Isolation,
     #[serde(default)]

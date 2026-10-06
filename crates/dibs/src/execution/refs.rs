@@ -3,7 +3,7 @@ use std::path::Path;
 
 /// What `@<ref>` names, before anything is looked up.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Side {
+pub enum Side {
     Local,
     /// Fetched on the machine by this name.
     Ref(String),
@@ -14,7 +14,7 @@ pub(crate) enum Side {
 }
 
 impl Side {
-    pub(crate) fn name(&self) -> String {
+    pub fn name(&self) -> String {
         match self {
             Side::Local => "local".into(),
             Side::Ref(r) | Side::Pinned(r) => r.clone(),
@@ -24,7 +24,7 @@ impl Side {
 
     /// Sent from here whatever the remote holds: the tree as it stands, or the base it is measured
     /// against.
-    pub(crate) fn sent(&self) -> bool {
+    pub fn sent(&self) -> bool {
         match self {
             Side::Local => true,
             Side::Base(_, tip) => tip == "local",
@@ -34,7 +34,7 @@ impl Side {
 }
 
 /// One tree, `A..B`, or `a,b,c`.
-pub(crate) fn sides(reference: Option<&str>) -> Result<Vec<Side>, String> {
+pub fn sides(reference: Option<&str>) -> Result<Vec<Side>, String> {
     let one = |r: &str| {
         if r == "local" {
             Side::Local
@@ -78,30 +78,30 @@ pub(crate) fn sides(reference: Option<&str>) -> Result<Vec<Side>, String> {
 }
 
 /// One side of a comparison, looked up.
-pub(crate) struct Arm {
-    pub(crate) name: String,
+pub struct Arm {
+    pub name: String,
     /// What the machine fetches, or None for a tree sent from here.
-    pub(crate) fetch: Option<String>,
+    pub fetch: Option<String>,
     /// How its commit was found, for a person to check.
-    pub(crate) note: Option<String>,
+    pub note: Option<String>,
     /// A commit sent from a checkout of its own rather than fetched.
-    pub(crate) checkout: Option<super::Checkout>,
+    pub checkout: Option<super::Checkout>,
 }
 
 impl Arm {
     /// Where a sent arm is sent from.
-    pub(crate) fn dir<'a>(&'a self, checkout: &'a Path) -> &'a Path {
+    pub fn dir<'a>(&'a self, checkout: &'a Path) -> &'a Path {
         self.checkout.as_ref().map_or(checkout, |c| c.dir.as_path())
     }
 
-    pub(crate) fn local(&self, checkout: &Path) -> Result<super::Local, String> {
+    pub fn local(&self, checkout: &Path) -> Result<super::Local, String> {
         match &self.checkout {
             Some(c) => c.local(),
             None => super::local(checkout),
         }
     }
 
-    pub(crate) fn commit(&self) -> Option<&str> {
+    pub fn commit(&self) -> Option<&str> {
         self.checkout
             .as_ref()
             .map(|c| c.sha.as_str())
@@ -110,7 +110,7 @@ impl Arm {
 }
 
 /// `, <note>, sent from <from> since <why>`, as much of it as there is, to follow the commit.
-pub(crate) fn sent_from(c: &super::Checkout, note: Option<&str>, from: &str) -> String {
+pub fn sent_from(c: &super::Checkout, note: Option<&str>, from: &str) -> String {
     format!(
         "{}, sent from {from}{}",
         note.map(|n| format!(", {n}")).unwrap_or_default(),
@@ -118,12 +118,12 @@ pub(crate) fn sent_from(c: &super::Checkout, note: Option<&str>, from: &str) -> 
     )
 }
 
-pub(crate) fn short(sha: &str) -> &str {
+pub fn short(sha: &str) -> &str {
     &sha[..12.min(sha.len())]
 }
 
 /// Each side looked up here. A commit the machine cannot fetch is checked out and sent instead.
-pub(crate) fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
+pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
     let here = |r: &str| {
         if r == "local" {
             "HEAD".to_string()

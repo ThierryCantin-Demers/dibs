@@ -1,5 +1,5 @@
 use super::parse::{Step, StepKind};
-use dibs::call::BatchStep;
+use crate::call::BatchStep;
 use dibs_format::Mode;
 use std::fmt;
 
@@ -57,7 +57,7 @@ pub fn recipe_env(own_id: &str, calls: &[Pending], k: usize) -> Option<BatchStep
     nested_env(BatchStep::from_env(), own_id, calls, k)
 }
 
-pub(crate) fn nested_env(
+pub fn nested_env(
     outer: Option<BatchStep>,
     own_id: &str,
     calls: &[Pending],
@@ -91,7 +91,7 @@ pub(crate) fn nested_env(
 }
 
 /// The history key dibs will file a step under, which is what its estimate is looked up by.
-pub(crate) fn pending_of(step: &Step, here: bool, cwd: &str) -> Pending {
+pub fn pending_of(step: &Step, here: bool, cwd: &str) -> Pending {
     let directory = || cwd.rsplit('/').next().unwrap_or_default().to_string();
     let (mode, default) = match step.lock {
         StepKind::Sync => (Planned::Job(Mode::Rsh), "sync".to_string()),
@@ -109,7 +109,7 @@ pub(crate) fn pending_of(step: &Step, here: bool, cwd: &str) -> Pending {
 }
 
 /// dibs files a label with everything but `[A-Za-z0-9._-]` replaced.
-pub(crate) fn history_key(label: &str) -> String {
+pub fn history_key(label: &str) -> String {
     label
         .chars()
         .map(|c| {
@@ -122,7 +122,7 @@ pub(crate) fn history_key(label: &str) -> String {
         .collect()
 }
 
-pub(crate) fn plan(steps: &[Step], machines: &[String]) -> String {
+pub fn plan(steps: &[Step], machines: &[String]) -> String {
     let w = steps.iter().map(|s| s.name.len()).max().unwrap_or(4).max(4);
     let m = machines.iter().map(String::len).max().unwrap_or(7).max(7);
     let mut s = String::new();

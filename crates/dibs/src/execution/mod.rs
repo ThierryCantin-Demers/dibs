@@ -14,12 +14,12 @@ mod tests;
 mod trees;
 mod with;
 
-pub(crate) use base::{RunError, raw, run_recipe};
-pub(crate) use build::{build_signature, packages};
-pub(crate) use local::{
+pub use base::{RunError, raw, run_recipe};
+pub use build::{build_signature, packages};
+pub use local::{
     Checkout, Local, as_fetched, checkout, identity, local, toplevel, unfetchable, variant,
 };
-pub(crate) use refs::{commit, merge_base};
-pub(crate) use schedule::recipe_jobs;
-pub(crate) use trees::Nest;
-pub(crate) use with::with_service;
+pub use refs::{commit, merge_base};
+pub use schedule::recipe_jobs;
+pub use trees::Nest;
+pub use with::with_service;

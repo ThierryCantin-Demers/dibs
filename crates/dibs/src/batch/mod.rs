@@ -14,7 +14,7 @@ mod summary;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use base::{Options, batch_id, run};
-pub(crate) use guard::StepGuard;
-pub(crate) use parse::BatchError;
-pub(crate) use plan::{Pending, Planned, recipe_env};
+pub use base::{Options, batch_id, run};
+pub use guard::StepGuard;
+pub use parse::BatchError;
+pub use plan::{Pending, Planned, recipe_env};

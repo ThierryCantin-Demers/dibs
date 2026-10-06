@@ -26,7 +26,7 @@ impl Invocation {
 /// Whether a command line's words are as a program receives them, or as a shell has yet to
 /// expand them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum Expansion {
+pub enum Expansion {
     #[default]
     Done,
     Pending,
@@ -34,7 +34,7 @@ pub(crate) enum Expansion {
 
 impl Expansion {
     /// A word the shell has still to expand, which reads as no particular value.
-    pub(crate) fn pending(self, word: &str) -> bool {
+    pub fn pending(self, word: &str) -> bool {
         self == Expansion::Pending && word.contains('$')
     }
 }

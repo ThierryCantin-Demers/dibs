@@ -7,11 +7,11 @@
 
 use super::{refs::Arm, trees::lockfile};
 use crate::{
+    cli::RecipeCall,
     git::Git,
     lockfile::Package,
     recipe::{resolve_repo, root_of},
 };
-use dibs::cli::RecipeCall;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -148,12 +148,12 @@ pub fn config(pins: &[PinnedTree]) -> String {
 }
 
 /// `--pin <repo>@<ref>`, both halves named.
-pub(crate) struct PinSpec<'a> {
-    pub(crate) repo: &'a str,
-    pub(crate) reference: &'a str,
+pub struct PinSpec<'a> {
+    pub repo: &'a str,
+    pub reference: &'a str,
 }
 
-pub(crate) fn pin_spec(p: &str) -> Result<PinSpec<'_>, String> {
+pub fn pin_spec(p: &str) -> Result<PinSpec<'_>, String> {
     match p.split_once('@') {
         Some((repo, reference))
             if !repo.is_empty()
@@ -170,23 +170,23 @@ pub(crate) fn pin_spec(p: &str) -> Result<PinSpec<'_>, String> {
 }
 
 /// A repo built against in place of what the lockfile names, and what that replaces.
-pub(crate) struct Pinned {
-    pub(crate) repo: String,
-    pub(crate) reference: String,
-    pub(crate) dir: PathBuf,
+pub struct Pinned {
+    pub repo: String,
+    pub reference: String,
+    pub dir: PathBuf,
     /// The tree sent, when one is: the one at `dir`, or a checkout of a commit the machine cannot fetch.
-    pub(crate) local: Option<super::Local>,
-    pub(crate) checkout: Option<super::Checkout>,
-    pub(crate) note: Option<String>,
-    pub(crate) crates: BTreeMap<String, String>,
-    pub(crate) lock: Option<String>,
+    pub local: Option<super::Local>,
+    pub checkout: Option<super::Checkout>,
+    pub note: Option<String>,
+    pub crates: BTreeMap<String, String>,
+    pub lock: Option<String>,
     /// The sources a `[patch]` has to redirect, and the crates taken from each.
-    pub(crate) sources: BTreeMap<String, std::collections::BTreeSet<String>>,
+    pub sources: BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
 /// Every pin, resolved against every arm's lockfile and every pin's: one pinned crate may reach
 /// the build through another pinned repo rather than through this one.
-pub(crate) fn pins_of(
+pub fn pins_of(
     args: &RecipeCall,
     repo: &str,
     dir: &Path,

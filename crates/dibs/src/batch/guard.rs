@@ -1,7 +1,7 @@
 //! A batch step's guard: it runs the step's line, and stops the step's whole process group the
 //! moment the driver is gone, however the driver went.
 
-use dibs::call::{BatchStep, Starter, Watched};
+use crate::call::{BatchStep, Starter, Watched};
 use dibs_format::{Exit, MachineName};
 use std::{
     io,
@@ -9,19 +9,15 @@ use std::{
     process::{Command, Stdio},
 };
 
-pub(crate) struct StepGuard;
+pub struct StepGuard;
 
 impl StepGuard {
     /// The word a step's guard is started with, outside the grammar.
-    pub(crate) const WORD: &str = "__step-guard";
+    pub const WORD: &str = "__step-guard";
 
     /// The driver's side: the guard of `line` started, leading a process group of its own, so a
     /// cancellation stops the step whole and a Ctrl-C at the driver's terminal reaches none of it.
-    pub(crate) fn spawn(
-        line: &str,
-        batch: &BatchStep,
-        on: Option<&MachineName>,
-    ) -> io::Result<Watched> {
+    pub fn spawn(line: &str, batch: &BatchStep, on: Option<&MachineName>) -> io::Result<Watched> {
         let mut guard = Command::new(std::env::current_exe()?);
         if let Some(on) = on {
             guard.env("DIBS_ON", on.as_str());
@@ -37,7 +33,7 @@ impl StepGuard {
     }
 
     /// The guard's side: the line through bash, as a shell would read it.
-    pub(crate) fn serve(line: &str) -> i32 {
+    pub fn serve(line: &str) -> i32 {
         let starter = Starter::take();
         let mut step = match Command::new("bash").args(["-c", line]).spawn() {
             Ok(step) => step,

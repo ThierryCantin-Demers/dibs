@@ -1,4 +1,4 @@
-use dibs::cli::{Invocation, Mode, RecipeCall, RecipeVerb, RunLock};
+use crate::cli::{Invocation, Mode, RecipeCall, RecipeVerb, RunLock};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -204,7 +204,7 @@ pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
 }
 
 /// Fails on a cycle, naming a step in it.
-pub(crate) fn order(steps: &[Step]) -> Result<Vec<usize>, BatchError> {
+pub fn order(steps: &[Step]) -> Result<Vec<usize>, BatchError> {
     let index: HashMap<&str, usize> = steps
         .iter()
         .enumerate()
@@ -306,7 +306,7 @@ pub fn split_words(line: &str) -> Result<Vec<String>, String> {
 /// What the driver needs to know about a step before it runs: where it goes, for ordering, and
 /// what it is, for the summary. The words are read as written, since bash expands them only
 /// when the step runs; everything else passes through untouched.
-pub(crate) fn describe(words: &[String]) -> Result<Step, String> {
+pub fn describe(words: &[String]) -> Result<Step, String> {
     let read = Invocation::parse_unexpanded(&words[1..])
         .map_err(|e| e.message.trim_start_matches("dibs: ").to_string())?;
     let mut step = Step {
@@ -353,7 +353,7 @@ pub(crate) fn describe(words: &[String]) -> Result<Step, String> {
 }
 
 /// The verb and the two words after it, which only `--on <machine>` may come before.
-pub(crate) fn recipe_label(words: &[String]) -> String {
+pub fn recipe_label(words: &[String]) -> String {
     let verb = match words.get(1).map(String::as_str) {
         Some("--on") => 3,
         _ => 1,
@@ -368,7 +368,7 @@ pub(crate) fn recipe_label(words: &[String]) -> String {
 }
 
 impl Step {
-    pub(crate) fn measures(&self) -> bool {
+    pub fn measures(&self) -> bool {
         self.lock == StepKind::Bench
             || (self.lock == StepKind::Recipe
                 && self

@@ -9,7 +9,7 @@
 //! what putting it in the repo was for. The revisions belong to the run record.
 
 use super::{base::Recipe, refusals::RecipeError};
-use dibs::paths::Paths;
+use crate::paths::Paths;
 use dibs_format::RunVerb;
 use serde::Deserialize;
 use std::{

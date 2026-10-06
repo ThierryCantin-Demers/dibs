@@ -4,7 +4,7 @@
 //! it should have, so a machine set up by hand drifted from the others unseen until a job failed
 //! on it.
 
-use dibs::{
+use crate::{
     call::{LockedCall, Origin, Output, RecipeJob},
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run},
@@ -870,19 +870,19 @@ pub fn command(
     })
 }
 
-pub(crate) fn inventory_path() -> Option<PathBuf> {
+pub fn inventory_path() -> Option<PathBuf> {
     Paths::from_env().inventory()
 }
 
 /// The machines the inventory names, which are reached only through dibs.
-pub(crate) fn pool() -> Result<BTreeSet<String>, InventoryError> {
+pub fn pool() -> Result<BTreeSet<String>, InventoryError> {
     Ok(inventory()?
         .map(|i| i.names().map(MachineName::to_string).collect())
         .unwrap_or_default())
 }
 
 /// The inventory, when there is a file; one that does not read is an error.
-pub(crate) fn inventory() -> Result<Option<Inventory>, InventoryError> {
+pub fn inventory() -> Result<Option<Inventory>, InventoryError> {
     match inventory_path() {
         Some(path) => Inventory::load(&path),
         None => Ok(None),
@@ -890,7 +890,7 @@ pub(crate) fn inventory() -> Result<Option<Inventory>, InventoryError> {
 }
 
 /// Every repo with a recipes file.
-pub(crate) fn recipe_repos() -> Vec<String> {
+pub fn recipe_repos() -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(crate::recipe::local_dir()) else {
         return Vec::new();
     };

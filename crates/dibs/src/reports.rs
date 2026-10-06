@@ -2,18 +2,15 @@
 //! shares, with the answers brought back to the session that reported it.
 
 use crate::{
-    change_notice,
+    caller::Caller,
+    cli::Friction,
     execution::RunError,
+    paths::{Paths, ReportsStamp},
     records::{
         friction::{self, Note},
         now_secs,
     },
-};
-use dibs::{
-    caller::Caller,
-    cli::Friction,
-    paths::{Paths, ReportsStamp},
-    update::Build,
+    update::{Build, ChangeNotice},
 };
 use dibs_runner::shared::SharedFile;
 use serde_json::Value;
@@ -575,7 +572,7 @@ pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, 
 
 /// The text arrives in the environment rather than as an argument: a report about a flag starts
 /// with the flag, and parsing that as one is how the complaint becomes the complaint.
-pub(crate) fn friction_verb(friction: Friction) -> Result<ExitCode, RunError> {
+pub fn friction_verb(friction: Friction) -> Result<ExitCode, RunError> {
     let reports_repo = || repo().ok_or("DIBS_REPORTS names no <owner>/<repo> to take reports from");
     match friction {
         Friction::Wait => {
@@ -590,7 +587,7 @@ pub(crate) fn friction_verb(friction: Friction) -> Result<ExitCode, RunError> {
         } => println!("{}", reply(&reports_repo()?, issue, &answer, close)?),
         Friction::Note { text } => {
             let caller = Caller::from_env();
-            change_notice(&caller);
+            ChangeNotice::tell_once(&caller);
             let mut note = friction::note(
                 &text,
                 &caller.name,

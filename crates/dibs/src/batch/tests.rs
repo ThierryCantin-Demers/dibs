@@ -4,7 +4,7 @@ use super::{
     plan::{Pending, Planned, nested_env, step_env},
     summary::summary,
 };
-use dibs::call::BatchStep;
+use crate::call::BatchStep;
 use dibs_format::Mode;
 use std::path::Path;
 

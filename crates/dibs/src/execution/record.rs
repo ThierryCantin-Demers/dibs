@@ -5,12 +5,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 /// Every job that kept files has them fetched, into `to` when given: under the job's arm and rep
 /// when a comparison or reps would otherwise write one path twice.
-pub(crate) fn fetch_artifacts(
-    backend: &Jobs,
-    steps: &[StepRecord],
-    to: Option<&str>,
-    compared: bool,
-) {
+pub fn fetch_artifacts(backend: &Jobs, steps: &[StepRecord], to: Option<&str>, compared: bool) {
     for s in steps.iter().filter(|s| s.artifacts.is_some_and(|n| n > 0)) {
         let Some(job) = &s.job else { continue };
         let dest = to.map(|dir| {
@@ -35,7 +30,7 @@ pub(crate) fn fetch_artifacts(
 
 /// Each arm's measured seconds per rep, and the jobs whose logs hold its numbers. The seconds
 /// are the steps' wall time, which is only a first look: the recipe's own output is the result.
-pub(crate) fn measured_summary(
+pub fn measured_summary(
     arms: &[Arm],
     steps: &[StepRecord],
     revisions: &dyn Fn(usize) -> Vec<(String, String)>,
@@ -85,7 +80,7 @@ pub(crate) fn measured_summary(
 }
 
 /// The batch a call is a step of, as the batch driver told it.
-pub(crate) fn batch_of_caller() -> Option<BatchId> {
+pub fn batch_of_caller() -> Option<BatchId> {
     std::env::var("DIBS_BATCH")
         .ok()
         .filter(|b| !b.is_empty())
