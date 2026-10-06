@@ -27,7 +27,7 @@ use std::{
 };
 
 /// What a far shell exits with when the runner for this source is not there.
-pub(super) const MISSING: i32 = 125;
+pub const MISSING: i32 = 125;
 /// What a far shell exits with, nothing heard from the runner, when it was not there to start:
 /// the check's own, or the exec's when the version went between the check and the exec.
 const NOT_STARTED: [i32; 3] = [MISSING, 126, 127];
@@ -103,7 +103,7 @@ pub struct Served<'a> {
 }
 
 /// What reached this side from the runner.
-pub(super) enum Heard {
+pub enum Heard {
     Out(Vec<u8>),
     Err(Vec<u8>),
     /// A line the runner or ssh wrote on stderr, outside any frame.
@@ -437,13 +437,13 @@ enum Attempted {
 
 /// Partial lines held back until their end arrives.
 #[derive(Default)]
-pub(super) struct LineBuffers {
+pub struct LineBuffers {
     out: Vec<u8>,
     err: Vec<u8>,
 }
 
 impl Delivery<'_> {
-    pub(super) fn give(&mut self, stream: Stream, bytes: &[u8], buffers: &mut LineBuffers) {
+    pub fn give(&mut self, stream: Stream, bytes: &[u8], buffers: &mut LineBuffers) {
         if let Delivery::Inherit = self {
             let _ = match stream {
                 Stream::Out => io::stdout()
@@ -469,7 +469,7 @@ impl Delivery<'_> {
     }
 
     /// What is left of a last line without its end.
-    pub(super) fn flush(&mut self, buffers: &mut LineBuffers) {
+    pub fn flush(&mut self, buffers: &mut LineBuffers) {
         for (stream, held) in [(Stream::Out, &buffers.out), (Stream::Err, &buffers.err)] {
             if !held.is_empty() {
                 self.line(stream, held);
@@ -585,7 +585,7 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
 }
 
 /// The runner's own stderr, and ssh's, a line at a time.
-pub(super) fn read_lines(err: impl Read, tell: mpsc::Sender<Heard>) {
+pub fn read_lines(err: impl Read, tell: mpsc::Sender<Heard>) {
     let mut err = BufReader::new(err);
     let mut line = Vec::new();
     while matches!(err.read_until(b'\n', &mut line), Ok(1..)) {

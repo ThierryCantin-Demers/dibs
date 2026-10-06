@@ -1,4 +1,5 @@
 use crate::{cli::RecipeCall, paths::Paths, records::runs::now_secs};
+use dibs_format::Span;
 use dibs_runner::shared::SharedFile;
 use std::path::PathBuf;
 
@@ -9,7 +10,7 @@ pub fn affinity_path() -> Option<PathBuf> {
 }
 
 /// The machine deletes a target directory unused this long, so a memo of one is kept no longer.
-pub const AFFINITY_SECS: u64 = 5 * 86400;
+pub const AFFINITY_SECS: u64 = 5 * Span::DAY.0;
 
 /// One line of the affinity file: the machine holding a repo's build cache, and when it was last
 /// used there.
@@ -73,7 +74,7 @@ mod tests {
 
     #[test]
     fn affinity_is_one_machine_per_repo_and_expires_with_the_cache() {
-        let day = 86400;
+        let day = Span::DAY.0;
         let text = affinity_update("cubek\tbox-a\n", "cubek", "box-b", 10 * day);
         let text = affinity_update(&text, "burn", "box-a", 12 * day);
         assert_eq!(

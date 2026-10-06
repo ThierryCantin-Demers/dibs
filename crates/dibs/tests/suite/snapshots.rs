@@ -906,7 +906,7 @@ fn runs_and_gaps() {
     snapshot("runs", t.text());
 }
 
-pub(crate) const INVENTORY: &str = r#"default = "box-a"
+pub const INVENTORY: &str = r#"default = "box-a"
 root = "~/prog"
 
 [machine.box-a]
@@ -1446,14 +1446,14 @@ fn notices() {
 }
 
 /// A call that is refused, and what it takes to be refused that way.
-pub(crate) struct Refusal {
+pub struct Refusal {
     args: Vec<String>,
     env: Vec<(String, String)>,
     stdin: Option<String>,
 }
 
 impl Refusal {
-    pub(crate) fn of(args: &[&str]) -> Refusal {
+    pub fn of(args: &[&str]) -> Refusal {
         Refusal {
             args: args.iter().map(|a| a.to_string()).collect(),
             env: Vec::new(),
@@ -1461,7 +1461,7 @@ impl Refusal {
         }
     }
 
-    pub(crate) fn env(mut self, key: &str, value: &str) -> Refusal {
+    pub fn env(mut self, key: &str, value: &str) -> Refusal {
         self.env.push((key.to_string(), value.to_string()));
         self
     }
@@ -1473,7 +1473,7 @@ impl Refusal {
 }
 
 /// Each refusal's exit in one table, then what each one said.
-pub(crate) fn refusal_table(s: &Sandbox, n: &Normal, refusals: Vec<Refusal>) -> String {
+pub fn refusal_table(s: &Sandbox, n: &Normal, refusals: Vec<Refusal>) -> String {
     let mut table = String::from("exit  call\n");
     let mut t = Transcript::default();
     for r in refusals {

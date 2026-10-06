@@ -2,7 +2,7 @@ use crate::harness::*;
 use std::fs;
 
 /// A repo the recipe layer can prepare: its clone on the machine's side, and a tree here.
-pub(crate) fn app(s: &Sandbox) -> String {
+pub fn app(s: &Sandbox) -> String {
     s.git(".", &["init", "-q", "--bare", "origin.git"]);
     s.git(".", &["clone", "-q", "origin.git", "app"]);
     s.write("app/a.txt", "x\n");
@@ -15,7 +15,7 @@ pub(crate) fn app(s: &Sandbox) -> String {
     s.p("app")
 }
 
-pub(crate) fn recipes(s: &Sandbox, toml: &str) {
+pub fn recipes(s: &Sandbox, toml: &str) {
     s.write("app/.dibs.toml", toml);
 }
 
@@ -37,7 +37,7 @@ fn last_run(s: &Sandbox, label: &str) -> String {
 }
 
 /// A cargo that builds nothing, so a recipe's build and the checks on it are all that run.
-pub(crate) fn fake_cargo(s: &Sandbox) -> String {
+pub fn fake_cargo(s: &Sandbox) -> String {
     s.write_exec(
         "fc/cargo",
         "#!/bin/bash\necho \"    Finished \\`release\\` profile [optimized] target(s) in 0.01s\"\n",
@@ -45,7 +45,7 @@ pub(crate) fn fake_cargo(s: &Sandbox) -> String {
     s.p("fc/cargo")
 }
 
-pub(crate) const PARAMS: &str = r#"
+pub const PARAMS: &str = r#"
 [build.p]
   [build.p.params]
   backend = { choices = ["cuda", "vulkan"], default = "cuda" }

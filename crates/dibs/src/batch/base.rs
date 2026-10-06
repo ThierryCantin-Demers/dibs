@@ -11,7 +11,7 @@ use crate::{
     execution::recipe_jobs,
     paths::{FileError, Paths},
 };
-use dibs_format::{Exit, MachineName};
+use dibs_format::{Exit, MachineName, Span};
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Write},
@@ -123,7 +123,7 @@ pub fn collect_old(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    let keep = std::time::Duration::from_secs(14 * 86400);
+    let keep = std::time::Duration::from_secs(14 * Span::DAY.0);
     for e in entries.flatten() {
         let old = e
             .metadata()

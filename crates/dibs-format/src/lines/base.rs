@@ -24,7 +24,7 @@ impl std::error::Error for LineError {}
 
 impl LineError {
     /// A field's value read as what it holds.
-    pub(crate) fn parse<T: FromStr>(field: &'static str, value: &str) -> Result<T, LineError> {
+    pub fn parse<T: FromStr>(field: &'static str, value: &str) -> Result<T, LineError> {
         value.parse().map_err(|_| LineError::Value {
             field,
             value: value.to_string(),
@@ -33,13 +33,13 @@ impl LineError {
 }
 
 /// The fields of one tab-separated line, read in order.
-pub(crate) struct Fields<'a> {
+pub struct Fields<'a> {
     fields: Vec<&'a str>,
     next: usize,
 }
 
 impl<'a> Fields<'a> {
-    pub(crate) fn of(line: &'a str) -> Fields<'a> {
+    pub fn of(line: &'a str) -> Fields<'a> {
         let line = line.strip_suffix('\n').unwrap_or(line);
         Fields {
             fields: line.split('\t').collect(),
@@ -47,25 +47,22 @@ impl<'a> Fields<'a> {
         }
     }
 
-    pub(crate) fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         self.fields.len()
     }
 
-    pub(crate) fn text(&mut self) -> &'a str {
+    pub fn text(&mut self) -> &'a str {
         let field = self.fields.get(self.next).copied().unwrap_or_default();
         self.next += 1;
         field
     }
 
-    pub(crate) fn parsed<T: FromStr>(&mut self, field: &'static str) -> Result<T, LineError> {
+    pub fn parsed<T: FromStr>(&mut self, field: &'static str) -> Result<T, LineError> {
         LineError::parse(field, self.text())
     }
 
     /// A field that holds `-` when there is nothing to say.
-    pub(crate) fn dashed<T: FromStr>(
-        &mut self,
-        field: &'static str,
-    ) -> Result<Option<T>, LineError> {
+    pub fn dashed<T: FromStr>(&mut self, field: &'static str) -> Result<Option<T>, LineError> {
         match self.text() {
             "-" => Ok(None),
             value => LineError::parse(field, value).map(Some),
@@ -73,7 +70,7 @@ impl<'a> Fields<'a> {
     }
 
     /// A field that is empty when there is nothing to say.
-    pub(crate) fn optional(&mut self) -> Option<String> {
+    pub fn optional(&mut self) -> Option<String> {
         Some(self.text())
             .filter(|v| !v.is_empty())
             .map(str::to_string)
@@ -81,7 +78,7 @@ impl<'a> Fields<'a> {
 }
 
 /// Free text made safe for one field: a tab or a newline in it would end the field or the line.
-pub(crate) struct Field<'a>(pub(crate) &'a str);
+pub struct Field<'a>(pub &'a str);
 
 impl fmt::Display for Field<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -96,7 +93,7 @@ impl fmt::Display for Field<'_> {
 }
 
 /// A value written as `-` when absent.
-pub(crate) struct Dashed<'a, T>(pub(crate) Option<&'a T>);
+pub struct Dashed<'a, T>(pub Option<&'a T>);
 
 impl<T: fmt::Display> fmt::Display for Dashed<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

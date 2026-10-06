@@ -64,9 +64,9 @@ pub fn serve() -> i32 {
 
 /// One call on this machine.
 pub struct Visit {
-    pub(super) call: Received,
-    pub(super) sink: Sink,
-    pub(super) settings: Settings,
+    pub call: Received,
+    pub sink: Sink,
+    pub settings: Settings,
     /// What was made for this call alone, which goes with it however it ends.
     temporary: Vec<PathBuf>,
 }
@@ -249,7 +249,7 @@ impl Visit {
     /// `--max`, raised to twice what 90% of this job's own runs took when nobody chose it, so work
     /// that always runs long is not killed at its mode's default. Only a shared job or a
     /// benchmark: a transfer and a sweep keep their mode's cap.
-    pub(super) fn cap(&self, history: &History) -> u64 {
+    pub fn cap(&self, history: &History) -> u64 {
         let request = &self.call.request;
         let max = request.max;
         let a_job = matches!(self.call.mode(), Mode::Shared | Mode::Bench);
@@ -282,7 +282,7 @@ impl Visit {
     }
 
     /// Says what to do about an overrun: run it again, since a compile picks up where it stopped.
-    pub(super) fn overran(&self, max: u64) {
+    pub fn overran(&self, max: u64) {
         let mut said = format!(
             "dibs: stopped after holding the lock for {max}s, which is --max for a {} job.\n  \
              Nothing is wrong with it; it was simply told to hold no longer than that.\n",

@@ -6,7 +6,7 @@ use crate::{
         clocks::{Clocks, Removal, USED},
         copy::{Copier, empty, now, remove_all, touch},
         error::{Named, PrepareError},
-        git::{Commands, answer, said},
+        git::{Commands, Git, answer, said},
         packages::{Cache, Lines},
         seed::Seed,
         sweep::{PREPARE_LOCK, Sweep},
@@ -36,6 +36,9 @@ pub struct Trees<'a> {
 
 /// A tree whose target was prepared this recently may be about to be entered by another call.
 const IN_USE: Duration = Duration::from_secs(15 * 60);
+/// A reseed is worth its copy only from a sibling sharing more of the lockfile than the tree's
+/// own build by at least one package in this many.
+const RESEED_GAIN: u64 = 10;
 
 /// What names this prepare's own temporary refs and directories: unique to it, as the shell's
 /// `$$` was to its script.
@@ -281,20 +284,16 @@ impl Trees<'_> {
                 "dibs: {} was left half checked out, so it is checked out again\n",
                 worktree.display()
             ));
-            let mut remove = std::process::Command::new("git");
+            let mut remove = Git(source).command();
             remove
-                .arg("-C")
-                .arg(source)
                 .args(["worktree", "remove", "--force", "--force"])
                 .arg(worktree);
             let _ = self.commands.output(remove);
             remove_all(worktree);
         }
         let add = |commands: &Commands| {
-            let mut git = std::process::Command::new("git");
-            git.arg("-C")
-                .arg(source)
-                .args(["worktree", "add", "--detach", "-q"])
+            let mut git = Git(source).command();
+            git.args(["worktree", "add", "--detach", "-q"])
                 .arg(worktree)
                 .arg(sha);
             commands.output(git)
@@ -393,7 +392,7 @@ impl Trees<'_> {
             return None;
         }
         let mine = cache.record().map_or(0, |own| packages.shared_with(&own));
-        let floor = mine + packages.len().div_ceil(10);
+        let floor = mine + packages.len().div_ceil(RESEED_GAIN);
         let held = (Builds { target }).all_exclusive()?;
         let seed = Seed {
             replacing: true,

@@ -12,7 +12,7 @@ use crate::{
     paths::{FileError, Paths},
     records::{Kept, RecordsError},
 };
-use dibs_format::{Lock, Pairs, RunRecord, RunVerb};
+use dibs_format::{Lock, Pairs, RunRecord, RunVerb, Span};
 use std::{
     collections::BTreeMap,
     io::Write as _,
@@ -178,7 +178,8 @@ fn local_offset() -> i64 {
 
 /// `YYYY-MM-DD HH:MM` for seconds since the epoch, by the days-to-civil conversion.
 pub fn date(t: i64) -> String {
-    let (days, secs) = (t.div_euclid(86400), t.rem_euclid(86400));
+    let day = Span::DAY.0 as i64;
+    let (days, secs) = (t.div_euclid(day), t.rem_euclid(day));
     let z = days + 719468;
     let era = z.div_euclid(146097);
     let doe = z - era * 146097;

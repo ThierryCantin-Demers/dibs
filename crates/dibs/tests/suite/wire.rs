@@ -62,7 +62,7 @@ const PTY: &str =
 const MACHINES: &str = "[machine.box-a]\nssh      = \"dibs@box-a\"\nhostname = \"box-a\"\n\n  [[machine.box-a.device]]\n  kind     = \"gpu\"\n  alias    = \"gpu:card\"\n  name     = \"a card\"\n  pci      = \"0000:01:00.0\"\n  chip     = \"10de:2786\"\n  runtimes = [\"cuda\", \"vulkan\"]\n\n[machine.box-b]\nssh      = \"dibs@box-b\"\nhostname = \"box-b\"\n";
 
 /// A sandbox whose calls leave this computer for box-a over the recording ssh.
-pub(crate) fn wired() -> Sandbox {
+pub fn wired() -> Sandbox {
     let mut s = Sandbox::new();
     s.write_exec("wirebin/ssh", RECORDING_SSH);
     fs::create_dir_all(s.path("wire")).unwrap();
@@ -98,7 +98,7 @@ const WORDS: &str = r#"eval "set -- $1"; printf '%s\0' "$@""#;
 
 /// How a call's command is compared.
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum Cmd {
+pub enum Cmd {
     /// As one shell string, the way it was given.
     AsSent,
     /// By the words the machine's shell makes of it, however the arguments were quoted.
@@ -107,20 +107,20 @@ pub(crate) enum Cmd {
 
 /// Whether a capture's calls come one after another or all at once, in no particular order.
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum Calls {
+pub enum Calls {
     InOrder,
     AtOnce,
 }
 
 /// One snapshot's worth of captures from a wired sandbox.
-pub(crate) struct Wire<'a> {
+pub struct Wire<'a> {
     s: &'a Sandbox,
     n: Normal,
     t: Transcript,
 }
 
 impl<'a> Wire<'a> {
-    pub(crate) fn new(s: &'a Sandbox) -> Wire<'a> {
+    pub fn new(s: &'a Sandbox) -> Wire<'a> {
         Wire {
             s,
             n: wire_normal(s),
@@ -129,11 +129,11 @@ impl<'a> Wire<'a> {
     }
 
     /// One call's wire, under the call.
-    pub(crate) fn record(&mut self, title: &str, call: Call) -> Output {
+    pub fn record(&mut self, title: &str, call: Call) -> Output {
         self.record_as(title, call, Cmd::AsSent, Calls::InOrder)
     }
 
-    pub(crate) fn record_as(&mut self, title: &str, call: Call, cmd: Cmd, calls: Calls) -> Output {
+    pub fn record_as(&mut self, title: &str, call: Call, cmd: Cmd, calls: Calls) -> Output {
         self.clear();
         let out = call.run();
         let body = format!("-> exit {}\n{}", out.code, self.captured(cmd, calls));
@@ -141,7 +141,7 @@ impl<'a> Wire<'a> {
         out
     }
 
-    pub(crate) fn text(&self) -> &str {
+    pub fn text(&self) -> &str {
         self.t.text()
     }
 

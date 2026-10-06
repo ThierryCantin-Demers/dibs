@@ -37,13 +37,13 @@ const SAY_ACQUIRED_AFTER: u64 = 5;
 const LOG_BOUND: usize = 20000;
 const LOG_KEPT: usize = 10000;
 /// What a command bash could not start exits with.
-pub(super) const NOT_STARTED: i32 = 127;
+pub const NOT_STARTED: i32 = 127;
 
 /// Where a call runs: the machine, its lock directory, and what stops the call.
-pub(super) struct Place<'a> {
-    pub(super) machine: &'a Site,
-    pub(super) dir: &'a LockDir,
-    pub(super) stopper: &'a Arc<Stopper>,
+pub struct Place<'a> {
+    pub machine: &'a Site,
+    pub dir: &'a LockDir,
+    pub stopper: &'a Arc<Stopper>,
 }
 
 impl Place<'_> {
@@ -78,9 +78,9 @@ struct Acquired {
 
 /// Where a job that holds the lock keeps what it leaves: its directory, and its log unless it is
 /// a transfer's.
-pub(super) struct Begun {
-    pub(super) dir: PathBuf,
-    pub(super) log: Option<PathBuf>,
+pub struct Begun {
+    pub dir: PathBuf,
+    pub log: Option<PathBuf>,
 }
 
 impl Begun {
@@ -93,18 +93,18 @@ impl Begun {
 }
 
 /// What a job was given besides its command.
-pub(super) struct Hosted {
-    pub(super) ports: Ports,
-    pub(super) services: Option<Services>,
+pub struct Hosted {
+    pub ports: Ports,
+    pub services: Option<Services>,
     /// A port or a service failed the call, which ends with 77.
-    pub(super) failed: bool,
+    pub failed: bool,
     /// Who gave the status when the job's tree ended the call before its command.
-    pub(super) laid: Option<By>,
+    pub laid: Option<By>,
 }
 
 impl Hosted {
     /// The trailer's lines for the ports, then the services.
-    pub(super) fn lines(&self, host: &str) -> String {
+    pub fn lines(&self, host: &str) -> String {
         let services = self.services.as_ref().map(|s| s.lines(host));
         format!("{}{}", self.ports.lines(host), services.unwrap_or_default())
     }
@@ -112,7 +112,7 @@ impl Hosted {
 
 impl Visit {
     /// A shared job or a benchmark: queue, take the lock, run the job, and say how it went.
-    pub(super) fn run(&self, at: &Place, mut environment: Environment, caller: Caller) -> i32 {
+    pub fn run(&self, at: &Place, mut environment: Environment, caller: Caller) -> i32 {
         let request = &self.call.request;
         let binding = (self.call.mode() == Mode::Bench
             && !request.watch.hold

@@ -19,7 +19,7 @@ use std::{
 };
 
 /// What a job's tree came to before its command.
-pub(super) enum Laid {
+pub enum Laid {
     /// The command runs, in the tree when there is one, where a recipe step is a step.
     Run(Option<Spot>),
     /// Nothing more runs: the prepare was the job, failed, or waits for a git dependency.
@@ -28,26 +28,26 @@ pub(super) enum Laid {
 
 /// A recipe step about to run: refused, or running with the machine's state when it is a
 /// measurement.
-pub(super) enum Begins {
+pub enum Begins {
     Refused,
     Runs(Running),
 }
 
 /// A step's command running: the machine's state when it is a measurement, and a build's mark.
-pub(super) struct Running {
-    pub(super) state: Option<Pairs>,
-    pub(super) mark: Option<BuildMark>,
+pub struct Running {
+    pub state: Option<Pairs>,
+    pub mark: Option<BuildMark>,
 }
 
 /// Where a recipe step runs: its tree, and the target it builds into.
-pub(super) struct Spot {
-    pub(super) worktree: PathBuf,
-    pub(super) target: PathBuf,
+pub struct Spot {
+    pub worktree: PathBuf,
+    pub target: PathBuf,
 }
 
 impl Visit {
     /// The job's tree laid out, or found, and the command pointed at it.
-    pub(super) fn lay_out(
+    pub fn lay_out(
         &self,
         at: &Place,
         tree: &Tree,
@@ -146,7 +146,7 @@ impl Visit {
 
     /// What comes before a step's command: a measurement refused where another tree has built
     /// since, the machine's state, and a build's claim on its target.
-    pub(super) fn step_begins(&self, step: &Step, stepping: &Stepping) -> Begins {
+    pub fn step_begins(&self, step: &Step, stepping: &Stepping) -> Begins {
         if step.check && stepping.refused() {
             self.sink.record(Record::Stepped(Stepped {
                 refused: true,
@@ -179,7 +179,7 @@ impl Visit {
     /// What comes after it: a build's lockfile recorded once it succeeded, the files it kept,
     /// and the pin check, which ends the step 3 when a pin did not take. Whether dibs gave the
     /// status.
-    pub(super) fn step_ends(
+    pub fn step_ends(
         &self,
         step: &Step,
         stepping: &Stepping,
@@ -208,7 +208,7 @@ impl Visit {
     }
 
     /// What a prepare says, where the job's own output goes.
-    pub(super) fn told(&self, output: Output, text: &str) {
+    pub fn told(&self, output: Output, text: &str) {
         if text.is_empty() {
             return;
         }

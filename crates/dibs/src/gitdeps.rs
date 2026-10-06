@@ -5,7 +5,7 @@
 //! has that commit already, so it is sent ahead of the build, and only when the machine lacks
 //! it. Git objects are named by content, so adding files never changes one already there.
 
-use crate::lockfile::Package;
+use crate::{git::Git, lockfile::Package};
 use std::path::{Path, PathBuf};
 
 /// A pinned commit and the directory in this machine's cargo git cache that holds it.
@@ -75,13 +75,9 @@ pub fn local(cargo_home: &Path, pins: &[(String, String)]) -> Vec<Db> {
             if rest.len() != 16 || !rest.chars().all(|c| c.is_ascii_hexdigit()) {
                 continue;
             }
-            let has = std::process::Command::new("git")
-                .arg("-C")
-                .arg(path)
-                .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success());
+            let has = Git(path)
+                .run(&["cat-file", "-e", &format!("{commit}^{{commit}}")])
+                .is_ok();
             if has {
                 out.push(Db {
                     name: name.clone(),

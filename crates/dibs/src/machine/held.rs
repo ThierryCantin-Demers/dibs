@@ -21,7 +21,7 @@ pub struct Held {
 }
 
 /// Ends a hold with its command's status. Dropped unsent, the machine learns its caller is gone.
-pub struct Release(pub(super) Sender<Message>);
+pub struct Release(pub Sender<Message>);
 
 impl Release {
     pub fn send(self, status: i32) {

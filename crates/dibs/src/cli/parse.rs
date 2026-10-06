@@ -622,7 +622,7 @@ impl Service {
     }
 
     /// `--ready tcp:<name>` has to name a `--port`; a number needs none.
-    pub(super) fn refuse_unknown_port(&self, ports: &[PortName]) -> Result<(), CliError> {
+    pub fn refuse_unknown_port(&self, ports: &[PortName]) -> Result<(), CliError> {
         let Some(port) = self.ready.as_deref().and_then(|r| r.strip_prefix("tcp:")) else {
             return Ok(());
         };

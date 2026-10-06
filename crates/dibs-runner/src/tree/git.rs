@@ -57,9 +57,21 @@ impl Commands<'_> {
 
     /// `git -C <dir> <args>`.
     pub fn git(&self, dir: &Path, args: &[&str]) -> io::Result<Output> {
-        let mut git = Command::new("git");
-        git.arg("-C").arg(dir).args(args);
+        let mut git = Git(dir).command();
+        git.args(args);
         self.output(git)
+    }
+}
+
+/// git, run in one directory.
+pub struct Git<'a>(pub &'a Path);
+
+impl Git<'_> {
+    /// `git -C <dir>`, for the arguments after it.
+    pub fn command(&self) -> Command {
+        let mut git = Command::new("git");
+        git.arg("-C").arg(self.0);
+        git
     }
 }
 

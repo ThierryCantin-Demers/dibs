@@ -13,7 +13,7 @@ use super::{
     build::hex,
     jobs::{JobRequest, Jobs, Reported},
 };
-use crate::{call::RecipeJob, gitdeps, recipe::Lock};
+use crate::{call::RecipeJob, git::Git, gitdeps, recipe::Lock};
 use dibs_format::wire;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -140,15 +140,7 @@ pub fn preparing_title(repo: &str, reference: &str) -> String {
 pub fn lockfile(dir: &Path, reference: Option<&str>) -> Option<String> {
     match reference {
         None => std::fs::read_to_string(dir.join("Cargo.lock")).ok(),
-        Some(r) => std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["show", &format!("{r}:Cargo.lock")])
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()),
+        Some(r) => Git(dir).run(&["show", &format!("{r}:Cargo.lock")]).ok(),
     }
 }
 

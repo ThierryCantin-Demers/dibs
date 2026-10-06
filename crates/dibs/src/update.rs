@@ -1,16 +1,16 @@
 //! `dibs --update`, and the change notice: a session is told once when dibs changed under it.
 
-use crate::{caller::Caller, paths::Paths};
-use dibs_format::Exit;
+use crate::{caller::Caller, git::Git, paths::Paths};
+use dibs_format::{Exit, Span};
 use std::{
     io::{self, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     time::{Duration, SystemTime},
 };
 
 /// A stamp untouched this long belongs to a session that is gone.
-const STAMP_LIFETIME: Duration = Duration::from_secs(31 * 86400);
+const STAMP_LIFETIME: Duration = Duration::from_secs(31 * Span::DAY.0);
 const LISTED: usize = 10;
 
 /// What this binary was built from, as its build script stamped it.
@@ -27,15 +27,8 @@ impl Build {
 }
 
 fn git(clone: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(clone)
-        .args(args)
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
-    (out.status.success() && !text.is_empty()).then_some(text)
+    let text = Git(clone).run(args).ok()?.trim_end().to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 /// A pull, which says on stderr why it failed.
@@ -50,14 +43,7 @@ fn pulled(clone: &Path) -> bool {
 
 /// Whether a git command in the clone succeeds, its output left unread.
 fn git_ok(clone: &Path, args: &[&str]) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(clone)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    Git(clone).run(args).is_ok()
 }
 
 /// `dibs --update`: the clone fast-forwarded and what arrived listed, a reinstall when anything

@@ -9,9 +9,9 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub(crate) const LOCK: &str = "[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"widget\"\nversion = \"0.2.0\"\nsource = \"git+https://example.invalid/widget?rev=abc#abc\"\n";
+pub const LOCK: &str = "[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n\n[[package]]\nname = \"widget\"\nversion = \"0.2.0\"\nsource = \"git+https://example.invalid/widget?rev=abc#abc\"\n";
 
-pub(crate) fn short_hash(text: &str) -> String {
+pub fn short_hash(text: &str) -> String {
     Sha256::digest(text.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -20,7 +20,7 @@ pub(crate) fn short_hash(text: &str) -> String {
 }
 
 /// Each path under `root` and what it is, with the contents of the files dibs writes itself.
-pub(crate) fn tree(root: &Path, n: &Normal) -> Vec<String> {
+pub fn tree(root: &Path, n: &Normal) -> Vec<String> {
     let entries: Vec<(String, PathBuf)> = fs::read_dir(root)
         .map(|d| {
             d.flatten()

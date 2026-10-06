@@ -10,24 +10,24 @@ use dibs_format::{
 use std::{fs, path::PathBuf};
 
 /// A job that has ended, which its caller is told about.
-pub(super) struct Ended<'a> {
-    pub(super) session: &'a Visit,
-    pub(super) machine: &'a Site,
-    pub(super) job: &'a JobId,
-    pub(super) log: &'a PathBuf,
+pub struct Ended<'a> {
+    pub session: &'a Visit,
+    pub machine: &'a Site,
+    pub job: &'a JobId,
+    pub log: &'a PathBuf,
     /// Read once, under the lock, for `meta` and the trailer.
-    pub(super) read: LogRead,
-    pub(super) job_dir: &'a PathBuf,
-    pub(super) hosted: &'a Hosted,
-    pub(super) waited: u64,
-    pub(super) ran: u64,
-    pub(super) status: i32,
-    pub(super) by: By,
+    pub read: LogRead,
+    pub job_dir: &'a PathBuf,
+    pub hosted: &'a Hosted,
+    pub waited: u64,
+    pub ran: u64,
+    pub status: i32,
+    pub by: By,
 }
 
 impl Ended<'_> {
     /// What `dibs out` reads back about the job, beside its log.
-    pub(super) fn keep(&self) {
+    pub fn keep(&self) {
         let call = &self.session.call;
         let meta = JobMeta {
             mode: call.mode(),
@@ -45,7 +45,7 @@ impl Ended<'_> {
 
     /// The digest, then the trailer and what follows it: the same shape every time, on stderr,
     /// where a pipe on the caller's side cannot cut it off.
-    pub(super) fn report(&self) {
+    pub fn report(&self) {
         let session = self.session;
         let call = &session.call;
         let host = &self.machine.host;

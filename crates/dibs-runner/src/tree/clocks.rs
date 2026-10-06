@@ -2,7 +2,7 @@ use crate::{
     clock::Span,
     tree::{
         copy::{remove_all, touch},
-        git::Commands,
+        git::{Commands, Git},
     },
 };
 use std::{
@@ -118,18 +118,15 @@ pub struct Removal<'a> {
 
 impl Removal<'_> {
     pub fn tree(&self, tree: &Path) -> bool {
-        let mut git = Command::new("git");
-        git.arg("-C")
-            .arg(tree)
-            .args(["worktree", "remove", "--force"])
-            .arg(tree);
+        let mut git = Git(tree).command();
+        git.args(["worktree", "remove", "--force"]).arg(tree);
         self.run(git) || self.path(tree)
     }
 
     /// What git keeps of the worktrees removed from a clone, cleared.
     pub fn prune(&self, clone: &Path) {
-        let mut git = Command::new("git");
-        git.arg("-C").arg(clone).args(["worktree", "prune"]);
+        let mut git = Git(clone).command();
+        git.args(["worktree", "prune"]);
         self.run(git);
     }
 
