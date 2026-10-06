@@ -90,6 +90,7 @@ fn a_fresh_variable_changes_the_procedure_and_has_to_be_a_variable() {
     assert!(
         bad.check("r")
             .unwrap_err()
+            .to_string()
             .contains("'A B' is not a variable name")
     );
 }
@@ -122,19 +123,21 @@ fn a_parameter_falls_back_to_its_default_and_is_checked_against_its_choices() {
 
     let e = r
         .values(&given(&[("backend", "metal"), ("size", "64")]))
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
     assert!(
         e.contains("cuda, vulkan"),
         "a refusal has to say what is allowed: {e}"
     );
     let e = r
         .values(&given(&[("backends", "cuda"), ("size", "64")]))
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
     assert!(
         e.contains("backend, samples, size"),
         "and which names exist: {e}"
     );
-    let e = r.values(&given(&[])).unwrap_err();
+    let e = r.values(&given(&[])).unwrap_err().to_string();
     assert!(
         e.contains("--size"),
         "a parameter with no default cannot be left out: {e}"
@@ -169,7 +172,7 @@ fn binding_fills_the_declared_names_and_leaves_the_shell_alone() {
 #[test]
 fn a_step_cannot_name_the_target_directory_it_does_not_write_to() {
     let r = parse("[[bench.r.step]]\nlock=\"shared\"\nrun=\"ls target/release/bench\"\n");
-    let e = r.check("r").unwrap_err();
+    let e = r.check("r").unwrap_err().to_string();
     assert!(e.contains("CARGO_TARGET_DIR"), "{e}");
     let fine = parse(
         "[[bench.r.step]]\nlock=\"shared\"\nrun=\"ls $CARGO_TARGET_DIR/release && ls $R/target-main\"\n",
@@ -197,7 +200,7 @@ fn a_step_cannot_name_the_target_directory_it_does_not_write_to() {
 #[test]
 fn a_measurement_that_would_compile_under_the_exclusive_lock_is_refused() {
     let alone = parse("[[bench.r.step]]\nlock=\"exclusive\"\nrun=\"cargo bench --bench gemm\"\n");
-    let e = alone.check("r").unwrap_err();
+    let e = alone.check("r").unwrap_err().to_string();
     assert!(
         e.contains("--no-run"),
         "the message has to show the two-step form: {e}"

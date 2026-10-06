@@ -5,9 +5,10 @@ use dibs::{
     call::{Dispatch, Guard, MachineCall, Rsh},
     caller::Caller,
     cli::{Call, Help, Invocation, Mode, RecipeCall, RecipeVerb},
-    execution::{self, RunError},
+    execution::{self, Refusal, RunError},
     fleet,
     machine::{RUNNER_WORD, Runner},
+    paths::FileError,
     recipe,
     records::{self, friction, runs},
     reports,
@@ -72,7 +73,7 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             Ok(ExitCode::SUCCESS)
         }
         Invocation::Version => Ok(version()),
-        Invocation::Friction(friction) => reports::friction_verb(friction),
+        Invocation::Friction(friction) => Ok(reports::friction_verb(friction)?),
         Invocation::Recipe(call) => {
             let caller = Caller::from_env();
             ChangeNotice::tell_once(&caller);
@@ -107,10 +108,7 @@ fn version() -> ExitCode {
 
 fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
     if args.there && args.verb != RecipeVerb::With {
-        return Err(
-            "--there belongs to with: it runs the command on the machine beside the repo's servers"
-                .into(),
-        );
+        return Err(Refusal::There.into());
     }
     // Refused even by a verb that never reaches a machine, as every call naming one is.
     let on = Call {
@@ -121,9 +119,8 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
 
     if args.verb == RecipeVerb::Batch {
         let text = match args.repo.as_str() {
-            "-" => std::io::read_to_string(std::io::stdin())
-                .map_err(|e| format!("reading the batch from stdin: {e}"))?,
-            path => std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?,
+            "-" => std::io::read_to_string(std::io::stdin()).map_err(Refusal::BatchStdin)?,
+            path => std::fs::read_to_string(path).map_err(FileError::at(Path::new(path)))?,
         };
         let code = batch::run(
             &text,
@@ -144,7 +141,7 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
             only,
             &recipe::root_of(&args)?,
             fleet::recipe_repos(),
-            &fleet::pool().map_err(|e| e.to_string())?,
+            &fleet::pool()?,
         )?);
     }
 

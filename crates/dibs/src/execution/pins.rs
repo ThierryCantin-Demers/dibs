@@ -5,10 +5,10 @@
 //! `[patch]`, in a config file above the tree rather than in it: the tree stays what was sent.
 //! A pinned build still gets a tree of its own, since resolving the patch rewrites the lockfile.
 
-use super::{refs::Arm, trees::lockfile};
+use super::{error::PinError, local::Fetched, refs::Arm, trees::lockfile};
 use crate::{
     cli::RecipeCall,
-    git::Git,
+    git::{Git, GitError},
     lockfile::Package,
     recipe::{resolve_repo, root_of},
 };
@@ -40,7 +40,7 @@ pub fn crates<'a>(manifests: impl Iterator<Item = (&'a str, String)>) -> BTreeMa
 }
 
 /// A local tree's crates, from the files a send would carry.
-pub fn local_crates(dir: &Path) -> Result<BTreeMap<String, String>, String> {
+pub fn local_crates(dir: &Path) -> Result<BTreeMap<String, String>, GitError> {
     let list = Git(dir).run(&[
         "ls-files",
         "-co",
@@ -57,7 +57,7 @@ pub fn local_crates(dir: &Path) -> Result<BTreeMap<String, String>, String> {
 }
 
 /// A ref's crates, read from the repo's history here.
-pub fn ref_crates(dir: &Path, reference: &str) -> Result<BTreeMap<String, String>, String> {
+pub fn ref_crates(dir: &Path, reference: &str) -> Result<BTreeMap<String, String>, GitError> {
     let list = Git(dir).run(&["ls-tree", "-r", "--name-only", "-z", reference])?;
     let paths: Vec<&str> = list
         .split('\0')
@@ -76,9 +76,9 @@ pub fn ref_crates(dir: &Path, reference: &str) -> Result<BTreeMap<String, String
 pub fn sources(
     lock: &str,
     names: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
+) -> Result<BTreeMap<String, BTreeSet<String>>, PinError> {
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut take = |name: Option<String>, source: Option<String>| -> Result<(), String> {
+    let mut take = |name: Option<String>, source: Option<String>| -> Result<(), PinError> {
         let (Some(n), Some(s)) = (name, source) else {
             return Ok(());
         };
@@ -90,9 +90,7 @@ pub fn sources(
         } else if s.contains("crates.io-index") || s.starts_with("sparse+https://index.crates.io") {
             "crates-io".to_string()
         } else {
-            return Err(format!(
-                "{n} comes from {s}, which a pin does not know how to replace"
-            ));
+            return Err(PinError::Unpatchable { name: n, source: s });
         };
         out.entry(key).or_default().insert(n);
         Ok(())
@@ -153,7 +151,7 @@ pub struct PinSpec<'a> {
     pub reference: &'a str,
 }
 
-pub fn pin_spec(p: &str) -> Result<PinSpec<'_>, String> {
+pub fn pin_spec(p: &str) -> Result<PinSpec<'_>, PinError> {
     match p.split_once('@') {
         Some((repo, reference))
             if !repo.is_empty()
@@ -163,9 +161,7 @@ pub fn pin_spec(p: &str) -> Result<PinSpec<'_>, String> {
         {
             Ok(PinSpec { repo, reference })
         }
-        _ => Err(format!(
-            "--pin {p}: a pin is one tree, <repo>@local or <repo>@<ref>"
-        )),
+        _ => Err(PinError::Malformed(p.to_string())),
     }
 }
 
@@ -191,7 +187,7 @@ pub fn pins_of(
     repo: &str,
     dir: &Path,
     arms: &[Arm],
-) -> Result<Vec<Pinned>, String> {
+) -> Result<Vec<Pinned>, PinError> {
     let mut pins = Vec::new();
     for p in &args.pins {
         let PinSpec {
@@ -201,12 +197,16 @@ pub fn pins_of(
         let pdir = resolve_repo(name, &root_of(args)?)?;
         let identity = super::identity(&pdir);
         if identity == repo {
-            return Err(format!(
-                "--pin {p}: that is the repo being built; name its tree with {repo}@<ref> instead"
-            ));
+            return Err(PinError::Itself {
+                pin: p.clone(),
+                repo: repo.to_string(),
+            });
         }
         if pins.iter().any(|q: &Pinned| q.repo == identity) {
-            return Err(format!("--pin {p}: {identity} is pinned twice"));
+            return Err(PinError::Twice {
+                pin: p.clone(),
+                repo: identity,
+            });
         }
         let (local, checkout, note, crates, lock) = match reference {
             "local" => (
@@ -217,8 +217,15 @@ pub fn pins_of(
                 lockfile(&pdir, None),
             ),
             _ => {
-                let (sha, seen, ahead) = super::as_fetched(&pdir, reference)
-                    .ok_or_else(|| format!("--pin {p}: no {reference} in {}", pdir.display()))?;
+                let Fetched {
+                    commit: sha,
+                    seen,
+                    ahead,
+                } = super::as_fetched(&pdir, reference).ok_or_else(|| PinError::NoRef {
+                    pin: p.clone(),
+                    reference: reference.to_string(),
+                    dir: pdir.clone(),
+                })?;
                 let (crates, lock) = (ref_crates(&pdir, &sha)?, lockfile(&pdir, Some(&sha)));
                 match ahead.or_else(|| super::unfetchable(&pdir, &sha)) {
                     Some(why) => {
@@ -259,11 +266,10 @@ pub fn pins_of(
             }
         }
         if p.sources.is_empty() {
-            return Err(format!(
-                "--pin {}: {repo}'s Cargo.lock takes none of {}'s crates from git or crates.io, so there is nothing\n  \
-                 for the pin to replace. A repo already built from a path, as a local-development block does, needs no pin.",
-                p.repo, p.repo
-            ));
+            return Err(PinError::NothingToReplace {
+                pinned: p.repo.clone(),
+                repo: repo.to_string(),
+            });
         }
     }
     Ok(pins)

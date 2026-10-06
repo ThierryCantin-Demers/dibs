@@ -9,7 +9,7 @@ use crate::{
     caller::Caller,
     cli::Call,
     execution::recipe_jobs,
-    paths::Paths,
+    paths::{FileError, Paths},
 };
 use dibs_format::{Exit, MachineName};
 use std::{
@@ -174,8 +174,8 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let root = state_dir();
     collect_old(&root);
     let dir = root.join(&id);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let _driving = Driver::claim(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(FileError::at(&dir))?;
+    let _driving = Driver::claim(&dir).map_err(FileError::at(&dir))?;
     if let Some(owner) = &opts.owner {
         let _ = std::fs::write(dir.join("owner"), owner);
     }
@@ -273,7 +273,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
                         running.values().for_each(|&pid| stop(pid));
                     }
                 }
-                Err(e) => return Err(e.to_string().into()),
+                Err(e) => return Err(BatchError::Lost(e)),
             }
         };
         running.remove(&i);

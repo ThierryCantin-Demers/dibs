@@ -1,7 +1,10 @@
 //! A recipe: the procedure a repo or this computer declares, its parameters, and what makes two
 //! runs of it the same procedure.
 
-use super::manifest::Source;
+use super::{
+    error::{Flaw, ParamError, RecipeError},
+    manifest::Source,
+};
 use dibs_format::Lock;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -67,30 +70,28 @@ impl Recipe {
     pub fn values(
         &self,
         given: &BTreeMap<String, String>,
-    ) -> Result<BTreeMap<String, String>, String> {
+    ) -> Result<BTreeMap<String, String>, ParamError> {
         if let Some(unknown) = given.keys().find(|k| !self.params.contains_key(*k)) {
-            let have: Vec<&str> = self.params.keys().map(|s| s.as_str()).collect();
-            return Err(match have.is_empty() {
-                true => {
-                    format!("this recipe takes no parameters, so --{unknown} means nothing to it")
-                }
-                false => format!(
-                    "no parameter '{unknown}'; this recipe takes: {}",
-                    have.join(", ")
-                ),
+            return Err(match self.params.is_empty() {
+                true => ParamError::TakesNone(unknown.clone()),
+                false => ParamError::Unknown {
+                    name: unknown.clone(),
+                    have: self.params.keys().cloned().collect(),
+                },
             });
         }
         let mut out = BTreeMap::new();
         for (name, p) in &self.params {
             let v = match given.get(name).or(p.default.as_ref()) {
                 Some(v) => v.clone(),
-                None => return Err(format!("--{name} has no default, so it has to be given")),
+                None => return Err(ParamError::NoDefault(name.clone())),
             };
             if !p.choices.is_empty() && !p.choices.contains(&v) {
-                return Err(format!(
-                    "--{name} {v} is not one of: {}",
-                    p.choices.join(", ")
-                ));
+                return Err(ParamError::NotAChoice {
+                    name: name.clone(),
+                    value: v,
+                    choices: p.choices.clone(),
+                });
             }
             out.insert(name.clone(), v);
         }
@@ -143,15 +144,17 @@ impl Recipe {
 
     /// The two ways a recipe invalidates its own measurement, refused before anything is paid
     /// for rather than found in the numbers afterwards.
-    pub fn check(&self, name: &str) -> Result<(), String> {
+    pub fn check(&self, name: &str) -> Result<(), RecipeError> {
+        let unsound = |flaw: Flaw| RecipeError::Unsound {
+            recipe: name.to_string(),
+            flaw,
+        };
         let variable = |v: &str| {
             v.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
                 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         };
         if let Some(v) = self.fresh.iter().find(|v| !variable(v)) {
-            return Err(format!(
-                "recipe '{name}': fresh lists variables to give each run its own value, and '{v}' is not a variable name"
-            ));
+            return Err(unsound(Flaw::Fresh(v.clone())));
         }
         // Expanded unquoted on the machine so that * and ** match, which leaves no room for
         // anything the shell would read as more than a path.
@@ -165,10 +168,7 @@ impl Recipe {
                     .all(|c| c.is_ascii_alphanumeric() || "/._-*?[]+=,@".contains(c))
         };
         if let Some(a) = self.artifacts.iter().find(|a| !pattern(a)) {
-            return Err(format!(
-                "recipe '{name}': artifact '{a}' has to be a path pattern inside the tree, or under $CARGO_TARGET_DIR/,\n             \
-                 made of letters, digits and / . _ - * ? [ ] + = , @"
-            ));
+            return Err(unsound(Flaw::Artifact(a.clone())));
         }
         for st in &self.steps {
             // CARGO_TARGET_DIR is redirected per tree, so a relative target/ names a directory
@@ -196,10 +196,7 @@ impl Recipe {
                     None => w.trim_end_matches(['"', '\'']) == "target",
                 }
             }) {
-                return Err(format!(
-                    "recipe '{name}' names {t}, but the build writes to $CARGO_TARGET_DIR, which dibs\n             \
-                     puts outside the tree. Use $CARGO_TARGET_DIR/... instead."
-                ));
+                return Err(unsound(Flaw::Target(t.to_string())));
             }
         }
         let cargo = |st: &Step| st.run.split_whitespace().any(|w| w == "cargo");
@@ -214,23 +211,7 @@ impl Recipe {
             .find(|st| st.lock == Lock::Exclusive && cargo(st))
             && !built_first
         {
-            // shell has no steps to split, so it is told the two calls instead.
-            return Err(match name {
-                "shell" => format!(
-                    "a command that compiles cannot take the exclusive lock, which holds the whole\n             \
-                         machine for work that tolerates neighbours. Build it first without --bench:\n               \
-                         dibs shell <repo>@<ref> --reason <why> -- '{} --no-run'\n             \
-                         then measure with --bench.",
-                    st.run
-                ),
-                _ => format!(
-                    "recipe '{name}' compiles under the exclusive lock, which holds the whole machine\n             \
-                         for work that tolerates neighbours. Split it in two:\n               \
-                         [[step]] lock = \"shared\"     run = \"{} --no-run\"\n               \
-                         [[step]] lock = \"exclusive\"  run = \"{}\"",
-                    st.run, st.run
-                ),
-            });
+            return Err(unsound(Flaw::CompilesExclusive(st.run.clone())));
         }
         Ok(())
     }

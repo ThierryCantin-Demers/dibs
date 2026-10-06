@@ -16,5 +16,5 @@ mod tests;
 
 pub use base::{Options, batch_id, run};
 pub use guard::StepGuard;
-pub use parse::BatchError;
+pub use parse::{BadLine, BatchError};
 pub use plan::{Pending, Planned, recipe_env};

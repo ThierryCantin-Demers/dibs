@@ -1,7 +1,4 @@
-use super::{
-    base::{RunError, sh},
-    refs::sides,
-};
+use super::{base::sh, error::RunError, refs::sides};
 use crate::{
     batch,
     cli::{RecipeCall, Sweep},

@@ -1,4 +1,5 @@
-use crate::git::Git;
+use super::{error::ArmError, local::Fetched};
+use crate::git::{Git, GitError};
 use std::path::Path;
 
 /// What `@<ref>` names, before anything is looked up.
@@ -34,7 +35,7 @@ impl Side {
 }
 
 /// One tree, `A..B`, or `a,b,c`.
-pub fn sides(reference: Option<&str>) -> Result<Vec<Side>, String> {
+pub fn sides(reference: Option<&str>) -> Result<Vec<Side>, ArmError> {
     let one = |r: &str| {
         if r == "local" {
             Side::Local
@@ -46,15 +47,11 @@ pub fn sides(reference: Option<&str>) -> Result<Vec<Side>, String> {
         return Ok(vec![Side::Ref("HEAD".into())]);
     };
     if r.contains("...") {
-        return Err(format!(
-            "{r}: A...B is not a comparison dibs makes. A..B measures B against where it left A"
-        ));
+        return Err(ArmError::Symmetric(r.to_string()));
     }
     if let Some((a, b)) = r.split_once("..") {
         if a.is_empty() || b.is_empty() || b.contains("..") || r.contains(',') {
-            return Err(format!(
-                "{r}: a range names both ends, as main..local. Several arms in turn are a,b,c"
-            ));
+            return Err(ArmError::HalfRange(r.to_string()));
         }
         let tip = if b == "local" {
             Side::Local
@@ -65,14 +62,17 @@ pub fn sides(reference: Option<&str>) -> Result<Vec<Side>, String> {
     }
     let list: Vec<Side> = r.split(',').map(one).collect();
     if list.iter().any(|s| s.name().is_empty()) {
-        return Err(format!("{r}: an empty arm"));
+        return Err(ArmError::EmptyArm(r.to_string()));
     }
     if let Some(twice) = list
         .iter()
         .enumerate()
         .find(|(i, s)| list[..*i].contains(s))
     {
-        return Err(format!("{r}: {} is named twice", twice.1.name()));
+        return Err(ArmError::Twice {
+            reference: r.to_string(),
+            arm: twice.1.name(),
+        });
     }
     Ok(list)
 }
@@ -94,7 +94,7 @@ impl Arm {
         self.checkout.as_ref().map_or(checkout, |c| c.dir.as_path())
     }
 
-    pub fn local(&self, checkout: &Path) -> Result<super::Local, String> {
+    pub fn local(&self, checkout: &Path) -> Result<super::Local, GitError> {
         match &self.checkout {
             Some(c) => c.local(),
             None => super::local(checkout),
@@ -123,7 +123,7 @@ pub fn short(sha: &str) -> &str {
 }
 
 /// Each side looked up here. A commit the machine cannot fetch is checked out and sent instead.
-pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> {
+pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, ArmError> {
     let here = |r: &str| {
         if r == "local" {
             "HEAD".to_string()
@@ -145,8 +145,12 @@ pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> 
                 continue;
             }
             Side::Ref(r) => match super::as_fetched(dir, r) {
-                Some((sha, seen, ahead)) => (
-                    sha,
+                Some(Fetched {
+                    commit,
+                    seen,
+                    ahead,
+                }) => (
+                    commit,
                     r.clone(),
                     Some(format!("as {seen} stands here")),
                     ahead,
@@ -166,12 +170,12 @@ pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> 
                 (sha.clone(), sha, None, None)
             }
             Side::Base(a, b) => {
-                let (sha, upstream) = super::merge_base(dir, &here(a), &here(b))?;
+                let Base { commit, upstream } = super::merge_base(dir, &here(a), &here(b))?;
                 let note = match upstream {
                     Some(u) => format!("where {b} left {u}, since {a} is behind it"),
                     None => format!("where {b} left {a}"),
                 };
-                (sha.clone(), sha, Some(note), None)
+                (commit.clone(), commit, Some(note), None)
             }
         };
         let why = match s.sent() {
@@ -198,31 +202,36 @@ pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, String> 
         && base.commit().is_some()
         && base.commit() == tip.commit()
     {
-        return Err(format!(
-            "{} has nothing its base does not, so there is nothing to compare",
-            tip.name
-        ));
+        return Err(ArmError::NothingToCompare {
+            tip: tip.name.clone(),
+        });
     }
     Ok(arms)
 }
 
 /// The commit `name` is here, in full.
-pub fn commit(dir: &std::path::Path, name: &str) -> Result<String, String> {
+pub fn commit(dir: &Path, name: &str) -> Result<String, ArmError> {
     Git(dir)
         .run(&["rev-parse", "--verify", "-q", &format!("{name}^{{commit}}")])
         .map(|s| s.trim().to_string())
-        .map_err(|_| format!("no {name} in {}", dir.display()))
+        .map_err(|_| ArmError::NoCommit {
+            name: name.to_string(),
+            dir: dir.to_path_buf(),
+        })
+}
+
+/// Where a range's tip left its base.
+#[derive(Debug, PartialEq)]
+pub struct Base {
+    pub commit: String,
+    /// The upstream that decided it, when the local branch is behind.
+    pub upstream: Option<String>,
 }
 
 /// Where `tip` left `from`: the commit an A/B of `from..tip` measures `tip` against. A local branch
 /// that is behind its upstream would put that point too early and credit `tip` with commits it
 /// merely did not have, so the upstream is asked too and the later of the two answers wins.
-/// Returns the commit and, when the upstream decided it, the upstream's name.
-pub fn merge_base(
-    dir: &std::path::Path,
-    from: &str,
-    tip: &str,
-) -> Result<(String, Option<String>), String> {
+pub fn merge_base(dir: &Path, from: &str, tip: &str) -> Result<Base, ArmError> {
     let tip = commit(dir, tip)?;
     let own = commit(dir, from)?;
     let base = |c: &str| {
@@ -230,8 +239,11 @@ pub fn merge_base(
             .run(&["merge-base", c, &tip])
             .map(|s| s.trim().to_string())
     };
-    let mine = base(&own)
-        .map_err(|_| format!("{from} and {tip:.8} share no history in {}", dir.display()))?;
+    let mine = base(&own).map_err(|_| ArmError::NoHistory {
+        from: from.to_string(),
+        tip: tip.clone(),
+        dir: dir.to_path_buf(),
+    })?;
     let upstream = Git(dir)
         .run(&[
             "rev-parse",
@@ -251,9 +263,15 @@ pub fn merge_base(
                     .run(&["merge-base", "--is-ancestor", &mine, &b])
                     .is_ok() =>
         {
-            Ok((b, Some(u)))
+            Ok(Base {
+                commit: b,
+                upstream: Some(u),
+            })
         }
-        _ => Ok((mine, None)),
+        _ => Ok(Base {
+            commit: mine,
+            upstream: None,
+        }),
     }
 }
 
@@ -301,15 +319,24 @@ mod tests {
         git("commit -q --allow-empty -m f1");
         assert_eq!(
             merge_base(&r, "main", "feat").unwrap(),
-            (c2.clone(), Some("origin/main".to_string()))
+            Base {
+                commit: c2.clone(),
+                upstream: Some("origin/main".to_string())
+            }
         );
         assert_eq!(
             merge_base(&r, "origin/main", "HEAD").unwrap(),
-            (c2.clone(), None)
+            Base {
+                commit: c2.clone(),
+                upstream: None
+            }
         );
         assert_eq!(
             merge_base(&r, &c1, "feat").unwrap(),
-            (c1, None),
+            Base {
+                commit: c1,
+                upstream: None
+            },
             "a commit has no upstream to ask"
         );
         assert!(merge_base(&r, "no-such", "feat").is_err());

@@ -5,7 +5,7 @@ use crate::{
     call::{CallError, Destination, LockedCall, MachineCall, Origin, Output, RecipeJob, Sync},
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run, RunLock},
-    execution::RunError,
+    execution::{Refusal, RunError},
     machine::{Interrupt, Listener, Stream},
     placement::Placement,
     recipe::Lock,
@@ -210,13 +210,11 @@ impl Jobs {
         let placed = match machine.destination()? {
             Destination::Named(m) => Some(m),
             Destination::Unnamed => None,
-            Destination::Unchosen => Some(Placement { machine: &machine }.pick().map_err(|_| {
-                let why = repo.map(|r| format!(" --repo {r}")).unwrap_or_default();
-                format!(
-                    "nowhere to send this: it names no machine, and none could be placed. dibs --pick -v{why}\n  \
-                     says why; --on <machine> names one."
-                )
-            })?),
+            Destination::Unchosen => Some(
+                Placement { machine: &machine }
+                    .pick()
+                    .map_err(|_| Refusal::Nowhere(repo.map(str::to_string)))?,
+            ),
         };
         Ok(Jobs::on(placed))
     }

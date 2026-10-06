@@ -4,7 +4,12 @@
 //! directory under `$HOME` the XDG specification names. An empty variable counts as unset, as it
 //! does in a shell's `${VAR:-default}`.
 
-use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    ffi::OsString,
+    fmt, io,
+    path::{Path, PathBuf},
+};
 
 /// The variables a path is read from, captured once.
 #[derive(Debug, Clone, Default)]
@@ -170,6 +175,33 @@ impl Paths {
 
     fn config(&self, name: &str) -> Option<PathBuf> {
         self.under("XDG_CONFIG_HOME", ".config", name)
+    }
+}
+
+/// A file or directory that could not be read, written or made, said as `<path>: <error>`.
+#[derive(Debug)]
+pub struct FileError {
+    pub path: PathBuf,
+    pub error: io::Error,
+}
+
+impl FileError {
+    pub fn new(path: impl Into<PathBuf>, error: io::Error) -> FileError {
+        FileError {
+            path: path.into(),
+            error,
+        }
+    }
+
+    /// For `map_err`: the error at `path`.
+    pub fn at(path: &Path) -> impl FnOnce(io::Error) -> FileError + '_ {
+        move |error| FileError::new(path, error)
+    }
+}
+
+impl fmt::Display for FileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.path.display(), self.error)
     }
 }
 

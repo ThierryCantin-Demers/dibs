@@ -4,9 +4,9 @@
 use crate::{
     caller::Caller,
     cli::Friction,
-    execution::RunError,
-    paths::{Paths, ReportsStamp},
+    paths::{FileError, Paths, ReportsStamp},
     records::{
+        RecordsError,
         friction::{self, Note},
         now_secs,
     },
@@ -16,7 +16,8 @@ use dibs_runner::shared::SharedFile;
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
-    io::{BufRead, BufReader, Read, Write},
+    fmt,
+    io::{self, BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     os::unix::process::CommandExt as _,
     path::{Path, PathBuf},
@@ -99,8 +100,95 @@ impl Notice<'_> {
     }
 }
 
+/// Why a report could not be filed, answered or waited for.
+#[derive(Debug)]
+pub enum ReportsError {
+    /// DIBS_REPORTS is unset or names no repo.
+    NoRepo,
+    NoGh(io::Error),
+    /// What gh said when it failed.
+    Gh(String),
+    /// A public repo, which a report must never reach.
+    Public(String),
+    /// gh created an issue and printed no URL for it.
+    NoIssue(String),
+    NoHome,
+    File(FileError),
+    Unreadable(serde_json::Error),
+    NoForward(io::Error),
+    NoStderr,
+    /// The forwarder stopped before it listened, with what it said.
+    Unlistening {
+        repo: String,
+        said: String,
+    },
+    NotReady,
+    KeepsStopping(String),
+    NoPort(io::Error),
+    Io(io::Error),
+    Records(RecordsError),
+}
+
+impl From<FileError> for ReportsError {
+    fn from(e: FileError) -> ReportsError {
+        ReportsError::File(e)
+    }
+}
+
+impl From<RecordsError> for ReportsError {
+    fn from(e: RecordsError) -> ReportsError {
+        ReportsError::Records(e)
+    }
+}
+
+impl fmt::Display for ReportsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReportsError::NoRepo => {
+                f.write_str("DIBS_REPORTS names no <owner>/<repo> to take reports from")
+            }
+            ReportsError::NoGh(e) => write!(f, "could not run gh: {e}"),
+            ReportsError::Gh(said) => f.write_str(said),
+            ReportsError::Public(repo) => write!(
+                f,
+                "{repo} is public, and a report carries the paths and commands of whoever filed it"
+            ),
+            ReportsError::NoIssue(url) => write!(f, "gh printed no issue: {url}"),
+            ReportsError::NoHome => f.write_str("no HOME to keep reports' state in"),
+            ReportsError::File(e) => e.fmt(f),
+            ReportsError::Unreadable(e) => {
+                write!(f, "gh issue list printed something unreadable: {e}")
+            }
+            ReportsError::NoForward(e) => write!(f, "could not run gh webhook forward: {e}"),
+            ReportsError::NoStderr => f.write_str("gh webhook forward has no stderr"),
+            ReportsError::Unlistening { repo, said } => write!(
+                f,
+                "gh webhook forward stopped before it was listening. It needs the cli/gh-webhook extension, and \
+                 admin on {repo}; only one forward per repo can run at a time.\n{said}"
+            ),
+            ReportsError::NotReady => write!(
+                f,
+                "gh webhook forward did not start listening within {}s",
+                FORWARD_READY.as_secs()
+            ),
+            ReportsError::KeepsStopping(said) => write!(
+                f,
+                "gh webhook forward keeps stopping as soon as it starts:\n{said}"
+            ),
+            ReportsError::NoPort(e) => write!(f, "no local port to listen on: {e}"),
+            ReportsError::Io(e) => e.fmt(f),
+            ReportsError::Records(e) => e.fmt(f),
+        }
+    }
+}
+
 /// Fetches the replies `by` has not seen and adds them to `into`, whole or not at all.
-pub fn fetch_replies(repo: &str, notes: &[Note], by: &str, into: &Path) -> Result<(), String> {
+pub fn fetch_replies(
+    repo: &str,
+    notes: &[Note],
+    by: &str,
+    into: &Path,
+) -> Result<(), ReportsError> {
     std::thread::spawn(|| {
         std::thread::sleep(FETCH_LIMIT);
         std::process::exit(124);
@@ -115,7 +203,7 @@ pub fn fetch_replies(repo: &str, notes: &[Note], by: &str, into: &Path) -> Resul
             }
             Some(text)
         })
-        .map_err(|e| e.to_string())
+        .map_err(ReportsError::Io)
 }
 
 /// Opt-in per person, since a report says what they were doing: without it, friction stays on
@@ -128,15 +216,17 @@ fn is_repo(r: &str) -> bool {
     matches!(r.split_once('/'), Some((owner, name)) if !owner.is_empty() && !name.is_empty() && !name.contains('/'))
 }
 
-fn gh(args: &[&str]) -> Result<String, String> {
+fn gh(args: &[&str]) -> Result<String, ReportsError> {
     let out = Command::new("gh")
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("could not run gh: {e}"))?;
+        .map_err(ReportsError::NoGh)?;
     match out.status.success() {
         true => Ok(String::from_utf8_lossy(&out.stdout).trim().to_string()),
-        false => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        false => Err(ReportsError::Gh(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        )),
     }
 }
 
@@ -152,7 +242,7 @@ fn number(url: &str) -> Option<u64> {
 }
 
 /// A public repo is refused: a report carries the paths, repos and commands of whoever filed it.
-pub fn file(repo: &str, n: &Note) -> Result<u64, String> {
+pub fn file(repo: &str, n: &Note) -> Result<u64, ReportsError> {
     let visibility = gh(&[
         "repo",
         "view",
@@ -163,9 +253,7 @@ pub fn file(repo: &str, n: &Note) -> Result<u64, String> {
         ".visibility",
     ])?;
     if visibility == "PUBLIC" {
-        return Err(format!(
-            "{repo} is public, and a report carries the paths and commands of whoever filed it"
-        ));
+        return Err(ReportsError::Public(repo.to_string()));
     }
     let title: String = n.text.chars().take(100).collect();
     let body = format!(
@@ -179,7 +267,7 @@ pub fn file(repo: &str, n: &Note) -> Result<u64, String> {
         "issue", "create", "-R", repo, "--title", &title, "--body", &body, "--label", LABEL,
     ];
     let url = match gh(&create) {
-        Err(e) if e.contains(LABEL) => {
+        Err(ReportsError::Gh(said)) if said.contains(LABEL) => {
             gh(&[
                 "label",
                 "create",
@@ -195,7 +283,7 @@ pub fn file(repo: &str, n: &Note) -> Result<u64, String> {
         }
         other => other?,
     };
-    number(&url).ok_or_else(|| format!("gh printed no issue: {url}"))
+    number(&url).ok_or(ReportsError::NoIssue(url))
 }
 
 /// What has already been said or acted on, one key a line: `#<n>` for a report, a comment's URL
@@ -207,10 +295,10 @@ struct Keys {
 }
 
 impl Keys {
-    fn load(stamp: ReportsStamp) -> Result<Keys, String> {
+    fn load(stamp: ReportsStamp) -> Result<Keys, ReportsError> {
         let path = Paths::from_env()
             .reports(stamp)
-            .ok_or("no HOME to keep reports' state in")?;
+            .ok_or(ReportsError::NoHome)?;
         let text = std::fs::read_to_string(&path);
         let fresh = text.is_err();
         let set = text
@@ -225,12 +313,12 @@ impl Keys {
         self.set.insert(key.to_string())
     }
 
-    fn save(&self) -> Result<(), String> {
+    fn save(&self) -> Result<(), ReportsError> {
         if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            std::fs::create_dir_all(dir).map_err(FileError::at(dir))?;
         }
         let text: String = self.set.iter().map(|k| format!("{k}\n")).collect();
-        std::fs::write(&self.path, text).map_err(|e| format!("{}: {e}", self.path.display()))
+        Ok(std::fs::write(&self.path, text).map_err(FileError::at(&self.path))?)
     }
 }
 
@@ -248,7 +336,7 @@ fn login(v: &Value) -> &str {
     v["login"].as_str().unwrap_or("someone")
 }
 
-fn listed(repo: &str) -> Result<Vec<Value>, String> {
+fn listed(repo: &str) -> Result<Vec<Value>, ReportsError> {
     let text = gh(&[
         "issue",
         "list",
@@ -263,13 +351,12 @@ fn listed(repo: &str) -> Result<Vec<Value>, String> {
         "--json",
         "number,title,url,state,author,comments",
     ])?;
-    let v: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("gh issue list printed something unreadable: {e}"))?;
+    let v: Value = serde_json::from_str(&text).map_err(ReportsError::Unreadable)?;
     Ok(v.as_array().cloned().unwrap_or_default())
 }
 
 /// Answers to the reports this session filed, each said once.
-fn replies(repo: &str, notes: &[Note], by: &str) -> Result<Vec<String>, String> {
+fn replies(repo: &str, notes: &[Note], by: &str) -> Result<Vec<String>, ReportsError> {
     let filed: BTreeSet<u64> = notes
         .iter()
         .filter(|n| n.by == by)
@@ -306,7 +393,7 @@ fn answered_here(body: &Value) -> bool {
     body.as_str().is_some_and(|b| b.contains(ANSWER))
 }
 
-fn catch_up(repo: &str, woken: &mut Keys) -> Result<Vec<String>, String> {
+fn catch_up(repo: &str, woken: &mut Keys) -> Result<Vec<String>, ReportsError> {
     let first = woken.fresh;
     let mut out = Vec::new();
     for issue in listed(repo)? {
@@ -423,7 +510,7 @@ fn arrival(stream: TcpStream) -> Option<Arrival> {
 struct Forward(Child);
 
 impl Forward {
-    fn start(repo: &str, port: u16) -> Result<Forward, String> {
+    fn start(repo: &str, port: u16) -> Result<Forward, ReportsError> {
         let mut child = Command::new("gh")
             .args([
                 "webhook",
@@ -439,11 +526,8 @@ impl Forward {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("could not run gh webhook forward: {e}"))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or("gh webhook forward has no stderr")?;
+            .map_err(ReportsError::NoForward)?;
+        let stderr = child.stderr.take().ok_or(ReportsError::NoStderr)?;
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let mut said = String::new();
@@ -462,17 +546,13 @@ impl Forward {
         let mut forward = Forward(child);
         match rx.recv_timeout(FORWARD_READY) {
             Ok(Ok(())) => Ok(forward),
-            Ok(Err(said)) => Err(format!(
-                "gh webhook forward stopped before it was listening. It needs the cli/gh-webhook extension, and \
-                 admin on {repo}; only one forward per repo can run at a time.\n{}",
-                said.trim()
-            )),
+            Ok(Err(said)) => Err(ReportsError::Unlistening {
+                repo: repo.to_string(),
+                said: said.trim().to_string(),
+            }),
             Err(_) => {
                 let _ = forward.0.kill();
-                Err(format!(
-                    "gh webhook forward did not start listening within {}s",
-                    FORWARD_READY.as_secs()
-                ))
+                Err(ReportsError::NotReady)
             }
         }
     }
@@ -496,7 +576,7 @@ impl Drop for Forward {
 
 /// Returns once a report, or an answer that was not posted from here, lands. What landed while
 /// nothing listened is read first, since GitHub delivers a webhook once or not at all.
-pub fn wait(repo: &str) -> Result<Vec<String>, String> {
+pub fn wait(repo: &str) -> Result<Vec<String>, ReportsError> {
     let mut woken = Keys::load(ReportsStamp::Woken)?;
     let news = catch_up(repo, &mut woken)?;
     if !news.is_empty() {
@@ -504,9 +584,8 @@ pub fn wait(repo: &str) -> Result<Vec<String>, String> {
         return Ok(news);
     }
     woken.save()?;
-    let listener =
-        TcpListener::bind("127.0.0.1:0").map_err(|e| format!("no local port to listen on: {e}"))?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(ReportsError::NoPort)?;
+    let port = listener.local_addr().map_err(ReportsError::Io)?.port();
     let mut short = 0;
     loop {
         let started = Instant::now();
@@ -541,10 +620,7 @@ pub fn wait(repo: &str) -> Result<Vec<String>, String> {
             0
         };
         if short >= SHORT_LIVES {
-            return Err(format!(
-                "gh webhook forward keeps stopping as soon as it starts:\n{}",
-                said.trim()
-            ));
+            return Err(ReportsError::KeepsStopping(said.trim().to_string()));
         }
         eprintln!(
             "dibs: gh webhook forward stopped, so it is started again. It said: {}",
@@ -553,7 +629,7 @@ pub fn wait(repo: &str) -> Result<Vec<String>, String> {
     }
 }
 
-pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, String> {
+pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, ReportsError> {
     let n = issue.to_string();
     let url = gh(&[
         "issue",
@@ -572,8 +648,8 @@ pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, 
 
 /// The text arrives in the environment rather than as an argument: a report about a flag starts
 /// with the flag, and parsing that as one is how the complaint becomes the complaint.
-pub fn friction_verb(friction: Friction) -> Result<ExitCode, RunError> {
-    let reports_repo = || repo().ok_or("DIBS_REPORTS names no <owner>/<repo> to take reports from");
+pub fn friction_verb(friction: Friction) -> Result<ExitCode, ReportsError> {
+    let reports_repo = || repo().ok_or(ReportsError::NoRepo);
     match friction {
         Friction::Wait => {
             for news in wait(&reports_repo()?)? {

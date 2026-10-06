@@ -8,7 +8,10 @@
 //! So this does not just list. It says when a label's runs stopped being comparable, and
 //! where.
 
-use crate::paths::Paths;
+use crate::{
+    paths::{FileError, Paths},
+    records::{Kept, RecordsError},
+};
 use dibs_format::{Lock, Pairs, RunRecord, RunVerb};
 use std::{
     collections::BTreeMap,
@@ -131,11 +134,11 @@ impl Spread {
     }
 }
 
-pub fn load(path: &Path) -> Result<Vec<Record>, String> {
+pub fn load(path: &Path) -> Result<Vec<Record>, RecordsError> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
+        Err(e) => return Err(FileError::new(path, e).into()),
     };
     Ok(text
         .lines()
@@ -498,23 +501,23 @@ pub fn gaps(records: &[Record]) -> String {
     out
 }
 
-pub fn runs_path() -> Result<PathBuf, String> {
+pub fn runs_path() -> Result<PathBuf, RecordsError> {
     Paths::from_env()
         .runs()
-        .ok_or_else(|| "no HOME, and nowhere to record runs".into())
+        .ok_or(RecordsError::NoHome(Kept::Runs))
 }
 
-pub fn write_record(run: &RunRecord) -> Result<(), String> {
+pub fn write_record(run: &RunRecord) -> Result<(), RecordsError> {
     let path = runs_path()?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        std::fs::create_dir_all(dir).map_err(FileError::at(dir))?;
     }
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    writeln!(f, "{}", run.to_line()).map_err(|e| format!("{}: {e}", path.display()))
+        .map_err(FileError::at(&path))?;
+    Ok(writeln!(f, "{}", run.to_line()).map_err(FileError::at(&path))?)
 }
 
 pub fn now_secs() -> u64 {

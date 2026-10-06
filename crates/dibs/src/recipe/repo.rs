@@ -1,8 +1,9 @@
-use crate::{cli::RecipeCall, execution};
+use super::error::RepoError;
+use crate::{cli::RecipeCall, execution, paths::FileError};
 use std::path::{Path, PathBuf};
 
 /// `--root`, or else where checkouts are looked up by default.
-pub fn root_of(args: &RecipeCall) -> Result<PathBuf, String> {
+pub fn root_of(args: &RecipeCall) -> Result<PathBuf, RepoError> {
     match &args.root {
         Some(root) => Ok(root.clone()),
         None => repo_root(),
@@ -11,31 +12,26 @@ pub fn root_of(args: &RecipeCall) -> Result<PathBuf, String> {
 
 /// Where a bare repo name is looked up. Everyone lays their checkouts out differently, so
 /// this is only a starting guess: DIBS_ROOT, then --root, then the directory you are in.
-pub fn repo_root() -> Result<PathBuf, String> {
+pub fn repo_root() -> Result<PathBuf, RepoError> {
     if let Some(r) = std::env::var_os("DIBS_ROOT").filter(|r| !r.is_empty()) {
         return Ok(PathBuf::from(r));
     }
     // A fresh non-interactive shell has no DIBS_ROOT, since it lives in the user's fish
     // config, so the inventory file may carry it: `root = "/home/me/prog"` at the top level.
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    Ok(crate::fleet::inventory()
-        .map_err(|e| e.to_string())?
+    Ok(crate::fleet::inventory()?
         .and_then(|i| i.root(home.as_deref()))
         .unwrap_or_else(|| PathBuf::from(".")))
 }
 
-pub fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
+pub fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, RepoError> {
     let direct = PathBuf::from(repo);
     if direct.join(".dibs.toml").exists() || direct.join(".git").exists() {
         return canon(direct);
     }
     // A path into a subdirectory has no .git of its own, and `.` would otherwise join the root.
     if direct.is_absolute() || direct.starts_with(".") || direct.starts_with("..") {
-        return execution::toplevel(&direct).ok_or_else(|| {
-            format!(
-                "'{repo}' is in no git checkout and has no .dibs.toml, so there is no tree to send"
-            )
-        });
+        return execution::toplevel(&direct).ok_or_else(|| RepoError::NoCheckout(repo.to_string()));
     }
     // Inside a worktree of the named repo, or one by that directory name, `@local` means that
     // tree, and the clone under the root would otherwise be sent in its place without a word.
@@ -51,13 +47,12 @@ pub fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, String> {
     if under.exists() {
         return canon(under);
     }
-    Err(format!(
-        "no repo at '{repo}' and none at {}/{repo}.\n  A bare name is looked up under DIBS_ROOT, then --root, then the `root` key of\n  ~/.config/dibs/machines.toml, then the current directory. Give a path, or set one of those.",
-        root.display()
-    ))
+    Err(RepoError::NotFound {
+        repo: repo.to_string(),
+        root: root.to_path_buf(),
+    })
 }
 
-pub fn canon(p: PathBuf) -> Result<PathBuf, String> {
-    p.canonicalize()
-        .map_err(|e| format!("{}: {e}", p.display()))
+pub fn canon(p: PathBuf) -> Result<PathBuf, RepoError> {
+    Ok(p.canonicalize().map_err(FileError::at(&p))?)
 }

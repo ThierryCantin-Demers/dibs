@@ -1,5 +1,6 @@
 use super::{
     base::{Isolation, Recipe, Step},
+    error::{RecipeError, ShellWords},
     labels::{label_steps, run_label},
     manifest::{Manifest, Source, Verb},
     repo::{resolve_repo, root_of},
@@ -9,53 +10,7 @@ use crate::{
     execution,
 };
 use dibs_format::Lock;
-use std::{collections::BTreeMap, fmt, path::PathBuf};
-
-/// Why a recipe cannot be read or run as asked, said as its `Display`.
-#[derive(Debug)]
-pub enum RecipeError {
-    /// A recipes file that cannot be read, does not parse, or declares what is refused.
-    File { path: PathBuf, why: String },
-    /// Neither the repo nor this computer's recipes say anything about it.
-    NoRecipes {
-        repo: String,
-        in_repo: PathBuf,
-        local: PathBuf,
-    },
-    /// The call asks for what the recipes do not have, or in a way they refuse.
-    Refused(String),
-}
-
-impl fmt::Display for RecipeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RecipeError::File { path, why } => write!(f, "{}: {why}", path.display()),
-            RecipeError::NoRecipes {
-                repo,
-                in_repo,
-                local,
-            } => write!(
-                f,
-                "no recipes for {repo}: nothing in {} or {}",
-                in_repo.display(),
-                local.display()
-            ),
-            RecipeError::Refused(why) => f.write_str(why),
-        }
-    }
-}
-
-impl From<String> for RecipeError {
-    fn from(why: String) -> RecipeError {
-        RecipeError::Refused(why)
-    }
-}
-
-impl From<&str> for RecipeError {
-    fn from(why: &str) -> RecipeError {
-        RecipeError::Refused(why.to_string())
-    }
-}
+use std::{collections::BTreeMap, path::PathBuf};
 
 /// A recipe invocation resolved as far as it can be without a machine: which recipe, and the
 /// labels its jobs are filed under.
@@ -72,34 +27,29 @@ pub struct Resolved {
     pub tree_fresh: Vec<String>,
 }
 
-const LABEL_DERIVED: &str =
-    "derived so that every run of one piece of\n  work lands in one history.";
-
-const SHELL_USAGE: &str = "dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>";
-
 /// A shell's own words are refused before its tree is looked for, and all in one refusal, so
 /// one try finds them all.
 fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> {
     let mut wrong = Vec::new();
     if args.reason.is_none() {
-        wrong.push("needs --reason <why>: most of what gets run is neither a build nor a benchmark,\n  and knowing what those were is how the next recipe gets written".to_string());
+        wrong.push(ShellWords::NoReason);
     }
     match (&args.command, &args.recipe) {
-        (None, Some(word)) => wrong.push(format!(
-            "needs -- before its command: '{word}' after the repo would be a recipe's name"
-        )),
-        (None, None) => wrong.push("needs -- <command>".to_string()),
+        (None, Some(word)) => wrong.push(ShellWords::RecipeName(word.clone())),
+        (None, None) => wrong.push(ShellWords::NoCommand),
         _ => {}
     }
     if args.params.contains_key("label") {
-        let label = run_label(repo, "shell", None, args.device.as_deref());
-        wrong.push(format!(
-            "takes no --label: its durations are filed under {label}, {LABEL_DERIVED} A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so"
-        ));
+        wrong.push(ShellWords::Label(run_label(
+            repo,
+            "shell",
+            None,
+            args.device.as_deref(),
+        )));
     }
     match wrong.is_empty() {
         true => Ok(()),
-        false => Err(format!("shell {}.\n  usage: {SHELL_USAGE}", wrong.join(";\n  and ")).into()),
+        false => Err(RecipeError::Shell(wrong)),
     }
 }
 
@@ -148,12 +98,7 @@ pub fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
         } else {
             None
         })
-        .ok_or_else(|| {
-            format!(
-                "not a verb: {} (build, test, bench, shell, raw, list, runs, gaps or friction)",
-                args.verb
-            )
-        })?;
+        .ok_or(RecipeError::NotAVerb(args.verb))?;
     let name = if shell_recipe.is_some() {
         Some("shell")
     } else {
@@ -161,33 +106,30 @@ pub fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
     }
     .ok_or_else(|| {
         let have = manifest.names(verb);
-        if have.is_empty() {
-            format!("{} defines no {} recipes", dir.display(), verb.as_str())
-        } else {
-            format!(
-                "needs a recipe name; {} has: {}",
-                dir.display(),
-                have.join(", ")
-            )
+        match have.is_empty() {
+            true => RecipeError::NoneOfVerb {
+                dir: dir.clone(),
+                verb,
+            },
+            false => RecipeError::Unnamed {
+                dir: dir.clone(),
+                have,
+            },
         }
     })?;
     let mut rec = shell_recipe.clone().map(Ok).unwrap_or_else(|| {
-        manifest.recipe(verb, name).cloned().ok_or_else(|| {
-            let have = manifest.names(verb);
-            format!(
-                "no {} recipe called '{name}'; {} has: {}",
-                verb.as_str(),
-                dir.display(),
-                if have.is_empty() {
-                    "none".into()
-                } else {
-                    have.join(", ")
-                }
-            )
-        })
+        manifest
+            .recipe(verb, name)
+            .cloned()
+            .ok_or_else(|| RecipeError::NoSuchRecipe {
+                verb,
+                name: name.to_string(),
+                dir: dir.clone(),
+                have: manifest.names(verb),
+            })
     })?;
     if rec.steps.is_empty() {
-        return Err(format!("recipe '{name}' declares no steps").into());
+        return Err(RecipeError::NoSteps(name.to_string()));
     }
 
     // Derived, never supplied. A label an agent writes by hand names the run rather than the
@@ -207,15 +149,16 @@ pub fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
         ),
     };
     if args.params.contains_key("label") && !rec.params.contains_key("label") {
-        return Err(format!(
-            "{} {name} takes no --label: its durations are filed under {label}, {LABEL_DERIVED}",
-            verb.as_str()
-        )
-        .into());
+        return Err(RecipeError::Labelled {
+            verb,
+            name: name.to_string(),
+            label,
+        });
     }
-    let params = rec
-        .values(&args.params)
-        .map_err(|e| format!("{name}: {e}"))?;
+    let params = rec.values(&args.params).map_err(|why| RecipeError::Param {
+        recipe: name.to_string(),
+        why,
+    })?;
     rec = rec.bound(&params);
     rec.check(name)?;
     // The duration history keys on lock and label together, so a recipe's build and its

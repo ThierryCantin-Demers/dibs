@@ -179,8 +179,11 @@ pub fn send_missing_gitdbs(backend: &Jobs, prepared: &wire::Prepared, gitdbs: &[
             "dibs: sending {} at {:.8}, which the machine does not have and may not be able to fetch",
             db.name, db.commit
         );
-        if let Err(e) = sync_gitdb(backend, &db.path, &format!("{}/{}", asked.dir, db.name)) {
-            eprintln!("dibs: {e}; the build will try to fetch it itself");
+        if !sync_gitdb(backend, &db.path, &format!("{}/{}", asked.dir, db.name)) {
+            eprintln!(
+                "dibs: sending {} failed; the build will try to fetch it itself",
+                db.path.display()
+            );
         }
     }
 }
@@ -252,8 +255,8 @@ pub fn announce_prepared(prepared: &wire::Prepared) {
 }
 
 /// Adds files and never replaces one: git names objects by their content, so what is already
-/// there is already right, and a cargo on the machine may be reading it.
-pub fn sync_gitdb(backend: &Jobs, from: &Path, to: &str) -> Result<(), String> {
+/// there is already right, and a cargo on the machine may be reading it. Says whether it was sent.
+pub fn sync_gitdb(backend: &Jobs, from: &Path, to: &str) -> bool {
     let args = gitdb_args(from, to);
     let req = JobRequest {
         label: "",
@@ -264,10 +267,7 @@ pub fn sync_gitdb(backend: &Jobs, from: &Path, to: &str) -> Result<(), String> {
         new_series: false,
         tree: None,
     };
-    match backend.sync(&req, &args, &mut |_| {}).outcome.status {
-        0 => Ok(()),
-        _ => Err(format!("sending {} failed", from.display())),
-    }
+    backend.sync(&req, &args, &mut |_| {}).outcome.status == 0
 }
 
 pub fn gitdb_args(from: &Path, to: &str) -> [String; 5] {

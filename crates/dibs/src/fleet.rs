@@ -10,12 +10,13 @@ use crate::{
     cli::{Call, Command as ShellCommand, Mode, Run},
     inventory::{Inventory, InventoryError},
     machine::Stream,
-    paths::Paths,
+    paths::{FileError, Paths},
 };
 use dibs_format::{Exit, Label, MachineName};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt, io,
     io::Write as _,
     net::{TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
@@ -61,6 +62,116 @@ const BASH_NEEDED: (u32, u32) = (5, 1);
 const PROBE_WAIT_SECONDS: u64 = 30;
 const PROBE_LABEL: &str = "machines-probe";
 const SSH_UNREACHABLE: i32 = 255;
+
+/// Why `dibs machines` could not read what the machines should have.
+#[derive(Debug)]
+pub enum FleetError {
+    NoHome,
+    Unread(FileError),
+    Parse {
+        path: PathBuf,
+        error: Box<toml::de::Error>,
+    },
+    /// A machine lists someone fleet.toml has no `[person]` for.
+    Stranger {
+        path: PathBuf,
+        machine: String,
+        person: String,
+    },
+    NoKeygen(io::Error),
+    NotAKey {
+        file: PathBuf,
+        who: String,
+    },
+    NoMachine {
+        name: String,
+        path: PathBuf,
+        have: Vec<String>,
+    },
+    Json(serde_json::Error),
+}
+
+/// Why nothing was read from a machine.
+#[derive(Debug)]
+enum Unprobed {
+    /// Not in the pool, and no ssh target.
+    NoWay,
+    Ssh(io::Error),
+    Busy,
+    Unreachable(String),
+    Failed {
+        exit: i32,
+        said: String,
+    },
+}
+
+/// Why a name a machine is reached by does not reach it from here.
+#[derive(Debug)]
+enum Unreached {
+    Unresolved(String),
+    NoAnswer(String),
+}
+
+impl fmt::Display for FleetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FleetError::NoHome => f.write_str("no HOME to find fleet.toml under"),
+            FleetError::Unread(e) => write!(
+                f,
+                "{e}\n  It says what each machine should have: people and their keys, and per machine how it was set\n  \
+                 up, the names it is reached by, who may log in and the profiles it needs. See dibs-design/machines.md."
+            ),
+            FleetError::Parse { path, error } => write!(f, "{}: {error}", path.display()),
+            FleetError::Stranger {
+                path,
+                machine,
+                person,
+            } => write!(
+                f,
+                "{}: machine {machine} lists {person}, who has no [person.{person}]",
+                path.display()
+            ),
+            FleetError::NoKeygen(e) => write!(f, "ssh-keygen: {e}"),
+            FleetError::NotAKey { file, who } => {
+                write!(f, "{}: not a public key ({who})", file.display())
+            }
+            FleetError::NoMachine { name, path, have } => write!(
+                f,
+                "no machine {name} in {}; it has: {}",
+                path.display(),
+                have.join(", ")
+            ),
+            FleetError::Json(e) => e.fmt(f),
+        }
+    }
+}
+
+impl fmt::Display for Unprobed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Unprobed::NoWay => f.write_str(
+                "not in the pool, and no ssh to reach it by: give it one, or record it with dibs --check",
+            ),
+            Unprobed::Ssh(e) => e.fmt(f),
+            Unprobed::Busy => f.write_str("busy: a benchmark holds it, so it was not probed"),
+            Unprobed::Unreachable(said) => write!(f, "unreachable: {said}"),
+            Unprobed::Failed { exit, said } => {
+                write!(f, "the probe failed (exit {exit}): {said}")
+            }
+        }
+    }
+}
+
+impl fmt::Display for Unreached {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Unreached::Unresolved(name) => write!(f, "{name} does not resolve here"),
+            Unreached::NoAnswer(name) => {
+                write!(f, "{name} resolves, and nothing answers on port 22")
+            }
+        }
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -516,34 +627,31 @@ impl Profile {
 }
 
 /// `DIBS_FLEET`, or beside the inventory.
-pub fn path() -> Result<PathBuf, String> {
-    Paths::from_env()
-        .fleet()
-        .ok_or_else(|| "no HOME to find fleet.toml under".into())
+pub fn path() -> Result<PathBuf, FleetError> {
+    Paths::from_env().fleet().ok_or(FleetError::NoHome)
 }
 
-fn load(path: &Path) -> Result<Fleet, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| {
-        format!(
-            "{}: {e}\n  It says what each machine should have: people and their keys, and per machine how it was set\n  \
-             up, the names it is reached by, who may log in and the profiles it needs. See dibs-design/machines.md.",
-            path.display()
-        )
+fn load(path: &Path) -> Result<Fleet, FleetError> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| FleetError::Unread(FileError::new(path, e)))?;
+    let fleet: Fleet = toml::from_str(&text).map_err(|error| FleetError::Parse {
+        path: path.to_path_buf(),
+        error: Box::new(error),
     })?;
-    let fleet: Fleet = toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     for (name, m) in &fleet.machine {
         if let Some(p) = m.people.iter().find(|p| !fleet.person.contains_key(*p)) {
-            return Err(format!(
-                "{}: machine {name} lists {p}, who has no [person.{p}]",
-                path.display()
-            ));
+            return Err(FleetError::Stranger {
+                path: path.to_path_buf(),
+                machine: name.clone(),
+                person: p.clone(),
+            });
         }
     }
     Ok(fleet)
 }
 
 /// Each key file's fingerprint, read the way the machine's side reads its `authorized_keys`.
-fn owners(fleet: &Fleet, dir: &Path) -> Result<BTreeMap<String, String>, String> {
+fn owners(fleet: &Fleet, dir: &Path) -> Result<BTreeMap<String, String>, FleetError> {
     let mut out = BTreeMap::new();
     for (who, person) in &fleet.person {
         for key in &person.keys {
@@ -552,9 +660,12 @@ fn owners(fleet: &Fleet, dir: &Path) -> Result<BTreeMap<String, String>, String>
                 .arg("-lf")
                 .arg(&file)
                 .output()
-                .map_err(|e| format!("ssh-keygen: {e}"))?;
+                .map_err(FleetError::NoKeygen)?;
             if !listed.status.success() {
-                return Err(format!("{}: not a public key ({who})", file.display()));
+                return Err(FleetError::NotAKey {
+                    file,
+                    who: who.clone(),
+                });
             }
             for fp in String::from_utf8_lossy(&listed.stdout)
                 .lines()
@@ -588,7 +699,7 @@ fn pin(checkout: &Path) -> Option<String> {
 /// How a machine was probed, and what it said or why it said nothing.
 struct Probed {
     via: Via,
-    observed: Result<Observed, String>,
+    observed: Result<Observed, Unprobed>,
 }
 
 /// What a probe printed, and its exit.
@@ -605,7 +716,7 @@ fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> Probed {
         (false, None) => {
             return Probed {
                 via: Via::Ssh,
-                observed: Err("not in the pool, and no ssh to reach it by: give it one, or record it with dibs --check".into()),
+                observed: Err(Unprobed::NoWay),
             };
         }
     };
@@ -614,7 +725,7 @@ fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> Probed {
         Err(e) => {
             return Probed {
                 via,
-                observed: Err(e.to_string()),
+                observed: Err(Unprobed::Ssh(e)),
             };
         }
     };
@@ -630,17 +741,14 @@ fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> Probed {
     let unreachable = i32::from(Exit::Unreachable.code());
     let observed = match heard.status {
         Some(0) => Ok(Observed::parse(&String::from_utf8_lossy(&heard.stdout))),
-        Some(code) if code == busy => {
-            Err("busy: a benchmark holds it, so it was not probed".into())
-        }
+        Some(code) if code == busy => Err(Unprobed::Busy),
         Some(code) if code == unreachable || code == SSH_UNREACHABLE => {
-            Err(format!("unreachable: {}", said()))
+            Err(Unprobed::Unreachable(said()))
         }
-        code => Err(format!(
-            "the probe failed (exit {}): {}",
-            code.unwrap_or(-1),
-            said()
-        )),
+        code => Err(Unprobed::Failed {
+            exit: code.unwrap_or(-1),
+            said: said(),
+        }),
     };
     Probed { via, observed }
 }
@@ -710,17 +818,17 @@ fn over_ssh(target: &str) -> std::io::Result<Heard> {
 }
 
 /// From here: the name resolves, and something answers on the ssh port.
-fn reach(name: &str) -> Result<(), String> {
+fn reach(name: &str) -> Result<(), Unreached> {
     let addrs: Vec<_> = (name, 22)
         .to_socket_addrs()
-        .map_err(|_| format!("{name} does not resolve here"))?
+        .map_err(|_| Unreached::Unresolved(name.to_string()))?
         .collect();
     match addrs
         .iter()
         .any(|a| TcpStream::connect_timeout(a, Duration::from_secs(3)).is_ok())
     {
         true => Ok(()),
-        false => Err(format!("{name} resolves, and nothing answers on port 22")),
+        false => Err(Unreached::NoAnswer(name.to_string())),
     }
 }
 
@@ -734,7 +842,11 @@ fn reach_all(paths: &[String]) -> Vec<PathCheck> {
             .into_iter()
             .map(|(p, t)| PathCheck {
                 name: p.clone(),
-                problem: t.join().expect("a reach does not panic").err(),
+                problem: t
+                    .join()
+                    .expect("a reach does not panic")
+                    .err()
+                    .map(|e| e.to_string()),
             })
             .collect()
     })
@@ -750,7 +862,7 @@ fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Rep
             findings.extend(m.check(&o, cx));
             (None, m.access(&o, cx))
         }
-        Err(e) => (Some(e), Access::default()),
+        Err(e) => (Some(e.to_string()), Access::default()),
     };
     Report {
         machine: name.to_string(),
@@ -810,17 +922,16 @@ pub fn command(
     root: &Path,
     recipe_repos: Vec<String>,
     pool: &BTreeSet<String>,
-) -> Result<ExitCode, String> {
+) -> Result<ExitCode, FleetError> {
     let path = path()?;
     let mut fleet = load(&path)?;
     if let Some(name) = only {
         if !fleet.machine.contains_key(name) {
-            let have: Vec<&str> = fleet.machine.keys().map(String::as_str).collect();
-            return Err(format!(
-                "no machine {name} in {}; it has: {}",
-                path.display(),
-                have.join(", ")
-            ));
+            return Err(FleetError::NoMachine {
+                name: name.to_string(),
+                path,
+                have: fleet.machine.into_keys().collect(),
+            });
         }
         fleet.machine.retain(|n, _| n == name);
     }
@@ -859,7 +970,7 @@ pub fn command(
             };
             println!(
                 "{}",
-                serde_json::to_string_pretty(&overview).map_err(|e| e.to_string())?
+                serde_json::to_string_pretty(&overview).map_err(FleetError::Json)?
             )
         }
         false => print!("{}", render(&reports)),

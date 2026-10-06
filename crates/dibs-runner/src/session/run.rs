@@ -123,7 +123,7 @@ impl Visit {
                 host: &at.machine.host,
             });
         if let Some(Err(refused)) = binding.as_ref().map(Binding::check) {
-            self.sink.say(&refused);
+            self.sink.say(&refused.to_string());
             return Exit::Refused.status();
         }
         let arrived = match self.arrive(at) {

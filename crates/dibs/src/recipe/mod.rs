@@ -2,6 +2,7 @@
 //! and what is refused before anything is built.
 
 mod base;
+mod error;
 mod labels;
 mod listing;
 mod manifest;
@@ -14,6 +15,7 @@ mod tests;
 pub use base::Isolation;
 pub use base::{Recipe, Step};
 pub use dibs_format::Lock;
+pub use error::{Flaw, ManifestError, ParamError, RecipeError, RepoError, ShellWords};
 #[cfg(test)]
 pub use labels::label_steps;
 pub use labels::run_label;
@@ -21,5 +23,5 @@ pub use listing::list;
 pub use manifest::{Manifest, Service, local_dir};
 #[cfg(test)]
 pub use manifest::{Source, Verb};
-pub use refusals::{RecipeError, Resolved, resolve};
+pub use refusals::{Resolved, resolve};
 pub use repo::{resolve_repo, root_of};

@@ -8,7 +8,10 @@
 //! procedure to a moment and make it progressively harder to rerun, which is the opposite of
 //! what putting it in the repo was for. The revisions belong to the run record.
 
-use super::{base::Recipe, refusals::RecipeError};
+use super::{
+    base::Recipe,
+    error::{ManifestError, RecipeError},
+};
 use crate::paths::Paths;
 use dibs_format::RunVerb;
 use serde::Deserialize;
@@ -77,16 +80,13 @@ pub struct Tree {
 
 impl Tree {
     /// Each is removed with `rm -rf` inside the new tree, so it has to name something in it.
-    fn check(&self) -> Result<(), String> {
+    fn check(&self) -> Result<(), ManifestError> {
         for p in &self.fresh {
             let inside = p.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
                 && p.chars()
                     .all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
             if !inside {
-                return Err(format!(
-                    "[tree] fresh lists paths inside the tree, and '{p}' is not one: relative, with no . or .. \
-                     part, in letters, digits and ._-/"
-                ));
+                return Err(ManifestError::Fresh(p.clone()));
             }
         }
         Ok(())
@@ -174,12 +174,13 @@ impl Manifest {
             if !path.exists() {
                 continue;
             }
-            let at = |why: String| RecipeError::File {
+            let at = |why: ManifestError| RecipeError::File {
                 path: path.clone(),
                 why,
             };
-            let text = std::fs::read_to_string(&path).map_err(|e| at(e.to_string()))?;
-            let parsed: Manifest = toml::from_str(&text).map_err(|e| at(e.to_string()))?;
+            let text = std::fs::read_to_string(&path).map_err(|e| at(ManifestError::Read(e)))?;
+            let parsed: Manifest =
+                toml::from_str(&text).map_err(|e| at(ManifestError::Parse(Box::new(e))))?;
             parsed.refuse_needs().map_err(at)?;
             parsed
                 .tree
@@ -194,15 +195,16 @@ impl Manifest {
         Ok(found)
     }
 
-    fn refuse_needs(&self) -> Result<(), String> {
+    fn refuse_needs(&self) -> Result<(), ManifestError> {
         let named = [&self.bench, &self.build, &self.test]
             .into_iter()
             .flatten()
             .find_map(|(name, rec)| Some((name, rec.needs.as_deref()?)));
         match named {
-            Some((name, needs)) => Err(format!(
-                "recipe {name} needs '{needs}', which nothing here can check or route on; name the machine with --on"
-            )),
+            Some((name, needs)) => Err(ManifestError::Needs {
+                recipe: name.clone(),
+                needs: needs.to_string(),
+            }),
             None => Ok(()),
         }
     }
@@ -253,8 +255,8 @@ impl Manifest {
     }
 
     /// Every recipe this file defines, for saying what is available when a name is wrong.
-    pub fn names(&self, verb: Verb) -> Vec<&str> {
-        self.table(verb).keys().map(|s| s.as_str()).collect()
+    pub fn names(&self, verb: Verb) -> Vec<String> {
+        self.table(verb).keys().cloned().collect()
     }
 
     pub fn listing(&self, verb: Verb) -> Vec<(&str, Source)> {

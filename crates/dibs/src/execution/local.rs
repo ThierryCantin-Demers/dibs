@@ -3,9 +3,9 @@
 //! machine cannot fetch it.
 
 use crate::{
-    execution::{build::hex, refs::commit},
-    git::Git,
-    paths::Paths,
+    execution::{build::hex, error::CheckoutError, refs::commit},
+    git::{Git, GitError},
+    paths::{FileError, Paths},
 };
 use dibs_runner::shared::SharedFile;
 use sha2::{Digest, Sha256};
@@ -62,7 +62,7 @@ pub fn variant(dir: &std::path::Path, identity: &str) -> Option<String> {
     (folder != identity).then(|| folder.to_string())
 }
 
-pub fn local(dir: &std::path::Path) -> Result<Local, String> {
+pub fn local(dir: &std::path::Path) -> Result<Local, GitError> {
     let head = Git(dir)
         .run(&["rev-parse", "--short", "HEAD"])?
         .trim()
@@ -114,7 +114,7 @@ pub struct Checkout {
 }
 
 impl Checkout {
-    pub fn local(&self) -> Result<Local, String> {
+    pub fn local(&self) -> Result<Local, GitError> {
         Ok(Local {
             key: self.key.clone(),
             ..local(&self.dir)?
@@ -127,11 +127,11 @@ pub fn checkout(
     identity: &str,
     sha: &str,
     why: Option<&'static str>,
-) -> Result<Checkout, String> {
+) -> Result<Checkout, CheckoutError> {
     checkout_in(
         &Paths::from_env()
             .sent()
-            .ok_or("no HOME to keep a cache under")?
+            .ok_or(CheckoutError::NoHome)?
             .join(identity),
         dir,
         identity,
@@ -146,8 +146,8 @@ fn checkout_in(
     identity: &str,
     sha: &str,
     why: Option<&'static str>,
-) -> Result<Checkout, String> {
-    std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
+) -> Result<Checkout, CheckoutError> {
+    std::fs::create_dir_all(root).map_err(FileError::at(root))?;
     let (slot, lock) = (0u32..)
         .find_map(|n| {
             let path = root.join(format!("{n}.lock"));
@@ -157,9 +157,7 @@ fn checkout_in(
             match taken {
                 Ok(f) => Some(Ok((n.to_string(), f))),
                 Err(std::fs::TryLockError::WouldBlock) => None,
-                Err(std::fs::TryLockError::Error(e)) => {
-                    Some(Err(format!("{}: {e}", path.display())))
-                }
+                Err(std::fs::TryLockError::Error(e)) => Some(Err(FileError::new(&path, e))),
             }
         })
         .expect("an unbounded range")?;
@@ -168,7 +166,7 @@ fn checkout_in(
         let _ = std::fs::remove_dir_all(&checkout);
         let from = dir
             .to_str()
-            .ok_or_else(|| format!("{}: not a path git can take", dir.display()))?;
+            .ok_or_else(|| CheckoutError::Unnamed(dir.to_path_buf()))?;
         Git(root).run(&["clone", "--quiet", "--shared", "--no-checkout", from, &slot])?;
     }
     Git(&checkout).run(&["checkout", "--quiet", "--detach", "--force", sha])?;
@@ -184,16 +182,26 @@ fn checkout_in(
     })
 }
 
-/// The commit `name` means here, the name it was found under, and why it must be sent rather than
-/// fetched by name. That is the remote-tracking ref, which a local branch of that name may be
-/// behind, unless the local branch has commits origin lacks: fetching it would take origin's.
-pub fn as_fetched(
-    dir: &std::path::Path,
-    name: &str,
-) -> Option<(String, String, Option<&'static str>)> {
+/// A ref as this checkout sees it, for a run that may have to send it.
+pub struct Fetched {
+    pub commit: String,
+    /// The name it was found under.
+    pub seen: String,
+    /// Why it must be sent rather than fetched by name.
+    pub ahead: Option<&'static str>,
+}
+
+/// `name` as this checkout sees it. That is the remote-tracking ref, which a local branch of that
+/// name may be behind, unless the local branch has commits origin lacks: fetching it would take
+/// origin's.
+pub fn as_fetched(dir: &std::path::Path, name: &str) -> Option<Fetched> {
     let tracking = format!("origin/{name}");
     let Ok(pushed) = commit(dir, &tracking) else {
-        return commit(dir, name).ok().map(|c| (c, name.to_string(), None));
+        return commit(dir, name).ok().map(|commit| Fetched {
+            commit,
+            seen: name.to_string(),
+            ahead: None,
+        });
     };
     match commit(dir, &format!("refs/heads/{name}")) {
         Ok(own)
@@ -201,9 +209,17 @@ pub fn as_fetched(
                 .run(&["merge-base", "--is-ancestor", &own, &pushed])
                 .is_err() =>
         {
-            Some((own, name.to_string(), Some("origin's branch lacks it")))
+            Some(Fetched {
+                commit: own,
+                seen: name.to_string(),
+                ahead: Some("origin's branch lacks it"),
+            })
         }
-        _ => Some((pushed, tracking, None)),
+        _ => Some(Fetched {
+            commit: pushed,
+            seen: tracking,
+            ahead: None,
+        }),
     }
 }
 

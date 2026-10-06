@@ -1,7 +1,11 @@
-use crate::cli::{Invocation, Mode, RecipeCall, RecipeVerb, RunLock};
+use crate::{
+    cli::{CliError, Invocation, Mode, RecipeCall, RecipeVerb, RunLock},
+    paths::FileError,
+};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    sync::mpsc,
 };
 
 /// Why a batch is refused before anything runs, or stops: said as its `Display`.
@@ -10,7 +14,7 @@ pub enum BatchError {
     /// A line that is not one dibs call the driver can run.
     Line {
         line: usize,
-        why: String,
+        why: BadLine,
     },
     NoSteps,
     UnknownStep {
@@ -25,7 +29,29 @@ pub enum BatchError {
     Unplaced {
         step: String,
     },
-    Refused(String),
+    File(FileError),
+    /// The steps' reports stopped arriving before every step ended.
+    Lost(mpsc::RecvTimeoutError),
+}
+
+/// Why a batch line is not one dibs call the driver can run.
+#[derive(Debug)]
+pub enum BadLine {
+    Unclosed,
+    Attribute(String),
+    SingleQuote,
+    DoubleQuote,
+    /// A shell operator outside quotes.
+    Operator(char),
+    /// `$(` outside quotes.
+    Substitution,
+    NotDibs(String),
+    /// Words the grammar refuses.
+    Grammar(CliError),
+    Watch,
+    Nested,
+    Renamed(String),
+    Backslash,
 }
 
 impl fmt::Display for BatchError {
@@ -45,14 +71,45 @@ impl fmt::Display for BatchError {
                 "step {step} measures and names no machine, and a measurement is never placed for you. Give it\n  \
                  --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step."
             ),
-            BatchError::Refused(why) => f.write_str(why),
+            BatchError::File(e) => e.fmt(f),
+            BatchError::Lost(e) => e.fmt(f),
         }
     }
 }
 
-impl From<String> for BatchError {
-    fn from(why: String) -> BatchError {
-        BatchError::Refused(why)
+impl fmt::Display for BadLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BadLine::Unclosed => f.write_str("an attribute list is not closed with ]"),
+            BadLine::Attribute(attr) => write!(
+                f,
+                "unknown attribute '{attr}': a step takes a name, after=a,b and cont"
+            ),
+            BadLine::SingleQuote => f.write_str("a single quote is not closed"),
+            BadLine::DoubleQuote => f.write_str("a double quote is not closed"),
+            BadLine::Operator(c) => write!(
+                f,
+                "'{c}' outside quotes makes this more than one dibs call. Quote the command you are sending"
+            ),
+            BadLine::Substitution => {
+                f.write_str("$( outside quotes runs a command here, not on the machine. Quote it")
+            }
+            BadLine::NotDibs(command) => write!(
+                f,
+                "'{command}' is not a dibs command. A batch is a list of dibs calls, one per line"
+            ),
+            BadLine::Grammar(e) => f.write_str(e.message.trim_start_matches("dibs: ")),
+            BadLine::Watch => f.write_str("a batch step cannot --watch: it never finishes"),
+            BadLine::Nested => f.write_str("a batch step cannot be a batch"),
+            BadLine::Renamed(name) => write!(f, "a second step is named '{name}'"),
+            BadLine::Backslash => f.write_str("the last line ends in a backslash"),
+        }
+    }
+}
+
+impl From<FileError> for BatchError {
+    fn from(e: FileError) -> BatchError {
+        BatchError::File(e)
     }
 }
 
@@ -118,15 +175,13 @@ pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let at = |why: String| BatchError::Line {
+        let at = |why: BadLine| BatchError::Line {
             line: first_line,
             why,
         };
         let (attrs, command) = match line.strip_prefix('[') {
             Some(rest) => {
-                let (a, c) = rest
-                    .split_once(']')
-                    .ok_or_else(|| at("an attribute list is not closed with ]".into()))?;
+                let (a, c) = rest.split_once(']').ok_or_else(|| at(BadLine::Unclosed))?;
                 (a.trim(), c.trim())
             }
             None => ("", line),
@@ -147,21 +202,17 @@ pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
             } else if !attr.contains('=') && name.is_none() {
                 name = Some(attr.to_string());
             } else {
-                return Err(at(format!(
-                    "unknown attribute '{attr}': a step takes a name, after=a,b and cont"
-                )));
+                return Err(at(BadLine::Attribute(attr.to_string())));
             }
         }
         let words = split_words(command).map_err(at)?;
         if words.first().map(String::as_str) != Some("dibs") {
-            return Err(at(format!(
-                "'{command}' is not a dibs command. A batch is a list of dibs calls, one per line"
-            )));
+            return Err(at(BadLine::NotDibs(command.to_string())));
         }
         let s = describe(&words).map_err(at)?;
         let name = name.unwrap_or_else(|| (steps.len() + 1).to_string());
         if steps.iter().any(|p| p.name == name) {
-            return Err(at(format!("a second step is named '{name}'")));
+            return Err(at(BadLine::Renamed(name)));
         }
         // A step says what it waits for, or waits for the one before it: sequential unless
         // told otherwise, so a list written top to bottom runs top to bottom.
@@ -182,7 +233,7 @@ pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
     if !joined.trim().is_empty() {
         return Err(BatchError::Line {
             line: first_line,
-            why: "the last line ends in a backslash".into(),
+            why: BadLine::Backslash,
         });
     }
     if steps.is_empty() {
@@ -234,7 +285,7 @@ pub fn order(steps: &[Step]) -> Result<Vec<usize>, BatchError> {
 /// Shell words without expansion, for reading a step's flags. The step itself runs through bash,
 /// so `$DIBS_BATCH` and quoting mean what they mean at a prompt. Anything that would make the
 /// line more than one dibs call is refused.
-pub fn split_words(line: &str) -> Result<Vec<String>, String> {
+pub fn split_words(line: &str) -> Result<Vec<String>, BadLine> {
     let mut words = Vec::new();
     let mut cur = String::new();
     let mut in_word = false;
@@ -247,7 +298,7 @@ pub fn split_words(line: &str) -> Result<Vec<String>, String> {
                     match chars.next() {
                         Some('\'') => break,
                         Some(x) => cur.push(x),
-                        None => return Err("a single quote is not closed".into()),
+                        None => return Err(BadLine::SingleQuote),
                     }
                 }
             }
@@ -262,10 +313,10 @@ pub fn split_words(line: &str) -> Result<Vec<String>, String> {
                                 cur.push('\\');
                                 cur.push(x);
                             }
-                            None => return Err("a double quote is not closed".into()),
+                            None => return Err(BadLine::DoubleQuote),
                         },
                         Some(x) => cur.push(x),
-                        None => return Err("a double quote is not closed".into()),
+                        None => return Err(BadLine::DoubleQuote),
                     }
                 }
             }
@@ -276,14 +327,10 @@ pub fn split_words(line: &str) -> Result<Vec<String>, String> {
                 }
             }
             ';' | '&' | '|' | '<' | '>' | '(' | ')' | '`' => {
-                return Err(format!(
-                    "'{c}' outside quotes makes this more than one dibs call. Quote the command you are sending"
-                ));
+                return Err(BadLine::Operator(c));
             }
             '$' if chars.peek() == Some(&'(') => {
-                return Err(
-                    "$( outside quotes runs a command here, not on the machine. Quote it".into(),
-                );
+                return Err(BadLine::Substitution);
             }
             c if c.is_whitespace() => {
                 if in_word {
@@ -306,9 +353,8 @@ pub fn split_words(line: &str) -> Result<Vec<String>, String> {
 /// What the driver needs to know about a step before it runs: where it goes, for ordering, and
 /// what it is, for the summary. The words are read as written, since bash expands them only
 /// when the step runs; everything else passes through untouched.
-pub fn describe(words: &[String]) -> Result<Step, String> {
-    let read = Invocation::parse_unexpanded(&words[1..])
-        .map_err(|e| e.message.trim_start_matches("dibs: ").to_string())?;
+pub fn describe(words: &[String]) -> Result<Step, BadLine> {
+    let read = Invocation::parse_unexpanded(&words[1..]).map_err(BadLine::Grammar)?;
     let mut step = Step {
         name: String::new(),
         line: String::new(),
@@ -327,7 +373,7 @@ pub fn describe(words: &[String]) -> Result<Step, String> {
                 Mode::Peek(_) => StepKind::Peek,
                 Mode::Sync(_) => StepKind::Sync,
                 Mode::Watch { .. } => {
-                    return Err("a batch step cannot --watch: it never finishes".into());
+                    return Err(BadLine::Watch);
                 }
                 _ => StepKind::Shared,
             };
@@ -337,7 +383,7 @@ pub fn describe(words: &[String]) -> Result<Step, String> {
         }
         Invocation::Recipe(call) => {
             if call.verb == RecipeVerb::Batch {
-                return Err("a batch step cannot be a batch".into());
+                return Err(BadLine::Nested);
             }
             step.on = call.on.clone();
             step.device = call.device.clone();

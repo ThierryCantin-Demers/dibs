@@ -1,5 +1,6 @@
 use super::{
-    base::{RunError, preparing, sh},
+    base::{preparing, sh},
+    error::{Refusal, RunError, Unprepared},
     jobs::{JobRequest, Jobs},
     refs::{arms, sides},
     trees::{
@@ -25,49 +26,42 @@ use std::process::ExitCode;
 pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let sides = sides(args.reference.as_deref())?;
     if sides.len() > 1 {
-        return Err("with runs against one tree, so it takes one ref".into());
+        return Err(Refusal::WithRefs.into());
     }
     if !args.pins.is_empty() {
-        return Err("with does not take --pin; a recipe does".into());
+        return Err(Refusal::WithPin.into());
     }
     let dir = resolve_repo(&args.repo, &root_of(args)?)?;
     let repo_name = super::identity(&dir);
     let manifest = Manifest::load(&dir, &repo_name)?;
-    let name = args.recipe.as_deref().ok_or_else(|| {
-        format!(
-            "with needs a service: dibs with {} <service> -- <command>",
-            args.repo
-        )
-    })?;
+    let name = args
+        .recipe
+        .as_deref()
+        .ok_or_else(|| Refusal::WithService(args.repo.clone()))?;
     let svc = manifest.service(name).ok_or_else(|| {
-        let have: Vec<&str> = manifest.service_listing().iter().map(|(n, _)| *n).collect();
+        let have: Vec<String> = manifest
+            .service_listing()
+            .iter()
+            .map(|(n, _)| n.to_string())
+            .collect();
         match have.is_empty() {
-            true => format!("{repo_name} defines no services, so there is nothing to run against"),
-            false => format!(
-                "no service '{name}' for {repo_name}. It has: {}",
-                have.join(", ")
-            ),
+            true => Refusal::NoServices(repo_name.clone()),
+            false => Refusal::NoSuchService {
+                name: name.to_string(),
+                repo: repo_name.clone(),
+                have,
+            },
         }
     })?;
     if svc.serves.is_empty() {
-        return Err(format!(
-            "service '{name}' starts nothing: it needs a [[service.{name}.serve]] with a run"
-        )
-        .into());
+        return Err(Refusal::StartsNothing(name.to_string()).into());
     }
-    let command = args
-        .command
-        .as_deref()
-        .ok_or("with needs a command after --")?;
+    let command = args.command.as_deref().ok_or(Refusal::WithCommand)?;
 
     let backend = Jobs::on(match Jobs::destination(args.machine())? {
         Destination::Named(m) => Some(m),
         Destination::Unnamed => None,
-        Destination::Unchosen => {
-            return Err("with starts servers on a machine this computer then drives, so it names one: --on <machine>,\n  \
-                        or export DIBS_ON. dibs --machines lists them."
-                .into())
-        }
+        Destination::Unchosen => return Err(Refusal::WithUnplaced.into()),
     });
     let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
     if args.device.is_some() {
@@ -173,14 +167,13 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
                 c.lock = None;
             }
             if reported.prepared.is_none() || reported.outcome.status != 0 {
-                return Err(RunError::call(
-                    reported.outcome.status,
-                    format!(
-                        "could not prepare {repo_name} from {} (exit {})",
-                        from.display(),
-                        reported.outcome.status
-                    ),
-                ));
+                return Err(RunError::Call {
+                    exit: reported.outcome.status,
+                    failed: Unprepared::PrepareFrom {
+                        repo: repo_name.clone(),
+                        from: from.to_path_buf(),
+                    },
+                });
             }
             reported
         }
@@ -192,13 +185,13 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             let title = preparing_title(&repo_name, reference);
             let reported = backend.run_reporting(&prepare, &title, &mut |_| {});
             if reported.outcome.status != 0 {
-                return Err(RunError::call(
-                    reported.outcome.status,
-                    format!(
-                        "could not prepare {repo_name}@{reference} (exit {})",
-                        reported.outcome.status
-                    ),
-                ));
+                return Err(RunError::Call {
+                    exit: reported.outcome.status,
+                    failed: Unprepared::PrepareRef {
+                        repo: repo_name.clone(),
+                        reference: reference.to_string(),
+                    },
+                });
             }
             if let Some(prepared) = &reported.prepared {
                 announce_prepared(prepared);
@@ -207,10 +200,10 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         }
     };
     let Some(prepared) = reported.prepared else {
-        return Err(RunError::call(
-            Exit::Setup.status(),
-            "the worktree setup did not report a path; see its output above".into(),
-        ));
+        return Err(RunError::Call {
+            exit: Exit::Setup.status(),
+            failed: Unprepared::NoPath,
+        });
     };
     send_missing_gitdbs(&backend, &prepared, &plan.gitdbs);
 

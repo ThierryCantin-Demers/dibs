@@ -4,7 +4,13 @@
 //! by an agent choosing to mention it in chat. The same few gaps were found again session after
 //! session, and the one report anybody wrote down lived in a scratchpad and went with it.
 
-use crate::{paths::Paths, records::runs};
+use crate::{
+    paths::{FileError, Paths},
+    records::{
+        error::{Kept, RecordsError},
+        runs,
+    },
+};
 pub use dibs_format::FrictionNote as Note;
 use std::{
     collections::BTreeMap,
@@ -15,19 +21,19 @@ use std::{
 /// Beside the run records, and moved by a variable of its own: it answers for the same work, and
 /// where it should live is the user's to decide. Sharing it is theirs to choose too, with
 /// DIBS_REPORTS, and never a default.
-pub fn path() -> Result<PathBuf, String> {
+pub fn path() -> Result<PathBuf, RecordsError> {
     Paths::from_env()
         .friction()
-        .ok_or_else(|| "no HOME, and nowhere to record this".into())
+        .ok_or(RecordsError::NoHome(Kept::Friction))
 }
 
 /// Whitespace collapsed to one line, because what makes the list readable later is that each
 /// report is one, and two sessions reporting the same thing have to land on the same text to be
 /// counted as two.
-pub fn note(text: &str, by: &str, version: &str, when: u64) -> Result<Note, String> {
+pub fn note(text: &str, by: &str, version: &str, when: u64) -> Result<Note, RecordsError> {
     let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if text.is_empty() {
-        return Err("--friction takes one line: what got in the way, in your own words".into());
+        return Err(RecordsError::EmptyNote);
     }
     Ok(Note {
         when,
@@ -40,16 +46,16 @@ pub fn note(text: &str, by: &str, version: &str, when: u64) -> Result<Note, Stri
 
 /// Appended, never rewritten, so two sessions reporting at the same moment cannot lose each
 /// other's line.
-pub fn append(path: &Path, n: &Note) -> Result<(), String> {
+pub fn append(path: &Path, n: &Note) -> Result<(), RecordsError> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        std::fs::create_dir_all(dir).map_err(FileError::at(dir))?;
     }
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    writeln!(f, "{}", n.to_line()).map_err(|e| format!("{}: {e}", path.display()))
+        .map_err(FileError::at(path))?;
+    Ok(writeln!(f, "{}", n.to_line()).map_err(FileError::at(path))?)
 }
 
 pub fn load(path: &Path) -> Vec<Note> {

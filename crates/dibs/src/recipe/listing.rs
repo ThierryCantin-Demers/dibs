@@ -1,6 +1,6 @@
 use super::{
+    error::RecipeError,
     manifest::{Manifest, Source, Verb, local_dir},
-    refusals::RecipeError,
     repo::{resolve_repo, root_of},
 };
 use crate::{cli::RecipeCall, execution};

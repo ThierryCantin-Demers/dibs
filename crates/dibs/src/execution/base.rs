@@ -1,4 +1,5 @@
 use super::{
+    error::{Refusal, RunError, Unprepared},
     jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
     pins::{self, pin_spec, pins_of},
     record::{batch_of_caller, fetch_artifacts, measured_summary},
@@ -12,9 +13,9 @@ use super::{
 };
 use crate::{
     batch,
-    call::{CallError, Destination, RecipeJob},
+    call::{Destination, RecipeJob},
     cli::{RecipeCall, ShellWord},
-    recipe::{self, Lock, Manifest, RecipeError, Resolved, resolve},
+    recipe::{self, Lock, Manifest, Resolved, resolve},
     records::{affinity_get, affinity_set, now_secs, pinned, write_record},
 };
 use dibs_format::{
@@ -23,80 +24,9 @@ use dibs_format::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt,
     path::Path,
     process::ExitCode,
 };
-
-/// What stops a recipe run, said as its `Display` in full, and the exit it ends with.
-#[derive(Debug)]
-pub enum RunError {
-    /// Refused here: exit 2.
-    Refused(String),
-    /// A call the run made failed. Its exit passes on, so an unreachable machine reads as 69 to
-    /// whoever ran this rather than as a refusal.
-    Call { exit: i32, why: String },
-    /// A call refused before it was sent, in its own words.
-    Unsent(CallError),
-}
-
-impl RunError {
-    pub fn call(exit: i32, why: String) -> RunError {
-        RunError::Call { exit, why }
-    }
-
-    pub fn exit(&self) -> u8 {
-        let refused = Exit::Refused.code();
-        let exit = match self {
-            RunError::Refused(_) => return refused,
-            RunError::Call { exit, .. } => *exit,
-            RunError::Unsent(e) => e.exit(),
-        };
-        u8::try_from(exit)
-            .ok()
-            .filter(|c| *c != 0)
-            .unwrap_or(refused)
-    }
-}
-
-impl fmt::Display for RunError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RunError::Refused(why) | RunError::Call { why, .. } => writeln!(f, "dibs: {why}"),
-            RunError::Unsent(e) => e.fmt(f),
-        }
-    }
-}
-
-impl From<CallError> for RunError {
-    fn from(e: CallError) -> RunError {
-        RunError::Unsent(e)
-    }
-}
-
-impl From<String> for RunError {
-    fn from(why: String) -> RunError {
-        RunError::Refused(why)
-    }
-}
-
-impl From<&str> for RunError {
-    fn from(why: &str) -> RunError {
-        RunError::Refused(why.to_string())
-    }
-}
-
-impl From<batch::BatchError> for RunError {
-    fn from(e: batch::BatchError) -> RunError {
-        RunError::Refused(e.to_string())
-    }
-}
-
-impl From<RecipeError> for RunError {
-    fn from(e: RecipeError) -> RunError {
-        RunError::Refused(e.to_string())
-    }
-}
 
 /// What is about to be prepared, for the person reading along.
 pub fn preparing(repo: &str, arm: &Arm, local: Option<&super::Local>, dir: &Path) -> String {
@@ -382,15 +312,13 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 let reported = sync_prepared(&backend, from, &l.key, &send, &mut announce);
                 drop(lock);
                 if reported.prepared.is_none() || reported.outcome.status != 0 {
-                    return Err(RunError::call(
-                        reported.outcome.status,
-                        format!(
-                            "could not send the pinned {} from {} (exit {})",
-                            p.repo,
-                            from.display(),
-                            reported.outcome.status
-                        ),
-                    ));
+                    return Err(RunError::Call {
+                        exit: reported.outcome.status,
+                        failed: Unprepared::SendPinned {
+                            repo: p.repo.clone(),
+                            from: from.to_path_buf(),
+                        },
+                    });
                 }
                 reported
             }
@@ -403,22 +331,22 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 let title = preparing_title(&p.repo, &p.reference);
                 let reported = backend.run_reporting(&prepare, &title, &mut |_| {});
                 if reported.outcome.status != 0 {
-                    return Err(RunError::call(
-                        reported.outcome.status,
-                        format!(
-                            "could not prepare the pinned {}@{} (exit {})",
-                            p.repo, p.reference, reported.outcome.status
-                        ),
-                    ));
+                    return Err(RunError::Call {
+                        exit: reported.outcome.status,
+                        failed: Unprepared::PreparePinned {
+                            repo: p.repo.clone(),
+                            reference: p.reference.clone(),
+                        },
+                    });
                 }
                 reported
             }
         };
         let Some(prepared) = reported.prepared else {
-            return Err(RunError::call(
-                Exit::Setup.status(),
-                "the worktree setup did not report a path; see its output above".into(),
-            ));
+            return Err(RunError::Call {
+                exit: Exit::Setup.status(),
+                failed: Unprepared::NoPath,
+            });
         };
         send_missing_gitdbs(&backend, &prepared, &plan.gitdbs);
         pinned.push(prepared);
@@ -543,20 +471,16 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 } = sync_prepared(&backend, arms[a].dir(&dir), key, &send, &mut announce);
                 checkout_locks[a] = None;
                 let Some(prepared) = prepared else {
-                    return Err(RunError::call(
-                        out.status,
-                        format!("could not prepare {} (exit {})", what(a), out.status),
-                    ));
+                    return Err(RunError::Call {
+                        exit: out.status,
+                        failed: Unprepared::Prepare(what(a)),
+                    });
                 };
                 if out.status != 0 {
-                    return Err(RunError::call(
-                        out.status,
-                        format!(
-                            "sending {} failed (exit {})",
-                            arms[a].dir(&dir).display(),
-                            out.status
-                        ),
-                    ));
+                    return Err(RunError::Call {
+                        exit: out.status,
+                        failed: Unprepared::Send(arms[a].dir(&dir).to_path_buf()),
+                    });
                 }
                 send_missing_gitdbs(&backend, &prepared, &t.plan.gitdbs);
                 t.prepared = Some(prepared);
@@ -575,10 +499,10 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     ..
                 } = backend.run_reporting(&prepare, &title, &mut |_| {});
                 let Some(prepared) = prepared.filter(|_| out.status == 0) else {
-                    return Err(RunError::call(
-                        out.status,
-                        format!("could not prepare {} (exit {})", what(a), out.status),
-                    ));
+                    return Err(RunError::Call {
+                        exit: out.status,
+                        failed: Unprepared::Prepare(what(a)),
+                    });
                 };
                 announce(&prepared);
                 send_missing_gitdbs(&backend, &prepared, &t.plan.gitdbs);
@@ -640,10 +564,10 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 prepared,
             } = backend.run_reporting(&folded, &run, &mut announce);
             let Some(prepared) = prepared else {
-                return Err(RunError::call(
-                    out.status,
-                    format!("could not prepare {} (exit {})", what(arm), out.status),
-                ));
+                return Err(RunError::Call {
+                    exit: out.status,
+                    failed: Unprepared::Prepare(what(arm)),
+                });
             };
             send_missing_gitdbs(&backend, &prepared, &t.plan.gitdbs);
             let waited = held(&prepared);
@@ -820,11 +744,7 @@ pub fn destination(
     match Jobs::destination(args.machine())? {
         Destination::Named(m) => Ok(Some(m)),
         Destination::Unnamed => Ok(None),
-        Destination::Unchosen => Err(format!(
-            "{name} measures, and a measurement names its machine: its series belongs to the machine it\n  \
-             ran on. Give --on <machine>, or export DIBS_ON; dibs --machines lists them."
-        )
-        .into()),
+        Destination::Unchosen => Err(Refusal::Unmeasured(name.to_string()).into()),
     }
 }
 
@@ -926,10 +846,8 @@ pub fn sh(s: &str) -> String {
 /// `dibs raw`: nothing prepared and nothing looked up, the last resort, and recorded so that
 /// being a last resort is visible rather than assumed.
 pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
-    let reason = args.reason.as_deref().ok_or(
-        "raw needs --reason. It is recorded, and a reason that keeps recurring is what\n             specifies the next recipe. If this fits a recipe, use the recipe instead.",
-    )?;
-    let command = args.command.as_deref().ok_or("raw needs -- <command>")?;
+    let reason = args.reason.as_deref().ok_or(Refusal::RawReason)?;
+    let command = args.command.as_deref().ok_or(Refusal::RawCommand)?;
     // Always shared, and nothing is prepared for it, so it is placed like any other shared work.
     let backend = Jobs::placed(args.machine(), None, None)?;
     let out = backend.run(
