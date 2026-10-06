@@ -439,3 +439,49 @@ fn after_the_sync_only_changed_files_are_newer_than_the_copied_build() {
         "the sync does not delete the sweep's marker"
     );
 }
+
+/// Master's prepare, as clients that have not updated send it on switch day.
+const BASH_PREPARE: &str = include_str!("fixtures/bash-prepare.sh");
+
+#[test]
+fn a_bash_prepare_and_a_runner_prepare_of_one_commit_take_turns() {
+    let mut s = Sandbox::new();
+    let dir = app(&s);
+    recipes(&s, PARAMS);
+    s.git("app", &["add", "-A"]);
+    s.git("app", &["commit", "-qm", "recipes"]);
+    s.git("app", &["push", "-q", "origin", "HEAD:main"]);
+    let main = s.git("app", &["rev-parse", "HEAD"]);
+    s.write("bash-prepare.sh", BASH_PREPARE);
+    let scratch = s.path("scratch");
+    fs::create_dir_all(scratch.join("ws/app")).unwrap();
+    let turn = fs::File::create(scratch.join("ws/app/.prepare.lock")).unwrap();
+    turn.lock().unwrap();
+    let (out, err) = (s.path("bash.out"), s.path("bash.err"));
+    let bash = s.spawn(
+        s.command("bash", [s.p("bash-prepare.sh")])
+            .env("HOME", s.p("home"))
+            .env("DIBS_SCRATCH", scratch.display().to_string())
+            .streams_to(&out, &err),
+    );
+    let runner = s.spawn(s.dibs(["build", &format!("{dir}@main"), "p"]));
+    s.until_records("the runner's job started", || s.holders() == 1);
+    drop(turn);
+    assert_eq!(s.wait(bash), 0, "{}", fs::read_to_string(&err).unwrap());
+    assert_eq!(s.wait(runner), 0);
+    let n = Normal::of(&s).literal(&main[..12], "<main>");
+    let said: String = fs::read_to_string(&out)
+        .unwrap()
+        .lines()
+        .map(|l| format!("1| {}\n", n.apply(l)))
+        .collect();
+    let mut t = Transcript::default();
+    t.section(
+        "a bash prepare and dibs build app@main p, both of app@main, the repo's turn held until the runner's job starts",
+        &format!(
+            "{said}{}\n",
+            n.apply(&tree(&scratch, &n).join("\n"))
+        ),
+    );
+    snapshot("trees-bash", t.text());
+}

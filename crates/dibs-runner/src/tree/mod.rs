@@ -5,6 +5,8 @@ mod base;
 mod builds;
 mod clocks;
 mod copy;
+#[cfg(test)]
+mod edges;
 mod error;
 mod gc;
 mod git;

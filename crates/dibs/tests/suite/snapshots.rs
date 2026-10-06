@@ -1087,6 +1087,76 @@ fn gc() {
     snapshot("gc", t.text());
 }
 
+/// Each clock is its own, from the account's settings: a tree, a job's directory and a cache
+/// one whole day inside their keep and one day past it.
+#[test]
+fn keep_boundaries() {
+    let s = Sandbox::new();
+    s.write(
+        "home/.config/dibs/runner.toml",
+        "keep_days = 4\ntarget_keep_days = 2\n",
+    );
+    let aged = [
+        (
+            "ws/demo/four-days",
+            "ws/demo/four-days/.dibs-used",
+            "4 days ago",
+        ),
+        (
+            "ws/demo/five-days",
+            "ws/demo/five-days/.dibs-used",
+            "5 days ago",
+        ),
+        (
+            "jobs/20260101000000-4",
+            "jobs/20260101000000-4",
+            "4 days ago",
+        ),
+        (
+            "jobs/20260101000000-5",
+            "jobs/20260101000000-5",
+            "5 days ago",
+        ),
+        (
+            "target/two-days",
+            "target/two-days/.dibs-used",
+            "2 days ago",
+        ),
+        (
+            "target/three-days",
+            "target/three-days/.dibs-used",
+            "3 days ago",
+        ),
+    ];
+    for (dir, marker, when) in aged {
+        fs::create_dir_all(s.path(&format!("gc/{dir}"))).unwrap();
+        if marker != dir {
+            s.write(&format!("gc/{marker}"), "");
+        }
+        s.command("touch", ["-d", when, &s.p(&format!("gc/{marker}"))])
+            .run();
+    }
+    let n = Normal::of(&s)
+        .literal(env!("DIBS_RUNNER_HASH"), "<hash>")
+        .clocked()
+        .rule(r"\b[0-9]+(\.[0-9])?[KMG]\b", "<size>")
+        .rule(
+            r"(?m)^  \S+ free of \S+ on \S+$",
+            "  <free> free of <size> on <mount>",
+        )
+        .rule(r"(build caches on) \S+,", "$1 <mount>,");
+    let out = s
+        .dibs(["--gc", "--dry-run"])
+        .env("DIBS_SCRATCH", s.p("gc"))
+        .run();
+    let mut t = Transcript::default();
+    t.section(
+        "dibs --gc --dry-run  (keep_days = 4, target_keep_days = 2)",
+        &n.output(&out),
+    );
+    snapshot("keep-boundaries", t.text());
+}
+
 #[test]
 fn out_and_fetch() {
     let mut s = Sandbox::new();

@@ -1,0 +1,21 @@
+== a bash prepare and dibs build app@main p, both of app@main, the repo's turn held until the runner's job starts
+1| DIBS-WT <root>/scratch/ws/app/<main>
+1| DIBS-TARGET <root>/scratch/target/app
+1| DIBS-REV app <main>
+jobs/  (1 job directories)
+out/
+target/
+  .app.lock
+  app/
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .prepare.lock  (empty)
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      a.txt

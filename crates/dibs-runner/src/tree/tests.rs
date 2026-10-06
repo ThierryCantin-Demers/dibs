@@ -29,10 +29,10 @@ use std::{
 };
 
 /// A scratch, and a home whose `prog/demo` is a clone with a branch only it has.
-struct Machine {
-    root: PathBuf,
+pub struct Machine {
+    pub root: PathBuf,
     reflinks: Reflinks,
-    seed_wait: Duration,
+    pub seed_wait: Duration,
     environment: Environment,
     deadline: Deadline,
     unstopped: Box<Guard>,
@@ -42,7 +42,7 @@ struct Machine {
 type Guard = dyn Fn(&mut dyn FnMut()) + Sync;
 
 impl Machine {
-    fn new() -> Machine {
+    pub fn new() -> Machine {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "dibs-trees.{}.{}",
@@ -83,7 +83,7 @@ impl Machine {
         self
     }
 
-    fn p(&self, rel: &str) -> PathBuf {
+    pub fn p(&self, rel: &str) -> PathBuf {
         self.root.join(rel)
     }
 
@@ -99,7 +99,7 @@ impl Machine {
     }
 
     /// A prepare, with `hear` told each thing it says as it says it.
-    fn prepare_hearing(
+    pub fn prepare_hearing(
         &self,
         prepare: &Prepare,
         hear: &dyn Fn(&str),
@@ -139,13 +139,13 @@ impl Machine {
         (prepared, said.into_inner())
     }
 
-    fn prepared(&self, prepare: &Prepare) -> Prepared {
+    pub fn prepared(&self, prepare: &Prepare) -> Prepared {
         let (prepared, said) = self.prepare(prepare);
         prepared.unwrap_or_else(|e| panic!("{e:?}: {said}"))
     }
 
     /// A sibling target with an artifact, a lock and, given lines, a record.
-    fn sibling(&self, name: &str, record: &[&str]) -> PathBuf {
+    pub fn sibling(&self, name: &str, record: &[&str]) -> PathBuf {
         let t = self.p(&format!("scratch/target/{name}"));
         fs::create_dir_all(t.join("debug/deps")).unwrap();
         fs::write(t.join(format!("debug/deps/lib{name}.rlib")), "artifact\n").unwrap();
@@ -159,7 +159,7 @@ impl Machine {
     }
 
     /// A local tree's sources.
-    fn sources(&self, key: &str, file: &str) -> PathBuf {
+    pub fn sources(&self, key: &str, file: &str) -> PathBuf {
         let ws = self.p(&format!("scratch/ws/demo/local-{key}"));
         fs::create_dir_all(&ws).unwrap();
         fs::write(ws.join(file), "source\n").unwrap();
@@ -174,10 +174,10 @@ impl Drop for Machine {
 }
 
 /// A lock held by a process of its own: one this test held could linger in a parallel test's fork.
-struct Building(Child);
+pub struct Building(Child);
 
 impl Building {
-    fn holding(lock: &Path) -> Building {
+    pub fn holding(lock: &Path) -> Building {
         let mut build = Command::new("flock")
             .arg(lock)
             .args(["-c", "echo held; read -r _"])
@@ -192,13 +192,13 @@ impl Building {
         Building(build)
     }
 
-    fn done(mut self) {
+    pub fn done(mut self) {
         drop(self.0.stdin.take());
         self.0.wait().unwrap();
     }
 }
 
-fn run(dir: &Path, cmd: &str) -> String {
+pub fn run(dir: &Path, cmd: &str) -> String {
     let out = Command::new("bash")
         .args(["-c", cmd])
         .current_dir(dir)
@@ -225,7 +225,7 @@ fn executable(path: &Path, text: &str) {
     assert!(writer.wait().unwrap().success());
 }
 
-fn lines(of: &[&str]) -> Vec<String> {
+pub fn lines(of: &[&str]) -> Vec<String> {
     of.iter().map(|l| l.to_string()).collect()
 }
 
@@ -250,7 +250,7 @@ fn fetched(reference: &str, slot: u32) -> Prepare {
     }
 }
 
-fn local(key: &str, packages: &[&str]) -> Prepare {
+pub fn local(key: &str, packages: &[&str]) -> Prepare {
     Prepare {
         source: Source::Local {
             key: key.into(),
