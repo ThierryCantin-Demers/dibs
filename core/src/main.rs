@@ -443,6 +443,10 @@ fn run() -> Result<ExitCode, Failure> {
             "raw needs --reason. It is recorded, and a reason that keeps recurring is what\n             specifies the next recipe. If this fits a recipe, use the recipe instead.",
         )?;
         let command = args.command.as_deref().ok_or("raw needs -- <command>")?;
+        let wrong = values_not_taken(args.params.keys());
+        if !wrong.is_empty() {
+            return Err(format!("raw {}.", wrong.join(";\n  and ")).into());
+        }
         // Always shared, and nothing is prepared for it, so it is placed like any other shared work.
         let mut backend = Dibs::default();
         backend.machine = place(&backend.program, None, None)?;
@@ -1837,11 +1841,27 @@ fn refuse_shell_words(args: &Args, repo: &str) -> Result<(), String> {
             "takes no --label: its durations are filed under {label}, {LABEL_DERIVED} A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so"
         ));
     }
+    wrong.extend(values_not_taken(args.params.keys().filter(|n| *n != "label")));
     match wrong.as_slice() {
         [] => Ok(()),
         [one] => Err(format!("shell {one}.\n  usage: {SHELL_USAGE}")),
         all => Err(format!("shell {}.\n  usage: {SHELL_USAGE}", all.join(";\n  and "))),
     }
+}
+
+/// A one-off has no recipe to declare values, so a `--name value` it was given would be dropped.
+fn values_not_taken<'a>(names: impl Iterator<Item = &'a String>) -> Vec<String> {
+    let (served, other): (Vec<&String>, Vec<&String>) =
+        names.partition(|n| matches!(n.as_str(), "with" | "port" | "ready" | "ready-within"));
+    let mut wrong: Vec<String> = other.iter().map(|n| format!("takes no --{n}")).collect();
+    if !served.is_empty() {
+        let flags: Vec<String> = served.iter().map(|n| format!("--{n}")).collect();
+        wrong.push(format!(
+            "starts no server, so it takes no {}: dibs run does,\n  as dibs run --port <name> --with <name>='<server>' --ready tcp:<name> -- '<cmd>'",
+            flags.join(", ")
+        ));
+    }
+    wrong
 }
 
 const SHELL_USAGE: &str = "dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>";

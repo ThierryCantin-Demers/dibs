@@ -588,6 +588,24 @@ fn a_shell_names_every_missing_piece_at_once() {
 }
 
 #[test]
+fn a_one_off_refuses_a_server_it_would_not_start() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    let n0 = arrivals(&s);
+    let served = ["--port", "ws", "--with", "ws=serve", "--ready", "tcp:ws", "--", "echo hi"];
+    let raw = s.dibs(["raw", "--reason", "a test against a server"].into_iter().chain(served)).run();
+    assert_eq!((raw.code, raw.stderr.lines_with("raw starts no server, so it takes no --port, --ready, --with: dibs run does")), (2, 1), "{}", raw.all());
+    let shell = s.dibs(["shell", &format!("{app}@local"), "--reason", "a test against a server", "--frobs", "3"].into_iter().chain(served)).run();
+    assert_eq!(
+        (shell.code, shell.stderr.lines_with("shell takes no --frobs"), shell.stderr.lines_with("and starts no server")),
+        (2, 1, 1),
+        "{}",
+        shell.all()
+    );
+    assert_eq!(arrivals(&s), n0, "and nothing is sent");
+}
+
+#[test]
 fn reps_build_once_and_measure_each_time_into_one_record() {
     let s = Sandbox::new();
     let app = app(&s);
