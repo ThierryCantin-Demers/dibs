@@ -141,6 +141,7 @@ impl Visit {
                     machine: &machine,
                     settings: &self.settings,
                     write: self.call.label().as_str() == "check-write",
+                    json: self.call.request.json,
                 }
                 .serve(&self.sink);
             }

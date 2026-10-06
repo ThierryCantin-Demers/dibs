@@ -1,4 +1,4 @@
-use crate::probe::base::{Report, output_of};
+use crate::probe::{base::Report, facts::Tools};
 
 /// A Mac's one GPU, as system_profiler names it. There is no slot to pin it by: the alias names it
 /// for the record, and `--device` on it pins nothing.
@@ -8,7 +8,9 @@ pub struct Gpus {
 
 impl Gpus {
     pub fn find(report: &mut Report) -> Gpus {
-        let said = output_of("system_profiler", &["SPDisplaysDataType"]).unwrap_or_default();
+        let said = Tools::here()
+            .output("system_profiler", &["SPDisplaysDataType"])
+            .unwrap_or_default();
         let field = |key: &str| {
             said.lines()
                 .find_map(|l| Some(l.trim().strip_prefix(key)?.trim().to_string()))

@@ -866,8 +866,7 @@ fn machines_says_what_each_one_lacks_against_what_it_should_have() {
     assert_eq!(
         (
             out.code,
-            out.stdout
-                .lines_with("here  set up by hand, probed through dibs"),
+            out.stdout.lines_with("here  set up by hand"),
             out.stdout
                 .lines_matching(r"^  NO  login    a key of nobody listed: SHA256:"),
             out.stdout
@@ -882,22 +881,16 @@ fn machines_says_what_each_one_lacks_against_what_it_should_have() {
         "{}",
         out.all()
     );
-    assert_eq!(
-        s.log()
-            .lines_matching("\tarrived\t.*\tshared\tmachines-probe\t"),
-        1,
-        "the machine in the pool is probed under its shared lock:\n{}",
-        s.log()
-    );
     let json: serde_json::Value =
         serde_json::from_str(&s.dibs(["machines", "--json"]).run().stdout).unwrap();
     assert_eq!(
         (
             json["machines"].as_array().map(Vec::len),
             json["people"][0].as_str(),
-            json["machines"][1]["access"]["people"]["alice"].as_str()
+            json["machines"][1]["access"]["people"]["alice"].as_str(),
+            json["machines"][1]["unprobed"].is_null(),
         ),
-        (Some(2), Some("alice"), Some("key")),
+        (Some(2), Some("alice"), Some("key"), true),
         "--json is one report per machine, with who stands where: {json}"
     );
     let one: serde_json::Value =

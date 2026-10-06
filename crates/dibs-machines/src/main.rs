@@ -193,11 +193,7 @@ impl App {
                 self.selected = None;
             }
         });
-        ui.label(format!(
-            "Set up by {}, probed {}.",
-            r.provisioned,
-            r.via.describe()
-        ));
+        ui.label(format!("Set up by {}.", r.provisioned));
         if let Some(why) = &r.unprobed {
             ui.colored_label(ui.visuals().warn_fg_color, format!("Not probed: {why}"));
         }

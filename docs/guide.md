@@ -612,11 +612,13 @@ login = "keys"                       # or "tailscale", for Tailscale SSH
 paths = ["box.local", "box.example.ts.net"]
 profiles = ["dibs", "rust", "cuda", "vulkan", "unprivileged"]      # also "metal"
 repos = ["burn", "cubecl"]           # default: every repo with a recipes file
-# ssh = "user@box.local"             # only for a machine not yet in the pool
+# ssh = "user@box.local"             # a machine not yet in the pool: what --check reaches
 ```
 
-Each machine is probed at once, a machine in the pool as a shared job under its lock, waiting at
-most 30 seconds before it is reported busy instead. The report, or `--json`, says per machine:
+Each machine in the pool is probed at once by its runner, which reads the same facts `--check`
+reports, takes no lock and has 30 seconds to answer. A machine not yet in the pool has no runner
+to ask, so it is reported unprobed with the `dibs --check` that records it. The report, or
+`--json`, says per machine:
 
 - **paths:** whether each name resolves here and answers on port 22.
 - **login:** with keys, whether everyone listed has a key there, and any key belonging to nobody
@@ -624,7 +626,7 @@ most 30 seconds before it is reported busy instead. The report, or `--json`, say
   whether it is on, and any key in `authorized_keys` beside it, which would be a second way in;
   who may log in is then the tailnet's policy, which the machine cannot say.
 - **repos:** a clone at `~/prog/<repo>` for each.
-- **dibs:** bash 5.1 or newer, flock, GNU timeout, rsync and git.
+- **dibs:** bash, which jobs run under, rsync 3, git, and cargo, which builds the runner.
 - **rust:** rustup, stable, and every toolchain the machine's repos pin in `rust-toolchain`.
 - **cuda**, **vulkan**, **metal:** the driver and nvcc, the loader, macOS.
 - **unprivileged:** the account has no sudo without a password and is in no group that is root in

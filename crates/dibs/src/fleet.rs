@@ -5,67 +5,32 @@
 //! on it.
 
 use crate::{
-    call::{LockedCall, Origin, Output, RecipeJob},
+    call::{Asked, Bound, MachineCall},
     caller::Caller,
-    cli::{Call, Command as ShellCommand, Mode, Run},
+    cli::Call,
     inventory::{Inventory, InventoryError},
-    machine::Stream,
+    machine::Kept,
     paths::{FileError, Paths},
     recipe::{RepoError, repo_root},
 };
 use dibs_format::{
-    Exit, Label, MachineName,
-    fleet::{Access, Area, Finding, Overview, PathCheck, Provisioned, Report, Standing, Via},
+    Exit, Label, MachineName, Mode,
+    fleet::{Access, Area, Facts, Finding, Overview, PathCheck, Provisioned, Report, Standing},
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt, io,
-    io::Write as _,
     net::{TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
-    process::{Command, ExitCode, Stdio},
+    process::{Command, ExitCode},
     time::Duration,
 };
 
-/// Written for POSIX sh, since it has to run before a machine has what dibs needs, and few enough
-/// lines that a job's digest of its output keeps all of them.
-pub const PROBE: &str = r#"PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/local/cuda/bin:$PATH"
-p() { printf 'DIBS-PROBE %s\n' "$*"; }
-have() { command -v "$1" 2>/dev/null; }
-p sys "user=$(id -un)" "host=$(hostname -s 2>/dev/null || hostname)" "os=$(uname -s)" "arch=$(uname -m)"
-best=$(for b in "$(have bash)" /opt/homebrew/bin/bash /usr/local/bin/bash /bin/bash; do
-    [ -n "$b" ] && [ -x "$b" ] && "$b" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"' 2>/dev/null
-done | sort -t. -k1,1n -k2,2n | tail -n 1)
-p bash "version=$best"
-p tools "flock=$(have flock)" "timeout=$(have timeout)" "gtimeout=$(have gtimeout)" "rsync=$(rsync --version 2>/dev/null | awk 'NR == 1 && $1 == "rsync" {print $3}')" "git=$(have git)"
-p rust "rustup=$(have rustup)" "toolchains=$(rustup toolchain list 2>/dev/null | awk '{print $1}' | paste -sd, -)"
-vk=no
-{ /sbin/ldconfig -p || /usr/sbin/ldconfig -p; } 2>/dev/null | grep -q 'libvulkan\.so\.1' && vk=yes
-p gpu "nvidia=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1)" "nvcc=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9.]*\),.*/\1/p')" "vulkan=$vk"
-np=no
-sudo -n -l >/dev/null 2>&1 && np=yes
-p account "nopasswd=$np" "groups=$(id -Gn | tr ' ' ,)"
-p keys $(ssh-keygen -lf "$HOME/.ssh/authorized_keys" 2>/dev/null | awk '{print $2}')
-ts=no
-tailscale debug prefs 2>/dev/null | grep -q '"RunSSH": true' && ts=yes
-p login "tailscale_ssh=$ts"
-r=
-for d in "$HOME"/prog/*/; do
-    [ -e "$d.git" ] || continue
-    r="$r $(basename "$d")=$(git -C "$d" remote get-url origin 2>/dev/null)"
-done
-p repos $r
-p disk "free_kb=$(df -Pk "$HOME" | awk 'NR==2{print $4}')"
-"#;
-
 /// Groups whose members are root in all but name.
 const PRIVILEGED_GROUPS: [&str; 4] = ["sudo", "admin", "wheel", "docker"];
-const BASH_NEEDED: (u32, u32) = (5, 1);
-/// Long enough to go around a quick shared job, short enough not to sit out a benchmark.
+/// How long a machine has to answer its probe.
 const PROBE_WAIT_SECONDS: u64 = 30;
-const PROBE_LABEL: &str = "machines-probe";
-const SSH_UNREACHABLE: i32 = 255;
 
 /// Why `dibs machines` could not read what the machines should have.
 #[derive(Debug)]
@@ -100,15 +65,16 @@ pub enum FleetError {
 /// Why nothing was read from a machine.
 #[derive(Debug)]
 enum Unprobed {
-    /// Not in the pool, and no ssh target.
-    NoWay,
-    Ssh(io::Error),
-    Busy,
+    /// Not in the inventory, so no runner of this dibs is there to ask; with how it is reached.
+    NotInPool(Option<String>),
+    /// No answer within the probe's bound.
+    Late,
     Unreachable(String),
     Failed {
         exit: i32,
         said: String,
     },
+    Unreadable(serde_json::Error),
 }
 
 /// Why a name a machine is reached by does not reach it from here.
@@ -169,15 +135,19 @@ impl From<InventoryError> for FleetError {
 impl fmt::Display for Unprobed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Unprobed::NoWay => f.write_str(
+            Unprobed::NotInPool(Some(ssh)) => write!(
+                f,
+                "not in the pool: dibs --check {ssh} --write records it and installs what probes it"
+            ),
+            Unprobed::NotInPool(None) => f.write_str(
                 "not in the pool, and no ssh to reach it by: give it one, or record it with dibs --check",
             ),
-            Unprobed::Ssh(e) => e.fmt(f),
-            Unprobed::Busy => f.write_str("busy: a benchmark holds it, so it was not probed"),
+            Unprobed::Late => write!(f, "no answer within {PROBE_WAIT_SECONDS}s"),
             Unprobed::Unreachable(said) => write!(f, "unreachable: {said}"),
             Unprobed::Failed { exit, said } => {
                 write!(f, "the probe failed (exit {exit}): {said}")
             }
+            Unprobed::Unreadable(e) => write!(f, "the probe printed no facts: {e}"),
         }
     }
 }
@@ -212,8 +182,7 @@ struct Person {
 #[serde(deny_unknown_fields)]
 struct Machine {
     provisioned: Provisioned,
-    /// How to reach a machine not yet in the pool. One in the pool is only ever reached through
-    /// dibs, under its lock.
+    /// How to reach a machine not yet in the pool, for the `--check` that adds it.
     ssh: Option<String>,
     #[serde(default)]
     paths: Vec<String>,
@@ -249,61 +218,6 @@ enum Profile {
     Unprivileged,
 }
 
-/// What the probe printed, by section.
-#[derive(Default)]
-struct Observed {
-    fields: BTreeMap<String, String>,
-    keys: BTreeSet<String>,
-    repos: BTreeMap<String, String>,
-}
-
-impl Observed {
-    fn parse(text: &str) -> Observed {
-        let mut o = Observed::default();
-        for rest in text.lines().filter_map(|l| l.strip_prefix("DIBS-PROBE ")) {
-            let mut words = rest.split_whitespace();
-            let Some(section) = words.next() else {
-                continue;
-            };
-            for w in words {
-                match (section, w.split_once('=')) {
-                    ("keys", _) => {
-                        o.keys.insert(w.to_string());
-                    }
-                    ("repos", Some((name, url))) => {
-                        o.repos.insert(name.to_string(), url.to_string());
-                    }
-                    (_, Some((k, v))) => {
-                        o.fields.insert(format!("{section}.{k}"), v.to_string());
-                    }
-                    _ => {}
-                }
-            }
-        }
-        o
-    }
-
-    fn get(&self, key: &str) -> &str {
-        self.fields.get(key).map_or("", String::as_str)
-    }
-
-    fn has(&self, key: &str) -> bool {
-        !self.get(key).is_empty()
-    }
-
-    fn bash(&self) -> Option<(u32, u32)> {
-        let (major, minor) = self.get("bash.version").split_once('.')?;
-        Some((major.parse().ok()?, minor.parse().ok()?))
-    }
-
-    fn toolchains(&self) -> Vec<&str> {
-        self.get("rust.toolchains")
-            .split(',')
-            .filter(|t| !t.is_empty())
-            .collect()
-    }
-}
-
 /// What a machine is checked against, beyond its own entry.
 struct Context {
     /// Each key's fingerprint, to whom it belongs.
@@ -318,7 +232,7 @@ impl Machine {
         self.repos.as_deref().unwrap_or(&cx.recipe_repos)
     }
 
-    fn check(&self, o: &Observed, cx: &Context) -> Vec<Finding> {
+    fn check(&self, o: &Facts, cx: &Context) -> Vec<Finding> {
         let login = match self.login {
             Login::Keys => self.keys(&self.access(o, cx)),
             Login::Tailscale => self.tailscale(o, cx),
@@ -328,7 +242,7 @@ impl Machine {
         out
     }
 
-    fn access(&self, o: &Observed, cx: &Context) -> Access {
+    fn access(&self, o: &Facts, cx: &Context) -> Access {
         let holds = |p: &str| {
             o.keys
                 .iter()
@@ -381,9 +295,9 @@ impl Machine {
         )
     }
 
-    fn tailscale(&self, o: &Observed, cx: &Context) -> Finding {
+    fn tailscale(&self, o: &Facts, cx: &Context) -> Finding {
         let mut missing = Vec::new();
-        if o.get("login.tailscale_ssh") != "yes" {
+        if !o.tailscale_ssh {
             missing.push("Tailscale SSH is off".to_string());
         }
         if !o.keys.is_empty() {
@@ -404,7 +318,7 @@ impl Machine {
         )
     }
 
-    fn repo_clones(&self, o: &Observed, cx: &Context) -> Finding {
+    fn repo_clones(&self, o: &Facts, cx: &Context) -> Finding {
         let wanted = self.repos(cx);
         let missing = wanted
             .iter()
@@ -416,36 +330,35 @@ impl Machine {
 }
 
 impl Profile {
-    fn check(self, o: &Observed, m: &Machine, cx: &Context) -> Finding {
+    fn check(self, o: &Facts, m: &Machine, cx: &Context) -> Finding {
         match self {
             Profile::Dibs => {
-                let mut missing: Vec<String> = ["flock", "rsync", "git"]
+                let wants = [
+                    (o.bash.is_none(), "no bash"),
+                    (o.rsync.is_none(), "no rsync 3"),
+                    (!o.git, "no git"),
+                    (!o.cargo, "no cargo"),
+                ];
+                let missing = wants
                     .iter()
-                    .filter(|t| !o.has(&format!("tools.{t}")))
-                    .map(|t| t.to_string())
+                    .filter(|(lacks, _)| *lacks)
+                    .map(|(_, said)| said.to_string())
                     .collect();
-                if !o.has("tools.timeout") && !o.has("tools.gtimeout") {
-                    missing.push("GNU timeout".into());
-                }
-                match o.bash() {
-                    Some(v) if v >= BASH_NEEDED => {}
-                    Some((major, minor)) => missing.push(format!(
-                        "bash {major}.{minor}, needs {}.{}",
-                        BASH_NEEDED.0, BASH_NEEDED.1
-                    )),
-                    None => missing.push("bash".into()),
-                }
                 Finding::new(
                     Area::Dibs,
                     missing,
-                    format!("bash {}", o.get("bash.version")),
+                    format!(
+                        "bash {}, rsync {}",
+                        o.bash.as_deref().unwrap_or_default(),
+                        o.rsync.as_deref().unwrap_or_default()
+                    ),
                 )
             }
             Profile::Rust => {
-                if !o.has("rust.rustup") {
+                if !o.rustup {
                     return Finding::new(Area::Rust, vec!["no rustup".into()], String::new());
                 }
-                let have = o.toolchains();
+                let have = &o.toolchains;
                 let needed: BTreeSet<&str> = std::iter::once("stable")
                     .chain(
                         m.repos(cx)
@@ -470,50 +383,51 @@ impl Profile {
             }
             Profile::Cuda => {
                 let mut missing = Vec::new();
-                if !o.has("gpu.nvidia") {
+                if o.nvidia.is_none() {
                     missing.push("no NVIDIA driver".into());
                 }
-                if !o.has("gpu.nvcc") {
+                if o.nvcc.is_none() {
                     missing.push("no nvcc".into());
                 }
                 Finding::new(
                     Area::Cuda,
                     missing,
-                    format!("driver {}, nvcc {}", o.get("gpu.nvidia"), o.get("gpu.nvcc")),
+                    format!(
+                        "driver {}, nvcc {}",
+                        o.nvidia.as_deref().unwrap_or_default(),
+                        o.nvcc.as_deref().unwrap_or_default()
+                    ),
                 )
             }
             Profile::Vulkan => {
-                let missing = (o.get("gpu.vulkan") != "yes")
+                let missing = (!o.vulkan)
                     .then(|| "no Vulkan loader".to_string())
                     .into_iter()
                     .collect();
                 Finding::new(Area::Vulkan, missing, "loader present".into())
             }
             Profile::Metal => {
-                let missing = (o.get("sys.os") != "Darwin")
-                    .then(|| format!("{} has no Metal", o.get("sys.os")))
+                let missing = (o.os != "Darwin")
+                    .then(|| format!("{} has no Metal", o.os))
                     .into_iter()
                     .collect();
                 Finding::new(Area::Metal, missing, "macOS".into())
             }
             Profile::Unprivileged => {
                 let mut missing = Vec::new();
-                if o.get("account.nopasswd") == "yes" {
+                if o.nopasswd {
                     missing.push("sudo without a password".to_string());
                 }
                 let groups: Vec<&str> = o
-                    .get("account.groups")
-                    .split(',')
+                    .groups
+                    .iter()
+                    .map(String::as_str)
                     .filter(|g| PRIVILEGED_GROUPS.contains(g))
                     .collect();
                 if !groups.is_empty() {
                     missing.push(format!("in {}", groups.join(", ")));
                 }
-                Finding::new(
-                    Area::Account,
-                    missing,
-                    format!("{}, no root", o.get("sys.user")),
-                )
+                Finding::new(Area::Account, missing, format!("{}, no root", o.user))
             }
         }
     }
@@ -589,125 +503,57 @@ fn pin(checkout: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
-/// How a machine was probed, and what it said or why it said nothing.
-struct Probed {
-    via: Via,
-    observed: Result<Observed, Unprobed>,
-}
-
-/// What a probe printed, and its exit.
-struct Heard {
-    status: Option<i32>,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-}
-
-fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> Probed {
-    let (via, heard) = match (pool.contains(name), &m.ssh) {
-        (true, _) => (Via::Dibs, Ok(over_dibs(name))),
-        (false, Some(target)) => (Via::Ssh, over_ssh(target)),
-        (false, None) => {
-            return Probed {
-                via: Via::Ssh,
-                observed: Err(Unprobed::NoWay),
-            };
-        }
+/// What a machine in the pool has, as the check of its runner reads it, or why it said nothing.
+fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> Result<Facts, Unprobed> {
+    if !pool.contains(name) {
+        return Err(Unprobed::NotInPool(m.ssh.clone()));
+    }
+    let machine = MachineName::new(name);
+    let call = Call {
+        on: Some(machine.clone()),
+        ..Call::default()
     };
-    let heard = match heard {
-        Ok(heard) => heard,
+    let flags = Call {
+        json: true,
+        ..Call::default()
+    };
+    let caller = Caller::from_env();
+    let answer = match MachineCall::new(&call, &caller) {
+        Ok(asking) => asking.ask(
+            &machine,
+            &flags,
+            Asked::plain(Mode::Check, Label::new("check")),
+            Bound::polled(PROBE_WAIT_SECONDS, Kept::Everything),
+        ),
         Err(e) => {
-            return Probed {
-                via,
-                observed: Err(Unprobed::Ssh(e)),
-            };
+            return Err(Unprobed::Failed {
+                exit: e.exit(),
+                said: e.to_string().trim().to_string(),
+            });
         }
     };
+    let output = String::from_utf8_lossy(&answer.output);
     let said = || {
-        String::from_utf8_lossy(&heard.stderr)
+        output
             .lines()
             .rfind(|l| !l.trim().is_empty())
             .unwrap_or_default()
             .trim()
             .to_string()
     };
-    let busy = i32::from(Exit::Busy.code());
     let unreachable = i32::from(Exit::Unreachable.code());
-    let observed = match heard.status {
-        Some(0) => Ok(Observed::parse(&String::from_utf8_lossy(&heard.stdout))),
-        Some(code) if code == busy => Err(Unprobed::Busy),
-        Some(code) if code == unreachable || code == SSH_UNREACHABLE => {
-            Err(Unprobed::Unreachable(said()))
-        }
-        code => Err(Unprobed::Failed {
-            exit: code.unwrap_or(-1),
-            said: said(),
-        }),
-    };
-    Probed { via, observed }
-}
-
-/// The probe as a shared job on a machine in the pool, under its lock.
-fn over_dibs(name: &str) -> Heard {
-    let run = Run {
-        command: ShellCommand(vec![PROBE.to_string()]),
-        ..Run::default()
-    };
-    let call = Call {
-        mode: Mode::Run(run.clone()),
-        on: Some(MachineName::new(name)),
-        wait: Some(PROBE_WAIT_SECONDS),
-        label: Some(Label::new(PROBE_LABEL)),
-        stream: true,
-        ..Call::default()
-    };
-    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-    let job = RecipeJob::default();
-    let exit = LockedCall::run_of(&run)
-        .made_by(Origin::Recipe(&job))
-        .run_into(
-            &call,
-            &Caller::from_env(),
-            &mut Output::Lines(&mut |stream, line| match stream {
-                Stream::Out => stdout.extend_from_slice(line),
-                Stream::Err => stderr.extend_from_slice(line),
-            }),
-        );
-    let status = exit.unwrap_or_else(|e| {
-        stderr.extend_from_slice(e.to_string().as_bytes());
-        e.exit()
-    });
-    Heard {
-        status: Some(status),
-        stdout,
-        stderr,
+    match answer.exit {
+        None => Err(Unprobed::Late),
+        Some(0) => serde_json::from_str(
+            output
+                .lines()
+                .find(|l| l.starts_with('{'))
+                .unwrap_or_default(),
+        )
+        .map_err(Unprobed::Unreadable),
+        Some(code) if code == unreachable => Err(Unprobed::Unreachable(said())),
+        Some(exit) => Err(Unprobed::Failed { exit, said: said() }),
     }
-}
-
-fn over_ssh(target: &str) -> std::io::Result<Heard> {
-    let mut child = Command::new("ssh")
-        .args([
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            target,
-            "sh -s",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .take()
-        .expect("piped")
-        .write_all(PROBE.as_bytes())?;
-    let out = child.wait_with_output()?;
-    Ok(Heard {
-        status: out.status.code(),
-        stdout: out.stdout,
-        stderr: out.stderr,
-    })
 }
 
 /// From here: the name resolves, and something answers on the ssh port.
@@ -746,7 +592,7 @@ fn reach_all(paths: &[String]) -> Vec<PathCheck> {
 }
 
 fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Report {
-    let Probed { via, observed } = probe(name, m, pool);
+    let observed = probe(name, m, pool);
     let paths = reach_all(&m.paths);
     let problems = paths.iter().filter_map(|p| p.problem.clone()).collect();
     let mut findings = vec![Finding::new(Area::Paths, problems, m.paths.join(", "))];
@@ -760,7 +606,6 @@ fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Rep
     Report {
         machine: name.to_string(),
         provisioned: m.provisioned.clone(),
-        via,
         unprobed,
         paths,
         access,
@@ -771,11 +616,7 @@ fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Rep
 fn render(reports: &[Report]) -> String {
     let mut s = String::new();
     for r in reports {
-        let via = match r.via {
-            Via::Dibs => "through dibs",
-            Via::Ssh => "over ssh",
-        };
-        s += &format!("{}  set up by {}, probed {via}\n", r.machine, r.provisioned);
+        s += &format!("{}  set up by {}\n", r.machine, r.provisioned);
         for f in &r.findings {
             s += &format!(
                 "  {}  {:<8} {}\n",
@@ -920,16 +761,38 @@ mod tests {
     use super::*;
     use dibs_format::fleet::Provisioner;
 
-    const SEEN: &str = "noise before\n\
-        DIBS-PROBE sys user=box host=box os=Linux arch=x86_64\n\
-        DIBS-PROBE bash version=5.2\n\
-        DIBS-PROBE tools flock=/usr/bin/flock timeout=/usr/bin/timeout gtimeout= rsync=3.2.7 git=/usr/bin/git\n\
-        DIBS-PROBE rust rustup=/h/.cargo/bin/rustup toolchains=stable-x86_64-unknown-linux-gnu,1.98.1-x86_64-unknown-linux-gnu\n\
-        DIBS-PROBE gpu nvidia=610.57.04 nvcc=13.1 vulkan=yes\n\
-        DIBS-PROBE account nopasswd=yes groups=box,render,sudo\n\
-        DIBS-PROBE keys SHA256:alice SHA256:stranger SHA256:carol\n\
-        DIBS-PROBE repos burn=https://x/burn.git cubecl=\n\
-        DIBS-PROBE disk free_kb=123\n";
+    fn seen() -> Facts {
+        Facts {
+            user: "box".into(),
+            host: "box".into(),
+            os: "Linux".into(),
+            arch: "x86_64".into(),
+            bash: Some("5.2.26".into()),
+            rsync: Some("3.2.7".into()),
+            git: true,
+            cargo: true,
+            rustup: true,
+            toolchains: vec![
+                "stable-x86_64-unknown-linux-gnu".into(),
+                "1.98.1-x86_64-unknown-linux-gnu".into(),
+            ],
+            nvidia: Some("610.57.04".into()),
+            nvcc: Some("13.1".into()),
+            vulkan: true,
+            nopasswd: true,
+            groups: vec!["box".into(), "render".into(), "sudo".into()],
+            keys: vec![
+                "SHA256:alice".into(),
+                "SHA256:carol".into(),
+                "SHA256:stranger".into(),
+            ],
+            tailscale_ssh: false,
+            repos: [("burn", "https://x/burn.git"), ("cubecl", "")]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
 
     fn machine(profiles: Vec<Profile>) -> Machine {
         Machine {
@@ -971,37 +834,17 @@ mod tests {
     }
 
     #[test]
-    fn the_probe_is_posix_sh_and_reports_every_section() {
-        let syntax = Command::new("sh")
-            .args(["-n", "-c", PROBE])
-            .status()
-            .unwrap();
-        assert!(syntax.success());
-        let out = Command::new("sh").args(["-c", PROBE]).output().unwrap();
-        let o = Observed::parse(&String::from_utf8_lossy(&out.stdout));
-        for key in [
-            "sys.os",
-            "bash.version",
-            "account.nopasswd",
-            "login.tailscale_ssh",
-            "disk.free_kb",
-        ] {
-            assert!(
-                o.has(key),
-                "{key} missing from:\n{}",
-                String::from_utf8_lossy(&out.stdout)
-            );
-        }
-        assert!(
-            String::from_utf8_lossy(&out.stdout).lines().count() <= 20,
-            "a job's digest keeps its first 20 lines"
-        );
+    fn a_machine_outside_the_pool_is_not_probed() {
+        assert!(matches!(
+            probe("away", &machine(vec![]), &BTreeSet::new()),
+            Err(Unprobed::NotInPool(None))
+        ));
     }
 
     #[test]
     fn keys_are_matched_by_owner_and_a_stranger_or_an_unlisted_person_is_flagged() {
         let m = machine(vec![]);
-        let a = m.access(&Observed::parse(SEEN), &cx());
+        let a = m.access(&seen(), &cx());
         assert_eq!(
             (
                 a.people.get("alice"),
@@ -1029,29 +872,32 @@ mod tests {
     fn a_machine_logged_into_by_tailscale_needs_it_on_and_no_keys_beside_it() {
         let mut m = machine(vec![]);
         m.login = Login::Tailscale;
-        let without = Observed::parse(&SEEN.replace(
-            "DIBS-PROBE keys SHA256:alice SHA256:stranger SHA256:carol",
-            "DIBS-PROBE keys",
-        ));
+        let without = Facts {
+            keys: Vec::new(),
+            ..seen()
+        };
         assert_eq!(
             finding(&m.check(&without, &cx()), Area::Login).detail,
             "Tailscale SSH is off"
         );
-        let on = SEEN.to_string() + "DIBS-PROBE login tailscale_ssh=yes\n";
+        let on = Facts {
+            tailscale_ssh: true,
+            ..seen()
+        };
         assert_eq!(
-            finding(&m.check(&Observed::parse(&on), &cx()), Area::Login).detail,
+            finding(&m.check(&on, &cx()), Area::Login).detail,
             "a second way in, keys in authorized_keys: alice, carol, SHA256:stranger"
         );
-        let clean = on.replace(
-            "DIBS-PROBE keys SHA256:alice SHA256:stranger SHA256:carol",
-            "DIBS-PROBE keys",
-        );
-        assert!(finding(&m.check(&Observed::parse(&clean), &cx()), Area::Login).ok);
+        let clean = Facts {
+            keys: Vec::new(),
+            ..on
+        };
+        assert!(finding(&m.check(&clean, &cx()), Area::Login).ok);
     }
 
     #[test]
     fn toolchains_come_from_the_pins_of_the_repos_a_machine_needs() {
-        let o = Observed::parse(SEEN);
+        let o = seen();
         let mut m = machine(vec![Profile::Rust]);
         assert!(
             m.check(&o, &cx())
@@ -1069,7 +915,7 @@ mod tests {
     #[test]
     fn a_missing_clone_and_privileges_are_found() {
         let fs = machine(vec![Profile::Unprivileged, Profile::Dibs, Profile::Cuda])
-            .check(&Observed::parse(SEEN), &cx());
+            .check(&seen(), &cx());
         assert_eq!(finding(&fs, Area::Repos).detail, "no clone of app");
         assert_eq!(
             finding(&fs, Area::Account).detail,
@@ -1079,15 +925,15 @@ mod tests {
     }
 
     #[test]
-    fn an_old_bash_and_a_missing_timeout_fail_the_dibs_profile() {
-        let o = Observed::parse(
-            &SEEN
-                .replace("version=5.2", "version=3.2")
-                .replace("timeout=/usr/bin/timeout", "timeout="),
-        );
+    fn the_dibs_profile_wants_what_a_runner_and_its_jobs_need() {
+        let o = Facts {
+            rsync: None,
+            cargo: false,
+            ..seen()
+        };
         assert_eq!(
             finding(&machine(vec![Profile::Dibs]).check(&o, &cx()), Area::Dibs).detail,
-            "GNU timeout, bash 3.2, needs 5.1"
+            "no rsync 3, no cargo"
         );
     }
 

@@ -1,4 +1,4 @@
-use crate::probe::base::{Report, on_path, output_of};
+use crate::probe::{base::Report, facts::Tools};
 use std::{
     fmt::Write as _,
     fs,
@@ -44,17 +44,18 @@ struct Link {
 
 impl Gpus {
     pub fn find(report: &mut Report) -> Gpus {
-        let nvidia: Vec<Vec<String>> = output_of(
-            "nvidia-smi",
-            &[
-                "--query-gpu=name,pci.bus_id,memory.total,compute_cap",
-                "--format=csv,noheader,nounits",
-            ],
-        )
-        .unwrap_or_default()
-        .lines()
-        .map(|line| line.split(',').map(|f| f.trim().to_string()).collect())
-        .collect();
+        let nvidia: Vec<Vec<String>> = Tools::here()
+            .output(
+                "nvidia-smi",
+                &[
+                    "--query-gpu=name,pci.bus_id,memory.total,compute_cap",
+                    "--format=csv,noheader,nounits",
+                ],
+            )
+            .unwrap_or_default()
+            .lines()
+            .map(|line| line.split(',').map(|f| f.trim().to_string()).collect())
+            .collect();
         for card in &nvidia {
             let field = |n: usize| card.get(n).map_or("", String::as_str);
             report.line(&format!(
@@ -65,7 +66,8 @@ impl Gpus {
                 field(3)
             ));
         }
-        let amd: Vec<String> = output_of("rocm-smi", &["--showproductname", "--csv"])
+        let amd: Vec<String> = Tools::here()
+            .output("rocm-smi", &["--showproductname", "--csv"])
             .unwrap_or_default()
             .lines()
             .skip(1)
@@ -74,8 +76,10 @@ impl Gpus {
                 (fields.len() > 1).then(|| fields[1].to_string())
             })
             .collect();
-        let hip = on_path("rocminfo")
-            || output_of("ldconfig", &["-p"]).is_some_and(|l| l.contains("libamdhip64"));
+        let hip = Tools::here().find("rocminfo").is_some()
+            || Tools::here()
+                .output("ldconfig", &["-p"])
+                .is_some_and(|l| l.contains("libamdhip64"));
         for card in &amd {
             let runtime = match hip {
                 true => "(rocm)",
@@ -103,7 +107,7 @@ impl Gpus {
             report.note("that moves data is measuring the riser or the slot it is in.");
         }
         if nvidia.is_empty() && amd.is_empty() {
-            match on_path("lspci") {
+            match Tools::here().find("lspci").is_some() {
                 true => {
                     let seen: Vec<String> = lspci_gpus(&["vga", "3d controller"])
                         .into_iter()
@@ -128,7 +132,7 @@ impl Gpus {
     /// The inventory's device tables, from what was just detected: a hand-written bus id is how
     /// an inventory goes quietly stale.
     pub fn entries(&self) -> String {
-        let vulkan = on_path("vulkaninfo");
+        let vulkan = Tools::here().find("vulkaninfo").is_some();
         let lines = lspci_gpus(&GPU_CLASSES);
         let chips: Vec<String> = lines.iter().filter_map(|l| chip(l)).collect();
         let mut out = String::new();
@@ -243,7 +247,8 @@ fn display_devices() -> Vec<String> {
 
 /// `lspci -nn` lines naming any of the classes, case aside.
 fn lspci_gpus(classes: &[&str]) -> Vec<String> {
-    output_of("lspci", &["-nn"])
+    Tools::here()
+        .output("lspci", &["-nn"])
         .unwrap_or_default()
         .lines()
         .filter(|l| {

@@ -2,19 +2,11 @@ use crate::{
     clock::Moment,
     machine::{Scope, Site, WritableDir as _},
     platform::{Host, Platform as _},
-    probe::Gpus,
-    settings::{Settings, home},
+    probe::{Gpus, facts::Tools},
+    settings::Settings,
     sink::Sink,
-    stop::Signals,
 };
-use std::{
-    ffi::CString,
-    fmt::Write as _,
-    fs,
-    os::unix::ffi::OsStrExt as _,
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{ffi::CString, fmt::Write as _, fs, os::unix::ffi::OsStrExt as _, path::Path};
 
 /// Marks the inventory entry `--check --write` records, which the client cuts out.
 const ENTRY_START: &str = "--8<-- dibs inventory --8<--";
@@ -28,6 +20,8 @@ pub struct Probe<'a> {
     pub settings: &'a Settings,
     /// Print the inventory entry for the client to record.
     pub write: bool,
+    /// Print the facts alone, as one line of JSON.
+    pub json: bool,
 }
 
 /// The report as it is written, and how many things failed or want a look.
@@ -65,22 +59,21 @@ impl Report {
 impl Probe<'_> {
     /// Prints the report; 1 when something blocks the machine from being used.
     pub fn serve(&self, sink: &Sink) -> i32 {
+        let facts = Tools::here().facts();
+        if self.json {
+            sink.out(facts.line().as_bytes());
+            return 0;
+        }
         let machine = self.machine;
         let mut report = Report::default();
         report.line(&format!("dibs --check on {}", machine.host));
         report.line("");
         report.ok("this dibs's runner is installed, and the login shell started it");
-        match first_line("bash", &["--version"]).and_then(|l| bash_version(&l)) {
+        match &facts.bash {
             Some(version) => report.ok(&format!("bash {version}, which every job runs under")),
             None => report.bad("no bash, and every job runs under bash -c"),
         }
-        let rsync = first_line("rsync", &["--version"])
-            .and_then(|l| {
-                let words: Vec<&str> = l.split_whitespace().collect();
-                (words.first() == Some(&"rsync")).then(|| words.get(2).map(|v| v.to_string()))?
-            })
-            .filter(|v| v.starts_with(|c: char| ('3'..='9').contains(&c)));
-        match rsync {
+        match &facts.rsync {
             Some(version) => report.ok(&format!("rsync {version}, so a tree can be sent here")),
             None => {
                 report.bad("no rsync 3, so a tree sent from another computer cannot arrive");
@@ -112,7 +105,7 @@ impl Probe<'_> {
             }
         }
         report.line("");
-        let repos = clones();
+        let repos: Vec<&String> = facts.repos.keys().collect();
         match repos.is_empty() {
             false => report.line(&format!(
                 "  repos it can build:  {}",
@@ -271,46 +264,6 @@ impl Probe<'_> {
     }
 }
 
-/// `5.2.26` of `GNU bash, version 5.2.26(1)-release (...)`.
-fn bash_version(line: &str) -> Option<String> {
-    let after = line.split_once("version ")?.1;
-    let version: String = after
-        .chars()
-        .take_while(|c| *c != '(' && *c != ' ')
-        .collect();
-    (!version.is_empty()).then_some(version)
-}
-
-/// What a tool printed first, None when it could not run.
-pub fn first_line(program: &str, args: &[&str]) -> Option<String> {
-    output_of(program, args)?.lines().next().map(str::to_string)
-}
-
-/// What a tool printed on stdout, None when it could not run or printed nothing.
-pub fn output_of(program: &str, args: &[&str]) -> Option<String> {
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null());
-    Signals::unblocked(&mut command);
-    let out = command.output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    (!text.trim().is_empty()).then_some(text)
-}
-
-/// Whether a program is on `PATH`.
-#[cfg(target_os = "linux")]
-pub fn on_path(program: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|path| {
-        std::env::split_paths(&path).any(|dir| {
-            fs::metadata(dir.join(program)).is_ok_and(|m| {
-                std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0
-            })
-        })
-    })
-}
-
 /// Free space as `df -h` gives it.
 fn available(dir: &Path) -> String {
     let Ok(path) = CString::new(dir.as_os_str().as_bytes()) else {
@@ -322,32 +275,4 @@ fn available(dir: &Path) -> String {
         return "?".into();
     }
     crate::tree::Bytes(found.f_bavail as u64 * found.f_frsize as u64).to_string()
-}
-
-/// The repos under `~/prog` a worktree can be prepared from.
-fn clones() -> Vec<String> {
-    let mut repos: Vec<String> = fs::read_dir(home().join("prog"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.path().join(".git").exists())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-    repos.sort();
-    repos
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bash_says_its_version_before_its_build() {
-        assert_eq!(
-            bash_version("GNU bash, version 5.2.26(1)-release (x86_64-redhat-linux-gnu)")
-                .as_deref(),
-            Some("5.2.26")
-        );
-        assert_eq!(bash_version("no such thing"), None);
-    }
 }

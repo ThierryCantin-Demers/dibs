@@ -15,7 +15,6 @@ pub struct Overview {
 pub struct Report {
     pub machine: String,
     pub provisioned: Provisioned,
-    pub via: Via,
     /// Why nothing was read from the machine, when nothing was.
     pub unprobed: Option<String>,
     pub paths: Vec<PathCheck>,
@@ -36,14 +35,6 @@ pub struct Provisioned {
 pub enum Provisioner {
     Ansible,
     Hand,
-}
-
-/// How a machine was reached for its probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Via {
-    Dibs,
-    Ssh,
 }
 
 /// A name a machine is reached by, and why it does not reach it from here.
@@ -95,6 +86,43 @@ pub enum Area {
     Vulkan,
     Metal,
     Account,
+}
+
+/// What a machine has, as its runner reads it: what `dibs --check` and `dibs machines` judge.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Facts {
+    pub user: String,
+    pub host: String,
+    /// As `uname -s` says it: `Linux`, `Darwin`.
+    pub os: String,
+    pub arch: String,
+    /// The bash every job runs under, by version.
+    pub bash: Option<String>,
+    /// rsync 3 or later, by version, which a tree sent from elsewhere arrives through.
+    pub rsync: Option<String>,
+    pub git: bool,
+    pub cargo: bool,
+    pub rustup: bool,
+    pub toolchains: Vec<String>,
+    /// The NVIDIA driver's version.
+    pub nvidia: Option<String>,
+    pub nvcc: Option<String>,
+    pub vulkan: bool,
+    /// The account may sudo without a password.
+    pub nopasswd: bool,
+    pub groups: Vec<String>,
+    /// Fingerprints of the keys in the account's `authorized_keys`.
+    pub keys: Vec<String>,
+    pub tailscale_ssh: bool,
+    /// Each clone under `~/prog`, by name, with its origin.
+    pub repos: BTreeMap<String, String>,
+}
+
+impl Facts {
+    /// The document as one line of JSON, as the runner prints it.
+    pub fn line(&self) -> String {
+        format!("{}\n", serde_json::to_string(self).unwrap_or_default())
+    }
 }
 
 impl Overview {
@@ -181,15 +209,6 @@ impl Standing {
     }
 }
 
-impl Via {
-    pub fn describe(self) -> &'static str {
-        match self {
-            Via::Dibs => "through dibs, under its shared lock",
-            Via::Ssh => "over ssh, not being in the pool yet",
-        }
-    }
-}
-
 impl fmt::Display for Provisioned {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let by = match self.by {
@@ -210,11 +229,11 @@ mod tests {
     const SAID: &str = r#"{
       "people": ["alice", "bob"],
       "machines": [
-        {"machine": "box", "provisioned": {"by": "ansible", "source": "box-ansible"}, "via": "dibs",
+        {"machine": "box", "provisioned": {"by": "ansible", "source": "box-ansible"},
          "unprobed": null, "paths": [{"name": "box.local", "problem": null}],
          "access": {"people": {"alice": "key", "bob": "missing"}, "strangers": ["SHA256:x"]},
          "findings": [{"area": "login", "ok": false, "detail": "no key of bob"}]},
-        {"machine": "mac", "provisioned": {"by": "hand", "source": null}, "via": "ssh",
+        {"machine": "mac", "provisioned": {"by": "hand", "source": null},
          "unprobed": "unreachable: asleep", "paths": [], "access": {"people": {}, "strangers": []},
          "findings": []}
       ]

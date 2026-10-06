@@ -902,106 +902,52 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     watch.off: false
 
 == dibs machines
--> exit 0
+-> exit 1
 call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve <hash>'\'''
   the request the runner acts on:
-    agent: session suite
-    agent_id: local_suite
+    agent: 
+    agent_id: 
     batch: null
     card: null
-    command:
-      | PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/local/cuda/bin:$PATH"
-      | p() { printf 'DIBS-PROBE %s\n' "$*"; }
-      | have() { command -v "$1" 2>/dev/null; }
-      | p sys "user=$(id -un)" "host=$(hostname -s 2>/dev/null || hostname)" "os=$(uname -s)" "arch=$(uname -m)"
-      | best=$(for b in "$(have bash)" /opt/homebrew/bin/bash /usr/local/bin/bash /bin/bash; do
-      |     [ -n "$b" ] && [ -x "$b" ] && "$b" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"' 2>/dev/null
-      | done | sort -t. -k1,1n -k2,2n | tail -n 1)
-      | p bash "version=$best"
-      | p tools "flock=$(have flock)" "timeout=$(have timeout)" "gtimeout=$(have gtimeout)" "rsync=$(rsync --version 2>/dev/null | awk 'NR == 1 && $1 == "rsync" {print $3}')" "git=$(have git)"
-      | p rust "rustup=$(have rustup)" "toolchains=$(rustup toolchain list 2>/dev/null | awk '{print $1}' | paste -sd, -)"
-      | vk=no
-      | { /sbin/ldconfig -p || /usr/sbin/ldconfig -p; } 2>/dev/null | grep -q 'libvulkan\.so\.1' && vk=yes
-      | p gpu "nvidia=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1)" "nvcc=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9.]*\),.*/\1/p')" "vulkan=$vk"
-      | np=no
-      | sudo -n -l >/dev/null 2>&1 && np=yes
-      | p account "nopasswd=$np" "groups=$(id -Gn | tr ' ' ,)"
-      | p keys $(ssh-keygen -lf "$HOME/.ssh/authorized_keys" 2>/dev/null | awk '{print $2}')
-      | ts=no
-      | tailscale debug prefs 2>/dev/null | grep -q '"RunSSH": true' && ts=yes
-      | p login "tailscale_ssh=$ts"
-      | r=
-      | for d in "$HOME"/prog/*/; do
-      |     [ -e "$d.git" ] || continue
-      |     r="$r $(basename "$d")=$(git -C "$d" remote get-url origin 2>/dev/null)"
-      | done
-      | p repos $r
-      | p disk "free_kb=$(df -Pk "$HOME" | awk 'NR==2{print $4}')"
+    command: 
     fingerprint: null
-    json: false
-    label: machines-probe
+    json: true
+    label: check
     max: 1800
     max_from: default
-    mode: shared
+    mode: check
     new_series: false
     ports: []
     ready_within: 300
     services: []
-    stream: true
+    stream: false
     tty: false
     verbose: false
-    wait: 30
+    wait: null
     watch.hold: false
     watch.lease: 120
     watch.off: false
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-b 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve <hash>'\'''
   the request the runner acts on:
-    agent: session suite
-    agent_id: local_suite
+    agent: 
+    agent_id: 
     batch: null
     card: null
-    command:
-      | PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/local/cuda/bin:$PATH"
-      | p() { printf 'DIBS-PROBE %s\n' "$*"; }
-      | have() { command -v "$1" 2>/dev/null; }
-      | p sys "user=$(id -un)" "host=$(hostname -s 2>/dev/null || hostname)" "os=$(uname -s)" "arch=$(uname -m)"
-      | best=$(for b in "$(have bash)" /opt/homebrew/bin/bash /usr/local/bin/bash /bin/bash; do
-      |     [ -n "$b" ] && [ -x "$b" ] && "$b" -c 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"' 2>/dev/null
-      | done | sort -t. -k1,1n -k2,2n | tail -n 1)
-      | p bash "version=$best"
-      | p tools "flock=$(have flock)" "timeout=$(have timeout)" "gtimeout=$(have gtimeout)" "rsync=$(rsync --version 2>/dev/null | awk 'NR == 1 && $1 == "rsync" {print $3}')" "git=$(have git)"
-      | p rust "rustup=$(have rustup)" "toolchains=$(rustup toolchain list 2>/dev/null | awk '{print $1}' | paste -sd, -)"
-      | vk=no
-      | { /sbin/ldconfig -p || /usr/sbin/ldconfig -p; } 2>/dev/null | grep -q 'libvulkan\.so\.1' && vk=yes
-      | p gpu "nvidia=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1)" "nvcc=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9.]*\),.*/\1/p')" "vulkan=$vk"
-      | np=no
-      | sudo -n -l >/dev/null 2>&1 && np=yes
-      | p account "nopasswd=$np" "groups=$(id -Gn | tr ' ' ,)"
-      | p keys $(ssh-keygen -lf "$HOME/.ssh/authorized_keys" 2>/dev/null | awk '{print $2}')
-      | ts=no
-      | tailscale debug prefs 2>/dev/null | grep -q '"RunSSH": true' && ts=yes
-      | p login "tailscale_ssh=$ts"
-      | r=
-      | for d in "$HOME"/prog/*/; do
-      |     [ -e "$d.git" ] || continue
-      |     r="$r $(basename "$d")=$(git -C "$d" remote get-url origin 2>/dev/null)"
-      | done
-      | p repos $r
-      | p disk "free_kb=$(df -Pk "$HOME" | awk 'NR==2{print $4}')"
+    command: 
     fingerprint: null
-    json: false
-    label: machines-probe
+    json: true
+    label: check
     max: 1800
     max_from: default
-    mode: shared
+    mode: check
     new_series: false
     ports: []
     ready_within: 300
     services: []
-    stream: true
+    stream: false
     tty: false
     verbose: false
-    wait: 30
+    wait: null
     watch.hold: false
     watch.lease: 120
     watch.off: false
