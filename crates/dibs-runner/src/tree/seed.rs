@@ -2,6 +2,7 @@ use crate::tree::{
     base::Stamp,
     builds::{Builds, Held},
     copy::{Copier, Sharing, remove_all},
+    git::Unstopped,
     packages::{Cache, Lines},
 };
 use dibs_format::wire::{Seeded, Shared};
@@ -69,8 +70,8 @@ pub struct Copied {
 
 impl Seed<'_> {
     /// A new tree's target, and its sources when the sibling has some.
-    pub fn run(&self) -> Option<Seeded> {
-        self.copy()?.place(self.target, self.worktree)
+    pub fn run(&self, unstopped: Unstopped) -> Option<Seeded> {
+        self.copy()?.place(self.target, self.worktree, unstopped)
     }
 
     /// The best sibling's target copied, chosen before anything of this tree moves.
@@ -259,14 +260,20 @@ impl Seed<'_> {
 
 impl Copied {
     /// In place of a tree that has no target yet; its sources only where it has none either.
-    pub fn place(mut self, target: &Path, worktree: &Path) -> Option<Seeded> {
-        if fs::rename(&self.target, target).is_err() {
+    pub fn place(mut self, target: &Path, worktree: &Path, unstopped: Unstopped) -> Option<Seeded> {
+        let mut placed = false;
+        unstopped(&mut || {
+            placed = fs::rename(&self.target, target).is_ok();
+            if placed && let Some(sources) = &self.sources {
+                self.seeded.sources = !worktree.exists() && fs::rename(sources, worktree).is_ok();
+            }
+        });
+        if !placed {
             self.discard();
             return None;
         }
-        if let Some(sources) = self.sources.take() {
-            self.seeded.sources = !worktree.exists() && fs::rename(&sources, worktree).is_ok();
-            remove_all(&sources);
+        if let Some(sources) = &self.sources {
+            remove_all(sources);
         }
         Some(self.seeded)
     }
@@ -280,27 +287,18 @@ impl Copied {
         worktree: &Path,
         stamp: &Stamp,
         say: &dyn Fn(&str),
+        unstopped: Unstopped,
     ) -> Option<Seeded> {
         let aside = format!(".old.{}", stamp.as_str());
         let (old_target, old_tree) = (suffixed(target, &aside), suffixed(worktree, &aside));
-        if fs::rename(worktree, &old_tree).is_err() {
+        let mut replaced = false;
+        unstopped(&mut || replaced = self.swap(target, worktree, &old_target, &old_tree));
+        if !replaced {
             self.discard();
             return None;
         }
-        if fs::rename(target, &old_target).is_err() {
-            let _ = fs::rename(&old_tree, worktree);
-            self.discard();
-            return None;
-        }
-        if fs::rename(&self.target, target).is_err() {
-            let _ = fs::rename(&old_target, target);
-            let _ = fs::rename(&old_tree, worktree);
-            self.discard();
-            return None;
-        }
-        if let Some(sources) = self.sources.take() {
-            self.seeded.sources = fs::rename(&sources, worktree).is_ok();
-            remove_all(&sources);
+        if let Some(sources) = &self.sources {
+            remove_all(sources);
         }
         if !(remove_all(&old_target) & remove_all(&old_tree)) {
             say(
@@ -308,6 +306,27 @@ impl Copied {
             );
         }
         Some(self.seeded)
+    }
+
+    /// The tree and its target set aside and the copies moved in, or, where a rename fails,
+    /// everything moved back.
+    fn swap(&mut self, target: &Path, worktree: &Path, old_target: &Path, old_tree: &Path) -> bool {
+        if fs::rename(worktree, old_tree).is_err() {
+            return false;
+        }
+        if fs::rename(target, old_target).is_err() {
+            let _ = fs::rename(old_tree, worktree);
+            return false;
+        }
+        if fs::rename(&self.target, target).is_err() {
+            let _ = fs::rename(old_target, target);
+            let _ = fs::rename(old_tree, worktree);
+            return false;
+        }
+        if let Some(sources) = &self.sources {
+            self.seeded.sources = fs::rename(sources, worktree).is_ok();
+        }
+        true
     }
 
     pub fn discard(&self) {

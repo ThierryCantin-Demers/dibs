@@ -12,12 +12,16 @@ use std::{
     thread,
 };
 
+/// Runs what a stop must not cut short, such as the renames that replace a tree.
+pub type Unstopped<'a> = &'a dyn Fn(&mut dyn FnMut());
+
 /// How a prepare runs what it needs: in the job's environment, each in a process group of its
 /// own, named to whatever stops the call while it runs, so that a stop takes it too, and stopped
 /// at the job's cap, which the prepare counts against.
 pub struct Commands<'a> {
     pub environment: &'a Environment,
     pub running: &'a dyn Fn(Option<u32>),
+    pub unstopped: Unstopped<'a>,
     pub deadline: Deadline,
 }
 

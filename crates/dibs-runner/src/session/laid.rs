@@ -61,6 +61,10 @@ impl Session {
         };
         let say = |text: &str| self.told(output, text);
         let running = |pid| at.stopper.state().stage = Stage::Preparing(pid);
+        let unstopped = |act: &mut dyn FnMut()| {
+            let _state = at.stopper.state();
+            act();
+        };
         let home = home();
         let cargo_home = var("CARGO_HOME")
             .map(PathBuf::from)
@@ -78,6 +82,7 @@ impl Session {
             commands: Commands {
                 environment,
                 running: &running,
+                unstopped: &unstopped,
                 deadline,
             },
             say: &say,

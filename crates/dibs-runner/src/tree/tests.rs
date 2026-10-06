@@ -15,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
         mpsc,
     },
@@ -30,7 +30,11 @@ struct Machine {
     seed_wait: Duration,
     environment: Environment,
     deadline: Deadline,
+    unstopped: Box<Guard>,
 }
+
+/// What stands in for the stopper's guard around what a stop must not cut short.
+type Guard = dyn Fn(&mut dyn FnMut()) + Sync;
 
 impl Machine {
     fn new() -> Machine {
@@ -48,6 +52,7 @@ impl Machine {
             seed_wait: Duration::from_secs(900),
             environment: Environment::default(),
             deadline: Deadline::default(),
+            unstopped: Box::new(|act| act()),
         }
     }
 
@@ -115,6 +120,7 @@ impl Machine {
             commands: Commands {
                 environment: &self.environment,
                 running: &|_| {},
+                unstopped: &*self.unstopped,
                 deadline: self.deadline,
             },
             say: &say,
@@ -548,6 +554,28 @@ fn an_existing_tree_far_behind_a_sibling_starts_again_from_it() {
         .filter(|e| e.file_name().to_string_lossy().contains(".old."))
         .collect();
     assert!(left.is_empty(), "nothing of the old tree is left behind");
+}
+
+#[test]
+fn a_reseed_moves_its_tree_only_where_no_stop_lands() {
+    let mut m = Machine::new();
+    m.sibling("demo-local-moved", &["aaa", "bbb"]);
+    m.sources("moved", "theirs.rs");
+    let target = m.sibling("demo-local-mine", &["aaa", "ccc"]);
+    let ws = m.sources("mine", "mine.rs");
+    let guarded = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&guarded);
+    m.unstopped = Box::new(move |act| {
+        assert!(ws.is_dir() && target.is_dir(), "whole before");
+        act();
+        assert!(ws.is_dir() && target.is_dir(), "and whole after");
+        counted.fetch_add(1, Ordering::Relaxed);
+    });
+    assert_eq!(
+        m.prepared(&local("mine", &["aaa", "bbb"])).reseeded,
+        Some(1)
+    );
+    assert_eq!(guarded.load(Ordering::Relaxed), 1);
 }
 
 #[test]

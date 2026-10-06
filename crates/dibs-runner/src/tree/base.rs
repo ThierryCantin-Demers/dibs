@@ -179,7 +179,7 @@ impl Trees<'_> {
         if !suffix.is_empty() && !target.is_dir() {
             seeded = self
                 .seed(prepare, &target, &worktree, packages, 0, stamp)
-                .run();
+                .run(self.commands.unstopped);
             let _ = fs::remove_file(target.join(".dibs-tree"));
         }
         self.cache(&target, prepare, packages)?;
@@ -342,7 +342,7 @@ impl Trees<'_> {
         if !worktree.is_dir() && !target.is_dir() {
             seeded = self
                 .seed(prepare, &target, &worktree, packages, 0, stamp)
-                .run();
+                .run(self.commands.unstopped);
         } else if let Some(packages) = packages
             && worktree.is_dir()
             && target.is_dir()
@@ -398,7 +398,7 @@ impl Trees<'_> {
                 copied.discard();
                 None
             }
-            false => copied.replace(target, worktree, stamp, self.say),
+            false => copied.replace(target, worktree, stamp, self.say, self.commands.unstopped),
         };
         drop(held);
         seeded.map(|seeded| Reseeded { seeded, mine })
