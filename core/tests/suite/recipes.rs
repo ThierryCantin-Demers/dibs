@@ -765,6 +765,18 @@ fn a_ref_the_machine_cannot_fetch_is_sent_from_here() {
 }
 
 #[test]
+fn a_build_that_claims_its_target_keeps_no_file_the_claim_redated() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    s.write("app/results/old.json", "stale\n");
+    let cargo = fake_cargo(&s);
+    recipes(&s, &format!("[build.artb]\nartifacts = [\"results/*.json\"]\n  [[build.artb.step]]\n  lock = \"shared\"\n  run = \"{cargo} build\"\n"));
+    let out = s.dibs(["build", &format!("{app}@local"), "artb", "--artifacts", &s.p("gotb")]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert!(!s.exists("gotb/results/old.json"), "a file the claim touched is not this run's: {}", out.all());
+}
+
+#[test]
 fn a_recipes_artifacts_come_back_by_themselves() {
     // Each step keeps the files it wrote in its job directory and the run fetches them, so nothing
     // is left on the machine to be copied by hand.

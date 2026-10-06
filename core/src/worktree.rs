@@ -212,6 +212,8 @@ pub fn claiming(run: &str) -> String {
     flock 8
     if [ "$(cat "$CARGO_TARGET_DIR/.dibs-tree" 2>/dev/null)" != "$PWD" ]; then
         find . -name .git -prune -o -type f -exec touch -c -- {{}} +
+        # Artifacts are files newer than the job's cmd, and every file here was just made newer.
+        [ -n "${{DIBS_JOB:-}}" ] && touch -c -- "${{DIBS_SCRATCH:-$HOME/.cache/dibs}}/jobs/$DIBS_JOB/cmd"
         printf '%s\n' "$PWD" > "$CARGO_TARGET_DIR/.dibs-tree"
         echo "dibs: this tree did not make the last build in $CARGO_TARGET_DIR, so cargo rebuilds its crates" >&2
     fi
@@ -433,6 +435,11 @@ mkdir -p "${{WT%/*}}"
 # exists". Per repo rather than per commit, because the prune below touches every worktree.
 exec 7>"$SCRATCH/ws/{repo}/.prepare.lock"
 flock 7
+# An add that was stopped leaves the tree registered and locked, with no index and files missing.
+if [ -e "$WT/.git" ] && ! (cd "$WT" && [ -f "$(git rev-parse --git-path index 2>/dev/null)" ]); then
+    git -C "$SRC" worktree remove --force --force "$WT" 2>/dev/null || rm -rf "$WT"
+    git -C "$SRC" worktree prune
+fi
 if [ ! -d "$WT/.git" ] && [ ! -f "$WT/.git" ]; then
     # Detached on purpose: a worktree that tracks a branch would move under a job that is
     # still measuring from it.
@@ -731,6 +738,19 @@ mod tests {
         let sha = text.lines().find_map(|l| l.strip_prefix("DIBS-REV demo "))
             .unwrap_or("").trim().to_string();
         (out.status.success(), sha)
+    }
+
+    #[test]
+    fn a_worktree_a_stopped_add_left_is_checked_out_again() {
+        let (home, wanted, _) = sandbox("half");
+        assert!(resolve(&home, "local-only").0);
+        let wt = home.join(format!("scratch/ws/demo/{}", &wanted[..12]));
+        let index = std::process::Command::new("git").arg("-C").arg(&wt).args(["rev-parse", "--path-format=absolute", "--git-path", "index"]).output().unwrap();
+        std::fs::remove_file(String::from_utf8_lossy(&index.stdout).trim()).unwrap();
+        std::fs::remove_file(wt.join("f")).unwrap();
+        assert!(resolve(&home, "local-only").0);
+        assert_eq!(std::fs::read_to_string(wt.join("f")).unwrap(), "real\n", "the tree is whole again");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     // A branch that exists only locally cannot be fetched, and the fallback fetch writes
