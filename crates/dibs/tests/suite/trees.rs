@@ -378,3 +378,64 @@ fn a_git_database_the_machine_lacks_is_sent_ahead_of_the_build() {
     }
     snapshot("trees-gitdb", t.text());
 }
+
+// What seeding sources is for, and the rsync behaviour it rests on: after the sync, a file this
+// tree did not change keeps the sibling's time, older than the copied build, and a changed one
+// is dated after it.
+#[test]
+fn after_the_sync_only_changed_files_are_newer_than_the_copied_build() {
+    let mut s = Sandbox::new();
+    s.set("DIBS_REFLINK", "copy");
+    let dir = app(&s);
+    recipes(&s, PARAMS);
+    s.write("app/src/same.rs", "fn same() {}\n");
+    s.write("app/src/edited.rs", "fn before() {}\n");
+    s.git("app", &["add", "-A"]);
+    s.git("app", &["commit", "-qm", "sources"]);
+    let first = s.dibs(["build", &format!("{dir}@local"), "p"]).run();
+    assert_eq!(first.code, 0, "{}", first.all());
+    let sibling = s.p(&format!("scratch/ws/app/local-{}/src", short_hash(&dir)));
+    let aged = s
+        .command(
+            "touch",
+            [
+                "-d",
+                "400 days ago",
+                &format!("{sibling}/same.rs"),
+                &format!("{sibling}/edited.rs"),
+            ],
+        )
+        .run();
+    assert_eq!(aged.code, 0);
+    s.git("app", &["worktree", "add", "-q", &s.p("app-topk")]);
+    s.write("app-topk/src/edited.rs", "fn after() {}\n");
+    let topk = s.p("app-topk");
+    let out = s.dibs(["build", &format!("{topk}@local"), "p"]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let tree = s.path(&format!("scratch/ws/app/local-{}", short_hash(&topk)));
+    let age = |file: &str| {
+        fs::metadata(tree.join(file))
+            .and_then(|m| m.modified())
+            .unwrap()
+            .elapsed()
+            .unwrap_or_default()
+            .as_secs()
+    };
+    assert!(
+        age("src/same.rs") > 86400 * 300,
+        "an unchanged file keeps the sibling's time: {}",
+        out.all()
+    );
+    assert!(
+        age("src/edited.rs") < 3600,
+        "a changed file is rewritten and dated now"
+    );
+    assert_eq!(
+        fs::read_to_string(tree.join("src/edited.rs")).unwrap(),
+        "fn after() {}\n"
+    );
+    assert!(
+        tree.join(".dibs-used").exists(),
+        "the sync does not delete the sweep's marker"
+    );
+}

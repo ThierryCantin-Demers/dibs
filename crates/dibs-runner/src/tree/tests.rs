@@ -1,7 +1,7 @@
 use crate::{
     clock::Deadline,
     job::Environment,
-    tree::{Commands, Copier, Reflinks, Stepping, Trees},
+    tree::{Commands, Copier, Reflinks, Stepping, Trees, copy::Sharing},
 };
 use dibs_format::{
     Exit,
@@ -437,6 +437,28 @@ fn a_new_tree_starts_from_its_repos_latest_target_with_its_sources() {
     );
     assert!(Path::new(&p.worktree).join("theirs.rs").exists());
     assert!(old.join("debug/deps/libdemo-local-old.rlib").exists());
+}
+
+// As on a machine whose target directories alone were moved to a filesystem that shares blocks:
+// sources are copied plainly there, and a target never is.
+#[test]
+fn sources_are_copied_even_where_only_targets_can_be_reflinked() {
+    let m = Machine::new();
+    let sources = m.sources("old", "theirs.rs");
+    let plain = Copier {
+        reflinks: Reflinks::Never,
+    };
+    assert!(
+        plain
+            .tree(&sources, &m.p("sources"), Sharing::Preferred)
+            .is_ok()
+    );
+    assert!(m.p("sources/theirs.rs").exists());
+    assert!(
+        plain
+            .tree(&sources, &m.p("target"), Sharing::Required)
+            .is_err()
+    );
 }
 
 #[test]
