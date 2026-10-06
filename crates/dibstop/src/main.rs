@@ -7,6 +7,8 @@
 mod action;
 mod app;
 mod feed;
+#[cfg(test)]
+mod frames;
 mod input;
 mod item;
 mod status;

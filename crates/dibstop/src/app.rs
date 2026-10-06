@@ -101,7 +101,7 @@ pub struct App {
 }
 
 impl App {
-    fn new(interval: u64) -> App {
+    pub fn new(interval: u64) -> App {
         App {
             views: BTreeMap::new(),
             sel: 0,
