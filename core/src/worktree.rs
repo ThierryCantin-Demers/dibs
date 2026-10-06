@@ -185,12 +185,29 @@ fi
 find "$TARGET" -maxdepth 1 -name '.dibs-packages.pending.*' -mmin +1440 -delete 2>/dev/null || true
 "#;
 
+/// A build stopped partway leaves its mark unheld, and what it compiled may be half written: rustc
+/// reuses a killed session's incremental state, and the result links with symbols missing. What
+/// the stopped build touched is built again, from nothing.
+const INTERRUPTED: &str = r#"for mark in "$CARGO_TARGET_DIR"/.dibs-building.*; do
+    [ -e "$mark" ] && flock -n -x "$mark" true || continue
+    for d in "$CARGO_TARGET_DIR"/*/incremental "$CARGO_TARGET_DIR"/*/*/incremental "$CARGO_TARGET_DIR"/*/.fingerprint "$CARGO_TARGET_DIR"/*/*/.fingerprint; do
+        [ -d "$d" ] && find "$d" -mindepth 1 -maxdepth 1 -newer "$mark" -exec rm -rf {} + 2>/dev/null
+    done
+    rm -f "$mark"
+    echo "dibs: a build in $CARGO_TARGET_DIR was stopped partway, so the crates it touched are built again" >&2
+done
+"#;
+
 /// A build step wrapped so that, once it exits 0, what its own prepare staged joins the target's
 /// record. The record is a union: old artifacts stay when a tree moves on, so a revision built
 /// last week still counts. The lock is for two builds of one target finishing together.
 pub fn recording(run: &str, token: &str) -> String {
     format!(
-        r#"( {run} ); rc=$?
+        r#"{INTERRUPTED}exec 7>"$CARGO_TARGET_DIR/.dibs-building.$$"
+flock -s 7
+( {run} ); rc=$?
+exec 7>&-
+rm -f "$CARGO_TARGET_DIR/.dibs-building.$$"
 staged="$CARGO_TARGET_DIR/.dibs-packages.pending.{token}"
 if [ "$rc" = 0 ] && [ -s "$staged" ]; then
     (
@@ -1910,6 +1927,39 @@ mod local_tests {
         step(&scratch, "k", "t1", "true; exit 0");
         assert_eq!(record(&scratch, "k").unwrap().lines().count(), 2, "a command that exits itself still records");
         assert!(std::fs::read_dir(&scratch).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().starts_with(".packages.")));
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_build_after_one_stopped_partway_rebuilds_what_that_one_touched() {
+        let scratch = tmp("interrupted");
+        let target = scratch.join("target/demo-local-k");
+        let dir = |p: &str| {
+            std::fs::create_dir_all(target.join(p)).unwrap();
+            target.join(p)
+        };
+        let touch = |p: &std::path::Path, when: &str| {
+            Command::new("touch").args(["-d", when]).arg(p).status().unwrap();
+        };
+        let kept = [dir("release/incremental/old-1"), dir("release/.fingerprint/old-1")];
+        let stopped = [dir("release/incremental/half-2"), dir("release/.fingerprint/half-2")];
+        let mark = target.join(".dibs-building.1");
+        std::fs::write(&mark, "").unwrap();
+        touch(&mark, "30 minutes ago");
+        for d in &kept {
+            touch(d, "1 hour ago");
+        }
+        let running = target.join(".dibs-building.2");
+        std::fs::write(&running, "").unwrap();
+        touch(&running, "2 hours ago");
+        let held = std::fs::File::open(&running).unwrap();
+        held.lock_shared().unwrap();
+        step(&scratch, "k", "t1", "true");
+        assert!(stopped.iter().all(|d| !d.exists()), "what the stopped build touched goes");
+        assert!(kept.iter().all(|d| d.exists()), "what it did not touch stays");
+        assert!(!mark.exists() && running.exists(), "its mark goes, and a running build's does not");
+        assert!(!target.join(format!(".dibs-building.{}", std::process::id())).exists());
+        drop(held);
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
