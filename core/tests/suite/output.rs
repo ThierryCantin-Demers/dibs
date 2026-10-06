@@ -175,6 +175,7 @@ fn an_overrun_says_it_was_stopped_and_what_running_it_again_does() {
     let s = Sandbox::new();
     let out = s.dibs(["--max", "1", "--label", "overran", "python3 -c 'while True: pass'"]).run();
     assert_eq!(out.code, 124, "an overrun exits 124");
+    assert_eq!(out.stderr.lines_with("  exit 124  by=dibs"), 1, "with dibs named as what ended it");
     assert_eq!(out.all().lines_with("stopped after holding"), 1, "it says it was stopped, not that it failed");
     assert_eq!(out.all().lines_with("picks up from the crates"), 1, "and what running it again would do");
     assert_eq!(
@@ -182,6 +183,15 @@ fn an_overrun_says_it_was_stopped_and_what_running_it_again_does() {
         0,
         "a label that fits the default hears nothing"
     );
+}
+
+#[test]
+fn a_command_that_exits_124_itself_is_not_called_an_overrun() {
+    let s = Sandbox::new();
+    let out = s.dibs(["--max", "600", "--label", "own-124", "exit 124"]).run();
+    assert_eq!(out.code, 124, "{}", out.all());
+    assert_eq!(out.stderr.lines_with("  exit 124  by=command"), 1, "{}", out.all());
+    assert_eq!(out.all().lines_with("stopped after holding"), 0, "{}", out.all());
 }
 
 #[test]

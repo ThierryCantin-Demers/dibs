@@ -41,12 +41,14 @@ if [ "${#PORT_NAME[@]}" -gt 0 ] && ! ports_take; then
     echo "dibs: $WITH_FAIL, so the command did not run." >&2
 fi
 [ -z "$WITH_FAIL" ] && [ "${#WITH_NAME[@]}" -gt 0 ] && { with_start; with_ready || with_stop; }
+OVERRAN=0
 if [ -n "$WITH_FAIL" ]; then
     STATUS=77
     [ -n "$JOBLOG" ] && : >> "$JOBLOG"
     # A tee waiting for the job's output never gets a writer otherwise.
     [ -n "$TEE" ] && : > "$JOBDIR/pipe"
 else
+    STARTED=$(date +%s)
     if [ "$MODE" = rsh ]; then
         timeout --signal=TERM --kill-after=30 "$MAXHOLD" bash -c "$CMD" 8>&- 9>&- 0<&5 5<&- &
     elif [ -n "$JOBLOG" ] && [ "$MAXHOLD" -gt 0 ]; then
@@ -89,6 +91,8 @@ else
         wait "$WORK"
         STATUS=$?
     fi
+    # timeout passes a command's own 124 through, so only one that lasted the whole cap was cut.
+    [ "$STATUS" -eq 124 ] && [ "$MAXHOLD" -gt 0 ] && [ $(( $(date +%s) - STARTED )) -ge "$MAXHOLD" ] && OVERRAN=1
     # Without timeout the job shares this script's group, which has the lock in it.
     { [ "$MODE" = rsh ] || [ "$MAXHOLD" -gt 0 ]; } && sweep_group "$WORK"
 fi

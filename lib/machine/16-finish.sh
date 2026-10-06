@@ -4,7 +4,7 @@
 # filter replaced is still here.
 if [ -n "$JOBLOG" ]; then
     by=command
-    [ "$STATUS" -eq 124 ] && [ "$MAXHOLD" -gt 0 ] && by=dibs
+    [ "$OVERRAN" = 1 ] && by=dibs
     [ "$STATUS" -eq 77 ] && [ -n "$WITH_FAIL" ] && by=dibs
     [ "$STATUS" -eq 76 ] && [ -n "$BATCH_TAG" ] && [ -e "$DIR/cancelled.${BATCH_TAG%% *}" ] && by=dibs
     [ "$STATUS" -eq 78 ] && grep -qx DIBS-REFUSED "$JOBLOG" 2>/dev/null && by=dibs
@@ -68,7 +68,7 @@ fi
 # half an hour on its own, and the answer is almost always to run the same thing again: the
 # target directory survives, so a compile picks up from the crates that finished rather than
 # starting over. Raising --max is for the job that genuinely needs longer in one go.
-if [ "$STATUS" -eq 124 ]; then
+if [ "$OVERRAN" = 1 ]; then
     echo "dibs: stopped after holding the lock for ${MAXHOLD}s, which is --max for a $MODE job." >&2
     echo "  Nothing is wrong with it; it was simply told to hold no longer than that." >&2
     [ "$HOLD" = 1 ] || {
