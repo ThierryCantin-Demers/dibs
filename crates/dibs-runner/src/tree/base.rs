@@ -1,7 +1,8 @@
 use crate::{
+    clock::Deadline,
     platform::{Host, Platform as _},
     tree::{
-        builds::Builds,
+        builds::{Builds, Held},
         clocks::Clocks,
         copy::{Copier, empty, touch},
         git::{Commands, answer, said},
@@ -103,11 +104,13 @@ impl Trees<'_> {
                 self.fetched(prepare, reference, *slot, packages.as_ref(), &stamp)
             }
             Source::Local { key, .. } => self.local(prepare, key, packages.as_ref(), &stamp),
-        }?;
+        };
+        let laid = self.within_cap(laid)?;
         let sha = match &prepare.source {
             Source::Local { content, .. } => format!("local:{content}"),
             Source::Fetched { .. } => laid.sha.clone(),
         };
+        let gitdbs = self.within_cap(Ok(self.gitdbs(&prepare.gitdbs)))?;
         Ok(Prepared {
             worktree: laid.worktree.display().to_string(),
             target: laid.target.display().to_string(),
@@ -117,8 +120,22 @@ impl Trees<'_> {
             },
             seeded: laid.seeded,
             reseeded: laid.reseeded,
-            gitdbs: self.gitdbs(&prepare.gitdbs),
+            gitdbs,
         })
+    }
+
+    /// A step's outcome, unless the job's cap passed meanwhile: a command stopped at the cap
+    /// fails in whatever way the step reads it.
+    fn within_cap<T>(&self, step: Result<T, Exit>) -> Result<T, Exit> {
+        match self.overran() {
+            true => Err(Exit::Overran),
+            false => step,
+        }
+    }
+
+    /// Whether the job's cap has passed, which ends the prepare with the job.
+    fn overran(&self) -> bool {
+        self.commands.deadline.passed()
     }
 
     /// Keyed by commit rather than by branch name: two agents on one branch at different
@@ -222,6 +239,9 @@ impl Trees<'_> {
         if let Some(sha) = sha {
             return Ok(sha);
         }
+        if self.overran() {
+            return Err(Exit::Overran);
+        }
         let mut told = format!("dibs: no such ref in {repo}: {reference}\n");
         if CREDENTIALS.iter().any(|c| why.contains(c)) {
             told.push_str(&format!(
@@ -238,9 +258,11 @@ impl Trees<'_> {
     /// it. Two prepares of one commit would both see none and both add it, so they take turns,
     /// per repo since the prune after touches every worktree of it.
     fn add(&self, source: &Path, worktree: &Path, sha: &str, repo: &str) -> Result<(), Exit> {
-        let lock = fs::File::create(self.scratch.join("ws").join(repo).join(".prepare.lock"))
-            .and_then(|lock| lock.lock().map(|()| lock))
-            .map_err(|e| self.failed("could not lock the repo's trees", &e))?;
+        let lock = self.held(
+            &self.scratch.join("ws").join(repo).join(".prepare.lock"),
+            self.commands.deadline,
+            "could not lock the repo's trees",
+        )?;
         if worktree.join(".git").exists() {
             drop(lock);
             return Ok(());
@@ -269,6 +291,7 @@ impl Trees<'_> {
         drop(lock);
         match added {
             true => Ok(()),
+            false if self.overran() => Err(Exit::Overran),
             false => {
                 (self.say)(&format!(
                     "dibs: could not add the worktree {}\n",
@@ -369,19 +392,23 @@ impl Trees<'_> {
 
     /// A sent tree to this prepare alone, from deciding what it starts from until its target is
     /// marked used, so a reseed that copied for minutes never replaces a tree handed over since.
-    fn turn(&self, worktree: &Path) -> Result<fs::File, Exit> {
+    fn turn(&self, worktree: &Path) -> Result<Held, Exit> {
         let path = worktree.with_file_name(format!(".{}.lock", name(worktree)));
-        let lock =
-            fs::File::create(&path).map_err(|e| self.failed("could not lock the tree", &e))?;
-        if lock.try_lock().is_err() {
-            (self.say)(&format!(
-                "dibs: waiting for another prepare of {}\n",
-                worktree.display()
-            ));
-            lock.lock()
-                .map_err(|e| self.failed("could not lock the tree", &e))?;
+        if let Ok(Some(held)) = Held::exclusive_by(&path, Deadline::after(Some(Duration::ZERO))) {
+            return Ok(held);
         }
-        Ok(lock)
+        (self.say)(&format!(
+            "dibs: waiting for another prepare of {}\n",
+            worktree.display()
+        ));
+        self.held(&path, self.commands.deadline, "could not lock the tree")
+    }
+
+    /// `lock` taken before `deadline`, or the prepare overran.
+    fn held(&self, lock: &Path, deadline: Deadline, why: &str) -> Result<Held, Exit> {
+        Held::exclusive_by(lock, deadline)
+            .map_err(|e| self.failed(why, &e))?
+            .ok_or(Exit::Overran)
     }
 
     fn seed<'s>(
@@ -401,7 +428,7 @@ impl Trees<'_> {
             packages,
             floor,
             fresh: &prepare.fresh,
-            wait: self.seed_wait,
+            wait: self.commands.deadline.within(self.seed_wait),
             copier: self.copier,
             stamp,
             replacing: false,

@@ -71,7 +71,11 @@ beside it, from deciding what the tree starts from until its target is marked us
 that waited minutes for a sibling's build never replaces a tree another call has been handed
 since; a bash prepare takes no such lock. What it laid out comes back as a `prepared` record;
 what it says goes where the job's output goes. A step waiting for a git dependency exits 3 with
-`by=dibs` before its command, as does a prepare that fails. The command then runs in the
+`by=dibs` before its command, as does a prepare that fails. The job's `--max` counts from when
+it holds the lock, as master's `timeout` around its setup did: a git command, a lock another
+prepare holds or a seed's wait for a sibling's build that outlasts it ends the call 124 with
+`by=dibs`, and the command gets what is left. A copy makes FIFOs, sockets and devices anew rather
+than opening them. The command then runs in the
 worktree with the target as `CARGO_TARGET_DIR`, or, for a transfer, in the directory the
 transfer names the worktree in. Around a recipe step's command the runner refuses a measurement
 whose target another tree built into since (exit 78, `by=dibs`), reads the machine's state,

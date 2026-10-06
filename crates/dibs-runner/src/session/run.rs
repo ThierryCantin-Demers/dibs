@@ -1,7 +1,7 @@
 use crate::{
     call::Journal,
     channel::{Caller, Channel},
-    clock::{Moment, Span},
+    clock::{Deadline, Moment, Span},
     history::History,
     job::{
         Cap, Environment, Guard, Held, Job, LogRead, Output, Ports, Readiness, Services, Start,
@@ -362,10 +362,7 @@ impl Session {
             (Some(log), false) => Output::Log(log),
             (None, _) => Output::Caller,
         };
-        let cap = (max > 0).then(|| Cap {
-            after: Duration::from_secs(max),
-            grace: JOB_GRACE,
-        });
+        let deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
         let ports = Ports::take(&request.ports, self.settings.ports, at.dir, pid);
         for picked in &ports.picked {
             environment.port(picked);
@@ -382,7 +379,7 @@ impl Session {
         {
             state.stage = Stage::Preparing(None);
             drop(state);
-            let laid = self.lay_out(at, tree, &mut environment, output);
+            let laid = self.lay_out(at, tree, &mut environment, output, deadline);
             state = at.stopper.state();
             match laid {
                 Laid::Run(at) => spot = at,
@@ -459,6 +456,10 @@ impl Session {
                     Ok(work) => {
                         state.stage = Stage::Running(work.pid);
                         drop(state);
+                        let cap = deadline.left().map(|after| Cap {
+                            after,
+                            grace: JOB_GRACE,
+                        });
                         self.work(work, cap, arrived.held.is_some(), &mut hosted)
                     }
                     Err(e) => {

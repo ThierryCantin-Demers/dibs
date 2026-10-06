@@ -76,7 +76,10 @@ impl Copier {
             {
                 return fs::hard_link(first, to);
             }
-            self.file(from, to, sharing)?;
+            match meta.is_file() {
+                true => self.file(from, to, sharing)?,
+                false => special(to, &meta)?,
+            }
             if meta.nlink() > 1 {
                 linked.insert(inode, to.to_path_buf());
             }
@@ -99,6 +102,27 @@ impl Copier {
                 from.display()
             ))),
         }
+    }
+}
+
+/// A FIFO, socket or device made anew, as `cp -a` makes one: opening a FIFO to read it waits for
+/// a writer that may never come.
+#[allow(
+    clippy::unnecessary_cast,
+    reason = "mode_t and dev_t are narrower on macOS"
+)]
+fn special(to: &Path, of: &fs::Metadata) -> io::Result<()> {
+    let path = CString::new(to.as_os_str().as_bytes())?;
+    // SAFETY: mknod reads a NUL-terminated path, alive here.
+    match unsafe {
+        libc::mknod(
+            path.as_ptr(),
+            of.mode() as libc::mode_t,
+            of.rdev() as libc::dev_t,
+        )
+    } {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
     }
 }
 

@@ -1,20 +1,31 @@
-use crate::{job::Environment, stop::Signals};
+use crate::{
+    clock::Deadline,
+    job::{Environment, reap},
+    stop::Signals,
+};
 use std::{
     io,
     os::unix::process::CommandExt as _,
     path::Path,
     process::{Command, Output, Stdio},
+    sync::mpsc,
+    thread,
 };
 
 /// How a prepare runs what it needs: in the job's environment, each in a process group of its
-/// own, named to whatever stops the call while it runs, so that a stop takes it too.
+/// own, named to whatever stops the call while it runs, so that a stop takes it too, and stopped
+/// at the job's cap, which the prepare counts against.
 pub struct Commands<'a> {
     pub environment: &'a Environment,
     pub running: &'a dyn Fn(Option<u32>),
+    pub deadline: Deadline,
 }
 
 impl Commands<'_> {
     pub fn output(&self, mut command: Command) -> io::Result<Output> {
+        if self.deadline.passed() {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
         self.environment.apply(&mut command);
         Signals::unblocked(&mut command);
         command
@@ -23,8 +34,19 @@ impl Commands<'_> {
             .stderr(Stdio::piped())
             .process_group(0);
         let child = command.spawn()?;
-        (self.running)(Some(child.id()));
-        let output = child.wait_with_output();
+        let pid = child.id();
+        (self.running)(Some(pid));
+        let output = match self.deadline.left() {
+            None => child.wait_with_output(),
+            Some(left) => {
+                let (tell, ended) = mpsc::channel();
+                thread::spawn(move || tell.send(child.wait_with_output()));
+                ended.recv_timeout(left).unwrap_or_else(|_| {
+                    reap(&[pid]);
+                    Err(io::ErrorKind::TimedOut.into())
+                })
+            }
+        };
         (self.running)(None);
         output
     }

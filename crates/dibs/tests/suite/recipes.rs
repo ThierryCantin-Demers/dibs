@@ -1869,3 +1869,48 @@ fn a_shell_in_a_worktree_needs_no_repo_and_answers_to_its_directory_name() {
         out.all()
     );
 }
+
+#[test]
+fn a_prepare_that_hangs_is_stopped_at_the_jobs_cap() {
+    let s = Sandbox::new();
+    let dir = app(&s);
+    let never = s.gate("never");
+    let real = std::env::var("PATH")
+        .unwrap()
+        .split(':')
+        .map(|d| std::path::Path::new(d).join("git"))
+        .find(|git| git.is_file())
+        .unwrap();
+    s.write_exec(
+        "bin/git",
+        &format!(
+            "#!/bin/sh\ncase \" $* \" in *\" {} fetch \"*) {} ;; esac\nexec '{}' \"$@\"\n",
+            s.p("home/prog/app"),
+            never.hold(),
+            real.display()
+        ),
+    );
+    let out = s
+        .dibs([
+            "shell",
+            &format!("{dir}@main"),
+            "--reason",
+            "x",
+            "--max",
+            "2",
+            "--",
+            "true",
+        ])
+        .run();
+    assert_eq!(
+        (
+            out.code,
+            out.stderr.lines_matching(" exit 124 +by=dibs"),
+            out.stderr.lines_with("holding the lock for 2s"),
+            out.all().contains("no such ref"),
+        ),
+        (124, 1, 1, false),
+        "a fetch that never ends is stopped at the cap like the job it is part of: {}",
+        out.all()
+    );
+}

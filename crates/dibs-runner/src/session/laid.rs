@@ -1,4 +1,5 @@
 use crate::{
+    clock::Deadline,
     job::{Environment, Output},
     platform::{Host, Platform as _},
     session::{base::Session, run::Place},
@@ -46,6 +47,7 @@ impl Session {
         tree: &Tree,
         environment: &mut Environment,
         output: Output,
+        deadline: Deadline,
     ) -> Laid {
         let prepare = match &tree.place {
             Where::At(laid) => {
@@ -76,6 +78,7 @@ impl Session {
             commands: Commands {
                 environment,
                 running: &running,
+                deadline,
             },
             say: &say,
         }

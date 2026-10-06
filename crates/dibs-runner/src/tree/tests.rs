@@ -1,4 +1,5 @@
 use crate::{
+    clock::Deadline,
     job::Environment,
     tree::{Commands, Copier, Reflinks, Stepping, Trees},
 };
@@ -10,6 +11,7 @@ use std::{
     cell::RefCell,
     fs::{self, File},
     io::{BufRead as _, BufReader},
+    os::unix::{fs::FileTypeExt as _, net::UnixListener},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -27,6 +29,7 @@ struct Machine {
     reflinks: Reflinks,
     seed_wait: Duration,
     environment: Environment,
+    deadline: Deadline,
 }
 
 impl Machine {
@@ -44,6 +47,7 @@ impl Machine {
             reflinks: Reflinks::Copies,
             seed_wait: Duration::from_secs(900),
             environment: Environment::default(),
+            deadline: Deadline::default(),
         }
     }
 
@@ -111,6 +115,7 @@ impl Machine {
             commands: Commands {
                 environment: &self.environment,
                 running: &|_| {},
+                deadline: self.deadline,
             },
             say: &say,
         };
@@ -398,6 +403,25 @@ fn a_new_tree_starts_from_its_repos_latest_target_with_its_sources() {
     );
     assert!(Path::new(&p.worktree).join("theirs.rs").exists());
     assert!(old.join("debug/deps/libdemo-local-old.rlib").exists());
+}
+
+#[test]
+fn a_fifo_or_socket_in_a_siblings_sources_is_made_anew_rather_than_read() {
+    let m = Machine::new();
+    m.sibling("demo-local-old", &[]);
+    let sources = m.sources("old", "theirs.rs");
+    // Unreadable, so a copier that opened it would fail here rather than wait for a writer.
+    run(&sources, "mkfifo pipe && chmod 200 pipe");
+    let socket = UnixListener::bind(sources.join("socket")).unwrap();
+    let p = m.prepared(&local("new", &[]));
+    drop(socket);
+    assert!(p.seeded.unwrap().sources);
+    let kind = |name: &str| {
+        fs::symlink_metadata(Path::new(&p.worktree).join(name))
+            .unwrap()
+            .file_type()
+    };
+    assert!(kind("pipe").is_fifo() && kind("socket").is_socket());
 }
 
 #[test]

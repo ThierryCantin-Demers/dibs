@@ -1,11 +1,12 @@
+use crate::clock::Deadline;
 use std::{
     fs::{self, File},
+    io,
     path::{Path, PathBuf},
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-/// How often a lock a seed waits for is tried again.
+/// How often a lock waited for is tried again.
 const RETRY: Duration = Duration::from_millis(25);
 
 /// The `.cargo-lock` files cargo holds in a target directory while it builds there.
@@ -14,8 +15,9 @@ pub struct Builds<'a> {
     pub target: &'a Path,
 }
 
-/// A build's lock, held: shared, so that no build starts while a copy is read, or exclusive, so
-/// that none runs in a target being moved or removed.
+/// A lock held: a build's, shared so that no build starts while a copy is read, or exclusive so
+/// that none runs in a target being moved or removed; or a prepare's, so that two never lay out
+/// one tree at once.
 pub struct Held(#[allow(dead_code, reason = "held for its lock")] File);
 
 impl Builds<'_> {
@@ -77,12 +79,16 @@ impl Held {
     /// `lock` shared, within `wait`.
     pub fn shared_within(lock: &Path, wait: Duration) -> Option<Held> {
         let file = File::open(lock).ok()?;
-        let deadline = Instant::now() + wait;
-        let mut taken = file.try_lock_shared().is_ok();
-        while !taken && Instant::now() < deadline {
-            thread::sleep(RETRY);
-            taken = file.try_lock_shared().is_ok();
-        }
-        taken.then_some(Held(file))
+        Deadline::after(Some(wait))
+            .until(RETRY, || file.try_lock_shared().is_ok())
+            .then_some(Held(file))
+    }
+
+    /// `lock`, made if missing, exclusively before `deadline`; None once it has passed.
+    pub fn exclusive_by(lock: &Path, deadline: Deadline) -> io::Result<Option<Held>> {
+        let file = File::create(lock)?;
+        Ok(deadline
+            .until(RETRY, || file.try_lock().is_ok())
+            .then_some(Held(file)))
     }
 }
