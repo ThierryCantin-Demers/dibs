@@ -132,7 +132,10 @@ impl Machine {
             },
             say: &say,
         };
-        let prepared = trees.prepare(prepare);
+        let prepared = trees.prepare(prepare).map_err(|error| {
+            said.borrow_mut().push_str(&error.to_string());
+            error.exit()
+        });
         (prepared, said.into_inner())
     }
 
@@ -1138,7 +1141,7 @@ fn a_sweep_leaves_trees_a_prepare_holds_and_keeps_one_revived_after_it_judged() 
     assert!(trees.verdicts.iter().all(|v| v.fate == Fate::Past));
     fs::write(revived.join(".dibs-used"), "").unwrap();
     let prepare = Building::holding(&m.p("scratch/ws/other/.prepare.lock"));
-    sweep.remove(&mut trees, Moment::epoch_now());
+    sweep.collect(&mut trees, Moment::epoch_now());
     prepare.done();
     assert!(!gone.exists());
     assert!(revived.exists() && fate_of(&trees, &revived) == Fate::Kept);
@@ -1159,7 +1162,7 @@ fn a_sweep_leaves_caches_a_prepare_holds_and_keeps_one_revived_after_it_judged()
     assert!(caches.verdicts.iter().all(|v| v.fate == Fate::Past));
     fs::write(revived.join(".dibs-used"), "").unwrap();
     let prepare = Building::holding(&m.p("scratch/target/.held.lock"));
-    sweep.remove(&mut caches, Moment::epoch_now());
+    sweep.collect(&mut caches, Moment::epoch_now());
     prepare.done();
     assert!(!gone.exists());
     assert!(revived.exists() && fate_of(&caches, &revived) == Fate::Kept);
@@ -1261,4 +1264,47 @@ fn a_build_after_one_stopped_partway_rebuilds_what_that_one_touched() {
     );
     s.with(None, |step| step.building()).unwrap().ended(143);
     assert!(own.exists(), "one stopped leaves its mark");
+}
+
+#[test]
+fn a_value_from_the_wire_that_names_a_path_elsewhere_is_refused() {
+    let m = Machine::new();
+    let with = |change: &dyn Fn(&mut Prepare)| {
+        let mut prepare = local("k", &["aaa"]);
+        change(&mut prepare);
+        prepare
+    };
+    let refused = [
+        with(&|p| p.repo = "../demo".into()),
+        with(&|p| {
+            p.source = Source::Local {
+                key: "../../x".into(),
+                content: "c".into(),
+            }
+        }),
+        with(&|p| {
+            p.nest = Some(Nest {
+                name: "a/b".into(),
+                config: String::new(),
+            })
+        }),
+        with(&|p| p.packages.as_mut().unwrap().token = "../t".into()),
+        with(&|p| p.fresh = vec!["../../home".into()]),
+        with(&|p| p.fresh = vec![".".into()]),
+        with(&|p| p.fresh = vec!["/etc".into()]),
+        with(&|p| {
+            p.gitdbs = vec![GitDb {
+                name: "../db".into(),
+                commit: "c".into(),
+            }]
+        }),
+    ];
+    for prepare in refused {
+        let (prepared, said) = m.prepare(&prepare);
+        assert_eq!(prepared.err(), Some(Exit::Refused), "{prepare:?}");
+        assert!(said.contains(" is no "), "{said}");
+    }
+    assert!(!m.p("scratch/ws").exists(), "nothing was laid out");
+    let inside = with(&|p| p.fresh = vec!["./target".into(), "a/b".into()]);
+    assert!(m.prepare(&inside).0.is_ok());
 }

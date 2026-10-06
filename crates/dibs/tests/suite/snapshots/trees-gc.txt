@@ -46,6 +46,7 @@ out/
 target/
   .abandoned.lock
   .app-local-<key>.lock
+  .held.lock
   .stuck.lock
   .swept-only.lock
   app-local-<key>/

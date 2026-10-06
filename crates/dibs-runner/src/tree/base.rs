@@ -5,32 +5,20 @@ use crate::{
         builds::{Builds, Held},
         clocks::{Clocks, Removal, USED},
         copy::{Copier, empty, now, remove_all, touch},
+        error::{Named, PrepareError},
         git::{Commands, answer, said},
         packages::{Cache, Lines},
         seed::Seed,
         sweep::{PREPARE_LOCK, Sweep},
     },
 };
-use dibs_format::{
-    Exit,
-    wire::{GitDb, GitDbs, Nest, Prepare, Prepared, Revision, Seeded, Source},
-};
+use dibs_format::wire::{GitDb, GitDbs, Nest, Prepare, Prepared, Revision, Seeded, Source};
 use std::{
-    fs, io,
+    fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU32, Ordering},
     time::Duration,
 };
-
-/// What a failed fetch says when the machine cannot see the remote at all, so the ref it was
-/// asked for is very likely fine.
-const CREDENTIALS: [&str; 5] = [
-    "could not read Username",
-    "Authentication failed",
-    "terminal prompts disabled",
-    "Permission denied (publickey)",
-    "Repository not found",
-];
 
 /// Where dibs lays trees out on a machine, which it owns so that nothing is asked to follow a
 /// convention by hand: a tree per commit or per sent checkout under `ws`, a build cache per repo
@@ -86,11 +74,8 @@ struct Reseeded {
 }
 
 impl Trees<'_> {
-    pub fn prepare(&self, prepare: &Prepare) -> Result<Prepared, Exit> {
-        if !plain_name(&prepare.repo) {
-            (self.say)(&format!("dibs: {:?} is no repo's name\n", prepare.repo));
-            return Err(Exit::Refused);
-        }
+    pub fn prepare(&self, prepare: &Prepare) -> Result<Prepared, PrepareError> {
+        Trees::placed(prepare)?;
         let packages = prepare
             .packages
             .as_ref()
@@ -122,11 +107,34 @@ impl Trees<'_> {
         })
     }
 
+    /// Every value of the request that names a path, refused unless it names one inside the
+    /// place it is for: a repo's name and a key that climbed out of `ws` would lay a tree out
+    /// anywhere, and a fresh path that did would remove anything.
+    fn placed(prepare: &Prepare) -> Result<(), PrepareError> {
+        Named::Repo.check(&prepare.repo)?;
+        if let Source::Local { key, .. } = &prepare.source {
+            Named::Key.check(key)?;
+        }
+        if let Some(nest) = &prepare.nest {
+            Named::Nest.check(&nest.name)?;
+        }
+        if let Some(packages) = &prepare.packages {
+            Named::Token.check(&packages.token)?;
+        }
+        for fresh in &prepare.fresh {
+            Named::Fresh.check(fresh)?;
+        }
+        for db in &prepare.gitdbs {
+            Named::GitDb.check(&db.name)?;
+        }
+        Ok(())
+    }
+
     /// A step's outcome, unless the job's cap passed meanwhile: a command stopped at the cap
     /// fails in whatever way the step reads it.
-    fn within_cap<T>(&self, step: Result<T, Exit>) -> Result<T, Exit> {
+    fn within_cap<T>(&self, step: Result<T, PrepareError>) -> Result<T, PrepareError> {
         match self.overran() {
-            true => Err(Exit::Overran),
+            true => Err(PrepareError::Overran),
             false => step,
         }
     }
@@ -148,12 +156,11 @@ impl Trees<'_> {
         slot: u32,
         packages: Option<&Lines>,
         stamp: &Stamp,
-    ) -> Result<Laid, Exit> {
+    ) -> Result<Laid, PrepareError> {
         let repo = &prepare.repo;
         let source = self.home.join("prog").join(repo);
         if !source.join(".git").is_dir() {
-            (self.say)(&format!("dibs: no clone at {}\n", source.display()));
-            return Err(Exit::Setup);
+            return Err(PrepareError::NoClone(source));
         }
         let sha = self.resolve(&source, repo, reference, stamp)?;
         let short: String = sha.chars().take(12).collect();
@@ -206,10 +213,14 @@ impl Trees<'_> {
         repo: &str,
         reference: &str,
         stamp: &Stamp,
-    ) -> Result<String, Exit> {
+    ) -> Result<String, PrepareError> {
+        let no_ref = |said: String| PrepareError::NoRef {
+            repo: repo.to_string(),
+            reference: reference.to_string(),
+            said,
+        };
         if reference.starts_with('-') {
-            (self.say)(&format!("dibs: no such ref in {repo}: {reference}\n"));
-            return Err(Exit::Setup);
+            return Err(no_ref(String::new()));
         }
         let mine = format!("refs/dibs/prepare-{}", stamp.as_str());
         let git = |args: &[&str]| self.commands.git(source, args);
@@ -242,25 +253,16 @@ impl Trees<'_> {
         if let Some(sha) = sha {
             return Ok(sha);
         }
-        if self.overran() {
-            return Err(Exit::Overran);
+        match self.overran() {
+            true => Err(PrepareError::Overran),
+            false => Err(no_ref(why)),
         }
-        let mut told = format!("dibs: no such ref in {repo}: {reference}\n");
-        if CREDENTIALS.iter().any(|c| why.contains(c)) {
-            told.push_str(&format!(
-                "  The fetch failed on credentials, so nothing here can see that remote: a private\n  \
-                 repo is the usual reason, and the ref itself is probably fine.\n  \
-                 Send your working tree instead, which fetches nothing:  {repo}@local\n"
-            ));
-        }
-        (self.say)(&told);
-        Err(Exit::Setup)
     }
 
     /// The repo's trees to this prepare alone: two prepares of one commit would both see no tree
     /// and both add it, the prune after touches every worktree of the repo, and a sweep removes
     /// none of them meanwhile.
-    fn repo_turn(&self, repo: &str) -> Result<Held, Exit> {
+    fn repo_turn(&self, repo: &str) -> Result<Held, PrepareError> {
         self.held(
             &self.scratch.join("ws").join(repo).join(PREPARE_LOCK),
             self.commands.deadline,
@@ -270,7 +272,7 @@ impl Trees<'_> {
 
     /// The commit's worktree, detached so that it never moves under a job still measuring from
     /// it. Holding the repo's turn.
-    fn add(&self, source: &Path, worktree: &Path, sha: &str) -> Result<(), Exit> {
+    fn add(&self, source: &Path, worktree: &Path, sha: &str) -> Result<(), PrepareError> {
         if worktree.join(".git").exists() {
             if !self.half_checked_out(worktree) {
                 return Ok(());
@@ -311,14 +313,8 @@ impl Trees<'_> {
         };
         match added {
             true => Ok(()),
-            false if self.overran() => Err(Exit::Overran),
-            false => {
-                (self.say)(&format!(
-                    "dibs: could not add the worktree {}\n",
-                    worktree.display()
-                ));
-                Err(Exit::Setup)
-            }
+            false if self.overran() => Err(PrepareError::Overran),
+            false => Err(PrepareError::NotAdded(worktree.to_path_buf())),
         }
     }
 
@@ -330,7 +326,7 @@ impl Trees<'_> {
         key: &str,
         packages: Option<&Lines>,
         stamp: &Stamp,
-    ) -> Result<Laid, Exit> {
+    ) -> Result<Laid, PrepareError> {
         let repo = &prepare.repo;
         let worktree = self.nested(prepare).join(format!("local-{key}"));
         let nest = prepare
@@ -437,7 +433,7 @@ impl Trees<'_> {
     /// The target to this prepare alone, from deciding what it starts from until it is marked
     /// used: a sweep removes no target a prepare holds, and its marker's time, which says
     /// whether another call may be about to enter it, is left until then.
-    fn target_turn(&self, target: &Path) -> Result<Held, Exit> {
+    fn target_turn(&self, target: &Path) -> Result<Held, PrepareError> {
         self.made(target.parent().unwrap_or(self.scratch))?;
         self.held(
             &Held::beside(target),
@@ -448,7 +444,7 @@ impl Trees<'_> {
 
     /// A sent tree to this prepare alone, from deciding what it starts from until its target is
     /// marked used, so a reseed that copied for minutes never replaces a tree handed over since.
-    fn turn(&self, worktree: &Path) -> Result<Held, Exit> {
+    fn turn(&self, worktree: &Path) -> Result<Held, PrepareError> {
         let path = Held::beside(worktree);
         if let Ok(Some(held)) = Held::exclusive_by(&path, Deadline::after(Some(Duration::ZERO))) {
             return Ok(held);
@@ -461,10 +457,10 @@ impl Trees<'_> {
     }
 
     /// `lock` taken before `deadline`, or the prepare overran.
-    fn held(&self, lock: &Path, deadline: Deadline, why: &str) -> Result<Held, Exit> {
+    fn held(&self, lock: &Path, deadline: Deadline, why: &str) -> Result<Held, PrepareError> {
         Held::exclusive_by(lock, deadline)
-            .map_err(|e| self.failed(why, &e))?
-            .ok_or(Exit::Overran)
+            .map_err(|e| PrepareError::io(why, e))?
+            .ok_or(PrepareError::Overran)
     }
 
     fn seed<'s>(
@@ -504,7 +500,7 @@ impl Trees<'_> {
     /// The nest's config, beside the tree's own where cargo reads it after it, so the tree stays
     /// what was sent or checked out. Marked used with its tree, since a sweep judges the
     /// directory it sits in by that.
-    fn nest(&self, prepare: &Prepare, stamp: &Stamp) -> Result<(), Exit> {
+    fn nest(&self, prepare: &Prepare, stamp: &Stamp) -> Result<(), PrepareError> {
         let Some(Nest { name, config }) = &prepare.nest else {
             return Ok(());
         };
@@ -515,7 +511,7 @@ impl Trees<'_> {
             .and_then(|()| fs::create_dir_all(&cargo))
             .and_then(|()| fs::write(&written, config))
             .and_then(|()| fs::rename(&written, cargo.join("config.toml")))
-            .map_err(|e| self.failed("could not write the pins' cargo config", &e))
+            .map_err(|e| PrepareError::io("could not write the pins' cargo config", e))
     }
 
     /// The target, marked used, with this prepare's lockfile staged beside it until a build of it
@@ -525,15 +521,15 @@ impl Trees<'_> {
         target: &Path,
         prepare: &Prepare,
         packages: Option<&Lines>,
-    ) -> Result<(), Exit> {
+    ) -> Result<(), PrepareError> {
         self.made(target)?;
         self.made(&self.scratch.join("out"))?;
-        empty(&target.join(USED)).map_err(|e| self.failed("could not mark the target", &e))?;
+        empty(&target.join(USED)).map_err(|e| PrepareError::io("could not mark the target", e))?;
         let cache = Cache { dir: target };
         if let (Some(lines), Some(staged)) = (packages, &prepare.packages) {
             cache
                 .stage(&staged.token, lines)
-                .map_err(|e| self.failed("could not stage the lockfile", &e))?;
+                .map_err(|e| PrepareError::io("could not stage the lockfile", e))?;
         }
         cache.forget_unbuilt();
         Ok(())
@@ -570,21 +566,13 @@ impl Trees<'_> {
         })
     }
 
-    fn made(&self, dir: &Path) -> Result<(), Exit> {
+    fn made(&self, dir: &Path) -> Result<(), PrepareError> {
         fs::create_dir_all(dir)
-            .map_err(|e| self.failed(&format!("could not make {}", dir.display()), &e))
+            .map_err(|e| PrepareError::io(&format!("could not make {}", dir.display()), e))
     }
 
-    fn made_used(&self, worktree: &Path) -> Result<(), Exit> {
-        touch(&worktree.join(USED)).map_err(|e| self.failed("could not mark the tree", &e))
-    }
-
-    fn failed(&self, what: &str, error: &io::Error) -> Exit {
-        (self.say)(&format!("dibs: {what}: {error}\n"));
-        match error.kind() {
-            io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded => Exit::NoRoom,
-            _ => Exit::Setup,
-        }
+    fn made_used(&self, worktree: &Path) -> Result<(), PrepareError> {
+        touch(&worktree.join(USED)).map_err(|e| PrepareError::io("could not mark the tree", e))
     }
 }
 
@@ -593,9 +581,4 @@ fn worked_in(dirs: &[&Path]) -> bool {
     Host::processes()
         .iter()
         .any(|p| Host::cwd(p.pid).is_some_and(|cwd| dirs.iter().any(|dir| cwd.starts_with(dir))))
-}
-
-/// A name that is one path component, which a repo's directory and its trees are named by.
-fn plain_name(name: &str) -> bool {
-    !name.is_empty() && !name.starts_with('.') && !name.contains('/')
 }

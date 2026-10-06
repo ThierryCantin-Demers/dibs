@@ -259,8 +259,10 @@ one of them.
   - A script reads `DIBS_PATIENCE` and `DIBS_QUICK` from its environment alone, so until every
     client has switched, `/etc/dibs/runner.toml` leaves them at their defaults.
   - A prepare that finds the scratch full or over quota exits 70, where a script exited with
-    whatever its failing command did. A repo name that is not one path component is refused
-    with 2, and a ref that starts with `-` is no ref (3), before git reads either.
+    whatever its failing command did. A repo's name, a sent tree's key, a nest's name, a
+    lockfile's token or a git database's name that is not one path component, or a fresh path
+    that leaves its tree or is the tree itself, is refused with 2 before anything is laid out,
+    and a ref that starts with `-` is no ref (3), before git reads it.
   - After an overrun a recipe step's end still runs: the files it names are kept, and a pin that
     did not take turns the 124 into 3. A script's `timeout` stopped both with the command.
   - A step whose tree, laid out by an earlier call, has gone since exits 127 with `by=command`,

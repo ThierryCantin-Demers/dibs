@@ -5,6 +5,7 @@ mod base;
 mod builds;
 mod clocks;
 mod copy;
+mod error;
 mod gc;
 mod git;
 mod glob;

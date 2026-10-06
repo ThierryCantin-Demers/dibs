@@ -95,9 +95,10 @@ impl Visit {
         .prepare(prepare);
         let prepared = match prepared {
             Ok(prepared) => prepared,
-            Err(exit) => {
+            Err(error) => {
+                say(&error.to_string());
                 return Laid::Done {
-                    status: exit.status(),
+                    status: error.exit().status(),
                     by: By::Dibs,
                 };
             }

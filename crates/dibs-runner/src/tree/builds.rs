@@ -61,11 +61,6 @@ impl Builds<'_> {
             })
             .collect()
     }
-
-    /// Whether nothing builds there: every lock could be taken exclusively.
-    pub fn idle(&self) -> bool {
-        self.all_exclusive().is_some()
-    }
 }
 
 impl Held {

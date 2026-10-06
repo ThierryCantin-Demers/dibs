@@ -111,7 +111,7 @@ impl<'a> Sweep<'a> {
         let now = Moment::epoch_now();
         for kind in Kind::ALL {
             if let Some(mut section) = self.judged(kind, now) {
-                self.remove(&mut section, now);
+                self.collect(&mut section, now);
             }
         }
     }
@@ -148,10 +148,7 @@ impl<'a> Sweep<'a> {
                 .collect(),
             Kind::Caches => entries
                 .map(|cache| {
-                    let fate = match self.cache(&cache, now) {
-                        Fate::Past if !(Builds { target: &cache }).idle() => Fate::Held,
-                        fate => fate,
-                    };
+                    let fate = self.cache(&cache, now);
                     let used = Clocks::used(&cache, now);
                     Verdict::of(cache, fate, used)
                 })
@@ -168,18 +165,18 @@ impl<'a> Sweep<'a> {
         Some(Section::holding(kind, verdicts, None))
     }
 
-    /// What is past its clock in `section` removed, unless the sweep is dry.
-    pub fn remove(&self, section: &mut Section, now: u64) {
-        if self.dry {
-            return;
-        }
+    /// What is past its clock in `section` judged again under the locks a prepare revives it
+    /// under, and removed holding them unless the sweep is dry. Judging takes no lock, since
+    /// one taken and let go can stay held a moment in a process another thread forks.
+    pub fn collect(&self, section: &mut Section, now: u64) {
         match section.kind {
-            Kind::Trees => self.remove_trees(&mut section.verdicts, now),
+            Kind::Trees => self.collect_trees(&mut section.verdicts, now),
             Kind::Caches => {
                 for verdict in &mut section.verdicts {
-                    self.remove_cache(verdict, now);
+                    self.collect_cache(verdict, now);
                 }
             }
+            Kind::Jobs | Kind::Leftovers | Kind::Runners if self.dry => {}
             Kind::Jobs | Kind::Leftovers | Kind::Runners => {
                 for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
                     verdict.removed = self.removal.path(&verdict.path);
@@ -190,7 +187,7 @@ impl<'a> Sweep<'a> {
 
     /// Each repo's past trees under its prepare lock, judged again there, and the clone they were
     /// added from pruned of them.
-    fn remove_trees(&self, verdicts: &mut [Verdict], now: u64) {
+    fn collect_trees(&self, verdicts: &mut [Verdict], now: u64) {
         let mut repos: BTreeMap<PathBuf, Vec<&mut Verdict>> = BTreeMap::new();
         for verdict in verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
             let repo = verdict.path.parent().unwrap_or(self.scratch).to_path_buf();
@@ -204,7 +201,7 @@ impl<'a> Sweep<'a> {
             let mut pruned = false;
             for verdict in past {
                 verdict.fate = self.tree(&verdict.path, now);
-                if verdict.fate == Fate::Past {
+                if verdict.fate == Fate::Past && !self.dry {
                     verdict.removed = self.removal.tree(&verdict.path);
                     pruned = true;
                 }
@@ -217,7 +214,7 @@ impl<'a> Sweep<'a> {
 
     /// A past cache under the lock a prepare revives it under, with every build lock in it held,
     /// judged again there.
-    fn remove_cache(&self, verdict: &mut Verdict, now: u64) {
+    fn collect_cache(&self, verdict: &mut Verdict, now: u64) {
         if !matches!(verdict.fate, Fate::Past | Fate::Hollow) {
             return;
         }
@@ -233,6 +230,9 @@ impl<'a> Sweep<'a> {
             return;
         };
         verdict.fate = self.cache(&verdict.path, now);
+        if self.dry {
+            return;
+        }
         match verdict.fate {
             Fate::Past => verdict.removed = self.removal.path(&verdict.path),
             Fate::Hollow => self.removal.hollow(&verdict.path),

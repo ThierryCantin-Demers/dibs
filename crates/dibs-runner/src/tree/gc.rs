@@ -169,7 +169,7 @@ impl Report {
                 Report::say("  runners: a build of one is running, so none is collected now\n");
                 continue;
             };
-            sweep.remove(&mut section, now);
+            sweep.collect(&mut section, now);
             let listed = match kind {
                 Kind::Trees => self.trees(&section, &sizes, now, &mut tally),
                 Kind::Caches => self.caches(&section, &sizes, sharing.as_ref(), now, &mut tally),
