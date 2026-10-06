@@ -947,6 +947,25 @@ fn a_step_keeps_the_files_it_wrote_and_none_an_earlier_run_left() {
 }
 
 #[test]
+fn a_file_a_claim_dated_is_not_kept_as_the_steps_own() {
+    let s = Stepped::new(Some("/another/tree"));
+    let job = s.machine.p("scratch/jobs/j1");
+    fs::create_dir_all(&job).unwrap();
+    fs::create_dir_all(s.worktree.join("results")).unwrap();
+    fs::write(s.worktree.join("results/old.json"), "old").unwrap();
+    aged(&s.worktree.join("results/old.json"));
+    fs::write(job.join("cmd"), "x").unwrap();
+    run(&job, "touch -d '1 minute ago' cmd");
+    let kept = s.with(Some(&job), |step| {
+        step.claim();
+        fs::write(s.worktree.join("results/new.json"), "new").unwrap();
+        step.keep(&lines(&["results/*.json"]))
+    });
+    assert_eq!(kept, Some(1));
+    assert!(!job.join("artifacts/results/old.json").exists());
+}
+
+#[test]
 fn a_build_that_still_takes_a_pinned_crate_from_git_is_said() {
     let s = Stepped::new(None);
     fs::write(

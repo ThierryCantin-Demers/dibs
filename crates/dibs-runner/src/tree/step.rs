@@ -1,5 +1,5 @@
 use crate::tree::{
-    copy::{dated, now},
+    copy::{Mark, dated, now},
     glob::Glob,
     packages::{Cache, Lines, RECORD},
 };
@@ -10,6 +10,8 @@ use std::{
 
 /// Where a target records the tree whose build it last held.
 const CLAIM: &str = ".dibs-tree";
+/// The job's command, whose time is when the job started.
+const STARTED: &str = "cmd";
 /// What a pattern under the target starts with, as a recipe writes it.
 const UNDER_TARGET: &str = "$CARGO_TARGET_DIR/";
 
@@ -40,7 +42,8 @@ impl Stepping<'_> {
 
     /// The target claimed for this tree. Cargo judges a crate fresh when its sources are older
     /// than its last compile, so a tree checked out before another tree built into a shared
-    /// target is handed that tree's artifacts unless its sources are dated after them.
+    /// target is handed that tree's artifacts unless its sources are dated after them. The job's
+    /// start is marked again after them, or `keep` would take every file of the tree for new.
     pub fn claim(&self) {
         let lock = File::create(self.target.join(format!("{CLAIM}.lock")));
         let _held = lock.and_then(|lock| lock.lock().map(|()| lock));
@@ -48,6 +51,9 @@ impl Stepping<'_> {
             return;
         }
         dated_now(self.worktree);
+        if let Some(job_dir) = self.job_dir {
+            let _ = Mark(&job_dir.join(STARTED)).set();
+        }
         let _ = fs::write(
             self.target.join(CLAIM),
             format!("{}\n", self.worktree.display()),
@@ -91,7 +97,7 @@ impl Stepping<'_> {
     /// taken: a tree is reused from run to run, and a file an earlier run left would look current.
     pub fn keep(&self, patterns: &[String]) -> Option<u32> {
         let job_dir = self.job_dir?;
-        let started = fs::metadata(job_dir.join("cmd"))
+        let started = fs::metadata(job_dir.join(STARTED))
             .and_then(|m| m.modified())
             .ok()?;
         let mut kept = 0;

@@ -19,15 +19,14 @@ use crate::{
     },
     status::Look,
     stop::{Stage, State, Stopper},
-    tree::Stepping,
+    tree::{Mark, Stepping},
 };
 use dibs_format::{By, Event, Exit, HistoryLine, JobId, Mode, wire::Record};
 use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::{Arc, MutexGuard},
-    thread,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 /// How long a job is given to stop once its cap has passed.
@@ -39,8 +38,6 @@ const LOG_BOUND: usize = 20000;
 const LOG_KEPT: usize = 10000;
 /// What a command bash could not start exits with.
 pub(super) const NOT_STARTED: i32 = 127;
-/// Longer than the coarsest tick a file's time is stamped by.
-const FILE_TICK: Duration = Duration::from_millis(11);
 
 /// Where a call runs: the machine, its lock directory, and what stops the call.
 pub(super) struct Place<'a> {
@@ -599,15 +596,10 @@ impl Session {
         state.logged_end = true;
     }
 
-    /// What the job runs, whose time marks the job's start: what it writes is newer. File times
-    /// move a tick, up to 10 ms, at a time, so the job starts once a tick has passed the mark.
+    /// What the job runs, whose time marks the job's start: what it writes is newer.
     fn write_command(path: &Path, command: &str) -> io::Result<()> {
         fs::write(path, format!("{command}\n"))?;
-        let marked = fs::metadata(path)?.modified()?;
-        if let Ok(left) = (marked + FILE_TICK).duration_since(SystemTime::now()) {
-            thread::sleep(left);
-        }
-        Ok(())
+        Mark(path).passed()
     }
 }
 

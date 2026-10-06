@@ -9,6 +9,8 @@ use std::{
         fs::{MetadataExt as _, symlink},
     },
     path::{Path, PathBuf},
+    thread,
+    time::{Duration, SystemTime},
 };
 
 /// How this machine shares a file's blocks. A test sets `DIBS_REFLINK` to `copy` or `never` to
@@ -153,6 +155,30 @@ pub fn now(path: &Path) -> io::Result<()> {
     match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) } {
         0 => Ok(()),
         _ => Err(io::Error::last_os_error()),
+    }
+}
+
+/// Longer than the coarsest tick a file's time is stamped by.
+const FILE_TICK: Duration = Duration::from_millis(11);
+
+/// A file whose time marks when something began: whatever is written after it is newer.
+pub struct Mark<'a>(pub &'a Path);
+
+impl Mark<'_> {
+    /// Dated now.
+    pub fn set(&self) -> io::Result<()> {
+        now(self.0)?;
+        self.passed()
+    }
+
+    /// Returns once the clock files are stamped by has moved past it: file times move a tick,
+    /// up to 10 ms, at a time.
+    pub fn passed(&self) -> io::Result<()> {
+        let marked = fs::metadata(self.0)?.modified()?;
+        if let Ok(left) = (marked + FILE_TICK).duration_since(SystemTime::now()) {
+            thread::sleep(left);
+        }
+        Ok(())
     }
 }
 
