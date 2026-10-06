@@ -37,7 +37,7 @@
 -> exit 69
 2| dibs: --sync is preserving mtimes into the machine. A build there may then compile nothing:
 2|   for a source tree use --checksum --no-times instead of -a.
-2| dibs: syncing with dibs@box-a (box-a)
+2| dibs: syncing with dibs@box-a (box-a) once its lock is held; the files are read then, not now
 2| ssh: Could not resolve hostname box-a: Name or service not known
 2| dibs: cannot reach 'dibs@box-a' over ssh.
 2|   The name 'box-a' does not resolve from here. A .local name needs mDNS
@@ -46,7 +46,7 @@
 
 == dibs --on box-a --sync -a ':~/y' ./x
 -> exit 69
-2| dibs: syncing with dibs@box-a (box-a)
+2| dibs: syncing with dibs@box-a (box-a) once its lock is held; the files are read then, not now
 2| ssh: Could not resolve hostname box-a: Name or service not known
 2| dibs: cannot reach 'dibs@box-a' over ssh.
 2|   The name 'box-a' does not resolve from here. A .local name needs mDNS

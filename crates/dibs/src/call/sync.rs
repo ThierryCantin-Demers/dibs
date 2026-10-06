@@ -126,7 +126,10 @@ impl Sync<'_> {
             Some(machine) if machine.as_str() != target.host => format!(" ({machine})"),
             _ => String::new(),
         };
-        output.say(&format!("dibs: syncing with {}{named}\n", target.host));
+        output.say(&format!(
+            "dibs: syncing with {}{named} once its lock is held; the files are read then, not now\n",
+            target.host
+        ));
         // SAFETY: the closure makes an async-signal-safe call only.
         unsafe {
             rsync.pre_exec(|| {

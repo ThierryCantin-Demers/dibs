@@ -5,7 +5,7 @@
 2| dibs: step 1/1 [Shared], with the setup ahead of it
 2| dibs: <root>/scratch/ws/app/<main>
 2| dibs: sending dep-0123456789abcdef at <commit>, which the machine does not have and may not be able to fetch
-2| dibs: syncing with dibs@box-a (box-a)
+2| dibs: syncing with dibs@box-a (box-a) once its lock is held; the files are read then, not now
 2| dibs: step 1/1 [Shared]
 recorded revisions: {"app":"<main>"}
 the machine's git databases: dep-0123456789abcdef
@@ -14,10 +14,10 @@ it holds the pinned commit: true
 == a working tree of the same lockfile, sent to another machine home: dibs build <root>/app@local p --on box-a
 -> exit 0
 2| dibs: preparing app from <root>/app (clean)
-2| dibs: syncing with dibs@box-a (box-a)
+2| dibs: syncing with dibs@box-a (box-a) once its lock is held; the files are read then, not now
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| dibs: sending dep-0123456789abcdef at <commit>, which the machine does not have and may not be able to fetch
-2| dibs: syncing with dibs@box-a (box-a)
+2| dibs: syncing with dibs@box-a (box-a) once its lock is held; the files are read then, not now
 2| dibs: step 1/1 [Shared]
 recorded revisions: {"app":"local:<sha>-<content>"}
 the machine's git databases: dep-0123456789abcdef
@@ -26,7 +26,7 @@ it holds the pinned commit: true
 == again, once the machine has it: dibs build <root>/app@local p --on box-a
 -> exit 0
 2| dibs: preparing app from <root>/app (clean)
-2| dibs: syncing with dibs@box-a (box-a)
+2| dibs: syncing with dibs@box-a (box-a) once its lock is held; the files are read then, not now
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| dibs: step 1/1 [Shared]
 recorded revisions: {"app":"local:<sha>-<content>"}
