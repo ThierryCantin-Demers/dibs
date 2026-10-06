@@ -361,7 +361,7 @@ impl Trees<'_> {
                 copied.discard();
                 None
             }
-            false => copied.replace(target, worktree, stamp),
+            false => copied.replace(target, worktree, stamp, self.say),
         };
         drop(held);
         seeded.map(|seeded| Reseeded { seeded, mine })

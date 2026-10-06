@@ -274,7 +274,13 @@ impl Copied {
     /// In place of an existing tree and its target, which go. Its sources go even where the
     /// sibling's did not come, since files dated from one tree and compared against another's
     /// artifacts could pass for fresh: the sync after sends them all again.
-    pub fn replace(mut self, target: &Path, worktree: &Path, stamp: &Stamp) -> Option<Seeded> {
+    pub fn replace(
+        mut self,
+        target: &Path,
+        worktree: &Path,
+        stamp: &Stamp,
+        say: &dyn Fn(&str),
+    ) -> Option<Seeded> {
         let aside = format!(".old.{}", stamp.as_str());
         let (old_target, old_tree) = (suffixed(target, &aside), suffixed(worktree, &aside));
         if fs::rename(worktree, &old_tree).is_err() {
@@ -296,8 +302,11 @@ impl Copied {
             self.seeded.sources = fs::rename(&sources, worktree).is_ok();
             remove_all(&sources);
         }
-        remove_all(&old_target);
-        remove_all(&old_tree);
+        if !(remove_all(&old_target) & remove_all(&old_tree)) {
+            say(
+                "dibs: could not remove all of what the reseed replaced; the next sweep takes it\n",
+            );
+        }
         Some(self.seeded)
     }
 

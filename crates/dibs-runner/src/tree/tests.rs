@@ -525,6 +525,25 @@ fn a_tree_prepared_moments_ago_or_worked_in_is_never_moved_aside() {
     assert!(ws.join("mine.rs").exists(), "so it keeps its own");
 }
 
+#[test]
+fn a_reseed_that_cannot_remove_what_it_replaced_still_prepares_the_tree() {
+    let m = Machine::new();
+    m.sibling("demo-local-moved", &["aaa", "bbb"]);
+    let mine = m.sibling("demo-local-mine", &["aaa", "ccc"]);
+    m.sources("mine", "mine.rs");
+    let stuck = mine.join("stuck");
+    fs::create_dir_all(&stuck).unwrap();
+    fs::write(stuck.join("f"), "").unwrap();
+    run(&stuck, "chmod 500 .");
+    let (prepared, said) = m.prepare(&local("mine", &["aaa", "bbb"]));
+    run(&m.p("scratch"), "chmod -R u+w target");
+    assert_eq!(prepared.unwrap().reseeded, Some(1), "{said}");
+    assert!(
+        said.contains("could not remove all of what the reseed replaced; the next sweep takes it"),
+        "{said}"
+    );
+}
+
 /// What a reseed and the call beside it were heard to do.
 #[derive(Debug, PartialEq, Eq)]
 enum Heard {
