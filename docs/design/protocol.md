@@ -63,7 +63,7 @@ A recipe's request names the tree its job runs in: one laid out before, or one t
 out at the head of the job, once it holds the lock and before the command, so a recipe pays for
 one place in the queue rather than two. It fetches a ref into a ref of its own, never through
 the clone's one `FETCH_HEAD`, adds the commit's worktree or makes a sent tree's directory, seeds
-a new target from a sibling's, stages the lockfile's packages beside it, sweeps what nobody has
+a new target from a sibling's by reflinks (`FICLONE` on Linux, `clonefile` on macOS), stages the lockfile's packages beside it, sweeps what nobody has
 used, and asks cargo's git cache which pinned commits it lacks. The layout under the scratch and
 its markers (`.dibs-used`, `.dibs-tree`, `.dibs-packages`, `.prepare.lock`) are the ones a bash
 prepare left, so no build cache is rebuilt. A sent tree's prepare also holds `.<tree>.lock`

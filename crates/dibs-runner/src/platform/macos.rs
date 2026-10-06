@@ -299,8 +299,16 @@ impl Platform for MacOs {
         None
     }
 
-    fn reflink(_from: &Path, _to: &Path) -> bool {
-        false
+    /// `clonefile`, which APFS answers with a copy that shares its blocks and HFS+ refuses.
+    fn reflink(from: &Path, to: &Path) -> bool {
+        let (Ok(from), Ok(to)) = (
+            CString::new(from.as_os_str().as_bytes()),
+            CString::new(to.as_os_str().as_bytes()),
+        ) else {
+            return false;
+        };
+        // SAFETY: clonefile reads two NUL-terminated paths, both alive here.
+        unsafe { libc::clonefile(from.as_ptr(), to.as_ptr(), 0) == 0 }
     }
 
     fn filesystem(dir: &Path) -> Option<String> {
