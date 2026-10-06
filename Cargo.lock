@@ -544,9 +544,9 @@ dependencies = [
 name = "dibs-machines"
 version = "0.1.0"
 dependencies = [
+ "dibs",
+ "dibs-format",
  "eframe",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -565,7 +565,6 @@ dependencies = [
  "dibs",
  "dibs-format",
  "ratatui",
- "serde",
  "serde_json",
 ]
 

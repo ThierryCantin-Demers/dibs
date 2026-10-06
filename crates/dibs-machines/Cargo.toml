@@ -11,9 +11,9 @@ name = "dibs-machines"
 path = "src/main.rs"
 
 [dependencies]
+dibs.workspace = true
+dibs-format.workspace = true
 eframe.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

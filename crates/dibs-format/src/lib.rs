@@ -5,6 +5,7 @@
 
 pub mod base64;
 mod exit;
+pub mod fleet;
 mod friction;
 mod ids;
 mod lines;

@@ -11,8 +11,12 @@ use crate::{
     inventory::{Inventory, InventoryError},
     machine::Stream,
     paths::{FileError, Paths},
+    recipe::{RepoError, repo_root},
 };
-use dibs_format::{Exit, Label, MachineName};
+use dibs_format::{
+    Exit, Label, MachineName,
+    fleet::{Access, Area, Finding, Overview, PathCheck, Provisioned, Report, Standing, Via},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -79,6 +83,8 @@ pub enum FleetError {
         person: String,
     },
     NoKeygen(io::Error),
+    Repo(RepoError),
+    Inventory(InventoryError),
     NotAKey {
         file: PathBuf,
         who: String,
@@ -142,7 +148,21 @@ impl fmt::Display for FleetError {
                 have.join(", ")
             ),
             FleetError::Json(e) => e.fmt(f),
+            FleetError::Repo(e) => e.fmt(f),
+            FleetError::Inventory(e) => e.fmt(f),
         }
+    }
+}
+
+impl From<RepoError> for FleetError {
+    fn from(e: RepoError) -> FleetError {
+        FleetError::Repo(e)
+    }
+}
+
+impl From<InventoryError> for FleetError {
+    fn from(e: InventoryError) -> FleetError {
+        FleetError::Inventory(e)
     }
 }
 
@@ -207,20 +227,6 @@ struct Machine {
     repos: Option<Vec<String>>,
 }
 
-#[derive(Deserialize, Serialize, Clone)]
-#[serde(deny_unknown_fields)]
-struct Provisioned {
-    by: Provisioner,
-    source: Option<String>,
-}
-
-#[derive(Deserialize, Serialize, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-enum Provisioner {
-    Ansible,
-    Hand,
-}
-
 /// How a person gets in, which decides where their access is written down.
 #[derive(Deserialize, Clone, Copy, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -241,119 +247,6 @@ enum Profile {
     Vulkan,
     Metal,
     Unprivileged,
-}
-
-#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
-#[serde(rename_all = "lowercase")]
-enum Area {
-    Paths,
-    Login,
-    Repos,
-    Dibs,
-    Rust,
-    Cuda,
-    Vulkan,
-    Metal,
-    Account,
-}
-
-impl Area {
-    fn name(self) -> &'static str {
-        match self {
-            Area::Paths => "paths",
-            Area::Login => "login",
-            Area::Repos => "repos",
-            Area::Dibs => "dibs",
-            Area::Rust => "rust",
-            Area::Cuda => "cuda",
-            Area::Vulkan => "vulkan",
-            Area::Metal => "metal",
-            Area::Account => "account",
-        }
-    }
-}
-
-/// Where one person stands on one machine.
-#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
-#[serde(rename_all = "lowercase")]
-enum Standing {
-    /// Listed, with a key in `authorized_keys`.
-    Key,
-    /// Listed, with no key there.
-    Missing,
-    /// Not listed, with a key there anyway.
-    Unlisted,
-    /// Listed, on a machine the tailnet's policy decides.
-    Tailnet,
-}
-
-/// Who can get in, as far as the machine can say.
-#[derive(Serialize, Default)]
-struct Access {
-    people: BTreeMap<String, Standing>,
-    /// Fingerprints of keys that belong to nobody in fleet.toml.
-    strangers: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct PathCheck {
-    name: String,
-    problem: Option<String>,
-}
-
-#[derive(Serialize, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-enum Via {
-    Dibs,
-    Ssh,
-}
-
-#[derive(Serialize, Debug)]
-struct Finding {
-    area: Area,
-    ok: bool,
-    detail: String,
-}
-
-impl Finding {
-    fn new(area: Area, missing: Vec<String>, present: String) -> Finding {
-        match missing.is_empty() {
-            true => Finding {
-                area,
-                ok: true,
-                detail: present,
-            },
-            false => Finding {
-                area,
-                ok: false,
-                detail: missing.join(", "),
-            },
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct Report {
-    machine: String,
-    provisioned: Provisioned,
-    via: Via,
-    /// Why nothing was read from the machine, when nothing was.
-    unprobed: Option<String>,
-    paths: Vec<PathCheck>,
-    access: Access,
-    findings: Vec<Finding>,
-}
-
-#[derive(Serialize)]
-struct Overview<'a> {
-    people: Vec<&'a String>,
-    machines: &'a [Report],
-}
-
-impl Report {
-    fn as_expected(&self) -> bool {
-        self.unprobed.is_none() && self.findings.iter().all(|f| f.ok)
-    }
 }
 
 /// What the probe printed, by section.
@@ -878,21 +771,11 @@ fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Rep
 fn render(reports: &[Report]) -> String {
     let mut s = String::new();
     for r in reports {
-        let by = match r.provisioned.by {
-            Provisioner::Ansible => "ansible",
-            Provisioner::Hand => "hand",
-        };
-        let source = r
-            .provisioned
-            .source
-            .as_ref()
-            .map(|x| format!(" ({x})"))
-            .unwrap_or_default();
         let via = match r.via {
             Via::Dibs => "through dibs",
             Via::Ssh => "over ssh",
         };
-        s += &format!("{}  set up by {by}{source}, probed {via}\n", r.machine);
+        s += &format!("{}  set up by {}, probed {via}\n", r.machine, r.provisioned);
         for f in &r.findings {
             s += &format!(
                 "  {}  {:<8} {}\n",
@@ -915,7 +798,8 @@ fn render(reports: &[Report]) -> String {
     s
 }
 
-/// `dibs machines [<machine>]`: every machine in fleet.toml, or the one named, probed at once.
+/// `dibs machines [<machine>]`: the overview as text, or as JSON, exiting 1 when anything is
+/// missing.
 pub fn command(
     json: bool,
     only: Option<&str>,
@@ -923,6 +807,32 @@ pub fn command(
     recipe_repos: Vec<String>,
     pool: &BTreeSet<String>,
 ) -> Result<ExitCode, FleetError> {
+    let overview = overview(only, root, recipe_repos, pool)?;
+    match json {
+        true => println!(
+            "{}",
+            serde_json::to_string_pretty(&overview).map_err(FleetError::Json)?
+        ),
+        false => print!("{}", render(&overview.machines)),
+    }
+    Ok(match overview.machines.iter().all(Report::as_expected) {
+        true => ExitCode::SUCCESS,
+        false => ExitCode::from(Exit::Failed.code()),
+    })
+}
+
+/// The overview as `dibs machines` takes it, from this computer's own settings.
+pub fn survey(only: Option<&str>) -> Result<Overview, FleetError> {
+    overview(only, &repo_root()?, recipe_repos(), &pool()?)
+}
+
+/// Every machine in fleet.toml, or the one named, probed at once.
+pub fn overview(
+    only: Option<&str>,
+    root: &Path,
+    recipe_repos: Vec<String>,
+    pool: &BTreeSet<String>,
+) -> Result<Overview, FleetError> {
     let path = path()?;
     let mut fleet = load(&path)?;
     if let Some(name) = only {
@@ -962,22 +872,9 @@ pub fn command(
             .map(|r| r.join().expect("a probe does not panic"))
             .collect()
     });
-    match json {
-        true => {
-            let overview = Overview {
-                people: fleet.person.keys().collect(),
-                machines: &reports,
-            };
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&overview).map_err(FleetError::Json)?
-            )
-        }
-        false => print!("{}", render(&reports)),
-    }
-    Ok(match reports.iter().all(Report::as_expected) {
-        true => ExitCode::SUCCESS,
-        false => ExitCode::from(Exit::Failed.code()),
+    Ok(Overview {
+        people: fleet.person.into_keys().collect(),
+        machines: reports,
     })
 }
 
@@ -1021,6 +918,7 @@ pub fn recipe_repos() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dibs_format::fleet::Provisioner;
 
     const SEEN: &str = "noise before\n\
         DIBS-PROBE sys user=box host=box os=Linux arch=x86_64\n\

@@ -1,18 +1,14 @@
-//! A window on `dibs machines`: what each machine lacks against what it should have.
+//! A window on `dibs machines`: what each machine lacks against what it should have, probed in
+//! this process through the dibs library.
 
-mod model;
-
+use dibs::fleet::{self, FleetError};
+use dibs_format::fleet::{Area, Overview, Report, Standing};
 use eframe::egui::{self, Color32, RichText, Ui};
-use model::{Overview, Report, Standing};
 use std::{
     sync::mpsc,
     time::{Duration, Instant},
 };
 
-/// The machines grid's columns, in the order `dibs machines` reports them.
-const AREAS: [&str; 9] = [
-    "paths", "login", "repos", "dibs", "rust", "cuda", "vulkan", "metal", "account",
-];
 const GOOD: Color32 = Color32::from_rgb(90, 180, 100);
 
 fn main() -> eframe::Result {
@@ -38,7 +34,7 @@ enum Tab {
 /// A probe in flight, of every machine or of the one named.
 struct Probe {
     only: Option<String>,
-    done: mpsc::Receiver<Result<Overview, String>>,
+    done: mpsc::Receiver<Result<Overview, FleetError>>,
 }
 
 impl Probe {
@@ -46,7 +42,7 @@ impl Probe {
         let (tx, done) = mpsc::channel();
         let (ctx, name) = (ctx.clone(), only.clone());
         std::thread::spawn(move || {
-            let _ = tx.send(model::probe(name.as_deref()));
+            let _ = tx.send(fleet::survey(name.as_deref()));
             ctx.request_repaint();
         });
         Probe { only, done }
@@ -57,7 +53,7 @@ struct App {
     overview: Overview,
     probing: Option<Probe>,
     probed_at: Option<Instant>,
-    error: Option<String>,
+    error: Option<FleetError>,
     selected: Option<String>,
     tab: Tab,
 }
@@ -123,7 +119,7 @@ impl App {
                 (None, None) => {}
             }
             if let Some(e) = &self.error {
-                ui.colored_label(ui.visuals().error_fg_color, e);
+                ui.colored_label(ui.visuals().error_fg_color, e.to_string());
             }
         });
     }
@@ -135,8 +131,8 @@ impl App {
             .show(ui, |ui| {
                 ui.strong("machine");
                 ui.strong("set up by");
-                for area in AREAS {
-                    ui.strong(area);
+                for area in Area::ALL {
+                    ui.strong(area.name());
                 }
                 ui.end_row();
                 for r in &self.overview.machines {
@@ -144,8 +140,8 @@ impl App {
                     if ui.selectable_label(chosen, &r.machine).clicked() {
                         self.selected = (!chosen).then(|| r.machine.clone());
                     }
-                    ui.label(r.provisioned.describe());
-                    for area in AREAS {
+                    ui.label(r.provisioned.to_string());
+                    for area in Area::ALL {
                         area_cell(ui, r, area);
                     }
                     ui.end_row();
@@ -199,7 +195,7 @@ impl App {
         });
         ui.label(format!(
             "Set up by {}, probed {}.",
-            r.provisioned.describe(),
+            r.provisioned,
             r.via.describe()
         ));
         if let Some(why) = &r.unprobed {
@@ -221,7 +217,7 @@ impl App {
                     ui,
                     matches!(standing, Standing::Key | Standing::Tailnet),
                     who,
-                    standing.describe(),
+                    standing.name(),
                 );
             }
             for fp in &r.access.strangers {
@@ -229,7 +225,7 @@ impl App {
             }
             section(ui, "Checks");
             for f in &r.findings {
-                mark(ui, f.ok, &f.area, &f.detail);
+                mark(ui, f.ok, f.area.name(), &f.detail);
             }
         });
     }
@@ -257,7 +253,7 @@ impl eframe::App for App {
     }
 }
 
-fn area_cell(ui: &mut Ui, r: &Report, area: &str) {
+fn area_cell(ui: &mut Ui, r: &Report, area: Area) {
     match (r.finding(area), &r.unprobed) {
         (Some(f), _) => {
             verdict(ui, f.ok).on_hover_text(&f.detail);
@@ -272,7 +268,7 @@ fn area_cell(ui: &mut Ui, r: &Report, area: &str) {
 }
 
 fn standing_cell(ui: &mut Ui, r: &Report, who: &str) {
-    let text = |s: Standing| RichText::new(s.describe());
+    let text = |s: Standing| RichText::new(s.name());
     match r.access.people.get(who) {
         Some(s @ (Standing::Key | Standing::Tailnet)) => ui.label(text(*s).color(GOOD)),
         Some(s @ Standing::Missing) => ui.label(text(*s).color(ui.visuals().error_fg_color)),

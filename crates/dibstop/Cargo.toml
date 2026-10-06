@@ -14,7 +14,8 @@ crossterm.workspace = true
 dibs.workspace = true
 dibs-format.workspace = true
 ratatui.workspace = true
-serde.workspace = true
+
+[dev-dependencies]
 serde_json.workspace = true
 
 [lints]

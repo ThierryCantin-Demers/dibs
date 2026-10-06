@@ -24,4 +24,4 @@ pub use manifest::{Manifest, Service, local_dir};
 #[cfg(test)]
 pub use manifest::{Source, Verb};
 pub use refusals::{Resolved, resolve};
-pub use repo::{resolve_repo, root_of};
+pub use repo::{repo_root, resolve_repo, root_of};
