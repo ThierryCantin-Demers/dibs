@@ -147,6 +147,10 @@ impl Platform for MacOs {
         None
     }
 
+    fn variable(_pid: u32, _name: &str) -> Option<String> {
+        None
+    }
+
     fn fd_path(pid: u32, fd: u32) -> Option<String> {
         let size = std::mem::size_of::<VnodeWithPath>() as libc::c_int;
         // SAFETY: VnodeWithPath is plain data, and proc_pidfdinfo writes at most `size` bytes.

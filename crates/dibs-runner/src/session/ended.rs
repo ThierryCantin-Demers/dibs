@@ -38,6 +38,7 @@ impl Ended<'_> {
             by: self.by,
             agent: call.agent.clone(),
             lines: self.read.lines as u64,
+            who: (!call.agent_id.is_empty()).then(|| call.agent_id.clone()),
         };
         let _ = fs::write(self.job_dir.join("meta"), meta.to_string());
     }

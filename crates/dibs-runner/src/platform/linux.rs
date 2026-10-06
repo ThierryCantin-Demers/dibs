@@ -182,6 +182,14 @@ impl Platform for Linux {
         fs::read_link(format!("/proc/{pid}/cwd")).ok()
     }
 
+    fn variable(pid: u32, name: &str) -> Option<String> {
+        let environment = fs::read(format!("/proc/{pid}/environ")).ok()?;
+        environment.split(|b| *b == 0).find_map(|pair| {
+            let value = pair.strip_prefix(name.as_bytes())?.strip_prefix(b"=")?;
+            Some(String::from_utf8_lossy(value).into_owned())
+        })
+    }
+
     fn listening() -> Vec<u16> {
         ["/proc/net/tcp", "/proc/net/tcp6"]
             .iter()

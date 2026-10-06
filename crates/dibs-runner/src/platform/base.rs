@@ -53,6 +53,9 @@ pub trait Platform {
     /// The directory a process works in; None where the system will not say.
     fn cwd(pid: u32) -> Option<PathBuf>;
 
+    /// A variable of a process's environment; None where the system will not say.
+    fn variable(pid: u32, name: &str) -> Option<String>;
+
     /// The TCP ports something listens on.
     fn listening() -> Vec<u16>;
 

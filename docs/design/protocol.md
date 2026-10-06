@@ -206,7 +206,11 @@ one of them.
   fields. A script reads the tenth into its fingerprint, which only blurs that script's own
   estimate key, so a field is only ever added at the end. Either half prunes, queues behind and
   bypasses the other's records. `dibs --kill` sends TERM to the holder alone, runner or script,
-  which stops its own tree; `--force` sends KILL to the whole tree, deepest first.
+  which stops its own tree; `--force` sends KILL to the whole tree, deepest first. A pid no
+  record names, whose environment names a job that has written its `meta`, is what that job
+  left running: `--kill` stops it and what it started, TERM and KILL 5 s later, and refuses
+  another session's, which the meta's `who` line names, without `--anyone`. macOS does not show
+  another process's environment, so there such a pid is not stopped.
 - **History, log and job directories.** The same columns and files, so estimates and `dibs out`
   read across both. A runner appends to `history` and `log` holding `<file>.lock` shared, and
   rewrites either only holding it exclusively, by rename; a lock file another account made

@@ -3,14 +3,14 @@
 
 use crate::{
     call::{Call, Journal},
-    clock::{Moment, Span},
+    clock::{Deadline, Moment, Span},
     job::{reap, tree_below},
     lock::{Kind, Lock, LockDir, pid_of, still_the_same},
     platform::{Host, Platform as _},
     sink::Sink,
     status::Look,
 };
-use dibs_format::{Event, Exit, Label, LockRecord, Mode};
+use dibs_format::{Event, Exit, JobMeta, Label, LockRecord, Mode};
 use std::{fs, thread, time::Duration};
 
 /// How long apart the two readings of an orphaned lock are: a client tests the lock by taking it
@@ -18,6 +18,10 @@ use std::{fs, thread, time::Duration};
 const SECOND_READING: Duration = Duration::from_millis(200);
 /// An orphan's description is cut to this many characters, its indent included.
 const DESCRIBED: usize = 100;
+/// How long what a job left running is given to end after TERM before KILL.
+const LEFTOVER_GRACE: Duration = Duration::from_secs(5);
+/// How often it is looked at meanwhile.
+const ROUND: Duration = Duration::from_millis(250);
 
 /// A call that stops jobs or frees the lock.
 pub struct Kill<'a> {
@@ -64,9 +68,8 @@ impl Kill<'_> {
 
     /// Whose job this is, checked before anything is signalled. An id that names an account, not
     /// a session, proves nothing, and a record with no id is not grounds to refuse.
-    fn refused(&self, record: &LockRecord, anyone: bool) -> Option<Refusal> {
-        let theirs = record.agent_id.as_deref().unwrap_or_default();
-        match theirs {
+    fn refused(&self, theirs: Option<&str>, anyone: bool) -> Option<Refusal> {
+        match theirs.unwrap_or_default() {
             _ if anyone => None,
             id if id.starts_with("shell-") => Some(Refusal::Account),
             "" => None,
@@ -105,6 +108,9 @@ impl Kill<'_> {
                 .ok()
         });
         let (Some(file), Some(record)) = (found, record) else {
+            if let Ok(pid) = target.name.parse::<u32>() {
+                return self.leftover(pid, target.anyone);
+            }
             self.sink.say(&format!(
                 "Nothing holding or queued with pid {}.\n{}",
                 target.name,
@@ -123,7 +129,7 @@ impl Kill<'_> {
             ));
             return Exit::Failed.status();
         }
-        match self.refused(&record, target.anyone) {
+        match self.refused(record.agent_id.as_deref(), target.anyone) {
             Some(Refusal::Someone) => {
                 self.sink.say(&format!(
                     "dibs: {} {} (pid {pid}) belongs to {}, not to you.\n  \
@@ -195,6 +201,63 @@ impl Kill<'_> {
         0
     }
 
+    /// A process that outlived its job holds no lock, so no record names it; its environment
+    /// still names the job, and the job's meta whose it was. It goes with what it started.
+    fn leftover(&self, pid: u32, anyone: bool) -> i32 {
+        let job = Host::variable(pid, "DIBS_JOB")
+            .filter(|job| !job.is_empty() && job.bytes().all(|b| b.is_ascii_digit() || b == b'-'));
+        let Some(job) = job else {
+            self.sink.say(&format!(
+                "dibs: nothing was stopped: pid {pid} holds no lock here, waits for none, and no dibs job started it.\n{}",
+                self.shown()
+            ));
+            return Exit::Failed.status();
+        };
+        let meta = fs::read_to_string(self.look.machine.jobs().join(&job).join("meta"))
+            .ok()
+            .and_then(|text| text.parse::<JobMeta>().ok());
+        let Some(meta) = meta else {
+            self.sink.say(&format!(
+                "dibs: nothing was stopped: pid {pid} belongs to job {job}, which is still running. Stop the job:\n  \
+                 dibs --kill <its pid in dibs status>\n"
+            ));
+            return Exit::Failed.status();
+        };
+        let label = &meta.label;
+        if self.refused(meta.who.as_deref(), anyone).is_some() {
+            self.sink.say(&format!(
+                "dibs: pid {pid} was left running by job {job} ({label}), which belonged to {}.\n  \
+                 If you know it should stop:  dibs --kill {pid} --anyone\n",
+                meta.agent
+            ));
+            return Exit::Refused.status();
+        }
+        let mut tree = vec![pid];
+        tree.extend(tree_below(pid, &Host::processes()));
+        let send = |signal| {
+            for victim in tree.iter().rev() {
+                // SAFETY: kill only sends a signal.
+                unsafe { libc::kill(*victim as libc::pid_t, signal) };
+            }
+        };
+        send(libc::SIGTERM);
+        if !Deadline::after(Some(LEFTOVER_GRACE))
+            .until(ROUND, || tree.iter().all(|p| !Host::running(*p)))
+        {
+            send(libc::SIGKILL);
+        }
+        let mut line = self.call.log_line(Event::Killed);
+        line.command = format!("killed what job {job} ({label}) left running: pid {pid}");
+        self.journal().write(&line);
+        self.sink.out(
+            format!(
+                "Stopped pid {pid} and what it started, left running by job {job} ({label}) after the job had ended.\n"
+            )
+            .as_bytes(),
+        );
+        0
+    }
+
     /// Every job of a batch here: a holder loses what runs under it and exits 76 itself, so the
     /// lock goes the ordinary way; a waiter is stopped outright, since its lock would otherwise
     /// come and its command run. The mark refuses the batch's later steps here for a day, which
@@ -230,10 +293,10 @@ impl Kill<'_> {
                 })
             })
             .collect();
-        if let Some(Step { record, .. }) = steps
-            .iter()
-            .find(|step| self.refused(&step.record, target.anyone).is_some())
-        {
+        if let Some(Step { record, .. }) = steps.iter().find(|step| {
+            self.refused(step.record.agent_id.as_deref(), target.anyone)
+                .is_some()
+        }) {
             self.sink.say(&format!(
                 "dibs: batch {id} is running {} for {}, not for you. If it should stop:\n  \
                  dibs --kill {id} --anyone\n",

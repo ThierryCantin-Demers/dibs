@@ -52,6 +52,9 @@ pub struct JobMeta {
     pub agent: String,
     /// How many lines its log holds.
     pub lines: u64,
+    /// The session that ran it, which `dibs --kill` asks of what it left running; absent in a
+    /// job that ended before it was kept.
+    pub who: Option<String>,
 }
 
 impl FromStr for JobMeta {
@@ -77,6 +80,10 @@ impl FromStr for JobMeta {
             by: LineError::parse("by", text("by")?)?,
             agent: text("agent")?.to_string(),
             lines: LineError::parse("lines", text("lines")?)?,
+            who: values
+                .get("who")
+                .filter(|who| !who.is_empty())
+                .map(|who| who.to_string()),
         })
     }
 }
@@ -90,7 +97,8 @@ impl fmt::Display for JobMeta {
         writeln!(f, "exit\t{}", self.exit)?;
         writeln!(f, "by\t{}", self.by)?;
         writeln!(f, "agent\t{}", Field(&self.agent))?;
-        writeln!(f, "lines\t{}", self.lines)
+        writeln!(f, "lines\t{}", self.lines)?;
+        writeln!(f, "who\t{}", Field(self.who.as_deref().unwrap_or_default()))
     }
 }
 
@@ -98,14 +106,22 @@ impl fmt::Display for JobMeta {
 mod tests {
     use super::*;
 
-    const SERVICE_FAILED: &str = "mode\tshared\nlabel\trec-with\nqueued\t0\nran\t1\nexit\t77\nby\tdibs\nagent\tsession suite\nlines\t0\n";
+    const SERVICE_FAILED: &str = "mode\tshared\nlabel\trec-with\nqueued\t0\nran\t1\nexit\t77\nby\tdibs\nagent\tsession suite\nlines\t0\nwho\t\n";
 
     #[test]
     fn the_file_a_machine_writes_today_reads_and_writes_back_byte_for_byte() {
-        let plain = "mode\tshared\nlabel\trec-plain\nqueued\t0\nran\t1\nexit\t0\nby\tcommand\nagent\tsession suite\nlines\t2\n";
+        let plain = "mode\tshared\nlabel\trec-plain\nqueued\t0\nran\t1\nexit\t0\nby\tcommand\nagent\tsession suite\nlines\t2\nwho\tlocal_suite\n";
         for text in [plain, SERVICE_FAILED] {
             assert_eq!(text.parse::<JobMeta>().unwrap().to_string(), text);
         }
+        let meta: JobMeta = plain.parse().unwrap();
+        assert_eq!(meta.who.as_deref(), Some("local_suite"));
+    }
+
+    #[test]
+    fn a_file_kept_before_jobs_named_their_session_reads_as_nobodys() {
+        let before = SERVICE_FAILED.replace("who\t\n", "");
+        assert_eq!(before.parse::<JobMeta>().unwrap().who, None);
     }
 
     #[test]

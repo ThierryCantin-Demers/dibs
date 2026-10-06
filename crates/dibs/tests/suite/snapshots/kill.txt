@@ -12,7 +12,7 @@
 
 == dibs --kill 999999
 -> exit 1
-2| Nothing holding or queued with pid <pid>.
+2| dibs: nothing was stopped: pid <pid> holds no lock here, waits for none, and no dibs job started it.
 2| dibs: BUSY, benchmark in progress
 2|   bench  blocker  <dur>  pid <pid>  job <job>   [no history for this one yet]
 2|     read -r _ < <root>/f-p

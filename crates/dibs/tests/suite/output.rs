@@ -373,6 +373,41 @@ fn an_overrun_says_it_was_stopped_and_what_running_it_again_does() {
     );
 }
 
+// A leftover in the job's group goes with the job, so this one leaves it; only Linux shows a
+// process's environment, which names its job.
+#[cfg(target_os = "linux")]
+#[test]
+fn kill_stops_what_an_ended_job_left_running() {
+    let s = Sandbox::new();
+    let (gate, started) = (s.gate("left"), s.gate("started"));
+    let pidfile = s.p("left.pid");
+    // The job waits for its leftover to have left its group, which is swept when the job ends.
+    let cmd = format!(
+        "setsid bash -c 'trap \"\" TERM; echo $$ > {pidfile}; {}; {}' > /dev/null 2>&1 & {}",
+        started.signal(),
+        gate.hold(),
+        started.hold()
+    );
+    let out = s.dibs(["--max", "0", "--label", "leaves", &cmd]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let pid: u32 = s.read("left.pid").trim().parse().unwrap();
+    let out = s.dibs(["--kill", &pid.to_string(), "--anyone"]).run();
+    assert_eq!(
+        (out.code, out.stdout.lines_with("left running by job")),
+        (0, 1),
+        "{}",
+        out.all()
+    );
+    until("the leftover to go", || !alive(pid));
+    let out = s.dibs(["--kill", &pid.to_string()]).run();
+    assert_eq!(
+        (out.code, out.stderr.lines_with("nothing was stopped")),
+        (1, 1),
+        "and a pid nothing owns says so: {}",
+        out.all()
+    );
+}
+
 #[test]
 fn a_label_whose_history_runs_long_gets_a_cap_from_it() {
     // A suite that always runs past the default cap was killed as an overrun every time.
