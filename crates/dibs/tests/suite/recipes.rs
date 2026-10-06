@@ -1871,6 +1871,25 @@ fn a_shell_in_a_worktree_needs_no_repo_and_answers_to_its_directory_name() {
 }
 
 #[test]
+fn a_shell_names_every_missing_piece_at_once() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    let out = s.dibs(["shell", &format!("{app}@local"), "echo hi"]).run();
+    assert_eq!(
+        (
+            out.code,
+            out.stderr.lines_with("needs --reason"),
+            out.stderr
+                .lines_with("needs -- before its command: 'echo hi'"),
+            out.stderr.lines_with("usage: dibs shell")
+        ),
+        (2, 1, 1, 1),
+        "one refusal names both, and how the call is written: {}",
+        out.all()
+    );
+}
+
+#[test]
 fn a_prepare_that_hangs_is_stopped_at_the_jobs_cap() {
     let s = Sandbox::new();
     let dir = app(&s);
