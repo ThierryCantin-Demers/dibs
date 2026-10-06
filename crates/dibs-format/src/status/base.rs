@@ -50,6 +50,8 @@ pub struct Scene {
     /// The machine's short name, which `dibs --on` reaches it by.
     pub host: String,
     pub orphans: Vec<Orphan>,
+    /// Processes of this account that outlived the jobs that started them.
+    pub leftovers: Vec<Leftover>,
     /// The lock is taken, and no process this account can see holds it.
     pub unseen: bool,
     /// The lock directory, for a caller that asked with `-v`.
@@ -61,6 +63,15 @@ pub struct Scene {
 pub struct Orphan {
     pub pid: u32,
     /// Its pid, age, owner and arguments, as `ps -o pid=,etime=,user=,args=` prints them.
+    pub described: String,
+}
+
+/// A process whose environment names a job that has ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Leftover {
+    pub job: JobId,
+    pub label: Label,
+    /// Its pid, age, owner and arguments, as an orphan's are.
     pub described: String,
 }
 

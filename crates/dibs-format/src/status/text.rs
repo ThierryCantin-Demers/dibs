@@ -266,6 +266,31 @@ impl Text<'_> {
         }
     }
 
+    /// What outlived its job, which holds no lock and so is in no record: it runs beside
+    /// whatever is measured next.
+    fn leftovers(&self, out: &mut String, p: &Palette) {
+        let leftovers = &self.status.scene.leftovers;
+        if leftovers.is_empty() {
+            return;
+        }
+        let _ = writeln!(
+            out,
+            "{}dibs: LEFT RUNNING.{} These outlived the jobs that started them, and hold no lock:",
+            p.warn, p.off
+        );
+        for leftover in leftovers {
+            let line = format!("    {}", leftover.described);
+            let _ = writeln!(
+                out,
+                "{}  (job {}, {})",
+                line.chars().take(DESCRIBED).collect::<String>(),
+                leftover.job,
+                leftover.label
+            );
+        }
+        out.push_str("  Stop one with: dibs --kill <pid>\n");
+    }
+
     /// What is said when no record holds the lock.
     fn unheld(&self, out: &mut String, p: &Palette) {
         let status = self.status;
@@ -356,6 +381,7 @@ impl fmt::Display for Text<'_> {
                 p.dim, p.off
             );
         }
+        self.leftovers(&mut out, &p);
         f.write_str(&out)
     }
 }

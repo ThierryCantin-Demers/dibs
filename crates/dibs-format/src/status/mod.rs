@@ -5,7 +5,7 @@ mod base;
 mod text;
 
 pub use base::{
-    BatchShown, Holder, Idle, IdleKind, Left, Listing, LockState, Orphan, Remaining, Scene, Scope,
-    Service, Shown, Status, Waiter,
+    BatchShown, Holder, Idle, IdleKind, Left, Leftover, Listing, LockState, Orphan, Remaining,
+    Scene, Scope, Service, Shown, Status, Waiter,
 };
 pub use text::Text;

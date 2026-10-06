@@ -13,10 +13,10 @@ use crate::{
     },
 };
 use dibs_format::{
-    LockRecord, Mode,
+    JobId, JobMeta, LockRecord, Mode,
     status::{
-        BatchShown, Holder, Listing, LockState, Orphan, Remaining, Scene, Service, Shown, Status,
-        Text, Waiter,
+        BatchShown, Holder, Leftover, Listing, LockState, Orphan, Remaining, Scene, Service, Shown,
+        Status, Text, Waiter,
     },
 };
 use std::{
@@ -65,6 +65,7 @@ impl Look<'_> {
         let mut scene = Scene {
             host: self.machine.host.clone(),
             listing: listed.then(|| self.listing()),
+            leftovers: self.leftovers(),
             ..Scene::default()
         };
         let state = match records.first().map(|r| r.mode) {
@@ -99,6 +100,32 @@ impl Look<'_> {
             queue,
             scene,
         }
+    }
+
+    /// Processes of this account whose environment names a job that has written its meta, which
+    /// a job does as it ends. Only Linux shows another process's environment.
+    #[cfg(target_os = "linux")]
+    fn leftovers(&self) -> Vec<Leftover> {
+        let jobs = self.machine.jobs();
+        Host::processes()
+            .iter()
+            .filter_map(|process| {
+                let job = JobId::checked(&Host::variable(process.pid, "DIBS_JOB")?)?;
+                let meta = fs::read_to_string(jobs.join(job.as_str()).join("meta")).ok()?;
+                let meta: JobMeta = meta.parse().ok()?;
+                Some(Leftover {
+                    job,
+                    label: meta.label,
+                    described: Host::describe(process.pid)
+                        .unwrap_or_else(|| process.pid.to_string()),
+                })
+            })
+            .collect()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn leftovers(&self) -> Vec<Leftover> {
+        Vec::new()
     }
 
     /// The status as text, coloured when the caller's stdout is a terminal.

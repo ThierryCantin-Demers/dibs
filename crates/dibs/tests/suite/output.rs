@@ -395,6 +395,37 @@ fn an_overrun_takes_what_its_job_left_running_with_it() {
 // process's environment, which names its job.
 #[cfg(target_os = "linux")]
 #[test]
+fn status_warns_of_what_an_ended_job_left_running() {
+    let s = Sandbox::new();
+    let (gate, started) = (s.gate("left"), s.gate("started"));
+    let pidfile = s.p("left.pid");
+    // The job waits for its leftover to have left its group, which is swept when the job ends.
+    let cmd = format!(
+        "setsid bash -c 'echo $$ > {pidfile}; {}; {}' > /dev/null 2>&1 & {}",
+        started.signal(),
+        gate.hold(),
+        started.hold()
+    );
+    let out = s.dibs(["--max", "0", "--label", "leaves", &cmd]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let pid = s.read("left.pid").trim().to_string();
+    let said = s.status();
+    let left: Vec<&str> = said
+        .lines()
+        .filter(|l| l.contains(&pid) && l.contains("leaves"))
+        .collect();
+    assert_eq!(
+        (said.lines_with("LEFT RUNNING"), left.len()),
+        (1, 1),
+        "{said}"
+    );
+    gate.open();
+    until("the leftover to go", || !alive(pid.parse().unwrap()));
+    assert_eq!(s.status().lines_with("LEFT RUNNING"), 0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn kill_stops_what_an_ended_job_left_running() {
     let s = Sandbox::new();
     let (gate, started) = (s.gate("left"), s.gate("started"));

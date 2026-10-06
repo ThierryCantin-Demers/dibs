@@ -69,6 +69,15 @@ id!(
     Alias
 );
 
+impl JobId {
+    /// `text` as a job's id, only when it is one: digits and dashes, as a job's directory is
+    /// named, so one read from a process's environment names no other path.
+    pub fn checked(text: &str) -> Option<JobId> {
+        (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit() || b == b'-'))
+            .then(|| JobId::new(text))
+    }
+}
+
 impl Label {
     /// The label as a machine files it: anything outside `[A-Za-z0-9._-]` becomes `_`.
     pub fn filed(&self) -> Label {

@@ -240,8 +240,9 @@ one of them.
   which stops its own tree; `--force` sends KILL to the whole tree, deepest first. A pid no
   record names, whose environment names a job that has written its `meta`, is what that job
   left running: `--kill` stops it and what it started, TERM and KILL 5 s later, and refuses
-  another session's, which the meta's `who` line names, without `--anyone`. macOS does not show
-  another process's environment, so there such a pid is not stopped.
+  another session's, which the meta's `who` line names, without `--anyone`, and `dibs status`
+  names it under `LEFT RUNNING`. macOS does not show another process's environment, so there
+  such a pid is neither named nor stopped.
 - **History, log and job directories.** The same columns and files, so estimates and `dibs out`
   read across both. A runner appends to `history` and `log` holding `<file>.lock` shared, and
   rewrites either only holding it exclusively, by rename; a lock file another account made

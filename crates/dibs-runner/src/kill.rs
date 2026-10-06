@@ -10,7 +10,7 @@ use crate::{
     sink::Sink,
     status::Look,
 };
-use dibs_format::{Event, Exit, JobMeta, Label, LockRecord, Mode};
+use dibs_format::{Event, Exit, JobId, JobMeta, Label, LockRecord, Mode};
 use std::{fs, thread, time::Duration};
 
 /// How long apart the two readings of an orphaned lock are: a client tests the lock by taking it
@@ -204,16 +204,14 @@ impl Kill<'_> {
     /// A process that outlived its job holds no lock, so no record names it; its environment
     /// still names the job, and the job's meta whose it was. It goes with what it started.
     fn leftover(&self, pid: u32, anyone: bool) -> i32 {
-        let job = Host::variable(pid, "DIBS_JOB")
-            .filter(|job| !job.is_empty() && job.bytes().all(|b| b.is_ascii_digit() || b == b'-'));
-        let Some(job) = job else {
+        let Some(job) = Host::variable(pid, "DIBS_JOB").and_then(|job| JobId::checked(&job)) else {
             self.sink.say(&format!(
                 "dibs: nothing was stopped: pid {pid} holds no lock here, waits for none, and no dibs job started it.\n{}",
                 self.shown()
             ));
             return Exit::Failed.status();
         };
-        let meta = fs::read_to_string(self.look.machine.jobs().join(&job).join("meta"))
+        let meta = fs::read_to_string(self.look.machine.jobs().join(job.as_str()).join("meta"))
             .ok()
             .and_then(|text| text.parse::<JobMeta>().ok());
         let Some(meta) = meta else {
