@@ -406,17 +406,25 @@ impl Recipe {
             // the build never writes: the step reads whatever an earlier tree left there. Only
             // cargo's own output counts, since a program may keep its own under target/ too.
             let triple = |d: &str| d.matches('-').count() >= 2;
-            if let Some(t) = st.run.split_whitespace().find(|w| {
-                let w = w.trim_start_matches("./").trim_start_matches(['"', '\'']);
-                match w.strip_prefix("target/") {
+            let words: Vec<&str> = st.run.split_whitespace().collect();
+            // `rustup target` and `rustup +nightly target` name a subcommand, not a directory.
+            let rustup = |i: usize| match i.checked_sub(1).map(|p| words[p]) {
+                Some("rustup") => true,
+                Some(t) if t.starts_with('+') => i >= 2 && words[i - 2] == "rustup",
+                _ => false,
+            };
+            if let Some(t) = words.iter().enumerate().find_map(|(i, w)| {
+                let bare = w.trim_start_matches("./").trim_start_matches(['"', '\'']);
+                let names = match bare.strip_prefix("target/") {
                     Some(rest) => {
                         let dir = rest.split(['/', '"', '\'']).next().unwrap_or("");
                         dir.is_empty()
                             || triple(dir)
                             || ["debug", "release", "doc", "tmp", "package", "criterion", "nextest"].contains(&dir)
                     }
-                    None => w.trim_end_matches(['"', '\'']) == "target",
-                }
+                    None => bare.trim_end_matches(['"', '\'']) == "target" && !rustup(i),
+                };
+                names.then_some(*w)
             }) {
                 return Err(format!(
                     "recipe '{name}' names {t}, but the build writes to $CARGO_TARGET_DIR, which dibs\n             \
@@ -513,6 +521,15 @@ mod tests {
         assert_ne!(plain.fingerprint(), fresh.fingerprint(), "a cold cache and a warm one are two procedures");
         let bad = parse("[bench.r]\nfresh = [\"A B\"]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n");
         assert!(bad.check("r").unwrap_err().contains("'A B' is not a variable name"));
+    }
+
+    #[test]
+    fn a_relative_target_is_refused_but_a_rustup_subcommand_is_not() {
+        let step = |run: &str| parse(&format!("[bench.r]\n[[bench.r.step]]\nlock = \"shared\"\nrun = {run:?}\n")).check("r");
+        assert!(step("rustup target list --installed && cargo check --target wasm32-unknown-unknown").is_ok());
+        assert!(step("rustup +nightly target add wasm32-unknown-unknown").is_ok());
+        assert!(step("du -sh target").unwrap_err().contains("names target,"));
+        assert!(step("ls ./target/release").unwrap_err().contains("names ./target/release,"));
     }
 
     const SWEEP: &str = "\
