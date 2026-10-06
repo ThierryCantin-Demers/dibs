@@ -11,15 +11,15 @@ use std::{
 /// `hold.<pid>`, the fifo a hold's job reads the status of its caller's command from. Being a
 /// fifo is also how status tells a hold, which waits on purpose, from a job that is idle.
 #[derive(Debug, Clone)]
-pub struct Held {
+pub struct HoldFifo {
     pub path: PathBuf,
     /// Open for reading too, so a release written before the job opens the fifo waits in it
     /// rather than finding nobody to take it.
     fifo: Arc<File>,
 }
 
-impl Held {
-    pub fn make(dir: &LockDir, pid: u32) -> io::Result<Held> {
+impl HoldFifo {
+    pub fn make(dir: &LockDir, pid: u32) -> io::Result<HoldFifo> {
         let path = dir.file("hold", pid);
         let name = CString::new(path.as_os_str().as_bytes())?;
         // SAFETY: mkfifo only reads the path.
@@ -27,7 +27,7 @@ impl Held {
             return Err(io::Error::last_os_error());
         }
         let fifo = OpenOptions::new().read(true).write(true).open(&path)?;
-        Ok(Held {
+        Ok(HoldFifo {
             path,
             fifo: Arc::new(fifo),
         })
@@ -54,7 +54,7 @@ mod tests {
     fn a_release_sent_before_the_job_reads_waits_for_it() {
         let dir = std::env::temp_dir().join(format!("dibs-held.{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        let held = Held::make(&LockDir { path: dir.clone() }, 1).unwrap();
+        let held = HoldFifo::make(&LockDir { path: dir.clone() }, 1).unwrap();
         held.release(3);
         let mut said = String::new();
         let mut reader = OpenOptions::new().read(true).open(&held.path).unwrap();

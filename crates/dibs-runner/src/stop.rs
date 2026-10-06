@@ -1,5 +1,5 @@
 use crate::{
-    call::{Call, Journal},
+    call::{Journal, Received},
     job::reap,
     lock::LockDir,
     sink::Sink,
@@ -47,7 +47,7 @@ pub struct State {
 /// Stops a call from another thread, leaving the machine as the call's own end would.
 pub struct Stopper {
     state: Mutex<State>,
-    call: Call,
+    call: Received,
     dir: LockDir,
     log: PathBuf,
     sink: Sink,
@@ -56,7 +56,7 @@ pub struct Stopper {
 }
 
 impl Stopper {
-    pub fn new(call: Call, dir: LockDir, log: PathBuf, sink: Sink) -> Stopper {
+    pub fn new(call: Received, dir: LockDir, log: PathBuf, sink: Sink) -> Stopper {
         Stopper {
             state: Mutex::new(State {
                 stage: Stage::Setup,

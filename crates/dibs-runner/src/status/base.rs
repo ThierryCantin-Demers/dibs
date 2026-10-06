@@ -3,7 +3,7 @@ use crate::{
     history::{Estimate, History, Key, Scope},
     job::Tree,
     lock::{Kind, Lock, LockDir},
-    machine::Machine,
+    machine::Site,
     platform::{Host, Platform as _},
     queue::Eta,
     settings::{Settings, home},
@@ -30,7 +30,7 @@ use std::{
 /// they name. Nothing here forks.
 #[derive(Clone, Copy)]
 pub struct Look<'a> {
-    pub machine: &'a Machine,
+    pub machine: &'a Site,
     pub dir: &'a LockDir,
     pub history: &'a History,
     pub settings: &'a Settings,

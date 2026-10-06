@@ -3,4 +3,4 @@ mod ended;
 mod laid;
 mod run;
 
-pub use base::{Session, serve};
+pub use base::{Visit, serve};

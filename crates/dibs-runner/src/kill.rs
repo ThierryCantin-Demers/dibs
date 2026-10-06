@@ -2,7 +2,7 @@
 //! what is broken gets freed.
 
 use crate::{
-    call::{Call, Journal},
+    call::{Journal, Received},
     clock::{Deadline, Moment, Span},
     job::{reap, tree_below},
     lock::{Kind, Lock, LockDir, RecordFile},
@@ -25,7 +25,7 @@ const ROUND: Duration = Duration::from_millis(250);
 
 /// A call that stops jobs or frees the lock.
 pub struct Kill<'a> {
-    pub call: &'a Call,
+    pub call: &'a Received,
     pub look: Look<'a>,
     pub sink: &'a Sink,
 }

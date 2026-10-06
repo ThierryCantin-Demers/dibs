@@ -5,7 +5,7 @@
 use crate::{
     clock::Moment,
     itself::Itself,
-    machine::Machine,
+    machine::Site,
     platform::{Host, Platform as _},
     settings::{Settings, home},
     tree::{
@@ -113,7 +113,7 @@ impl Asked {
     /// The sweep, with the machine's own clocks unless days were given.
     pub fn sweep(&self) -> Sweep {
         let settings = Settings::load();
-        let machine = Machine::set_up().ok();
+        let machine = Site::set_up().ok();
         Sweep {
             scratch: machine
                 .as_ref()

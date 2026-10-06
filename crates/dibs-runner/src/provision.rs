@@ -1,4 +1,4 @@
-use crate::{channel::Caller, session::Session, settings::home, sink::Sink, stop::Signals};
+use crate::{channel::Caller, session::Visit, settings::home, sink::Sink, stop::Signals};
 use dibs_format::{
     Exit, Label, Mode,
     wire::{MaxFrom, Request, Watch},
@@ -129,7 +129,7 @@ pub fn build(hash: &str) -> i32 {
         new_series: false,
         tree: None,
     };
-    let code = Session::new(request, sink)
+    let code = Visit::new(request, sink)
         .with_temporary(vec![source.clone(), archive.clone()])
         .serve(Caller::Stdout, signals);
     let _ = fs::remove_dir_all(&source);

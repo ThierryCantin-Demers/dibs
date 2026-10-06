@@ -8,7 +8,7 @@ const NAME: usize = 48;
 
 /// A request, with what the machine derives from it before it acts.
 #[derive(Debug, Clone)]
-pub struct Call {
+pub struct Received {
     pub request: Request,
     /// The caller's title on one line, `?` when it gave none.
     pub agent: String,
@@ -23,8 +23,8 @@ pub struct Call {
     pub pid: u32,
 }
 
-impl Call {
-    pub fn of(request: Request) -> Call {
+impl Received {
+    pub fn of(request: Request) -> Received {
         let agent = request.agent.one_line(NAME);
         let agent_id = request.agent_id.one_line(NAME);
         let batch_tag = request
@@ -45,7 +45,7 @@ impl Call {
             command = asked.named();
             work = asked.command();
         }
-        Call {
+        Received {
             agent: match agent.is_empty() {
                 true => "?".into(),
                 false => agent,

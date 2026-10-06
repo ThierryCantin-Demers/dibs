@@ -13,7 +13,7 @@ mod tree;
 
 pub use base::{Cap, Job, Output};
 pub use environment::{Environment, Unpinned};
-pub use held::Held;
+pub use held::HoldFifo;
 pub use outcome::{Digest, LogRead, Repeat, job_id};
 pub use ports::{PortRange, Ports};
 pub use reap::{reap, tree_below};

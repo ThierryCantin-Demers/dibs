@@ -4,7 +4,7 @@ use crate::{
     clock::{Moment, Span},
     job::Tree,
     lock::{Kind, LockDir},
-    machine::Machine,
+    machine::Site,
     settings::var,
     sink::Sink,
 };
@@ -26,8 +26,8 @@ const OUT_LOG: &str = "DIBS-OUT-LOG";
 const FETCHED: &str = "DIBS-FETCH";
 
 /// The jobs a machine keeps, and where what is read of them goes.
-pub struct Kept<'a> {
-    pub machine: &'a Machine,
+pub struct KeptJobs<'a> {
+    pub machine: &'a Site,
     pub dir: &'a LockDir,
     pub sink: &'a Sink,
     /// The caller's stdout is a terminal, so a hint may be dimmed.
@@ -41,7 +41,7 @@ struct Asked<'a> {
     whole: bool,
 }
 
-impl Kept<'_> {
+impl KeptJobs<'_> {
     pub fn out(&self, label: &str) -> i32 {
         let target = label.split('.').next().unwrap_or_default();
         let last = label.rsplit('.').next().unwrap_or_default();

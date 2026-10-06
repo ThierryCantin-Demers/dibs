@@ -4,16 +4,16 @@ use crate::{
     clock::{Deadline, Moment, Span},
     history::History,
     job::{
-        Cap, Environment, Guard, Held, Job, LogRead, Output, Ports, Readiness, Services, Start,
+        Cap, Environment, Guard, HoldFifo, Job, LogRead, Output, Ports, Readiness, Services, Start,
         job_id,
     },
     lock::{Hold, Kind, Lock, LockDir},
-    machine::Machine,
+    machine::Site,
     platform::{Host, Platform as _},
     queue::Queue,
     series::Binding,
     session::{
-        base::Session,
+        base::Visit,
         ended::Ended,
         laid::{Begins, Laid},
     },
@@ -41,7 +41,7 @@ pub(super) const NOT_STARTED: i32 = 127;
 
 /// Where a call runs: the machine, its lock directory, and what stops the call.
 pub(super) struct Place<'a> {
-    pub(super) machine: &'a Machine,
+    pub(super) machine: &'a Site,
     pub(super) dir: &'a LockDir,
     pub(super) stopper: &'a Arc<Stopper>,
 }
@@ -58,7 +58,7 @@ impl Place<'_> {
 struct Arrived {
     start: u64,
     job: JobId,
-    held: Option<Held>,
+    held: Option<HoldFifo>,
 }
 
 /// How waiting for the lock ended.
@@ -110,7 +110,7 @@ impl Hosted {
     }
 }
 
-impl Session {
+impl Visit {
     /// A shared job or a benchmark: queue, take the lock, run the job, and say how it went.
     pub(super) fn run(&self, at: &Place, mut environment: Environment, caller: Caller) -> i32 {
         let request = &self.call.request;
@@ -172,7 +172,7 @@ impl Session {
         let start = Moment::epoch_now();
         let job = job_id(start, pid);
         let held = match request.watch.hold {
-            true => match Held::make(at.dir, pid) {
+            true => match HoldFifo::make(at.dir, pid) {
                 Ok(held) => Some(held),
                 Err(_) => {
                     self.sink.say(&format!(
@@ -319,7 +319,7 @@ impl Session {
         let kept = match transfer {
             true => Ok(()),
             false => fs::create_dir_all(&dir)
-                .and_then(|()| Session::write_command(&dir.join("cmd"), &self.call.work)),
+                .and_then(|()| Visit::write_command(&dir.join("cmd"), &self.call.work)),
         };
         if let Err(e) = &kept
             && no_room(e)
@@ -447,7 +447,7 @@ impl Session {
                 Exit::ServiceFailed.status()
             }
             false => {
-                let command = arrived.held.as_ref().map(Held::command);
+                let command = arrived.held.as_ref().map(HoldFifo::command);
                 let command = command.as_deref().unwrap_or(&self.call.work);
                 match Job::spawn(command, &environment, output, &self.sink) {
                     Ok(work) => {

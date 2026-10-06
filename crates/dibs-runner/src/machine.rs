@@ -8,7 +8,7 @@ use std::{
 
 /// Where this machine keeps the lock, its timings, its log and its scratch.
 #[derive(Debug, Clone)]
-pub struct Machine {
+pub struct Site {
     pub lock_dir: PathBuf,
     pub history: PathBuf,
     pub log: PathBuf,
@@ -37,9 +37,9 @@ pub enum Scope {
 #[derive(Debug)]
 pub struct Unwritable(pub PathBuf);
 
-impl Machine {
+impl Site {
     /// Finds and checks the machine's directories, as every call does before anything else.
-    pub fn set_up() -> Result<Machine, Unwritable> {
+    pub fn set_up() -> Result<Site, Unwritable> {
         let LockPlace {
             dir: lock_dir,
             scope,
@@ -77,7 +77,7 @@ impl Machine {
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".cache/dibs"));
         let _ = fs::create_dir_all(scratch.join("tmp"));
-        Ok(Machine {
+        Ok(Site {
             lock_dir,
             history,
             log,

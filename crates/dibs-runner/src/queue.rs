@@ -1,5 +1,5 @@
 use crate::{
-    call::Call,
+    call::Received,
     clock::{Moment, Span},
     history::{Estimate, History, Key, Scope},
     lock::{Kind, LockDir},
@@ -12,7 +12,7 @@ use dibs_format::{LockRecord, Mode};
 pub struct Queue<'a> {
     pub dir: &'a LockDir,
     pub history: &'a History,
-    pub call: &'a Call,
+    pub call: &'a Received,
 }
 
 /// When the jobs waiting now start, worked out in arrival order. Queued shared jobs do not stand

@@ -2,7 +2,7 @@
 //! caller's runs keep to it, not only one laptop's. It refuses jobs, so it is off until the
 //! machine's `machine_series` setting turns it on.
 
-use crate::{call::Call, clock::Moment, shared::SharedFile};
+use crate::{call::Received, clock::Moment, shared::SharedFile};
 use std::{fs, path::PathBuf};
 
 /// A file without this first line is from another keying and is ignored whole.
@@ -11,7 +11,7 @@ const HEADER: &str = "#dibs-cards 1";
 /// The binding of the call's label to a card, in the file `cards` beside the history.
 pub struct Binding<'a> {
     pub path: PathBuf,
-    pub call: &'a Call,
+    pub call: &'a Received,
     pub host: &'a str,
 }
 

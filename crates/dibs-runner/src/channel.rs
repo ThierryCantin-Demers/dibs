@@ -1,5 +1,5 @@
 use crate::{
-    job::Held,
+    job::HoldFifo,
     platform::{Host, Platform as _},
     stop::Stopper,
 };
@@ -142,7 +142,7 @@ impl Channel {
         present
     }
 
-    pub fn watch(mut self, lease: u64, stopper: Arc<Stopper>, held: Option<Held>) {
+    pub fn watch(mut self, lease: u64, stopper: Arc<Stopper>, held: Option<HoldFifo>) {
         let within = (lease > 0).then(|| Duration::from_secs(lease));
         thread::spawn(move || {
             let end = std::iter::repeat_with(|| self.hear(within))

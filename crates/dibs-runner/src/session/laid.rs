@@ -2,7 +2,7 @@ use crate::{
     clock::Deadline,
     job::{Environment, Output},
     platform::{Host, Platform as _},
-    session::{base::Session, run::Place},
+    session::{base::Visit, run::Place},
     settings::{home, var},
     stop::Stage,
     tree::{Commands, Copier, Stepping, Trees},
@@ -39,7 +39,7 @@ pub(super) struct Spot {
     pub(super) target: PathBuf,
 }
 
-impl Session {
+impl Visit {
     /// The job's tree laid out, or found, and the command pointed at it.
     pub(super) fn lay_out(
         &self,

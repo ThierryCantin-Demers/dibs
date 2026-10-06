@@ -1,6 +1,6 @@
 use crate::{
     clock::Moment,
-    machine::{Machine, Scope, WritableDir as _},
+    machine::{Scope, Site, WritableDir as _},
     platform::{Host, Platform as _},
     probe::Gpus,
     settings::{Settings, home},
@@ -24,7 +24,7 @@ const ENTRY_END: &str = "--8<-- end --8<--";
 /// that ssh got there, that the login shell parsed the bootstrap and that this dibs's runner is
 /// installed.
 pub struct Probe<'a> {
-    pub machine: &'a Machine,
+    pub machine: &'a Site,
     pub settings: &'a Settings,
     /// Print the inventory entry for the client to record.
     pub write: bool,

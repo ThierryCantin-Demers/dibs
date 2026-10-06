@@ -1,5 +1,5 @@
 use crate::{
-    machine::Machine,
+    machine::Site,
     platform::{Host, Platform as _, Slot},
     settings::{home, var},
     stop::Signals,
@@ -25,7 +25,7 @@ pub struct Unpinned(pub String);
 impl Environment {
     /// Nothing here has a person behind it, so a pager or a credential prompt is a hang; and
     /// scratch, not `/tmp`, which is a small tmpfs shared by everyone.
-    pub fn of(machine: &Machine, card: Option<&Card>) -> Result<Environment, Unpinned> {
+    pub fn of(machine: &Site, card: Option<&Card>) -> Result<Environment, Unpinned> {
         let mut vars = BTreeMap::from([
             ("GIT_PAGER", "cat".to_string()),
             ("PAGER", "cat".into()),

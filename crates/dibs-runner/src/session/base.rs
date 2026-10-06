@@ -1,13 +1,13 @@
 use crate::{
-    call::{Call, Journal, ONE_LINE, OneLine as _},
+    call::{Journal, ONE_LINE, OneLine as _, Received},
     channel::{Caller, Channel},
     clock::{Moment, Span},
     history::{History, Key, Scope},
     job::{Cap, Environment, Job, Output, Unpinned},
-    kept::Kept,
+    kept::KeptJobs,
     kill::Kill,
     lock::LockDir,
-    machine::Machine,
+    machine::Site,
     probe::Probe,
     session::run::{NOT_STARTED, Place},
     settings::Settings,
@@ -46,13 +46,13 @@ pub fn serve() -> i32 {
     let code = match channel.request() {
         Ok(request) if request.mode == Mode::Rsh && request.tree.is_none() => {
             sink.record(Record::Transferring);
-            return Session::new(request, Sink::plain()).serve(Caller::Stdout, signals);
+            return Visit::new(request, Sink::plain()).serve(Caller::Stdout, signals);
         }
         // Framed until its tree is laid out, which says so before the transfer starts.
         Ok(request) if request.mode == Mode::Rsh => {
-            Session::new(request, sink.clone()).serve(Caller::Stdout, signals)
+            Visit::new(request, sink.clone()).serve(Caller::Stdout, signals)
         }
-        Ok(request) => Session::new(request, sink.clone()).serve(Caller::Channel(channel), signals),
+        Ok(request) => Visit::new(request, sink.clone()).serve(Caller::Channel(channel), signals),
         Err(e) => {
             sink.say(&format!("dibs-runner: {e}\n"));
             Exit::Refused.status()
@@ -63,26 +63,26 @@ pub fn serve() -> i32 {
 }
 
 /// One call on this machine.
-pub struct Session {
-    pub(super) call: Call,
+pub struct Visit {
+    pub(super) call: Received,
     pub(super) sink: Sink,
     pub(super) settings: Settings,
     /// What was made for this call alone, which goes with it however it ends.
     temporary: Vec<PathBuf>,
 }
 
-impl Session {
-    pub fn new(request: Request, sink: Sink) -> Session {
-        Session {
-            call: Call::of(request),
+impl Visit {
+    pub fn new(request: Request, sink: Sink) -> Visit {
+        Visit {
+            call: Received::of(request),
             sink,
             settings: Settings::load(),
             temporary: Vec::new(),
         }
     }
 
-    pub fn with_temporary(self, temporary: Vec<PathBuf>) -> Session {
-        Session { temporary, ..self }
+    pub fn with_temporary(self, temporary: Vec<PathBuf>) -> Visit {
+        Visit { temporary, ..self }
     }
 
     /// Runs the call to its end; the caller's channel, where it has one, is watched while it is
@@ -93,7 +93,7 @@ impl Session {
                 self.sink.say(&format!("dibs: {refused}\n"));
             }
         }
-        let machine = match Machine::set_up() {
+        let machine = match Site::set_up() {
             Ok(machine) => machine,
             Err(unwritable) => {
                 self.sink.say(&unwritable.said());
@@ -172,7 +172,7 @@ impl Session {
             dir: &dir,
             stopper: &stopper,
         };
-        let kept = Kept {
+        let kept = KeptJobs {
             machine: &machine,
             dir: &dir,
             sink: &self.sink,

@@ -1,7 +1,7 @@
 use crate::{
     job::{Digest, LogRead, Repeat},
-    machine::Machine,
-    session::{base::Session, run::Hosted},
+    machine::Site,
+    session::{base::Visit, run::Hosted},
 };
 use dibs_format::{
     By, JobId, JobMeta,
@@ -11,8 +11,8 @@ use std::{fs, path::PathBuf};
 
 /// A job that has ended, which its caller is told about.
 pub(super) struct Ended<'a> {
-    pub(super) session: &'a Session,
-    pub(super) machine: &'a Machine,
+    pub(super) session: &'a Visit,
+    pub(super) machine: &'a Site,
     pub(super) job: &'a JobId,
     pub(super) log: &'a PathBuf,
     /// Read once, under the lock, for `meta` and the trailer.
