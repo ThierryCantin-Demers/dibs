@@ -2,7 +2,10 @@ use crate::{
     call::base::{CallError, Request},
     caller::Caller,
     cli::Call,
-    machine::{Answer, CallValues, Card, Fleet, Here, Kept, Liveness, Session, Target, TargetEnv},
+    machine::{
+        Answer, CallValues, Card, Deadline, Delivery, Fleet, Here, Kept, Liveness, Session, Stream,
+        Target, TargetEnv,
+    },
     paths::Paths,
 };
 use dibs_format::{Label, MachineName, Mode};
@@ -136,6 +139,29 @@ impl<'a> MachineCall<'a> {
             exit: answer.exit.map(|status| session.exit(status, target)),
             ..answer
         })
+    }
+
+    /// The machine the call names, sent the mode's values, its output read here a line at a
+    /// time until it ends or `deadline` stops it. What ssh's failure means is one of those lines.
+    pub fn read_until(
+        &self,
+        asked: Asked,
+        deadline: Deadline,
+        on_line: &mut dyn FnMut(Stream, &[u8]),
+    ) -> Result<i32, CallError> {
+        let target = self.target()?;
+        self.somewhere(&target)?;
+        let values = CallValues {
+            tty: false,
+            ..self.values(asked, &target)?
+        };
+        let session = Session::new(&target, &self.here);
+        let status = session.read_until(&values, Delivery::Lines(&mut *on_line), deadline)?;
+        let diagnosis = session.diagnose(status, &target);
+        for line in diagnosis.said.split_inclusive('\n') {
+            on_line(Stream::Err, line.as_bytes());
+        }
+        Ok(diagnosis.exit)
     }
 
     /// A machine the inventory names, asked as `dibs --on <machine>` with `flags` would ask it,

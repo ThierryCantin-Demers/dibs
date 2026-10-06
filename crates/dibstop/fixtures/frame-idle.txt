@@ -1,7 +1,7 @@
 box-a BUSY, benchmark in progress (1 queued)   box-b in use, shared   updated 0s ago, every 10s
 ┌ jobs ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │  MACHIN WHAT   MODE   LABEL         DEVICE         AGENT         TIME    CORES   STEP        NOTE                    │
-│  box-a  HOLDIN bench  bench app gem gpu0           gemv sweep    1h01m   0.9x    -           3x its usual 10m00s     │
+│  box-a  HOLDIN bench  bench app gem gpu0           gemv sweep    1h01m   0.9x    -           over 2x its p90, 15m00s │
 │  box-a  queued shared build app red -              reduce kernel 2m00s   -       -           starts in ~5m00s        │
 │  box-b  HOLDIN shared build lib     -              lib refactor  3m20s   1.2x    1/3 ~10m20s usually 5m00s over 4 run│
 │▸ box-b  HOLDIN shared test lib      -              gemv sweep    15m00s  -       -           3s cpu, none in 10m00s  │

@@ -1,8 +1,8 @@
 //! One row of the jobs table, and what the pane under it says about that job.
 
-use crate::{
-    status::{Batch, Holder, Queued, Status},
-    text::dur,
+use dibs_format::{
+    Alias, Label, Mode, Span,
+    status::{BatchShown, Holder, IdleKind, Scope, Shown, Status, Waiter},
 };
 
 #[derive(Clone)]
@@ -10,24 +10,24 @@ pub struct Item {
     pub machine: String,
     /// Which card the job was pinned to, where one was named. Absent is the common case and
     /// is not a fault: a build does not want a card.
-    pub device: Option<String>,
+    pub device: Option<Alias>,
     pub holding: bool,
     pub slot: String,
-    pub mode: String,
-    pub pid: i64,
-    pub label: String,
+    pub mode: Mode,
+    pub pid: u32,
+    pub label: Label,
     pub agent: String,
     pub cmd: String,
-    pub time: i64,
-    pub cpu: Option<i64>,
-    pub rate: Option<i64>,
-    pub eta: Option<i64>,
+    pub time: u64,
+    pub cpu: Option<u64>,
+    pub rate: Option<u64>,
+    pub eta: Option<u64>,
     pub note: String,
     /// The column is narrow and the pane is not, so each says as much as it has room for.
     pub long: String,
     pub alarm: bool,
     pub output: Option<String>,
-    pub batch: Option<Batch>,
+    pub batch: Option<BatchShown>,
 }
 
 impl Item {
@@ -44,10 +44,10 @@ impl Item {
         let Verdict { note, long, alarm } = Verdict::of_holder(h);
         Item {
             machine: machine.to_string(),
-            device: pinned(&h.device),
+            device: h.device.clone(),
             holding: true,
             slot: "HOLDING".into(),
-            mode: h.mode.clone(),
+            mode: h.mode,
             pid: h.pid,
             label: h.label.clone(),
             agent: h.agent.clone(),
@@ -55,7 +55,7 @@ impl Item {
             time: h.elapsed,
             cpu: Some(h.cpu),
             rate: h.cpu_rate,
-            eta: h.remaining,
+            eta: h.estimate.as_ref().and_then(|e| e.remaining),
             note,
             long,
             alarm,
@@ -64,14 +64,14 @@ impl Item {
         }
     }
 
-    fn queued(machine: &str, q: &Queued) -> Item {
+    fn queued(machine: &str, q: &Waiter) -> Item {
         let Verdict { note, long, alarm } = Verdict::of_queued(q);
         Item {
             machine: machine.to_string(),
-            device: pinned(&q.device),
+            device: q.device.clone(),
             holding: false,
             slot: format!("queued {}", q.position),
-            mode: q.mode.clone(),
+            mode: q.mode,
             pid: q.pid,
             label: q.label.clone(),
             agent: q.agent.clone(),
@@ -89,16 +89,36 @@ impl Item {
     }
 }
 
-fn runs(n: i64) -> String {
+fn runs(n: usize) -> String {
     match n {
         1 => "1 run".into(),
         n => format!("{n} runs"),
     }
 }
 
-/// The feed writes `-` for a job that named no card.
-fn pinned(device: &Option<String>) -> Option<String> {
-    device.clone().filter(|d| d != "-" && !d.is_empty())
+/// How the table and the pane write a batch's progress.
+pub trait Progress {
+    /// Which step of how many, and how long the batch has left on this machine: `>` where that
+    /// is a floor, `~` where it is an estimate.
+    fn progress(&self) -> String;
+    fn left_text(&self) -> Option<String>;
+}
+
+impl Progress for BatchShown {
+    fn progress(&self) -> String {
+        match &self.left {
+            Some(l) if l.left_partial => format!("{}/{} >{}", self.k, self.n, Span(l.left)),
+            Some(l) => format!("{}/{} ~{}", self.k, self.n, Span(l.left)),
+            None => format!("{}/{}", self.k, self.n),
+        }
+    }
+
+    fn left_text(&self) -> Option<String> {
+        self.left.as_ref().map(|l| match l.left_partial {
+            true => format!("over {}", Span(l.left)),
+            false => format!("~{}", Span(l.left)),
+        })
+    }
 }
 
 /// What the note column says about a job, what the pane says at length, and whether either
@@ -111,43 +131,30 @@ struct Verdict {
 
 impl Verdict {
     fn of_holder(h: &Holder) -> Verdict {
-        if let Some(f) = h.idle_for {
-            let never = h.idle_kind.as_deref() == Some("never");
+        if let Some(idle) = &h.idle {
+            let f = Span(idle.idle_for);
+            let never = idle.idle_kind == IdleKind::Never;
             return Verdict {
                 note: match never {
-                    true => format!("no cpu at all in {}", dur(f)),
-                    false => format!("{} cpu, none in {}", dur(h.cpu), dur(f)),
+                    true => format!("no cpu at all in {f}"),
+                    false => format!("{} cpu, none in {f}", Span(h.cpu)),
                 },
                 long: match never {
                     true => format!(
                         "It has burned no CPU at all in the {} since it acquired the lock: it is \
                          waiting on something. Stop it with K.",
-                        dur(h.elapsed)
+                        Span(h.elapsed)
                     ),
                     false => format!(
-                        "It has burned {} of CPU in total, but none of it in the last {}, so it has \
+                        "It has burned {} of CPU in total, but none of it in the last {f}, so it has \
                          stopped doing anything. Stop it with K.",
-                        dur(h.cpu),
-                        dur(f)
+                        Span(h.cpu)
                     ),
                 },
                 alarm: true,
             };
         }
-        if h.overrun.unwrap_or(false) {
-            return Verdict {
-                note: format!("3x its usual {}", dur(h.est.unwrap_or(0))),
-                long: format!(
-                    "It has been running {}, more than three times the {} this same job usually \
-                     takes over {}.",
-                    dur(h.elapsed),
-                    dur(h.est.unwrap_or(0)),
-                    runs(h.est_n.unwrap_or(0))
-                ),
-                alarm: true,
-            };
-        }
-        let (Some(e), Some(n)) = (h.est, h.est_n) else {
+        let Some(shown) = &h.estimate else {
             return Verdict {
                 note: "no history for this one yet".into(),
                 long: "Nothing recorded for this job or for its mode, so there is no honest \
@@ -156,14 +163,29 @@ impl Verdict {
                 alarm: false,
             };
         };
-        let usual = if e == 0 {
-            "under a second".to_string()
-        } else {
-            dur(e)
+        if let Some(overrun) = shown.overrun() {
+            return Verdict {
+                note: overrun.to_string(),
+                long: format!(
+                    "It has been running {}, over twice the 90th percentile of its {}, {}.",
+                    Span(h.elapsed),
+                    runs(shown.runs),
+                    Span(overrun.high)
+                ),
+                alarm: true,
+            };
+        }
+        Verdict::of_estimate(h.mode, shown)
+    }
+
+    fn of_estimate(mode: Mode, shown: &Shown) -> Verdict {
+        let usual = match shown.median {
+            0 => "under a second".to_string(),
+            e => Span(e).to_string(),
         };
-        let runs = runs(n);
-        let (note, long) = match h.est_scope.as_deref().unwrap_or("this") {
-            "this" if h.est_other_values => (
+        let runs = runs(shown.runs);
+        let (note, long) = match shown.scope {
+            Scope::This if shown.other => (
                 format!("other values: {usual} over {runs}"),
                 format!(
                     "Nothing recorded with these values. Runs of this label with others take \
@@ -172,28 +194,26 @@ impl Verdict {
                 ),
             ),
             // One sample is a fact about one run, not a habit.
-            "this" if n == 1 => (
+            Scope::This if shown.runs == 1 => (
                 format!("ran once, in {usual}"),
                 format!("This job has run once before, in {usual}."),
             ),
-            "this" => (
+            Scope::This => (
                 format!("usually {usual} over {runs}"),
                 format!("This job usually takes {usual}, measured over {runs}."),
             ),
-            "agent" => (
+            Scope::Agent => (
                 format!("this agent: {usual} over {runs}"),
                 format!(
-                    "Nothing recorded under this label. This agent's other {} jobs take {usual} \
-                     across {runs}, which is the closest thing to an estimate there is.",
-                    h.mode
+                    "Nothing recorded under this label. This agent's other {mode} jobs take {usual} \
+                     across {runs}, which is the closest thing to an estimate there is."
                 ),
             ),
-            _ => (
-                format!("no history; {} \u{2248} {usual}", h.mode),
+            Scope::Mode => (
+                format!("no history; {mode} \u{2248} {usual}"),
                 format!(
-                    "Nothing recorded for this job or this agent. {} runs on this machine take \
-                     {usual} as a rule, which is worth knowing but says nothing about this one.",
-                    h.mode
+                    "Nothing recorded for this job or this agent. {mode} runs on this machine take \
+                     {usual} as a rule, which is worth knowing but says nothing about this one."
                 ),
             ),
         };
@@ -204,13 +224,13 @@ impl Verdict {
         }
     }
 
-    fn of_queued(q: &Queued) -> Verdict {
+    fn of_queued(q: &Waiter) -> Verdict {
         let (note, long) = match q.eta {
             Some(e) => (
-                format!("starts in ~{}", dur(e)),
+                format!("starts in ~{}", Span(e)),
                 format!(
                     "Waiting for the lock. Nothing ahead of it is expected to take more than {}.",
-                    dur(e)
+                    Span(e)
                 ),
             ),
             None => (
@@ -232,16 +252,35 @@ impl Verdict {
 mod tests {
     use super::*;
 
+    fn status(holders: &str, queue: &str) -> Status {
+        serde_json::from_str(&format!(
+            r#"{{"t":0,"state":"shared","cores":1,"load":0,"caches":[],"clones":[],"holders":[{holders}],"queue":[{queue}]}}"#
+        ))
+        .unwrap()
+    }
+
+    fn holder(label: &str, estimate: &str) -> String {
+        format!(
+            r#"{{"mode":"shared","pid":7,"label":"{label}","agent":"a","device":"-","cmd":"c","started":0,"elapsed":3,"cpu":1{estimate}}}"#
+        )
+    }
+
     #[test]
     fn a_job_in_a_batch_says_which_step_and_how_long_the_batch_has_left() {
-        let s: Status = serde_json::from_str(
-            r#"{"state":"shared","holders":[{"mode":"shared","pid":7,"label":"b","agent":"a","cmd":"c","elapsed":3,"cpu":1,"est":10,"est_n":3,"est_scope":"this","remaining":7,"batch":{"id":"20260917-1","step":"build","k":2,"n":5,"here":2,"elsewhere":1,"next":"bench ~4m00s","far":"home","left":620,"left_partial":true}}],"queue":[{"position":1,"mode":"bench","pid":8,"label":"q","agent":"x","cmd":"c","waiting":1,"eta":7}]}"#,
-        )
-        .unwrap();
+        let batch = r#","batch":{"id":"20260917-1","step":"build","k":2,"n":5,"here":2,"elsewhere":1,"next":"bench ~4m00s","far":"home","left":620,"left_partial":true}"#;
+        let s = status(
+            &holder(
+                "b",
+                &format!(
+                    r#","est":10,"est_lo":8,"est_hi":12,"est_n":3,"est_scope":"this","remaining":7{batch}"#
+                ),
+            ),
+            r#"{"position":1,"mode":"bench","pid":8,"label":"q","agent":"x","device":"-","cmd":"c","arrived":0,"waiting":1,"eta":7}"#,
+        );
         let v = Item::all("m", &s);
         assert_eq!(v[0].note, "usually 10s over 3 runs");
         assert_eq!(
-            v[0].batch.as_ref().map(Batch::progress).as_deref(),
+            v[0].batch.as_ref().map(Progress::progress).as_deref(),
             Some("2/5 >10m20s")
         );
         assert!(v[1].batch.is_none(), "a job outside a batch has no step");
@@ -249,10 +288,15 @@ mod tests {
 
     #[test]
     fn one_run_is_not_called_usual() {
-        let s: Status = serde_json::from_str(
-            r#"{"state":"shared","holders":[{"mode":"shared","pid":7,"label":"b","agent":"a","cmd":"c","elapsed":3,"cpu":1,"est":116,"est_n":1,"est_scope":"this"},{"mode":"shared","pid":8,"label":"c","agent":"a","cmd":"c","elapsed":3,"cpu":1,"est":116,"est_n":1,"est_scope":"agent"}],"queue":[]}"#,
-        )
-        .unwrap();
+        let once = r#","est":116,"est_lo":116,"est_hi":116,"est_n":1"#;
+        let s = status(
+            &format!(
+                "{},{}",
+                holder("b", &format!(r#"{once},"est_scope":"this""#)),
+                holder("c", &format!(r#"{once},"est_scope":"agent""#))
+            ),
+            "",
+        );
         let v = Item::all("m", &s);
         assert_eq!(v[0].note, "ran once, in 1m56s");
         assert_eq!(v[1].note, "this agent: 1m56s over 1 run");

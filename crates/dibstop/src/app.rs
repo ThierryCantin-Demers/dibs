@@ -11,8 +11,8 @@ use crate::{
     action::Action,
     feed::{Feed, Msg},
     item::Item,
-    status::Status,
 };
+use dibs_format::{Label, status::Status};
 
 const MIN_INTERVAL: u64 = 1;
 const MAX_INTERVAL: u64 = 60;
@@ -47,8 +47,8 @@ impl Overlay {
 /// A kill waiting for its `y`.
 pub struct PendingKill {
     pub machine: String,
-    pub pid: i64,
-    pub label: String,
+    pub pid: u32,
+    pub label: Label,
 }
 
 /// One machine's side of the world. Held apart rather than merged, because "the feed is down"
@@ -130,17 +130,11 @@ impl App {
         };
         let mut app = App::new(interval);
         for m in names {
-            let view = app.views.entry(m.clone()).or_default();
-            match Feed::spawn(tx.clone(), m, interval, app.generation) {
-                Ok(feed) => app.feeds.push(feed),
-                Err(e) => view.dead = Some(format!("could not start: {e}")),
-            }
+            app.views.entry(m.clone()).or_default();
+            app.feeds
+                .push(Feed::spawn(tx.clone(), m, interval, app.generation));
         }
         app
-    }
-
-    pub fn has_feeds(&self) -> bool {
-        !self.feeds.is_empty()
     }
 
     pub fn rows(&self) -> Vec<Item> {
@@ -197,16 +191,13 @@ impl App {
             .map(|f| f.machine.clone())
             .collect();
         for m in names {
-            match Feed::spawn(tx.clone(), m.clone(), self.interval, self.generation) {
-                Ok(feed) => {
-                    self.feeds.push(feed);
-                    self.views.entry(m).or_default().dead = None;
-                }
-                Err(e) => {
-                    self.views.entry(m).or_default().dead =
-                        Some(format!("could not restart the feed: {e}"))
-                }
-            }
+            self.feeds.push(Feed::spawn(
+                tx.clone(),
+                m.clone(),
+                self.interval,
+                self.generation,
+            ));
+            self.views.entry(m).or_default().dead = None;
         }
         self.busy = Some(format!("reconnecting every {secs}s"));
     }
@@ -220,7 +211,7 @@ impl App {
             } if generation == self.generation => {
                 let now = Instant::now();
                 let v = self.views.entry(machine).or_default();
-                v.status = Some(status);
+                v.status = Some(*status);
                 v.seen_at = Some(now);
                 v.dead = None;
                 v.trouble = None;
@@ -263,13 +254,13 @@ impl App {
             .filter(|(_, v)| v.retry_at.is_some_and(|t| t <= now))
         {
             self.feeds.retain(|f| f.machine != *m);
-            v.retry_at = match Feed::spawn(tx.clone(), m.clone(), self.interval, self.generation) {
-                Ok(feed) => {
-                    self.feeds.push(feed);
-                    None
-                }
-                Err(_) => Some(now + RETRY_ENDED),
-            };
+            self.feeds.push(Feed::spawn(
+                tx.clone(),
+                m.clone(),
+                self.interval,
+                self.generation,
+            ));
+            v.retry_at = None;
         }
     }
 

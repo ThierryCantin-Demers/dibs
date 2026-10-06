@@ -26,20 +26,8 @@ pub fn fit(s: &str, width: usize) -> String {
 
 /// Hundredths of a core, as cores. The total core-time goes in the pane below: on its own it
 /// only ever prompts the question of why three minutes of work shows twenty-three of CPU.
-pub fn cores(hundredths: i64) -> String {
+pub fn cores(hundredths: u64) -> String {
     format!("{}.{}x", hundredths / 100, (hundredths % 100) / 10)
-}
-
-/// Matches the wrapper's own formatting, so numbers read the same in both places.
-pub fn dur(s: i64) -> String {
-    let s = s.max(0);
-    if s >= 3600 {
-        format!("{}h{:02}m", s / 3600, (s % 3600) / 60)
-    } else if s >= 60 {
-        format!("{}m{:02}s", s / 60, s % 60)
-    } else {
-        format!("{s}s")
-    }
 }
 
 /// A control character drawn into a cell reaches the terminal as itself: a carriage return,

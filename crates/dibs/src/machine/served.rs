@@ -1,4 +1,5 @@
 use crate::machine::{
+    deadline::{Deadline, Ended},
     held::{Held, Holder, Release},
     interrupt::Interrupt,
     lines::{Listener, Stream},
@@ -20,13 +21,9 @@ use std::{
     },
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, RecvTimeoutError, Sender},
-    },
+    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 /// What a far shell exits with when the runner for this source is not there.
@@ -45,6 +42,18 @@ impl Runner {
     pub const HASH: &str = env!("DIBS_RUNNER_HASH");
     /// The tree a machine builds it from, as a gzipped tar.
     pub const SOURCE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runner-source.tar.gz"));
+
+    /// The runner, when this process was started under its word, as a call on this computer
+    /// starts it. Any binary linking this library is started so.
+    pub fn serves(words: &[String]) -> Option<i32> {
+        match words {
+            [word, rest @ ..] if word == RUNNER_WORD => Some(dibs_runner::main(
+                rest,
+                dibs_runner::Source { hash: Runner::HASH },
+            )),
+            _ => None,
+        }
+    }
 
     /// The line the login shell there runs, which fish, bash and dash read alike.
     fn far_line() -> String {
@@ -91,39 +100,6 @@ pub struct Served<'a> {
     pub holding: Option<Sender<Held>>,
     /// When an asked call is stopped, and whether it was.
     pub deadline: Option<Deadline>,
-}
-
-/// A bound on a call that is asked rather than run: past it, the call is stopped.
-#[derive(Debug, Clone)]
-pub struct Deadline {
-    at: Instant,
-    passed: Arc<AtomicBool>,
-}
-
-impl Deadline {
-    pub fn after(bound: Duration) -> Deadline {
-        Deadline {
-            at: Instant::now() + bound,
-            passed: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    pub fn passed(&self) -> bool {
-        self.passed.load(Ordering::SeqCst)
-    }
-
-    /// Stops the process at the deadline, unless `ended` says first that it has gone.
-    fn watch(&self, pid: u32, ended: Receiver<()>) {
-        let left = self.at.saturating_duration_since(Instant::now());
-        let passed = Arc::clone(&self.passed);
-        thread::spawn(move || {
-            if let Err(RecvTimeoutError::Timeout) = ended.recv_timeout(left) {
-                passed.store(true, Ordering::SeqCst);
-                // SAFETY: the process is not reaped before `ended` closes.
-                unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-            }
-        });
-    }
 }
 
 /// What reached this side from the runner.
@@ -393,14 +369,14 @@ impl Served<'_> {
             thread::spawn(move || read_lines(err, tell))
         });
         drop(tell);
-        let (gone, ended) = mpsc::channel::<()>();
+        let (gone, ended) = mpsc::channel();
         if let Some(deadline) = &self.deadline {
-            deadline.watch(child.id(), ended);
+            deadline.watch(child.id(), gone.clone(), ended);
         }
         let waiter = thread::spawn(move || {
             let status = child.wait();
             drop(channel);
-            drop(gone);
+            let _ = gone.send(Ended::Reaped);
             status
         });
         let mut exit = None;

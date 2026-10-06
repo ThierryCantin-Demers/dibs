@@ -1,7 +1,8 @@
 use crate::machine::{
+    deadline::Deadline,
     held::Holder,
     interrupt::Interrupt,
-    served::{Deadline, Delivery, Served},
+    served::{Delivery, Served},
     ssh::Ssh,
     target::Target,
     unreachable::Unreachable,
@@ -218,6 +219,21 @@ impl Session {
         delivery: Delivery,
     ) -> io::Result<i32> {
         self.served(values, live).run(delivery)
+    }
+
+    /// Runs a call whose output this process reads a line at a time, until it ends or its
+    /// deadline stops it.
+    pub fn read_until(
+        &self,
+        values: &CallValues,
+        delivery: Delivery,
+        deadline: Deadline,
+    ) -> io::Result<i32> {
+        Served {
+            deadline: Some(deadline),
+            ..self.served(values, Liveness::from_env())
+        }
+        .run(delivery)
     }
 
     /// rsync's far side, fed this process's stdin; the exit is the far side's.

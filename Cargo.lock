@@ -562,6 +562,8 @@ name = "dibstop"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "dibs",
+ "dibs-format",
  "ratatui",
  "serde",
  "serde_json",

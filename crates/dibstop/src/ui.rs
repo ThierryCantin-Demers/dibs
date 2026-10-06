@@ -8,9 +8,10 @@ use ratatui::{
 
 use crate::{
     app::{App, Overlay, PendingKill},
-    item::Item,
-    text::{agent_hue, cores, dur, fit, plain},
+    item::{Item, Progress as _},
+    text::{agent_hue, cores, fit, plain},
 };
+use dibs_format::{Mode, Span as DibsSpan, status::LockState};
 
 const DIM: Style = Style::new().fg(Color::DarkGray);
 const SELECTED_BG: Color = Color::Indexed(236);
@@ -92,9 +93,13 @@ fn header(app: &App) -> Line<'static> {
                 Style::new().fg(Color::Red),
             )),
             (None, Some(s)) => {
-                let (text, style) = state_style(&s.state);
+                let (text, style) = state_style(s.state);
                 head.push(Span::styled(
-                    if multi { text } else { format!("dibs: {text}") },
+                    if multi {
+                        text.to_string()
+                    } else {
+                        format!("dibs: {text}")
+                    },
                     style,
                 ));
                 if !s.queue.is_empty() {
@@ -231,11 +236,15 @@ impl Widths {
                 &mut w.machine,
                 longest(&|it| Some(count(&it.machine))),
             ),
-            (true, &mut w.label, longest(&|it| Some(count(&it.label)))),
+            (
+                true,
+                &mut w.label,
+                longest(&|it| Some(count(it.label.as_str()))),
+            ),
             (
                 any_device,
                 &mut w.device,
-                longest(&|it| it.device.as_deref().map(count)),
+                longest(&|it| it.device.as_ref().map(|d| count(d.as_str()))),
             ),
             (true, &mut w.agent, longest(&|it| Some(count(&it.agent)))),
             (true, &mut w.note, longest(&|it| Some(count(&it.note)))),
@@ -305,20 +314,23 @@ fn job_row(it: &Item, selected: bool, w: &Widths) -> Row<'static> {
     }
     cells.extend([
         Span::styled(it.slot.clone(), slot_style),
-        Span::styled(it.mode.clone(), mode_style(&it.mode, base)),
-        Span::styled(fit(&it.label, w.label), base.fg(hue)),
+        Span::styled(it.mode.to_string(), mode_style(it.mode, base)),
+        Span::styled(fit(it.label.as_str(), w.label), base.fg(hue)),
     ]);
     if w.any_device {
         // An unpinned job among pinned ones is the thing worth seeing, so it reads as a
         // dash rather than as blank space.
         cells.push(match &it.device {
-            Some(d) => Span::styled(fit(d, w.device), base.fg(Color::Magenta)),
+            Some(d) => Span::styled(fit(d.as_str(), w.device), base.fg(Color::Magenta)),
             None => Span::styled(fit("-", w.device), base.patch(DIM)),
         });
     }
     cells.extend([
         Span::styled(fit(&it.agent, w.agent), base.fg(hue)),
-        Span::styled(dur(it.time), base.add_modifier(Modifier::BOLD)),
+        Span::styled(
+            DibsSpan(it.time).to_string(),
+            base.add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             it.rate.map(cores).unwrap_or_else(|| "-".into()),
             base.patch(DIM),
@@ -352,14 +364,14 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
     ];
     let eta = |none: &str| {
         it.eta
-            .map(|e| format!("~{}", dur(e)))
+            .map(|e| format!("~{}", DibsSpan(e)))
             .unwrap_or_else(|| none.into())
     };
     if it.holding {
-        let cpu = dur(it.cpu.unwrap_or(0));
+        let cpu = DibsSpan(it.cpu.unwrap_or(0));
         lines.push(Line::from(vec![
             Span::styled("running ", DIM),
-            Span::raw(dur(it.time)),
+            Span::raw(DibsSpan(it.time).to_string()),
             Span::styled("   cpu ", DIM),
             Span::raw(match it.rate {
                 Some(r) => format!("{cpu} across all cores, {} right now", cores(r)),
@@ -371,7 +383,7 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
     } else {
         lines.push(Line::from(vec![
             Span::styled("waiting ", DIM),
-            Span::raw(dur(it.time)),
+            Span::raw(DibsSpan(it.time).to_string()),
             Span::styled("   starts in ", DIM),
             Span::raw(eta("no telling")),
         ]));
@@ -389,7 +401,7 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
     if let Some(b) = &it.batch {
         let mut first = vec![
             Span::styled("batch ", DIM),
-            Span::raw(b.id.clone()),
+            Span::raw(b.id.to_string()),
             Span::styled(format!("   step {} of {}: ", b.k, b.n), DIM),
             Span::raw(b.step.clone()),
         ];
@@ -505,8 +517,8 @@ fn confirm(f: &mut Frame, kill: &PendingKill) {
 
 /// The same two colours the header uses for the machine's state, so a row reads the same
 /// way as the line summarising it.
-fn mode_style(mode: &str, base: Style) -> Style {
-    base.fg(if mode == "bench" {
+fn mode_style(mode: Mode, base: Style) -> Style {
+    base.fg(if mode == Mode::Bench {
         Color::Red
     } else {
         Color::Yellow
@@ -514,15 +526,14 @@ fn mode_style(mode: &str, base: Style) -> Style {
     .add_modifier(Modifier::BOLD)
 }
 
-fn state_style(state: &str) -> (String, Style) {
+fn state_style(state: LockState) -> (&'static str, Style) {
     let bold = |c: Color| Style::new().fg(c).add_modifier(Modifier::BOLD);
     match state {
-        "bench" => ("BUSY, benchmark in progress".into(), bold(Color::Red)),
-        "shared" => ("in use, shared".into(), bold(Color::Yellow)),
-        "idle" => ("idle".into(), bold(Color::Green)),
-        "busy" => ("in use".into(), bold(Color::Yellow)),
-        "orphan" => ("LOCKED BY AN ORPHAN".into(), bold(Color::Red)),
-        other => (other.into(), Style::new()),
+        LockState::Bench => ("BUSY, benchmark in progress", bold(Color::Red)),
+        LockState::Shared => ("in use, shared", bold(Color::Yellow)),
+        LockState::Idle => ("idle", bold(Color::Green)),
+        LockState::Busy => ("in use", bold(Color::Yellow)),
+        LockState::Orphan => ("LOCKED BY AN ORPHAN", bold(Color::Red)),
     }
 }
 
@@ -540,14 +551,14 @@ fn centred(area: Rect, (pct_x, pct_y): (u16, u16)) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::status::Status;
+    use dibs_format::status::Status;
 
     #[test]
     fn a_long_label_agent_and_note_widen_as_far_as_the_screen_allows() {
         let label = "gemv-rows-with-a-long-label";
         let agent = "cubecl-cpu load_width detection";
         let s: Status = serde_json::from_str(&format!(
-            r#"{{"state":"shared","holders":[{{"mode":"shared","pid":7,"label":"{label}","agent":"{agent}","cmd":"c","elapsed":3,"cpu":1,"est":10,"est_n":3,"est_scope":"this","est_other_values":true}}],"queue":[]}}"#
+            r#"{{"t":0,"state":"shared","cores":1,"load":0,"caches":[],"clones":[],"holders":[{{"mode":"shared","pid":7,"label":"{label}","agent":"{agent}","device":"-","cmd":"c","started":0,"elapsed":3,"cpu":1,"est":10,"est_lo":8,"est_hi":12,"est_n":3,"est_scope":"this","est_other_values":true}}],"queue":[]}}"#
         ))
         .unwrap();
         let rows = Item::all("m", &s);

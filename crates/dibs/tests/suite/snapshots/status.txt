@@ -42,7 +42,7 @@
 1|   shared  sweep  <dur>  pid <pid>   [nothing with these values; with others: usually 20s over 3 runs, longer than it has ever taken]
 1|     other values
 1|     from an agent
-1|   shared  stuck-one  <dur>  pid <pid>   [STUCK? its slowest run was 20s, this is over twice that]
+1|   shared  stuck-one  <dur>  pid <pid>   [STUCK? over 2x its p90, 20s]
 1|     stop it with: dibs --kill <pid>
 1|     far past its slowest
 1|     from an agent

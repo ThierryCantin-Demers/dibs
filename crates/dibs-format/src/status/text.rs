@@ -183,18 +183,13 @@ impl Text<'_> {
             }
             return;
         }
-        match &holder.estimate {
-            Some(shown) if shown.overrun => {
-                let _ = writeln!(
-                    out,
-                    "{lead}   {}[STUCK? its slowest run was {}, this is over twice that]{}",
-                    p.warn,
-                    Span(shown.high),
-                    p.off
-                );
+        let overrun = holder.estimate.as_ref().and_then(Shown::overrun);
+        match (&holder.estimate, overrun) {
+            (_, Some(overrun)) => {
+                let _ = writeln!(out, "{lead}   {}[STUCK? {overrun}]{}", p.warn, p.off);
                 let _ = writeln!(out, "{stop}");
             }
-            Some(shown) => {
+            (Some(shown), None) => {
                 let _ = writeln!(
                     out,
                     "{lead}   {}[{}]{}",
@@ -203,7 +198,7 @@ impl Text<'_> {
                     p.off
                 );
             }
-            None => {
+            (None, None) => {
                 let _ = writeln!(
                     out,
                     "{lead}   {}[no history for this one yet]{}",

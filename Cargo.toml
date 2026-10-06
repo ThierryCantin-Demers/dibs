@@ -22,6 +22,7 @@ edition = "2024"
 rust-version = "1.89"
 
 [workspace.dependencies]
+dibs = { path = "crates/dibs" }
 dibs-format = { path = "crates/dibs-format" }
 dibs-runner = { path = "crates/dibs-runner" }
 flate2 = "1"

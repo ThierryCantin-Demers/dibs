@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 crossterm.workspace = true
+dibs.workspace = true
+dibs-format.workspace = true
 ratatui.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -68,10 +68,12 @@ in `~/.claude/CLAUDE.md` imports it, and an `AGENTS.md`, which has no imports, c
 included when that file is generated.
 
 `dibstop [interval]` redraws every 10 seconds unless told otherwise, and `?` lists its keys. It
-keeps no state of its own: its feed is `dibs --watch --json`, one connection per machine, and
-every action it takes is a `dibs` call, so it cannot disagree with what `dibs status` would say,
-and `dibs` has to be on PATH for it. A redraw costs a read of the lock on the far side rather
-than a fresh login, which is what makes it safe to leave open beside a benchmark.
+keeps no state of its own: its feed is the watch `dibs --watch --json` runs, one connection per
+machine, opened in its own process through the dibs library, and every action it takes is a
+`dibs` call, so it cannot disagree with what `dibs status` would say, and `dibs` has to be on
+PATH for its actions. A redraw costs a read of the lock on the far side rather than a fresh
+login, which is what makes it safe to leave open beside a benchmark. A watch ends with the
+connection, so one never outlives a dibstop that was killed.
 
 ## Updating
 

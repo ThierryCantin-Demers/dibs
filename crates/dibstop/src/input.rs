@@ -11,8 +11,8 @@ use crate::{
     action::Action,
     app::{App, Overlay, PendingKill},
     feed::Msg,
-    text::dur,
 };
+use dibs_format::Span;
 
 const WHEEL_LINES: u16 = 3;
 const PAGE_LINES: u16 = 15;
@@ -166,14 +166,14 @@ impl App {
         }
         let starts = it
             .eta
-            .map(|e| format!("~{}", dur(e)))
+            .map(|e| format!("~{}", Span(e)))
             .unwrap_or_else(|| "no telling".into());
         self.overlay = Some(Overlay::new(
             format!("{} is still queued", it.label),
             format!(
                 "It has no processes yet: it is waiting for the lock.\n\n\
                  waiting   {}\n starts in {starts}\n agent     {}\n\n{}",
-                dur(it.time),
+                Span(it.time),
                 it.agent,
                 it.cmd
             ),

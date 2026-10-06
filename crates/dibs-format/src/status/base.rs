@@ -1,6 +1,6 @@
-use crate::{Alias, BatchId, JobId, Label, Mode};
+use crate::{Alias, BatchId, JobId, Label, Mode, Span};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf};
 
 /// One machine's lock as `dibs status` reports it: who holds it, who waits and when each should
 /// start, and what a dispatcher ranks the machine by. Its JSON, one line, is what dibstop and
@@ -167,6 +167,24 @@ pub struct Shown {
     /// Running more than twice its ninetieth percentile.
     #[serde(default, skip_serializing_if = "is_false")]
     pub overrun: bool,
+}
+
+/// A holder running more than twice its ninetieth percentile, in the words every view of it uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Overrun {
+    pub high: u64,
+}
+
+impl Shown {
+    pub fn overrun(&self) -> Option<Overrun> {
+        self.overrun.then_some(Overrun { high: self.high })
+    }
+}
+
+impl fmt::Display for Overrun {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "over 2x its p90, {}", Span(self.high))
+    }
 }
 
 /// Which key an estimate was drawn from, sharpest first.

@@ -1,5 +1,6 @@
 //! One call to one machine: where it goes, what it sends, and how it ends.
 
+mod deadline;
 mod held;
 mod interrupt;
 mod lines;
@@ -11,6 +12,7 @@ mod target;
 mod unreachable;
 mod values;
 
+pub use deadline::{Deadline, Stop};
 pub use held::{Held, Holder, Release};
 pub use interrupt::{Interrupt, Relayed};
 pub use lines::{Lines, Listener, Stream};

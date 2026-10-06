@@ -5,6 +5,7 @@ mod base;
 mod card;
 mod check;
 mod dispatch;
+mod feed;
 mod hold;
 mod kept;
 mod kill;
@@ -19,6 +20,7 @@ mod watched;
 
 pub use base::{CallError, LockedCall};
 pub use dispatch::Dispatch;
+pub use feed::{Fed, StatusFeed};
 pub use hold::Guard;
 pub use kill::{Driver, DriverClaim};
 pub use local::Destination;
