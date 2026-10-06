@@ -373,6 +373,24 @@ fn an_overrun_says_it_was_stopped_and_what_running_it_again_does() {
     );
 }
 
+#[test]
+fn an_overrun_takes_what_its_job_left_running_with_it() {
+    let s = Sandbox::new();
+    let gate = s.gate("orphan");
+    let pidfile = s.p("orphan.pid");
+    // The trailing command keeps the job's own shell from exec'ing the one that ignores TERM.
+    let cmd = format!(
+        "bash -c 'trap \"\" TERM; echo $$ > {pidfile}; {}'; true",
+        gate.hold()
+    );
+    let out = s
+        .dibs(["--max", "1", "--label", "overran-tree", &cmd])
+        .run();
+    assert_eq!(out.code, 124, "{}", out.all());
+    let pid: u32 = s.read("orphan.pid").trim().parse().unwrap();
+    until("the process that ignored TERM to go", || !alive(pid));
+}
+
 // A leftover in the job's group goes with the job, so this one leaves it; only Linux shows a
 // process's environment, which names its job.
 #[cfg(target_os = "linux")]
