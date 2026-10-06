@@ -4,6 +4,10 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span(pub u64);
 
+impl Span {
+    pub const DAY: Span = Span(86_400);
+}
+
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = self.0;

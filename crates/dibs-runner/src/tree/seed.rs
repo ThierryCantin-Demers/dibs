@@ -1,7 +1,8 @@
 use crate::tree::{
     base::Stamp,
     builds::{Builds, Held},
-    copy::{Copier, Sharing, remove_all},
+    clocks::USED,
+    copy::{Copier, Sharing, empty, remove_all},
     git::Unstopped,
     packages::{Cache, Lines},
 };
@@ -107,7 +108,8 @@ impl Seed<'_> {
                     copy.join(".dibs-tree"),
                     format!("{}\n", self.worktree.display()),
                 )
-                .is_ok();
+                .is_ok()
+                && empty(&copy.join(USED)).is_ok();
             drop(taken);
             if !copied {
                 remove_all(&copy);

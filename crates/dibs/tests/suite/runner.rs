@@ -183,6 +183,58 @@ fn a_runner_that_does_not_build_stops_the_call_with_72() {
 }
 
 #[test]
+fn a_runner_gone_between_its_check_and_its_start_is_built_again() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, true);
+    // It passes the far shell's `[ -x ]`, and its exec fails as a removed file's would; aged, so
+    // the older runner is the newest one there to build.
+    let runner = format!("home/{}", runner_path());
+    s.write_exec(&runner, "\u{7f}ELF\0\0\0\0");
+    s.command("touch", ["-d", "400 days ago", &s.p(&runner)])
+        .run();
+    let out = s
+        .remote(s.dibs(["--label", "after-build", "echo ran"]))
+        .run();
+    assert_eq!(
+        (out.code, out.stdout.lines_with("ran")),
+        (0, 1),
+        "the call runs once its runner is built: {}",
+        out.all()
+    );
+    let installed = fs::symlink_metadata(s.path(&format!("home/{}", runner_path()))).unwrap();
+    assert!(installed.is_file());
+}
+
+#[test]
+fn a_queued_gc_starts_though_its_runner_was_removed_while_it_waited() {
+    let mut s = Sandbox::new();
+    // A binary of its own in the version's directory, as a built runner is.
+    let version = format!("home/.cache/dibs/runner/{RUNNER_HASH}");
+    let copy = s.p(&format!("{version}/dibs-copy"));
+    s.command("cp", [DIBS, copy.as_str()]).run();
+    s.write_exec(
+        &format!("home/{}", runner_path()),
+        &format!("#!/bin/sh\nexec '{copy}' __runner \"$@\"\n"),
+    );
+    let (up, hold) = (s.gate("up"), s.gate("hold"));
+    let bench = s.spawn(s.dibs([
+        "--bench",
+        "--label",
+        "measured",
+        &format!("{}; {}", up.signal(), hold.hold()),
+    ]));
+    up.reached();
+    let gc = s.spawn(s.remote(s.dibs(["--gc", "--dry-run"])));
+    s.until_records("the sweep queued", || {
+        s.records("waiting").iter().any(|r| r[3] == "dibs-gc")
+    });
+    fs::remove_dir_all(s.path(&version)).unwrap();
+    hold.open();
+    assert_eq!(s.wait(bench), 0);
+    assert_eq!(s.wait(gc), 0);
+}
+
+#[test]
 fn a_machine_with_no_runner_refuses_the_call_and_says_how_to_install_one() {
     let mut s = Sandbox::new();
     without_this_runner(&mut s, false);

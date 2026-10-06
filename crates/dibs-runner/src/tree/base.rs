@@ -3,18 +3,17 @@ use crate::{
     platform::{Host, Platform as _},
     tree::{
         builds::{Builds, Held},
-        clocks::Clocks,
-        copy::{Copier, empty, remove_all, touch},
+        clocks::{Clocks, Removal, USED},
+        copy::{Copier, empty, now, remove_all, touch},
         git::{Commands, answer, said},
         packages::{Cache, Lines},
-        runners::Runners,
-        seed::{Seed, name},
-        sweep::Sweep,
+        seed::Seed,
+        sweep::{PREPARE_LOCK, Sweep},
     },
 };
 use dibs_format::{
     Exit,
-    wire::{GitDb, GitDbs, Nest, Prepare, Prepared, Revision, SOURCE_HASH, Seeded, Source},
+    wire::{GitDb, GitDbs, Nest, Prepare, Prepared, Revision, Seeded, Source},
 };
 use std::{
     fs, io,
@@ -40,8 +39,7 @@ pub struct Trees<'a> {
     pub scratch: &'a Path,
     pub home: &'a Path,
     pub cargo_home: &'a Path,
-    pub keep_days: u64,
-    pub target_keep_days: u64,
+    pub clocks: Clocks,
     pub seed_wait: Duration,
     pub copier: Copier,
     pub commands: Commands<'a>,
@@ -160,10 +158,6 @@ impl Trees<'_> {
         let sha = self.resolve(&source, repo, reference, stamp)?;
         let short: String = sha.chars().take(12).collect();
         let worktree = self.nested(prepare).join(&short);
-        self.made(worktree.parent().unwrap_or(self.scratch))?;
-        self.add(&source, &worktree, &sha, repo)?;
-        self.made_used(&worktree)?;
-        self.nest(prepare, stamp)?;
         let mut suffix = prepare
             .nest
             .as_ref()
@@ -173,6 +167,14 @@ impl Trees<'_> {
             suffix += &format!("-arm{slot}");
         }
         let target = self.scratch.join("target").join(format!("{repo}{suffix}"));
+        self.made(worktree.parent().unwrap_or(self.scratch))?;
+        let trees = self.repo_turn(repo)?;
+        self.add(&source, &worktree, &sha)?;
+        self.made_used(&worktree)?;
+        self.revive(prepare, &worktree);
+        drop(trees);
+        self.nest(prepare, stamp)?;
+        let target_turn = self.target_turn(&target)?;
         // The checkout's files may be older than the copied artifacts, so the copy's claim is
         // dropped and the first build dates them after it.
         let mut seeded = None;
@@ -183,7 +185,8 @@ impl Trees<'_> {
             let _ = fs::remove_file(target.join(".dibs-tree"));
         }
         self.cache(&target, prepare, packages)?;
-        self.sweep(&worktree, &target);
+        drop(target_turn);
+        self.sweep();
         if let Ok(pruned) = self.commands.git(&source, &["worktree", "prune"]) {
             (self.say)(&String::from_utf8_lossy(&pruned.stderr));
         }
@@ -254,18 +257,22 @@ impl Trees<'_> {
         Err(Exit::Setup)
     }
 
-    /// The commit's worktree, detached so that it never moves under a job still measuring from
-    /// it. Two prepares of one commit would both see none and both add it, so they take turns,
-    /// per repo since the prune after touches every worktree of it.
-    fn add(&self, source: &Path, worktree: &Path, sha: &str, repo: &str) -> Result<(), Exit> {
-        let lock = self.held(
-            &self.scratch.join("ws").join(repo).join(".prepare.lock"),
+    /// The repo's trees to this prepare alone: two prepares of one commit would both see no tree
+    /// and both add it, the prune after touches every worktree of the repo, and a sweep removes
+    /// none of them meanwhile.
+    fn repo_turn(&self, repo: &str) -> Result<Held, Exit> {
+        self.held(
+            &self.scratch.join("ws").join(repo).join(PREPARE_LOCK),
             self.commands.deadline,
             "could not lock the repo's trees",
-        )?;
+        )
+    }
+
+    /// The commit's worktree, detached so that it never moves under a job still measuring from
+    /// it. Holding the repo's turn.
+    fn add(&self, source: &Path, worktree: &Path, sha: &str) -> Result<(), Exit> {
         if worktree.join(".git").exists() {
             if !self.half_checked_out(worktree) {
-                drop(lock);
                 return Ok(());
             }
             (self.say)(&format!(
@@ -302,7 +309,6 @@ impl Trees<'_> {
             }
             again.is_ok_and(|o| o.status.success())
         };
-        drop(lock);
         match added {
             true => Ok(()),
             false if self.overran() => Err(Exit::Overran),
@@ -337,7 +343,11 @@ impl Trees<'_> {
             .join("target")
             .join(format!("{repo}-local-{key}{nest}"));
         self.made(worktree.parent().unwrap_or(self.scratch))?;
+        let trees = self.repo_turn(repo)?;
+        self.revive(prepare, &worktree);
+        drop(trees);
         let turn = self.turn(&worktree)?;
+        let target_turn = self.target_turn(&target)?;
         let (mut seeded, mut reseeded) = (None, None);
         if !worktree.is_dir() && !target.is_dir() {
             seeded = self
@@ -354,9 +364,10 @@ impl Trees<'_> {
         self.made(&worktree)?;
         self.made_used(&worktree)?;
         self.cache(&target, prepare, packages)?;
+        drop(target_turn);
         drop(turn);
         self.nest(prepare, stamp)?;
-        self.sweep(&worktree, &target);
+        self.sweep();
         Ok(Laid {
             worktree,
             target,
@@ -414,10 +425,31 @@ impl Trees<'_> {
         index.is_some_and(|index| !worktree.join(index).exists()) && !worked_in(&[worktree])
     }
 
+    /// The tree this prepare may reuse, and the nest it sits in, marked used holding the repo's
+    /// turn, under which a sweep judges them again before it removes either.
+    fn revive(&self, prepare: &Prepare, worktree: &Path) {
+        let _ = now(&worktree.join(USED));
+        if prepare.nest.is_some() {
+            let _ = now(&self.nested(prepare).join(USED));
+        }
+    }
+
+    /// The target to this prepare alone, from deciding what it starts from until it is marked
+    /// used: a sweep removes no target a prepare holds, and its marker's time, which says
+    /// whether another call may be about to enter it, is left until then.
+    fn target_turn(&self, target: &Path) -> Result<Held, Exit> {
+        self.made(target.parent().unwrap_or(self.scratch))?;
+        self.held(
+            &Held::beside(target),
+            self.commands.deadline,
+            "could not lock the target",
+        )
+    }
+
     /// A sent tree to this prepare alone, from deciding what it starts from until its target is
     /// marked used, so a reseed that copied for minutes never replaces a tree handed over since.
     fn turn(&self, worktree: &Path) -> Result<Held, Exit> {
-        let path = worktree.with_file_name(format!(".{}.lock", name(worktree)));
+        let path = Held::beside(worktree);
         if let Ok(Some(held)) = Held::exclusive_by(&path, Deadline::after(Some(Duration::ZERO))) {
             return Ok(held);
         }
@@ -479,7 +511,7 @@ impl Trees<'_> {
         let nest = self.scratch.join("ws").join(&prepare.repo).join(name);
         let cargo = nest.join(".cargo");
         let written = cargo.join(format!("config.toml.{}", stamp.as_str()));
-        touch(&nest.join(".dibs-used"))
+        touch(&nest.join(USED))
             .and_then(|()| fs::create_dir_all(&cargo))
             .and_then(|()| fs::write(&written, config))
             .and_then(|()| fs::rename(&written, cargo.join("config.toml")))
@@ -496,8 +528,7 @@ impl Trees<'_> {
     ) -> Result<(), Exit> {
         self.made(target)?;
         self.made(&self.scratch.join("out"))?;
-        empty(&target.join(".dibs-used"))
-            .map_err(|e| self.failed("could not mark the target", &e))?;
+        empty(&target.join(USED)).map_err(|e| self.failed("could not mark the target", &e))?;
         let cache = Cache { dir: target };
         if let (Some(lines), Some(staged)) = (packages, &prepare.packages) {
             cache
@@ -508,23 +539,12 @@ impl Trees<'_> {
         Ok(())
     }
 
-    fn sweep(&self, worktree: &Path, target: &Path) {
-        Sweep {
-            scratch: self.scratch,
-            clocks: Clocks {
-                keep_days: self.keep_days,
-                target_keep_days: self.target_keep_days,
-            },
-            worktree,
-            target,
-            runners: &Runners {
-                dir: self.home.join(".cache/dibs/runner"),
-                own: SOURCE_HASH.map(str::to_string),
-            },
-            commands: &self.commands,
+    fn sweep(&self) {
+        let removal = Removal {
+            commands: Some(&self.commands),
             say: self.say,
-        }
-        .run();
+        };
+        Sweep::new(self.scratch, self.home, self.clocks, removal).run();
     }
 
     /// Which of the commits asked about the machine's cargo lacks.
@@ -556,7 +576,7 @@ impl Trees<'_> {
     }
 
     fn made_used(&self, worktree: &Path) -> Result<(), Exit> {
-        touch(&worktree.join(".dibs-used")).map_err(|e| self.failed("could not mark the tree", &e))
+        touch(&worktree.join(USED)).map_err(|e| self.failed("could not mark the tree", &e))
     }
 
     fn failed(&self, what: &str, error: &io::Error) -> Exit {

@@ -63,13 +63,14 @@ A recipe's request names the tree its job runs in: one laid out before, or one t
 out at the head of the job, once it holds the lock and before the command, so a recipe pays for
 one place in the queue rather than two. It fetches a ref into a ref of its own, never through
 the clone's one `FETCH_HEAD`, adds the commit's worktree or makes a sent tree's directory, seeds
-a new target from a sibling's by reflinks (`FICLONE` on Linux, `clonefile` on macOS), stages the lockfile's packages beside it, sweeps what nobody has
-used, and asks cargo's git cache which pinned commits it lacks. The layout under the scratch and
-its markers (`.dibs-used`, `.dibs-tree`, `.dibs-packages`, `.prepare.lock`) are the ones a bash
-prepare left, so no build cache is rebuilt. A sent tree's prepare also holds `.<tree>.lock`
-beside it, from deciding what the tree starts from until its target is marked used, so a reseed
-that waited minutes for a sibling's build never replaces a tree another call has been handed
-since; a bash prepare takes no such lock. What it laid out comes back as a `prepared` record;
+a new target from a sibling's by reflinks (`FICLONE` on Linux, `clonefile` on macOS), stages
+the lockfile's packages beside it, sweeps what nobody has used, and asks cargo's git cache which
+pinned commits it lacks. The layout under the scratch and its markers (`.dibs-used`,
+`.dibs-tree`, `.dibs-packages`, `.prepare.lock`) are the ones a bash prepare left, so no build
+cache is rebuilt. A sent tree's prepare also holds `.<tree>.lock` beside it, from deciding what
+the tree starts from until its target is marked used, so a reseed that waited minutes for a
+sibling's build never replaces a tree another call has been handed since; a bash prepare takes
+no such lock. What it laid out comes back as a `prepared` record;
 what it says goes where the job's output goes. A step waiting for a git dependency exits 3 with
 `by=dibs` before its command, as does a prepare that fails. The job's `--max` counts from when
 it holds the lock, as master's `timeout` around its setup did: a git command, a lock another
@@ -77,8 +78,7 @@ prepare holds or a seed's wait for a sibling's build that outlasts it ends the c
 `by=dibs`, and the command gets what is left. A copy makes FIFOs, sockets and devices anew rather
 than opening them. A worktree with no index, which a checkout stopped partway leaves since git
 writes it last, is removed and added again unless a process works in it. The command then runs
-in the
-worktree with the target as `CARGO_TARGET_DIR`, or, for a transfer, in the directory the
+in the worktree with the target as `CARGO_TARGET_DIR`, or, for a transfer, in the directory the
 transfer names the worktree in. Around a recipe step's command the runner refuses a measurement
 whose target another tree built into since (exit 78, `by=dibs`), reads the machine's state,
 claims the target for a build's tree, records a successful build's lockfile, keeps the files the
@@ -86,6 +86,29 @@ step names, and checks that a pin took (exit 3, `by=dibs`), and says what it did
 record before the trailer. A transfer with a tree is framed until it is laid out: the
 `prepared` record, then `transferring`, after which the runner frames nothing; `dibs __rsh`
 writes the record to a file the sync that started rsync reads.
+
+### The sweep
+
+Every prepare and `dibs --gc` walk the scratch the same way and judge it by the same clocks:
+`--gc` lists what one sweep judged, and a prepare removes the same things quietly.
+
+- **What it walks:** every repo's trees under `ws`, the build caches under `target`, the job
+  directories under `jobs`, leftovers under `tmp` and `out`, and the runners' directory.
+- **A tree** is past once its `.dibs-used` is older than `keep_days`, and **a cache** once its
+  marker is older than `target_keep_days`, unless a build holds one of its `.cargo-lock` files.
+  One with no marker is dated rather than removed.
+- **Against a prepare reviving it.** A prepare marks a tree it may reuse, and the nest it sits
+  in, holding the repo's `.prepare.lock`, and holds `.<target>.lock` beside its target from
+  deciding what the target starts from until the target is marked used. A sweep takes the same
+  locks, without waiting, before it removes either, judges it again under them, and holds every
+  build lock in a cache through its removal. Whatever a prepare holds is left for the next sweep.
+  A copy a prepare is seeding, or a tree it set aside, carries the prepare's process in its name
+  (`.seed.<pid>`, `.old.<pid>`), and is the prepare's while that process runs.
+- **Runner versions** are kept by use: each call a version serves marks its `.dibs-used`. One a
+  later version replaced goes once that mark is older than `keep_days`; the newest installed
+  always stays, since it builds the next.
+- **The lock files** beside the targets stay after their targets go, so two prepares of one
+  target never hold two different files.
 
 ### Liveness
 
@@ -133,7 +156,8 @@ writes the record to a file the sync that started rsync reads.
 
 ## Provisioning
 
-- **A version missing on a machine** shows as exit 125 with no frame. The client then runs the
+- **A version missing on a machine** shows as exit 125 with no frame, or 126 or 127 when it was
+  removed between the far shell's check and its `exec`. The client then runs the
   newest runner already there (`ls -t`) as `build <hash>`, fed the tree. That runner takes the
   shared lock as an ordinary job, labelled `dibs-runner`, which unpacks the tree in
   `~/.cache/dibs/runner/.src.<hash>.<pid>` with the time of unpacking on every file (the tree is
@@ -221,7 +245,9 @@ one of them.
   - A runner's job is in its own process group, where a script's shared the script's, and the
     group is swept when the job ends or its runner dies.
   - A runner does not sweep old job directories as a plain job starts. It sweeps them, with old
-    trees, caches and runner versions, whenever it lays out a tree, and `--gc` does.
+    trees, caches, leftovers in `tmp` and `out`, and runner versions, whenever it lays out a
+    tree, as `--gc` does. A script's prepare swept trees and caches alone, took no lock to, and
+    could remove one a runner's prepare was reviving.
   - A runner keeps the pids it would stop in memory, so it writes no `work.<pid>`, which only the
     script that wrote one ever read.
   - A runner lays a recipe's tree out itself, so a job's log holds none of a prepare's `DIBS-`

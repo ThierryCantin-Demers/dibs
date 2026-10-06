@@ -9,7 +9,7 @@
 1|     target/demo                                 <size>  used today
 1|   job logs and artifacts, removed after 14 days: 2 entries, <size>, oldest 30 days, 1 past it holding <size>, which would go
 1|   leftover temporary files, removed after 14 days: 1 entry, <size>, oldest 30 days, 1 past it holding <size>, which would go
-1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 14 days
+1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 14 days unused
 1|     <hash>                              <size>
 1|     0000000000000000                              <size>   would remove
 1|     .src.0000000000000000.42                      <size>   would remove
@@ -31,7 +31,7 @@
 1|     target/demo                                 <size>  used today
 1|   job logs and artifacts, removed after 2 days: 3 entries, <size>, oldest 30 days, 1 past it holding <size>, which would go
 1|   leftover temporary files, removed after 2 days: 1 entry, <size>, oldest 30 days, 1 past it holding <size>, which would go
-1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 2 days
+1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 2 days unused
 1|     <hash>                              <size>
 1|     0000000000000000                              <size>   would remove
 1|     .src.0000000000000000.42                      <size>   would remove
@@ -53,7 +53,7 @@
 1|     target/demo                                 <size>  used today
 1|   job logs and artifacts, removed after 14 days: 4 entries, <size>, oldest 30 days, removed 1 holding <size>
 1|   leftover temporary files, removed after 14 days: 1 entry, <size>, oldest 30 days, removed 1 holding <size>
-1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 14 days
+1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 14 days unused
 1|     <hash>                              <size>
 1|     0000000000000000                              <size>   removed
 1|     .src.0000000000000000.42                      <size>   removed
@@ -68,7 +68,7 @@
 -> exit 0
 1| dibs --gc on <host>, under <root>/no-scratch
 1|   job logs and artifacts, removed after 14 days: 1 entry, <size>, oldest 0 days, none past its clock
-1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 14 days
+1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 14 days unused
 1|     <hash>                              <size>
 1|   reclaimed <size> of <size>
 1|   <free> free of <size> on <mount>

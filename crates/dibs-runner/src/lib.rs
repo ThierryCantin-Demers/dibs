@@ -34,14 +34,17 @@ pub use provision::{BUILD_MAX, Source};
 pub fn main(args: &[String], source: Source) -> i32 {
     match args {
         [verb, asked] if verb == "serve" => match source.serves(asked) {
-            true => session::serve(),
+            true => {
+                tree::Runners::here().mark_used();
+                session::serve()
+            }
             false => source.refuse(asked),
         },
         [verb] if verb == "hash" => source.name(),
         [verb] if verb == job::Tether::WORD => job::Tether::serve(),
         [verb, hash] if verb == "build" => provision::build(hash),
         [verb, days, dry] if verb == "gc" => {
-            tree::Asked::parse(&format!("{days} {dry}")).sweep().run()
+            tree::Asked::parse(&format!("{days} {dry}")).report().run()
         }
         _ => {
             eprintln!(

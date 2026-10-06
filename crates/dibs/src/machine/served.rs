@@ -31,6 +31,9 @@ use std::{
 
 /// What a far shell exits with when the runner for this source is not there.
 pub(super) const MISSING: i32 = 125;
+/// What a far shell exits with, nothing heard from the runner, when it was not there to start:
+/// the check's own, or the exec's when the version went between the check and the exec.
+const NOT_STARTED: [i32; 3] = [MISSING, 126, 127];
 /// The word the client's own binary serves the runner under, on this computer.
 pub const RUNNER_WORD: &str = "__runner";
 
@@ -337,7 +340,7 @@ impl Served<'_> {
             let status = child.wait()?;
             Interrupt::pass_on(status);
             return Ok(match (said, Exit::shell_status(status)) {
-                (None, MISSING) => Attempted::Missing,
+                (None, code) if NOT_STARTED.contains(&code) => Attempted::Missing,
                 (_, code) => Attempted::Exit(code),
             });
         };
@@ -437,7 +440,7 @@ impl Served<'_> {
         Ok(match exit {
             Some(code) => Attempted::Exit(code),
             None if Interrupt::heard() => Attempted::Exit(i32::from(Exit::Interrupted.code())),
-            None if !any && Exit::shell_status(status) == MISSING => Attempted::Missing,
+            None if !any && NOT_STARTED.contains(&Exit::shell_status(status)) => Attempted::Missing,
             None => Attempted::Exit(Exit::shell_status(status)),
         })
     }

@@ -17,7 +17,9 @@ mod sweep;
 mod tests;
 
 pub use base::Trees;
+pub use clocks::Clocks;
 pub use copy::{Copier, Mark, Reflinks};
 pub use gc::{Asked, Bytes};
 pub use git::Commands;
+pub use runners::Runners;
 pub use step::Stepping;

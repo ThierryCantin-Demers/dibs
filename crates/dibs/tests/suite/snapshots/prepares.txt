@@ -2,6 +2,7 @@
 jobs/  (1 job directories)
 out/
 target/
+  .app.lock
   app/
     .dibs-used  (empty)
 tmp/
@@ -21,6 +22,7 @@ ws/
 jobs/  (3 job directories)
 out/
 target/
+  .app.lock
   app/
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
@@ -43,6 +45,8 @@ ws/
 jobs/  (5 job directories)
 out/
 target/
+  .app-local-<app>.lock
+  .app.lock
   app/
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
@@ -77,6 +81,8 @@ ws/
 jobs/  (8 job directories)
 out/
 target/
+  .app-local-<app>.lock
+  .app.lock
   app/
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
@@ -118,6 +124,9 @@ ws/
 jobs/  (11 job directories)
 out/
 target/
+  .app-local-<app-topk>.lock
+  .app-local-<app>.lock
+  .app.lock
   app/
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
@@ -175,6 +184,10 @@ ws/
 jobs/  (17 job directories)
 out/
 target/
+  .app-local-<app-topk>.lock
+  .app-local-<app>.lock
+  .app-local-<main, sent>.lock
+  .app.lock
   app/
     .dibs-tree:
       | <root>/scratch/ws/app/<main>

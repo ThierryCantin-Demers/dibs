@@ -7,6 +7,7 @@ recorded revisions: {"app":"local:<sha>-<content>"}
 jobs/  (2 job directories)
 out/
 target/
+  .app-local-<app>.lock
   app-local-<app>/
     .dibs-packages.pending.<token>:
       | 666bf15ebb3d
@@ -16,6 +17,7 @@ tmp/
 ws/
   app/
     .local-<app>.lock
+    .prepare.lock  (empty)
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
@@ -36,6 +38,7 @@ recorded revisions: {"app":"local:<sha>-<content>"}
 jobs/  (5 job directories)
 out/
 target/
+  .app-local-<app>.lock
   app-local-<app>/
     .dibs-packages:
       | 791b0c5685df
@@ -52,6 +55,7 @@ tmp/
 ws/
   app/
     .local-<app>.lock
+    .prepare.lock  (empty)
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
@@ -73,6 +77,8 @@ recorded seeded: "app-local-<app>"
 jobs/  (8 job directories)
 out/
 target/
+  .app-local-<app-topk>.lock
+  .app-local-<app>.lock
   app-local-<app-topk>/
     .dibs-packages:
       | 791b0c5685df
@@ -102,6 +108,7 @@ ws/
   app/
     .local-<app-topk>.lock
     .local-<app>.lock
+    .prepare.lock  (empty)
     local-<app-topk>/
       .dibs-used  (empty)
       .dibs.toml
@@ -135,6 +142,10 @@ recorded arms: [{"fetched":"main","name":"main","revisions":{"app":"<main>"}},{"
 jobs/  (12 job directories)
 out/
 target/
+  .app-arm1.lock
+  .app-local-<app-topk>.lock
+  .app-local-<app>.lock
+  .app.lock
   app/
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
@@ -223,6 +234,10 @@ recorded revisions: {"app":"local:<sha>+dirty-<content>"}
 jobs/  (15 job directories)
 out/
 target/
+  .app-arm1.lock
+  .app-local-<app-topk>.lock
+  .app-local-<app>.lock
+  .app.lock
   app/
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
@@ -325,6 +340,10 @@ recorded seeded: "app-local-<app>"
 jobs/  (18 job directories)
 out/
 target/
+  .app-arm1.lock
+  .app-local-<app-topk>.lock
+  .app-local-<app>.lock
+  .app.lock
   app/
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
@@ -440,6 +459,12 @@ recorded seeded: "app-local-<app-topk>"
 jobs/  (21 job directories)
 out/
 target/
+  .app-arm1.lock
+  .app-local-<app-topk>.lock
+  .app-local-<app>-pin-<hash>.lock
+  .app-local-<app>.lock
+  .app.lock
+  .lib-local-<lib>.lock
   app/
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
@@ -597,6 +622,7 @@ ws/
         a.txt
   lib/
     .local-<lib>.lock
+    .prepare.lock  (empty)
     local-<lib>/
       .dibs-used  (empty)
       Cargo.toml

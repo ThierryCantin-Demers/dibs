@@ -44,6 +44,10 @@ jobs after, apart from those dibs ran: recent
 jobs/  (3 job directories)
 out/
 target/
+  .abandoned.lock
+  .app-local-<key>.lock
+  .stuck.lock
+  .swept-only.lock
   app-local-<key>/
     .dibs-used  (empty)
   held/
@@ -63,6 +67,7 @@ tmp/
 ws/
   app/
     .local-<key>.lock
+    .prepare.lock  (empty)
     local-<key>/
       .dibs-used  (empty)
       .dibs.toml
@@ -71,6 +76,7 @@ ws/
     recent/
       .dibs-used  (empty)
   other/
+    .prepare.lock  (empty)
     unmarked/
       .dibs-used  (empty)
 
@@ -84,6 +90,11 @@ jobs after, apart from those dibs ran: recent
 jobs/  (5 job directories)
 out/
 target/
+  .abandoned.lock
+  .app-local-<key>.lock
+  .held.lock
+  .stuck.lock
+  .swept-only.lock
   app-local-<key>/
     .dibs-used  (empty)
   recent/
@@ -101,6 +112,7 @@ tmp/
 ws/
   app/
     .local-<key>.lock
+    .prepare.lock  (empty)
     local-<key>/
       .dibs-used  (empty)
       .dibs.toml
@@ -109,5 +121,6 @@ ws/
     recent/
       .dibs-used  (empty)
   other/
+    .prepare.lock  (empty)
     unmarked/
       .dibs-used  (empty)

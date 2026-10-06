@@ -1,7 +1,12 @@
 use crate::{
-    clock::Deadline,
+    clock::{Deadline, Moment},
     job::Environment,
-    tree::{Commands, Copier, Reflinks, Stepping, Trees, copy::Sharing},
+    tree::{
+        Clocks, Commands, Copier, Reflinks, Runners, Stepping, Trees,
+        clocks::{Fate, Removal},
+        copy::Sharing,
+        sweep::{Kind, Section, Sweep},
+    },
 };
 use dibs_format::{
     Exit,
@@ -111,8 +116,10 @@ impl Machine {
             scratch: &scratch,
             home: &home,
             cargo_home: &cargo,
-            keep_days: 14,
-            target_keep_days: 5,
+            clocks: Clocks {
+                keep_days: 14,
+                target_keep_days: 5,
+            },
             seed_wait: self.seed_wait,
             copier: Copier {
                 reflinks: self.reflinks,
@@ -1086,4 +1093,114 @@ fn a_sweep_collects_replaced_runners_and_dead_builds_but_never_beside_a_build() 
         "the newest stays"
     );
     assert!(!runners.join(".src.2222222222222222.7").exists());
+}
+
+impl Machine {
+    /// A sweep of this scratch on the machine's usual clocks, saying nothing.
+    fn sweeping<'a>(&'a self, scratch: &'a Path, home: &'a Path) -> Sweep<'a> {
+        let clocks = Clocks {
+            keep_days: 14,
+            target_keep_days: 5,
+        };
+        let removal = Removal {
+            commands: None,
+            say: &|_| {},
+        };
+        Sweep::new(scratch, home, clocks, removal)
+    }
+
+    /// A directory under scratch with a marker unused for 400 days.
+    fn abandoned(&self, rel: &str) -> PathBuf {
+        let dir = self.p(&format!("scratch/{rel}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(".dibs-used"), "").unwrap();
+        aged(&dir.join(".dibs-used"));
+        dir
+    }
+}
+
+fn fate_of(section: &Section, path: &Path) -> Fate {
+    let verdict = section.verdicts.iter().find(|v| v.path == path).unwrap();
+    verdict.fate
+}
+
+#[test]
+fn a_sweep_leaves_trees_a_prepare_holds_and_keeps_one_revived_after_it_judged() {
+    let m = Machine::new();
+    let (scratch, home) = (m.p("scratch"), m.p("home"));
+    let (gone, revived, held) = (
+        m.abandoned("ws/demo/gone"),
+        m.abandoned("ws/demo/revived"),
+        m.abandoned("ws/other/held"),
+    );
+    let sweep = m.sweeping(&scratch, &home);
+    let mut trees = sweep.judged(Kind::Trees, Moment::epoch_now()).unwrap();
+    assert!(trees.verdicts.iter().all(|v| v.fate == Fate::Past));
+    fs::write(revived.join(".dibs-used"), "").unwrap();
+    let prepare = Building::holding(&m.p("scratch/ws/other/.prepare.lock"));
+    sweep.remove(&mut trees, Moment::epoch_now());
+    prepare.done();
+    assert!(!gone.exists());
+    assert!(revived.exists() && fate_of(&trees, &revived) == Fate::Kept);
+    assert!(held.exists() && fate_of(&trees, &held) == Fate::Preparing);
+}
+
+#[test]
+fn a_sweep_leaves_caches_a_prepare_holds_and_keeps_one_revived_after_it_judged() {
+    let m = Machine::new();
+    let (scratch, home) = (m.p("scratch"), m.p("home"));
+    let (gone, revived, held) = (
+        m.abandoned("target/gone"),
+        m.abandoned("target/revived"),
+        m.abandoned("target/held"),
+    );
+    let sweep = m.sweeping(&scratch, &home);
+    let mut caches = sweep.judged(Kind::Caches, Moment::epoch_now()).unwrap();
+    assert!(caches.verdicts.iter().all(|v| v.fate == Fate::Past));
+    fs::write(revived.join(".dibs-used"), "").unwrap();
+    let prepare = Building::holding(&m.p("scratch/target/.held.lock"));
+    sweep.remove(&mut caches, Moment::epoch_now());
+    prepare.done();
+    assert!(!gone.exists());
+    assert!(revived.exists() && fate_of(&caches, &revived) == Fate::Kept);
+    assert!(held.exists() && fate_of(&caches, &held) == Fate::Preparing);
+}
+
+#[test]
+fn a_prepares_copy_is_left_while_the_prepare_runs_and_taken_once_it_has_gone() {
+    let m = Machine::new();
+    let (scratch, home) = (m.p("scratch"), m.p("home"));
+    let mut ended = Command::new("true").spawn().unwrap();
+    let dead = ended.id();
+    ended.wait().unwrap();
+    let running = m.abandoned(&format!("target/demo-arm1.seed.{}-2", std::process::id()));
+    let left = m.abandoned(&format!("ws/demo/local-k.old.{dead}"));
+    m.sweeping(&scratch, &home).run();
+    assert!(running.exists(), "a running prepare's copy is its own");
+    assert!(!left.exists(), "a gone prepare's set-aside tree is past");
+}
+
+#[test]
+fn a_runner_version_is_kept_by_its_use_however_long_ago_it_was_installed() {
+    let m = Machine::new();
+    let (scratch, home) = (m.p("scratch"), m.p("home"));
+    let runners = Runners::in_home(&home);
+    let used = "1111111111111111";
+    for hash in ["0000000000000000", used, "2222222222222222"] {
+        fs::create_dir_all(runners.dir.join(hash)).unwrap();
+        fs::write(runners.binary(hash), "").unwrap();
+    }
+    aged(&runners.binary("0000000000000000"));
+    aged(&runners.binary(used));
+    Runners {
+        dir: runners.dir.clone(),
+        own: Some(used.to_string()),
+    }
+    .mark_used();
+    m.sweeping(&scratch, &home).run();
+    assert!(!runners.dir.join("0000000000000000").exists());
+    assert!(
+        runners.dir.join(used).exists(),
+        "a version used since stays"
+    );
 }

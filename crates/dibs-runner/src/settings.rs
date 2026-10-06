@@ -1,4 +1,7 @@
-use crate::{job::PortRange, tree::Reflinks};
+use crate::{
+    job::PortRange,
+    tree::{Clocks, Reflinks},
+};
 use std::{
     collections::HashMap,
     env, fmt, fs,
@@ -270,10 +273,8 @@ pub struct Settings {
     /// A holder whose output file was written within so many seconds is working, whatever its
     /// CPU says: a compiler daemon such as sccache works outside the job's tree.
     pub wrote_within: i64,
-    /// Days a worktree, a job's directory or a temporary file is kept unused.
-    pub keep_days: u64,
-    /// Days a build cache is kept unused: a compiler refills it, which a worktree is not.
-    pub target_keep_days: u64,
+    /// How long trees, caches, job directories and leftovers are kept unused.
+    pub clocks: Clocks,
     /// Seconds a new tree waits for a sibling's build that will leave it more of its lockfile.
     pub seed_wait: u64,
     /// How a seed shares blocks; `DIBS_REFLINK`, read from the environment alone, is a test's.
@@ -305,8 +306,10 @@ impl Settings {
         Settings {
             idle_after: signed("DIBS_IDLE_AFTER", 60),
             wrote_within: signed("DIBS_WROTE_WITHIN", 120),
-            keep_days: number("DIBS_KEEP_DAYS", 14),
-            target_keep_days: number("DIBS_TARGET_KEEP_DAYS", 5),
+            clocks: Clocks {
+                keep_days: number("DIBS_KEEP_DAYS", 14),
+                target_keep_days: number("DIBS_TARGET_KEEP_DAYS", 5),
+            },
             seed_wait: number("DIBS_SEED_WAIT", 900),
             reflinks: Reflinks::of(var("DIBS_REFLINK").as_deref()),
             machine_series: setting("DIBS_MACHINE_SERIES").is_some_and(|v| v == "1"),

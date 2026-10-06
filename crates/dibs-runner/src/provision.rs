@@ -1,4 +1,4 @@
-use crate::{channel::Caller, session::Visit, settings::home, sink::Sink, stop::Signals};
+use crate::{channel::Caller, session::Visit, sink::Sink, stop::Signals, tree::Runners};
 use dibs_format::{
     Exit, Label, Mode,
     wire::{MaxFrom, Request, Watch},
@@ -11,7 +11,6 @@ use std::{
 
 /// How long a build of the runner may hold the shared lock.
 pub const BUILD_MAX: u64 = 1800;
-const HASH_DIGITS: usize = 16;
 /// What the far shell exits with for a missing runner, so the client builds its own over this one.
 const NOT_THIS_SOURCE: i32 = 125;
 
@@ -64,7 +63,7 @@ impl Source<'_> {
 pub fn build(hash: &str) -> i32 {
     let signals = Signals::block();
     let sink = Sink::plain();
-    if hash.len() != HASH_DIGITS || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !Runners::names_a_version(hash) {
         sink.say(&format!("dibs-runner: {hash:?} is not a runner's hash\n"));
         return Exit::Refused.status();
     }
@@ -73,34 +72,34 @@ pub fn build(hash: &str) -> i32 {
         sink.say("dibs-runner: no tree arrived on stdin to build\n");
         return Exit::Refused.status();
     }
-    let runners = home().join(".cache/dibs/runner");
+    let runners = Runners::here();
     let _one_at_a_time = match BuildLock::take(&runners, &sink) {
         Ok(lock) => lock,
         Err(e) => {
             sink.say(&format!(
                 "dibs-runner: {} could not be locked: {e}\n",
-                runners.join(BuildLock::FILE).display()
+                runners.build_lock().display()
             ));
             return Exit::NoRoom.status();
         }
     };
     let pid = std::process::id();
-    let archive = runners.join(format!(".tree.{hash}.{pid}.tar.gz"));
-    let source = runners.join(format!(".src.{hash}.{pid}"));
+    let archive = runners.sent(hash, pid);
+    let source = runners.unpacked(hash, pid);
     if let Err(e) = fs::create_dir_all(&source).and_then(|()| fs::write(&archive, tree)) {
         sink.say(&format!(
             "dibs-runner: the tree could not be kept in {}: {e}\n",
-            runners.display()
+            runners.dir.display()
         ));
         return Exit::NoRoom.status();
     }
     let command = format!(
         "[ \"$({installed} hash 2>/dev/null)\" = {hash} ] && {{ echo 'dibs-runner {hash} is installed already.'; exit 0; }}\n\
          cd {source} && tar -xmzf {archive} && CARGO_TARGET_DIR={target} sh install.sh {hash}",
-        installed = quoted(&runners.join(hash).join("dibs-runner")),
+        installed = quoted(&runners.binary(hash)),
         source = quoted(&source),
         archive = quoted(&archive),
-        target = quoted(&runners.join(".target")),
+        target = quoted(&runners.target()),
     );
     let request = Request {
         mode: Mode::Shared,
@@ -145,14 +144,12 @@ struct BuildLock {
 }
 
 impl BuildLock {
-    const FILE: &str = ".build.lock";
-
-    fn take(runners: &Path, sink: &Sink) -> io::Result<BuildLock> {
-        fs::create_dir_all(runners)?;
+    fn take(runners: &Runners, sink: &Sink) -> io::Result<BuildLock> {
+        fs::create_dir_all(&runners.dir)?;
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(runners.join(BuildLock::FILE))?;
+            .open(runners.build_lock())?;
         if file.try_lock().is_err() {
             sink.say(
                 "dibs-runner: another build of the runner is running here; this one waits for it.\n",

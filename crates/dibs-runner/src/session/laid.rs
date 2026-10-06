@@ -73,8 +73,7 @@ impl Visit {
             scratch: &at.machine.scratch,
             home: &home,
             cargo_home: &cargo_home,
-            keep_days: self.settings.keep_days,
-            target_keep_days: self.settings.target_keep_days,
+            clocks: self.settings.clocks,
             seed_wait: Duration::from_secs(self.settings.seed_wait),
             copier: Copier {
                 reflinks: self.settings.reflinks,

@@ -15,9 +15,14 @@ impl Itself {
         std::env::args().nth(1).as_deref() == Some(Itself::RUNNER_WORD)
     }
 
-    /// The words that start it again, for a job's shell.
+    /// The words that start it again, for a job's shell: through this process on Linux, so a
+    /// version removed while the job queued still starts.
     pub fn words() -> Vec<String> {
-        let mut words = vec![Itself::exe().display().to_string()];
+        let exe = match cfg!(target_os = "linux") {
+            true => format!("/proc/{}/exe", std::process::id()),
+            false => Itself::exe().display().to_string(),
+        };
+        let mut words = vec![exe];
         if Itself::served_by_a_client() {
             words.push(Itself::RUNNER_WORD.to_string());
         }
