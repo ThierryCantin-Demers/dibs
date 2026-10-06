@@ -1,4 +1,7 @@
-use crate::platform::base::{Extent, Platform, Process, Slot, elapsed};
+use crate::{
+    platform::base::{Extent, Platform, Process, Slot, elapsed},
+    settings::Settings,
+};
 use std::{
     ffi::CString,
     fs,
@@ -441,7 +444,7 @@ fn lists_children() -> bool {
     static LISTS: OnceLock<bool> = OnceLock::new();
     *LISTS.get_or_init(|| {
         let me = std::process::id();
-        crate::settings::setting("DIBS_NO_CHILDREN").is_none_or(|v| v != "1")
+        !Settings::load().no_children
             && Path::new(&format!("/proc/{me}/task/{me}/children")).exists()
     })
 }

@@ -3,7 +3,7 @@ use crate::{
     machine::{Machine, Scope},
     platform::{Host, Platform as _},
     probe::Gpus,
-    settings::{home, refused, unknown},
+    settings::{Settings, home},
     sink::Sink,
     stop::Signals,
 };
@@ -25,6 +25,7 @@ const ENTRY_END: &str = "--8<-- end --8<--";
 /// installed.
 pub struct Probe<'a> {
     pub machine: &'a Machine,
+    pub settings: &'a Settings,
     /// Print the inventory entry for the client to record.
     pub write: bool,
 }
@@ -88,10 +89,10 @@ impl Probe<'_> {
         }
         report
             .ok("the CPU of reaped children is counted, so idle detection sees a job's whole tree");
-        for refused in refused() {
+        for refused in &self.settings.refused {
             report.bad(&refused.to_string());
         }
-        for unknown in unknown() {
+        for unknown in &self.settings.unknown {
             report.warn(&unknown.to_string());
         }
         self.lock_dir(&mut report);

@@ -1,7 +1,7 @@
 use crate::{
     machine::Machine,
     platform::{Host, Platform as _, Slot},
-    settings::{home, setting, var},
+    settings::{home, var},
     stop::Signals,
 };
 use dibs_format::wire::{Card, Picked};
@@ -22,9 +22,6 @@ pub struct Environment {
 #[derive(Debug)]
 pub struct Unpinned(pub String);
 
-/// The machine's settings a prepare's script reads, given to it from the settings file too.
-const JOB_SETTINGS: [&str; 3] = ["DIBS_KEEP_DAYS", "DIBS_TARGET_KEEP_DAYS", "DIBS_SEED_WAIT"];
-
 impl Environment {
     /// Nothing here has a person behind it, so a pager or a credential prompt is a hang; and
     /// scratch, not `/tmp`, which is a small tmpfs shared by everyone.
@@ -38,11 +35,6 @@ impl Environment {
             ("TMPDIR", machine.tmp().display().to_string()),
             ("PATH", Environment::path()),
         ]);
-        for name in JOB_SETTINGS {
-            if let Some(value) = setting(name) {
-                vars.insert(name, value);
-            }
-        }
         if let Some(card) = card
             && let Some(pci) = &card.pci
         {

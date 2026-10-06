@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     env, fmt, fs,
     path::{Path, PathBuf},
-    sync::OnceLock,
 };
 
 /// A variable's value, where an empty one counts as unset.
@@ -14,30 +13,6 @@ pub fn var(name: &str) -> Option<String> {
 /// `$HOME`, or `/` where it is unset.
 pub fn home() -> PathBuf {
     PathBuf::from(var("HOME").unwrap_or_else(|| "/".into()))
-}
-
-/// A machine setting by its variable's name, where `DIBS_PATIENCE` is `patience` in a file: the
-/// account's settings file, then the machine's, then the environment, which ssh forwards nothing
-/// to, so only a call on this computer sets it. What every account must read alike comes from
-/// the machine's file alone, and where the lock and the shared files are from the environment.
-pub fn setting(name: &str) -> Option<String> {
-    let files = SettingsFiles::once();
-    let from_files = match Key::of(name).map(|key| key.setter) {
-        Some(Setter::Machine) => files.machine.get(name),
-        Some(Setter::Account) => files.account.get(name).or_else(|| files.machine.get(name)),
-        Some(Setter::Environment) | None => None,
-    };
-    from_files.or_else(|| var(name))
-}
-
-/// What the settings files name and may not set, each said on every call until it is gone.
-pub fn refused() -> impl Iterator<Item = &'static Refused> {
-    SettingsFiles::once().both().flat_map(|file| &file.refused)
-}
-
-/// What the settings files name that nothing reads, which `dibs --check` lists.
-pub fn unknown() -> impl Iterator<Item = &'static Unknown> {
-    SettingsFiles::once().both().flat_map(|file| &file.unknown)
 }
 
 /// A name a settings file may hold, and who may set it.
@@ -161,12 +136,25 @@ struct SettingsFiles {
 }
 
 impl SettingsFiles {
-    fn once() -> &'static SettingsFiles {
-        static FILES: OnceLock<SettingsFiles> = OnceLock::new();
-        FILES.get_or_init(|| SettingsFiles {
+    fn load() -> SettingsFiles {
+        SettingsFiles {
             machine: SettingsFile::load(&SettingsFiles::machine_path(), Whose::Machine),
             account: SettingsFile::load(&SettingsFiles::account_path(), Whose::Account),
-        })
+        }
+    }
+
+    /// A setting by its variable's name, where `DIBS_PATIENCE` is `patience` in a file: the
+    /// account's file, then the machine's, then the environment, which ssh forwards nothing to,
+    /// so only a call on this computer sets it. What every account must read alike comes from
+    /// the machine's file alone, and where the lock and the shared files are from the
+    /// environment.
+    fn setting(&self, name: &str) -> Option<String> {
+        let from_files = match Key::of(name).map(|key| key.setter) {
+            Some(Setter::Machine) => self.machine.get(name),
+            Some(Setter::Account) => self.account.get(name).or_else(|| self.machine.get(name)),
+            Some(Setter::Environment) | None => None,
+        };
+        from_files.or_else(|| var(name))
     }
 
     /// `/etc/dibs/runner.toml`, which only root writes and every account reads.
@@ -184,7 +172,7 @@ impl SettingsFiles {
             .join("dibs/runner.toml")
     }
 
-    fn both(&'static self) -> impl Iterator<Item = &'static SettingsFile> {
+    fn both(&self) -> impl Iterator<Item = &SettingsFile> {
         [&self.machine, &self.account].into_iter()
     }
 }
@@ -292,10 +280,18 @@ pub struct Settings {
     pub reflinks: Reflinks,
     /// The machine holds every label's measurements to one card, whoever runs them.
     pub machine_series: bool,
+    /// The kernel cannot list a process's children, so the whole table is read instead.
+    pub no_children: bool,
+    /// What the settings files name and may not set, said on every call until it is gone.
+    pub refused: Vec<Refused>,
+    /// What they name that nothing reads, which `dibs --check` lists.
+    pub unknown: Vec<Unknown>,
 }
 
 impl Settings {
     pub fn load() -> Settings {
+        let files = SettingsFiles::load();
+        let setting = |name: &str| files.setting(name);
         let number = |name: &str, default: u64| {
             setting(name)
                 .and_then(|v| v.parse().ok())
@@ -324,6 +320,15 @@ impl Settings {
             ports: setting("DIBS_PORTS")
                 .and_then(|r| r.parse().ok())
                 .unwrap_or_default(),
+            no_children: setting("DIBS_NO_CHILDREN").is_some_and(|v| v == "1"),
+            refused: files
+                .both()
+                .flat_map(|file| file.refused.iter().cloned())
+                .collect(),
+            unknown: files
+                .both()
+                .flat_map(|file| file.unknown.iter().cloned())
+                .collect(),
         }
     }
 }

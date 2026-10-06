@@ -10,7 +10,7 @@ use crate::{
     machine::Machine,
     probe::Probe,
     session::run::{NOT_STARTED, Place},
-    settings::{self, Settings},
+    settings::Settings,
     sink::Sink,
     status::Look,
     stop::{Signals, Stage, Stopper},
@@ -87,7 +87,7 @@ impl Session {
     /// queued and runs.
     pub fn serve(&self, caller: Caller, signals: Signals) -> i32 {
         if self.call.mode() != Mode::Check {
-            for refused in settings::refused() {
+            for refused in &self.settings.refused {
                 self.sink.say(&format!("dibs: {refused}\n"));
             }
         }
@@ -137,6 +137,7 @@ impl Session {
             Mode::Check => {
                 return Probe {
                     machine: &machine,
+                    settings: &self.settings,
                     write: self.call.label().as_str() == "check-write",
                 }
                 .serve(&self.sink);
