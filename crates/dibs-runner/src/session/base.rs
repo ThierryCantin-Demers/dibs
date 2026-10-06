@@ -9,7 +9,7 @@ use crate::{
     lock::LockDir,
     machine::Site,
     probe::Probe,
-    session::run::{NOT_STARTED, Place},
+    session::run::{NOT_STARTED, Venue},
     settings::Settings,
     sink::Sink,
     status::Look,
@@ -168,7 +168,7 @@ impl Visit {
             Journal { path: &machine.log }.write(&line);
             return Exit::Cancelled.status();
         }
-        let at = Place {
+        let at = Venue {
             machine: &machine,
             dir: &dir,
             stopper: &stopper,
@@ -194,7 +194,7 @@ impl Visit {
 
     /// A peek runs beside whatever is measured, with no lock, and every one is logged: the log has
     /// to say what ran beside which run.
-    fn peek(&self, at: &Place, environment: &Environment, caller: Caller) -> i32 {
+    fn peek(&self, at: &Venue, environment: &Environment, caller: Caller) -> i32 {
         let request = &self.call.request;
         // A command that writes nothing would otherwise outlive its caller to its cap.
         if let Caller::Channel(channel) = caller

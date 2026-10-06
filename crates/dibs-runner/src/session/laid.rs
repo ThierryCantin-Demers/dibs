@@ -2,14 +2,14 @@ use crate::{
     clock::Deadline,
     job::{Environment, Output},
     platform::{Host, Platform as _},
-    session::{base::Visit, run::Place},
+    session::{base::Visit, run::Venue},
     settings::{home, var},
     stop::Stage,
     tree::{BuildMark, Commands, Copier, Stepping, Trees},
 };
 use dibs_format::{
     By, Exit, Mode, Pair, Pairs,
-    wire::{Place as Where, Record, Step, Stepped, Then, Tree},
+    wire::{Place, Record, Step, Stepped, Then, Tree},
 };
 use std::{
     fs::OpenOptions,
@@ -49,21 +49,21 @@ impl Visit {
     /// The job's tree laid out, or found, and the command pointed at it.
     pub fn lay_out(
         &self,
-        at: &Place,
+        at: &Venue,
         tree: &Tree,
         environment: &mut Environment,
         output: Output,
         deadline: Deadline,
     ) -> Laid {
         let prepare = match &tree.place {
-            Where::At(laid) => {
+            Place::At(laid) => {
                 environment.in_tree(PathBuf::from(&laid.worktree), Some(laid.target.clone()));
                 return Laid::Run(Some(Spot {
                     worktree: PathBuf::from(&laid.worktree),
                     target: PathBuf::from(&laid.target),
                 }));
             }
-            Where::Prepare(prepare) => prepare,
+            Place::Prepare(prepare) => prepare,
         };
         let say = |text: &str| self.told(output, text);
         let running = |pid| at.stopper.state().stage = Stage::Preparing(pid);

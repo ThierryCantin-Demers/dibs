@@ -18,7 +18,7 @@ pub struct Builds<'a> {
 /// A lock held: a build's, shared so that no build starts while a copy is read, or exclusive so
 /// that none runs in a target being moved or removed; or a prepare's, so that two never lay out
 /// one tree at once.
-pub struct Held(#[allow(dead_code, reason = "held for its lock")] File);
+pub struct FileLock(#[allow(dead_code, reason = "held for its lock")] File);
 
 impl Builds<'_> {
     /// Its locks, at most three directories down, as `find -maxdepth 3` finds them.
@@ -47,43 +47,43 @@ impl Builds<'_> {
     pub fn running(&self) -> bool {
         self.locks()
             .iter()
-            .any(|lock| Held::shared_now(lock).is_none())
+            .any(|lock| FileLock::shared_now(lock).is_none())
     }
 
     /// Every lock taken exclusively, or None when a build holds one.
-    pub fn all_exclusive(&self) -> Option<Vec<Held>> {
+    pub fn all_exclusive(&self) -> Option<Vec<FileLock>> {
         self.locks()
             .into_iter()
             .map(|lock| {
                 let file = File::open(lock).ok()?;
                 file.try_lock().ok()?;
-                Some(Held(file))
+                Some(FileLock(file))
             })
             .collect()
     }
 }
 
-impl Held {
+impl FileLock {
     /// `lock` shared, at once.
-    pub fn shared_now(lock: &Path) -> Option<Held> {
+    pub fn shared_now(lock: &Path) -> Option<FileLock> {
         let file = File::open(lock).ok()?;
         file.try_lock_shared().ok()?;
-        Some(Held(file))
+        Some(FileLock(file))
     }
 
     /// `lock` shared, within `wait`.
-    pub fn shared_within(lock: &Path, wait: Duration) -> Option<Held> {
+    pub fn shared_within(lock: &Path, wait: Duration) -> Option<FileLock> {
         let file = File::open(lock).ok()?;
         Deadline::after(Some(wait))
             .until(RETRY, || file.try_lock_shared().is_ok())
-            .then_some(Held(file))
+            .then_some(FileLock(file))
     }
 
     /// `lock`, made if missing, exclusively at once.
-    pub fn exclusive_now(lock: &Path) -> Option<Held> {
+    pub fn exclusive_now(lock: &Path) -> Option<FileLock> {
         let file = File::create(lock).ok()?;
         file.try_lock().ok()?;
-        Some(Held(file))
+        Some(FileLock(file))
     }
 
     /// The lock a prepare holds beside a tree or a target while it decides what to make of it,
@@ -94,10 +94,10 @@ impl Held {
     }
 
     /// `lock`, made if missing, exclusively before `deadline`; None once it has passed.
-    pub fn exclusive_by(lock: &Path, deadline: Deadline) -> io::Result<Option<Held>> {
+    pub fn exclusive_by(lock: &Path, deadline: Deadline) -> io::Result<Option<FileLock>> {
         let file = File::create(lock)?;
         Ok(deadline
             .until(RETRY, || file.try_lock().is_ok())
-            .then_some(Held(file)))
+            .then_some(FileLock(file)))
     }
 }

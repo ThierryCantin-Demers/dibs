@@ -1,6 +1,6 @@
 use crate::tree::{
     base::Stamp,
-    builds::{Builds, Held},
+    builds::{Builds, FileLock},
     clocks::USED,
     copy::{Copier, Sharing, empty, remove_all},
     git::Unstopped,
@@ -54,7 +54,7 @@ struct Sibling {
 /// A sibling's locks as far as they could be taken.
 struct Taken {
     #[allow(dead_code, reason = "held for their locks")]
-    locks: Vec<Held>,
+    locks: Vec<FileLock>,
     /// Every one was taken.
     free: bool,
     /// One was waited for.
@@ -202,7 +202,7 @@ impl Seed<'_> {
         })
         .locks()
         {
-            if let Some(held) = Held::shared_now(&lock) {
+            if let Some(held) = FileLock::shared_now(&lock) {
                 taken.locks.push(held);
                 continue;
             }
@@ -215,7 +215,7 @@ impl Seed<'_> {
                 name(&sibling.dir),
                 sibling.rank
             ));
-            match Held::shared_within(&lock, self.wait) {
+            match FileLock::shared_within(&lock, self.wait) {
                 Some(held) => {
                     taken.locks.push(held);
                     taken.waited = true;

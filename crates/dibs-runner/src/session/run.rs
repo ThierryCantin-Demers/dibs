@@ -40,13 +40,13 @@ const LOG_KEPT: usize = 10000;
 pub const NOT_STARTED: i32 = 127;
 
 /// Where a call runs: the machine, its lock directory, and what stops the call.
-pub struct Place<'a> {
+pub struct Venue<'a> {
     pub machine: &'a Site,
     pub dir: &'a LockDir,
     pub stopper: &'a Arc<Stopper>,
 }
 
-impl Place<'_> {
+impl Venue<'_> {
     fn journal(&self) -> Journal<'_> {
         Journal {
             path: &self.machine.log,
@@ -112,7 +112,7 @@ impl Hosted {
 
 impl Visit {
     /// A shared job or a benchmark: queue, take the lock, run the job, and say how it went.
-    pub fn run(&self, at: &Place, mut environment: Environment, caller: Caller) -> i32 {
+    pub fn run(&self, at: &Venue, mut environment: Environment, caller: Caller) -> i32 {
         let request = &self.call.request;
         let binding = (self.call.mode() == Mode::Bench
             && !request.watch.hold
@@ -166,7 +166,7 @@ impl Visit {
     }
 
     /// Joins the queue: the waiting record, the batch it is a step of, the fifo a hold waits on.
-    fn arrive(&self, at: &Place) -> Result<Arrived, i32> {
+    fn arrive(&self, at: &Venue) -> Result<Arrived, i32> {
         let request = &self.call.request;
         let pid = self.call.pid;
         let start = Moment::epoch_now();
@@ -200,7 +200,7 @@ impl Visit {
 
     /// Waits its turn: through the gate unless it may go around, then for the lock, within
     /// `--wait` when there is one.
-    fn acquire(&self, at: &Place, history: &History, arrived: &Arrived) -> Result<Acquired, i32> {
+    fn acquire(&self, at: &Venue, history: &History, arrived: &Arrived) -> Result<Acquired, i32> {
         let request = &self.call.request;
         let pid = self.call.pid;
         let lock = match Lock::open(at.dir) {
@@ -295,7 +295,7 @@ impl Visit {
     /// the command it runs, unless the disk has no room for it.
     fn begin(
         &self,
-        at: &Place,
+        at: &Venue,
         arrived: &Arrived,
         acquired: &Acquired,
         environment: &mut Environment,
@@ -344,7 +344,7 @@ impl Visit {
     /// The ports and services the job asked for, then the job itself, to its end.
     fn host<'a>(
         &self,
-        at: &Place<'a>,
+        at: &Venue<'a>,
         mut state: MutexGuard<'a, State>,
         arrived: &Arrived,
         begun: &Begun,
@@ -512,7 +512,7 @@ impl Visit {
 
     /// Says how the job ended, keeps what `dibs out` reads, lets the lock go, and only then tells
     /// the caller, who cannot hold the lock by reading slowly.
-    fn finish(&self, at: &Place, end: Finish) -> i32 {
+    fn finish(&self, at: &Venue, end: Finish) -> i32 {
         let request = &self.call.request;
         let mode = self.call.mode();
         let job = &end.arrived.job;
@@ -589,7 +589,7 @@ impl Visit {
     }
 
     /// Leaves the queue or the lock without running anything, and says so in the log.
-    fn abandon(&self, at: &Place, job: &JobId, state: &mut MutexGuard<State>) {
+    fn abandon(&self, at: &Venue, job: &JobId, state: &mut MutexGuard<State>) {
         at.dir.clear(self.call.pid);
         let mut line = self.call.log_line(Event::Aborted);
         line.job = Some(job.clone());

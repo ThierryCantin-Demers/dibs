@@ -2,7 +2,7 @@ use crate::{
     clock::Deadline,
     platform::{Host, Platform as _},
     tree::{
-        builds::{Builds, Held},
+        builds::{Builds, FileLock},
         clocks::{Clocks, Removal, USED},
         copy::{Copier, empty, now, remove_all, touch},
         error::{Named, PrepareError},
@@ -265,7 +265,7 @@ impl Trees<'_> {
     /// The repo's trees to this prepare alone: two prepares of one commit would both see no tree
     /// and both add it, the prune after touches every worktree of the repo, and a sweep removes
     /// none of them meanwhile.
-    fn repo_turn(&self, repo: &str) -> Result<Held, PrepareError> {
+    fn repo_turn(&self, repo: &str) -> Result<FileLock, PrepareError> {
         self.held(
             &self.scratch.join("ws").join(repo).join(PREPARE_LOCK),
             self.commands.deadline,
@@ -432,10 +432,10 @@ impl Trees<'_> {
     /// The target to this prepare alone, from deciding what it starts from until it is marked
     /// used: a sweep removes no target a prepare holds, and its marker's time, which says
     /// whether another call may be about to enter it, is left until then.
-    fn target_turn(&self, target: &Path) -> Result<Held, PrepareError> {
+    fn target_turn(&self, target: &Path) -> Result<FileLock, PrepareError> {
         self.made(target.parent().unwrap_or(self.scratch))?;
         self.held(
-            &Held::beside(target),
+            &FileLock::beside(target),
             self.commands.deadline,
             "could not lock the target",
         )
@@ -443,9 +443,10 @@ impl Trees<'_> {
 
     /// A sent tree to this prepare alone, from deciding what it starts from until its target is
     /// marked used, so a reseed that copied for minutes never replaces a tree handed over since.
-    fn turn(&self, worktree: &Path) -> Result<Held, PrepareError> {
-        let path = Held::beside(worktree);
-        if let Ok(Some(held)) = Held::exclusive_by(&path, Deadline::after(Some(Duration::ZERO))) {
+    fn turn(&self, worktree: &Path) -> Result<FileLock, PrepareError> {
+        let path = FileLock::beside(worktree);
+        if let Ok(Some(held)) = FileLock::exclusive_by(&path, Deadline::after(Some(Duration::ZERO)))
+        {
             return Ok(held);
         }
         (self.say)(&format!(
@@ -456,8 +457,8 @@ impl Trees<'_> {
     }
 
     /// `lock` taken before `deadline`, or the prepare overran.
-    fn held(&self, lock: &Path, deadline: Deadline, why: &str) -> Result<Held, PrepareError> {
-        Held::exclusive_by(lock, deadline)
+    fn held(&self, lock: &Path, deadline: Deadline, why: &str) -> Result<FileLock, PrepareError> {
+        FileLock::exclusive_by(lock, deadline)
             .map_err(|e| PrepareError::io(why, e))?
             .ok_or(PrepareError::Overran)
     }

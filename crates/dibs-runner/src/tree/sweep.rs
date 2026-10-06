@@ -2,7 +2,7 @@ use crate::{
     clock::Moment,
     platform::{Host, Platform as _},
     tree::{
-        builds::{Builds, Held},
+        builds::{Builds, FileLock},
         clocks::{Clocks, Contents as _, Fate, Removal},
         runners::Runners,
     },
@@ -194,7 +194,7 @@ impl<'a> Sweep<'a> {
             repos.entry(repo).or_default().push(verdict);
         }
         for (repo, past) in repos {
-            let Some(_lock) = Held::exclusive_now(&repo.join(PREPARE_LOCK)) else {
+            let Some(_lock) = FileLock::exclusive_now(&repo.join(PREPARE_LOCK)) else {
                 past.into_iter().for_each(|v| v.fate = Fate::Preparing);
                 continue;
             };
@@ -218,7 +218,7 @@ impl<'a> Sweep<'a> {
         if !matches!(verdict.fate, Fate::Past | Fate::Hollow) {
             return;
         }
-        let Some(_turn) = Held::exclusive_now(&Held::beside(&verdict.path)) else {
+        let Some(_turn) = FileLock::exclusive_now(&FileLock::beside(&verdict.path)) else {
             verdict.fate = Fate::Preparing;
             return;
         };
