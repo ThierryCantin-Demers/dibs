@@ -217,10 +217,22 @@ one of them.
   without group write is opened to read, which `flock` takes as well. Past 4000 lines `history`
   keeps each label's newest 50 runs, and past 20000 `log` keeps its last 10000. A script appends
   with no lock and still cuts `history` to its last 500 lines, which only shortens it.
-- **What differs.** A runner's job is in its own process group, where a script's shared the
-  script's, and the group is swept when the job ends or its runner dies. A runner does not sweep
-  old job directories as a job starts: that belongs to `--gc`. A runner keeps the pids it would
-  stop in memory, so it writes no `work.<pid>`, which only the script that wrote one ever read.
-  A runner lays a recipe's tree out itself, so a job's log holds none of a prepare's `DIBS-`
-  lines. A script reads `DIBS_PATIENCE` and `DIBS_QUICK` from its environment alone, so until every
-  client has switched, `/etc/dibs/runner.toml` leaves them at their defaults.
+- **What differs.**
+  - A runner's job is in its own process group, where a script's shared the script's, and the
+    group is swept when the job ends or its runner dies.
+  - A runner does not sweep old job directories as a plain job starts. It sweeps them, with old
+    trees, caches and runner versions, whenever it lays out a tree, and `--gc` does.
+  - A runner keeps the pids it would stop in memory, so it writes no `work.<pid>`, which only the
+    script that wrote one ever read.
+  - A runner lays a recipe's tree out itself, so a job's log holds none of a prepare's `DIBS-`
+    lines.
+  - A script reads `DIBS_PATIENCE` and `DIBS_QUICK` from its environment alone, so until every
+    client has switched, `/etc/dibs/runner.toml` leaves them at their defaults.
+  - A prepare that finds the scratch full or over quota exits 70, where a script exited with
+    whatever its failing command did. A repo name that is not one path component is refused
+    with 2, and a ref that starts with `-` is no ref (3), before git reads either.
+  - After an overrun a recipe step's end still runs: the files it names are kept, and a pin that
+    did not take turns the 124 into 3. A script's `timeout` stopped both with the command.
+  - A step whose tree, laid out by an earlier call, has gone since exits 127 with `by=command`,
+    since bash cannot start there, where a script's `cd` exited 3.
+  - `dibs --gc --days` ages old runner versions by the same days as trees.
