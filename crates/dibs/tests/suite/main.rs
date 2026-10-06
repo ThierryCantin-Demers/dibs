@@ -9,6 +9,7 @@ mod cli;
 mod client;
 mod contention;
 mod hold;
+mod hook;
 mod identity;
 mod lock;
 mod machines;

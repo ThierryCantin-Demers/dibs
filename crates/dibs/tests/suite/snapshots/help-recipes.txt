@@ -180,6 +180,9 @@
 1|   dibs --friction --reply <n> '<answer>' [--close]
 1|                                answers report n there
 1|   dibs --log [n]              the last n arrivals and outcomes, killings included
+1|   dibs hook ssh               a Claude Code PreToolUse hook: reads the tool call on stdin and
+1|                                refuses, with exit 2, ssh, scp, sftp or rsync aimed at a
+1|                                machine in the inventory. rsync through dibs passes.
 1| 
 1| A shared job quick enough to be gone before a queued benchmark could have started anyway
 1| goes around it rather than waiting for the whole benchmark. DIBS_PATIENCE (60s) is how long

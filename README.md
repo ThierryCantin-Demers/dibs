@@ -85,8 +85,24 @@ dibs ships no recipes. You describe a repo's builds and benchmarks in
 
 Load [`dibs-agent-rules.md`](dibs-agent-rules.md) into your agents' instructions from your clone,
 so an update updates the rules too. In Claude Code, a line `@~/<clone>/dibs-agent-rules.md` in
-`~/.claude/CLAUDE.md` does it. The rules mention hooks that stop an agent from reaching a machine
-over plain ssh or sleeping under the lock. Those live in your own config, not here.
+`~/.claude/CLAUDE.md` does it.
+
+The rules tell an agent never to ssh a machine; `dibs hook ssh` makes it so. It is a Claude Code
+PreToolUse hook: it reads the tool call on stdin and refuses, with exit 2 and the dibs call to
+use instead, an ssh, scp, sftp or rsync aimed at any name a machine in your inventory goes by. An
+rsync through dibs's own transport passes. To wire it, add to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "dibs hook ssh" }] }
+    ]
+  }
+}
+```
+
+A hook that stops an agent sleeping under the lock is still yours to write.
 
 ## Learn more
 

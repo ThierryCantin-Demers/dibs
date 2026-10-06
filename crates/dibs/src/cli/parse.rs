@@ -1,5 +1,5 @@
 use crate::cli::{
-    Call, CliError, Friction, Invocation, KillTarget, Mode, OutTarget, PortName, RecipeCall,
+    Call, CliError, Friction, Hook, Invocation, KillTarget, Mode, OutTarget, PortName, RecipeCall,
     RecipeVerb, Run, RunLock, Service, ServiceName, shell::Command,
 };
 use dibs_format::{Alias, BatchId, JobId, Label, MachineName};
@@ -290,6 +290,7 @@ impl Parser {
                         "status" if shared => self.word = Word::Status,
                         "gc" if shared => self.word = Word::Gc,
                         "friction" if shared => return Friction::parse(&words[at..]),
+                        "hook" if shared => return Hook::parse(&words[at..]),
                         "out" if shared => at += self.out(words.get(at)),
                         "fetch" if shared => at += self.fetch(&words[at..]),
                         verb => match RecipeVerb::of_word(verb) {
@@ -673,6 +674,15 @@ impl FromStr for KillTarget {
             (true, _) => Ok(KillTarget::Batch(BatchId::new(target))),
             (false, Ok(pid)) => Ok(KillTarget::Pid(pid)),
             (false, Err(_)) => Err(CliError::new(format!("not a pid or a batch id: {target}"))),
+        }
+    }
+}
+
+impl Hook {
+    fn parse(words: &[String]) -> Result<Invocation, CliError> {
+        match words {
+            [kind] if kind == "ssh" => Ok(Invocation::Hook(Hook::Ssh)),
+            _ => Err(CliError::new("dibs: hook takes one kind of hook: ssh")),
         }
     }
 }

@@ -178,6 +178,9 @@ Calls: one command under the lock, and what the machines are doing.
   dibs --friction --reply <n> '<answer>' [--close]
                                answers report n there
   dibs --log [n]              the last n arrivals and outcomes, killings included
+  dibs hook ssh               a Claude Code PreToolUse hook: reads the tool call on stdin and
+                               refuses, with exit 2, ssh, scp, sftp or rsync aimed at a
+                               machine in the inventory. rsync through dibs passes.
 
 A shared job quick enough to be gone before a queued benchmark could have started anyway
 goes around it rather than waiting for the whole benchmark. DIBS_PATIENCE (60s) is how long

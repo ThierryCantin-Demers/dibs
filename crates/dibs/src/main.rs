@@ -4,9 +4,10 @@ use dibs::{
     batch,
     call::{Dispatch, Guard, MachineCall, Rsh},
     caller::Caller,
-    cli::{Call, Help, Invocation, Mode, RecipeCall, RecipeVerb},
+    cli::{Call, Help, Hook, Invocation, Mode, RecipeCall, RecipeVerb},
     execution::{self, Refusal, RunError},
     fleet,
+    hook::SshHook,
     machine::Runner,
     paths::FileError,
     recipe,
@@ -71,6 +72,7 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         }
         Invocation::Version => Ok(version()),
         Invocation::Friction(friction) => Ok(reports::friction_verb(friction)?),
+        Invocation::Hook(Hook::Ssh) => Ok(ExitCode::from(SshHook::serve() as u8)),
         Invocation::Recipe(call) => {
             let caller = Caller::from_env();
             ChangeNotice::tell_once(&caller);

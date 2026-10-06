@@ -14,6 +14,15 @@ pub enum Invocation {
     Version,
     /// One call to a machine, or a mode that answers here.
     Call(Call),
+    /// `dibs hook <kind>`: a hook of an agent's harness, reading the tool call on stdin.
+    Hook(Hook),
+}
+
+/// What a hook guards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hook {
+    /// ssh, scp, sftp and rsync aimed at a machine in the inventory.
+    Ssh,
 }
 
 /// `dibs --friction`: a note, the listener, or an answer to a report.

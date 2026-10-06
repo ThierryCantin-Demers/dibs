@@ -13,7 +13,7 @@ mod shell;
 mod tests;
 
 pub use base::{
-    Call, Friction, Invocation, KillTarget, Mode, OutTarget, PortName, Run, RunLock, Service,
+    Call, Friction, Hook, Invocation, KillTarget, Mode, OutTarget, PortName, Run, RunLock, Service,
     ServiceName,
 };
 pub use error::CliError;

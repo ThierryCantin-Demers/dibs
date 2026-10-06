@@ -8,6 +8,7 @@ pub mod execution;
 pub mod fleet;
 pub mod git;
 pub mod gitdeps;
+pub mod hook;
 pub mod inventory;
 pub mod lockfile;
 pub mod machine;

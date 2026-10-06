@@ -762,7 +762,14 @@ and a digit is just `5`.
 
 ## Related
 
-The Claude hooks that stop an agent reaching the machine directly, or sleeping under the
-exclusive lock are not here: a hook has to land in `~/.claude/hooks/` to do anything, which
-makes it part of your own config rather than part of this. `dibs-agent-rules.md` describes
-what they enforce, so you can write your own.
+`dibs hook ssh` is the hook that stops an agent reaching a machine directly. As a Claude Code
+PreToolUse hook on Bash, it reads the tool call on stdin and exits 2, which refuses it and shows
+the agent why, when a command runs ssh, scp, sftp or rsync at any name a machine in the inventory
+goes by: its name, its ssh target's host, its hostname, or any of them with a domain after it.
+It reads past `;`, `&&`, pipes, `$( )`, backticks and wrappers such as `sudo` and `timeout`, and
+takes a quoted string or a heredoc body as text, so a commit message that names a machine
+passes. An rsync whose `-e` is dibs's own transport passes, and so does everything when there is
+no inventory. The README has the lines for `~/.claude/settings.json`; wiring it is yours to do.
+
+A hook that stops an agent sleeping under the exclusive lock is not here: `dibs-agent-rules.md`
+describes what it enforces, so you can write your own.
