@@ -301,7 +301,7 @@ impl Copied {
         Some(self.seeded)
     }
 
-    fn discard(&self) {
+    pub fn discard(&self) {
         remove_all(&self.target);
         if let Some(sources) = &self.sources {
             remove_all(sources);

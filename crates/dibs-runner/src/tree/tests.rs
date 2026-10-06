@@ -9,12 +9,15 @@ use dibs_format::{
 use std::{
     cell::RefCell,
     fs::{self, File},
+    io::{BufRead as _, BufReader},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command, Stdio},
     sync::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
+        mpsc,
     },
+    thread,
     time::Duration,
 };
 
@@ -146,6 +149,31 @@ impl Machine {
 impl Drop for Machine {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+/// A lock held by a process of its own: one this test held could linger in a parallel test's fork.
+struct Building(Child);
+
+impl Building {
+    fn holding(lock: &Path) -> Building {
+        let mut build = Command::new("flock")
+            .arg(lock)
+            .args(["-c", "echo held; read -r _"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut held = String::new();
+        BufReader::new(build.stdout.take().unwrap())
+            .read_line(&mut held)
+            .unwrap();
+        Building(build)
+    }
+
+    fn done(mut self) {
+        drop(self.0.stdin.take());
+        self.0.wait().unwrap();
     }
 }
 
@@ -497,6 +525,99 @@ fn a_tree_prepared_moments_ago_or_worked_in_is_never_moved_aside() {
     assert!(ws.join("mine.rs").exists(), "so it keeps its own");
 }
 
+/// What a reseed and the call beside it were heard to do.
+#[derive(Debug, PartialEq, Eq)]
+enum Heard {
+    Copying,
+    Queued,
+    Synced,
+}
+
+/// A reseed of `mine` that waits for the build in `busy`, which will have all of its lockfile.
+fn reseed_waiting_on_a_build(m: &Machine) -> (Building, PathBuf) {
+    let busy = m.sibling("demo-local-busy", &["aaa"]);
+    fs::write(busy.join(".dibs-packages.pending.x"), "aaa\nbbb\n").unwrap();
+    m.sibling("demo-local-mine", &["ccc"]);
+    (Building::holding(&busy.join("debug/.cargo-lock")), busy)
+}
+
+#[test]
+fn a_reseed_never_replaces_a_tree_another_prepare_handed_over_while_it_copied() {
+    let m = &Machine::new();
+    let ws = &m.sources("mine", "mine.rs");
+    let (build, busy) = reseed_waiting_on_a_build(m);
+    let (tell, heard) = mpsc::channel();
+    let (reseeded, first) = thread::scope(|s| {
+        let reseeding = tell.clone();
+        let reseed = s.spawn(move || {
+            m.prepare_hearing(&local("mine", &["aaa", "bbb"]), &|text| {
+                if text.contains("waiting up to") {
+                    reseeding.send(Heard::Copying).unwrap();
+                }
+            })
+        });
+        assert_eq!(heard.recv().unwrap(), Heard::Copying);
+        let sync = s.spawn(move || {
+            let (prepared, said) = m.prepare_hearing(&local("mine", &[]), &|text| {
+                if text.contains("another prepare") {
+                    tell.send(Heard::Queued).unwrap();
+                }
+            });
+            prepared.unwrap_or_else(|e| panic!("{e:?}: {said}"));
+            fs::write(ws.join("synced.rs"), "sent\n").unwrap();
+            tell.send(Heard::Synced).unwrap();
+        });
+        let first = heard.recv().unwrap();
+        fs::write(busy.join(".dibs-packages"), "aaa\nbbb\n").unwrap();
+        build.done();
+        sync.join().unwrap();
+        (reseed.join().unwrap(), first)
+    });
+    assert_eq!(first, Heard::Queued, "the second prepare waits its turn");
+    let (reseeded, said) = reseeded;
+    assert_eq!(reseeded.unwrap().reseeded, Some(0), "{said}");
+    assert!(
+        ws.join("synced.rs").exists(),
+        "what was sent once the reseed had decided is still there"
+    );
+}
+
+#[test]
+fn a_reseed_keeps_a_tree_a_process_entered_while_it_copied() {
+    let m = Machine::new();
+    let ws = m.sources("mine", "mine.rs");
+    let (build, busy) = reseed_waiting_on_a_build(&m);
+    let build = Mutex::new(Some(build));
+    let worker = Mutex::new(None);
+    let (prepared, said) = m.prepare_hearing(&local("mine", &["aaa", "bbb"]), &|text| {
+        if text.contains("waiting up to") {
+            let entered = Command::new("sh")
+                .args(["-c", "read -r _"])
+                .current_dir(&ws)
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+            *worker.lock().unwrap() = Some(entered);
+            fs::write(busy.join(".dibs-packages"), "aaa\nbbb\n").unwrap();
+            if let Some(build) = build.lock().unwrap().take() {
+                build.done();
+            }
+        }
+    });
+    if let Some(mut entered) = worker.lock().unwrap().take() {
+        drop(entered.stdin.take());
+        entered.wait().unwrap();
+    }
+    assert_eq!(prepared.unwrap().reseeded, None, "{said}");
+    assert!(ws.join("mine.rs").exists(), "it keeps its own");
+    let left: Vec<_> = fs::read_dir(m.p("scratch/target"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains(".seed."))
+        .collect();
+    assert!(left.is_empty(), "and the copy goes");
+}
+
 #[test]
 fn an_existing_tree_close_to_its_siblings_or_being_built_keeps_its_own() {
     let m = Machine::new();
@@ -810,27 +931,13 @@ fn a_sweep_collects_replaced_runners_and_dead_builds_but_never_beside_a_build() 
     aged(&runners.join("0000000000000000/dibs-runner"));
     aged(&runners.join("1111111111111111/dibs-runner"));
     fs::create_dir_all(runners.join(".src.2222222222222222.7")).unwrap();
-    // Held by a process of its own: a lock this test held could linger in a parallel test's fork.
-    let mut build = Command::new("flock")
-        .arg(runners.join(".build.lock"))
-        .args(["-c", "echo held; read -r _"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut held = String::new();
-    std::io::BufRead::read_line(
-        &mut std::io::BufReader::new(build.stdout.take().unwrap()),
-        &mut held,
-    )
-    .unwrap();
+    let build = Building::holding(&runners.join(".build.lock"));
     m.prepared(&local("k", &[]));
     assert!(
         runners.join(".src.2222222222222222.7").exists(),
         "nothing goes while a build runs"
     );
-    drop(build.stdin.take());
-    build.wait().unwrap();
+    build.done();
     m.prepared(&local("k", &[]));
     assert!(!runners.join("0000000000000000").exists());
     assert!(!runners.join("1111111111111111").exists());

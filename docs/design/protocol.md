@@ -66,7 +66,10 @@ the clone's one `FETCH_HEAD`, adds the commit's worktree or makes a sent tree's 
 a new target from a sibling's, stages the lockfile's packages beside it, sweeps what nobody has
 used, and asks cargo's git cache which pinned commits it lacks. The layout under the scratch and
 its markers (`.dibs-used`, `.dibs-tree`, `.dibs-packages`, `.prepare.lock`) are the ones a bash
-prepare left, so no build cache is rebuilt. What it laid out comes back as a `prepared` record;
+prepare left, so no build cache is rebuilt. A sent tree's prepare also holds `.<tree>.lock`
+beside it, from deciding what the tree starts from until its target is marked used, so a reseed
+that waited minutes for a sibling's build never replaces a tree another call has been handed
+since; a bash prepare takes no such lock. What it laid out comes back as a `prepared` record;
 what it says goes where the job's output goes. A step waiting for a git dependency exits 3 with
 `by=dibs` before its command, as does a prepare that fails. The command then runs in the
 worktree with the target as `CARGO_TARGET_DIR`, or, for a transfer, in the directory the

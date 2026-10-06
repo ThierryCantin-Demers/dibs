@@ -7,7 +7,7 @@ use crate::{
         git::{Commands, answer, said},
         packages::{Cache, Lines},
         runners::Runners,
-        seed::Seed,
+        seed::{Seed, name},
         sweep::Sweep,
     },
 };
@@ -300,6 +300,7 @@ impl Trees<'_> {
             .join("target")
             .join(format!("{repo}-local-{key}{nest}"));
         self.made(worktree.parent().unwrap_or(self.scratch))?;
+        let turn = self.turn(&worktree)?;
         let (mut seeded, mut reseeded) = (None, None);
         if !worktree.is_dir() && !target.is_dir() {
             seeded = self
@@ -316,6 +317,7 @@ impl Trees<'_> {
         self.made(&worktree)?;
         self.made_used(&worktree)?;
         self.cache(&target, prepare, packages)?;
+        drop(turn);
         self.nest(prepare, stamp)?;
         self.sweep(&worktree, &target);
         Ok(Laid {
@@ -332,7 +334,7 @@ impl Trees<'_> {
     /// sources as a new tree would, and the sync after it rewrites what differs. The sibling is
     /// copied before anything of the tree moves, and the tree is replaced only by renames. Never
     /// while a build holds its target, nor one prepared minutes ago, which another call's job may
-    /// be about to enter, nor one a process works in.
+    /// be about to enter, nor one a process works in, asked again once the copy has landed.
     fn reseed(
         &self,
         prepare: &Prepare,
@@ -342,7 +344,8 @@ impl Trees<'_> {
         stamp: &Stamp,
     ) -> Option<Reseeded> {
         let cache = Cache { dir: target };
-        if cache.used_within(IN_USE) || worked_in(&[worktree, target]) {
+        let in_use = || cache.used_within(IN_USE) || worked_in(&[worktree, target]);
+        if in_use() {
             return None;
         }
         let mine = cache.record().map_or(0, |own| packages.shared_with(&own));
@@ -352,9 +355,33 @@ impl Trees<'_> {
             replacing: true,
             ..self.seed(prepare, target, worktree, Some(packages), floor, stamp)
         };
-        let seeded = seed.copy()?.replace(target, worktree, stamp);
+        let copied = seed.copy()?;
+        let seeded = match in_use() {
+            true => {
+                copied.discard();
+                None
+            }
+            false => copied.replace(target, worktree, stamp),
+        };
         drop(held);
         seeded.map(|seeded| Reseeded { seeded, mine })
+    }
+
+    /// A sent tree to this prepare alone, from deciding what it starts from until its target is
+    /// marked used, so a reseed that copied for minutes never replaces a tree handed over since.
+    fn turn(&self, worktree: &Path) -> Result<fs::File, Exit> {
+        let path = worktree.with_file_name(format!(".{}.lock", name(worktree)));
+        let lock =
+            fs::File::create(&path).map_err(|e| self.failed("could not lock the tree", &e))?;
+        if lock.try_lock().is_err() {
+            (self.say)(&format!(
+                "dibs: waiting for another prepare of {}\n",
+                worktree.display()
+            ));
+            lock.lock()
+                .map_err(|e| self.failed("could not lock the tree", &e))?;
+        }
+        Ok(lock)
     }
 
     fn seed<'s>(
