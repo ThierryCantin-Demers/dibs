@@ -536,7 +536,11 @@ fn preserves_mtimes(args: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, os::unix::fs::PermissionsExt};
+    use std::{
+        fs,
+        io::Write as _,
+        process::{Command, Stdio},
+    };
 
     fn words(line: &str) -> Vec<String> {
         line.split(' ').map(str::to_string).collect()
@@ -546,10 +550,21 @@ mod tests {
     fn rsync_3_is_found_past_an_older_one_and_an_older_one_alone_is_refused() {
         let dir = std::env::temp_dir().join(format!("dibs-rsync-test.{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
+        // Written by a process of its own: a fork from a parallel test would hold this one's
+        // write descriptor across the exec of it, which then fails with ETXTBSY.
         let fake = |name: &str, says: &str| {
             let path = dir.join(name);
-            fs::write(&path, format!("#!/bin/sh\nprintf '{says}'\n")).unwrap();
-            fs::set_permissions(&path, PermissionsExt::from_mode(0o755)).unwrap();
+            let mut writer = Command::new("sh")
+                .args(["-c", "cat > \"$0\" && chmod 755 \"$0\""])
+                .arg(&path)
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let script = format!("#!/bin/sh\nprintf '{says}'\n");
+            let mut stdin = writer.stdin.take().unwrap();
+            stdin.write_all(script.as_bytes()).unwrap();
+            drop(stdin);
+            assert!(writer.wait().unwrap().success());
             path.display().to_string()
         };
         let apple = fake(

@@ -10,7 +10,7 @@ use regex::Regex;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -566,8 +566,9 @@ impl Sandbox {
     }
 
     pub fn write_exec(&self, rel: &str, text: &str) {
-        self.write(rel, text);
-        write_exec(&self.path(rel), text);
+        let path = self.path(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_exec(&path, text);
     }
 
     pub fn exists(&self, rel: &str) -> bool {
@@ -1062,9 +1063,22 @@ pub fn job_id(stderr: &str) -> String {
     capture(stderr, r"^job ([0-9-]+) ").unwrap_or_else(|| panic!("no trailer in:\n{stderr}"))
 }
 
+/// Written by a process of its own: a fork from a parallel test would hold this one's write
+/// descriptor across the exec of it, which then fails with ETXTBSY.
 pub fn write_exec(path: &Path, text: &str) {
-    fs::write(path, text).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut writer = Command::new("sh")
+        .args(["-c", "cat > \"$0\" && chmod 755 \"$0\""])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writer
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(text.as_bytes())
+        .unwrap();
+    assert!(writer.wait().unwrap().success(), "{}", path.display());
 }
 
 pub fn append(path: &Path, text: &str) {

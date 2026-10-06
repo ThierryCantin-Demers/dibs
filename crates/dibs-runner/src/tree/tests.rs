@@ -196,6 +196,19 @@ fn run(dir: &Path, cmd: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// Written by a process of its own: a fork from a parallel test would hold this one's write
+/// descriptor across the exec of it, which then fails with ETXTBSY.
+fn executable(path: &Path, text: &str) {
+    let mut writer = Command::new("sh")
+        .args(["-c", "cat > \"$0\" && chmod 755 \"$0\""])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut writer.stdin.take().unwrap(), text.as_bytes()).unwrap();
+    assert!(writer.wait().unwrap().success());
+}
+
 fn lines(of: &[&str]) -> Vec<String> {
     of.iter().map(|l| l.to_string()).collect()
 }
@@ -275,14 +288,12 @@ fn a_fetch_refused_for_credentials_says_to_send_the_tree_instead() {
     let mut m = Machine::new().with_clone();
     let git = run(Path::new("/"), "type -P git");
     fs::create_dir_all(m.p("bin")).unwrap();
-    fs::write(
-        m.p("bin/git"),
-        format!(
+    executable(
+        &m.p("bin/git"),
+        &format!(
             "#!/bin/bash\nfor a; do [ \"$a\" = fetch ] && {{ echo 'fatal: could not read Username' >&2; exit 128; }}; done\nexec {git} \"$@\"\n"
         ),
-    )
-    .unwrap();
-    run(&m.root, "chmod +x bin/git");
+    );
     let path = format!(
         "{}:{}",
         m.p("bin").display(),
