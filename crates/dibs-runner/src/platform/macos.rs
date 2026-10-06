@@ -3,7 +3,7 @@ use crate::{
     stop::Signals,
 };
 use std::{
-    ffi::{CStr, CString},
+    ffi::{CStr, CString, OsStr},
     os::unix::ffi::OsStrExt as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -45,6 +45,17 @@ struct VnodeWithPath {
 const KINFO_PROC_ROOM: usize = 1024;
 
 impl MacOs {
+    /// A vnode's path, up to its NUL.
+    fn path_of(vnode: &libc::vnode_info_path) -> Vec<u8> {
+        vnode
+            .vip_path
+            .iter()
+            .flatten()
+            .map(|c| *c as u8)
+            .take_while(|b| *b != 0)
+            .collect()
+    }
+
     /// What any account may read of any process, a zombie included. `PROC_PIDTBSDINFO` reads
     /// only this account's, which would take another account's live job for one gone.
     fn short_info(pid: u32) -> Option<libc::proc_bsdshortinfo> {
@@ -140,11 +151,22 @@ impl Platform for MacOs {
             .collect()
     }
 
-    /// Through libproc, so a status costs no process per descriptor; a pipe or a socket has no
-    /// path to give.
-    /// Not read: with no /proc, a tree in use here is told by its marker's age alone.
-    fn cwd(_pid: u32) -> Option<PathBuf> {
-        None
+    /// Through libproc, as `lsof -d cwd` reads it; another account's is not given.
+    fn cwd(pid: u32) -> Option<PathBuf> {
+        let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+        // SAFETY: proc_vnodepathinfo is plain data, and proc_pidinfo writes at most `size` bytes.
+        let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDVNODEPATHINFO,
+                0,
+                (&mut info as *mut libc::proc_vnodepathinfo).cast(),
+                size,
+            )
+        };
+        let path = MacOs::path_of(&info.pvi_cdir);
+        (read == size && !path.is_empty()).then(|| PathBuf::from(OsStr::from_bytes(&path)))
     }
 
     fn variable(_pid: u32, _name: &str) -> Option<String> {
@@ -167,15 +189,7 @@ impl Platform for MacOs {
         if read != size {
             return None;
         }
-        let path: Vec<u8> = info
-            .vnode
-            .vip_path
-            .iter()
-            .flatten()
-            .map(|c| *c as u8)
-            .take_while(|b| *b != 0)
-            .collect();
-        Some(String::from_utf8_lossy(&path).into_owned())
+        Some(String::from_utf8_lossy(&MacOs::path_of(&info.vnode)).into_owned())
     }
 
     fn listening() -> Vec<u16> {
