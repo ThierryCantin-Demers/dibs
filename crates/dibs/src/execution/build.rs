@@ -1,7 +1,7 @@
 //! What a build depends on: the signature its cargo command gives it, and its lockfile as the
 //! short hashes a machine's seed and a target's record compare.
 
-use crate::lockfile::Package;
+use dibs_format::lockfile::Package;
 use sha2::{Digest, Sha256};
 
 /// What a cargo build's artifacts depend on besides the lockfile: toolchain, profile, target,

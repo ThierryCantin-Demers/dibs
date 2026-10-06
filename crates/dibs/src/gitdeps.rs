@@ -5,7 +5,8 @@
 //! has that commit already, so it is sent ahead of the build, and only when the machine lacks
 //! it. Git objects are named by content, so adding files never changes one already there.
 
-use crate::{git::Git, lockfile::Package};
+use crate::git::Git;
+use dibs_format::lockfile::Package;
 use std::path::{Path, PathBuf};
 
 /// A pinned commit and the directory in this machine's cargo git cache that holds it.

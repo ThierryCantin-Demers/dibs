@@ -9,9 +9,9 @@ use super::{error::PinError, local::Fetched, refs::Arm, trees::lockfile};
 use crate::{
     cli::RecipeCall,
     git::{Git, GitError},
-    lockfile::Package,
     recipe::{resolve_repo, root_of},
 };
+use dibs_format::lockfile::Package;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},

@@ -10,7 +10,6 @@ pub mod git;
 pub mod gitdeps;
 pub mod hook;
 pub mod inventory;
-pub mod lockfile;
 pub mod machine;
 pub mod paths;
 pub mod placement;

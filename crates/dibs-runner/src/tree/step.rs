@@ -4,7 +4,7 @@ use crate::tree::{
     glob::Glob,
     packages::{Cache, Lines, RECORD},
 };
-use dibs_format::Exit;
+use dibs_format::{Exit, lockfile::Package};
 use std::{
     fs::{self, File},
     path::{Path, PathBuf},
@@ -213,10 +213,10 @@ impl Stepping<'_> {
     /// most often the pinned tree's version does not meet the requirement the dependency states.
     pub fn unpinned(&self, names: &[String]) -> bool {
         let text = fs::read_to_string(self.worktree.join("Cargo.lock")).unwrap_or_default();
-        let left: Vec<String> = (Lockfile { text: &text })
-            .packages()
-            .filter(|p| names.contains(&p.name) && !p.source.is_empty())
-            .map(|p| format!("  {} from {}\n", p.name, p.source))
+        let left: Vec<String> = Package::all(&text)
+            .into_iter()
+            .filter(|p| names.contains(&p.name))
+            .filter_map(|p| Some(format!("  {} from {}\n", p.name, p.source?)))
             .collect();
         if left.is_empty() {
             return false;
@@ -246,35 +246,5 @@ fn dated_now(dir: &Path) {
             }
             _ => {}
         }
-    }
-}
-
-/// A `Cargo.lock`, read for each package's name and source.
-struct Lockfile<'a> {
-    text: &'a str,
-}
-
-/// One package of a lockfile.
-struct Package {
-    name: String,
-    source: String,
-}
-
-impl<'a> Lockfile<'a> {
-    /// Each `[[package]]`, its fields as their lines give them.
-    fn packages(&self) -> impl Iterator<Item = Package> + 'a {
-        self.text.split("[[package]]").skip(1).map(|block| {
-            let field = |key: &str| {
-                block
-                    .lines()
-                    .find_map(|l| l.strip_prefix(&format!("{key} = ")))
-                    .map(|v| v.split_whitespace().next().unwrap_or("").replace('"', ""))
-                    .unwrap_or_default()
-            };
-            Package {
-                name: field("name"),
-                source: field("source"),
-            }
-        })
     }
 }

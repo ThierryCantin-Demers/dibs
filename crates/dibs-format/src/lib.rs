@@ -9,6 +9,7 @@ pub mod fleet;
 mod friction;
 mod ids;
 mod lines;
+pub mod lockfile;
 mod mode;
 mod run;
 mod span;

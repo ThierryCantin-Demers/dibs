@@ -1,4 +1,5 @@
-//! A Cargo.lock, read here.
+//! A Cargo.lock, read for its packages: what a pin redirects, what a build claims, and what a
+//! pin that did not take left where it was.
 
 /// One `[[package]]` of a Cargo.lock. A package without a source is a path in the workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
