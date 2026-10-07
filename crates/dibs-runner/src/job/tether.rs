@@ -22,7 +22,7 @@ pub struct Tether {
 
 /// A process group, by the pid of its leader.
 #[derive(Debug, Clone, Copy)]
-pub struct Group(pub u32);
+struct Group(pub u32);
 
 impl Tether {
     pub const WORD: &str = "tether";

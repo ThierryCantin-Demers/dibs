@@ -5,12 +5,12 @@ use std::path::PathBuf;
 
 /// Which machine holds a repo's build cache. Kept beside the run record, on this side, since
 /// it describes the pool rather than any one machine in it.
-pub fn affinity_path() -> Option<PathBuf> {
+fn affinity_path() -> Option<PathBuf> {
     Paths::from_env().affinity()
 }
 
 /// The machine deletes a target directory unused this long, so a memo of one is kept no longer.
-pub const AFFINITY_SECS: u64 = 5 * Span::DAY.0;
+const AFFINITY_SECS: u64 = 5 * Span::DAY.0;
 
 /// One line of the affinity file: the machine holding a repo's build cache, and when it was last
 /// used there.

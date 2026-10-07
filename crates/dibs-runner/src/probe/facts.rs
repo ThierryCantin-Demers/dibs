@@ -201,7 +201,7 @@ fn is_executable(path: &Path) -> bool {
 }
 
 /// `5.2.26` of `GNU bash, version 5.2.26(1)-release (...)`.
-pub fn bash_version(line: &str) -> Option<String> {
+fn bash_version(line: &str) -> Option<String> {
     let after = line.split_once("version ")?.1;
     let version: String = after
         .chars()

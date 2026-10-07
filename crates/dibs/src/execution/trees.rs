@@ -40,7 +40,7 @@ impl Nest {
 /// whose bytes match is left alone with the time it was copied with, and any other is rewritten
 /// and takes the current time.
 /// The marker is excluded so `--delete` leaves it, or collection could never date the tree.
-pub const SYNC_ARGS: &[&str] = &[
+const SYNC_ARGS: &[&str] = &[
     "-rlpgo",
     "--checksum",
     "--no-times",
@@ -248,7 +248,7 @@ pub fn announce_prepared(prepared: &wire::Prepared) {
 
 /// Adds files and never replaces one: git names objects by their content, so what is already
 /// there is already right, and a cargo on the machine may be reading it. Says whether it was sent.
-pub fn sync_gitdb(backend: &Jobs, from: &Path, to: &str) -> bool {
+fn sync_gitdb(backend: &Jobs, from: &Path, to: &str) -> bool {
     let args = gitdb_args(from, to);
     let req = JobRequest {
         label: "",

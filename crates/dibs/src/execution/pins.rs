@@ -40,7 +40,7 @@ pub fn crates<'a>(manifests: impl Iterator<Item = (&'a str, String)>) -> BTreeMa
 }
 
 /// A local tree's crates, from the files a send would carry.
-pub fn local_crates(dir: &Path) -> Result<BTreeMap<String, String>, GitError> {
+fn local_crates(dir: &Path) -> Result<BTreeMap<String, String>, GitError> {
     let list = Git(dir).run(&[
         "ls-files",
         "-co",
@@ -57,7 +57,7 @@ pub fn local_crates(dir: &Path) -> Result<BTreeMap<String, String>, GitError> {
 }
 
 /// A ref's crates, read from the repo's history here.
-pub fn ref_crates(dir: &Path, reference: &str) -> Result<BTreeMap<String, String>, GitError> {
+fn ref_crates(dir: &Path, reference: &str) -> Result<BTreeMap<String, String>, GitError> {
     let list = Git(dir).run(&["ls-tree", "-r", "--name-only", "-z", reference])?;
     let paths: Vec<&str> = list
         .split('\0')

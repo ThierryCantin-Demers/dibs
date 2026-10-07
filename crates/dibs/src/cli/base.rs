@@ -177,13 +177,3 @@ impl Run {
             .try_for_each(|s| s.refuse_unknown_port(&self.ports))
     }
 }
-
-impl Mode {
-    /// A mode answered on this computer before any machine is asked, which reads no command.
-    pub fn is_local(&self) -> bool {
-        matches!(
-            self,
-            Mode::Machines | Mode::Which | Mode::Pick | Mode::Update | Mode::Forget(_)
-        )
-    }
-}

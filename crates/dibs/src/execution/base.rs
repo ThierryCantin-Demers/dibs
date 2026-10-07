@@ -751,7 +751,7 @@ pub fn destination(
 /// Whether the wrapper refuses a measured step, or the first step when a card is named, on what it
 /// decides without the machine. A shared recipe's card is otherwise checked by the first step that
 /// carries it, after the tree and its dependencies have been sent.
-pub fn refused_before_building(
+fn refused_before_building(
     backend: &Jobs,
     rec: &recipe::Recipe,
     step_labels: &[String],
@@ -832,7 +832,7 @@ pub struct StepPlan {
 }
 
 /// One value per run for each of the recipe's `fresh` variables, the same in every step of it.
-pub fn fresh_values(rec: &recipe::Recipe, token: &str) -> BTreeMap<String, String> {
+fn fresh_values(rec: &recipe::Recipe, token: &str) -> BTreeMap<String, String> {
     rec.fresh
         .iter()
         .map(|v| (v.clone(), format!("dibs-{token}")))

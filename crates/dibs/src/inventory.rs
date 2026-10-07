@@ -187,11 +187,7 @@ impl Inventory {
     }
 
     /// The file's text with `entry` as the machine's whole entry, replacing any it had.
-    pub fn with_entry(
-        text: &str,
-        name: &MachineName,
-        entry: &str,
-    ) -> Result<String, InventoryError> {
+    fn with_entry(text: &str, name: &MachineName, entry: &str) -> Result<String, InventoryError> {
         let without = Inventory::without(text, name)?;
         let written = format!("{without}\n{}\n", entry.trim_end_matches('\n'));
         Inventory::parse(&written)?;

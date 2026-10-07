@@ -92,7 +92,7 @@ pub fn state_dir() -> PathBuf {
 /// Where a step goes, resolved as the step's own call will resolve it. None when it names no
 /// machine and several could take it, which a shared step is placed from and a measurement is
 /// refused over.
-pub fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String> {
+fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String> {
     let call = Call {
         on: step
             .on

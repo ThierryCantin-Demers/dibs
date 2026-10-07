@@ -21,7 +21,7 @@ impl Build {
     pub const COMMIT: Option<&str> = option_env!("DIBS_COMMIT");
 
     /// The clone: what `--update` pulls, and where the change notice reads what arrived.
-    pub fn clone_dir() -> &'static Path {
+    fn clone_dir() -> &'static Path {
         Path::new(env!("DIBS_CLONE"))
     }
 }

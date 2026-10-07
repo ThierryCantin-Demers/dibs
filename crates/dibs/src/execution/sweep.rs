@@ -109,7 +109,7 @@ pub fn sweep_text(args: &RecipeCall, points: &[BTreeMap<String, String>]) -> Str
 }
 
 /// What the summary calls one point: the values that make it that point.
-pub fn point_name(args: &RecipeCall, p: &BTreeMap<String, String>) -> String {
+fn point_name(args: &RecipeCall, p: &BTreeMap<String, String>) -> String {
     let slug = |v: &str| {
         v.chars()
             .map(|c| {

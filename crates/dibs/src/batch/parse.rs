@@ -411,7 +411,7 @@ pub fn describe(words: &[String]) -> Result<Step, BadLine> {
 }
 
 /// The verb and the two words after it, which only `--on <machine>` may come before.
-pub fn recipe_label(words: &[String]) -> String {
+fn recipe_label(words: &[String]) -> String {
     let verb = match words.get(1).map(String::as_str) {
         Some("--on") => 3,
         _ => 1,

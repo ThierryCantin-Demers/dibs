@@ -109,7 +109,7 @@ pub fn pending_of(step: &Step, here: bool, cwd: &str) -> Pending {
 }
 
 /// dibs files a label with everything but `[A-Za-z0-9._-]` replaced.
-pub fn history_key(label: &str) -> String {
+fn history_key(label: &str) -> String {
     label
         .chars()
         .map(|c| {

@@ -585,7 +585,7 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
 }
 
 /// The runner's own stderr, and ssh's, a line at a time.
-pub fn read_lines(err: impl Read, tell: mpsc::Sender<Heard>) {
+fn read_lines(err: impl Read, tell: mpsc::Sender<Heard>) {
     let mut err = BufReader::new(err);
     let mut line = Vec::new();
     while matches!(err.read_until(b'\n', &mut line), Ok(1..)) {
