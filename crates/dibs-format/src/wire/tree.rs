@@ -139,7 +139,7 @@ impl Prepared {
     }
 
     /// Whether the tree waits for a git dependency to be sent before it can build.
-    pub fn held(&self) -> bool {
+    pub fn awaits_gitdbs(&self) -> bool {
         self.gitdbs.as_ref().is_some_and(|g| !g.missing.is_empty())
     }
 }

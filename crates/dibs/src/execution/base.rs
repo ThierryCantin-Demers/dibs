@@ -543,7 +543,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 });
             };
             t.plan.send_missing(&backend, &prepared);
-            let waited = prepared.held();
+            let waited = prepared.awaits_gitdbs();
             t.prepared = Some(prepared);
             if !waited {
                 if stepped.as_ref().is_some_and(|s| s.refused) {
