@@ -95,6 +95,28 @@ fn a_fresh_variable_changes_the_procedure_and_has_to_be_a_variable() {
     );
 }
 
+#[test]
+fn a_relative_target_is_refused_but_a_rustup_subcommand_is_not() {
+    let step = |run: &str| {
+        parse(&format!(
+            "[bench.r]\n[[bench.r.step]]\nlock = \"shared\"\nrun = {run:?}\n"
+        ))
+        .check("r")
+        .map_err(|e| e.to_string())
+    };
+    assert!(
+        step("rustup target list --installed && cargo check --target wasm32-unknown-unknown")
+            .is_ok()
+    );
+    assert!(step("rustup +nightly target add wasm32-unknown-unknown").is_ok());
+    assert!(step("du -sh target").unwrap_err().contains("names target,"));
+    assert!(
+        step("ls ./target/release")
+            .unwrap_err()
+            .contains("names ./target/release,")
+    );
+}
+
 const SWEEP: &str = "\
 [bench.r.params]\n\
 backend = { choices = [\"cuda\", \"vulkan\"], default = \"cuda\" }\n\
