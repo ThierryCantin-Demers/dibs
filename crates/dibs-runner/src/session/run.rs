@@ -19,7 +19,7 @@ use crate::{
     sink::Sink,
     status::Look,
     stop::{Stage, State, Stopper},
-    tree::{Mark, Stepping},
+    tree::{BuildMark, Mark, Stepping},
 };
 use dibs_format::{
     By, Event, Exit, HistoryLine, JobId, Mode,
@@ -471,7 +471,9 @@ impl<'a> Run<'a> {
             false => {
                 let command = arrived.held.as_ref().map(HoldFifo::command);
                 let command = command.as_deref().unwrap_or(&self.at.call.work);
-                match Job::spawn(command, &environment, output, self.at.sink) {
+                let mark = running.as_ref().and_then(|r| r.mark.as_ref());
+                let holds = mark.map(BuildMark::held);
+                match Job::spawn(command, &environment, output, self.at.sink, holds) {
                     Ok(work) => {
                         state.stage = Stage::Running(work.pid);
                         drop(state);

@@ -1,6 +1,7 @@
 use crate::{
     clock::{Deadline, Moment},
-    job::Environment,
+    job::{Environment, Job, Output},
+    sink::Sink,
     tree::{
         Clocks, Commands, Reflinks, Runners, Spot, Stepping, TreeConfig, Trees,
         clocks::{Fate, Removal},
@@ -1272,6 +1273,37 @@ fn a_build_after_one_stopped_partway_rebuilds_what_that_one_touched() {
     );
     s.with(None, |step| step.building()).unwrap().ended(143);
     assert!(own.exists(), "one stopped leaves its mark");
+}
+
+#[test]
+fn a_build_mark_stays_held_while_the_builds_own_processes_live_after_the_runner_let_go() {
+    let s = Stepped::new(None);
+    let gate = s.target.join("gate");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&gate)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let mark = s.with(None, |step| step.building()).unwrap();
+    let build = Job::spawn(
+        &format!("read -r _ < '{}'", gate.display()),
+        &Environment::default(),
+        Output::Log(Path::new("/dev/null")),
+        &Sink::plain(),
+        Some(mark.held()),
+    )
+    .unwrap();
+    mark.ended(Exit::Overran.status());
+    let own = s
+        .target
+        .join(format!(".dibs-building.{}", std::process::id()));
+    let unheld = || File::open(&own).unwrap().try_lock().is_ok();
+    assert!(!unheld(), "the build's processes hold it");
+    fs::write(&gate, "\n").unwrap();
+    build.wait(None);
+    assert!(unheld(), "and nothing once they have gone");
 }
 
 #[test]

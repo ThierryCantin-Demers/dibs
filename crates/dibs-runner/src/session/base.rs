@@ -211,7 +211,13 @@ impl Visit {
             grace: PEEK_GRACE,
         });
         let mut state = at.stopper.state();
-        let job = match Job::spawn(&request.command, environment, Output::Caller, &self.sink) {
+        let job = match Job::spawn(
+            &request.command,
+            environment,
+            Output::Caller,
+            &self.sink,
+            None,
+        ) {
             Ok(job) => job,
             Err(e) => {
                 self.sink.say(&format!("dibs: bash could not start: {e}\n"));

@@ -7,6 +7,7 @@ use crate::tree::{
 use dibs_format::{Exit, lockfile::Package};
 use std::{
     fs::{self, File},
+    os::fd::{AsFd as _, BorrowedFd},
     path::{Path, PathBuf},
 };
 
@@ -23,14 +24,19 @@ const PER_CRATE: [&str; 2] = ["incremental", ".fingerprint"];
 /// A status above this is a signal's: 128 and its number.
 const SIGNALLED: i32 = 128;
 
-/// A build's mark in its target, held shared while the build runs: one nobody holds was left by a
-/// build stopped partway.
+/// A build's mark in its target, held shared by the runner and by the build's own processes: one
+/// nobody holds was left by a build stopped partway, whose rustc can outlive its runner.
 pub struct BuildMark {
     mark: PathBuf,
-    _held: File,
+    held: File,
 }
 
 impl BuildMark {
+    /// The lock, for the build's own processes to hold.
+    pub fn held(&self) -> BorrowedFd<'_> {
+        self.held.as_fd()
+    }
+
     /// A build that ended on its own takes its mark away; one stopped, at its cap or by a signal,
     /// leaves it for the next build to find unheld.
     pub fn ended(self, status: i32) {
@@ -124,7 +130,7 @@ impl<'a> Stepping<'a> {
             .join(format!("{BUILDING}{}", std::process::id()));
         let file = File::create(&mark).ok()?;
         file.lock_shared().ok()?;
-        Some(BuildMark { mark, _held: file })
+        Some(BuildMark { mark, held: file })
     }
 
     /// What each crate kept that is newer than a stopped build's mark, removed, and the mark.
