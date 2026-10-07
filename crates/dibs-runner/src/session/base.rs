@@ -2,14 +2,14 @@ use crate::{
     call::{Journal, ONE_LINE, OneLine as _, Received},
     channel::{Caller, Channel},
     clock::{Moment, Span},
-    history::{History, Key, Scope},
+    history::History,
     job::{Cap, Environment, Job, Output, Unpinned},
     kept::KeptJobs,
     kill::Kill,
     lock::LockDir,
     machine::Site,
     probe::Probe,
-    session::run::{NOT_STARTED, Venue},
+    session::run::{NOT_STARTED, Run, Venue},
     settings::Settings,
     sink::Sink,
     status::Look,
@@ -18,14 +18,12 @@ use crate::{
 };
 use dibs_format::{
     Event, Exit, Mode,
-    wire::{MaxFrom, Record, Request},
+    wire::{Record, Request},
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 /// How long a peek's command is given to stop once its cap has passed.
 const PEEK_GRACE: Duration = Duration::from_secs(5);
-/// History needs this many runs of a job before it may raise the job's cap.
-const RUNS_FOR_A_CAP: usize = 3;
 /// How much of a command a refusal's log line keeps after the words that say why.
 const REFUSED_LINE: usize = 160;
 
@@ -64,9 +62,9 @@ pub fn serve() -> i32 {
 
 /// One call on this machine.
 pub struct Visit {
-    pub call: Received,
-    pub sink: Sink,
-    pub settings: Settings,
+    call: Received,
+    sink: Sink,
+    settings: Settings,
     /// What was made for this call alone, which goes with it however it ends.
     temporary: Vec<PathBuf>,
 }
@@ -172,6 +170,9 @@ impl Visit {
             machine: &machine,
             dir: &dir,
             stopper: &stopper,
+            call: &self.call,
+            sink: &self.sink,
+            settings: &self.settings,
         };
         let kept = KeptJobs {
             machine: &machine,
@@ -181,7 +182,9 @@ impl Visit {
         };
         match self.call.mode() {
             Mode::Peek => self.peek(&at, &environment, caller),
-            Mode::Shared | Mode::Bench | Mode::Rsh | Mode::Gc => self.run(&at, environment, caller),
+            Mode::Shared | Mode::Bench | Mode::Rsh | Mode::Gc => {
+                Run::new(at).serve(environment, caller)
+            }
             Mode::Out => kept.out(self.call.label().as_str()),
             Mode::Fetch => kept.fetch(self.call.label().as_str()),
             mode => {
@@ -244,60 +247,5 @@ impl Visit {
             journal.write(&peeked(Event::PeekSlow));
         }
         status
-    }
-
-    /// `--max`, raised to twice what 90% of this job's own runs took when nobody chose it, so work
-    /// that always runs long is not killed at its mode's default. Only a shared job or a
-    /// benchmark: a transfer and a sweep keep their mode's cap.
-    pub fn cap(&self, history: &History) -> u64 {
-        let request = &self.call.request;
-        let max = request.max;
-        let a_job = matches!(self.call.mode(), Mode::Shared | Mode::Bench);
-        if !a_job || request.max_from != MaxFrom::Default || request.watch.hold || max == 0 {
-            return max;
-        }
-        let Some(estimate) = history.estimate(Key {
-            mode: self.call.mode(),
-            label: self.call.label(),
-            agent: Some(&self.call.agent),
-            fingerprint: request.fingerprint.as_deref(),
-        }) else {
-            return max;
-        };
-        if estimate.scope != Scope::This
-            || estimate.runs < RUNS_FOR_A_CAP
-            || estimate.high * 2 <= max
-        {
-            return max;
-        }
-        let raised = estimate.high * 2;
-        self.sink.say(&format!(
-            "dibs: 90% of {} runs of this took up to {}, so it may hold the lock for {} rather than {}. --max sets it.\n",
-            estimate.runs,
-            Span(estimate.high),
-            Span(raised),
-            Span(max)
-        ));
-        raised
-    }
-
-    /// Says what to do about an overrun: run it again, since a compile picks up where it stopped.
-    pub fn overran(&self, max: u64) {
-        let mut said = format!(
-            "dibs: stopped after holding the lock for {max}s, which is --max for a {} job.\n  \
-             Nothing is wrong with it; it was simply told to hold no longer than that.\n",
-            self.call.mode()
-        );
-        if !self.call.request.watch.hold {
-            said.push_str(
-                "  Run it again; a compile picks up from the crates that already finished, since the\n  \
-                 build cache outlives the job. Anything else starts over.\n",
-            );
-        }
-        said.push_str(&format!(
-            "  If it truly needs one long run, say so:  --max {}\n",
-            max * 2
-        ));
-        self.sink.say(&said);
     }
 }

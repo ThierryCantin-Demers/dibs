@@ -2,7 +2,7 @@ use crate::{
     clock::Deadline,
     job::{Environment, Output},
     platform::{Host, Platform as _},
-    session::{base::Visit, run::Venue},
+    session::run::Venue,
     settings::{home, var},
     stop::Stage,
     tree::{BuildMark, Commands, Copier, Stepping, Trees},
@@ -12,8 +12,6 @@ use dibs_format::{
     wire::{Place, Record, Step, Stepped, Then, Tree},
 };
 use std::{
-    fs::OpenOptions,
-    io::Write as _,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -45,16 +43,19 @@ pub struct Spot {
     pub target: PathBuf,
 }
 
-impl Visit {
+/// A job's tree: laid out before its command, and a recipe step begun and ended around it.
+pub struct Layout<'a> {
+    at: Venue<'a>,
+    output: Output<'a>,
+}
+
+impl<'a> Layout<'a> {
+    pub fn new(at: Venue<'a>, output: Output<'a>) -> Self {
+        Layout { at, output }
+    }
+
     /// The job's tree laid out, or found, and the command pointed at it.
-    pub fn lay_out(
-        &self,
-        at: &Venue,
-        tree: &Tree,
-        environment: &mut Environment,
-        output: Output,
-        deadline: Deadline,
-    ) -> Laid {
+    pub fn lay_out(&self, tree: &Tree, environment: &mut Environment, deadline: Deadline) -> Laid {
         let prepare = match &tree.place {
             Place::At(laid) => {
                 environment.in_tree(PathBuf::from(&laid.worktree), Some(laid.target.clone()));
@@ -65,10 +66,10 @@ impl Visit {
             }
             Place::Prepare(prepare) => prepare,
         };
-        let say = |text: &str| self.told(output, text);
-        let running = |pid| at.stopper.state().stage = Stage::Preparing(pid);
+        let say = |text: &str| self.output.tell(self.at.sink, text);
+        let running = |pid| self.at.stopper.state().stage = Stage::Preparing(pid);
         let unstopped = |act: &mut dyn FnMut()| {
-            let _state = at.stopper.state();
+            let _state = self.at.stopper.state();
             act();
         };
         let home = home();
@@ -76,13 +77,13 @@ impl Visit {
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".cargo"));
         let prepared = Trees {
-            scratch: &at.machine.scratch,
+            scratch: &self.at.machine.scratch,
             home: &home,
             cargo_home: &cargo_home,
-            clocks: self.settings.clocks,
-            seed_wait: Duration::from_secs(self.settings.seed_wait),
+            clocks: self.at.settings.clocks,
+            seed_wait: Duration::from_secs(self.at.settings.seed_wait),
             copier: Copier {
-                reflinks: self.settings.reflinks,
+                reflinks: self.at.settings.reflinks,
             },
             commands: Commands {
                 environment,
@@ -103,7 +104,8 @@ impl Visit {
                 };
             }
         };
-        self.sink
+        self.at
+            .sink
             .record(Record::Prepared(Box::new(prepared.clone())));
         let missing = prepared
             .gitdbs
@@ -136,8 +138,8 @@ impl Visit {
                     worktree.parent().unwrap_or(Path::new("/")).to_path_buf(),
                     None,
                 );
-                if self.call.mode() == Mode::Rsh {
-                    self.sink.transferring();
+                if self.at.call.mode() == Mode::Rsh {
+                    self.at.sink.transferring();
                 }
                 Laid::Run(None)
             }
@@ -148,7 +150,7 @@ impl Visit {
     /// since, the machine's state, and a build's claim on its target.
     pub fn step_begins(&self, step: &Step, stepping: &Stepping) -> Begins {
         if step.check && stepping.refused() {
-            self.sink.record(Record::Stepped(Stepped {
+            self.at.sink.record(Record::Stepped(Stepped {
                 refused: true,
                 ..Stepped::default()
             }));
@@ -199,31 +201,11 @@ impl Visit {
         if unpinned {
             *status = Exit::Setup.status();
         }
-        self.sink.record(Record::Stepped(Stepped {
+        self.at.sink.record(Record::Stepped(Stepped {
             refused: false,
             state: running.state,
             artifacts,
         }));
         unpinned
-    }
-
-    /// What a prepare says, where the job's own output goes.
-    pub fn told(&self, output: Output, text: &str) {
-        if text.is_empty() {
-            return;
-        }
-        let logged = |log: &Path| {
-            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log) {
-                let _ = file.write_all(text.as_bytes());
-            }
-        };
-        match output {
-            Output::Log(log) => logged(log),
-            Output::Stream(log) => {
-                logged(log);
-                self.sink.out(text.as_bytes());
-            }
-            Output::Caller | Output::Through => self.sink.say(text),
-        }
     }
 }

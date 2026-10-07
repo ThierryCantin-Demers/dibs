@@ -1,8 +1,8 @@
 use crate::{
-    call::Journal,
+    call::{Journal, Received},
     channel::{Caller, Channel},
     clock::{Deadline, Moment, Span},
-    history::History,
+    history::{History, Key, Scope},
     job::{
         Cap, Environment, Guard, HoldFifo, Job, LogRead, Output, Ports, Readiness, Services, Start,
         job_id,
@@ -13,15 +13,19 @@ use crate::{
     queue::Queue,
     series::Binding,
     session::{
-        base::Visit,
-        ended::Ended,
-        laid::{Begins, Laid},
+        ended::{Ended, Tally},
+        laid::{Begins, Laid, Layout},
     },
+    settings::Settings,
+    sink::Sink,
     status::Look,
     stop::{Stage, State, Stopper},
     tree::{Mark, Stepping},
 };
-use dibs_format::{By, Event, Exit, HistoryLine, JobId, Mode, wire::Record};
+use dibs_format::{
+    By, Event, Exit, HistoryLine, JobId, Mode,
+    wire::{MaxFrom, Record},
+};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -36,14 +40,21 @@ const SAY_ACQUIRED_AFTER: u64 = 5;
 /// The log is cut back to its last lines once it outgrows the bound.
 const LOG_BOUND: usize = 20000;
 const LOG_KEPT: usize = 10000;
+/// History needs this many runs of a job before it may raise the job's cap.
+const RUNS_FOR_A_CAP: usize = 3;
 /// What a command bash could not start exits with.
 pub const NOT_STARTED: i32 = 127;
 
-/// Where a call runs: the machine, its lock directory, and what stops the call.
+/// A call where it runs: the machine, its lock directory, what stops the call, the call itself,
+/// where it speaks, and the machine's settings.
+#[derive(Clone, Copy)]
 pub struct Venue<'a> {
     pub machine: &'a Site,
     pub dir: &'a LockDir,
     pub stopper: &'a Arc<Stopper>,
+    pub call: &'a Received,
+    pub sink: &'a Sink,
+    pub settings: &'a Settings,
 }
 
 impl Venue<'_> {
@@ -78,9 +89,9 @@ struct Acquired {
 
 /// Where a job that holds the lock keeps what it leaves: its directory, and its log unless it is
 /// a transfer's.
-pub struct Begun {
-    pub dir: PathBuf,
-    pub log: Option<PathBuf>,
+struct Begun {
+    dir: PathBuf,
+    log: Option<PathBuf>,
 }
 
 impl Begun {
@@ -92,8 +103,10 @@ impl Begun {
     }
 }
 
-/// What a job was given besides its command.
+/// What a job was given besides its command, and how the call ended.
 pub struct Hosted {
+    /// The command's status, or the one dibs gave the call.
+    pub status: i32,
     pub ports: Ports,
     pub services: Option<Services>,
     /// A port or a service failed the call, which ends with 77.
@@ -112,89 +125,95 @@ impl Hosted {
     }
 }
 
-impl Visit {
-    /// A shared job or a benchmark: queue, take the lock, run the job, and say how it went.
-    pub fn run(&self, at: &Venue, mut environment: Environment, caller: Caller) -> i32 {
-        let request = &self.call.request;
-        let binding = (self.call.mode() == Mode::Bench
+/// A shared job, a benchmark, a transfer or a sweep: queued, run under the lock, and told.
+pub struct Run<'a> {
+    at: Venue<'a>,
+}
+
+impl<'a> Run<'a> {
+    pub fn new(at: Venue<'a>) -> Self {
+        Run { at }
+    }
+
+    /// Queues, takes the lock, runs the job, and says how it went.
+    pub fn serve(&self, mut environment: Environment, caller: Caller) -> i32 {
+        let request = &self.at.call.request;
+        let binding = (self.at.call.mode() == Mode::Bench
             && !request.watch.hold
-            && self.settings.machine_series)
+            && self.at.settings.machine_series)
             .then(|| Binding {
-                path: at.machine.history.with_file_name("cards"),
-                call: &self.call,
-                host: &at.machine.host,
+                path: self.at.machine.history.with_file_name("cards"),
+                call: self.at.call,
+                host: &self.at.machine.host,
             });
         if let Some(Err(refused)) = binding.as_ref().map(Binding::check) {
-            self.sink.say(&refused.to_string());
+            self.at.sink.say(&refused.to_string());
             return Exit::Refused.status();
         }
-        let arrived = match self.arrive(at) {
+        let arrived = match self.arrive() {
             Ok(arrived) => arrived,
             Err(code) => return code,
         };
-        let history = History::load(&at.machine.history);
+        let history = History::load(&self.at.machine.history);
         let max = self.cap(&history);
         match caller {
             Caller::Channel(channel) if !request.watch.off => channel.watch(
                 request.watch.lease,
-                Arc::clone(at.stopper),
+                Arc::clone(self.at.stopper),
                 arrived.held.clone(),
             ),
             Caller::Channel(_) => {}
-            Caller::Stdout => Channel::hangup(Arc::clone(at.stopper)),
+            Caller::Stdout => Channel::hangup(Arc::clone(self.at.stopper)),
         }
-        let acquired = match self.acquire(at, &history, &arrived) {
+        let acquired = match self.acquire(&history, &arrived) {
             Ok(acquired) => acquired,
             Err(code) => return code,
         };
-        let mut state = at.stopper.state();
-        let begun = match self.begin(at, &arrived, &acquired, &mut environment, &mut state) {
+        let mut state = self.at.stopper.state();
+        let begun = match self.begin(&arrived, &acquired, &mut environment, &mut state) {
             Ok(begun) => begun,
             Err(code) => return code,
         };
-        let (status, hosted) = self.host(at, state, &arrived, &begun, environment, max);
-        self.finish(
-            at,
-            Finish {
-                arrived: &arrived,
-                acquired,
-                begun: &begun,
-                hosted: &hosted,
-                status,
-                max,
-                binding: binding.as_ref(),
-            },
-        )
+        let hosted = self.host(state, &arrived, &begun, environment, max);
+        self.finish(Finish {
+            arrived: &arrived,
+            acquired,
+            begun: &begun,
+            hosted: &hosted,
+            max,
+            binding: binding.as_ref(),
+        })
     }
 
     /// Joins the queue: the waiting record, the batch it is a step of, the fifo a hold waits on.
-    fn arrive(&self, at: &Venue) -> Result<Arrived, i32> {
-        let request = &self.call.request;
-        let pid = self.call.pid;
+    fn arrive(&self) -> Result<Arrived, i32> {
+        let request = &self.at.call.request;
+        let pid = self.at.call.pid;
         let start = Moment::epoch_now();
         let job = job_id(start, pid);
         let held = match request.watch.hold {
-            true => match HoldFifo::make(at.dir, pid) {
+            true => match HoldFifo::make(self.at.dir, pid) {
                 Ok(held) => Some(held),
                 Err(_) => {
-                    self.sink.say(&format!(
+                    self.at.sink.say(&format!(
                         "dibs: could not make {}, so nothing is held.\n",
-                        at.dir.file("hold", pid).display()
+                        self.at.dir.file("hold", pid).display()
                     ));
                     return Err(Exit::NoLock.status());
                 }
             },
             false => None,
         };
-        let mut state = at.stopper.state();
-        at.dir
-            .write(Kind::Waiting, &self.call.lock_record(start, &job));
+        let mut state = self.at.stopper.state();
+        self.at
+            .dir
+            .write(Kind::Waiting, &self.at.call.lock_record(start, &job));
         if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
-            let _ = fs::write(at.dir.file("batch", pid), format!("{batch}\n"));
+            let _ = fs::write(self.at.dir.file("batch", pid), format!("{batch}\n"));
         }
-        let mut line = self.call.log_line(Event::Arrived);
+        let mut line = self.at.call.log_line(Event::Arrived);
         line.job = Some(job.clone());
-        at.journal().write(&line);
+        self.at.journal().write(&line);
         state.stage = Stage::Queued;
         state.job = Some(job.clone());
         Ok(Arrived { start, job, held })
@@ -202,45 +221,45 @@ impl Visit {
 
     /// Waits its turn: through the gate unless it may go around, then for the lock, within
     /// `--wait` when there is one.
-    fn acquire(&self, at: &Venue, history: &History, arrived: &Arrived) -> Result<Acquired, i32> {
-        let request = &self.call.request;
-        let pid = self.call.pid;
-        let lock = match Lock::open(at.dir) {
+    fn acquire(&self, history: &History, arrived: &Arrived) -> Result<Acquired, i32> {
+        let request = &self.at.call.request;
+        let pid = self.at.call.pid;
+        let lock = match Lock::open(self.at.dir) {
             Ok(lock) => lock,
             Err(e) => {
-                self.sink.say(&format!(
+                self.at.sink.say(&format!(
                     "dibs: the lock in {} could not be opened: {e}. Nothing was run.\n",
-                    at.dir.path.display()
+                    self.at.dir.path.display()
                 ));
-                at.dir.clear(pid);
+                self.at.dir.clear(pid);
                 return Err(Exit::NoLock.status());
             }
         };
         let queue = Queue {
-            dir: at.dir,
+            dir: self.at.dir,
             history,
-            call: &self.call,
+            call: self.at.call,
         };
-        let hold = match self.call.mode() {
+        let hold = match self.at.call.mode() {
             Mode::Bench => Hold::Exclusive,
             _ => Hold::Shared,
         };
         let look = Look {
-            machine: at.machine,
-            dir: at.dir,
+            machine: self.at.machine,
+            dir: self.at.dir,
             history,
-            settings: &self.settings,
+            settings: self.at.settings,
             asking: pid,
         };
         let shown = || look.text(&look.status(request.verbose), request.tty);
         let deadline = request
             .wait
             .map(|wait| Instant::now() + Duration::from_secs(wait));
-        let passed = match queue.may_bypass(&self.settings) {
+        let passed = match queue.may_bypass(self.at.settings) {
             true => {
-                let mut line = self.call.log_line(Event::Bypassed);
+                let mut line = self.at.call.log_line(Event::Bypassed);
                 line.job = Some(arrived.job.clone());
-                at.journal().write(&line);
+                self.at.journal().write(&line);
                 Ok(true)
             }
             false => lock.pass_gate(deadline),
@@ -248,9 +267,9 @@ impl Visit {
         let waited = passed.and_then(|passed| match passed {
             true => {
                 if !lock.free(hold) {
-                    self.sink.say(&queue.line());
+                    self.at.sink.say(&queue.line());
                     if request.verbose {
-                        self.sink.say(&shown());
+                        self.at.sink.say(&shown());
                     }
                 }
                 lock.take(hold, deadline).map(|taken| match taken {
@@ -269,20 +288,20 @@ impl Visit {
             )),
             Err(e) => {
                 lock.leave_gate();
-                self.sink.say(&format!(
+                self.at.sink.say(&format!(
                     "dibs: the lock in {} could not be taken: {e}. Nothing was run.\n",
-                    at.dir.path.display()
+                    self.at.dir.path.display()
                 ));
-                at.dir.clear(pid);
+                self.at.dir.clear(pid);
                 return Err(Exit::NoLock.status());
             }
         };
         lock.leave_gate();
         if let Some(said) = gave_up {
-            self.sink.say(&said);
-            self.sink.say(&shown());
-            let mut state = at.stopper.state();
-            self.abandon(at, &arrived.job, &mut state);
+            self.at.sink.say(&said);
+            self.at.sink.say(&shown());
+            let mut state = self.at.stopper.state();
+            self.abandon(&arrived.job, &mut state);
             return Err(Exit::Busy.status());
         }
         let now = Moment::epoch_now();
@@ -297,43 +316,44 @@ impl Visit {
     /// the command it runs, unless the disk has no room for it.
     fn begin(
         &self,
-        at: &Venue,
         arrived: &Arrived,
         acquired: &Acquired,
         environment: &mut Environment,
         state: &mut MutexGuard<State>,
     ) -> Result<Begun, i32> {
-        let mode = self.call.mode();
+        let mode = self.at.call.mode();
         let job = &arrived.job;
-        at.dir.hold(&self.call.lock_record(acquired.at, job));
+        self.at
+            .dir
+            .hold(&self.at.call.lock_record(acquired.at, job));
         if acquired.waited >= SAY_ACQUIRED_AFTER {
-            self.sink.say(&format!(
+            self.at.sink.say(&format!(
                 "dibs: acquired the {mode} lock after {}\n",
                 Span(acquired.waited)
             ));
         }
-        Host::stay_awake(self.call.pid);
+        Host::stay_awake(self.at.call.pid);
         if mode == Mode::Bench {
             environment.set("DIBS_STATE", Host::machine_state());
         }
         let transfer = mode == Mode::Rsh;
-        let dir = at.machine.jobs().join(job.as_str());
+        let dir = self.at.machine.jobs().join(job.as_str());
         let kept = match transfer {
             true => Ok(()),
             false => fs::create_dir_all(&dir)
-                .and_then(|()| Visit::write_command(&dir.join("cmd"), &self.call.work)),
+                .and_then(|()| Run::write_command(&dir.join("cmd"), &self.at.call.work)),
         };
         if let Err(e) = &kept
             && no_room(e)
         {
-            self.sink.say(&format!(
+            self.at.sink.say(&format!(
                 "dibs: {} on {host} is full or over quota, so nothing ran there.\n  \
                  dibs --on {host} --gc --dry-run says what fills it. Tell the person you work for,\n  \
                  and do not delete anything on a shared machine to make room.\n",
-                at.machine.scratch.display(),
-                host = at.machine.host
+                self.at.machine.scratch.display(),
+                host = self.at.machine.host
             ));
-            self.abandon(at, job, state);
+            self.abandon(job, state);
             return Err(Exit::NoRoom.status());
         }
         let log = (!transfer && kept.is_ok()).then(|| dir.join("log"));
@@ -344,55 +364,57 @@ impl Visit {
     }
 
     /// The ports and services the job asked for, then the job itself, to its end.
-    fn host<'a>(
+    fn host(
         &self,
-        at: &Venue<'a>,
         mut state: MutexGuard<'a, State>,
         arrived: &Arrived,
         begun: &Begun,
         mut environment: Environment,
         max: u64,
-    ) -> (i32, Hosted) {
-        let request = &self.call.request;
-        let pid = self.call.pid;
+    ) -> Hosted {
+        let request = &self.at.call.request;
+        let pid = self.at.call.pid;
         let output = match (&begun.log, request.stream) {
-            _ if self.call.mode() == Mode::Rsh => Output::Through,
+            _ if self.at.call.mode() == Mode::Rsh => Output::Through,
             (Some(log), true) => Output::Stream(log),
             (Some(log), false) => Output::Log(log),
             (None, _) => Output::Caller,
         };
         let deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
-        let ports = Ports::take(&request.ports, self.settings.ports, at.dir, pid);
+        let ports = Ports::take(&request.ports, self.at.settings.ports, self.at.dir, pid);
         for picked in &ports.picked {
             environment.port(picked);
         }
         let mut hosted = Hosted {
+            status: NOT_STARTED,
             ports,
             services: None,
             failed: false,
             laid: None,
             overran: false,
         };
+        let layout = Layout::new(self.at, output);
         let mut spot = None;
         if let Some(tree) = &request.tree
             && hosted.ports.complete()
         {
             state.stage = Stage::Preparing(None);
             drop(state);
-            let laid = self.lay_out(at, tree, &mut environment, output, deadline);
-            state = at.stopper.state();
+            let laid = layout.lay_out(tree, &mut environment, deadline);
+            state = self.at.stopper.state();
             match laid {
-                Laid::Run(at) => spot = at,
+                Laid::Run(laid) => spot = laid,
                 Laid::Done { status, by } => {
                     drop(state);
                     begun.touch_log();
                     hosted.laid = Some(by);
                     hosted.overran = status == Exit::Overran.status();
-                    return (status, hosted);
+                    hosted.status = status;
+                    return hosted;
                 }
             }
         }
-        let say = |text: &str| self.told(output, text);
+        let say = |text: &str| output.tell(self.at.sink, text);
         let step = request.tree.as_ref().and_then(|t| t.step.as_ref());
         let stepping = spot.as_ref().map(|spot| Stepping {
             worktree: &spot.worktree,
@@ -402,20 +424,21 @@ impl Visit {
         });
         let mut running = None;
         if let (Some(step), Some(stepping)) = (step, &stepping) {
-            match self.step_begins(step, stepping) {
+            match layout.step_begins(step, stepping) {
                 Begins::Refused => {
                     drop(state);
                     begun.touch_log();
                     hosted.laid = Some(By::Dibs);
-                    return (Exit::TargetRebuilt.status(), hosted);
+                    hosted.status = Exit::TargetRebuilt.status();
+                    return hosted;
                 }
                 Begins::Runs(started) => running = Some(started),
             }
         }
         if !hosted.ports.complete() {
-            self.sink.say(&format!(
+            self.at.sink.say(&format!(
                 "dibs: no free port in {} on {}, so the command did not run.\n",
-                self.settings.ports, at.machine.host
+                self.at.settings.ports, self.at.machine.host
             ));
             hosted.failed = true;
         } else if !request.services.is_empty() {
@@ -423,8 +446,8 @@ impl Visit {
                 specs: &request.services,
                 environment: &environment,
                 job_dir: begun.log.as_ref().map(|_| begun.dir.as_path()),
-                record: at.dir.file("with", pid),
-                sink: &self.sink,
+                record: self.at.dir.file("with", pid),
+                sink: self.at.sink,
             });
             state.services = services.pids();
             state.stage = Stage::Starting;
@@ -434,7 +457,7 @@ impl Visit {
                 &Readiness {
                     ports: &hosted.ports,
                     environment: &environment,
-                    sink: &self.sink,
+                    sink: self.at.sink,
                 },
             );
             if !ready {
@@ -442,7 +465,7 @@ impl Visit {
             }
             hosted.failed = !ready;
             hosted.services = Some(services);
-            state = at.stopper.state();
+            state = self.at.stopper.state();
         }
         let status = match hosted.failed {
             true => {
@@ -452,8 +475,8 @@ impl Visit {
             }
             false => {
                 let command = arrived.held.as_ref().map(HoldFifo::command);
-                let command = command.as_deref().unwrap_or(&self.call.work);
-                match Job::spawn(command, &environment, output, &self.sink) {
+                let command = command.as_deref().unwrap_or(&self.at.call.work);
+                match Job::spawn(command, &environment, output, self.at.sink) {
                     Ok(work) => {
                         state.stage = Stage::Running(work.pid);
                         drop(state);
@@ -465,7 +488,9 @@ impl Visit {
                     }
                     Err(e) => {
                         drop(state);
-                        self.sink.say(&format!("dibs: bash could not start: {e}\n"));
+                        self.at
+                            .sink
+                            .say(&format!("dibs: bash could not start: {e}\n"));
                         NOT_STARTED
                     }
                 }
@@ -474,14 +499,14 @@ impl Visit {
         if let Some(services) = &mut hosted.services {
             services.stop();
         }
-        let mut status = status;
+        hosted.status = status;
         if let (Some(step), Some(stepping)) = (step, &stepping)
             && let Some(running) = running
-            && self.step_ends(step, stepping, &mut status, running)
+            && layout.step_ends(step, stepping, &mut hosted.status, running)
         {
             hosted.laid = Some(By::Dibs);
         }
-        (status, hosted)
+        hosted
     }
 
     /// Waits for the job, with its services watched: one that ends first stops the job, and the
@@ -491,7 +516,8 @@ impl Visit {
     fn work(&self, work: Job, cap: Option<Cap>, holding: bool, hosted: &mut Hosted) -> i32 {
         let guard = hosted.services.as_mut().map(|s| s.guard(work.pid));
         if holding {
-            self.sink
+            self.at
+                .sink
                 .record(Record::Holding(hosted.ports.picked.clone()));
         }
         let end = work.wait(cap);
@@ -501,13 +527,13 @@ impl Visit {
             .and_then(Guard::over)
             .or_else(|| hosted.services.as_ref().and_then(Services::ended));
         match (ended, hosted.services.as_mut()) {
-            (Some(at), Some(services)) => {
-                let code = services.status(at);
+            (Some(service), Some(services)) => {
+                let code = services.status(service);
                 services.failed(
-                    at,
+                    service,
                     &format!("exited {code} while the command ran"),
                     "the command was stopped",
-                    &self.sink,
+                    self.at.sink,
                 );
                 hosted.failed = true;
                 Exit::ServiceFailed.status()
@@ -518,26 +544,30 @@ impl Visit {
 
     /// Says how the job ended, keeps what `dibs out` reads, lets the lock go, and only then tells
     /// the caller, who cannot hold the lock by reading slowly.
-    fn finish(&self, at: &Venue, end: Finish) -> i32 {
-        let request = &self.call.request;
-        let mode = self.call.mode();
+    fn finish(&self, end: Finish) -> i32 {
+        let request = &self.at.call.request;
+        let mode = self.at.call.mode();
         let job = &end.arrived.job;
-        let cancelled = self.call.batch_id().is_some_and(|b| at.dir.cancelled(b));
+        let cancelled = self
+            .at
+            .call
+            .batch_id()
+            .is_some_and(|b| self.at.dir.cancelled(b));
         let status = if cancelled {
             Exit::Cancelled.status()
         } else {
-            end.status
+            end.hosted.status
         };
         let ran = Moment::epoch_now().saturating_sub(end.acquired.at);
         {
-            let mut state = at.stopper.state();
+            let mut state = self.at.stopper.state();
             state.stage = Stage::Finishing;
-            let mut line = self.call.log_line(Event::Finished);
+            let mut line = self.at.call.log_line(Event::Finished);
             line.queued = Some(end.acquired.waited);
             line.ran = Some(ran);
             line.exit = Some(status);
             line.job = Some(job.clone());
-            at.journal().write(&line);
+            self.at.journal().write(&line);
             state.logged_end = true;
         }
         let ended = end.begun.log.as_ref().map(|log| {
@@ -548,24 +578,25 @@ impl Visit {
                 Some(Exit::ServiceFailed) if end.hosted.failed => By::Dibs,
                 _ => By::Command,
             };
-            Ended {
-                session: self,
-                machine: at.machine,
-                job,
-                log,
-                read: LogRead::of(log),
-                job_dir: &end.begun.dir,
-                hosted: end.hosted,
-                waited: end.acquired.waited,
-                ran,
-                status,
-                by,
-            }
+            Ended::new(
+                self.at,
+                Tally {
+                    job,
+                    log,
+                    read: LogRead::of(log),
+                    job_dir: &end.begun.dir,
+                    hosted: end.hosted,
+                    waited: end.acquired.waited,
+                    ran,
+                    status,
+                    by,
+                },
+            )
         });
         if let Some(ended) = &ended {
             ended.keep();
         }
-        at.journal().trim(LOG_BOUND, LOG_KEPT);
+        self.at.journal().trim(LOG_BOUND, LOG_KEPT);
         if status == 0
             && let Some(binding) = end.binding
         {
@@ -573,17 +604,17 @@ impl Visit {
         }
         if status == 0 {
             History::append(
-                &at.machine.history,
+                &self.at.machine.history,
                 &HistoryLine {
                     mode,
-                    label: self.call.label().clone(),
+                    label: self.at.call.label().clone(),
                     seconds: Moment::epoch_now().saturating_sub(end.acquired.at),
-                    agent: Some(self.call.agent.clone()),
+                    agent: Some(self.at.call.agent.clone()),
                     fingerprint: request.fingerprint.clone(),
                 },
             );
         }
-        at.dir.clear(self.call.pid);
+        self.at.dir.clear(self.at.call.pid);
         drop(end.acquired.lock);
         if let Some(ended) = &ended {
             ended.report();
@@ -594,12 +625,67 @@ impl Visit {
         status
     }
 
+    /// `--max`, raised to twice what 90% of this job's own runs took when nobody chose it, so work
+    /// that always runs long is not killed at its mode's default. Only a shared job or a
+    /// benchmark: a transfer and a sweep keep their mode's cap.
+    fn cap(&self, history: &History) -> u64 {
+        let request = &self.at.call.request;
+        let max = request.max;
+        let a_job = matches!(self.at.call.mode(), Mode::Shared | Mode::Bench);
+        if !a_job || request.max_from != MaxFrom::Default || request.watch.hold || max == 0 {
+            return max;
+        }
+        let Some(estimate) = history.estimate(Key {
+            mode: self.at.call.mode(),
+            label: self.at.call.label(),
+            agent: Some(&self.at.call.agent),
+            fingerprint: request.fingerprint.as_deref(),
+        }) else {
+            return max;
+        };
+        if estimate.scope != Scope::This
+            || estimate.runs < RUNS_FOR_A_CAP
+            || estimate.high * 2 <= max
+        {
+            return max;
+        }
+        let raised = estimate.high * 2;
+        self.at.sink.say(&format!(
+            "dibs: 90% of {} runs of this took up to {}, so it may hold the lock for {} rather than {}. --max sets it.\n",
+            estimate.runs,
+            Span(estimate.high),
+            Span(raised),
+            Span(max)
+        ));
+        raised
+    }
+
+    /// Says what to do about an overrun: run it again, since a compile picks up where it stopped.
+    fn overran(&self, max: u64) {
+        let mut said = format!(
+            "dibs: stopped after holding the lock for {max}s, which is --max for a {} job.\n  \
+             Nothing is wrong with it; it was simply told to hold no longer than that.\n",
+            self.at.call.mode()
+        );
+        if !self.at.call.request.watch.hold {
+            said.push_str(
+                "  Run it again; a compile picks up from the crates that already finished, since the\n  \
+                 build cache outlives the job. Anything else starts over.\n",
+            );
+        }
+        said.push_str(&format!(
+            "  If it truly needs one long run, say so:  --max {}\n",
+            max * 2
+        ));
+        self.at.sink.say(&said);
+    }
+
     /// Leaves the queue or the lock without running anything, and says so in the log.
-    fn abandon(&self, at: &Venue, job: &JobId, state: &mut MutexGuard<State>) {
-        at.dir.clear(self.call.pid);
-        let mut line = self.call.log_line(Event::Aborted);
+    fn abandon(&self, job: &JobId, state: &mut MutexGuard<State>) {
+        self.at.dir.clear(self.at.call.pid);
+        let mut line = self.at.call.log_line(Event::Aborted);
         line.job = Some(job.clone());
-        at.journal().write(&line);
+        self.at.journal().write(&line);
         state.logged_end = true;
     }
 
@@ -616,7 +702,6 @@ struct Finish<'a> {
     acquired: Acquired,
     begun: &'a Begun,
     hosted: &'a Hosted,
-    status: i32,
     max: u64,
     binding: Option<&'a Binding<'a>>,
 }

@@ -31,6 +31,28 @@ pub enum Output<'a> {
     Through,
 }
 
+impl Output<'_> {
+    /// Says what dibs has to say about the job where the job's own output goes.
+    pub fn tell(self, sink: &Sink, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let logged = |log: &Path| {
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log) {
+                let _ = file.write_all(text.as_bytes());
+            }
+        };
+        match self {
+            Output::Log(log) => logged(log),
+            Output::Stream(log) => {
+                logged(log);
+                sink.out(text.as_bytes());
+            }
+            Output::Caller | Output::Through => sink.say(text),
+        }
+    }
+}
+
 /// How long a job may run, and how long it is given to stop once told to.
 #[derive(Debug, Clone, Copy)]
 pub struct Cap {

@@ -1,7 +1,6 @@
 use crate::{
     job::{Digest, LogRead, Repeat},
-    machine::Site,
-    session::{base::Visit, run::Hosted},
+    session::run::{Hosted, Venue},
 };
 use dibs_format::{
     By, JobId, JobMeta,
@@ -9,10 +8,8 @@ use dibs_format::{
 };
 use std::{fs, path::PathBuf};
 
-/// A job that has ended, which its caller is told about.
-pub struct Ended<'a> {
-    pub session: &'a Visit,
-    pub machine: &'a Site,
+/// What a job that held the lock came to: its log, how long it waited and ran, and its status.
+pub struct Tally<'a> {
     pub job: &'a JobId,
     pub log: &'a PathBuf,
     /// Read once, under the lock, for `meta` and the trailer.
@@ -25,75 +22,92 @@ pub struct Ended<'a> {
     pub by: By,
 }
 
-impl Ended<'_> {
+/// A job that has ended, which its caller is told about.
+pub struct Ended<'a> {
+    at: Venue<'a>,
+    tally: Tally<'a>,
+}
+
+impl<'a> Ended<'a> {
+    pub fn new(at: Venue<'a>, tally: Tally<'a>) -> Self {
+        Ended { at, tally }
+    }
+
     /// What `dibs out` reads back about the job, beside its log.
     pub fn keep(&self) {
-        let call = &self.session.call;
+        let call = self.at.call;
+        let tally = &self.tally;
         let meta = JobMeta {
             mode: call.mode(),
             label: call.label().clone(),
-            queued: self.waited,
-            ran: self.ran,
-            exit: self.status,
-            by: self.by,
+            queued: tally.waited,
+            ran: tally.ran,
+            exit: tally.status,
+            by: tally.by,
             agent: call.agent.clone(),
-            lines: self.read.lines as u64,
+            lines: tally.read.lines as u64,
             who: (!call.agent_id.is_empty()).then(|| call.agent_id.clone()),
         };
-        let _ = fs::write(self.job_dir.join("meta"), meta.to_string());
+        let _ = fs::write(tally.job_dir.join("meta"), meta.to_string());
     }
 
     /// The digest, then the trailer and what follows it: the same shape every time, on stderr,
     /// where a pipe on the caller's side cannot cut it off.
     pub fn report(&self) {
-        let session = self.session;
-        let call = &session.call;
-        let host = &self.machine.host;
-        let lines = self.read.lines;
+        let Venue {
+            call,
+            sink,
+            settings,
+            machine,
+            ..
+        } = self.at;
+        let tally = &self.tally;
+        let host = &machine.host;
+        let lines = tally.read.lines;
         if !call.request.stream {
-            session.sink.out(
+            sink.out(
                 &Digest {
-                    path: self.log,
+                    path: tally.log,
                     lines,
-                    head: session.settings.digest_head,
-                    tail: session.settings.digest_tail,
+                    head: settings.digest_head,
+                    tail: settings.digest_tail,
                     host,
-                    job: self.job,
+                    job: tally.job,
                 }
                 .text(),
             );
         }
-        let built = self.read.built;
-        session.sink.record(Record::Trailer(Trailer {
-            job: self.job.clone(),
+        let built = tally.read.built;
+        sink.record(Record::Trailer(Trailer {
+            job: tally.job.clone(),
             mode: call.mode(),
             label: call.label().clone(),
-            queued: self.waited,
-            ran: self.ran,
-            exit: self.status,
-            by: self.by,
+            queued: tally.waited,
+            ran: tally.ran,
+            exit: tally.status,
+            by: tally.by,
             built,
         }));
         let mut after = String::new();
         if !call.request.watch.hold {
             after.push_str(&format!(
                 "  log {host}:{}  ({lines} lines)  dibs --on {host} --out {}\n",
-                self.log.display(),
-                self.job
+                tally.log.display(),
+                tally.job
             ));
         }
-        after.push_str(&self.hosted.lines(host));
+        after.push_str(&tally.hosted.lines(host));
         if built == Some(Built::Nothing) {
             after.push_str(
                 "  built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary.\n",
             );
         }
-        if self.status != 0
+        if tally.status != 0
             && !call.request.watch.hold
             && let Some(earlier) = (Repeat {
-                jobs: &self.machine.jobs(),
-                this: self.job_dir,
-                window: session.settings.repeat_window,
+                jobs: &machine.jobs(),
+                this: tally.job_dir,
+                window: settings.repeat_window,
             })
             .earlier()
         {
@@ -101,6 +115,6 @@ impl Ended<'_> {
                 "  this exact command already failed here: job {earlier}. Unchanged, it failed the same way.\n"
             ));
         }
-        session.sink.say(&after);
+        sink.say(&after);
     }
 }
