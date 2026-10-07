@@ -1,5 +1,5 @@
 use super::error::RepoError;
-use crate::{cli::RecipeCall, execution, inventory::Inventory, paths::FileError};
+use crate::{cli::RecipeCall, execution::Repo, inventory::Inventory, paths::FileError};
 use std::path::{Path, PathBuf};
 
 /// Where a bare repo name is looked up.
@@ -45,17 +45,17 @@ impl Checkouts {
         }
         // A path into a subdirectory has no .git of its own, and `.` would otherwise join the root.
         if direct.is_absolute() || direct.starts_with(".") || direct.starts_with("..") {
-            return execution::toplevel(&direct)
+            return Repo(&direct)
+                .toplevel()
                 .ok_or_else(|| RepoError::NoCheckout(repo.to_string()));
         }
         // Inside a worktree of the named repo, or one by that directory name, `@local` means that
         // tree, and the clone under the root would otherwise be sent in its place without a word.
         let here = std::env::current_dir()
             .ok()
-            .and_then(|d| execution::toplevel(&d));
-        let named = |h: &PathBuf| {
-            execution::identity(h) == repo || h.file_name().is_some_and(|n| n == repo)
-        };
+            .and_then(|d| Repo(&d).toplevel());
+        let named =
+            |h: &PathBuf| Repo(h).identity() == repo || h.file_name().is_some_and(|n| n == repo);
         if let Some(here) = here.filter(|h| !repo.contains('/') && named(h)) {
             return Ok(here);
         }

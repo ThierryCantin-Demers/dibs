@@ -5,7 +5,12 @@
 //! `[patch]`, in a config file above the tree rather than in it: the tree stays what was sent.
 //! A pinned build still gets a tree of its own, since resolving the patch rewrites the lockfile.
 
-use super::{error::PinError, local::Fetched, refs::Arm, trees::lockfile};
+use super::{
+    error::PinError,
+    local::{Checkout, Fetched, Local, Repo},
+    refs::Arm,
+    trees::lockfile,
+};
 use crate::{
     cli::RecipeCall,
     git::{Git, GitError},
@@ -195,7 +200,7 @@ pub fn pins_of(
             reference,
         } = pin_spec(p)?;
         let pdir = Checkouts::of(args)?.find(name)?;
-        let identity = super::identity(&pdir);
+        let identity = Repo(&pdir).identity();
         if identity == repo {
             return Err(PinError::Itself {
                 pin: p.clone(),
@@ -210,7 +215,7 @@ pub fn pins_of(
         }
         let (local, checkout, note, crates, lock) = match reference {
             "local" => (
-                Some(super::local(&pdir)?),
+                Some(Local::of(&pdir)?),
                 None,
                 None,
                 local_crates(&pdir)?,
@@ -221,15 +226,15 @@ pub fn pins_of(
                     commit: sha,
                     seen,
                     ahead,
-                } = super::as_fetched(&pdir, reference).ok_or_else(|| PinError::NoRef {
+                } = Fetched::of(&pdir, reference).ok_or_else(|| PinError::NoRef {
                     pin: p.clone(),
                     reference: reference.to_string(),
                     dir: pdir.clone(),
                 })?;
                 let (crates, lock) = (ref_crates(&pdir, &sha)?, lockfile(&pdir, Some(&sha)));
-                match ahead.or_else(|| super::unfetchable(&pdir, &sha)) {
+                match ahead.or_else(|| Repo(&pdir).unfetchable(&sha)) {
                     Some(why) => {
-                        let c = super::checkout(&pdir, &identity, &sha, Some(why))?;
+                        let c = Checkout::of(&pdir, &identity, &sha, Some(why))?;
                         (
                             Some(c.local()?),
                             Some(c),

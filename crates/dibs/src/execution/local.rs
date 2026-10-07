@@ -3,12 +3,90 @@
 //! machine cannot fetch it.
 
 use crate::{
-    execution::{build::hex, error::CheckoutError, refs::commit},
+    execution::{
+        build::hex,
+        error::{ArmError, CheckoutError},
+    },
     git::{Git, GitError},
     paths::{FileError, Paths},
 };
 use dibs_runner::shared::SharedFile;
 use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+
+/// A checkout on this computer, asked which repo it is and what its refs name.
+#[derive(Clone, Copy)]
+pub struct Repo<'a>(pub &'a Path);
+
+impl Repo<'_> {
+    /// The repo a checkout belongs to rather than the folder it sits in. A worktree is named after
+    /// its branch, and that name finds no recipes, no clone on the machine and no build cache.
+    pub fn identity(self) -> String {
+        let dir = self.0;
+        let folder = |p: &Path| p.file_name().and_then(|s| s.to_str()).map(str::to_string);
+        let fallback = folder(dir).unwrap_or_else(|| "repo".into());
+        // A directory inside some other repo is not that repo, so only a checkout's own top level
+        // is asked.
+        if self.toplevel() != dir.canonicalize().ok() {
+            return fallback;
+        }
+        let Ok(common) = Git(dir).run(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        else {
+            return fallback;
+        };
+        let common = PathBuf::from(common.trim());
+        let named = if common.file_name().and_then(|s| s.to_str()) == Some(".git") {
+            common.parent().and_then(folder)
+        } else {
+            folder(&common).map(|n| n.trim_end_matches(".git").to_string())
+        };
+        named.filter(|n| !n.is_empty()).unwrap_or(fallback)
+    }
+
+    /// The checkout this directory is inside, if any.
+    pub fn toplevel(self) -> Option<PathBuf> {
+        let top = Git(self.0).run(&["rev-parse", "--show-toplevel"]).ok()?;
+        PathBuf::from(top.trim()).canonicalize().ok()
+    }
+
+    /// The folder a worktree sits in, which says which line of work a run came from. Only for the
+    /// record: the label, the recipes and the caches all go by `identity`.
+    pub fn variant(self, identity: &str) -> Option<String> {
+        let folder = self.0.file_name()?.to_str()?;
+        (folder != identity).then(|| folder.to_string())
+    }
+
+    /// The commit `name` is here, in full.
+    pub fn commit(self, name: &str) -> Result<String, ArmError> {
+        Git(self.0)
+            .run(&["rev-parse", "--verify", "-q", &format!("{name}^{{commit}}")])
+            .map(|s| s.trim().to_string())
+            .map_err(|_| ArmError::NoCommit {
+                name: name.to_string(),
+                dir: self.0.to_path_buf(),
+            })
+    }
+
+    /// Why a machine, which holds no credentials, cannot fetch `sha` from this checkout's origin,
+    /// or None when it can. A commit on no branch of origin here is taken as never pushed: sending
+    /// one that was costs a transfer, where fetching one that was not fails the run.
+    pub fn unfetchable(self, sha: &str) -> Option<&'static str> {
+        let on = Git(self.0).run(&[
+            "for-each-ref",
+            "--count=1",
+            "--contains",
+            sha,
+            "--format=%(refname)",
+            "refs/remotes/origin/",
+        ]);
+        if on.map_or(true, |r| r.trim().is_empty()) {
+            return Some("it was never pushed");
+        }
+        let url = Git(self.0).run(&["remote", "get-url", "origin"]).ok()?;
+        private(url.trim())
+            .then_some("its remote needs credentials, which the machines do not hold")
+    }
+}
 
 /// What a local tree is, for a run that was never pushed.
 ///
@@ -26,75 +104,41 @@ pub struct Local {
     pub dirty: bool,
 }
 
-/// The repo a checkout belongs to rather than the folder it sits in. A worktree is named after
-/// its branch, and that name finds no recipes, no clone on the machine and no build cache.
-pub fn identity(dir: &std::path::Path) -> String {
-    let folder = |p: &std::path::Path| p.file_name().and_then(|s| s.to_str()).map(str::to_string);
-    let fallback = folder(dir).unwrap_or_else(|| "repo".into());
-    // A directory inside some other repo is not that repo, so only a checkout's own top level
-    // is asked.
-    if toplevel(dir) != dir.canonicalize().ok() {
-        return fallback;
-    }
-    let Ok(common) = Git(dir).run(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
-    else {
-        return fallback;
-    };
-    let common = std::path::PathBuf::from(common.trim());
-    let named = if common.file_name().and_then(|s| s.to_str()) == Some(".git") {
-        common.parent().and_then(folder)
-    } else {
-        folder(&common).map(|n| n.trim_end_matches(".git").to_string())
-    };
-    named.filter(|n| !n.is_empty()).unwrap_or(fallback)
-}
-
-/// The checkout `dir` is inside, if any.
-pub fn toplevel(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let top = Git(dir).run(&["rev-parse", "--show-toplevel"]).ok()?;
-    std::path::PathBuf::from(top.trim()).canonicalize().ok()
-}
-
-/// The folder a worktree sits in, which says which line of work a run came from. Only for the
-/// record: the label, the recipes and the caches all go by `identity`.
-pub fn variant(dir: &std::path::Path, identity: &str) -> Option<String> {
-    let folder = dir.file_name()?.to_str()?;
-    (folder != identity).then(|| folder.to_string())
-}
-
-pub fn local(dir: &std::path::Path) -> Result<Local, GitError> {
-    let head = Git(dir)
-        .run(&["rev-parse", "--short", "HEAD"])?
-        .trim()
-        .to_string();
-    // Tracked and untracked-but-not-ignored, which is the same set the sync carries, so the
-    // hash describes what was actually built rather than what was committed.
-    let list = Git(dir).run(&["ls-files", "-co", "--exclude-standard", "-z"])?;
-    let mut h = Sha256::new();
-    let mut dirty = false;
-    for rel in list.split('\0').filter(|s| !s.is_empty()) {
-        h.update(rel.as_bytes());
-        h.update([0]);
-        if let Ok(b) = std::fs::read(dir.join(rel)) {
-            h.update(b.len().to_le_bytes());
-            h.update(&b);
+impl Local {
+    pub fn of(dir: &Path) -> Result<Local, GitError> {
+        let head = Git(dir)
+            .run(&["rev-parse", "--short", "HEAD"])?
+            .trim()
+            .to_string();
+        // Tracked and untracked-but-not-ignored, which is the same set the sync carries, so the
+        // hash describes what was actually built rather than what was committed.
+        let list = Git(dir).run(&["ls-files", "-co", "--exclude-standard", "-z"])?;
+        let mut h = Sha256::new();
+        let mut dirty = false;
+        for rel in list.split('\0').filter(|s| !s.is_empty()) {
+            h.update(rel.as_bytes());
+            h.update([0]);
+            if let Ok(b) = std::fs::read(dir.join(rel)) {
+                h.update(b.len().to_le_bytes());
+                h.update(&b);
+            }
         }
+        if !Git(dir).run(&["status", "--porcelain"])?.trim().is_empty() {
+            dirty = true;
+        }
+        let content = format!(
+            "{head}{}-{:.12}",
+            if dirty { "+dirty" } else { "" },
+            hex(&h.finalize())
+        );
+        let mut k = Sha256::new();
+        k.update(dir.as_os_str().as_encoded_bytes());
+        Ok(Local {
+            key: format!("{:.10}", hex(&k.finalize())),
+            content,
+            dirty,
+        })
     }
-    if !Git(dir).run(&["status", "--porcelain"])?.trim().is_empty() {
-        dirty = true;
-    }
-    let content = format!(
-        "{head}{}-{:.12}",
-        if dirty { "+dirty" } else { "" },
-        hex(&h.finalize())
-    );
-    let mut k = Sha256::new();
-    k.update(dir.as_os_str().as_encoded_bytes());
-    Ok(Local {
-        key: format!("{:.10}", hex(&k.finalize())),
-        content,
-        dirty,
-    })
 }
 
 /// A commit checked out here to be sent like a local tree: one the machine cannot fetch, or the
@@ -105,7 +149,7 @@ pub fn local(dir: &std::path::Path) -> Result<Local, GitError> {
 /// the commit rather than by the path, so two commits never build in one tree. Each is locked
 /// until it has been sent, which is why a comparison of two such commits takes two.
 pub struct Checkout {
-    pub dir: std::path::PathBuf,
+    pub dir: PathBuf,
     pub sha: String,
     pub key: String,
     pub lock: Option<std::fs::File>,
@@ -114,72 +158,72 @@ pub struct Checkout {
 }
 
 impl Checkout {
+    pub fn of(
+        dir: &Path,
+        identity: &str,
+        sha: &str,
+        why: Option<&'static str>,
+    ) -> Result<Checkout, CheckoutError> {
+        Checkout::under(
+            &Paths::from_env()
+                .sent()
+                .ok_or(CheckoutError::NoHome)?
+                .join(identity),
+            dir,
+            identity,
+            sha,
+            why,
+        )
+    }
+
+    fn under(
+        root: &Path,
+        dir: &Path,
+        identity: &str,
+        sha: &str,
+        why: Option<&'static str>,
+    ) -> Result<Checkout, CheckoutError> {
+        std::fs::create_dir_all(root).map_err(FileError::at(root))?;
+        let (slot, lock) = (0u32..)
+            .find_map(|n| {
+                let path = root.join(format!("{n}.lock"));
+                let taken = std::fs::File::create(&path)
+                    .map_err(std::fs::TryLockError::Error)
+                    .and_then(|f| f.try_lock().map(|()| f));
+                match taken {
+                    Ok(f) => Some(Ok((n.to_string(), f))),
+                    Err(std::fs::TryLockError::WouldBlock) => None,
+                    Err(std::fs::TryLockError::Error(e)) => Some(Err(FileError::new(&path, e))),
+                }
+            })
+            .expect("an unbounded range")?;
+        let checkout = root.join(&slot);
+        if !checkout.join(".git").exists() {
+            let _ = std::fs::remove_dir_all(&checkout);
+            let from = dir
+                .to_str()
+                .ok_or_else(|| CheckoutError::Unnamed(dir.to_path_buf()))?;
+            Git(root).run(&["clone", "--quiet", "--shared", "--no-checkout", from, &slot])?;
+        }
+        Git(&checkout).run(&["checkout", "--quiet", "--detach", "--force", sha])?;
+        Git(&checkout).run(&["clean", "-fdxq"])?;
+        let mut k = Sha256::new();
+        k.update(format!("base\0{identity}\0{sha}"));
+        Ok(Checkout {
+            dir: checkout,
+            sha: sha.to_string(),
+            key: format!("{:.10}", hex(&k.finalize())),
+            lock: Some(lock),
+            why,
+        })
+    }
+
     pub fn local(&self) -> Result<Local, GitError> {
         Ok(Local {
             key: self.key.clone(),
-            ..local(&self.dir)?
+            ..Local::of(&self.dir)?
         })
     }
-}
-
-pub fn checkout(
-    dir: &std::path::Path,
-    identity: &str,
-    sha: &str,
-    why: Option<&'static str>,
-) -> Result<Checkout, CheckoutError> {
-    checkout_in(
-        &Paths::from_env()
-            .sent()
-            .ok_or(CheckoutError::NoHome)?
-            .join(identity),
-        dir,
-        identity,
-        sha,
-        why,
-    )
-}
-
-fn checkout_in(
-    root: &std::path::Path,
-    dir: &std::path::Path,
-    identity: &str,
-    sha: &str,
-    why: Option<&'static str>,
-) -> Result<Checkout, CheckoutError> {
-    std::fs::create_dir_all(root).map_err(FileError::at(root))?;
-    let (slot, lock) = (0u32..)
-        .find_map(|n| {
-            let path = root.join(format!("{n}.lock"));
-            let taken = std::fs::File::create(&path)
-                .map_err(std::fs::TryLockError::Error)
-                .and_then(|f| f.try_lock().map(|()| f));
-            match taken {
-                Ok(f) => Some(Ok((n.to_string(), f))),
-                Err(std::fs::TryLockError::WouldBlock) => None,
-                Err(std::fs::TryLockError::Error(e)) => Some(Err(FileError::new(&path, e))),
-            }
-        })
-        .expect("an unbounded range")?;
-    let checkout = root.join(&slot);
-    if !checkout.join(".git").exists() {
-        let _ = std::fs::remove_dir_all(&checkout);
-        let from = dir
-            .to_str()
-            .ok_or_else(|| CheckoutError::Unnamed(dir.to_path_buf()))?;
-        Git(root).run(&["clone", "--quiet", "--shared", "--no-checkout", from, &slot])?;
-    }
-    Git(&checkout).run(&["checkout", "--quiet", "--detach", "--force", sha])?;
-    Git(&checkout).run(&["clean", "-fdxq"])?;
-    let mut k = Sha256::new();
-    k.update(format!("base\0{identity}\0{sha}"));
-    Ok(Checkout {
-        dir: checkout,
-        sha: sha.to_string(),
-        key: format!("{:.10}", hex(&k.finalize())),
-        lock: Some(lock),
-        why,
-    })
 }
 
 /// A ref as this checkout sees it, for a run that may have to send it.
@@ -191,55 +235,38 @@ pub struct Fetched {
     pub ahead: Option<&'static str>,
 }
 
-/// `name` as this checkout sees it. That is the remote-tracking ref, which a local branch of that
-/// name may be behind, unless the local branch has commits origin lacks: fetching it would take
-/// origin's.
-pub fn as_fetched(dir: &std::path::Path, name: &str) -> Option<Fetched> {
-    let tracking = format!("origin/{name}");
-    let Ok(pushed) = commit(dir, &tracking) else {
-        return commit(dir, name).ok().map(|commit| Fetched {
-            commit,
-            seen: name.to_string(),
-            ahead: None,
-        });
-    };
-    match commit(dir, &format!("refs/heads/{name}")) {
-        Ok(own)
-            if Git(dir)
-                .run(&["merge-base", "--is-ancestor", &own, &pushed])
-                .is_err() =>
-        {
-            Some(Fetched {
-                commit: own,
+impl Fetched {
+    /// `name` as this checkout sees it. That is the remote-tracking ref, which a local branch of
+    /// that name may be behind, unless the local branch has commits origin lacks: fetching it would
+    /// take origin's.
+    pub fn of(dir: &Path, name: &str) -> Option<Fetched> {
+        let tracking = format!("origin/{name}");
+        let Ok(pushed) = Repo(dir).commit(&tracking) else {
+            return Repo(dir).commit(name).ok().map(|commit| Fetched {
+                commit,
                 seen: name.to_string(),
-                ahead: Some("origin's branch lacks it"),
-            })
+                ahead: None,
+            });
+        };
+        match Repo(dir).commit(&format!("refs/heads/{name}")) {
+            Ok(own)
+                if Git(dir)
+                    .run(&["merge-base", "--is-ancestor", &own, &pushed])
+                    .is_err() =>
+            {
+                Some(Fetched {
+                    commit: own,
+                    seen: name.to_string(),
+                    ahead: Some("origin's branch lacks it"),
+                })
+            }
+            _ => Some(Fetched {
+                commit: pushed,
+                seen: tracking,
+                ahead: None,
+            }),
         }
-        _ => Some(Fetched {
-            commit: pushed,
-            seen: tracking,
-            ahead: None,
-        }),
     }
-}
-
-/// Why a machine, which holds no credentials, cannot fetch `sha` from this checkout's origin, or
-/// None when it can. A commit on no branch of origin here is taken as never pushed: sending one
-/// that was costs a transfer, where fetching one that was not fails the run.
-pub fn unfetchable(dir: &std::path::Path, sha: &str) -> Option<&'static str> {
-    let on = Git(dir).run(&[
-        "for-each-ref",
-        "--count=1",
-        "--contains",
-        sha,
-        "--format=%(refname)",
-        "refs/remotes/origin/",
-    ]);
-    if on.map_or(true, |r| r.trim().is_empty()) {
-        return Some("it was never pushed");
-    }
-    let url = Git(dir).run(&["remote", "get-url", "origin"]).ok()?;
-    private(url.trim()).then_some("its remote needs credentials, which the machines do not hold")
 }
 
 /// A remote that refuses an anonymous read. Remembered for a week, since asking costs a round
@@ -403,15 +430,15 @@ mod tests {
             "git -C cubek init -q && git -C cubek -c user.email=a@b -c user.name=t commit -q --allow-empty -m one",
         );
         sh("git -C cubek worktree add -q ../topk-branch");
-        assert_eq!(identity(&home.join("topk-branch")), "cubek");
-        assert_eq!(identity(&main), "cubek");
-        assert_eq!(identity(&main.join("inner")), "inner");
-        assert_eq!(identity(&home.join("loose")), "loose");
+        assert_eq!(Repo(&home.join("topk-branch")).identity(), "cubek");
+        assert_eq!(Repo(&main).identity(), "cubek");
+        assert_eq!(Repo(&main.join("inner")).identity(), "inner");
+        assert_eq!(Repo(&home.join("loose")).identity(), "loose");
         assert_eq!(
-            variant(&home.join("topk-branch"), "cubek").as_deref(),
+            Repo(&home.join("topk-branch")).variant("cubek").as_deref(),
             Some("topk-branch")
         );
-        assert_eq!(variant(&main, "cubek"), None);
+        assert_eq!(Repo(&main).variant("cubek"), None);
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -422,7 +449,7 @@ mod tests {
         let (a, b) = (tmp("a"), tmp("b"));
         repo(&a);
         repo(&b);
-        assert_ne!(local(&a).unwrap().key, local(&b).unwrap().key);
+        assert_ne!(Local::of(&a).unwrap().key, Local::of(&b).unwrap().key);
     }
 
     #[test]
@@ -472,8 +499,8 @@ mod tests {
         commit_empty("one");
         commit_empty("two");
         let (one, two) = (
-            commit(&repo, "HEAD~1").unwrap(),
-            commit(&repo, "HEAD").unwrap(),
+            Repo(&repo).commit("HEAD~1").unwrap(),
+            Repo(&repo).commit("HEAD").unwrap(),
         );
         let root = scratch.join("sent/repo");
         let at = |c: &Checkout| {
@@ -483,11 +510,11 @@ mod tests {
                 .trim()
                 .to_string()
         };
-        let a = checkout_in(&root, &repo, "repo", &one, None).unwrap();
-        let b = checkout_in(&root, &repo, "repo", &two, None).unwrap();
+        let a = Checkout::under(&root, &repo, "repo", &one, None).unwrap();
+        let b = Checkout::under(&root, &repo, "repo", &two, None).unwrap();
         assert_eq!((at(&a), at(&b)), (one, two.clone()));
         assert_ne!(a.dir, b.dir, "the first is held until it is sent");
-        let c = checkout_in(&root, &repo, "repo", &two, None).unwrap();
+        let c = Checkout::under(&root, &repo, "repo", &two, None).unwrap();
         assert!(c.dir != a.dir && c.dir != b.dir, "nor is the second");
         assert_eq!(
             c.key, b.key,
@@ -502,10 +529,10 @@ mod tests {
     fn editing_a_tree_keeps_its_cache_and_changes_what_the_record_says() {
         let a = tmp("edit");
         repo(&a);
-        let before = local(&a).unwrap();
+        let before = Local::of(&a).unwrap();
         assert!(!before.dirty);
         std::fs::write(a.join("a.rs"), "fn main() { let _ = 1; }\n").unwrap();
-        let after = local(&a).unwrap();
+        let after = Local::of(&a).unwrap();
         assert_eq!(before.key, after.key);
         assert_ne!(before.content, after.content);
         assert!(after.dirty);
@@ -517,9 +544,9 @@ mod tests {
     fn an_untracked_source_file_changes_the_content_hash() {
         let a = tmp("untracked");
         repo(&a);
-        let before = local(&a).unwrap().content;
+        let before = Local::of(&a).unwrap().content;
         std::fs::write(a.join("b.rs"), "fn other() {}\n").unwrap();
-        assert_ne!(before, local(&a).unwrap().content);
+        assert_ne!(before, Local::of(&a).unwrap().content);
     }
 
     // And an ignored one must not, because it does not make the trip either.
@@ -527,9 +554,9 @@ mod tests {
     fn an_ignored_file_does_not() {
         let a = tmp("ignored");
         repo(&a);
-        let before = local(&a).unwrap().content;
+        let before = Local::of(&a).unwrap().content;
         std::fs::create_dir_all(a.join("target")).unwrap();
         std::fs::write(a.join("target/big.rlib"), "artifact\n").unwrap();
-        assert_eq!(before, local(&a).unwrap().content);
+        assert_eq!(before, Local::of(&a).unwrap().content);
     }
 }

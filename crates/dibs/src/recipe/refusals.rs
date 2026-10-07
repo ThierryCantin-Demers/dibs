@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     cli::{RecipeCall, RecipeVerb},
-    execution,
+    execution::Repo,
 };
 use dibs_format::Lock;
 use std::{collections::BTreeMap, path::PathBuf};
@@ -64,12 +64,12 @@ impl Resolved {
         if args.verb == RecipeVerb::Shell {
             let repo = found
                 .as_deref()
-                .map(execution::identity)
+                .map(|dir| Repo(dir).identity())
                 .unwrap_or_else(|_| args.repo.clone());
             refuse_shell_words(args, &repo)?;
         }
         let dir = found?;
-        let repo_name = execution::identity(&dir);
+        let repo_name = Repo(&dir).identity();
         let manifest = if args.verb == RecipeVerb::Shell {
             Manifest::load_any(&dir, &repo_name)?
         } else {

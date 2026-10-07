@@ -1,6 +1,7 @@
 use super::{
     error::{Refusal, RunError, Unprepared},
     jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
+    local::Repo,
     pins::{self, pin_spec, pins_of},
     record::{batch_of_caller, fetch_artifacts, measured_summary},
     refs::{Arm, arms, sent_from, short, sides},
@@ -152,7 +153,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     sent_from(c, arm.note.as_deref(), &c.dir.display().to_string())
                 ),
                 (None, None) => {
-                    let l = super::local(&dir)?;
+                    let l = super::Local::of(&dir)?;
                     println!("{head}local {} from {}", l.content, dir.display());
                     println!(
                         "            {}",
@@ -649,7 +650,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         when: now_secs(),
         label,
         repo: repo_name.clone(),
-        variant: super::variant(&dir, &repo_name),
+        variant: Repo(&dir).variant(&repo_name),
         // shell borrows Build's machinery but is not a build, and a record that says
         // otherwise is a record that misleads whoever reads it later.
         verb: match shell_reason {

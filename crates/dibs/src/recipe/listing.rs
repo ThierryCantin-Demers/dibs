@@ -3,13 +3,13 @@ use super::{
     manifest::{Manifest, Source, Verb},
     repo::Checkouts,
 };
-use crate::{cli::RecipeCall, execution};
+use crate::{cli::RecipeCall, execution::Repo};
 use std::process::ExitCode;
 
 /// `dibs list <repo>`: its recipes, what each takes, and its services.
 pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
     let dir = Checkouts::of(args)?.find(&args.repo)?;
-    let manifest = Manifest::load(&dir, &execution::identity(&dir))?;
+    let manifest = Manifest::load(&dir, &Repo(&dir).identity())?;
     for v in [Verb::Bench, Verb::Build, Verb::Test] {
         let listing = manifest.listing(v);
         if !listing.is_empty() {

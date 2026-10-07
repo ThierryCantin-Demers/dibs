@@ -1,4 +1,7 @@
-use super::{error::ArmError, local::Fetched};
+use super::{
+    error::ArmError,
+    local::{Fetched, Repo},
+};
 use crate::git::{Git, GitError};
 use std::path::Path;
 
@@ -97,7 +100,7 @@ impl Arm {
     pub fn local(&self, checkout: &Path) -> Result<super::Local, GitError> {
         match &self.checkout {
             Some(c) => c.local(),
-            None => super::local(checkout),
+            None => super::Local::of(checkout),
         }
     }
 
@@ -144,7 +147,7 @@ pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, ArmError
                 });
                 continue;
             }
-            Side::Ref(r) => match super::as_fetched(dir, r) {
+            Side::Ref(r) => match Fetched::of(dir, r) {
                 Some(Fetched {
                     commit,
                     seen,
@@ -166,7 +169,7 @@ pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, ArmError
                 }
             },
             Side::Pinned(r) => {
-                let sha = super::commit(dir, r)?;
+                let sha = Repo(dir).commit(r)?;
                 (sha.clone(), sha, None, None)
             }
             Side::Base(a, b) => {
@@ -180,14 +183,14 @@ pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, ArmError
         };
         let why = match s.sent() {
             true => None,
-            false => ahead.or_else(|| super::unfetchable(dir, &sha)),
+            false => ahead.or_else(|| Repo(dir).unfetchable(&sha)),
         };
         arms.push(match s.sent() || why.is_some() {
             true => Arm {
                 name,
                 fetch: None,
                 note,
-                checkout: Some(super::checkout(dir, repo, &sha, why)?),
+                checkout: Some(super::Checkout::of(dir, repo, &sha, why)?),
             },
             // A ref is fetched by name, so how it stands here says nothing of what the machine takes.
             false => Arm {
@@ -209,17 +212,6 @@ pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, ArmError
     Ok(arms)
 }
 
-/// The commit `name` is here, in full.
-pub fn commit(dir: &Path, name: &str) -> Result<String, ArmError> {
-    Git(dir)
-        .run(&["rev-parse", "--verify", "-q", &format!("{name}^{{commit}}")])
-        .map(|s| s.trim().to_string())
-        .map_err(|_| ArmError::NoCommit {
-            name: name.to_string(),
-            dir: dir.to_path_buf(),
-        })
-}
-
 /// Where a range's tip left its base.
 #[derive(Debug, PartialEq)]
 pub struct Base {
@@ -232,8 +224,8 @@ pub struct Base {
 /// that is behind its upstream would put that point too early and credit `tip` with commits it
 /// merely did not have, so the upstream is asked too and the later of the two answers wins.
 pub fn merge_base(dir: &Path, from: &str, tip: &str) -> Result<Base, ArmError> {
-    let tip = commit(dir, tip)?;
-    let own = commit(dir, from)?;
+    let tip = Repo(dir).commit(tip)?;
+    let own = Repo(dir).commit(from)?;
     let base = |c: &str| {
         Git(dir)
             .run(&["merge-base", c, &tip])
@@ -255,7 +247,7 @@ pub fn merge_base(dir: &Path, from: &str, tip: &str) -> Result<Base, ArmError> {
         .map(|s| s.trim().to_string());
     let theirs = upstream
         .as_deref()
-        .and_then(|u| Some((u.to_string(), base(&commit(dir, u).ok()?).ok()?)));
+        .and_then(|u| Some((u.to_string(), base(&Repo(dir).commit(u).ok()?).ok()?)));
     match theirs {
         Some((u, b))
             if b != mine

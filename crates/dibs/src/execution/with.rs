@@ -2,6 +2,7 @@ use super::{
     base::{preparing, sh},
     error::{Refusal, RunError, Unprepared},
     jobs::{JobRequest, Jobs},
+    local::Repo,
     refs::{arms, sides},
     trees::{
         TreeSpec, announce_prepared, in_tree, new_token, preparing_title, send_missing_gitdbs,
@@ -32,7 +33,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         return Err(Refusal::WithPin.into());
     }
     let dir = Checkouts::of(args)?.find(&args.repo)?;
-    let repo_name = super::identity(&dir);
+    let repo_name = Repo(&dir).identity();
     let manifest = Manifest::load(&dir, &repo_name)?;
     let name = args
         .recipe
