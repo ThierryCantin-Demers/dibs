@@ -143,7 +143,13 @@ impl Sync<'_> {
             rsync.stdout(Stdio::piped()).stderr(Stdio::piped());
         }
         let relayed = Relayed::catch();
-        let mut child = rsync.spawn()?;
+        let mut child = match rsync.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                relayed.pass_on();
+                return Err(e.into());
+            }
+        };
         relayed.to(child.id());
         match output {
             Output::Lines(on_line) => Lines::of(&mut child).relay(*on_line),

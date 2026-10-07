@@ -311,6 +311,7 @@ impl Guard {
             Ok(running) => running,
             Err(e) => {
                 eprintln!("dibs: could not run {}: {e}", words.join(" "));
+                relayed.pass_on();
                 return 127;
             }
         };
