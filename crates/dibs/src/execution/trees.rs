@@ -10,6 +10,7 @@
 //! tolerates neighbours perfectly and must never hold the exclusive lock.
 
 use super::{
+    build::BuildSignature,
     jobs::{JobRequest, Jobs},
     local::Repo,
     pins::Nest,
@@ -28,7 +29,7 @@ pub struct TreeSpec<'a> {
     pub repo_name: &'a str,
     pub reference: &'a str,
     pub local: Option<&'a super::Local>,
-    pub signature: &'a str,
+    pub signature: &'a BuildSignature,
     pub token: &'a str,
     pub slot: usize,
     pub nest: Option<&'a Nest>,
@@ -46,7 +47,7 @@ impl TreeSpec<'_> {
         let lock = Repo(self.dir).lockfile(self.local.is_none().then_some(self.reference));
         let lock = lock.as_deref().unwrap_or("");
         let gitdbs = CargoHome::here().dbs(&GitPin::all(lock));
-        let lines = super::packages(lock, self.signature);
+        let lines = self.signature.packages(lock);
         let prepare = wire::Prepare {
             repo: self.repo_name.to_string(),
             source: match self.local {

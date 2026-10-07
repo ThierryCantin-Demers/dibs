@@ -1,4 +1,5 @@
 use super::{
+    build::BuildSignature,
     error::{Refusal, RunError, Unprepared},
     jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
     local::Repo,
@@ -272,7 +273,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             repo_name: &p.repo,
             reference: &p.reference,
             local: p.local.as_ref(),
-            signature: "",
+            signature: &BuildSignature::default(),
             token: &new_token(),
             slot: 0,
             nest: None,
@@ -363,7 +364,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     let signature = rec
         .steps
         .iter()
-        .find_map(|st| super::build_signature(&st.run))
+        .find_map(|st| BuildSignature::of(&st.run))
         .unwrap_or_default();
     let mut slot = 0;
     let mut trees = Vec::with_capacity(arms.len());
@@ -789,10 +790,10 @@ pub fn step_plan(
     pinned: Option<&BTreeSet<String>>,
 ) -> StepPlan {
     let step = &rec.steps[i];
-    let builds = super::build_signature(&step.run).is_some();
+    let builds = BuildSignature::of(&step.run).is_some();
     let built = rec.steps[..i]
         .iter()
-        .any(|s| s.lock == Lock::Shared && super::build_signature(&s.run).is_some());
+        .any(|s| s.lock == Lock::Shared && BuildSignature::of(&s.run).is_some());
     let measured = step.lock == Lock::Exclusive;
     // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop in the
     // step as well as the first word of it.

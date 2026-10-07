@@ -15,7 +15,6 @@ mod trees;
 mod with;
 
 pub use base::{raw, run_recipe};
-pub use build::{build_signature, packages};
 pub use error::{ArmError, CheckoutError, PinError, Refusal, RunError, Unprepared};
 pub use local::{Checkout, Fetched, Local, Repo};
 pub use schedule::Job;

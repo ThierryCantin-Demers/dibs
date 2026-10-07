@@ -1,5 +1,6 @@
 use super::{
     base::{preparing, sh},
+    build::BuildSignature,
     error::{Refusal, RunError, Unprepared},
     jobs::{JobRequest, Jobs},
     local::Repo,
@@ -130,7 +131,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let signature = svc
         .build
         .as_deref()
-        .and_then(super::build_signature)
+        .and_then(BuildSignature::of)
         .unwrap_or_default();
     let plan = TreeSpec {
         dir: &from,
@@ -225,7 +226,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             new_series: false,
             tree: Some(wire::Tree {
                 step: Some(wire::Step {
-                    claim: super::build_signature(build).is_some(),
+                    claim: BuildSignature::of(build).is_some(),
                     ..wire::Step::default()
                 }),
                 ..prepared.tree()
@@ -238,13 +239,8 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     }
 
     // Timed against a server this call built, a server another tree has built over since is refused.
-    let guarded = args.bench
-        && !args.anyway
-        && svc
-            .build
-            .as_deref()
-            .and_then(super::build_signature)
-            .is_some();
+    let guarded =
+        args.bench && !args.anyway && svc.build.as_deref().and_then(BuildSignature::of).is_some();
     let run = match served(svc, args, command, &in_tree_shell) {
         Ok(run) => run,
         Err(e) => {
