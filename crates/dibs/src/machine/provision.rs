@@ -294,4 +294,30 @@ mod tests {
         assert!(FIRST_BUILD.contains(&format!("exit {NO_LOCK_TAKER}")));
         assert!(FIRST_BUILD.contains(&format!("exit {UNLOCKABLE}")));
     }
+
+    #[test]
+    fn the_runner_source_resolves_against_its_own_lock_file() {
+        let dir = std::env::temp_dir().join(format!("dibs-runner-source-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut tar = std::process::Command::new("tar")
+            .args(["xzf", "-", "-C"])
+            .arg(&dir)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(&mut tar.stdin.take().unwrap(), Runner::SOURCE).unwrap();
+        assert!(tar.wait().unwrap().success());
+        // The cargo running this test, since the one on PATH may queue behind it.
+        let out = std::process::Command::new(env!("CARGO"))
+            .args(["metadata", "--locked", "--offline", "--format-version", "1"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }

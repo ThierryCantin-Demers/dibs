@@ -57,7 +57,8 @@ struct TreeFile {
 }
 
 impl RunnerTree {
-    const WATCHED: [&str; 5] = [
+    const WATCHED: [&str; 6] = [
+        "Cargo.lock",
         "crates/dibs-runner/src",
         "crates/dibs-runner/provision",
         "crates/dibs-runner/Cargo.toml",
@@ -71,7 +72,6 @@ impl RunnerTree {
         let provision = clone.join("crates/dibs-runner/provision");
         let mut files: Vec<TreeFile> = [
             ("Cargo.toml", "workspace.toml"),
-            ("Cargo.lock", "Cargo.lock"),
             ("install.sh", "install.sh"),
         ]
         .into_iter()
@@ -80,6 +80,11 @@ impl RunnerTree {
             bytes: read(&provision.join(from)),
         })
         .collect();
+        let lock = String::from_utf8(read(&clone.join("Cargo.lock"))).expect("Cargo.lock is text");
+        files.push(TreeFile {
+            path: "Cargo.lock".to_string(),
+            bytes: RunnerLock::cut(&lock).into_bytes(),
+        });
         for crate_dir in ["crates/dibs-format", "crates/dibs-runner"] {
             let root = clone.join(crate_dir);
             files.push(TreeFile {
@@ -143,6 +148,66 @@ impl RunnerTree {
         }
         tar.resize(tar.len() + 1024, 0);
         tar
+    }
+}
+
+/// The clone's lock file cut to what the runner and the format reach, so a machine builds the
+/// versions this client was built and tested with, and no second lock file can fall behind.
+struct RunnerLock;
+
+impl RunnerLock {
+    const MEMBERS: [&str; 2] = ["dibs-format", "dibs-runner"];
+    const PACKAGE: &str = "\n[[package]]\n";
+
+    fn cut(lock: &str) -> String {
+        let mut blocks = lock.split(RunnerLock::PACKAGE);
+        let header = blocks.next().expect("a lock file starts with its header");
+        let blocks: Vec<&str> = blocks.collect();
+        let mut kept = vec![false; blocks.len()];
+        let mut wanted: Vec<String> = RunnerLock::MEMBERS.iter().map(|m| m.to_string()).collect();
+        while let Some(entry) = wanted.pop() {
+            let mut words = entry.split(' ');
+            let name = words.next().expect("a dependency names a package");
+            let version = words.next();
+            let found = blocks.iter().position(|block| {
+                RunnerLock::field(block, "name") == Some(name)
+                    && version.is_none_or(|v| RunnerLock::field(block, "version") == Some(v))
+            });
+            let at = found.unwrap_or_else(|| panic!("Cargo.lock has no package {entry}"));
+            if !kept[at] {
+                kept[at] = true;
+                wanted.extend(RunnerLock::dependencies(blocks[at]));
+            }
+        }
+        blocks
+            .iter()
+            .zip(kept)
+            .filter(|(_, kept)| *kept)
+            .fold(header.to_string(), |lock, (block, _)| {
+                lock + RunnerLock::PACKAGE + block
+            })
+    }
+
+    fn field<'a>(block: &'a str, key: &str) -> Option<&'a str> {
+        block
+            .lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix(" = \""))
+            .map(|rest| rest.trim_end_matches('"'))
+    }
+
+    fn dependencies(block: &str) -> Vec<String> {
+        block
+            .lines()
+            .skip_while(|line| *line != "dependencies = [")
+            .skip(1)
+            .take_while(|line| *line != "]")
+            .map(|line| {
+                line.trim()
+                    .trim_end_matches(',')
+                    .trim_matches('"')
+                    .to_string()
+            })
+            .collect()
     }
 }
 

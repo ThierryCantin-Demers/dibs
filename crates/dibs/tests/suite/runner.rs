@@ -2,7 +2,6 @@
 
 use crate::harness::*;
 use std::{
-    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     time::Duration,
@@ -14,34 +13,6 @@ fn toml(rel: &str) -> toml::Table {
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
         .parse()
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
-
-/// Every package a lock file pins, as `name version`.
-fn pinned(rel: &str) -> BTreeSet<String> {
-    toml(rel)["package"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| {
-            format!(
-                "{} {}",
-                p["name"].as_str().unwrap(),
-                p["version"].as_str().unwrap()
-            )
-        })
-        .collect()
-}
-
-#[test]
-fn the_runners_lock_file_pins_what_the_workspace_does() {
-    let workspace = pinned("Cargo.lock");
-    let runner = pinned("crates/dibs-runner/provision/Cargo.lock");
-    let strays: Vec<&String> = runner.difference(&workspace).collect();
-    assert!(
-        strays.is_empty(),
-        "the runner's tree pins {strays:?}, which the workspace does not. Copy Cargo.lock into an \
-         unpacked tree, run cargo metadata --offline there, and keep the lock file it leaves"
-    );
 }
 
 #[test]
