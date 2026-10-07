@@ -3,7 +3,6 @@ use super::{
     jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
     local::Repo,
     pins::{Nest, PinSpec, Pinned, PinnedTree},
-    record::{batch_of_caller, fetch_artifacts, measured_summary},
     refs::{Arm, Side},
     schedule::Job,
     sweep::SweepPoints,
@@ -11,14 +10,14 @@ use super::{
 };
 use crate::{
     batch,
-    call::{Destination, RecipeJob},
+    call::{BatchStep, Destination, RecipeJob},
     cli::{RecipeCall, ShellWord},
     recipe::{self, Lock, Manifest, NotTaken, Resolved},
     records::{Affinity, RunLog, now_secs},
 };
 use dibs_format::{
-    Alias, ArmRecord, Exit, MachineName, Outcome, Pairs, ProcedureStep, RunRecord, RunVerb,
-    StepRecord, wire,
+    Alias, ArmRecord, BatchId, Exit, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
+    RunVerb, StepRecord, wire,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -626,7 +625,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             failed = Some(out.status);
         }
     }
-    fetch_artifacts(&backend, &steps, args.artifacts_to.as_deref(), compared);
+    backend.fetch_artifacts(&steps, args.artifacts_to.as_deref(), compared);
 
     let revision = |p: &wire::Prepared| (p.revision.repo.clone(), p.revision.sha.clone());
     let pinned_revisions: Vec<(String, String)> = pinned.iter().map(revision).collect();
@@ -639,7 +638,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             .collect()
     };
     if compared || args.reps > 1 {
-        eprint!("{}", measured_summary(&arms, &steps, &revisions_of));
+        eprint!("{}", Arm::measured_summary(&arms, &steps, &revisions_of));
     }
     let record = RunRecord {
         when: now_secs(),
@@ -702,7 +701,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 .collect(),
         },
         reps: args.reps,
-        batch: batch_of_caller(),
+        batch: BatchStep::from_env().map(|s| BatchId::from(s.batch)),
         anyway: args.anyway,
         new_series: args.new_series,
         fresh: Vec::from_iter(fresh_values(rec, &trees[0].token)).into(),
@@ -878,7 +877,7 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
         needs: None,
         reason: Some(reason.to_string()),
         seeded: None,
-        batch: batch_of_caller(),
+        batch: BatchStep::from_env().map(|s| BatchId::from(s.batch)),
         refs: None,
         arms: Vec::new(),
         reps: 1,

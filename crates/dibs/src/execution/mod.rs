@@ -6,7 +6,6 @@ mod error;
 mod jobs;
 mod local;
 mod pins;
-mod record;
 mod refs;
 mod schedule;
 mod sweep;

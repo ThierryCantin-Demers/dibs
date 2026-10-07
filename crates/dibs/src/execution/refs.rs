@@ -2,8 +2,12 @@ use super::{
     error::ArmError,
     local::{Fetched, Repo},
 };
-use crate::git::{Git, GitError};
-use std::path::Path;
+use crate::{
+    git::{Git, GitError},
+    recipe::Lock,
+};
+use dibs_format::{JobId, StepRecord};
+use std::{collections::BTreeMap, path::Path};
 
 /// What `@<ref>` names, before anything is looked up.
 #[derive(Debug, Clone, PartialEq)]
@@ -197,6 +201,57 @@ impl Arm {
             });
         }
         Ok(arms)
+    }
+
+    /// Each arm's measured seconds per rep, and the jobs whose logs hold its numbers. The seconds
+    /// are the steps' wall time, which is only a first look: the recipe's own output is the result.
+    pub fn measured_summary(
+        arms: &[Arm],
+        steps: &[StepRecord],
+        revisions: &dyn Fn(usize) -> Vec<(String, String)>,
+    ) -> String {
+        let width = arms.iter().map(|a| a.name.len()).max().unwrap_or(0);
+        let mut out = String::from(
+            "dibs: measured, each rep's exclusive seconds and the jobs with its output:\n",
+        );
+        for (a, arm) in arms.iter().enumerate() {
+            let mine: Vec<&StepRecord> = steps
+                .iter()
+                .filter(|s| {
+                    s.lock == Lock::Exclusive
+                        && (arms.len() == 1 || s.arm.as_deref() == Some(arm.name.as_str()))
+                })
+                .collect();
+            let mut per_rep: BTreeMap<u32, u64> = BTreeMap::new();
+            for s in &mine {
+                *per_rep.entry(s.rep.unwrap_or(1)).or_default() += s.seconds;
+            }
+            let secs: Vec<String> = per_rep.values().map(|s| format!("{s}s")).collect();
+            let jobs: Vec<&str> = mine
+                .iter()
+                .filter_map(|s| s.job.as_ref().map(JobId::as_str))
+                .collect();
+            let revs: Vec<String> = revisions(a)
+                .iter()
+                .map(|(r, sha)| format!("{r}@{sha}"))
+                .collect();
+            out += &format!(
+                "  {:<width$}  {}  {}  jobs {}\n",
+                arm.name,
+                revs.join(" "),
+                if secs.is_empty() {
+                    "nothing measured".to_string()
+                } else {
+                    secs.join(" ")
+                },
+                if jobs.is_empty() {
+                    "-".to_string()
+                } else {
+                    jobs.join(" ")
+                }
+            );
+        }
+        out
     }
 }
 

@@ -14,7 +14,7 @@ use dibs_format::{
     Alias, JobId, Label, MachineName, StepRecord,
     wire::{Prepared, Stepped, Tree},
 };
-use std::{io::Write as _, time::Instant};
+use std::{io::Write as _, path::PathBuf, time::Instant};
 
 /// What a run record names the layer its jobs ran on.
 pub const BACKEND: &str = "dibs";
@@ -290,6 +290,31 @@ impl Jobs {
         match Jobs::exit(exit) {
             0 => Ok(String::from_utf8_lossy(&report).into_owned()),
             exit => Err(exit),
+        }
+    }
+
+    /// Every job that kept files has them fetched, into `to` when given: under the job's arm and
+    /// rep when a comparison or reps would otherwise write one path twice.
+    pub fn fetch_artifacts(&self, steps: &[StepRecord], to: Option<&str>, compared: bool) {
+        for s in steps.iter().filter(|s| s.artifacts.is_some_and(|n| n > 0)) {
+            let Some(job) = &s.job else { continue };
+            let dest = to.map(|dir| {
+                let mut dest = PathBuf::from(dir);
+                if let Some(arm) = s.arm.as_deref().filter(|_| compared) {
+                    dest.push(arm);
+                }
+                if let Some(r) = s.rep {
+                    dest.push(format!("r{r}"));
+                }
+                dest.display().to_string()
+            });
+            // Its report goes where every other dibs: line does, apart from the jobs' own output.
+            match self.fetch(job, dest.as_deref()) {
+                Ok(report) => eprint!("{report}"),
+                Err(exit) => eprintln!(
+                    "dibs: could not fetch what job {job} kept (exit {exit}); dibs --fetch {job} tries again"
+                ),
+            }
         }
     }
 
