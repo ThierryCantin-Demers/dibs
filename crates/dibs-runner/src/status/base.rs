@@ -103,8 +103,7 @@ impl Look<'_> {
     }
 
     /// Processes of this account whose environment names a job that has written its meta, which
-    /// a job does as it ends. Only Linux shows another process's environment.
-    #[cfg(target_os = "linux")]
+    /// a job does as it ends.
     fn leftovers(&self) -> Vec<Leftover> {
         let jobs = self.machine.jobs();
         Host::processes()
@@ -121,11 +120,6 @@ impl Look<'_> {
                 })
             })
             .collect()
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn leftovers(&self) -> Vec<Leftover> {
-        Vec::new()
     }
 
     /// The status as text, coloured when the caller's stdout is a terminal.

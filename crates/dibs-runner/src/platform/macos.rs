@@ -169,8 +169,50 @@ impl Platform for MacOs {
         (read == size && !path.is_empty()).then(|| PathBuf::from(OsStr::from_bytes(&path)))
     }
 
-    fn variable(_pid: u32, _name: &str) -> Option<String> {
-        None
+    /// `sysctl(KERN_PROCARGS2)` answers for this account's processes: the argument count, the
+    /// executable's path, the arguments and then the environment, each ended by NULs.
+    fn variable(pid: u32, name: &str) -> Option<String> {
+        let mut query = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
+        let mut length: libc::size_t = 0;
+        // SAFETY: with no buffer, sysctl only says how long its answer is.
+        let sized = unsafe {
+            libc::sysctl(
+                query.as_mut_ptr(),
+                query.len() as libc::c_uint,
+                std::ptr::null_mut(),
+                &mut length,
+                std::ptr::null_mut(),
+                0,
+            )
+        } == 0;
+        if !sized {
+            return None;
+        }
+        let mut answer = vec![0u8; length];
+        // SAFETY: sysctl writes at most `length` bytes into the buffer, and says how many.
+        let read = unsafe {
+            libc::sysctl(
+                query.as_mut_ptr(),
+                query.len() as libc::c_uint,
+                answer.as_mut_ptr().cast(),
+                &mut length,
+                std::ptr::null_mut(),
+                0,
+            )
+        } == 0;
+        if !read {
+            return None;
+        }
+        answer.truncate(length);
+        let arguments = i32::from_ne_bytes(answer.get(..4)?.try_into().ok()?);
+        let mut strings = answer[4..].split(|b| *b == 0).filter(|s| !s.is_empty());
+        strings.next()?;
+        strings
+            .skip(usize::try_from(arguments).ok()?)
+            .find_map(|pair| {
+                let value = pair.strip_prefix(name.as_bytes())?.strip_prefix(b"=")?;
+                Some(String::from_utf8_lossy(value).into_owned())
+            })
     }
 
     fn fd_path(pid: u32, fd: u32) -> Option<String> {

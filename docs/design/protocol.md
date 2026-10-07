@@ -110,7 +110,9 @@ Every prepare and `dibs --gc` walk the scratch the same way and judge it by the 
   (`.seed.<pid>`, `.old.<pid>`), and is the prepare's while that process runs.
 - **Runner versions** are kept by use: each call a version serves marks its `.dibs-used`. One a
   later version replaced goes once that mark is older than `keep_days`; the newest installed
-  always stays, since it builds the next.
+  always stays, since it builds the next. A queued `--gc` starts its version again through
+  `/proc/<pid>/exe` on Linux, which a removal cannot reach; macOS starts it by its path, which
+  only a removal by hand reaches, since the call that queued it marked it used.
 - **The lock files** beside the targets stay after their targets go, so two prepares of one
   target never hold two different files.
 
@@ -161,7 +163,10 @@ Every prepare and `dibs --gc` walk the scratch the same way and judge it by the 
 ## Provisioning
 
 - **A version missing on a machine** shows as exit 125 with no frame, or 126 or 127 when it was
-  removed between the far shell's check and its `exec`. The client then runs the
+  removed between the far shell's check and its `exec`. A broken login shell, or a runner that is
+  there but cannot `exec` (another architecture, a missing loader, a `noexec` mount), ends the
+  same way and is taken for missing too: a build is tried once and the call made once more, and
+  then the call ends saying the runner could not be built there. The client then runs the
   newest runner already there (`ls -t`) as `build <hash>`, fed the tree. That runner takes the
   shared lock as an ordinary job, labelled `dibs-runner`, which unpacks the tree in
   `~/.cache/dibs/runner/.src.<hash>.<pid>` with the time of unpacking on every file (the tree is
@@ -241,8 +246,8 @@ one of them.
   record names, whose environment names a job that has written its `meta`, is what that job
   left running: `--kill` stops it and what it started, TERM and KILL 5 s later, and refuses
   another session's, which the meta's `who` line names, without `--anyone`, and `dibs status`
-  names it under `LEFT RUNNING`. macOS does not show another process's environment, so there
-  such a pid is neither named nor stopped.
+  names it under `LEFT RUNNING`. macOS shows a process's environment, through
+  `sysctl(KERN_PROCARGS2)`, to its own account alone, as it does the directory one works in.
 - **History, log and job directories.** The same columns and files, so estimates and `dibs out`
   read across both. A runner appends to `history` and `log` holding `<file>.lock` shared, and
   rewrites either only holding it exclusively, by rename; a lock file another account made
