@@ -2,7 +2,8 @@
 
 Design records for the lock itself. Each entry is here because it was expensive to work out
 and cheap to get wrong again, and several of them read as arbitrary until you know the
-measurement behind them.
+measurement behind them. An entry that no longer holds starts with **Superseded**, says by what,
+and keeps its reasoning, since that is what the next person would otherwise derive again.
 
 ## Settled. Do not re-open
 
@@ -39,16 +40,45 @@ delay a benchmark but never contaminate one.
 the ssh channel and nothing keeps a copy, but jobs redirect into files, and the process walk
 that already exists for CPU accounting resolves fd 1 and 2 across the tree to find them. It has
 to skip anything equal to the root's own stdout, which every descendant inherits, or it hands
-back the caller's terminal instead of the job's output.
+back the caller's terminal instead of the job's output. Every job's own output is also kept in
+its job directory, which `dibs out <job>` reads during the run or after; the walk finds what a
+job writes elsewhere, and `dibs out` lists both.
 
-**Transfers go through `--sync`**, which is rsync pointed back at the wrapper through its own
-`-e`, so the far side holds the shared lock while rsync's protocol stream passes through as the
-workload. A copy is not free: it competes for memory bandwidth and writeback with whatever is
+**Transfers go through `--sync`**, which is rsync pointed back at dibs through its own `-e`
+(`dibs __rsh`), so the far side holds the shared lock while rsync's protocol stream passes
+through as the workload. A copy is not free: it competes for memory bandwidth and writeback with whatever is
 being measured.
 
-**A full Rust rewrite of the remote half was considered and rejected.** Shipping the remote
-script per call is what keeps the target with nothing installed on it, which is the design's
-best property. The interface layer is Rust; the wrapper stays bash.
+**Superseded (2026-10-01): a full Rust rewrite of the remote half was considered and
+rejected.** Shipping the remote script per call kept the target with nothing installed on it,
+which was the design's best property, so the interface layer became Rust and the wrapper stayed
+bash.
+
+It was reversed by `dibs-runner` (`architecture.md`), for three costs the script kept paying.
+Every call wrote and parsed 2,653 lines of bash on the machine, about 60 ms before anything ran.
+The halves spoke through shell assignments, marker lines and a trailer parsed as text in three
+places, and that seam was where the bugs were: 7 of 40 commits and 6 of 16 friction reports. And
+four of seven open macOS issues were things bash cannot do: orphans formed by inherited lock
+descriptors, CPU of reaped children, a job dying with its caller. The property the script
+protected still holds: nobody installs or upgrades anything on a machine by hand, because each
+machine builds the runner from source the client embeds, and a client only ever talks to the
+runner built from its own source. What was given up: a machine needs cargo, and a change to the
+machine half takes a build there rather than a save.
+
+**Each machine builds its own runner, with its own cargo (2026-10-01).** Nothing is
+cross-compiled, so this computer needs no toolchain per machine, and a build on the machine
+links against what is there. Every machine in the pool already has cargo for its workloads. A
+version is built once per machine, the first time a client needs it, as an ordinary shared job.
+
+**The detach queue, the shared registry, `--any` and `--shared` were removed (2026-10-01).**
+Both features were built, tested and never switched on, for want of an always-on machine to
+hold them, and none of the four was in the agents' rules. Each is refused as gone, naming what
+replaced it where something did. They may come back.
+
+**A prepare sweeps `tmp`, and leaves `out` to `dibs --gc` (2026-10-07).** `tmp` is where `TMPDIR`
+points, so what lands there is a tool's, and goes once unchanged for `keep_days`. `out` is where
+a person keeps what a job made, and removing that is the person's call. An entry is judged by
+its own time, so a results directory whose files still change would go on the clock alone.
 
 ## Deferred. Do not re-derive
 
@@ -65,7 +95,8 @@ only around measured regions; preempt long *builds* for benchmarks rather than t
 since a compile is indifferent to SIGSTOP and a benchmark is not. Pinning GPU and CPU clocks is
 the prerequisite that would make any of it safe, and is worth doing on its own.
 
-**A JSON step-spec submitted per call.** Superseded in part, see `batch.md`. The reasoning
+**A JSON step-spec submitted per call.** Superseded in part by `dibs batch`, whose design is
+`history/batch.md`. The reasoning
 below held that a spec adds nothing over commands except a reservation, and it is still right
 about the machine. It was wrong about the caller: it costed a background completion as one
 round trip, when a completion wakes an agent for a full context re-read, so one job is three
@@ -78,6 +109,10 @@ day doing it. What survives unchanged is the rest of the entry.
   transition must be release-and-requeue-with-priority, never a lock upgrade.
 
 ## A shared sccache is the next real lever, and it is cheaper than artifacts
+
+**Superseded (2026-09-16)** by the next section: sccache misses on every new target directory,
+so dibs dropped it. The measurements stand. What rests on a shared sccache, cache affinity
+relaxed to a preference and a cache host, does not.
 
 Measured on the benchmarking machine, 2026-08-31: two build caches totalling 13.8G serve seven
 worktrees that cost 72M between them. One target directory per repo rather than per worktree is
@@ -208,12 +243,15 @@ So the gap was narrower than "disk is a problem" and sharper: worktrees were col
 creates. Both are enumerable because dibs put them there, which is the whole reason either can
 be collected.
 
-**Closed, on a separate and much longer clock.** A worktree is per commit and disposable; a
-target directory is per repo, shared by every tree of it, and is the thing that makes a build
-fast rather than a by-product of one. So it is removed only when a repo has stopped being built
-on that machine at all, at `DIBS_TARGET_KEEP_DAYS`, defaulting to 45 days against a worktree's
-14. The compilation cache is what makes even that safe: a collected directory costs 104s to
-refill rather than 922s.
+**Closed, on a clock of its own.** A worktree is per commit and disposable; a target directory
+is what makes a build fast rather than a by-product of one. So it has its own clock,
+`target_keep_days`, 5 days unused by default, against a worktree's 14 (`keep_days`); both are a
+machine's settings (`protocol.md`). It was first 45 days, so that a cache went only once its
+repo had stopped being built there at all, and a shared compilation cache was to refill one in
+104s rather than 922s. It became 5 on
+2026-09-16, when every prepare began to collect, local trees included, since the disk is what
+runs out first on a machine. sccache was dropped the same day, so a collected directory now
+costs one cold build.
 
 A directory with no marker is given one rather than removed, because everything already on a
 machine predates the marker and reading that as "never used" would delete every target directory
@@ -247,15 +285,59 @@ come from the target directory itself.
 
 ## Open
 
+**One assertion in the suite is load-sensitive and has not been identified.** Under six
+spinners the suite went 219, 219, 218. The one that used to fail there was the reaped-children
+CPU count, which measured wall time and now burns CPU time instead; something else is still
+sensitive and calling the suite flaky is not a diagnosis.
+
+That was the bash suite. The Rust suite that replaced it met and fixed several such
+assertions, each named in its commit, and ran ten times in a row green on 2026-10-07. That
+narrows this, and does not close it.
+
+**The live suite's rsync round-trip case has never run**, because the machine has not been idle
+long enough. The round trip itself is verified by hand; the harness case is not.
+
+**Nobody has checked whether agents can actually use this interface.** Every verb, flag and
+rule here was decided from the log of what agents did with the *old* interface, which is
+evidence about the problem and not about the fix. Whether the current one is understood, or
+merely obeyed while being misread, is unmeasured. The way to find out is the way the first
+round was found: read the transcripts of agents that have used `dibs`, and look for the
+confusion rather than the failures. A wrong call that still works teaches nobody anything and
+shows up nowhere in the log, so the transcript is the only place it is visible. Worth doing
+once there are enough sessions to be worth reading.
+
+**Concurrent builds of one repo serialise on cargo's own lock**, since they share its target
+directory. Two agents on different worktrees of the same repo wait for each other.
+
+Narrowed: each `@local` tree has a target directory of its own, so this is now two builds of
+fetched refs of one repo, which share one. sccache, once the answer here too, was dropped.
+
+**A long-running reader is invisible to every diagnostic here.** `--watch` takes no lock, so it
+appears in neither `--status` nor `--log`. Four orphaned feeds polled the machine every two
+seconds for four hours before a person noticed them by eye. Whatever else is true of the lock,
+the thing that costs a shared machine is not always holding it.
+
+Narrowed: a watch ends when its caller's connection does, or after the lease without a
+beat, so an orphaned feed stops. A live one is still in neither `dibs status` nor `dibs --log`.
+
+**Whether the largest workspace gets a recipe, and at what scope.** It builds in full only where
+ALSA development headers are installed, which is a real dependency of the chat app and nothing
+to do with measuring. The alternative is a recipe scoped to the engine crates, which is what
+would actually be measured. A recipe that quietly builds part of a workspace is the kind of
+thing that misleads six months later, so whichever it is has to say so.
+
+**Rules written for agents tend to be over-broad.** The scratch rule had to be narrowed after it
+read as forbidding an agent from syncing source into a worktree. Expect others.
+
+## Closed
+
+Open entries that are now built, each with what was built last.
+
 **The recipe layer could not run an unpushed local branch, and the workaround silently produced wrong
-numbers twice in one session.** Built, as `<repo>@local`. The cache is keyed on the local tree's
-path, which is the only key that is both warm across edits and separate between two arms; the
-sync follows the repo's ignore rules and drops `-t`, so nothing arrives older than the artifacts
-beside it; and the record names the tree by the content that was actually sent. The rest of the
-entry is why. It needs a fetchable ref, so a perf branch that nobody wants to
-push has no way in. An agent measuring one dropped to raw `dibs` calls and rebuilt by hand
-every guarantee the recipe layer already gives: a build cache isolated per ref, the commit recorded,
-and the build and the measurement in separate locks. Both of that session's real failures were
+numbers twice in one session.** It needed a fetchable ref, so a perf branch that nobody wants
+to push had no way in. An agent measuring one dropped to raw `dibs` calls and rebuilt by hand
+every guarantee the recipe layer already gives: a build cache isolated per ref, the commit
+recorded, and the build and the measurement in separate locks. Both of that session's real failures were
 in the half that got re-implemented.
 
 - It pointed both arms of an A/B at one `CARGO_TARGET_DIR` to avoid a cold rebuild. Cargo does
@@ -268,6 +350,11 @@ Neither is possible through the recipe layer, which is the argument for a mode t
 worktree, syncs it, and still does the rest. Pushing a branch to measure it is a real cost and
 refusing to is not misuse.
 
+Built, as `<repo>@local`. The cache is keyed on the local tree's path, which is the only key that
+is both warm across edits and separate between two arms; the sync follows the repo's ignore rules
+and drops `-t`, so nothing arrives older than the artifacts beside it; and the record names the
+tree by the content that was actually sent.
+
 **A sync that preserves times into a tree with a build cache beside it is a silent wrong-answer
 machine.** rsync's `-a` implies `-t`, which is right for a transfer and wrong for sources about
 to be compiled: cargo compares mtimes, and files that arrive older than the artifacts mean a
@@ -279,6 +366,10 @@ mtime differ and retransfers the whole tree every time. `--checksum` with `--no-
 only what really changed and stamps it now, at the cost of hashing the tree per sync. Warning
 when the destination has a target directory beside it is the cheap version and probably the
 right first move.
+
+Built two ways. A recipe sends an `@local` tree with `--checksum` and no times, so a
+changed file arrives stamped now. A `--sync` into a machine that would carry times across says
+so, and names `--checksum --no-times` for a source tree.
 
 **The most common gap is not a missing recipe, it is a missing parameter.** `dibs gaps`
 names "verify a cubecl PR against the cubek tile engine" six times, more than everything else
@@ -295,42 +386,29 @@ fix `shell` collapsing into one label: `cubek/shell` has run eleven different pr
 that name, so its history means nothing, which is the same defect as two devices under one
 label one level up.
 
-**One assertion in the suite is load-sensitive and has not been identified.** Under six
-spinners the suite went 219, 219, 218. The one that used to fail there was the reaped-children
-CPU count, which measured wall time and now burns CPU time instead; something else is still
-sensitive and calling the suite flaky is not a diagnosis.
+Built: a recipe declares values, with defaults and choices that `dibs list` prints, and
+`--sweep` runs one point per value as one batch.
 
 **Environment knobs do not reach the machine.** ssh does not forward the environment, so
 `DIBS_IDLE_AFTER` and its neighbours only take effect in local mode, which is how the test
 suite runs. Two bugs have already come from code placed on the wrong side of that boundary.
 
+Built: a runner reads its policy from settings files on the machine, then its environment,
+then its defaults (`protocol.md`, A machine's settings).
+
 **`--max` defaults to 30 minutes for shared jobs.** A genuinely long compile would be killed
 with exit 124, and splitting builds out of benchmarks makes long shared jobs more likely.
 
-**The live suite's rsync round-trip case has never run**, because the machine has not been idle
-long enough. The round trip itself is verified by hand; the harness case is not.
+Built: a shared job or a benchmark that names no `--max`, and whose label has at least three
+runs, gets twice its 90th percentile when that is longer than its mode's default, and says so
+as it starts.
 
 **Jobs that redirect nowhere still cannot be read.** Capturing them needs a `tee`, and it must
 be process substitution per stream: piping `2>&1` into one `tee` would merge the streams the
 caller sees and change what every job hands back. Not worth that risk for the minority case.
 
-**Nobody has checked whether agents can actually use this interface.** Every verb, flag and
-rule here was decided from the log of what agents did with the *old* interface, which is
-evidence about the problem and not about the fix. Whether the current one is understood, or
-merely obeyed while being misread, is unmeasured. The way to find out is the way the first
-round was found: read the transcripts of agents that have used `dibs`, and look for the
-confusion rather than the failures. A wrong call that still works teaches nobody anything and
-shows up nowhere in the log, so the transcript is the only place it is visible. Worth doing
-once there are enough sessions to be worth reading.
-
-**Concurrent builds of one repo serialise on cargo's own lock**, since they share its target
-directory. Two agents on different worktrees of the same repo wait for each other. sccache is
-the answer to this one as well, and it is the same piece of work.
-
-**A long-running reader is invisible to every diagnostic here.** `--watch` takes no lock, so it
-appears in neither `--status` nor `--log`. Four orphaned feeds polled the machine every two
-seconds for four hours before a person noticed them by eye. Whatever else is true of the lock,
-the thing that costs a shared machine is not always holding it.
+Built: every job's output is kept in its job directory on the machine for `keep_days`, and
+`dibs out <job>` reads it, during the run or after.
 
 **What `--status` reports as a job's CPU is its process tree, and sccache empties that tree.**
 The compiler runs inside a daemon parented to init, so a build using every core reads as near
@@ -339,14 +417,8 @@ column still shows a number that is true and misleading. Either it says nothing 
 alive but tree-idle, or the daemon's time is attributed to whoever holds the lock, which is
 right until two shared jobs compile at once.
 
-**Whether the largest workspace gets a recipe, and at what scope.** It builds in full only where
-ALSA development headers are installed, which is a real dependency of the chat app and nothing
-to do with measuring. The alternative is a recipe scoped to the engine crates, which is what
-would actually be measured. A recipe that quietly builds part of a workspace is the kind of
-thing that misleads six months later, so whichever it is has to say so.
-
-**Rules written for agents tend to be over-broad.** The scratch rule had to be narrowed after it
-read as forbidding an agent from syncing source into a worktree. Expect others.
+Closed by dropping sccache: the compiler runs in the job's own tree again, so the column
+counts it.
 
 ## Two flaky tests, and the shape they share
 
