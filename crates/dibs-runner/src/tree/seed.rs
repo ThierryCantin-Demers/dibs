@@ -1,8 +1,8 @@
 use crate::tree::{
     base::Stamp,
     builds::{Builds, FileLock},
-    clocks::USED,
-    copy::{Copier, Coreutils as _, Sharing},
+    clocks::{Contents as _, USED},
+    copy::{Copier, Sharing},
     git::Unstopped,
     packages::{Cache, Lines},
 };

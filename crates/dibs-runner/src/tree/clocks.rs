@@ -1,15 +1,15 @@
 use crate::{
     clock::Span,
-    tree::{
-        copy::Coreutils as _,
-        git::{Commands, Git},
-    },
+    tree::git::{Commands, Git},
 };
 use std::{
-    fs,
-    os::unix::fs::MetadataExt as _,
+    ffi::CString,
+    fs::{self, FileTimes},
+    io,
+    os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    time::SystemTime,
 };
 
 /// The marker a prepare leaves, whose time is when a tree or a cache was last used.
@@ -48,7 +48,7 @@ impl Clocks {
     }
 }
 
-/// When a path was last used or written, by its file times.
+/// A path's file times: read as when it was last used or written, and set as `touch` sets them.
 pub trait Dates {
     /// When a tree or a cache was last used: its marker's time, else its own.
     fn used(&self, now: u64) -> u64;
@@ -56,6 +56,12 @@ pub trait Dates {
     fn written(&self, now: u64) -> u64;
     /// `find -mtime +days`: unchanged for more than `days` whole days.
     fn unchanged_for(&self, now: u64, days: u64) -> bool;
+    /// `touch`: made if missing, and dated now.
+    fn touch(&self) -> io::Result<()>;
+    /// `touch -c`: an existing file dated now.
+    fn touch_existing(&self) -> io::Result<()>;
+    /// `touch -r`: given the times `of` holds, which needs no permission to read it.
+    fn date_like(&self, of: &fs::Metadata) -> io::Result<()>;
 }
 
 impl Dates for Path {
@@ -71,6 +77,43 @@ impl Dates for Path {
 
     fn unchanged_for(&self, now: u64, days: u64) -> bool {
         fs::metadata(self).is_ok_and(|m| Clocks::days(now, m.mtime().max(0) as u64) > days)
+    }
+
+    fn touch(&self) -> io::Result<()> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self)?;
+        let now = SystemTime::now();
+        file.set_times(FileTimes::new().set_accessed(now).set_modified(now))
+    }
+
+    fn touch_existing(&self) -> io::Result<()> {
+        let path = CString::new(self.as_os_str().as_bytes())?;
+        // SAFETY: utimensat reads a NUL-terminated path; null times mean now.
+        match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) } {
+            0 => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
+    fn date_like(&self, of: &fs::Metadata) -> io::Result<()> {
+        let path = CString::new(self.as_os_str().as_bytes())?;
+        let times = [
+            libc::timespec {
+                tv_sec: of.atime(),
+                tv_nsec: of.atime_nsec(),
+            },
+            libc::timespec {
+                tv_sec: of.mtime(),
+                tv_nsec: of.mtime_nsec(),
+            },
+        ];
+        // SAFETY: utimensat reads a NUL-terminated path and two timespecs, both alive here.
+        match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) } {
+            0 => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
     }
 }
 
@@ -131,12 +174,16 @@ impl<'a> Removal<'a> {
     }
 }
 
-/// What a directory holds, as a sweep reads it.
+/// What a path holds: listed, emptied or removed.
 pub trait Contents {
     /// Its entries, hidden ones included, sorted as the shell's glob lists them.
     fn entries(&self) -> Vec<PathBuf>;
     /// Every regular file below it.
     fn files(&self) -> Vec<PathBuf>;
+    /// `: >`: emptied, or made, and dated now.
+    fn make_empty(&self) -> io::Result<()>;
+    /// `rm -rf`: everything that can go goes, and whether all of it did.
+    fn remove_all(&self) -> bool;
 }
 
 impl Contents for Path {
@@ -164,5 +211,27 @@ impl Contents for Path {
             }
         }
         found
+    }
+
+    fn make_empty(&self) -> io::Result<()> {
+        fs::File::create(self)?;
+        self.touch()
+    }
+
+    fn remove_all(&self) -> bool {
+        let Ok(meta) = fs::symlink_metadata(self) else {
+            return true;
+        };
+        if !meta.is_dir() {
+            return fs::remove_file(self).is_ok();
+        }
+        let entries: Vec<PathBuf> = fs::read_dir(self)
+            .map(|d| d.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        let mut all = true;
+        for entry in entries {
+            all &= entry.remove_all();
+        }
+        all && fs::remove_dir(self).is_ok()
     }
 }

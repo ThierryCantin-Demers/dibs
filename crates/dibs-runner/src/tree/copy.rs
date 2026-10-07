@@ -1,9 +1,11 @@
-use crate::platform::{Host, Platform as _};
+use crate::{
+    platform::{Host, Platform as _},
+    tree::clocks::Dates as _,
+};
 use std::{
     collections::HashMap,
     ffi::CString,
-    fs::{self, FileTimes},
-    io,
+    fs, io,
     os::unix::{
         ffi::OsStrExt as _,
         fs::{MetadataExt as _, symlink},
@@ -153,80 +155,5 @@ impl Mark<'_> {
             thread::sleep(left);
         }
         Ok(())
-    }
-}
-
-/// The shell's file commands on a path, each by the path alone.
-pub trait Coreutils {
-    /// `touch`: made if missing, and dated now.
-    fn touch(&self) -> io::Result<()>;
-    /// `touch -c`: an existing file dated now.
-    fn touch_existing(&self) -> io::Result<()>;
-    /// `touch -r`: given the times `of` holds, which needs no permission to read it.
-    fn date_like(&self, of: &fs::Metadata) -> io::Result<()>;
-    /// `: >`: emptied, or made, and dated now.
-    fn make_empty(&self) -> io::Result<()>;
-    /// `rm -rf`: everything that can go goes, and whether all of it did.
-    fn remove_all(&self) -> bool;
-}
-
-impl Coreutils for Path {
-    fn touch(&self) -> io::Result<()> {
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self)?;
-        let now = std::time::SystemTime::now();
-        file.set_times(FileTimes::new().set_accessed(now).set_modified(now))
-    }
-
-    fn touch_existing(&self) -> io::Result<()> {
-        let path = CString::new(self.as_os_str().as_bytes())?;
-        // SAFETY: utimensat reads a NUL-terminated path; null times mean now.
-        match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) } {
-            0 => Ok(()),
-            _ => Err(io::Error::last_os_error()),
-        }
-    }
-
-    fn date_like(&self, of: &fs::Metadata) -> io::Result<()> {
-        let path = CString::new(self.as_os_str().as_bytes())?;
-        let times = [
-            libc::timespec {
-                tv_sec: of.atime(),
-                tv_nsec: of.atime_nsec(),
-            },
-            libc::timespec {
-                tv_sec: of.mtime(),
-                tv_nsec: of.mtime_nsec(),
-            },
-        ];
-        // SAFETY: utimensat reads a NUL-terminated path and two timespecs, both alive here.
-        match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) } {
-            0 => Ok(()),
-            _ => Err(io::Error::last_os_error()),
-        }
-    }
-
-    fn make_empty(&self) -> io::Result<()> {
-        fs::File::create(self)?;
-        self.touch()
-    }
-
-    fn remove_all(&self) -> bool {
-        let Ok(meta) = fs::symlink_metadata(self) else {
-            return true;
-        };
-        if !meta.is_dir() {
-            return fs::remove_file(self).is_ok();
-        }
-        let entries: Vec<PathBuf> = fs::read_dir(self)
-            .map(|d| d.flatten().map(|e| e.path()).collect())
-            .unwrap_or_default();
-        let mut all = true;
-        for entry in entries {
-            all &= entry.remove_all();
-        }
-        all && fs::remove_dir(self).is_ok()
     }
 }

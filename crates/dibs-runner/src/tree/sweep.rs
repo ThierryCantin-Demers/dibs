@@ -4,7 +4,6 @@ use crate::{
     tree::{
         builds::{Builds, FileLock},
         clocks::{Clocks, Contents as _, Dates as _, Fate, Removal, USED},
-        copy::Coreutils as _,
         runners::Runners,
     },
 };
