@@ -365,7 +365,7 @@ pub fn split_words(line: &str) -> Result<Vec<String>, BadLine> {
 /// What the driver needs to know about a step before it runs: where it goes, for ordering, and
 /// what it is, for the summary. The words are read as written, since bash expands them only
 /// when the step runs; everything else passes through untouched.
-pub fn describe(words: &[String]) -> Result<Step, BadLine> {
+fn describe(words: &[String]) -> Result<Step, BadLine> {
     let read = Invocation::parse_unexpanded(&words[1..]).map_err(BadLine::Grammar)?;
     let mut step = Step {
         name: String::new(),
