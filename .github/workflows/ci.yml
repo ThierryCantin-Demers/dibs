@@ -58,7 +58,6 @@ jobs:
           exit "$bad"
 
   lint:
-    needs: hygiene
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -74,7 +73,6 @@ jobs:
       - run: cargo clippy -p dibs --test live -- -D warnings
 
   test-linux:
-    needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -89,7 +87,6 @@ jobs:
   # The suite's cargo is a fake, so only a real one shows that each runner a machine builds into
   # the shared target is its own source's.
   runner-build:
-    needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -100,9 +97,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p dibs --test suite -- --ignored --exact runner::a_second_source_is_built_into_the_target_the_first_left
 
-  # The slowest runner to get, so it waits until Linux has passed.
   test-macos:
-    needs: test-linux
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
