@@ -4,7 +4,7 @@ use crate::machine::{
     interrupt::Interrupt,
     lines::{Listener, Stream},
     provision::{Installed, Provision},
-    session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Session},
+    session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Said, Session},
     ssh::Ssh,
     values::{CallValues, Watch},
 };
@@ -20,7 +20,7 @@ use std::{
         unix::process::CommandExt as _,
     },
     path::{Path, PathBuf},
-    process::{ChildStdin, Command, Stdio},
+    process::{ChildStderr, ChildStdin, Command, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
     thread,
     time::Duration,
@@ -33,6 +33,8 @@ const UNEXECUTABLE: i32 = 126;
 /// What a far shell exits with, nothing heard from the runner, when it was not there to start:
 /// the check's own, or the exec's when the version went between the check and the exec.
 const RUNNER_ABSENT: [i32; 3] = [MISSING, UNEXECUTABLE, 127];
+/// How long ssh's last words may take to arrive once it has exited.
+const LAST_WORDS: Duration = Duration::from_millis(200);
 /// The word the client's own binary serves the runner under, on this computer.
 pub const RUNNER_WORD: &str = "__runner";
 
@@ -189,6 +191,12 @@ impl Served<'_> {
         }
     }
 
+    /// ssh's stderr is read here, so that why it failed need not be asked again; a runner on this
+    /// computer has no such reason to give.
+    fn over_ssh(&self) -> bool {
+        matches!(self.session.route, Route::Ssh { .. })
+    }
+
     /// The process that reaches the runner, and how the runner is to watch for its caller. A hold
     /// is always watched, since its release comes down the channel.
     fn launch(&self) -> Launch {
@@ -272,6 +280,9 @@ impl Served<'_> {
             hold: false,
             lease: 0,
         };
+        if self.over_ssh() {
+            command.stderr(Stdio::piped());
+        }
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -279,6 +290,10 @@ impl Served<'_> {
         drop(command);
         let mut stdin = child.stdin.take().expect("stdin was piped");
         let mut stdout = child.stdout.take().expect("stdout was piped");
+        let relayed = child
+            .stderr
+            .take()
+            .map(|err| Relayed::start(err, self.session.said.clone()));
         let request = Frame::Request(Box::new(self.values.request(watch))).encode();
         let said = stdin.write_all(&request).ok().and_then(|()| {
             let mut unframer = Unframer::default();
@@ -312,12 +327,18 @@ impl Served<'_> {
         if let Some(Frame::Exit(code)) = said {
             drop(stdin);
             let status = child.wait()?;
+            if let Some(relayed) = &relayed {
+                relayed.settle();
+            }
             Interrupt::pass_on(status);
             return Ok(Attempted::Exit(code));
         }
         let Some(Frame::Record(Record::Transferring)) = said else {
             drop(stdin);
             let status = child.wait()?;
+            if let Some(relayed) = &relayed {
+                relayed.settle();
+            }
             Interrupt::pass_on(status);
             return Ok(match (said, Exit::shell_status(status)) {
                 (None, code) if RUNNER_ABSENT.contains(&code) => Attempted::Missing,
@@ -342,17 +363,20 @@ impl Served<'_> {
         thread::spawn(move || pass_through(from, stdin));
         pass_through(stdout, to);
         let status = child.wait()?;
+        if let Some(relayed) = &relayed {
+            relayed.settle();
+        }
         Interrupt::pass_on(status);
         Ok(Attempted::Exit(Exit::shell_status(status)))
     }
 
     fn attempt(&self, delivery: &mut Delivery) -> io::Result<Attempted> {
         let Launch { mut command, watch } = self.launch();
-        let lines = matches!(delivery, Delivery::Lines(_));
         command.stdin(Stdio::piped()).stdout(Stdio::piped());
-        if lines {
+        if matches!(delivery, Delivery::Lines(_)) || self.over_ssh() {
             command.stderr(Stdio::piped());
         }
+        self.session.said.clear();
         let mut child = command.spawn()?;
         drop(command);
         let request = Frame::Request(Box::new(self.values.request(watch))).encode();
@@ -390,7 +414,10 @@ impl Served<'_> {
             any |= !matches!(item, Heard::Line(_));
             match item {
                 Heard::Out(bytes) => delivery.give(Stream::Out, &bytes, &mut buffers),
-                Heard::Line(bytes) => delivery.give(Stream::Err, &bytes, &mut buffers),
+                Heard::Line(bytes) => {
+                    self.session.said.add(&bytes);
+                    delivery.give(Stream::Err, &bytes, &mut buffers);
+                }
                 Heard::Err(bytes) => delivery.give(Stream::Err, &bytes, &mut buffers),
                 Heard::Holding(ports) => {
                     if let (Some(holding), Some(release)) = (&self.holding, &release) {
@@ -587,6 +614,31 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
                 return;
             }
         }
+    }
+}
+
+/// ssh's stderr passed on to this process's own as it comes, and kept in the session for a
+/// diagnosis.
+struct Relayed(mpsc::Receiver<()>);
+
+impl Relayed {
+    fn start(mut err: ChildStderr, said: Said) -> Relayed {
+        let (relaying, done) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            let _relaying = relaying;
+            let mut chunk = [0u8; 4096];
+            while let Ok(n @ 1..) = err.read(&mut chunk) {
+                let _ = io::stderr().write_all(&chunk[..n]);
+                said.add(&chunk[..n]);
+            }
+        });
+        Relayed(done)
+    }
+
+    /// Gives what ssh wrote before it exited time to arrive, but no more: a helper ssh started
+    /// may hold the pipe open long after.
+    fn settle(&self) {
+        let _ = self.0.recv_timeout(LAST_WORDS);
     }
 }
 

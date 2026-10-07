@@ -9,10 +9,11 @@ use std::{
     time::Duration,
 };
 
-/// Why ssh could not reach a machine, asked again of ssh, since what it said the first time went
-/// to the terminal and was not kept.
+/// Why ssh could not reach a machine.
 pub struct Unreachable<'a> {
     pub target: &'a Target,
+    /// What the failed call heard ssh say; when nothing, ssh is asked again.
+    pub said: String,
 }
 
 impl Unreachable<'_> {
@@ -20,19 +21,22 @@ impl Unreachable<'_> {
         let host = &self.target.host;
         let timeout = Ssh::connect_timeout();
         let secs = timeout.parse().unwrap_or(10);
-        let why = bounded(
-            Command::new("ssh").args([
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "LogLevel=ERROR",
-                "-o",
-                &format!("ConnectTimeout={timeout}"),
-                host,
-                "true",
-            ]),
-            secs,
-        );
+        let why = match self.said.trim().is_empty() {
+            false => self.said.trim_end().to_string(),
+            true => bounded(
+                Command::new("ssh").args([
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "LogLevel=ERROR",
+                    "-o",
+                    &format!("ConnectTimeout={timeout}"),
+                    host,
+                    "true",
+                ]),
+                secs,
+            ),
+        };
         let mut text = format!("dibs: cannot reach '{host}' over ssh.\n");
         match (self.target.named, &self.target.machine) {
             (Named::DibsHost, _) => {

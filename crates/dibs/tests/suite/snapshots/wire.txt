@@ -1140,8 +1140,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     watch.hold: false
     watch.lease: 120
     watch.off: false
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 dibs@box-a true
-call 3: ssh -v -o BatchMode=yes -o ConnectTimeout=10 dibs@box-a true
+call 2: ssh -v -o BatchMode=yes -o ConnectTimeout=10 dibs@box-a true
 
 == dibs --check box-c --write  (a machine the inventory does not have yet)
 -> exit 0

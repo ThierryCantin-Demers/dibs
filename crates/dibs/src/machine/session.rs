@@ -9,7 +9,12 @@ use crate::machine::{
     values::CallValues,
 };
 use dibs_format::Exit;
-use std::{io, path::Path, time::Duration};
+use std::{
+    io,
+    path::Path,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    time::Duration,
+};
 
 /// A caller that says nothing for this long is gone, unless `DIBS_LEASE` says otherwise.
 const DEFAULT_LEASE_SECS: u64 = 120;
@@ -41,6 +46,36 @@ pub struct Session {
     pub lock_at: String,
     /// What notices call the machine: its inventory name, or the host.
     pub name: String,
+    pub said: Said,
+}
+
+/// What a call's last attempt heard on stderr outside the runner's frames: ssh's reason, when
+/// ssh is what failed, kept so that reason is not asked of the machine a second time.
+#[derive(Debug, Clone, Default)]
+pub struct Said(Arc<Mutex<Vec<u8>>>);
+
+impl Said {
+    /// Only the end is kept: a reason is ssh's last words.
+    const KEPT: usize = 4096;
+
+    pub fn clear(&self) {
+        self.kept().clear();
+    }
+
+    pub fn add(&self, bytes: &[u8]) {
+        let mut kept = self.kept();
+        kept.extend_from_slice(bytes);
+        let over = kept.len().saturating_sub(Said::KEPT);
+        kept.drain(..over);
+    }
+
+    fn kept(&self) -> MutexGuard<'_, Vec<u8>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap_or_else(PoisonError::into_inner)).into_owned()
+    }
 }
 
 /// Where a command run here reaches the machine a session locks.
@@ -139,6 +174,7 @@ impl Session {
                 route: Route::Here,
                 lock_at: me,
                 name: String::new(),
+                said: Said::default(),
             },
             false => Session {
                 route: Route::Ssh {
@@ -146,6 +182,7 @@ impl Session {
                 },
                 lock_at: target.hostname.to_ascii_lowercase(),
                 name: String::new(),
+                said: Said::default(),
             },
         };
         session.name = session.at(target, here);
@@ -187,7 +224,11 @@ impl Session {
         match (&self.route, status) {
             (Route::Ssh { .. }, SSH_FAILED) if !Interrupt::heard() => Diagnosis {
                 exit: i32::from(Exit::Unreachable.code()),
-                said: Unreachable { target }.diagnosis(),
+                said: Unreachable {
+                    target,
+                    said: self.said.text(),
+                }
+                .diagnosis(),
             },
             (_, exit) => Diagnosis {
                 exit,
