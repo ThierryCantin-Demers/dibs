@@ -4,14 +4,13 @@
 
 use crate::{
     execution::{
-        build::hex,
         error::{ArmError, CheckoutError},
         jobs::{JobRequest, Jobs, Reported},
     },
     git::{Git, GitError},
     paths::{FileError, Paths},
 };
-use dibs_format::{Moment, Span, wire};
+use dibs_format::{Hex, Moment, Span, wire};
 use dibs_runner::shared::SharedFile;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -153,12 +152,12 @@ impl Local {
         let content = format!(
             "{head}{}-{:.12}",
             if dirty { "+dirty" } else { "" },
-            hex(&h.finalize())
+            h.finalize().hex()
         );
         let mut k = Sha256::new();
         k.update(dir.as_os_str().as_encoded_bytes());
         Ok(Local {
-            key: format!("{:.10}", hex(&k.finalize())),
+            key: format!("{:.10}", k.finalize().hex()),
             content,
             dirty,
         })
@@ -267,7 +266,7 @@ impl Checkout {
         Ok(Checkout {
             dir: checkout,
             sha: sha.to_string(),
-            key: format!("{:.10}", hex(&k.finalize())),
+            key: format!("{:.10}", k.finalize().hex()),
             lock: Some(lock),
             why,
         })

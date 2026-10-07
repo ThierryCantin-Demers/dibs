@@ -1,8 +1,8 @@
 //! Files a call writes for a moment and hands to another process: created new, readable by their
 //! owner alone, under names nobody can guess, so nothing planted ahead of them is written through.
 
+use dibs_format::Hex;
 use std::{
-    fmt::Write as _,
     fs::{self, File, OpenOptions},
     io::{self, Read as _, Write as _},
     os::unix::fs::OpenOptionsExt as _,
@@ -43,10 +43,7 @@ impl ScratchFile {
     fn unguessable() -> io::Result<String> {
         let mut bytes = [0u8; NAME_BYTES];
         File::open("/dev/urandom")?.read_exact(&mut bytes)?;
-        Ok(bytes.iter().fold(String::new(), |mut name, b| {
-            let _ = write!(name, "{b:02x}");
-            name
-        }))
+        Ok(bytes.hex())
     }
 }
 

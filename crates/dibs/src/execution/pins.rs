@@ -6,7 +6,6 @@
 //! A pinned build still gets a tree of its own, since resolving the patch rewrites the lockfile.
 
 use super::{
-    build::hex,
     error::PinError,
     local::{Checkout, Fetched, Local, Repo},
     refs::Arm,
@@ -16,7 +15,7 @@ use crate::{
     git::{Git, GitError},
     recipe::Checkouts,
 };
-use dibs_format::lockfile::Package;
+use dibs_format::{Hex, lockfile::Package};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -128,7 +127,7 @@ impl Nest {
     pub fn new(pins: &[PinnedTree]) -> Nest {
         let config = Nest::config(pins);
         Nest {
-            name: format!("pin-{:.10}", hex(&Sha256::digest(config.as_bytes()))),
+            name: format!("pin-{:.10}", Sha256::digest(config.as_bytes()).hex()),
             config,
         }
     }

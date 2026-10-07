@@ -7,6 +7,7 @@ pub mod base64;
 mod exit;
 pub mod fleet;
 mod friction;
+mod hex;
 mod ids;
 mod lines;
 pub mod lockfile;
@@ -19,6 +20,7 @@ pub mod wire;
 
 pub use exit::Exit;
 pub use friction::FrictionNote;
+pub use hex::Hex;
 pub use ids::{Alias, BatchId, FileName, JobId, Label, MachineName};
 pub use lines::{
     BatchPlan, By, Event, HistoryLine, JobMeta, LineError, LockRecord, LogLine, PendingKind,

@@ -1,7 +1,7 @@
 //! What a build depends on: the signature its cargo command gives it, and its lockfile as the
 //! short hashes a machine's seed and a target's record compare.
 
-use dibs_format::lockfile::Package;
+use dibs_format::{Hex, lockfile::Package};
 use sha2::{Digest, Sha256};
 
 /// What a cargo build's artifacts depend on besides the lockfile: toolchain, profile, target,
@@ -107,7 +107,7 @@ impl BuildSignature {
         let short = |text: &str| {
             format!(
                 "{:.12}",
-                hex(&Sha256::digest(format!("{signature}\n{text}").as_bytes()))
+                Sha256::digest(format!("{signature}\n{text}").as_bytes()).hex()
             )
         };
         let mut lines = std::collections::BTreeSet::new();
@@ -135,11 +135,6 @@ impl BuildSignature {
         }
         lines.into_iter().collect()
     }
-}
-
-/// Bytes as lowercase hex.
-pub fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 #[cfg(test)]
