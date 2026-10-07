@@ -68,29 +68,40 @@ pub struct Relayed {
 const RELAYED: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGHUP];
 static RELAY_TO: AtomicI32 = AtomicI32::new(0);
 static RELAYED_SIGNAL: AtomicI32 = AtomicI32::new(0);
+/// A signal heard and not yet sent on: whichever of the handler and `to` takes it sends it, so it
+/// reaches a child that was starting as it arrived, and reaches it once.
+static UNSENT: AtomicI32 = AtomicI32::new(0);
 
 extern "C" fn relay(signal: libc::c_int) {
-    RELAYED_SIGNAL.store(signal, Ordering::Relaxed);
-    let child = RELAY_TO.load(Ordering::Relaxed);
+    RELAYED_SIGNAL.store(signal, Ordering::SeqCst);
+    UNSENT.store(signal, Ordering::SeqCst);
+    let child = RELAY_TO.load(Ordering::SeqCst);
     if child > 0 {
-        // SAFETY: kill is async-signal-safe.
-        unsafe { libc::kill(child, signal) };
+        Relayed::send(child, UNSENT.swap(0, Ordering::SeqCst));
     }
 }
 
 impl Relayed {
-    pub fn to(child: u32) -> Relayed {
-        RELAY_TO.store(child as i32, Ordering::Relaxed);
+    /// TERM and HUP are caught from before the child starts, which `to` then names.
+    pub fn catch() -> Relayed {
+        RELAY_TO.store(0, Ordering::SeqCst);
         let handler = relay as extern "C" fn(libc::c_int) as libc::sighandler_t;
         // SAFETY: the handler makes async-signal-safe calls only, and drop restores these.
         let previous = RELAYED.map(|signal| unsafe { libc::signal(signal, handler) });
         Relayed { previous }
     }
 
+    /// The child started: what was heard while it did is sent on now, and what comes later as
+    /// it arrives.
+    pub fn to(&self, child: u32) {
+        RELAY_TO.store(child as i32, Ordering::SeqCst);
+        Relayed::send(child as i32, UNSENT.swap(0, Ordering::SeqCst));
+    }
+
     /// The child has ended: a signal it was relayed now ends this process too.
     pub fn pass_on(self) {
         drop(self);
-        let signal = RELAYED_SIGNAL.swap(0, Ordering::Relaxed);
+        let signal = RELAYED_SIGNAL.swap(0, Ordering::SeqCst);
         if signal != 0 {
             // SAFETY: restores the default action and raises the signal on this process.
             unsafe {
@@ -99,11 +110,18 @@ impl Relayed {
             }
         }
     }
+
+    fn send(child: i32, signal: libc::c_int) {
+        if signal != 0 {
+            // SAFETY: kill is async-signal-safe.
+            unsafe { libc::kill(child, signal) };
+        }
+    }
 }
 
 impl Drop for Relayed {
     fn drop(&mut self) {
-        RELAY_TO.store(0, Ordering::Relaxed);
+        RELAY_TO.store(0, Ordering::SeqCst);
         for (signal, previous) in RELAYED.iter().zip(self.previous) {
             // SAFETY: puts back the handler `to` replaced.
             unsafe { libc::signal(*signal, previous) };

@@ -305,6 +305,8 @@ impl Guard {
             [] => std::process::Command::new("true"),
         };
         let interrupt = Interrupt::defer();
+        // Told to stop, the guard goes only once its command has, so nothing it ran outlives it.
+        let relayed = Relayed::catch();
         let mut running = match command.spawn() {
             Ok(running) => running,
             Err(e) => {
@@ -322,8 +324,7 @@ impl Guard {
                 stop_early(&at, pid);
             }
         });
-        // Told to stop, the guard goes only once its command has, so nothing it ran outlives it.
-        let relayed = Relayed::to(pid);
+        relayed.to(pid);
         let status = running.wait().map(Exit::shell_status).unwrap_or(1);
         drop(interrupt);
         done.store(true, Ordering::SeqCst);

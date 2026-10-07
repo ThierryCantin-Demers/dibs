@@ -142,8 +142,9 @@ impl Sync<'_> {
         if !matches!(output, Output::Inherit) {
             rsync.stdout(Stdio::piped()).stderr(Stdio::piped());
         }
+        let relayed = Relayed::catch();
         let mut child = rsync.spawn()?;
-        let relayed = Relayed::to(child.id());
+        relayed.to(child.id());
         match output {
             Output::Lines(on_line) => Lines::of(&mut child).relay(*on_line),
             Output::Listening(listener) => {
