@@ -120,15 +120,12 @@ impl Live {
     /// question is an ssh round trip, so this is gentler on it than the local suite's polling.
     fn eventually(&self, limit: Duration, mut cond: impl FnMut() -> bool) -> bool {
         let deadline = Instant::now() + limit;
-        loop {
-            if cond() {
-                return true;
-            }
-            if Instant::now() > deadline {
-                return false;
-            }
+        let mut held = cond();
+        while !held && Instant::now() <= deadline {
             thread::sleep(Duration::from_millis(250));
+            held = cond();
         }
+        held
     }
 
     fn soon(&self, cond: impl FnMut() -> bool) -> bool {

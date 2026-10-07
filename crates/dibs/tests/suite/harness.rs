@@ -14,8 +14,8 @@ use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -131,8 +131,8 @@ pub struct Sandbox {
 /// pid is still there, and an unreaped zombie answers yes.
 struct Spawned {
     pid: u32,
-    exit: Arc<Mutex<Option<i32>>>,
-    reaper: thread::JoinHandle<()>,
+    /// Ends with the job, giving its exit status.
+    reaper: thread::JoinHandle<i32>,
 }
 
 impl Sandbox {
@@ -327,13 +327,8 @@ impl Sandbox {
 
     fn adopt(&mut self, mut child: Child) -> Job {
         let pid = child.id();
-        let exit = Arc::new(Mutex::new(None));
-        let set = exit.clone();
-        let reaper = thread::spawn(move || {
-            let code = child.wait().map(exit_code).unwrap_or(-1);
-            *set.lock().unwrap() = Some(code);
-        });
-        self.children.push(Spawned { pid, exit, reaper });
+        let reaper = thread::spawn(move || child.wait().map(exit_code).unwrap_or(-1));
+        self.children.push(Spawned { pid, reaper });
         Job { pid }
     }
 
@@ -346,17 +341,11 @@ impl Sandbox {
             .expect("not a job of this sandbox");
         let child = self.children.remove(i);
         let deadline = Instant::now() + CALL_LIMIT;
-        loop {
-            if let Some(code) = *child.exit.lock().unwrap() {
-                let _ = child.reaper.join();
-                return code;
-            }
-            if Instant::now() > deadline {
-                unsafe { libc::kill(job.pid as i32, libc::SIGKILL) };
-                panic!("job {} did not end within {CALL_LIMIT:?}", job.pid);
-            }
-            thread::sleep(POLL);
+        if polled(deadline, || child.reaper.is_finished().then_some(())).is_none() {
+            unsafe { libc::kill(job.pid as i32, libc::SIGKILL) };
+            panic!("job {} did not end within {CALL_LIMIT:?}", job.pid);
         }
+        child.reaper.join().expect("a reaper does not panic")
     }
 
     pub fn gate(&self, name: &str) -> Gate {
@@ -674,7 +663,7 @@ impl Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         for c in self.children.drain(..) {
-            if c.exit.lock().unwrap().is_none() {
+            if !c.reaper.is_finished() {
                 unsafe { libc::kill(c.pid as i32, libc::SIGKILL) };
             }
             let _ = c.reaper.join();
@@ -798,23 +787,17 @@ impl Call {
         let out = drain(child.stdout.take().unwrap());
         let err = drain(child.stderr.take().unwrap());
         let deadline = Instant::now() + self.limit;
-        let status = loop {
-            if let Some(st) = child.try_wait().unwrap() {
-                break st;
+        let Some(status) = polled(deadline, || child.try_wait().unwrap()) else {
+            if bounded {
+                unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
             }
-            if Instant::now() > deadline {
-                if bounded {
-                    unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
-                }
-                let _ = child.kill();
-                let _ = child.wait();
-                return Output {
-                    code: 124,
-                    stdout: out.take(),
-                    stderr: err.take(),
-                };
-            }
-            thread::sleep(POLL);
+            let _ = child.kill();
+            let _ = child.wait();
+            return Output {
+                code: 124,
+                stdout: out.take(),
+                stderr: err.take(),
+            };
         };
         Output {
             code: exit_code(status),
@@ -957,19 +940,22 @@ impl Gate {
     /// Releases whoever is blocked on it, waiting for one to arrive if nobody is yet.
     pub fn open(&self) {
         let deadline = Instant::now() + WAIT_LIMIT;
-        loop {
-            match OpenOptions::new()
+        let open = || {
+            OpenOptions::new()
                 .write(true)
                 .custom_flags(libc::O_NONBLOCK)
                 .open(&self.path)
-            {
-                Ok(mut f) => {
-                    let _ = f.write_all(b"go\n");
-                    return;
-                }
-                Err(_) if Instant::now() < deadline => thread::sleep(POLL),
-                Err(e) => panic!("nothing ever read {}: {e}", self.path.display()),
+        };
+        let mut opened = open();
+        while opened.is_err() && Instant::now() < deadline {
+            thread::sleep(POLL);
+            opened = open();
+        }
+        match opened {
+            Ok(mut f) => {
+                let _ = f.write_all(b"go\n");
             }
+            Err(e) => panic!("nothing ever read {}: {e}", self.path.display()),
         }
     }
 
@@ -982,17 +968,10 @@ impl Gate {
             .unwrap();
         let deadline = Instant::now() + WAIT_LIMIT;
         let mut buf = [0u8; 64];
-        loop {
-            if matches!(f.read(&mut buf), Ok(n) if n > 0) {
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "nothing reached {}",
-                self.path.display()
-            );
-            thread::sleep(POLL);
-        }
+        let written = polled(deadline, || {
+            matches!(f.read(&mut buf), Ok(n) if n > 0).then_some(())
+        });
+        assert!(written.is_some(), "nothing reached {}", self.path.display());
     }
 }
 
@@ -1001,6 +980,16 @@ impl Gate {
 pub fn skip(why: &str) {
     let name = thread::current().name().unwrap_or("a test").to_string();
     let _ = writeln!(std::io::stderr(), "skipped {name}: {why}");
+}
+
+/// What `probe` finds by `deadline`, asked again every POLL.
+fn polled<T>(deadline: Instant, mut probe: impl FnMut() -> Option<T>) -> Option<T> {
+    let mut found = probe();
+    while found.is_none() && Instant::now() < deadline {
+        thread::sleep(POLL);
+        found = probe();
+    }
+    found
 }
 
 /// Polls a condition until it holds, failing the test after a bound rather than hanging it.

@@ -198,100 +198,33 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         })
         .collect();
     let started = Instant::now();
-    let mut states = vec![State::Waiting; steps.len()];
-    let mut stopped = false;
-    let mut cancelled: Option<String> = None;
-    let mut running: HashMap<usize, u32> = HashMap::new();
-    let (tx, rx) = mpsc::channel::<(usize, i32, u64)>();
-    loop {
-        let starting = ready(&steps, &machines, &states, stopped);
-        for &i in &starting {
-            states[i] = State::Running;
-        }
-        for i in starting {
-            let step = steps[i].clone();
-            let (out, err) = (
-                dir.join(format!("{}.out", step.name)),
-                dir.join(format!("{}.err", step.name)),
-            );
-            let pending: Vec<Pending> = (0..steps.len())
-                .filter(|&j| j != i && states[j] == State::Waiting)
-                .flat_map(|j| {
-                    let here = machines[j] == machines[i];
-                    match &recipes[j] {
-                        Some(jobs) => jobs
-                            .iter()
-                            .map(|p| Pending {
-                                name: format!("{}: {}", steps[j].name, p.name),
-                                here,
-                                ..p.clone()
-                            })
-                            .collect(),
-                        None => vec![pending_of(&steps[j], here, &cwd)],
-                    }
-                })
-                .collect();
-            let batch = step_env(&id, &step.name, i + 1, steps.len(), &pending);
-            let tx = tx.clone();
-            let verbose = opts.verbose;
-            let t = Instant::now();
-            match StepGuard::spawn(&step.line, &batch, opts.on.as_ref()) {
-                Ok(mut guarded) => {
-                    running.insert(i, guarded.id());
-                    std::thread::spawn(move || {
-                        let o = copy(
-                            guarded.take_stdout(),
-                            out,
-                            verbose.then(|| format!("{} ", step.name)),
-                        );
-                        let e = copy(
-                            guarded.take_stderr(),
-                            err,
-                            verbose.then(|| format!("{} ", step.name)),
-                        );
-                        // No code means a signal ended it, which the summary shows as killed.
-                        let status = guarded.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
-                        let _ = (o.join(), e.join());
-                        let _ = tx.send((i, status, t.elapsed().as_secs()));
-                    });
-                }
-                Err(_) => {
-                    let _ = tx.send((i, 127, 0));
-                }
-            }
-        }
-        if !states.contains(&State::Running) {
-            break;
-        }
-        let (i, exit, seconds) = loop {
-            match rx.recv_timeout(Duration::from_millis(500)) {
-                Ok(done) => break done,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if cancelled.is_none() && dir.join("cancel").exists() {
-                        cancelled = Some("with dibs --kill".into());
-                        stopped = true;
-                        running.values().for_each(|&pid| stop(pid));
-                    }
-                }
-                Err(e) => return Err(BatchError::Lost(e)),
-            }
-        };
-        running.remove(&i);
-        states[i] = State::Done { exit, seconds };
-        if exit == i32::from(Exit::Cancelled.code())
-            && cancelled.is_none()
-            && was_cancelled(
-                &std::fs::read_to_string(dir.join(format!("{}.err", steps[i].name)))
-                    .unwrap_or_default(),
-            )
-        {
-            cancelled = Some(format!("with dibs --kill on {}", machines[i]));
-            running.values().for_each(|&pid| stop(pid));
-        }
-        if exit != 0 && (!steps[i].cont || cancelled.is_some()) {
-            stopped = true;
-        }
+    let (tx, rx) = mpsc::channel();
+    let mut driving = Driving {
+        steps: &steps,
+        machines: &machines,
+        recipes,
+        dir: &dir,
+        id: &id,
+        cwd,
+        opts,
+        states: vec![State::Waiting; steps.len()],
+        stopped: false,
+        cancelled: None,
+        running: HashMap::new(),
+        tx,
+        rx,
+    };
+    driving.start();
+    while driving.states.contains(&State::Running) {
+        let end = driving.next_end()?;
+        driving.ended(end);
+        driving.start();
     }
+    let Driving {
+        mut states,
+        cancelled,
+        ..
+    } = driving;
     for s in states.iter_mut() {
         if *s == State::Waiting {
             *s = State::NotRun;
@@ -318,6 +251,141 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     } else {
         1
     })
+}
+
+/// How often a wait for a step to end looks for a cancellation.
+const CANCEL_CHECK: Duration = Duration::from_millis(500);
+
+/// How a step's command ended, and how long it ran.
+struct StepEnded {
+    step: usize,
+    exit: i32,
+    seconds: u64,
+}
+
+/// A batch's steps as they run: which wait, run and ended, and what stops the rest.
+struct Driving<'a> {
+    steps: &'a [Step],
+    machines: &'a [String],
+    recipes: Vec<Option<Vec<Pending>>>,
+    dir: &'a Path,
+    id: &'a str,
+    cwd: String,
+    opts: &'a Options,
+    states: Vec<State>,
+    stopped: bool,
+    cancelled: Option<String>,
+    running: HashMap<usize, u32>,
+    tx: mpsc::Sender<StepEnded>,
+    rx: mpsc::Receiver<StepEnded>,
+}
+
+impl Driving<'_> {
+    /// Starts every step whose turn has come.
+    fn start(&mut self) {
+        let starting = ready(self.steps, self.machines, &self.states, self.stopped);
+        for &i in &starting {
+            self.states[i] = State::Running;
+        }
+        for i in starting {
+            let step = self.steps[i].clone();
+            let (out, err) = (
+                self.dir.join(format!("{}.out", step.name)),
+                self.dir.join(format!("{}.err", step.name)),
+            );
+            let pending: Vec<Pending> = (0..self.steps.len())
+                .filter(|&j| j != i && self.states[j] == State::Waiting)
+                .flat_map(|j| {
+                    let here = self.machines[j] == self.machines[i];
+                    match &self.recipes[j] {
+                        Some(jobs) => jobs
+                            .iter()
+                            .map(|p| Pending {
+                                name: format!("{}: {}", self.steps[j].name, p.name),
+                                here,
+                                ..p.clone()
+                            })
+                            .collect(),
+                        None => vec![pending_of(&self.steps[j], here, &self.cwd)],
+                    }
+                })
+                .collect();
+            let batch = step_env(self.id, &step.name, i + 1, self.steps.len(), &pending);
+            let tx = self.tx.clone();
+            let verbose = self.opts.verbose;
+            let t = Instant::now();
+            match StepGuard::spawn(&step.line, &batch, self.opts.on.as_ref()) {
+                Ok(mut guarded) => {
+                    self.running.insert(i, guarded.id());
+                    std::thread::spawn(move || {
+                        let o = copy(
+                            guarded.take_stdout(),
+                            out,
+                            verbose.then(|| format!("{} ", step.name)),
+                        );
+                        let e = copy(
+                            guarded.take_stderr(),
+                            err,
+                            verbose.then(|| format!("{} ", step.name)),
+                        );
+                        // No code means a signal ended it, which the summary shows as killed.
+                        let status = guarded.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
+                        let _ = (o.join(), e.join());
+                        let _ = tx.send(StepEnded {
+                            step: i,
+                            exit: status,
+                            seconds: t.elapsed().as_secs(),
+                        });
+                    });
+                }
+                Err(_) => {
+                    let _ = self.tx.send(StepEnded {
+                        step: i,
+                        exit: 127,
+                        seconds: 0,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Waits for a step to end, stopping the others once the batch is cancelled meanwhile.
+    fn next_end(&mut self) -> Result<StepEnded, BatchError> {
+        let mut received = self.rx.recv_timeout(CANCEL_CHECK);
+        while matches!(received, Err(mpsc::RecvTimeoutError::Timeout)) {
+            if self.cancelled.is_none() && self.dir.join("cancel").exists() {
+                self.cancelled = Some("with dibs --kill".into());
+                self.stopped = true;
+                self.running.values().for_each(|&pid| stop(pid));
+            }
+            received = self.rx.recv_timeout(CANCEL_CHECK);
+        }
+        received.map_err(BatchError::Lost)
+    }
+
+    /// Records a step's end, and whether it stops the steps still waiting.
+    fn ended(&mut self, end: StepEnded) {
+        let StepEnded {
+            step: i,
+            exit,
+            seconds,
+        } = end;
+        self.running.remove(&i);
+        self.states[i] = State::Done { exit, seconds };
+        if exit == i32::from(Exit::Cancelled.code())
+            && self.cancelled.is_none()
+            && was_cancelled(
+                &std::fs::read_to_string(self.dir.join(format!("{}.err", self.steps[i].name)))
+                    .unwrap_or_default(),
+            )
+        {
+            self.cancelled = Some(format!("with dibs --kill on {}", self.machines[i]));
+            self.running.values().for_each(|&pid| stop(pid));
+        }
+        if exit != 0 && (!self.steps[i].cont || self.cancelled.is_some()) {
+            self.stopped = true;
+        }
+    }
 }
 
 /// A command may exit 76 of its own accord, so only dibs saying so makes it a cancellation.

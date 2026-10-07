@@ -467,42 +467,73 @@ enum Arrival {
     Stopped(String),
 }
 
-/// A webhook is answered, so the forwarder moves on.
-fn arrival(stream: TcpStream) -> Option<Arrival> {
-    let mut reader = BufReader::new(stream.try_clone().ok()?);
-    let mut first = String::new();
-    reader.read_line(&mut first).ok()?;
-    if first.trim_end() == STOPPED {
-        let mut said = String::new();
-        let _ = reader.read_to_string(&mut said);
-        return Some(Arrival::Stopped(said));
-    }
-    let (mut event, mut length) = (String::new(), 0usize);
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line).ok()? == 0 {
-            return None;
+impl Arrival {
+    /// A webhook is answered, so the forwarder moves on.
+    fn new(stream: TcpStream) -> Option<Arrival> {
+        let mut reader = BufReader::new(stream.try_clone().ok()?);
+        let mut first = String::new();
+        reader.read_line(&mut first).ok()?;
+        if first.trim_end() == STOPPED {
+            let mut said = String::new();
+            let _ = reader.read_to_string(&mut said);
+            return Some(Arrival::Stopped(said));
         }
-        let line = line.trim_end();
-        if line.is_empty() {
-            break;
-        }
-        if let Some((k, v)) = line.split_once(':') {
-            match k.trim().to_ascii_lowercase().as_str() {
-                "x-github-event" => event = v.trim().to_string(),
-                "content-length" => length = v.trim().parse().unwrap_or(0),
-                _ => {}
+        let (mut event, mut length) = (String::new(), 0usize);
+        for header in Arrival::headers(&mut reader)? {
+            if let Some((k, v)) = header.split_once(':') {
+                match k.trim().to_ascii_lowercase().as_str() {
+                    "x-github-event" => event = v.trim().to_string(),
+                    "content-length" => length = v.trim().parse().unwrap_or(0),
+                    _ => {}
+                }
             }
         }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).ok()?;
+        let _ = (&stream)
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        Some(Arrival::Delivery(
+            event,
+            serde_json::from_slice(&body).ok()?,
+        ))
     }
-    let mut body = vec![0; length];
-    reader.read_exact(&mut body).ok()?;
-    let _ =
-        (&stream).write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-    Some(Arrival::Delivery(
-        event,
-        serde_json::from_slice(&body).ok()?,
-    ))
+
+    /// The headers up to the blank line that ends them; None when the stream ends first.
+    fn headers(reader: &mut impl BufRead) -> Option<Vec<String>> {
+        let mut headers = Vec::new();
+        for line in reader.lines() {
+            match line.ok()?.trim_end() {
+                "" => return Some(headers),
+                header => headers.push(header.to_string()),
+            }
+        }
+        None
+    }
+}
+
+/// What one forwarder brought before it stopped: news, or what it said as it stopped.
+enum Heard {
+    News(Vec<String>),
+    Stopped(String),
+}
+
+impl Heard {
+    /// Listens until a delivery is news or the forwarder says it stopped.
+    fn listen(listener: &TcpListener, woken: &mut Keys) -> Heard {
+        listener
+            .incoming()
+            .filter_map(Result::ok)
+            .filter_map(Arrival::new)
+            .find_map(|arrival| match arrival {
+                Arrival::Stopped(said) => Some(Heard::Stopped(said)),
+                Arrival::Delivery(event, body) => {
+                    let news = on_event(&event, &body, woken);
+                    (!news.is_empty()).then_some(Heard::News(news))
+                }
+            })
+            // `incoming` never ends; were it to, the forwarder would be started again.
+            .unwrap_or_else(|| Heard::Stopped(String::new()))
+    }
 }
 
 /// `gh webhook forward`, which relays the repo's webhooks over its own connection to GitHub, so
@@ -587,7 +618,8 @@ pub fn wait(repo: &str) -> Result<Vec<String>, ReportsError> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(ReportsError::NoPort)?;
     let port = listener.local_addr().map_err(ReportsError::Io)?.port();
     let mut short = 0;
-    loop {
+    let mut said = String::new();
+    while short < SHORT_LIVES {
         let started = Instant::now();
         let forward = Forward::start(repo, port)?;
         let news = catch_up(repo, &mut woken)?;
@@ -595,38 +627,26 @@ pub fn wait(repo: &str) -> Result<Vec<String>, ReportsError> {
             woken.save()?;
             return Ok(news);
         }
-        let said = loop {
-            match listener
-                .incoming()
-                .next()
-                .and_then(Result::ok)
-                .and_then(arrival)
-            {
-                Some(Arrival::Stopped(said)) => break said,
-                Some(Arrival::Delivery(event, body)) => {
-                    let news = on_event(&event, &body, &mut woken);
-                    if !news.is_empty() {
-                        woken.save()?;
-                        return Ok(news);
-                    }
-                }
-                None => {}
+        said = match Heard::listen(&listener, &mut woken) {
+            Heard::News(news) => {
+                woken.save()?;
+                return Ok(news);
             }
+            Heard::Stopped(said) => said,
         };
         drop(forward);
-        short = if started.elapsed() < SHORT_LIVED {
-            short + 1
-        } else {
-            0
+        short = match started.elapsed() < SHORT_LIVED {
+            true => short + 1,
+            false => 0,
         };
-        if short >= SHORT_LIVES {
-            return Err(ReportsError::KeepsStopping(said.trim().to_string()));
+        if short < SHORT_LIVES {
+            eprintln!(
+                "dibs: gh webhook forward stopped, so it is started again. It said: {}",
+                Forward::stop_reason(&said)
+            );
         }
-        eprintln!(
-            "dibs: gh webhook forward stopped, so it is started again. It said: {}",
-            Forward::stop_reason(&said)
-        );
     }
+    Err(ReportsError::KeepsStopping(said.trim().to_string()))
 }
 
 pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, ReportsError> {
