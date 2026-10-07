@@ -1,6 +1,7 @@
 use crate::{
     call::OneLine as _,
-    job::{Cap, Environment, Job, Output, ports::Ports, reap},
+    job::{Cap, Environment, Job, Output, ports::Ports},
+    platform::{Host, Platform as _},
     sink::Sink,
 };
 use dibs_format::wire;
@@ -180,7 +181,7 @@ impl Services {
                     let mut state = watched.lock().unwrap_or_else(|e| e.into_inner());
                     if !state.over {
                         state.ended = Some(at);
-                        reap(&[job]);
+                        Host::reap(&[job]);
                         return;
                     }
                 }
@@ -227,7 +228,7 @@ impl Services {
             };
         }
         if !alive.is_empty() {
-            reap(&alive);
+            Host::reap(&alive);
         }
         let _ = fs::remove_file(&self.record);
     }

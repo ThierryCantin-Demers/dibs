@@ -1,4 +1,4 @@
-use crate::clock::{Moment, Span};
+use crate::clock::Span;
 use dibs_format::{JobId, JobMeta, wire::Built};
 use std::{
     fs::{self, File},
@@ -162,11 +162,6 @@ fn modified_within(path: &Path, now: SystemTime, within: Duration) -> bool {
     fs::metadata(path)
         .and_then(|m| m.modified())
         .is_ok_and(|m| now.duration_since(m).unwrap_or_default() < within)
-}
-
-/// A job's id: when it arrived, in the machine's zone, and the pid of the runner that took it.
-pub fn job_id(start: u64, pid: u32) -> JobId {
-    JobId::new(format!("{}-{pid}", Moment::at(start).compact()))
 }
 
 #[cfg(test)]

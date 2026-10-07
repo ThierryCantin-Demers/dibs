@@ -91,7 +91,7 @@ impl Copier {
             }
         }
         fs::set_permissions(to, meta.permissions())?;
-        dated(to, &meta)
+        to.date_like(&meta)
     }
 
     fn file(&self, from: &Path, to: &Path, sharing: Sharing) -> io::Result<()> {
@@ -132,36 +132,6 @@ fn special(to: &Path, of: &fs::Metadata) -> io::Result<()> {
     }
 }
 
-/// `to` given the times `of` holds, by its path, which needs no permission to read it.
-pub fn dated(to: &Path, of: &fs::Metadata) -> io::Result<()> {
-    let path = CString::new(to.as_os_str().as_bytes())?;
-    let times = [
-        libc::timespec {
-            tv_sec: of.atime(),
-            tv_nsec: of.atime_nsec(),
-        },
-        libc::timespec {
-            tv_sec: of.mtime(),
-            tv_nsec: of.mtime_nsec(),
-        },
-    ];
-    // SAFETY: utimensat reads a NUL-terminated path and two timespecs, both alive here.
-    match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) } {
-        0 => Ok(()),
-        _ => Err(io::Error::last_os_error()),
-    }
-}
-
-/// `touch -c`: an existing file dated now, by its path.
-pub fn now(path: &Path) -> io::Result<()> {
-    let path = CString::new(path.as_os_str().as_bytes())?;
-    // SAFETY: utimensat reads a NUL-terminated path; null times mean now.
-    match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) } {
-        0 => Ok(()),
-        _ => Err(io::Error::last_os_error()),
-    }
-}
-
 /// Longer than the coarsest tick a file's time is stamped by.
 const FILE_TICK: Duration = Duration::from_millis(11);
 
@@ -171,7 +141,7 @@ pub struct Mark<'a>(pub &'a Path);
 impl Mark<'_> {
     /// Dated now.
     pub fn set(&self) -> io::Result<()> {
-        now(self.0)?;
+        self.0.touch_existing()?;
         self.passed()
     }
 
@@ -186,36 +156,77 @@ impl Mark<'_> {
     }
 }
 
-/// `rm -rf`: everything that can go goes, and whether all of it did.
-pub fn remove_all(path: &Path) -> bool {
-    let Ok(meta) = fs::symlink_metadata(path) else {
-        return true;
-    };
-    if !meta.is_dir() {
-        return fs::remove_file(path).is_ok();
-    }
-    let entries: Vec<PathBuf> = fs::read_dir(path)
-        .map(|d| d.flatten().map(|e| e.path()).collect())
-        .unwrap_or_default();
-    let mut all = true;
-    for entry in entries {
-        all &= remove_all(&entry);
-    }
-    all && fs::remove_dir(path).is_ok()
+/// The shell's file commands on a path, each by the path alone.
+pub trait Coreutils {
+    /// `touch`: made if missing, and dated now.
+    fn touch(&self) -> io::Result<()>;
+    /// `touch -c`: an existing file dated now.
+    fn touch_existing(&self) -> io::Result<()>;
+    /// `touch -r`: given the times `of` holds, which needs no permission to read it.
+    fn date_like(&self, of: &fs::Metadata) -> io::Result<()>;
+    /// `: >`: emptied, or made, and dated now.
+    fn make_empty(&self) -> io::Result<()>;
+    /// `rm -rf`: everything that can go goes, and whether all of it did.
+    fn remove_all(&self) -> bool;
 }
 
-/// `touch`: made if missing, and dated now.
-pub fn touch(path: &Path) -> io::Result<()> {
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    let now = std::time::SystemTime::now();
-    file.set_times(FileTimes::new().set_accessed(now).set_modified(now))
-}
+impl Coreutils for Path {
+    fn touch(&self) -> io::Result<()> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self)?;
+        let now = std::time::SystemTime::now();
+        file.set_times(FileTimes::new().set_accessed(now).set_modified(now))
+    }
 
-/// `: >`: emptied, or made, and dated now.
-pub fn empty(path: &Path) -> io::Result<()> {
-    fs::File::create(path)?;
-    touch(path)
+    fn touch_existing(&self) -> io::Result<()> {
+        let path = CString::new(self.as_os_str().as_bytes())?;
+        // SAFETY: utimensat reads a NUL-terminated path; null times mean now.
+        match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) } {
+            0 => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
+    fn date_like(&self, of: &fs::Metadata) -> io::Result<()> {
+        let path = CString::new(self.as_os_str().as_bytes())?;
+        let times = [
+            libc::timespec {
+                tv_sec: of.atime(),
+                tv_nsec: of.atime_nsec(),
+            },
+            libc::timespec {
+                tv_sec: of.mtime(),
+                tv_nsec: of.mtime_nsec(),
+            },
+        ];
+        // SAFETY: utimensat reads a NUL-terminated path and two timespecs, both alive here.
+        match unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) } {
+            0 => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
+    fn make_empty(&self) -> io::Result<()> {
+        fs::File::create(self)?;
+        self.touch()
+    }
+
+    fn remove_all(&self) -> bool {
+        let Ok(meta) = fs::symlink_metadata(self) else {
+            return true;
+        };
+        if !meta.is_dir() {
+            return fs::remove_file(self).is_ok();
+        }
+        let entries: Vec<PathBuf> = fs::read_dir(self)
+            .map(|d| d.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        let mut all = true;
+        for entry in entries {
+            all &= entry.remove_all();
+        }
+        all && fs::remove_dir(self).is_ok()
+    }
 }

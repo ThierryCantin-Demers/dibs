@@ -5,7 +5,6 @@ use crate::{
     history::{History, Key, Scope},
     job::{
         Cap, Environment, Guard, HoldFifo, Job, LogRead, Output, Ports, Readiness, Services, Start,
-        job_id,
     },
     lock::{Hold, Kind, Lock, LockDir},
     machine::Site,
@@ -708,6 +707,11 @@ fn no_room(error: &io::Error) -> bool {
         error.kind(),
         io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
     )
+}
+
+/// A job's id: when it arrived, in the machine's zone, and the pid of the runner that took it.
+fn job_id(start: u64, pid: u32) -> JobId {
+    JobId::new(format!("{}-{pid}", Moment::at(start).compact()))
 }
 
 #[cfg(test)]

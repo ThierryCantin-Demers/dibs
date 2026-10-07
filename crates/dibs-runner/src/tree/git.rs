@@ -1,6 +1,7 @@
 use crate::{
     clock::Deadline,
-    job::{Environment, reap},
+    job::Environment,
+    platform::{Host, Platform as _},
     stop::Signals,
 };
 use std::{
@@ -68,7 +69,7 @@ impl<'a> Commands<'a> {
                 let (tell, ended) = mpsc::channel();
                 thread::spawn(move || tell.send(child.wait_with_output()));
                 ended.recv_timeout(left).unwrap_or_else(|_| {
-                    reap(&[pid]);
+                    Host::reap(&[pid]);
                     Err(io::ErrorKind::TimedOut.into())
                 })
             }
@@ -97,21 +98,29 @@ impl Git<'_> {
     }
 }
 
-/// What a command printed on stdout, trimmed, when it succeeded.
-pub fn answer(output: io::Result<Output>) -> Option<String> {
-    let output = output.ok().filter(|o| o.status.success())?;
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!text.is_empty()).then_some(text)
+/// What a finished command printed.
+pub trait Replied {
+    /// What it printed on stdout, trimmed, when it succeeded.
+    fn answer(self) -> Option<String>;
+    /// Both of its streams, as `2>&1` would have caught them.
+    fn said(&self) -> String;
 }
 
-/// Both of a command's streams, as `2>&1` would have caught them.
-pub fn said(output: &io::Result<Output>) -> String {
-    match output {
-        Ok(o) => format!(
-            "{}{}",
-            String::from_utf8_lossy(&o.stdout),
-            String::from_utf8_lossy(&o.stderr)
-        ),
-        Err(e) => e.to_string(),
+impl Replied for io::Result<Output> {
+    fn answer(self) -> Option<String> {
+        let output = self.ok().filter(|o| o.status.success())?;
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!text.is_empty()).then_some(text)
+    }
+
+    fn said(&self) -> String {
+        match self {
+            Ok(o) => format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ),
+            Err(e) => e.to_string(),
+        }
     }
 }

@@ -2,7 +2,7 @@ use crate::tree::{
     base::Stamp,
     builds::{Builds, FileLock},
     clocks::USED,
-    copy::{Copier, Sharing, empty, remove_all},
+    copy::{Copier, Coreutils as _, Sharing},
     git::Unstopped,
     packages::{Cache, Lines},
 };
@@ -147,10 +147,10 @@ impl<'a> Seed<'a> {
                     format!("{}\n", self.tree.worktree.display()),
                 )
                 .is_ok()
-                && empty(&copy.join(USED)).is_ok();
+                && copy.join(USED).make_empty().is_ok();
             drop(taken);
             if !copied {
-                remove_all(&copy);
+                copy.remove_all();
                 continue;
             }
             let from = name(&sibling.dir);
@@ -288,12 +288,12 @@ impl<'a> Seed<'a> {
                     .tree
                     .fresh
                     .iter()
-                    .map(|path| remove_all(Path::new(&format!("{}/{path}", copy.display()))))
+                    .map(|path| Path::new(&format!("{}/{path}", copy.display())).remove_all())
                     .collect();
                 gone.iter().all(|g| *g)
             };
         if !copied {
-            remove_all(&copy);
+            copy.remove_all();
         }
         copied.then_some(copy)
     }
@@ -314,7 +314,7 @@ impl Copied {
             return None;
         }
         if let Some(sources) = &self.sources {
-            remove_all(sources);
+            sources.remove_all();
         }
         Some(self.seeded)
     }
@@ -339,9 +339,9 @@ impl Copied {
             return None;
         }
         if let Some(sources) = &self.sources {
-            remove_all(sources);
+            sources.remove_all();
         }
-        if !(remove_all(&old_target) & remove_all(&old_tree)) {
+        if !(old_target.remove_all() & old_tree.remove_all()) {
             say(
                 "dibs: could not remove all of what the reseed replaced; the next sweep takes it\n",
             );
@@ -371,21 +371,21 @@ impl Copied {
     }
 
     pub fn discard(&self) {
-        remove_all(&self.target);
+        self.target.remove_all();
         if let Some(sources) = &self.sources {
-            remove_all(sources);
+            sources.remove_all();
         }
     }
 }
 
 /// A path's last component, as `${path##*/}` reads it.
-pub fn name(path: &Path) -> String {
+fn name(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
 
 /// `path` with `suffix` added to its last component.
-pub fn suffixed(path: &Path, suffix: &str) -> PathBuf {
+fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}{suffix}", path.display()))
 }

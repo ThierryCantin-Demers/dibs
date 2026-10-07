@@ -1,6 +1,6 @@
 use crate::tree::{
     clocks::Contents as _,
-    copy::{Mark, dated, now, remove_all},
+    copy::{Coreutils as _, Mark},
     glob::Glob,
     packages::{Cache, Lines, RECORD},
 };
@@ -143,7 +143,7 @@ impl<'a> Stepping<'a> {
                     .and_then(|m| m.modified())
                     .is_ok_and(|at| at > since)
                 {
-                    remove_all(&entry);
+                    entry.remove_all();
                 }
             }
         }
@@ -217,7 +217,7 @@ impl<'a> Stepping<'a> {
                     .map_or(Ok(()), fs::create_dir_all)
                     .and_then(|()| fs::copy(&from, &to))
                     .and_then(|_| fs::metadata(&from))
-                    .and_then(|m| dated(&to, &m));
+                    .and_then(|m| to.date_like(&m));
                 kept += u32::from(copied.is_ok());
             }
         }
@@ -257,7 +257,7 @@ fn dated_now(dir: &Path) {
         match entry.file_type() {
             Ok(kind) if kind.is_dir() => dated_now(&entry.path()),
             Ok(kind) if kind.is_file() => {
-                let _ = now(&entry.path());
+                let _ = entry.path().touch_existing();
             }
             _ => {}
         }

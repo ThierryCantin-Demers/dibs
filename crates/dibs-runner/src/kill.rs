@@ -4,9 +4,8 @@
 use crate::{
     call::{Journal, Received},
     clock::{Deadline, Moment, Span},
-    job::{reap, tree_below},
     lock::{Kind, Lock, LockDir, RecordFile},
-    platform::{Host, Platform as _},
+    platform::{Descendants as _, Host, Platform as _},
     sink::Sink,
     status::Look,
 };
@@ -156,7 +155,7 @@ impl Kill<'_> {
         // TERM goes to the holder alone, which stops its own tree before it lets the lock go.
         let mut tree = vec![pid];
         if self.force() {
-            tree.extend(tree_below(pid, &Host::processes()));
+            tree.extend(Host::processes().below(pid));
         }
         let signalled: Vec<String> = tree
             .iter()
@@ -231,7 +230,7 @@ impl Kill<'_> {
             return Exit::Refused.status();
         }
         let mut tree = vec![pid];
-        tree.extend(tree_below(pid, &Host::processes()));
+        tree.extend(Host::processes().below(pid));
         let send = |signal| {
             for victim in tree.iter().rev() {
                 // SAFETY: kill only sends a signal.
@@ -313,7 +312,7 @@ impl Kill<'_> {
                 Kind::Holder => Vec::new(),
                 Kind::Waiting => vec![step.pid],
             };
-            victims.extend(tree_below(step.pid, &processes));
+            victims.extend(processes.below(step.pid));
             for victim in victims.iter().rev() {
                 // SAFETY: kill only sends a signal.
                 unsafe { libc::kill(*victim as libc::pid_t, self.signal()) };
@@ -375,7 +374,7 @@ impl Kill<'_> {
         line.label = Label::new("reclaim");
         line.command = format!("reclaimed the lock from orphan pid{pids}");
         self.journal().write(&line);
-        reap(&kept);
+        Host::reap(&kept);
         for pid in kept.iter().filter(|&&pid| Host::running(pid)) {
             self.sink.say(&format!(
                 "  pid {pid} survived; run it again, or kill -9 {pid}\n"

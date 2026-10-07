@@ -2,7 +2,7 @@ use crate::{
     settings::home,
     tree::{
         clocks::{Clocks, Contents as _, Fate, USED},
-        copy::touch,
+        copy::Coreutils as _,
         sweep::{Kind, Section, Verdict},
     },
 };
@@ -87,7 +87,7 @@ impl Runners {
     /// `version` marked used where it was installed.
     pub fn mark(&self, version: &str) {
         if self.binary(version).is_file() {
-            let _ = touch(&self.dir.join(version).join(USED));
+            let _ = self.dir.join(version).join(USED).touch();
         }
     }
 

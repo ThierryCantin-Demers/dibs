@@ -1,7 +1,7 @@
 use crate::{
     call::{Journal, Received},
-    job::reap,
     lock::LockDir,
+    platform::{Host, Platform as _},
     sink::Sink,
 };
 use dibs_format::{Event, JobId};
@@ -106,8 +106,8 @@ impl Stopper {
         line.job = state.job.clone();
         Journal { path: &self.log }.write(&line);
         match state.stage {
-            Stage::Running(work) | Stage::Peeking(work) => reap(&[work]),
-            Stage::Starting => reap(&state.services),
+            Stage::Running(work) | Stage::Peeking(work) => Host::reap(&[work]),
+            Stage::Starting => Host::reap(&state.services),
             _ => self.abort(&mut state, 128 + libc::SIGTERM),
         }
     }
@@ -121,7 +121,7 @@ impl Stopper {
         };
         let stopped: Vec<u32> = work.into_iter().chain(state.services.clone()).collect();
         if !stopped.is_empty() {
-            reap(&stopped);
+            Host::reap(&stopped);
         }
         if matches!(
             state.stage,

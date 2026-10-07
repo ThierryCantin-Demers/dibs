@@ -4,7 +4,7 @@ use crate::{
     tree::{
         builds::{Builds, FileLock},
         clocks::{Clocks, Contents as _, Dates as _, Fate, Removal, USED},
-        copy::touch,
+        copy::Coreutils as _,
         runners::Runners,
     },
 };
@@ -246,7 +246,7 @@ impl<'a> Sweep<'a> {
         }
         let used = tree.join(USED);
         if !used.exists() {
-            let _ = touch(&used);
+            let _ = used.touch();
             return Fate::Dated;
         }
         match used.unchanged_for(now, self.clocks.keep_days) {

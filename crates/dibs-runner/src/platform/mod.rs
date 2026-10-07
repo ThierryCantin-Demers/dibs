@@ -6,7 +6,7 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
-pub use base::{Platform, Process, Slot};
+pub use base::{Descendants, Platform, Slot};
 #[cfg(target_os = "linux")]
 pub use linux::Linux as Host;
 #[cfg(target_os = "macos")]

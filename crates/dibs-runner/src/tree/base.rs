@@ -4,9 +4,9 @@ use crate::{
     tree::{
         builds::{Builds, FileLock},
         clocks::{Clocks, Removal, USED},
-        copy::{Copier, Reflinks, empty, now, remove_all, touch},
+        copy::{Copier, Coreutils as _, Reflinks},
         error::{Named, PrepareError},
-        git::{Commands, Git, answer, said},
+        git::{Commands, Git, Replied as _},
         packages::{Cache, Lines},
         seed::{Seed, Seedling},
         sweep::{PREPARE_LOCK, Sweep},
@@ -251,27 +251,24 @@ impl<'a> Trees<'a> {
         let fetched = git(&["fetch", "-q", "origin", &format!("+{reference}:{mine}")]);
         let (sha, why) = match fetched.as_ref().is_ok_and(|o| o.status.success()) {
             true => {
-                let sha = answer(git(&[
-                    "rev-parse",
-                    "--verify",
-                    "-q",
-                    &format!("{mine}^{{commit}}"),
-                ]));
+                let sha =
+                    git(&["rev-parse", "--verify", "-q", &format!("{mine}^{{commit}}")]).answer();
                 let _ = git(&["update-ref", "-d", &mine]);
-                (sha, said(&fetched))
+                (sha, fetched.said())
             }
             // A bare commit cannot be fetched by name from most servers, and a branch that
             // exists only on this machine cannot be fetched at all. Both resolve locally, by
             // their own name, which is not a slot anyone else can overwrite.
             false => {
                 let all = git(&["fetch", "-q", "--all"]);
-                let sha = answer(git(&[
+                let sha = git(&[
                     "rev-parse",
                     "--verify",
                     "-q",
                     &format!("{reference}^{{commit}}"),
-                ]));
-                (sha, format!("{}\n{}", said(&fetched), said(&all)))
+                ])
+                .answer();
+                (sha, format!("{}\n{}", fetched.said(), all.said()))
             }
         };
         if let Some(sha) = sha {
@@ -310,7 +307,7 @@ impl<'a> Trees<'a> {
                 .args(["worktree", "remove", "--force", "--force"])
                 .arg(worktree);
             let _ = self.commands.output(remove);
-            remove_all(worktree);
+            worktree.remove_all();
         }
         let add = |commands: &Commands| {
             let mut git = Git(source).command();
@@ -432,19 +429,19 @@ impl<'a> Trees<'a> {
     /// A tree a stopped `git worktree add` left: git writes the index once every file is out, so
     /// one without it was cut short. Never one a process works in.
     fn half_checked_out(&self, worktree: &Path) -> bool {
-        let index = answer(
-            self.commands
-                .git(worktree, &["rev-parse", "--git-path", "index"]),
-        );
+        let index = self
+            .commands
+            .git(worktree, &["rev-parse", "--git-path", "index"])
+            .answer();
         index.is_some_and(|index| !worktree.join(index).exists()) && !worked_in(&[worktree])
     }
 
     /// The tree this prepare may reuse, and the nest it sits in, marked used holding the repo's
     /// turn, under which a sweep judges them again before it removes either.
     fn revive(&self, prepare: &Prepare, worktree: &Path) {
-        let _ = now(&worktree.join(USED));
+        let _ = worktree.join(USED).touch_existing();
         if prepare.nest.is_some() {
-            let _ = now(&self.nested(prepare).join(USED));
+            let _ = self.nested(prepare).join(USED).touch_existing();
         }
     }
 
@@ -532,7 +529,8 @@ impl<'a> Trees<'a> {
             .join(name);
         let cargo = nest.join(".cargo");
         let written = cargo.join(format!("config.toml.{}", stamp.as_str()));
-        touch(&nest.join(USED))
+        nest.join(USED)
+            .touch()
             .and_then(|()| fs::create_dir_all(&cargo))
             .and_then(|()| fs::write(&written, config))
             .and_then(|()| fs::rename(&written, cargo.join("config.toml")))
@@ -549,7 +547,10 @@ impl<'a> Trees<'a> {
     ) -> Result<(), PrepareError> {
         self.made(target)?;
         self.made(&self.config.scratch.join("out"))?;
-        empty(&target.join(USED)).map_err(|e| PrepareError::io("could not mark the target", e))?;
+        target
+            .join(USED)
+            .make_empty()
+            .map_err(|e| PrepareError::io("could not mark the target", e))?;
         let cache = Cache::new(target);
         if let (Some(lines), Some(staged)) = (packages, &prepare.packages) {
             cache
@@ -600,7 +601,10 @@ impl<'a> Trees<'a> {
     }
 
     fn made_used(&self, worktree: &Path) -> Result<(), PrepareError> {
-        touch(&worktree.join(USED)).map_err(|e| PrepareError::io("could not mark the tree", e))
+        worktree
+            .join(USED)
+            .touch()
+            .map_err(|e| PrepareError::io("could not mark the tree", e))
     }
 }
 

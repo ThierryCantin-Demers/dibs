@@ -1,7 +1,8 @@
 use crate::{
-    platform::base::{Extent, Platform, Process, Slot, elapsed},
+    platform::base::{Extent, Platform, Process, Slot},
     settings::Settings,
 };
+use dibs_format::Span;
 use std::{
     ffi::CString,
     fs,
@@ -471,6 +472,17 @@ fn user_name(uid: u32) -> String {
     unsafe { std::ffi::CStr::from_ptr(entry.pw_name) }
         .to_string_lossy()
         .into_owned()
+}
+
+/// `[[dd-]hh:]mm:ss`, as ps prints a process's elapsed time.
+fn elapsed(seconds: u64) -> String {
+    let (days, hours) = (seconds / Span::DAY.0, seconds % Span::DAY.0 / 3600);
+    let clock = format!("{:02}:{:02}", seconds % 3600 / 60, seconds % 60);
+    match (days, hours) {
+        (0, 0) => clock,
+        (0, hours) => format!("{hours:02}:{clock}"),
+        (days, hours) => format!("{days}-{hours:02}:{clock}"),
+    }
 }
 
 #[cfg(test)]

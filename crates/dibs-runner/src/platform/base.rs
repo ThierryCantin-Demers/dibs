@@ -1,11 +1,48 @@
-use dibs_format::Span;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    thread,
+    time::Duration,
+};
+
+/// How long a reap waits between its rounds.
+const REAP_ROUND: Duration = Duration::from_millis(250);
+/// Rounds of TERM to what is below, then of KILL, before the named processes themselves.
+const REAP_BELOW_ROUNDS: usize = 50;
+const REAP_BELOW_TERM_ROUNDS: usize = 40;
+/// Rounds the named processes are given to end after TERM before KILL.
+const REAP_NAMED_ROUNDS: usize = 41;
 
 /// One process, as the tree under a job is walked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Process {
     pub pid: u32,
     pub parent: u32,
+}
+
+/// The processes under a pid in a process table.
+pub trait Descendants {
+    /// Parents before children, the pid itself left out.
+    fn below(&self, root: u32) -> Vec<u32>;
+}
+
+impl Descendants for [Process] {
+    fn below(&self, root: u32) -> Vec<u32> {
+        let mut wanted = BTreeSet::from([root]);
+        let mut below = Vec::new();
+        let mut level = vec![root];
+        while !level.is_empty() {
+            let next: Vec<u32> = self
+                .iter()
+                .filter(|p| level.contains(&p.parent) && !wanted.contains(&p.pid))
+                .map(|p| p.pid)
+                .collect();
+            wanted.extend(next.iter().copied());
+            below.extend(next.iter().copied());
+            level = next;
+        }
+        below
+    }
 }
 
 /// What a PCI slot holds now.
@@ -114,7 +151,7 @@ pub trait Platform {
             next += 1;
             let Some(children) = Self::children(pid) else {
                 tree = vec![root];
-                tree.extend(crate::job::tree_below(root, &Self::processes()));
+                tree.extend(Self::processes().below(root));
                 return tree;
             };
             for child in children {
@@ -125,16 +162,58 @@ pub trait Platform {
         }
         tree
     }
+
+    /// Stops a job's whole tree. The lock goes the moment the job exits, and a grandchild still
+    /// running then would run unlocked beside the next measurement, so everything below goes
+    /// first, deepest first, then what was named: TERM, and KILL for whatever outlives it.
+    fn reap(pids: &[u32]) {
+        for round in 1..=REAP_BELOW_ROUNDS {
+            let processes = Self::processes();
+            let below: Vec<u32> = pids.iter().flat_map(|p| processes.below(*p)).collect();
+            if below.is_empty() {
+                break;
+            }
+            let sig = match round > REAP_BELOW_TERM_ROUNDS {
+                true => libc::SIGKILL,
+                false => libc::SIGTERM,
+            };
+            for pid in below.iter().rev() {
+                Self::signal(*pid, sig);
+            }
+            thread::sleep(REAP_ROUND);
+        }
+        for pid in pids {
+            Self::signal(*pid, libc::SIGTERM);
+        }
+        for round in 1..=REAP_NAMED_ROUNDS {
+            let alive: Vec<u32> = pids.iter().copied().filter(|p| Self::running(*p)).collect();
+            if alive.is_empty() {
+                return;
+            }
+            if round == REAP_NAMED_ROUNDS {
+                for pid in alive {
+                    Self::signal(pid, libc::SIGKILL);
+                }
+            }
+            thread::sleep(REAP_ROUND);
+        }
+    }
+
+    fn signal(pid: u32, signal: libc::c_int) {
+        // SAFETY: kill only sends a signal.
+        unsafe { libc::kill(pid as libc::pid_t, signal) };
+    }
 }
 
-/// `[[dd-]hh:]mm:ss`, as ps prints a process's elapsed time.
-#[cfg(target_os = "linux")]
-pub fn elapsed(seconds: u64) -> String {
-    let (days, hours) = (seconds / Span::DAY.0, seconds % Span::DAY.0 / 3600);
-    let clock = format!("{:02}:{:02}", seconds % 3600 / 60, seconds % 60);
-    match (days, hours) {
-        (0, 0) => clock,
-        (0, hours) => format!("{hours:02}:{clock}"),
-        (days, hours) => format!("{days}-{hours:02}:{clock}"),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tree_below_lists_parents_before_children() {
+        let p = |pid, parent| Process { pid, parent };
+        let table = [p(1, 0), p(10, 1), p(11, 10), p(12, 11), p(13, 10), p(20, 1)];
+        assert_eq!(table.below(10), vec![11, 13, 12]);
+        assert!(table.below(12).is_empty());
     }
 }

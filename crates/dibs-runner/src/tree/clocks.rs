@@ -1,7 +1,7 @@
 use crate::{
     clock::Span,
     tree::{
-        copy::remove_all,
+        copy::Coreutils as _,
         git::{Commands, Git},
     },
 };
@@ -102,7 +102,7 @@ impl<'a> Removal<'a> {
     }
 
     pub fn path(&self, path: &Path) -> bool {
-        let gone = remove_all(path);
+        let gone = path.remove_all();
         if !gone {
             (self.say)(&format!(
                 "dibs: could not remove all of {}; the next sweep tries again\n",
