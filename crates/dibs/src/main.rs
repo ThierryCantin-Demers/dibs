@@ -10,7 +10,7 @@ use dibs::{
     hook::SshHook,
     machine::Runner,
     paths::FileError,
-    recipe,
+    recipe::{self, Checkouts},
     records::{Complaints, FrictionLog, RunLog},
     reports::{self, ReportsRepo},
     update::{Build, ChangeNotice},
@@ -138,7 +138,7 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
         return Ok(fleet::command(
             args.json,
             only,
-            &recipe::root_of(&args)?,
+            Checkouts::of(&args)?.root(),
             fleet::recipe_repos(),
             &fleet::pool()?,
         )?);

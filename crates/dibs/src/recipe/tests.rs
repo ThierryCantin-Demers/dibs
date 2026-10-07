@@ -1,6 +1,6 @@
 use super::{
     base::{Isolation, Recipe, Step},
-    labels::{label_steps, run_label},
+    labels::run_label,
     manifest::{Manifest, Source, Verb},
 };
 use dibs_format::Lock;
@@ -315,6 +315,18 @@ fn step(lock: Lock, run: &str) -> Step {
     }
 }
 
+fn recipe_of(steps: Vec<Step>) -> Recipe {
+    Recipe {
+        source: Source::Repo,
+        needs: None,
+        isolation: Isolation::Machine,
+        params: BTreeMap::new(),
+        fresh: Vec::new(),
+        artifacts: Vec::new(),
+        steps,
+    }
+}
+
 #[test]
 fn the_fingerprint_follows_the_procedure_and_nothing_else() {
     let a = Recipe {
@@ -385,7 +397,7 @@ fn isolation_defaults_to_the_whole_machine() {
 #[test]
 fn a_build_and_a_measurement_need_no_suffix() {
     let steps = vec![step(Lock::Shared, "build"), step(Lock::Exclusive, "bench")];
-    assert_eq!(label_steps("r/x", &steps), vec!["r/x", "r/x"]);
+    assert_eq!(recipe_of(steps).step_labels("r/x"), vec!["r/x", "r/x"]);
 }
 
 #[test]
@@ -403,7 +415,10 @@ fn two_steps_taking_the_same_lock_must_not_share_a_label() {
         step(Lock::Shared, "two"),
         step(Lock::Exclusive, "measure"),
     ];
-    assert_eq!(label_steps("r/x", &steps), vec!["r/x.1", "r/x.2", "r/x"]);
+    assert_eq!(
+        recipe_of(steps).step_labels("r/x"),
+        vec!["r/x.1", "r/x.2", "r/x"]
+    );
 }
 
 #[test]

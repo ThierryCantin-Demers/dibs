@@ -144,6 +144,22 @@ impl Recipe {
 
     /// The two ways a recipe invalidates its own measurement, refused before anything is paid
     /// for rather than found in the numbers afterwards.
+    /// One label per step, suffixed only where it has to be. A recipe with a build and a
+    /// measurement needs no suffix, because the lock already separates them.
+    pub fn step_labels(&self, label: &str) -> Vec<String> {
+        let steps = &self.steps;
+        let mut out = Vec::with_capacity(steps.len());
+        for (i, s) in steps.iter().enumerate() {
+            let same = steps.iter().filter(|o| o.lock == s.lock).count();
+            if same > 1 {
+                out.push(format!("{label}.{}", i + 1));
+            } else {
+                out.push(label.to_string());
+            }
+        }
+        out
+    }
+
     pub fn check(&self, name: &str) -> Result<(), RecipeError> {
         let unsound = |flaw: Flaw| RecipeError::Unsound {
             recipe: name.to_string(),

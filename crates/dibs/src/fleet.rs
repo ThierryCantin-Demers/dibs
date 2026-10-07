@@ -11,7 +11,7 @@ use crate::{
     inventory::{Inventory, InventoryError},
     machine::Kept,
     paths::{FileError, Paths},
-    recipe::{RepoError, repo_root},
+    recipe::{Checkouts, Manifest, RepoError},
 };
 use dibs_format::{
     Exit, Label, MachineName, Mode,
@@ -664,7 +664,7 @@ pub fn command(
 
 /// The overview as `dibs machines` takes it, from this computer's own settings.
 pub fn survey(only: Option<&str>) -> Result<Overview, FleetError> {
-    overview(only, &repo_root()?, recipe_repos(), &pool()?)
+    overview(only, Checkouts::here()?.root(), recipe_repos(), &pool()?)
 }
 
 /// Every machine in fleet.toml, or the one named, probed at once.
@@ -740,7 +740,7 @@ pub fn inventory() -> Result<Option<Inventory>, InventoryError> {
 
 /// Every repo with a recipes file.
 pub fn recipe_repos() -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(crate::recipe::local_dir()) else {
+    let Ok(entries) = std::fs::read_dir(Manifest::local_dir()) else {
         return Vec::new();
     };
     let mut repos: Vec<String> = entries

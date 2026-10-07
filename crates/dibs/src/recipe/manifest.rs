@@ -20,12 +20,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn local_dir() -> PathBuf {
-    Paths::from_env()
-        .recipes()
-        .unwrap_or_else(|| PathBuf::from("dibs/recipes"))
-}
-
 /// One server, and what it takes for something to be able to use it.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Serve {
@@ -142,14 +136,21 @@ pub enum Source {
 }
 
 impl Manifest {
+    /// This computer's recipes, which override a repo's own.
+    pub fn local_dir() -> PathBuf {
+        Paths::from_env()
+            .recipes()
+            .unwrap_or_else(|| PathBuf::from("dibs/recipes"))
+    }
+
     /// Two layers, the second overriding the first: whatever the repo declares for itself, then
     /// local config, because that is the override. The format is the same in both, so a recipe
     /// moves between them unchanged. dibs carries no recipes of its own: it knows no repo.
     pub fn load(dir: &Path, repo: &str) -> Result<Manifest, RecipeError> {
-        Manifest::load_from(dir, repo, &local_dir())
+        Manifest::load_from(dir, repo, &Manifest::local_dir())
     }
 
-    /// The layer that is normally `local_dir()`, passed in: a variable set for one test is read
+    /// The layer that is normally `Manifest::local_dir()`, passed in: a variable set for one test is read
     /// by every other test thread of the process.
     pub fn load_from(dir: &Path, repo: &str, local_dir: &Path) -> Result<Manifest, RecipeError> {
         Manifest::layers(dir, repo, local_dir)?.ok_or_else(|| RecipeError::NoRecipes {
@@ -161,7 +162,7 @@ impl Manifest {
 
     /// For work in a tree that runs no recipe, where a repo declaring nothing is not an error.
     pub fn load_any(dir: &Path, repo: &str) -> Result<Manifest, RecipeError> {
-        Ok(Manifest::layers(dir, repo, &local_dir())?.unwrap_or_default())
+        Ok(Manifest::layers(dir, repo, &Manifest::local_dir())?.unwrap_or_default())
     }
 
     /// None when neither layer has a file.

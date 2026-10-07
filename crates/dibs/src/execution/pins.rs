@@ -9,7 +9,7 @@ use super::{error::PinError, local::Fetched, refs::Arm, trees::lockfile};
 use crate::{
     cli::RecipeCall,
     git::{Git, GitError},
-    recipe::{resolve_repo, root_of},
+    recipe::Checkouts,
 };
 use dibs_format::lockfile::Package;
 use std::{
@@ -194,7 +194,7 @@ pub fn pins_of(
             repo: name,
             reference,
         } = pin_spec(p)?;
-        let pdir = resolve_repo(name, &root_of(args)?)?;
+        let pdir = Checkouts::of(args)?.find(name)?;
         let identity = super::identity(&pdir);
         if identity == repo {
             return Err(PinError::Itself {

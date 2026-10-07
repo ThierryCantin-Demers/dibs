@@ -16,12 +16,10 @@ pub use base::Isolation;
 pub use base::{Recipe, Step};
 pub use dibs_format::Lock;
 pub use error::{Flaw, ManifestError, NotTaken, ParamError, RecipeError, RepoError, ShellWords};
-#[cfg(test)]
-pub use labels::label_steps;
 pub use labels::run_label;
 pub use listing::list;
-pub use manifest::{Manifest, Service, local_dir};
+pub use manifest::{Manifest, Service};
 #[cfg(test)]
 pub use manifest::{Source, Verb};
-pub use refusals::{Resolved, resolve};
-pub use repo::{repo_root, resolve_repo, root_of};
+pub use refusals::Resolved;
+pub use repo::Checkouts;

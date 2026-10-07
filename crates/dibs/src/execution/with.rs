@@ -14,7 +14,7 @@ use crate::{
     cli::{
         Call, CliError, Command as ShellCommand, Mode, PortName, RecipeCall, Run, RunLock, Service,
     },
-    recipe::{self, Lock, Manifest, resolve_repo, root_of, run_label},
+    recipe::{self, Checkouts, Lock, Manifest, run_label},
     records::Affinity,
 };
 use dibs_format::{Alias, Exit, Label, MachineName, wire};
@@ -31,7 +31,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     if !args.pins.is_empty() {
         return Err(Refusal::WithPin.into());
     }
-    let dir = resolve_repo(&args.repo, &root_of(args)?)?;
+    let dir = Checkouts::of(args)?.find(&args.repo)?;
     let repo_name = super::identity(&dir);
     let manifest = Manifest::load(&dir, &repo_name)?;
     let name = args

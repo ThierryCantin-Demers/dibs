@@ -1,5 +1,3 @@
-use super::base::Step;
-
 pub fn run_label(repo: &str, verb: &str, name: Option<&str>, device: Option<&str>) -> String {
     let base = match name {
         Some(n) => format!("{repo}/{verb}/{n}"),
@@ -13,19 +11,4 @@ pub fn run_label(repo: &str, verb: &str, name: Option<&str>, device: Option<&str
         Some(d) => format!("{base}@{d}"),
         None => base,
     }
-}
-
-/// One label per step, suffixed only where it has to be. A recipe with a build and a
-/// measurement needs no suffix, because the lock already separates them.
-pub fn label_steps(base: &str, steps: &[Step]) -> Vec<String> {
-    let mut out = Vec::with_capacity(steps.len());
-    for (i, s) in steps.iter().enumerate() {
-        let same = steps.iter().filter(|o| o.lock == s.lock).count();
-        if same > 1 {
-            out.push(format!("{base}.{}", i + 1));
-        } else {
-            out.push(base.to_string());
-        }
-    }
-    out
 }

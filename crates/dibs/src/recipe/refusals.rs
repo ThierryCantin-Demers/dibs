@@ -1,9 +1,9 @@
 use super::{
     base::{Isolation, Recipe, Step},
     error::{NotTaken, RecipeError, ShellWords},
-    labels::{label_steps, run_label},
+    labels::run_label,
     manifest::{Manifest, Source, Verb},
-    repo::{resolve_repo, root_of},
+    repo::Checkouts,
 };
 use crate::{
     cli::{RecipeCall, RecipeVerb},
@@ -58,129 +58,131 @@ fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> 
     }
 }
 
-pub fn resolve(args: &RecipeCall) -> Result<Resolved, RecipeError> {
-    let found = root_of(args).and_then(|root| resolve_repo(&args.repo, &root));
-    if args.verb == RecipeVerb::Shell {
-        let repo = found
-            .as_deref()
-            .map(execution::identity)
-            .unwrap_or_else(|_| args.repo.clone());
-        refuse_shell_words(args, &repo)?;
-    }
-    let dir = found?;
-    let repo_name = execution::identity(&dir);
-    let manifest = if args.verb == RecipeVerb::Shell {
-        Manifest::load_any(&dir, &repo_name)?
-    } else {
-        Manifest::load(&dir, &repo_name)?
-    };
-
-    let shell_reason = match args.verb {
-        RecipeVerb::Shell => args.reason.clone(),
-        _ => None,
-    };
-    let shell_recipe = shell_reason.as_ref().map(|_| Recipe {
-        source: Source::Local,
-        needs: None,
-        isolation: Isolation::Machine,
-        params: BTreeMap::new(),
-        fresh: Vec::new(),
-        artifacts: Vec::new(),
-        steps: vec![Step {
-            lock: if args.bench {
-                Lock::Exclusive
-            } else {
-                Lock::Shared
-            },
-            run: args.command.clone().unwrap_or_default(),
-            env: BTreeMap::new(),
-        }],
-    });
-
-    let verb = Verb::parse(args.verb.as_str())
-        .or(if args.verb == RecipeVerb::Shell {
-            Some(Verb::Build)
-        } else {
-            None
-        })
-        .ok_or(RecipeError::NotAVerb(args.verb))?;
-    let name = if shell_recipe.is_some() {
-        Some("shell")
-    } else {
-        args.recipe.as_deref()
-    }
-    .ok_or_else(|| {
-        let have = manifest.names(verb);
-        match have.is_empty() {
-            true => RecipeError::NoneOfVerb {
-                dir: dir.clone(),
-                verb,
-            },
-            false => RecipeError::Unnamed {
-                dir: dir.clone(),
-                have,
-            },
+impl Resolved {
+    pub fn of(args: &RecipeCall) -> Result<Resolved, RecipeError> {
+        let found = Checkouts::of(args).and_then(|checkouts| checkouts.find(&args.repo));
+        if args.verb == RecipeVerb::Shell {
+            let repo = found
+                .as_deref()
+                .map(execution::identity)
+                .unwrap_or_else(|_| args.repo.clone());
+            refuse_shell_words(args, &repo)?;
         }
-    })?;
-    let mut rec = shell_recipe.clone().map(Ok).unwrap_or_else(|| {
-        manifest
-            .recipe(verb, name)
-            .cloned()
-            .ok_or_else(|| RecipeError::NoSuchRecipe {
+        let dir = found?;
+        let repo_name = execution::identity(&dir);
+        let manifest = if args.verb == RecipeVerb::Shell {
+            Manifest::load_any(&dir, &repo_name)?
+        } else {
+            Manifest::load(&dir, &repo_name)?
+        };
+
+        let shell_reason = match args.verb {
+            RecipeVerb::Shell => args.reason.clone(),
+            _ => None,
+        };
+        let shell_recipe = shell_reason.as_ref().map(|_| Recipe {
+            source: Source::Local,
+            needs: None,
+            isolation: Isolation::Machine,
+            params: BTreeMap::new(),
+            fresh: Vec::new(),
+            artifacts: Vec::new(),
+            steps: vec![Step {
+                lock: if args.bench {
+                    Lock::Exclusive
+                } else {
+                    Lock::Shared
+                },
+                run: args.command.clone().unwrap_or_default(),
+                env: BTreeMap::new(),
+            }],
+        });
+
+        let verb = Verb::parse(args.verb.as_str())
+            .or(if args.verb == RecipeVerb::Shell {
+                Some(Verb::Build)
+            } else {
+                None
+            })
+            .ok_or(RecipeError::NotAVerb(args.verb))?;
+        let name = if shell_recipe.is_some() {
+            Some("shell")
+        } else {
+            args.recipe.as_deref()
+        }
+        .ok_or_else(|| {
+            let have = manifest.names(verb);
+            match have.is_empty() {
+                true => RecipeError::NoneOfVerb {
+                    dir: dir.clone(),
+                    verb,
+                },
+                false => RecipeError::Unnamed {
+                    dir: dir.clone(),
+                    have,
+                },
+            }
+        })?;
+        let mut rec = shell_recipe.clone().map(Ok).unwrap_or_else(|| {
+            manifest
+                .recipe(verb, name)
+                .cloned()
+                .ok_or_else(|| RecipeError::NoSuchRecipe {
+                    verb,
+                    name: name.to_string(),
+                    dir: dir.clone(),
+                    have: manifest.names(verb),
+                })
+        })?;
+        if rec.steps.is_empty() {
+            return Err(RecipeError::NoSteps(name.to_string()));
+        }
+
+        // Derived, never supplied. A label an agent writes by hand names the run rather than the
+        // kind of work, which is why 51 of 80 labels in the old history appeared exactly once and
+        // filed their duration where nothing would look it up again.
+        //
+        // The verb is in it because a recipe name is only unique within a verb: `build cubek cuda`
+        // and `test cubek cuda` are different work, and one history for both predicts each from
+        // the other. Shell has no recipe name to carry.
+        let label = match &shell_recipe {
+            Some(_) => run_label(&repo_name, "shell", None, args.device.as_deref()),
+            None => run_label(
+                &repo_name,
+                verb.as_str(),
+                Some(name),
+                args.device.as_deref(),
+            ),
+        };
+        if args.params.contains_key("label") && !rec.params.contains_key("label") {
+            return Err(RecipeError::Labelled {
                 verb,
                 name: name.to_string(),
-                dir: dir.clone(),
-                have: manifest.names(verb),
-            })
-    })?;
-    if rec.steps.is_empty() {
-        return Err(RecipeError::NoSteps(name.to_string()));
-    }
-
-    // Derived, never supplied. A label an agent writes by hand names the run rather than the
-    // kind of work, which is why 51 of 80 labels in the old history appeared exactly once and
-    // filed their duration where nothing would look it up again.
-    //
-    // The verb is in it because a recipe name is only unique within a verb: `build cubek cuda`
-    // and `test cubek cuda` are different work, and one history for both predicts each from
-    // the other. Shell has no recipe name to carry.
-    let label = match &shell_recipe {
-        Some(_) => run_label(&repo_name, "shell", None, args.device.as_deref()),
-        None => run_label(
-            &repo_name,
-            verb.as_str(),
-            Some(name),
-            args.device.as_deref(),
-        ),
-    };
-    if args.params.contains_key("label") && !rec.params.contains_key("label") {
-        return Err(RecipeError::Labelled {
+                label,
+            });
+        }
+        let params = rec.values(&args.params).map_err(|why| RecipeError::Param {
+            recipe: name.to_string(),
+            why,
+        })?;
+        rec = rec.bound(&params);
+        rec.check(name)?;
+        // The duration history keys on lock and label together, so a recipe's build and its
+        // measurement stay apart on their own. Two steps taking the *same* lock would not, and
+        // their durations would average into one meaningless number: the bimodal history that
+        // made estimates useless in the first place, rebuilt deliberately.
+        let step_labels = rec.step_labels(&label);
+        Ok(Resolved {
+            dir,
+            repo_name,
             verb,
             name: name.to_string(),
+            rec,
             label,
-        });
+            step_labels,
+            shell_reason,
+            params,
+            tree_fresh: manifest.tree_fresh().to_vec(),
+        })
     }
-    let params = rec.values(&args.params).map_err(|why| RecipeError::Param {
-        recipe: name.to_string(),
-        why,
-    })?;
-    rec = rec.bound(&params);
-    rec.check(name)?;
-    // The duration history keys on lock and label together, so a recipe's build and its
-    // measurement stay apart on their own. Two steps taking the *same* lock would not, and
-    // their durations would average into one meaningless number: the bimodal history that
-    // made estimates useless in the first place, rebuilt deliberately.
-    let step_labels = label_steps(&label, &rec.steps);
-    Ok(Resolved {
-        dir,
-        repo_name,
-        verb,
-        name: name.to_string(),
-        rec,
-        label,
-        step_labels,
-        shell_reason,
-        params,
-        tree_fresh: manifest.tree_fresh().to_vec(),
-    })
 }

@@ -10,7 +10,7 @@ use crate::{
     cli::Invocation,
     cli::RecipeCall,
     recipe::{self, Lock, Resolved, Verb},
-    recipe::{Isolation, Recipe, Step, label_steps},
+    recipe::{Isolation, Recipe, Step},
 };
 use dibs_format::wire;
 use std::{
@@ -425,7 +425,7 @@ fn resolved(steps: Vec<Step>) -> Resolved {
         artifacts: Vec::new(),
         steps,
     };
-    let step_labels = label_steps("app/bench/r", &rec.steps);
+    let step_labels = rec.step_labels("app/bench/r");
     Resolved {
         dir: PathBuf::from("."),
         repo_name: "app".into(),

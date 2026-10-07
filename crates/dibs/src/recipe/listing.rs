@@ -1,14 +1,14 @@
 use super::{
     error::RecipeError,
-    manifest::{Manifest, Source, Verb, local_dir},
-    repo::{resolve_repo, root_of},
+    manifest::{Manifest, Source, Verb},
+    repo::Checkouts,
 };
 use crate::{cli::RecipeCall, execution};
 use std::process::ExitCode;
 
 /// `dibs list <repo>`: its recipes, what each takes, and its services.
 pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
-    let dir = resolve_repo(&args.repo, &root_of(args)?)?;
+    let dir = Checkouts::of(args)?.find(&args.repo)?;
     let manifest = Manifest::load(&dir, &execution::identity(&dir))?;
     for v in [Verb::Bench, Verb::Build, Verb::Test] {
         let listing = manifest.listing(v);
@@ -58,6 +58,6 @@ pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
             manifest.tree_fresh().join(", ")
         );
     }
-    println!("\nlocal recipes: {}", local_dir().display());
+    println!("\nlocal recipes: {}", Manifest::local_dir().display());
     Ok(ExitCode::SUCCESS)
 }

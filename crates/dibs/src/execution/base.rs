@@ -15,7 +15,7 @@ use crate::{
     batch,
     call::{Destination, RecipeJob},
     cli::{RecipeCall, ShellWord},
-    recipe::{self, Lock, Manifest, NotTaken, Resolved, resolve},
+    recipe::{self, Lock, Manifest, NotTaken, Resolved},
     records::{Affinity, RunLog, now_secs},
 };
 use dibs_format::{
@@ -76,7 +76,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     };
 
     let sides = sides(args.reference.as_deref())?;
-    let resolved = resolve(&args)?;
+    let resolved = Resolved::of(&args)?;
     let mut arms = arms(&sides, &resolved.dir, &resolved.repo_name)?;
     let mut pins = pins_of(&args, &resolved.repo_name, &resolved.dir, &arms)?;
     let local: Vec<bool> = arms.iter().map(|a| a.fetch.is_none()).collect();

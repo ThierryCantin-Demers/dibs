@@ -2,7 +2,7 @@ use super::{base::sh, error::RunError, refs::sides};
 use crate::{
     batch,
     cli::{RecipeCall, Sweep},
-    recipe::resolve,
+    recipe::Resolved,
 };
 use std::{collections::BTreeMap, process::ExitCode};
 
@@ -39,7 +39,7 @@ pub fn sweep_run(
             reps: 1,
             ..args.clone()
         };
-        resolve(&probe)?;
+        Resolved::of(&probe)?;
     }
     let text = sweep_text(args, points);
     let code = batch::run(

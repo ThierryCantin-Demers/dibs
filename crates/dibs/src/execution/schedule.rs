@@ -5,7 +5,7 @@ use super::{
 use crate::{
     batch,
     cli::RecipeCall,
-    recipe::{self, Lock, Resolved, resolve},
+    recipe::{self, Lock, Resolved},
 };
 use dibs_format::Mode;
 
@@ -130,7 +130,7 @@ pub fn jobs_of(
 /// The jobs a recipe line in a batch will make, so the batch's plan can estimate them. None
 /// when the line does not resolve here, which leaves that step without an estimate.
 pub fn recipe_jobs(args: &RecipeCall) -> Option<Vec<batch::Pending>> {
-    let r = resolve(args).ok()?;
+    let r = Resolved::of(args).ok()?;
     let pins = args
         .pins
         .iter()
