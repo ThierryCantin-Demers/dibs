@@ -173,11 +173,7 @@ impl Normal {
         if let Some(name) = s.root.file_name() {
             n = n.literal(&name.to_string_lossy(), "<root-name>");
         }
-        n = n.word(hostname(), "<host>");
-        if let Some(user) = std::env::var("USER").ok().filter(|u| u.len() > 1) {
-            n = n.word(&user, "<user>");
-        }
-        n
+        n.word(hostname(), "<host>")
     }
 
     /// Every match of `re`, with `$1` and the like in `with` naming its groups.
