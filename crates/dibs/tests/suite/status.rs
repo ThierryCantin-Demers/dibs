@@ -222,9 +222,10 @@ fn queued_shared_jobs_do_not_wait_out_each_other() {
     s.history("shared\tbuild-a\t60\nshared\tbuild-a\t60\nshared\tbuild-a\t60\n");
     s.history("shared\tbuild-b\t50\nshared\tbuild-b\t50\nshared\tbuild-b\t50\n");
     s.history("bench\tsweep\t200\nbench\tsweep\t200\nbench\tsweep\t200\n");
-    // Real pids, because prune drops any record whose process is gone.
-    let q = s.gate("q");
-    let waiters: Vec<Job> = (0..3).map(|_| s.spawn(s.sh(&q.hold()))).collect();
+    // Real pids, because prune drops any record whose process is gone. A gate each, since opening
+    // one releases only the readers already at it.
+    let gates: Vec<Gate> = (0..3).map(|n| s.gate(&format!("q{n}"))).collect();
+    let waiters: Vec<Job> = gates.iter().map(|q| s.spawn(s.sh(&q.hold()))).collect();
     let t = Moment::epoch_now();
     holder_record(&s, "bench", "blocker", "an agent", "the holder", 0);
     for (job, (mode, label, dt)) in waiters.iter().zip([
@@ -269,8 +270,8 @@ fn queued_shared_jobs_do_not_wait_out_each_other() {
         3,
         "the status display agrees with the json"
     );
-    q.open();
-    for j in waiters {
+    for (q, j) in gates.iter().zip(waiters) {
+        q.open();
         s.wait(j);
     }
 }
