@@ -285,7 +285,8 @@ fn the_scratch_a_prepare_sweeps() {
 
 #[test]
 fn a_git_database_the_machine_lacks_is_sent_ahead_of_the_build() {
-    let s = wired();
+    let mut s = wired();
+    s.set("DIBS_REFLINK", "never");
     let dir = app(&s);
     recipes(&s, PARAMS);
     s.git(".", &["init", "-q", "dep"]);

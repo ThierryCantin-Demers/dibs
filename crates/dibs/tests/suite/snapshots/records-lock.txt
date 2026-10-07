@@ -59,7 +59,7 @@ next	shared	rec-next	1
 == cpu.<pid>, the CPU sample a status leaves
   3 words: ticks, when it last worked, when sampled
   ticks    <clock ticks, a whole number>
-  worked   - (never)
+  worked   <- for never, or a second within the last minute>
   sampled  <a second since the epoch, within the last minute>
 
 == holder.<pid>, a hold

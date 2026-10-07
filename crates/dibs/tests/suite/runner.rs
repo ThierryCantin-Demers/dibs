@@ -199,7 +199,9 @@ fn a_queued_gc_starts_though_its_runner_was_removed_while_it_waited() {
     up.reached();
     let gc = s.spawn(s.remote(s.dibs(["--gc", "--dry-run"])));
     s.until_records("the sweep queued", || {
-        s.records("waiting").iter().any(|r| r[3] == "dibs-gc")
+        s.records("waiting")
+            .iter()
+            .any(|r| r.get(3).is_some_and(|label| label == "dibs-gc"))
     });
     fs::remove_dir_all(s.path(&version)).unwrap();
     hold.open();
@@ -354,7 +356,9 @@ fn the_first_build_queues_behind_a_benchmark() {
     s.held(1);
     let check = s.spawn(s.remote(s.dibs(["--check"])));
     s.until_records("the first build queued", || {
-        s.records("waiting").iter().any(|r| r[3] == "dibs-runner")
+        s.records("waiting")
+            .iter()
+            .any(|r| r.get(3).is_some_and(|label| label == "dibs-runner"))
     });
     assert!(!installed(&s), "nothing is built beside the benchmark");
     hold.open();

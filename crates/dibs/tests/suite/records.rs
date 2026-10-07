@@ -212,9 +212,10 @@ fn lock_records() {
                     true => "<clock ticks, a whole number>".to_string(),
                     false => w.to_string(),
                 }),
-                shown(1, &|w| match w {
-                    "-" => "- (never)".to_string(),
-                    w => recent(w),
+                // Whether the job's start burned a whole clock tick depends on the machine.
+                shown(1, &|w| match w == "-" || recent(w) != w {
+                    true => "<- for never, or a second within the last minute>".to_string(),
+                    false => w.to_string(),
                 }),
                 shown(2, &recent),
             ),

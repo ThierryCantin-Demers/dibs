@@ -422,7 +422,7 @@ fn every_user_on_a_machine_takes_the_same_lock() {
     assert_eq!(
         check.lines_with(&format!("install -d -m 2775 -g dibs {shared}")),
         1,
-        "and tells you exactly how to fix it, naming the configured path"
+        "and tells you exactly how to fix it, naming the configured path:\n{check}"
     );
     fs::create_dir_all(&shared).unwrap();
     let check = s
