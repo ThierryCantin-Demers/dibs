@@ -2,11 +2,24 @@
 //! index renumbers when a card is added, when the driver reorders, and between boots.
 
 use crate::{
-    inventory::Machine,
-    machine::{Card, Fleet, Target},
+    inventory::{Device, Machine},
+    machine::{Fleet, Target},
 };
 use dibs_format::{Alias, MachineName};
 use std::fmt;
+
+/// The card a call is pinned to, as the machine selects it.
+#[derive(Debug, Clone, Default)]
+pub struct Card {
+    /// The alias `--device` named.
+    pub alias: String,
+    pub pci: String,
+    /// Its runtimes, comma separated.
+    pub runtimes: String,
+    pub chip: String,
+    /// How many cards there share its chip id.
+    pub twins: usize,
+}
 
 #[derive(Debug)]
 pub enum CardError {
@@ -23,14 +36,21 @@ pub enum CardError {
 }
 
 impl Card {
+    /// No card named: the machine's runtime picks.
+    pub fn none() -> Card {
+        Card {
+            twins: 1,
+            ..Card::default()
+        }
+    }
+
     pub fn resolve(alias: &Alias, target: &Target, fleet: &Fleet) -> Result<Card, CardError> {
         let entry = target.entry(fleet).ok_or_else(|| CardError::NoEntry {
             host: target.host.clone(),
         })?;
         let device = entry.device(alias.as_str());
-        let field = |f: fn(&crate::inventory::Device) -> Option<&String>| {
-            device.and_then(f).cloned().unwrap_or_default()
-        };
+        let field =
+            |f: fn(&Device) -> Option<&String>| device.and_then(f).cloned().unwrap_or_default();
         let pci = field(|d| d.pci.as_ref());
         let chip = field(|d| d.chip.as_ref());
         // A CPU needs no pinning and has no PCI address; a machine's only GPU, as on a Mac, has no

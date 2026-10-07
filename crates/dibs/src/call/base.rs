@@ -1,6 +1,5 @@
 use crate::{
     call::{
-        card::CardError,
         hold::Hold,
         machine::MachineCall,
         origin::{BatchStep, Origin, RecipeJob},
@@ -11,8 +10,8 @@ use crate::{
     cli::{Call, Command, PortName, Run, RunLock, Service},
     inventory::InventoryError,
     machine::{
-        CallValues, Card, Delivery, Fleet, Here, Liveness, MaxFrom, Named, Session, Target,
-        TargetEnv, TargetError,
+        CallValues, Card, CardError, Delivery, Fleet, Here, Liveness, MaxFrom, Named, Session,
+        Target, TargetEnv, TargetError,
     },
     paths::Paths,
     placement::{Placement, Unplaced},

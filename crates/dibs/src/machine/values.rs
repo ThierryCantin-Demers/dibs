@@ -1,6 +1,7 @@
 use crate::{
     caller::Caller,
     cli::{PortName, Service},
+    machine::Card,
 };
 use dibs_format::{
     Alias, Label, Mode,
@@ -12,29 +13,6 @@ use dibs_format::{
 pub enum MaxFrom {
     Given,
     Default,
-}
-
-/// The card a call is pinned to, as the machine selects it.
-#[derive(Debug, Clone, Default)]
-pub struct Card {
-    /// The alias `--device` named.
-    pub alias: String,
-    pub pci: String,
-    /// Its runtimes, comma separated.
-    pub runtimes: String,
-    pub chip: String,
-    /// How many cards there share its chip id.
-    pub twins: usize,
-}
-
-impl Card {
-    /// No card named: the machine's runtime picks.
-    pub fn none() -> Card {
-        Card {
-            twins: 1,
-            ..Card::default()
-        }
-    }
 }
 
 /// One call's values, which the runner is sent as its request.

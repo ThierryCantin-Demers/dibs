@@ -218,6 +218,14 @@ enum Profile {
     Unprivileged,
 }
 
+/// A machine as the survey checks it: its entry, what was found on it, and what it is checked
+/// against.
+struct Surveyed<'a> {
+    machine: &'a Machine,
+    facts: &'a Facts,
+    cx: &'a Context,
+}
+
 /// What a machine is checked against, beyond its own entry.
 struct Context {
     /// Each key's fingerprint, to whom it belongs.
@@ -227,32 +235,37 @@ struct Context {
     recipe_repos: Vec<String>,
 }
 
-impl Machine {
-    fn repos<'a>(&'a self, cx: &'a Context) -> &'a [String] {
-        self.repos.as_deref().unwrap_or(&cx.recipe_repos)
+impl<'a> Surveyed<'a> {
+    fn repos(&self) -> &'a [String] {
+        self.machine
+            .repos
+            .as_deref()
+            .unwrap_or(&self.cx.recipe_repos)
     }
 
-    fn check(&self, o: &Facts, cx: &Context) -> Vec<Finding> {
-        let login = match self.login {
-            Login::Keys => self.keys(&self.access(o, cx)),
-            Login::Tailscale => self.tailscale(o, cx),
+    fn check(&self) -> Vec<Finding> {
+        let login = match self.machine.login {
+            Login::Keys => self.keys(&self.access()),
+            Login::Tailscale => self.tailscale(),
         };
-        let mut out = vec![login, self.repo_clones(o, cx)];
-        out.extend(self.profiles.iter().map(|p| p.check(o, self, cx)));
+        let mut out = vec![login, self.repo_clones()];
+        out.extend(self.machine.profiles.iter().map(|p| p.check(self)));
         out
     }
 
-    fn access(&self, o: &Facts, cx: &Context) -> Access {
+    fn access(&self) -> Access {
         let holds = |p: &str| {
-            o.keys
+            self.facts
+                .keys
                 .iter()
-                .any(|fp| cx.owners.get(fp).is_some_and(|who| who == p))
+                .any(|fp| self.cx.owners.get(fp).is_some_and(|who| who == p))
         };
         let mut people: BTreeMap<String, Standing> = self
+            .machine
             .people
             .iter()
             .map(|p| {
-                let standing = match (self.login, holds(p)) {
+                let standing = match (self.machine.login, holds(p)) {
                     (Login::Tailscale, _) => Standing::Tailnet,
                     (Login::Keys, true) => Standing::Key,
                     (Login::Keys, false) => Standing::Missing,
@@ -261,10 +274,10 @@ impl Machine {
             })
             .collect();
         let mut strangers = Vec::new();
-        for fp in &o.keys {
-            match cx.owners.get(fp) {
+        for fp in &self.facts.keys {
+            match self.cx.owners.get(fp) {
                 None => strangers.push(fp.clone()),
-                Some(who) if !self.people.contains(who) => {
+                Some(who) if !self.machine.people.contains(who) => {
                     people.insert(who.clone(), Standing::Unlisted);
                 }
                 Some(_) => {}
@@ -291,20 +304,21 @@ impl Machine {
         Finding::new(
             Area::Login,
             missing,
-            format!("keys of {}", self.people.join(", ")),
+            format!("keys of {}", self.machine.people.join(", ")),
         )
     }
 
-    fn tailscale(&self, o: &Facts, cx: &Context) -> Finding {
+    fn tailscale(&self) -> Finding {
         let mut missing = Vec::new();
-        if !o.tailscale_ssh {
+        if !self.facts.tailscale_ssh {
             missing.push("Tailscale SSH is off".to_string());
         }
-        if !o.keys.is_empty() {
-            let whose: Vec<&str> = o
+        if !self.facts.keys.is_empty() {
+            let whose: Vec<&str> = self
+                .facts
                 .keys
                 .iter()
-                .map(|fp| cx.owners.get(fp).map_or(fp.as_str(), String::as_str))
+                .map(|fp| self.cx.owners.get(fp).map_or(fp.as_str(), String::as_str))
                 .collect();
             missing.push(format!(
                 "a second way in, keys in authorized_keys: {}",
@@ -318,11 +332,11 @@ impl Machine {
         )
     }
 
-    fn repo_clones(&self, o: &Facts, cx: &Context) -> Finding {
-        let wanted = self.repos(cx);
+    fn repo_clones(&self) -> Finding {
+        let wanted = self.repos();
         let missing = wanted
             .iter()
-            .filter(|r| !o.repos.contains_key(*r))
+            .filter(|r| !self.facts.repos.contains_key(*r))
             .map(|r| format!("no clone of {r}"))
             .collect();
         Finding::new(Area::Repos, missing, wanted.join(", "))
@@ -330,7 +344,8 @@ impl Machine {
 }
 
 impl Profile {
-    fn check(self, o: &Facts, m: &Machine, cx: &Context) -> Finding {
+    fn check(self, surveyed: &Surveyed) -> Finding {
+        let o = surveyed.facts;
         match self {
             Profile::Dibs => {
                 let wants = [
@@ -361,9 +376,10 @@ impl Profile {
                 let have = &o.toolchains;
                 let needed: BTreeSet<&str> = std::iter::once("stable")
                     .chain(
-                        m.repos(cx)
+                        surveyed
+                            .repos()
                             .iter()
-                            .filter_map(|r| cx.pins.get(r).map(String::as_str)),
+                            .filter_map(|r| surveyed.cx.pins.get(r).map(String::as_str)),
                     )
                     .collect();
                 let installed = |c: &str| {
@@ -600,8 +616,13 @@ fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Rep
     let mut findings = vec![Finding::new(Area::Paths, problems, m.paths.join(", "))];
     let (unprobed, access) = match observed {
         Ok(o) => {
-            findings.extend(m.check(&o, cx));
-            (None, m.access(&o, cx))
+            let surveyed = Surveyed {
+                machine: m,
+                facts: &o,
+                cx,
+            };
+            findings.extend(surveyed.check());
+            (None, surveyed.access())
         }
         Err(e) => (Some(e.to_string()), Access::default()),
     };
@@ -779,6 +800,15 @@ mod tests {
         }
     }
 
+    fn checked(m: &Machine, o: &Facts) -> Vec<Finding> {
+        Surveyed {
+            machine: m,
+            facts: o,
+            cx: &cx(),
+        }
+        .check()
+    }
+
     fn cx() -> Context {
         Context {
             owners: [
@@ -813,8 +843,13 @@ mod tests {
 
     #[test]
     fn keys_are_matched_by_owner_and_a_stranger_or_an_unlisted_person_is_flagged() {
-        let m = machine(vec![]);
-        let a = m.access(&seen(), &cx());
+        let (m, o, cx) = (machine(vec![]), seen(), cx());
+        let surveyed = Surveyed {
+            machine: &m,
+            facts: &o,
+            cx: &cx,
+        };
+        let a = surveyed.access();
         assert_eq!(
             (
                 a.people.get("alice"),
@@ -829,7 +864,7 @@ mod tests {
                 ["SHA256:stranger".to_string()].as_slice()
             )
         );
-        let f = m.keys(&a);
+        let f = surveyed.keys(&a);
         assert_eq!(f.area, Area::Login);
         assert!(!f.ok);
         assert_eq!(
@@ -847,7 +882,7 @@ mod tests {
             ..seen()
         };
         assert_eq!(
-            finding(&m.check(&without, &cx()), Area::Login).detail,
+            finding(&checked(&m, &without), Area::Login).detail,
             "Tailscale SSH is off"
         );
         let on = Facts {
@@ -855,14 +890,14 @@ mod tests {
             ..seen()
         };
         assert_eq!(
-            finding(&m.check(&on, &cx()), Area::Login).detail,
+            finding(&checked(&m, &on), Area::Login).detail,
             "a second way in, keys in authorized_keys: alice, carol, SHA256:stranger"
         );
         let clean = Facts {
             keys: Vec::new(),
             ..on
         };
-        assert!(finding(&m.check(&clean, &cx()), Area::Login).ok);
+        assert!(finding(&checked(&m, &clean), Area::Login).ok);
     }
 
     #[test]
@@ -870,22 +905,22 @@ mod tests {
         let o = seen();
         let mut m = machine(vec![Profile::Rust]);
         assert!(
-            m.check(&o, &cx())
-                .iter()
-                .any(|f| f.area == Area::Rust && f.ok),
+            checked(&m, &o).iter().any(|f| f.area == Area::Rust && f.ok),
             "stable and app's pin are there"
         );
         m.repos = Some(vec!["old".into()]);
         assert_eq!(
-            finding(&m.check(&o, &cx()), Area::Rust).detail,
+            finding(&checked(&m, &o), Area::Rust).detail,
             "no 1.80.0 toolchain"
         );
     }
 
     #[test]
     fn a_missing_clone_and_privileges_are_found() {
-        let fs = machine(vec![Profile::Unprivileged, Profile::Dibs, Profile::Cuda])
-            .check(&seen(), &cx());
+        let fs = checked(
+            &machine(vec![Profile::Unprivileged, Profile::Dibs, Profile::Cuda]),
+            &seen(),
+        );
         assert_eq!(finding(&fs, Area::Repos).detail, "no clone of app");
         assert_eq!(
             finding(&fs, Area::Account).detail,
@@ -902,7 +937,7 @@ mod tests {
             ..seen()
         };
         assert_eq!(
-            finding(&machine(vec![Profile::Dibs]).check(&o, &cx()), Area::Dibs).detail,
+            finding(&checked(&machine(vec![Profile::Dibs]), &o), Area::Dibs).detail,
             "no rsync 3, no cargo"
         );
     }

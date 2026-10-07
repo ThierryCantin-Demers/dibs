@@ -2,7 +2,6 @@
 //! answered here from the inventory.
 
 mod base;
-mod card;
 mod check;
 mod dispatch;
 mod feed;
