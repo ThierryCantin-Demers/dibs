@@ -8,7 +8,7 @@ use crate::{
     settings::var,
     sink::Sink,
 };
-use dibs_format::{Exit, JobMeta, base64};
+use dibs_format::{Exit, JobId, JobMeta, base64};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -60,16 +60,18 @@ impl KeptJobs<'_> {
     /// keep, when that is what it asked for.
     fn job(&self, asked: &Asked) -> i32 {
         let jobs = self.machine.jobs();
-        let dir = jobs.join(asked.target);
-        let log = dir.join("log");
-        if !log.is_file() {
+        let Some(dir) = JobId::checked(asked.target)
+            .map(|id| jobs.join(id.as_str()))
+            .filter(|dir| dir.join("log").is_file())
+        else {
             self.sink.say(&format!(
                 "no job {} under {}\n",
                 asked.target,
                 jobs.display()
             ));
             return Exit::Failed.status();
-        }
+        };
+        let log = dir.join("log");
         let meta = fs::read_to_string(dir.join("meta"))
             .ok()
             .and_then(|m| m.parse::<JobMeta>().ok());
@@ -185,12 +187,14 @@ impl KeptJobs<'_> {
     /// A job's kept files as a base64 tar, capped, since no lock is taken to send them.
     pub fn fetch(&self, job: &str) -> i32 {
         let jobs = self.machine.jobs();
-        let dir = jobs.join(job);
-        if !dir.is_dir() {
+        let Some(dir) = JobId::checked(job)
+            .map(|id| jobs.join(id.as_str()))
+            .filter(|dir| dir.is_dir())
+        else {
             self.sink
                 .say(&format!("no job {job} under {}\n", jobs.display()));
             return Exit::Failed.status();
-        }
+        };
         let files = dir.join("artifacts");
         if !files.is_dir() {
             self.sink.say(&format!(
