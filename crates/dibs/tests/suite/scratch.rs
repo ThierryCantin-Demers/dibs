@@ -68,6 +68,59 @@ fn scratch_to_sweep(s: &Sandbox) -> String {
     s.p("gc")
 }
 
+/// The figure a line gives after `lead`, up to the next comma or space.
+fn figure<'a>(out: &'a str, lead: &str) -> &'a str {
+    let line = out
+        .lines()
+        .find(|l| l.contains(lead))
+        .unwrap_or_else(|| panic!("no line with {lead:?} in:\n{out}"));
+    let rest = &line[line.find(lead).unwrap() + lead.len()..];
+    rest.split([',', ' ']).next().unwrap()
+}
+
+/// The snapshots blank every size, so the totals are checked here.
+#[test]
+fn job_logs_count_in_what_would_go_and_only_what_went_in_what_came_back() {
+    let s = Sandbox::new();
+    s.write("gc/jobs/20260101000000-1/out", &"x".repeat(2 << 20));
+    s.write("gc/jobs/20260101000000-2/kept/out", "x");
+    for job in ["1", "2"] {
+        let dir = s.p(&format!("gc/jobs/20260101000000-{job}"));
+        assert_eq!(s.command("touch", ["-d", "30 days ago", &dir]).code(), 0);
+    }
+    let kept = s.p("gc/jobs/20260101000000-2/kept");
+    assert_eq!(s.command("chmod", ["555", &kept]).code(), 0);
+    let gc = |args: &[&str]| s.dibs(args).env("DIBS_SCRATCH", s.p("gc")).run().all();
+
+    let dry = gc(&["--gc", "--dry-run"]);
+    let past = figure(&dry, "2 past it holding ");
+    assert_ne!(past, "0K", "{dry}");
+    assert_eq!(
+        dry.lines()
+            .find(|l| l.contains("is past its clock and would go"))
+            .map(|l| l.trim_start().split(' ').next().unwrap()),
+        Some(past),
+        "the summary counts the job logs that would go: {dry}"
+    );
+
+    let swept = gc(&["--gc"]);
+    assert_eq!(s.command("chmod", ["755", &kept]).code(), 0);
+    let removed = figure(&swept, "removed 1 holding ");
+    assert_ne!(removed, "0K", "{swept}");
+    assert_eq!(
+        swept.lines_with("and could not remove 1"),
+        1,
+        "a job that would not go is not counted as removed: {swept}"
+    );
+    assert_eq!(
+        figure(&swept, "reclaimed "),
+        removed,
+        "and what came back is what went"
+    );
+    assert!(!s.exists("gc/jobs/20260101000000-1"));
+    assert!(s.exists("gc/jobs/20260101000000-2"));
+}
+
 #[test]
 fn a_dry_run_names_what_is_past_its_clock_and_removes_nothing() {
     let s = Sandbox::new();

@@ -170,8 +170,16 @@ impl Report {
             let listed = match kind {
                 Kind::Trees => self.trees(&section, &sizes, now, &mut tally),
                 Kind::Caches => self.caches(&section, &sizes, sharing.as_ref(), now, &mut tally),
-                Kind::Jobs => self.bulk("job logs and artifacts", &section, &sizes, now),
-                Kind::Leftovers => self.bulk("leftover temporary files", &section, &sizes, now),
+                Kind::Jobs => {
+                    self.bulk("job logs and artifacts", &section, &sizes, now, &mut tally)
+                }
+                Kind::Leftovers => self.bulk(
+                    "leftover temporary files",
+                    &section,
+                    &sizes,
+                    now,
+                    &mut tally,
+                ),
                 Kind::Runners => self.runners(&section, &sizes, &mut tally),
             };
             Report::say(&listed);
@@ -299,16 +307,28 @@ impl Report {
 
     /// Counted rather than listed: they are alike and there are hundreds, and the one anybody
     /// wants is found by its id with `dibs out`.
-    fn bulk(&self, what: &str, section: &Section, sizes: &Sizes, now: u64) -> String {
-        let (mut kib, mut past, mut past_kib, mut oldest) = (0, 0, 0, 0);
+    fn bulk(
+        &self,
+        what: &str,
+        section: &Section,
+        sizes: &Sizes,
+        now: u64,
+        tally: &mut Tally,
+    ) -> String {
+        let (mut kib, mut oldest) = (0, 0);
+        let (mut past, mut past_kib, mut removed, mut removed_kib) = (0, 0, 0, 0);
         let count = section.verdicts.len();
         for verdict in &section.verdicts {
             let k = sizes.of(&verdict.path);
             kib += k;
             oldest = oldest.max(Clocks::days(now, verdict.used));
-            if verdict.fate == Fate::Past {
+            if self.count(verdict, k, tally) {
                 past += 1;
                 past_kib += k;
+            }
+            if verdict.removed {
+                removed += 1;
+                removed_kib += k;
             }
         }
         if count == 0 {
@@ -317,7 +337,14 @@ impl Report {
         let ending = match (past, self.dry) {
             (0, _) => ", none past its clock".to_string(),
             (_, true) => format!(", {past} past it holding {}, which would go", Kib(past_kib)),
-            (_, false) => format!(", removed {past} holding {}", Kib(past_kib)),
+            (_, false) if removed == past => {
+                format!(", removed {removed} holding {}", Kib(removed_kib))
+            }
+            (_, false) => format!(
+                ", removed {removed} holding {}, and could not remove {}",
+                Kib(removed_kib),
+                past - removed
+            ),
         };
         format!(
             "  {what}, removed after {} days: {count} {}, {}, oldest {oldest} days{ending}\n",
