@@ -1,5 +1,5 @@
 use super::error::RepoError;
-use crate::{cli::RecipeCall, execution, paths::FileError};
+use crate::{cli::RecipeCall, execution, inventory::Inventory, paths::FileError};
 use std::path::{Path, PathBuf};
 
 /// Where a bare repo name is looked up.
@@ -27,7 +27,7 @@ impl Checkouts {
         // A fresh non-interactive shell has no DIBS_ROOT, since it lives in the user's fish
         // config, so the inventory file may carry it: `root = "/home/me/prog"` at the top level.
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        let root = crate::fleet::inventory()?
+        let root = Inventory::here()?
             .and_then(|i| i.root(home.as_deref()))
             .unwrap_or_else(|| PathBuf::from("."));
         Ok(Checkouts { root })

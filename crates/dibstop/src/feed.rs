@@ -2,7 +2,7 @@
 
 use dibs::{
     call::{Fed, StatusFeed},
-    fleet,
+    inventory::Inventory,
 };
 use dibs_format::{MachineName, status::Status};
 use std::sync::mpsc::Sender;
@@ -83,7 +83,7 @@ impl Feed {
 /// The machines to watch. Empty means there is no inventory, or one that does not read, and the
 /// one feed goes wherever a bare `dibs` would, which says what is wrong with it.
 pub fn machines() -> Vec<String> {
-    fleet::pool()
+    Inventory::pool()
         .map(|names| names.into_iter().collect())
         .unwrap_or_default()
 }

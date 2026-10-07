@@ -3,11 +3,12 @@
 //! Read through serde and edited through `toml_edit`, so writing one machine's entry leaves the
 //! rest of the file, comments included, as its owner wrote it.
 
+use crate::paths::Paths;
 use dibs_format::{Alias, MachineName};
 use dibs_runner::shared::SharedFile;
 use serde::Deserialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt, io,
     path::{Path, PathBuf},
 };
@@ -115,6 +116,21 @@ struct File {
 }
 
 impl Inventory {
+    /// This computer's, when there is a file; one that does not read is an error.
+    pub fn here() -> Result<Option<Inventory>, InventoryError> {
+        match Paths::from_env().inventory() {
+            Some(path) => Inventory::load(&path),
+            None => Ok(None),
+        }
+    }
+
+    /// The machines this computer's inventory names, which are reached only through dibs.
+    pub fn pool() -> Result<BTreeSet<String>, InventoryError> {
+        Ok(Inventory::here()?
+            .map(|i| i.names().map(MachineName::to_string).collect())
+            .unwrap_or_default())
+    }
+
     pub fn parse(text: &str) -> Result<Inventory, InventoryError> {
         let parse_error = |error: String| InventoryError::Parse { path: None, error };
         let file: File = toml::from_str(text).map_err(|e| parse_error(e.to_string()))?;

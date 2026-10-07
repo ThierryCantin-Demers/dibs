@@ -143,6 +143,24 @@ impl Manifest {
             .unwrap_or_else(|| PathBuf::from("dibs/recipes"))
     }
 
+    /// Every repo with a recipes file on this computer.
+    pub fn local_repos() -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(Manifest::local_dir()) else {
+            return Vec::new();
+        };
+        let mut repos: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| {
+                e.file_name()
+                    .to_str()?
+                    .strip_suffix(".toml")
+                    .map(str::to_string)
+            })
+            .collect();
+        repos.sort();
+        repos
+    }
+
     /// Two layers, the second overriding the first: whatever the repo declares for itself, then
     /// local config, because that is the override. The format is the same in both, so a recipe
     /// moves between them unchanged. dibs carries no recipes of its own: it knows no repo.

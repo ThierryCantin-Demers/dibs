@@ -8,9 +8,10 @@ use dibs::{
     execution::{self, Refusal, RunError},
     fleet,
     hook::SshHook,
+    inventory::Inventory,
     machine::Runner,
     paths::FileError,
-    recipe::{self, Checkouts},
+    recipe::{self, Checkouts, Manifest},
     records::{Complaints, FrictionLog, RunLog},
     reports::{self, ReportsRepo},
     update::{Build, ChangeNotice},
@@ -139,8 +140,8 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
             args.json,
             only,
             Checkouts::of(&args)?.root(),
-            fleet::recipe_repos(),
-            &fleet::pool()?,
+            Manifest::local_repos(),
+            &Inventory::pool()?,
         )?);
     }
 

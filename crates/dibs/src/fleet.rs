@@ -433,28 +433,30 @@ impl Profile {
     }
 }
 
-/// `DIBS_FLEET`, or beside the inventory.
-pub fn path() -> Result<PathBuf, FleetError> {
-    Paths::from_env().fleet().ok_or(FleetError::NoHome)
-}
-
-fn load(path: &Path) -> Result<Fleet, FleetError> {
-    let text =
-        std::fs::read_to_string(path).map_err(|e| FleetError::Unread(FileError::new(path, e)))?;
-    let fleet: Fleet = toml::from_str(&text).map_err(|error| FleetError::Parse {
-        path: path.to_path_buf(),
-        error: Box::new(error),
-    })?;
-    for (name, m) in &fleet.machine {
-        if let Some(p) = m.people.iter().find(|p| !fleet.person.contains_key(*p)) {
-            return Err(FleetError::Stranger {
-                path: path.to_path_buf(),
-                machine: name.clone(),
-                person: p.clone(),
-            });
-        }
+impl Fleet {
+    /// `DIBS_FLEET`, or beside the inventory.
+    fn path() -> Result<PathBuf, FleetError> {
+        Paths::from_env().fleet().ok_or(FleetError::NoHome)
     }
-    Ok(fleet)
+
+    fn load(path: &Path) -> Result<Fleet, FleetError> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| FleetError::Unread(FileError::new(path, e)))?;
+        let fleet: Fleet = toml::from_str(&text).map_err(|error| FleetError::Parse {
+            path: path.to_path_buf(),
+            error: Box::new(error),
+        })?;
+        for (name, m) in &fleet.machine {
+            if let Some(p) = m.people.iter().find(|p| !fleet.person.contains_key(*p)) {
+                return Err(FleetError::Stranger {
+                    path: path.to_path_buf(),
+                    machine: name.clone(),
+                    person: p.clone(),
+                });
+            }
+        }
+        Ok(fleet)
+    }
 }
 
 /// Each key file's fingerprint, read the way the machine's side reads its `authorized_keys`.
@@ -664,7 +666,12 @@ pub fn command(
 
 /// The overview as `dibs machines` takes it, from this computer's own settings.
 pub fn survey(only: Option<&str>) -> Result<Overview, FleetError> {
-    overview(only, Checkouts::here()?.root(), recipe_repos(), &pool()?)
+    overview(
+        only,
+        Checkouts::here()?.root(),
+        Manifest::local_repos(),
+        &Inventory::pool()?,
+    )
 }
 
 /// Every machine in fleet.toml, or the one named, probed at once.
@@ -674,8 +681,8 @@ fn overview(
     recipe_repos: Vec<String>,
     pool: &BTreeSet<String>,
 ) -> Result<Overview, FleetError> {
-    let path = path()?;
-    let mut fleet = load(&path)?;
+    let path = Fleet::path()?;
+    let mut fleet = Fleet::load(&path)?;
     if let Some(name) = only {
         if !fleet.machine.contains_key(name) {
             return Err(FleetError::NoMachine {
@@ -717,43 +724,6 @@ fn overview(
         people: fleet.person.into_keys().collect(),
         machines: reports,
     })
-}
-
-fn inventory_path() -> Option<PathBuf> {
-    Paths::from_env().inventory()
-}
-
-/// The machines the inventory names, which are reached only through dibs.
-pub fn pool() -> Result<BTreeSet<String>, InventoryError> {
-    Ok(inventory()?
-        .map(|i| i.names().map(MachineName::to_string).collect())
-        .unwrap_or_default())
-}
-
-/// The inventory, when there is a file; one that does not read is an error.
-pub fn inventory() -> Result<Option<Inventory>, InventoryError> {
-    match inventory_path() {
-        Some(path) => Inventory::load(&path),
-        None => Ok(None),
-    }
-}
-
-/// Every repo with a recipes file.
-pub fn recipe_repos() -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(Manifest::local_dir()) else {
-        return Vec::new();
-    };
-    let mut repos: Vec<String> = entries
-        .flatten()
-        .filter_map(|e| {
-            e.file_name()
-                .to_str()?
-                .strip_suffix(".toml")
-                .map(str::to_string)
-        })
-        .collect();
-    repos.sort();
-    repos
 }
 
 #[cfg(test)]

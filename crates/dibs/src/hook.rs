@@ -1,7 +1,7 @@
 //! `dibs hook ssh`: a Claude Code PreToolUse hook that refuses a shell command reaching a machine
 //! in the inventory with ssh, scp, sftp or rsync, which would take no lock there.
 
-use crate::{call::Rsh, fleet, inventory::Inventory};
+use crate::{call::Rsh, inventory::Inventory};
 use serde_json::Value;
 use std::io::Read;
 
@@ -66,7 +66,7 @@ impl SshHook {
             })
             .unwrap_or_default();
         // A hook that cannot read the inventory knows no machine, and lets the command through.
-        let Ok(Some(inventory)) = fleet::inventory() else {
+        let Ok(Some(inventory)) = Inventory::here() else {
             return 0;
         };
         match SshHook::of(&inventory).reached(&command) {
