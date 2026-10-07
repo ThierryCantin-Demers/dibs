@@ -2,7 +2,7 @@ use crate::{
     clock::Deadline,
     job::{Environment, JobEnd, Output},
     platform::{Host, Platform as _},
-    session::run::Venue,
+    session::run::Serving,
     settings::{home, var},
     stop::Stage,
     tree::{BuildMark, Commands, Spot, Stepping, TreeConfig, Trees},
@@ -39,12 +39,12 @@ pub struct Running {
 
 /// A job's tree: laid out before its command, and a recipe step begun and ended around it.
 pub struct Layout<'a> {
-    at: Venue<'a>,
+    at: Serving<'a>,
     output: Output<'a>,
 }
 
 impl<'a> Layout<'a> {
-    pub fn new(at: Venue<'a>, output: Output<'a>) -> Self {
+    pub fn new(at: Serving<'a>, output: Output<'a>) -> Self {
         Layout { at, output }
     }
 

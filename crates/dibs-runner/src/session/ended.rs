@@ -1,6 +1,6 @@
 use crate::{
     job::{Digest, LogRead, Repeat},
-    session::run::{Hosted, Venue},
+    session::run::{Hosted, Serving},
 };
 use dibs_format::{
     By, JobId, JobMeta,
@@ -24,12 +24,12 @@ pub struct Tally<'a> {
 
 /// A job that has ended, which its caller is told about.
 pub struct Ended<'a> {
-    at: Venue<'a>,
+    at: Serving<'a>,
     tally: Tally<'a>,
 }
 
 impl<'a> Ended<'a> {
-    pub fn new(at: Venue<'a>, tally: Tally<'a>) -> Self {
+    pub fn new(at: Serving<'a>, tally: Tally<'a>) -> Self {
         Ended { at, tally }
     }
 
@@ -54,7 +54,7 @@ impl<'a> Ended<'a> {
     /// The digest, then the trailer and what follows it: the same shape every time, on stderr,
     /// where a pipe on the caller's side cannot cut it off.
     pub fn report(&self) {
-        let Venue {
+        let Serving {
             call,
             sink,
             settings,

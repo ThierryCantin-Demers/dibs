@@ -1,29 +1,29 @@
 use crate::{
-    call::{Journal, ONE_LINE, OneLine as _, Received},
+    call::{Journal, OneLine as _, Received},
     channel::{Caller, Channel},
-    clock::{Moment, Span},
     history::History,
-    job::{Cap, Environment, Job, Output, Unpinned},
+    job::{Environment, Unpinned},
     kept::KeptJobs,
     kill::Kill,
     lock::LockDir,
     machine::Site,
     probe::Probe,
-    session::run::{NOT_STARTED, Run, Venue},
+    session::{
+        peek::Peek,
+        run::{Run, Serving},
+    },
     settings::Settings,
     sink::Sink,
     status::Look,
-    stop::{Signals, Stage, Stopper},
+    stop::{Signals, Stopper},
     views::Views,
 };
 use dibs_format::{
     Event, Exit, Mode,
     wire::{Record, Request},
 };
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
-/// How long a peek's command is given to stop once its cap has passed.
-const PEEK_GRACE: Duration = Duration::from_secs(5);
 /// How much of a command a refusal's log line keeps after the words that say why.
 const REFUSED_LINE: usize = 160;
 
@@ -166,7 +166,7 @@ impl Visit {
             Journal { path: &machine.log }.write(&line);
             return Exit::Cancelled.status();
         }
-        let at = Venue {
+        let at = Serving {
             machine: &machine,
             dir: &dir,
             stopper: &stopper,
@@ -181,7 +181,7 @@ impl Visit {
             tty: self.call.request.tty,
         };
         match self.call.mode() {
-            Mode::Peek => self.peek(&at, &environment, caller),
+            Mode::Peek => Peek::new(at).serve(&environment, caller),
             Mode::Shared | Mode::Bench | Mode::Rsh | Mode::Gc => {
                 Run::new(at).serve(environment, caller)
             }
@@ -193,65 +193,5 @@ impl Visit {
                 Exit::Refused.status()
             }
         }
-    }
-
-    /// A peek runs beside whatever is measured, with no lock, and every one is logged: the log has
-    /// to say what ran beside which run.
-    fn peek(&self, at: &Venue, environment: &Environment, caller: Caller) -> i32 {
-        let request = &self.call.request;
-        // A command that writes nothing would otherwise outlive its caller to its cap.
-        if let Caller::Channel(channel) = caller
-            && !request.watch.off
-        {
-            channel.watch(request.watch.lease, Arc::clone(at.stopper), None);
-        }
-        let start = Moment::epoch_now();
-        let cap = (request.max > 0).then(|| Cap {
-            after: Duration::from_secs(request.max),
-            grace: PEEK_GRACE,
-        });
-        let mut state = at.stopper.state();
-        let job = match Job::spawn(
-            &request.command,
-            environment,
-            Output::Caller,
-            &self.sink,
-            None,
-        ) {
-            Ok(job) => job,
-            Err(e) => {
-                self.sink.say(&format!("dibs: bash could not start: {e}\n"));
-                return NOT_STARTED;
-            }
-        };
-        state.stage = Stage::Peeking(job.pid);
-        drop(state);
-        let status = job.wait(cap).status;
-        at.stopper.state().stage = Stage::Setup;
-        let took = Moment::epoch_now().saturating_sub(start);
-        let journal = Journal {
-            path: &at.machine.log,
-        };
-        let peeked = |event| {
-            let mut line = self.call.log_line(event);
-            line.ran = Some(took);
-            line.exit = Some(status);
-            let command = request.command.one_line(ONE_LINE);
-            if !command.is_empty() {
-                line.command = command;
-            }
-            line
-        };
-        journal.write(&peeked(Event::Peek));
-        if took >= self.settings.peek_warn {
-            self.sink.say(&format!(
-                "dibs: that --peek took {} and ran with no lock, beside\n  \
-                 whatever is being measured. Anything that costs time belongs in\n  \
-                 'dibs <command>', which takes the shared lock.\n",
-                Span(took)
-            ));
-            journal.write(&peeked(Event::PeekSlow));
-        }
-        status
     }
 }

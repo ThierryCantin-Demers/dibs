@@ -44,10 +44,10 @@ const RUNS_FOR_A_CAP: usize = 3;
 /// What a command bash could not start exits with.
 pub const NOT_STARTED: i32 = 127;
 
-/// A call where it runs: the machine, its lock directory, what stops the call, the call itself,
+/// A call being served: the call itself, the machine, its lock directory, what stops the call,
 /// where it speaks, and the machine's settings.
 #[derive(Clone, Copy)]
-pub struct Venue<'a> {
+pub struct Serving<'a> {
     pub machine: &'a Site,
     pub dir: &'a LockDir,
     pub stopper: &'a Arc<Stopper>,
@@ -56,7 +56,7 @@ pub struct Venue<'a> {
     pub settings: &'a Settings,
 }
 
-impl Venue<'_> {
+impl Serving<'_> {
     fn journal(&self) -> Journal<'_> {
         Journal {
             path: &self.machine.log,
@@ -126,11 +126,11 @@ impl Hosted {
 
 /// A shared job, a benchmark, a transfer or a sweep: queued, run under the lock, and told.
 pub struct Run<'a> {
-    at: Venue<'a>,
+    at: Serving<'a>,
 }
 
 impl<'a> Run<'a> {
-    pub fn new(at: Venue<'a>) -> Self {
+    pub fn new(at: Serving<'a>) -> Self {
         Run { at }
     }
 
