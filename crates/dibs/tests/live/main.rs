@@ -9,7 +9,7 @@
 //! The machine has to be another computer, one that accepts --bench. The tests take turns,
 //! whatever the harness's thread count.
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../suite/harness.rs"]
 mod harness;
 
@@ -238,28 +238,30 @@ fn a_watch_dies_with_the_terminal_that_was_watching() {
     let live = Live::claim();
     let mut s = Sandbox::new();
     let out = s.path("watch.out");
+    // Every runner serving there but the one answering this peek, which is among its ancestors.
+    let serving = "a=$$; mine=; while [ \"$a\" -gt 1 ]; do mine=\"$mine $a \"; a=$(ps -o ppid= -p \"$a\" | tr -d ' '); done; \
+                   for p in $(pgrep -f '[d]ibs-runner serve'); do case \"$mine\" in *\" $p \"*) ;; *) echo \"$p\" ;; esac; done";
+    let pids = |text: String| -> Vec<String> { text.lines().map(str::to_string).collect() };
+    let before = pids(live.peek(serving));
     let watch = s.spawn(live.dibs(["--watch", "2"]).stdout_to(&out));
-    // The script's name there carries the pid of the dibs that sent it, which picks out this
-    // watch from any dibstop or person watching beside it.
-    let running = format!(
-        "pgrep -f '[.]dibs-payload[.]{}[.]' > /dev/null && echo running || echo gone",
-        watch.pid
-    );
     assert!(
         live.soon(|| std::fs::read_to_string(&out)
             .unwrap_or_default()
             .contains("ctrl-c to stop")),
         "it draws"
     );
-    assert_eq!(
-        live.peek(&running),
-        "running",
-        "the loop is running over there"
-    );
+    let watching: Vec<String> = pids(live.peek(serving))
+        .into_iter()
+        .filter(|p| !before.contains(p))
+        .collect();
+    assert!(!watching.is_empty(), "the loop is running over there");
     kill9(watch.pid);
     s.wait(watch);
     assert!(
-        live.soon(|| live.peek(&running) == "gone"),
+        live.soon(|| {
+            let now = pids(live.peek(serving));
+            watching.iter().all(|p| !now.contains(p))
+        }),
         "and it stops when the caller does"
     );
 }

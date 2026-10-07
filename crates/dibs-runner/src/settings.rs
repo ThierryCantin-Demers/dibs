@@ -282,6 +282,7 @@ pub struct Settings {
     /// The machine holds every label's measurements to one card, whoever runs them.
     pub machine_series: bool,
     /// The kernel cannot list a process's children, so the whole table is read instead.
+    #[cfg(target_os = "linux")]
     pub no_children: bool,
     /// What the settings files name and may not set, said on every call until it is gone.
     pub refused: Vec<Refused>,
@@ -323,6 +324,7 @@ impl Settings {
             ports: setting("DIBS_PORTS")
                 .and_then(|r| r.parse().ok())
                 .unwrap_or_default(),
+            #[cfg(target_os = "linux")]
             no_children: setting("DIBS_NO_CHILDREN").is_some_and(|v| v == "1"),
             refused: files
                 .both()
