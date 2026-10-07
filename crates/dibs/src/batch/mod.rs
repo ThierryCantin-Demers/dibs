@@ -10,7 +10,6 @@ mod base;
 mod guard;
 mod parse;
 mod plan;
-mod summary;
 #[cfg(test)]
 mod tests;
 

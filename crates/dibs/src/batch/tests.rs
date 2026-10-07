@@ -1,7 +1,7 @@
 use super::{
-    base::{State, jobs, ready, was_cancelled},
+    base::{State, StepStderr},
     parse::{Step, StepKind, parse, split_words},
-    summary::summary,
+    plan::Batch,
 };
 use crate::call::{BatchStep, Pending, Planned};
 use dibs_format::Mode;
@@ -158,35 +158,33 @@ fn independent_steps_overlap_only_on_different_machines() {
         st("m3", &["build"]),
     ];
     let machines: Vec<String> = ["x", "x", "y", "x"].iter().map(|s| s.to_string()).collect();
+    let batch = Batch {
+        steps: &steps,
+        machines: &machines,
+    };
     let mut states = vec![State::Waiting; 4];
-    assert_eq!(
-        names(&ready(&steps, &machines, &states, false), &steps),
-        ["build"]
-    );
+    assert_eq!(names(&batch.ready(&states, false), &steps), ["build"]);
     states[0] = State::Running;
-    assert!(ready(&steps, &machines, &states, false).is_empty());
+    assert!(batch.ready(&states, false).is_empty());
     states[0] = State::Done {
         exit: 0,
         seconds: 1,
     };
     assert_eq!(
-        names(&ready(&steps, &machines, &states, false), &steps),
+        names(&batch.ready(&states, false), &steps),
         ["m1", "m2"],
         "m3 waits for x to be free"
     );
     states[1] = State::Running;
     states[2] = State::Running;
-    assert!(ready(&steps, &machines, &states, false).is_empty());
+    assert!(batch.ready(&states, false).is_empty());
     states[1] = State::Done {
         exit: 0,
         seconds: 1,
     };
-    assert_eq!(
-        names(&ready(&steps, &machines, &states, false), &steps),
-        ["m3"]
-    );
+    assert_eq!(names(&batch.ready(&states, false), &steps), ["m3"]);
     assert!(
-        ready(&steps, &machines, &states, true).is_empty(),
+        batch.ready(&states, true).is_empty(),
         "a stopped batch starts nothing"
     );
 }
@@ -195,6 +193,10 @@ fn independent_steps_overlap_only_on_different_machines() {
 fn a_failed_step_still_releases_what_waits_on_it_when_the_batch_goes_on() {
     let steps = [st("a", &[]), st("b", &["a"])];
     let machines = vec!["x".to_string(), "x".to_string()];
+    let batch = Batch {
+        steps: &steps,
+        machines: &machines,
+    };
     let states = vec![
         State::Done {
             exit: 1,
@@ -202,10 +204,7 @@ fn a_failed_step_still_releases_what_waits_on_it_when_the_batch_goes_on() {
         },
         State::Waiting,
     ];
-    assert_eq!(
-        names(&ready(&steps, &machines, &states, false), &steps),
-        ["b"]
-    );
+    assert_eq!(names(&batch.ready(&states, false), &steps), ["b"]);
 }
 
 fn call(name: &str, mode: Mode) -> Pending {
@@ -282,15 +281,11 @@ fn a_step_ended_by_a_signal_reads_as_killed_rather_than_as_an_exit_code() {
             seconds: 1,
         },
     ];
-    let out = summary(
-        "1",
-        &steps,
-        &machines,
-        &states,
-        Path::new("/nonexistent"),
-        7,
-        None,
-    );
+    let batch = Batch {
+        steps: &steps,
+        machines: &machines,
+    };
+    let out = batch.summary("1", &states, Path::new("/nonexistent"), 7, None);
     assert!(
         out.lines()
             .any(|l| l.starts_with("a ") && l.contains(" killed")),
@@ -305,22 +300,24 @@ fn a_step_ended_by_a_signal_reads_as_killed_rather_than_as_an_exit_code() {
 
 #[test]
 fn only_dibs_saying_so_makes_exit_76_a_cancellation() {
-    assert!(was_cancelled(
-        "dibs: batch 1 was cancelled with dibs --kill, so this step does not run.\n"
-    ));
-    assert!(was_cancelled(
-        "job 20260917-9  bench  x  queued 0s  ran 4s  exit 76  by=dibs\n"
-    ));
-    assert!(!was_cancelled(
-        "job 20260917-9  shared  x  queued 0s  ran 1s  exit 76  by=command\n"
-    ));
+    assert!(
+        StepStderr("dibs: batch 1 was cancelled with dibs --kill, so this step does not run.\n")
+            .cancelled()
+    );
+    assert!(
+        StepStderr("job 20260917-9  bench  x  queued 0s  ran 4s  exit 76  by=dibs\n").cancelled()
+    );
+    assert!(
+        !StepStderr("job 20260917-9  shared  x  queued 0s  ran 1s  exit 76  by=command\n")
+            .cancelled()
+    );
 }
 
 #[test]
 fn the_job_ids_come_from_the_trailers() {
     let err = "dibs: step 1/2\njob 20260916-1  shared  a:setup  queued 0s  ran 1s  exit 0  by=command\n  log m:/x\njob 20260916-2  bench  a  queued 3s  ran 9s  exit 0  by=command  built=nothing\njob 20260916-3  shared  a  queued 0s  ran 0s  exit 69  by=dibs\n";
     assert_eq!(
-        jobs(err),
+        StepStderr(err).jobs(),
         [
             "20260916-1",
             "20260916-2 built=nothing",

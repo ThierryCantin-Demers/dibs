@@ -1,8 +1,7 @@
 use super::{
     guard::StepGuard,
     parse::{BatchError, Step, StepKind, parse},
-    plan::plan,
-    summary::summary,
+    plan::Batch,
 };
 use crate::{
     call::{BatchStep, Destination, Driver, MachineCall, Pending},
@@ -13,7 +12,7 @@ use crate::{
 };
 use dibs_format::{Exit, MachineName, Span};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::Command,
@@ -29,60 +28,41 @@ pub enum State {
     NotRun,
 }
 
-/// The steps that may start now, lowest first. A step waits for everything it names, and for
-/// its machine to have no other step of this batch on it: two steps on one machine overlapping
-/// is the surprise the lock exists to prevent, and nothing is lost by running them in turn.
-pub fn ready(steps: &[Step], machines: &[String], states: &[State], stopped: bool) -> Vec<usize> {
-    if stopped {
-        return Vec::new();
-    }
-    let index: HashMap<&str, usize> = steps
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (s.name.as_str(), i))
-        .collect();
-    let mut busy: HashSet<&str> = states
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| **s == State::Running)
-        .map(|(i, _)| machines[i].as_str())
-        .collect();
-    let mut out = Vec::new();
-    for (i, s) in steps.iter().enumerate() {
-        if states[i] != State::Waiting || busy.contains(machines[i].as_str()) {
-            continue;
-        }
-        if s.after
-            .iter()
-            .all(|a| matches!(states[index[a.as_str()]], State::Done { .. }))
-        {
-            busy.insert(machines[i].as_str());
-            out.push(i);
-        }
-    }
-    out
-}
+/// What a step printed on stderr, read for what dibs said of its jobs.
+#[derive(Clone, Copy)]
+pub struct StepStderr<'a>(pub &'a str);
 
-/// The jobs a step's trailers named, in order, each with what its trailer says about the exit
-/// and the build: `by=dibs` when dibs produced the exit, and `built=`, which is what says whether
-/// a measurement ran on a fresh binary. A recipe step prints several.
-pub fn jobs(stderr: &str) -> Vec<String> {
-    stderr
-        .lines()
-        .filter_map(|l| l.strip_prefix("job "))
-        .filter_map(|r| {
-            let mut words = r.split_whitespace();
-            let id = words.next()?;
-            let verdict: Vec<&str> = words
-                .filter(|w| *w == "by=dibs" || w.starts_with("built="))
-                .collect();
-            Some(if verdict.is_empty() {
-                id.to_string()
-            } else {
-                format!("{id} {}", verdict.join(" "))
+impl StepStderr<'_> {
+    /// The jobs a step's trailers named, in order, each with what its trailer says about the exit
+    /// and the build: `by=dibs` when dibs produced the exit, and `built=`, which is what says
+    /// whether a measurement ran on a fresh binary. A recipe step prints several.
+    pub fn jobs(&self) -> Vec<String> {
+        self.0
+            .lines()
+            .filter_map(|l| l.strip_prefix("job "))
+            .filter_map(|r| {
+                let mut words = r.split_whitespace();
+                let id = words.next()?;
+                let verdict: Vec<&str> = words
+                    .filter(|w| *w == "by=dibs" || w.starts_with("built="))
+                    .collect();
+                Some(if verdict.is_empty() {
+                    id.to_string()
+                } else {
+                    format!("{id} {}", verdict.join(" "))
+                })
             })
-        })
-        .collect()
+            .collect()
+    }
+
+    /// A command may exit 76 of its own accord, so only dibs saying so makes it a cancellation.
+    pub fn cancelled(&self) -> bool {
+        self.0.contains("was cancelled with dibs --kill")
+            || self.0.lines().any(|l| {
+                l.starts_with("job ")
+                    && l.contains(&format!("  exit {}  by=dibs", Exit::Cancelled.code()))
+            })
+    }
 }
 
 fn state_dir() -> PathBuf {
@@ -166,7 +146,11 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         .map(|m| m.unwrap_or_else(|| "?".into()))
         .collect();
     let id = batch_id();
-    let plan = plan(&steps, &machines);
+    let batch = Batch {
+        steps: &steps,
+        machines: &machines,
+    };
+    let plan = batch.plan();
     if opts.dry_run {
         print!("batch (dry run), {} steps\n{plan}", steps.len());
         return Ok(0);
@@ -200,8 +184,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let started = Instant::now();
     let (tx, rx) = mpsc::channel();
     let mut driving = Driving {
-        steps: &steps,
-        machines: &machines,
+        batch,
         recipes,
         dir: &dir,
         id: &id,
@@ -230,10 +213,8 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
             *s = State::NotRun;
         }
     }
-    let report = summary(
+    let report = batch.summary(
         &id,
-        &steps,
-        &machines,
         &states,
         &dir,
         started.elapsed().as_secs(),
@@ -265,8 +246,7 @@ struct StepEnded {
 
 /// A batch's steps as they run: which wait, run and ended, and what stops the rest.
 struct Driving<'a> {
-    steps: &'a [Step],
-    machines: &'a [String],
+    batch: Batch<'a>,
     recipes: Vec<Option<Vec<Pending>>>,
     dir: &'a Path,
     id: &'a str,
@@ -283,34 +263,35 @@ struct Driving<'a> {
 impl Driving<'_> {
     /// Starts every step whose turn has come.
     fn start(&mut self) {
-        let starting = ready(self.steps, self.machines, &self.states, self.stopped);
+        let starting = self.batch.ready(&self.states, self.stopped);
         for &i in &starting {
             self.states[i] = State::Running;
         }
         for i in starting {
-            let step = self.steps[i].clone();
+            let step = self.batch.steps[i].clone();
             let (out, err) = (
                 self.dir.join(format!("{}.out", step.name)),
                 self.dir.join(format!("{}.err", step.name)),
             );
-            let pending: Vec<Pending> = (0..self.steps.len())
+            let pending: Vec<Pending> = (0..self.batch.steps.len())
                 .filter(|&j| j != i && self.states[j] == State::Waiting)
                 .flat_map(|j| {
-                    let here = self.machines[j] == self.machines[i];
+                    let here = self.batch.machines[j] == self.batch.machines[i];
                     match &self.recipes[j] {
                         Some(jobs) => jobs
                             .iter()
                             .map(|p| Pending {
-                                name: format!("{}: {}", self.steps[j].name, p.name),
+                                name: format!("{}: {}", self.batch.steps[j].name, p.name),
                                 here,
                                 ..p.clone()
                             })
                             .collect(),
-                        None => vec![self.steps[j].pending(here, &self.cwd)],
+                        None => vec![self.batch.steps[j].pending(here, &self.cwd)],
                     }
                 })
                 .collect();
-            let batch = BatchStep::new(self.id, &step.name, i + 1, self.steps.len(), &pending);
+            let batch =
+                BatchStep::new(self.id, &step.name, i + 1, self.batch.steps.len(), &pending);
             let tx = self.tx.clone();
             let verbose = self.opts.verbose;
             let t = Instant::now();
@@ -356,7 +337,7 @@ impl Driving<'_> {
             if self.cancelled.is_none() && self.dir.join("cancel").exists() {
                 self.cancelled = Some("with dibs --kill".into());
                 self.stopped = true;
-                self.running.values().for_each(|&pid| stop(pid));
+                self.stop_running();
             }
             received = self.rx.recv_timeout(CANCEL_CHECK);
         }
@@ -374,37 +355,33 @@ impl Driving<'_> {
         self.states[i] = State::Done { exit, seconds };
         if exit == i32::from(Exit::Cancelled.code())
             && self.cancelled.is_none()
-            && was_cancelled(
-                &std::fs::read_to_string(self.dir.join(format!("{}.err", self.steps[i].name)))
-                    .unwrap_or_default(),
+            && StepStderr(
+                &std::fs::read_to_string(
+                    self.dir.join(format!("{}.err", self.batch.steps[i].name)),
+                )
+                .unwrap_or_default(),
             )
+            .cancelled()
         {
-            self.cancelled = Some(format!("with dibs --kill on {}", self.machines[i]));
-            self.running.values().for_each(|&pid| stop(pid));
+            self.cancelled = Some(format!("with dibs --kill on {}", self.batch.machines[i]));
+            self.stop_running();
         }
-        if exit != 0 && (!self.steps[i].cont || self.cancelled.is_some()) {
+        if exit != 0 && (!self.batch.steps[i].cont || self.cancelled.is_some()) {
             self.stopped = true;
+        }
+    }
+
+    /// Each step is its own process group, so the signal reaches the dibs call under it and that
+    /// call's death reaches the machine, which stops the job and releases its lock.
+    fn stop_running(&self) {
+        for &pid in self.running.values() {
+            // SAFETY: signals the step's process group, which its guard leads.
+            unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
         }
     }
 }
 
-/// A command may exit 76 of its own accord, so only dibs saying so makes it a cancellation.
-pub fn was_cancelled(stderr: &str) -> bool {
-    stderr.contains("was cancelled with dibs --kill")
-        || stderr.lines().any(|l| {
-            l.starts_with("job ")
-                && l.contains(&format!("  exit {}  by=dibs", Exit::Cancelled.code()))
-        })
-}
-
-/// A step is its own process group, so the signal reaches the dibs call under it and that call's
-/// death reaches the machine, which stops the job and releases its lock.
-pub fn stop(pid: u32) {
-    // SAFETY: signals the step's process group, which its guard leads.
-    unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
-}
-
-pub fn copy(
+fn copy(
     from: Option<impl std::io::Read + Send + 'static>,
     to: PathBuf,
     echo: Option<String>,
