@@ -173,7 +173,9 @@ impl Normal {
         if let Some(name) = s.root.file_name() {
             n = n.literal(&name.to_string_lossy(), "<root-name>");
         }
+        // dibs names a machine in lower case, which macOS's own name need not be.
         n.word(hostname(), "<host>")
+            .word(&hostname().to_ascii_lowercase(), "<host>")
     }
 
     /// Every match of `re`, with `$1` and the like in `with` naming its groups.

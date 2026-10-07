@@ -219,6 +219,8 @@ fn a_sweep_removes_only_what_dibs_made_and_nobody_used() {
     );
 }
 
+// Only Linux says which blocks a clone shares (protocol.md, Platforms).
+#[cfg(target_os = "linux")]
 #[test]
 fn a_cache_seeded_from_another_is_sized_by_what_is_its_own() {
     // The caches on a disk of their own that shares blocks, linked in the way a machine keeps them.

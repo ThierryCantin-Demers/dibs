@@ -380,14 +380,17 @@ fn a_session_that_named_its_work_is_told_apart() {
         s.dibs(["--kill", &pid])
             .no_session()
             .env("DIBS_AGENT", who)
-            .code()
+            .run()
     };
+    let other = kill_as("sweep b");
     assert_eq!(
-        kill_as("sweep b"),
+        other.code,
         2,
-        "a session that named its work is told apart from another"
+        "a session that named its work is told apart from another: {}",
+        other.all()
     );
-    assert_eq!(kill_as("sweep a"), 0, "and can stop its own");
+    let own = kill_as("sweep a");
+    assert_eq!(own.code, 0, "and can stop its own: {}", own.all());
     s.wait(job);
     s.gone();
 }
@@ -598,6 +601,8 @@ fn a_live_holder_is_not_an_orphan() {
     s.gone();
 }
 
+// macOS cannot say which process holds an flock (protocol.md, Platforms).
+#[cfg(target_os = "linux")]
 #[test]
 fn a_client_asking_about_the_lock_it_is_queueing_for_is_not_an_orphan_of_itself() {
     // A queued client prints the status while holding the lock descriptor, so every child that

@@ -498,6 +498,8 @@ fn status_of_idle_and_writing_holders() {
     gate.open();
 }
 
+// macOS cannot say which process holds an flock (protocol.md, Platforms).
+#[cfg(target_os = "linux")]
 #[test]
 fn status_with_the_lock_taken_and_nothing_recorded() {
     // The runner reads who holds the lock from the kernel, so stubs of the tools a bash machine

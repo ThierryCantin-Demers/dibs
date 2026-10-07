@@ -176,6 +176,8 @@ fn a_runner_that_passes_its_check_and_cannot_exec_is_built_again() {
     assert!(installed.is_file());
 }
 
+// macOS starts a queued gc's runner by its path (protocol.md, Platforms).
+#[cfg(target_os = "linux")]
 #[test]
 fn a_queued_gc_starts_though_its_runner_was_removed_while_it_waited() {
     let mut s = Sandbox::new();

@@ -129,7 +129,7 @@ impl Session {
     /// hold, which only ends when the call does.
     pub fn inside_hold(&self) -> bool {
         let held = std::env::var("DIBS_HOLDING").unwrap_or_default();
-        format!(" {held} ").contains(&format!(" {} ", self.lock_at))
+        format!(" {} ", held.to_ascii_lowercase()).contains(&format!(" {} ", self.lock_at))
     }
 
     pub fn new(target: &Target, here: &Here) -> Session {

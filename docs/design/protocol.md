@@ -306,7 +306,7 @@ without `DIBS_`, then from its environment, then its defaults.
 
 What differs between operating systems is behind one trait, in
 `crates/dibs-runner/src/platform/`: Linux reads `/proc`, macOS reads libproc and sysctl. macOS
-differs in four ways, and only CI's macOS job compiles its half.
+differs in five ways.
 
 - It cannot say which process holds an flock, so `dibs status` names no orphan there, and an
   orphaned lock waits for a kill by hand.
@@ -315,6 +315,8 @@ differs in four ways, and only CI's macOS job compiles its half.
   account's processes.
 - A queued `--gc` starts its runner by its path (The sweep).
 - A transfer's caller is gone when its parent exits, since polling cannot tell (A transfer).
+- It cannot say which blocks a cloned cache shares with the one it was seeded from, so `dibs
+  --gc` sizes a clone by its whole length.
 
 ## Viewers and the check
 

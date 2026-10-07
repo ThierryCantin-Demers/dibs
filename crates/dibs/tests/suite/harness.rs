@@ -149,6 +149,8 @@ impl Sandbox {
         ] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
+        // macOS's temporary directory is under a symlink, and dibs names a tree by its real path.
+        let root = root.canonicalize().unwrap();
         std::os::unix::fs::symlink(DIBS, root.join("bin/dibs")).unwrap();
         // Every machine named in a test is made up, and a real lookup of one takes seconds to
         // fail. This fails at once, the way ssh does for a name that does not resolve.
