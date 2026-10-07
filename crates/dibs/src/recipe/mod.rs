@@ -15,7 +15,7 @@ mod tests;
 pub use base::Isolation;
 pub use base::{Recipe, Step};
 pub use dibs_format::Lock;
-pub use error::{Flaw, ManifestError, ParamError, RecipeError, RepoError, ShellWords};
+pub use error::{Flaw, ManifestError, NotTaken, ParamError, RecipeError, RepoError, ShellWords};
 #[cfg(test)]
 pub use labels::label_steps;
 pub use labels::run_label;

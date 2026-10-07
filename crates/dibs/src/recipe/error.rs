@@ -80,6 +80,30 @@ pub enum ShellWords {
     NoCommand,
     /// `--label`, with the label its durations are filed under.
     Label(String),
+    NotTaken(NotTaken),
+}
+
+/// A `--name value` given to a one-off, which has no recipe to declare it and would drop it.
+#[derive(Debug)]
+pub enum NotTaken {
+    Value(String),
+    /// What only `dibs run` acts on: `--with`, `--port`, `--ready` and `--ready-within`.
+    Server(Vec<String>),
+}
+
+impl NotTaken {
+    pub fn of<'a>(names: impl Iterator<Item = &'a String>) -> Vec<NotTaken> {
+        let (served, other): (Vec<&String>, Vec<&String>) =
+            names.partition(|n| matches!(n.as_str(), "with" | "port" | "ready" | "ready-within"));
+        let mut not_taken: Vec<NotTaken> = other
+            .into_iter()
+            .map(|n| NotTaken::Value(n.clone()))
+            .collect();
+        if !served.is_empty() {
+            not_taken.push(NotTaken::Server(served.into_iter().cloned().collect()));
+        }
+        not_taken
+    }
 }
 
 /// Why the parameters given do not fit the recipe.
@@ -239,6 +263,23 @@ impl fmt::Display for ShellWords {
                 f,
                 "takes no --label: its durations are filed under {label}, {LABEL_DERIVED} A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so"
             ),
+            ShellWords::NotTaken(not_taken) => not_taken.fmt(f),
+        }
+    }
+}
+
+impl fmt::Display for NotTaken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NotTaken::Value(name) => write!(f, "takes no --{name}"),
+            NotTaken::Server(names) => {
+                let flags: Vec<String> = names.iter().map(|n| format!("--{n}")).collect();
+                write!(
+                    f,
+                    "starts no server, so it takes no {}: dibs run does,\n  as dibs run --port <name> --with <name>='<server>' --ready tcp:<name> -- '<cmd>'",
+                    flags.join(", ")
+                )
+            }
         }
     }
 }

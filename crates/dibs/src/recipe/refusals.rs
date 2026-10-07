@@ -1,6 +1,6 @@
 use super::{
     base::{Isolation, Recipe, Step},
-    error::{RecipeError, ShellWords},
+    error::{NotTaken, RecipeError, ShellWords},
     labels::{label_steps, run_label},
     manifest::{Manifest, Source, Verb},
     repo::{resolve_repo, root_of},
@@ -47,6 +47,11 @@ fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> 
             args.device.as_deref(),
         )));
     }
+    wrong.extend(
+        NotTaken::of(args.params.keys().filter(|n| *n != "label"))
+            .into_iter()
+            .map(ShellWords::NotTaken),
+    );
     match wrong.is_empty() {
         true => Ok(()),
         false => Err(RecipeError::Shell(wrong)),

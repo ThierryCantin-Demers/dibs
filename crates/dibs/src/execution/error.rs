@@ -5,7 +5,7 @@ use crate::{
     git::GitError,
     inventory::InventoryError,
     paths::FileError,
-    recipe::{RecipeError, RepoError},
+    recipe::{NotTaken, RecipeError, RepoError},
     records::RecordsError,
     reports::ReportsError,
 };
@@ -232,6 +232,7 @@ pub enum Refusal {
     Nowhere(Option<String>),
     RawReason,
     RawCommand,
+    RawNotTaken(Vec<NotTaken>),
     WithRefs,
     WithPin,
     /// `with` given no service, by the repo it was given.
@@ -344,6 +345,16 @@ impl fmt::Display for Refusal {
                 "raw needs --reason. It is recorded, and a reason that keeps recurring is what\n             specifies the next recipe. If this fits a recipe, use the recipe instead.",
             ),
             Refusal::RawCommand => f.write_str("raw needs -- <command>"),
+            Refusal::RawNotTaken(not_taken) => {
+                f.write_str("raw ")?;
+                for (i, n) in not_taken.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(";\n  and ")?;
+                    }
+                    n.fmt(f)?;
+                }
+                f.write_str(".")
+            }
             Refusal::WithRefs => f.write_str("with runs against one tree, so it takes one ref"),
             Refusal::WithPin => f.write_str("with does not take --pin; a recipe does"),
             Refusal::WithService(repo) => write!(

@@ -15,7 +15,7 @@ use crate::{
     batch,
     call::{Destination, RecipeJob},
     cli::{RecipeCall, ShellWord},
-    recipe::{self, Lock, Manifest, Resolved, resolve},
+    recipe::{self, Lock, Manifest, NotTaken, Resolved, resolve},
     records::{affinity_get, affinity_set, now_secs, pinned, write_record},
 };
 use dibs_format::{
@@ -848,6 +848,10 @@ pub fn sh(s: &str) -> String {
 pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let reason = args.reason.as_deref().ok_or(Refusal::RawReason)?;
     let command = args.command.as_deref().ok_or(Refusal::RawCommand)?;
+    let not_taken = NotTaken::of(args.params.keys());
+    if !not_taken.is_empty() {
+        return Err(Refusal::RawNotTaken(not_taken).into());
+    }
     // Always shared, and nothing is prepared for it, so it is placed like any other shared work.
     let backend = Jobs::placed(args.machine(), None, None)?;
     let out = backend.run(
