@@ -140,6 +140,12 @@ impl RecipeCall {
         self.on.as_deref().map(MachineName::new)
     }
 
+    /// A call sent to a named machine, by `--on` or `DIBS_ON`, is not ranked, and says nothing
+    /// about where the repo's cache belongs.
+    pub fn pinned(&self) -> bool {
+        self.on.is_some() || std::env::var("DIBS_ON").is_ok_and(|m| !m.is_empty())
+    }
+
     /// Reads a recipe verb and what follows it; `on` is a `--on` given before the verb.
     pub fn parse(
         verb: RecipeVerb,

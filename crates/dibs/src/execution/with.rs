@@ -15,7 +15,7 @@ use crate::{
         Call, CliError, Command as ShellCommand, Mode, PortName, RecipeCall, Run, RunLock, Service,
     },
     recipe::{self, Lock, Manifest, resolve_repo, root_of, run_label},
-    records::{affinity_set, pinned},
+    records::Affinity,
 };
 use dibs_format::{Alias, Exit, Label, MachineName, wire};
 use std::process::ExitCode;
@@ -120,8 +120,8 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         );
         return Ok(ExitCode::SUCCESS);
     }
-    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned(args)) {
-        affinity_set(&repo_name, m.as_str());
+    if let Some(m) = backend.machine.as_ref().filter(|_| !args.pinned()) {
+        Affinity::here().set(&repo_name, m.as_str());
     }
     eprintln!(
         "dibs: preparing {}",

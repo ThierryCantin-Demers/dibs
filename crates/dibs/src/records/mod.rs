@@ -6,6 +6,6 @@ mod error;
 pub mod friction;
 pub mod runs;
 
-pub use affinity::{affinity_get, affinity_set, pinned};
+pub use affinity::Affinity;
 pub use error::{Kept, RecordsError};
 pub use runs::{now_secs, runs_path, write_record};

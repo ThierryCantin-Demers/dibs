@@ -16,7 +16,7 @@ use crate::{
     call::{Destination, RecipeJob},
     cli::{RecipeCall, ShellWord},
     recipe::{self, Lock, Manifest, NotTaken, Resolved, resolve},
-    records::{affinity_get, affinity_set, now_secs, pinned, write_record},
+    records::{Affinity, now_secs, write_record},
 };
 use dibs_format::{
     Alias, ArmRecord, Exit, MachineName, Outcome, Pairs, ProcedureStep, RunRecord, RunVerb,
@@ -236,8 +236,8 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     // A measurement's claim on the repo's build cache is the one that sticks, since it could not
     // move; a pinned call claims nothing, since the machines report the caches it leaves.
     let backend = Jobs::on(destination(rec, &repo_name, name, &args)?);
-    if let Some(m) = backend.machine.as_ref().filter(|_| !pinned(&args)) {
-        affinity_set(&repo_name, m.as_str());
+    if let Some(m) = backend.machine.as_ref().filter(|_| !args.pinned()) {
+        Affinity::here().set(&repo_name, m.as_str());
     }
     if refused_before_building(&backend, rec, &step_labels, &args) {
         return Ok(ExitCode::from(Exit::Refused.code()));
@@ -736,7 +736,7 @@ pub fn destination(
     if rec.steps.iter().all(|s| s.lock == Lock::Shared) {
         let placed = Jobs::placed(
             args.machine(),
-            affinity_get(repo_name).as_deref(),
+            Affinity::here().get(repo_name).as_deref(),
             Some(repo_name),
         )?;
         return Ok(placed.machine);
