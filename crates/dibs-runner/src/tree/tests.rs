@@ -1,6 +1,6 @@
 use crate::{
     clock::{Deadline, Moment},
-    job::Environment,
+    job::{Environment, JobEnd},
     tree::{
         Clocks, Commands, Reflinks, Runners, Spot, Stepping, TreeConfig, Trees,
         clocks::{Fate, Removal},
@@ -1265,13 +1265,22 @@ fn a_build_after_one_stopped_partway_rebuilds_what_that_one_touched() {
     let own = s
         .target
         .join(format!(".dibs-building.{}", std::process::id()));
-    mine.ended(0);
+    let ended = |status, capped| {
+        let mark = s.with(None, |step| step.building()).unwrap();
+        mark.ended(JobEnd { status, capped });
+        own.exists()
+    };
+    mine.ended(JobEnd {
+        status: 0,
+        capped: false,
+    });
     assert!(
         !own.exists(),
         "a build that ended on its own leaves no mark"
     );
-    s.with(None, |step| step.building()).unwrap().ended(143);
-    assert!(own.exists(), "one stopped leaves its mark");
+    assert!(!ended(124, false), "its own timeout's 124 included");
+    assert!(ended(143, false), "one stopped by a signal leaves its mark");
+    assert!(ended(124, true), "and so does one its cap stopped");
 }
 
 #[test]
@@ -1290,7 +1299,10 @@ fn a_build_mark_stays_held_while_the_builds_own_processes_live_after_the_runner_
     command.arg("-c").arg("read -r _ < \"$0\"").arg(&gate);
     mark.hand_to(&mut command);
     let mut build = command.spawn().unwrap();
-    mark.ended(Exit::Overran.status());
+    mark.ended(JobEnd {
+        status: Exit::Overran.status(),
+        capped: true,
+    });
     let own = s
         .target
         .join(format!(".dibs-building.{}", std::process::id()));

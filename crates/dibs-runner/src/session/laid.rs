@@ -1,6 +1,6 @@
 use crate::{
     clock::Deadline,
-    job::{Environment, Output},
+    job::{Environment, JobEnd, Output},
     platform::{Host, Platform as _},
     session::run::Venue,
     settings::{home, var},
@@ -169,10 +169,14 @@ impl<'a> Layout<'a> {
         step: &Step,
         stepping: &Stepping,
         status: &mut i32,
+        capped: bool,
         running: Running,
     ) -> bool {
         if let Some(mark) = running.mark {
-            mark.ended(*status);
+            mark.ended(JobEnd {
+                status: *status,
+                capped,
+            });
         }
         if let Some(token) = &step.record
             && *status == 0

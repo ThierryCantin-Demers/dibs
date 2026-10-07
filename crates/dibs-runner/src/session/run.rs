@@ -498,7 +498,7 @@ impl<'a> Run<'a> {
         hosted.status = status;
         if let (Some(step), Some(stepping)) = (step, &stepping)
             && let Some(running) = running
-            && layout.step_ends(step, stepping, &mut hosted.status, running)
+            && layout.step_ends(step, stepping, &mut hosted.status, hosted.overran, running)
         {
             hosted.laid = Some(By::Dibs);
         }

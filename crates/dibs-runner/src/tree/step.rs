@@ -1,10 +1,13 @@
-use crate::tree::{
-    clocks::Contents as _,
-    copy::{Coreutils as _, Mark},
-    glob::Glob,
-    packages::{Cache, Lines, RECORD},
+use crate::{
+    job::JobEnd,
+    tree::{
+        clocks::Contents as _,
+        copy::{Coreutils as _, Mark},
+        glob::Glob,
+        packages::{Cache, Lines, RECORD},
+    },
 };
-use dibs_format::{Exit, lockfile::Package};
+use dibs_format::lockfile::Package;
 use std::{
     fs::{self, File},
     io,
@@ -46,10 +49,10 @@ impl BuildMark {
         }
     }
 
-    /// A build that ended on its own takes its mark away; one stopped, at its cap or by a signal,
-    /// leaves it for the next build to find unheld.
-    pub fn ended(self, status: i32) {
-        if status != Exit::Overran.status() && status <= SIGNALLED {
+    /// A build that ended on its own takes its mark away, a command's own 124 included; one
+    /// stopped, at its cap or by a signal, leaves it for the next build to find unheld.
+    pub fn ended(self, end: JobEnd) {
+        if !end.capped && end.status <= SIGNALLED {
             let _ = fs::remove_file(&self.mark);
         }
     }

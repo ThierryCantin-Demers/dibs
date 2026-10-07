@@ -10,7 +10,7 @@ mod services;
 mod tether;
 mod tree;
 
-pub use base::{Cap, Job, Output};
+pub use base::{Cap, Job, JobEnd, Output};
 pub use environment::{Environment, Unpinned};
 pub use held::HoldFifo;
 pub use outcome::{Digest, LogRead, Repeat};
