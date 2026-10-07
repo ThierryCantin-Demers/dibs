@@ -1,4 +1,5 @@
-use dibs_format::wire::Tree;
+use dibs_format::{Mode, wire::Tree};
+use std::fmt;
 
 /// Who makes a call.
 #[derive(Debug, Clone, Copy)]
@@ -57,6 +58,67 @@ impl BatchStep {
         ]
     }
 
+    /// What a step of a batch is started with. `DIBS_BATCH_PLAN` is `k<TAB>n` and then one pending
+    /// step per line; dibs sends it with the job and the machine keeps it beside the holder.
+    pub fn new(id: &str, step: &str, k: usize, n: usize, pending: &[Pending]) -> BatchStep {
+        let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
+        let mut plan = format!("{k}\t{n}\n");
+        for p in pending {
+            plan.push_str(&format!(
+                "{}\t{}\t{}\t{}\n",
+                clean(&p.name),
+                p.mode,
+                p.history_key(),
+                u8::from(p.here)
+            ));
+        }
+        BatchStep {
+            batch: clean(id),
+            step: clean(step),
+            plan,
+        }
+    }
+
+    /// The plan each of a recipe's jobs carries. Inside a batch the recipe is one of its steps, so
+    /// the recipe's jobs still to come go ahead of the batch's own.
+    pub fn for_recipe_job(own_id: &str, calls: &[Pending], k: usize) -> Option<BatchStep> {
+        BatchStep::for_recipe_job_in(BatchStep::from_env(), own_id, calls, k)
+    }
+
+    /// As `for_recipe_job`, inside `outer` rather than the batch this process was started in.
+    pub fn for_recipe_job_in(
+        outer: Option<BatchStep>,
+        own_id: &str,
+        calls: &[Pending],
+        k: usize,
+    ) -> Option<BatchStep> {
+        let pending = &calls[k + 1..];
+        match outer {
+            Some(outer) => {
+                let (head, rest) = outer
+                    .plan
+                    .split_once('\n')
+                    .unwrap_or((outer.plan.as_str(), ""));
+                let mut nums = head
+                    .split('\t')
+                    .map(|x| x.trim().parse::<usize>().unwrap_or(0));
+                let (bk, bn) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0));
+                let step = format!("{}: {}", outer.step, calls[k].name);
+                let mut env = BatchStep::new(&outer.batch, &step, bk, bn, pending);
+                env.plan.push_str(rest);
+                Some(env)
+            }
+            None if calls.len() > 1 => Some(BatchStep::new(
+                own_id,
+                &calls[k].name,
+                k + 1,
+                calls.len(),
+                pending,
+            )),
+            None => None,
+        }
+    }
+
     /// As the machine keeps it beside the holder.
     pub fn sent(&self) -> String {
         let text = format!("{}\t{}\n{}\n", self.batch, self.step, self.plan);
@@ -65,5 +127,48 @@ impl BatchStep {
             .take(BatchStep::PLAN_LINES)
             .collect();
         kept.trim_end_matches('\n').to_string()
+    }
+}
+
+/// A step not yet started, as the machine's `--status` reads it to say how long a batch has left.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pending {
+    pub name: String,
+    pub mode: Planned,
+    pub label: String,
+    /// On the same machine as the step carrying the plan.
+    pub here: bool,
+}
+
+/// What a pending step's duration is filed under: a mode, or a recipe, which runs several jobs
+/// under labels of their own and so has no single history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Planned {
+    Job(Mode),
+    Recipe,
+}
+
+impl fmt::Display for Planned {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Planned::Job(mode) => f.write_str(mode.as_str()),
+            Planned::Recipe => f.write_str("recipe"),
+        }
+    }
+}
+
+impl Pending {
+    /// dibs files a label with everything but `[A-Za-z0-9._-]` replaced.
+    fn history_key(&self) -> String {
+        self.label
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || "._-".contains(c) {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
     }
 }

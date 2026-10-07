@@ -1,6 +1,6 @@
 use super::{pins::PinSpec, refs::Side};
 use crate::{
-    batch,
+    call::{Pending, Planned},
     cli::RecipeCall,
     recipe::{self, Lock, Resolved},
 };
@@ -79,7 +79,7 @@ impl Job {
         local: &[bool],
         reps: u32,
         pins: &[(String, bool)],
-    ) -> Vec<batch::Pending> {
+    ) -> Vec<Pending> {
         let of = |arm: usize, rep: Option<u32>| {
             let mut tags = Vec::new();
             if sides.len() > 1 {
@@ -93,9 +93,9 @@ impl Job {
                 false => format!(" ({})", tags.join(" ")),
             }
         };
-        let job = |label: String, mode: Mode, tag: String| batch::Pending {
+        let job = |label: String, mode: Mode, tag: String| Pending {
             name: format!("{label}{tag}"),
-            mode: batch::Planned::Job(mode),
+            mode: Planned::Job(mode),
             label,
             here: true,
         };
@@ -129,7 +129,7 @@ impl Job {
 
     /// The jobs a recipe line in a batch will make, so the batch's plan can estimate them. None
     /// when the line does not resolve here, which leaves that step without an estimate.
-    pub fn of_batch_line(args: &RecipeCall) -> Option<Vec<batch::Pending>> {
+    pub fn of_batch_line(args: &RecipeCall) -> Option<Vec<Pending>> {
         let r = Resolved::of(args).ok()?;
         let pins = args
             .pins

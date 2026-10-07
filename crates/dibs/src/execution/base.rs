@@ -214,7 +214,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     let own_batch = batch::batch_id();
     // The fingerprint is of the bound recipe: two runs sharing it are the same work.
     let env_of = |k: usize| RecipeJob {
-        batch: batch::recipe_env(&own_batch, &calls, k),
+        batch: BatchStep::for_recipe_job(&own_batch, &calls, k),
         fingerprint: Some(fingerprint.clone()),
         tree: None,
     };

@@ -1,11 +1,11 @@
 use super::{
     guard::StepGuard,
     parse::{BatchError, Step, StepKind, parse},
-    plan::{Pending, pending_of, plan, step_env},
+    plan::plan,
     summary::summary,
 };
 use crate::{
-    call::{Destination, Driver, MachineCall},
+    call::{BatchStep, Destination, Driver, MachineCall, Pending},
     caller::Caller,
     cli::Call,
     execution::Job,
@@ -306,11 +306,11 @@ impl Driving<'_> {
                                 ..p.clone()
                             })
                             .collect(),
-                        None => vec![pending_of(&self.steps[j], here, &self.cwd)],
+                        None => vec![self.steps[j].pending(here, &self.cwd)],
                     }
                 })
                 .collect();
-            let batch = step_env(self.id, &step.name, i + 1, self.steps.len(), &pending);
+            let batch = BatchStep::new(self.id, &step.name, i + 1, self.steps.len(), &pending);
             let tx = self.tx.clone();
             let verbose = self.opts.verbose;
             let t = Instant::now();

@@ -1,7 +1,9 @@
 use crate::{
+    call::{Pending, Planned},
     cli::{CliError, Invocation, Mode, RecipeCall, RecipeVerb, RunLock},
     paths::FileError,
 };
+use dibs_format::Mode as JobMode;
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -433,5 +435,23 @@ impl Step {
                     .label
                     .as_deref()
                     .is_some_and(|l| l.starts_with("bench ")))
+    }
+
+    /// The history key dibs will file a step under, which is what its estimate is looked up by.
+    pub fn pending(&self, here: bool, cwd: &str) -> Pending {
+        let directory = || cwd.rsplit('/').next().unwrap_or_default().to_string();
+        let (mode, default) = match self.lock {
+            StepKind::Sync => (Planned::Job(JobMode::Rsh), "sync".to_string()),
+            StepKind::Recipe => (Planned::Recipe, String::new()),
+            StepKind::Shared => (Planned::Job(JobMode::Shared), directory()),
+            StepKind::Bench => (Planned::Job(JobMode::Bench), directory()),
+            StepKind::Peek => (Planned::Job(JobMode::Peek), directory()),
+        };
+        Pending {
+            name: self.name.clone(),
+            mode,
+            label: self.label.clone().unwrap_or(default),
+            here,
+        }
     }
 }

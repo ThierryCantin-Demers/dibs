@@ -1,10 +1,9 @@
 use super::{
     base::{State, jobs, ready, was_cancelled},
     parse::{Step, StepKind, parse, split_words},
-    plan::{Pending, Planned, nested_env, step_env},
     summary::summary,
 };
-use crate::call::BatchStep;
+use crate::call::{BatchStep, Pending, Planned};
 use dibs_format::Mode;
 use std::path::Path;
 
@@ -220,7 +219,7 @@ fn call(name: &str, mode: Mode) -> Pending {
 
 #[test]
 fn a_step_carries_what_is_still_to_come_under_the_keys_its_history_is_filed_by() {
-    let env = step_env(
+    let env = BatchStep::new(
         "b1",
         "build",
         1,
@@ -248,11 +247,11 @@ fn a_recipe_alone_is_its_own_batch_and_inside_one_goes_ahead_of_the_rest() {
         call("build", Mode::Shared),
         call("bench", Mode::Bench),
     ];
-    let alone = nested_env(None, "own", &calls, 1).unwrap();
+    let alone = BatchStep::for_recipe_job_in(None, "own", &calls, 1).unwrap();
     assert_eq!(alone.batch, "own");
     assert_eq!(alone.plan, "2\t3\nbench\tbench\tbench_x\t1\n");
     assert!(
-        nested_env(None, "own", &calls[..1], 0).is_none(),
+        BatchStep::for_recipe_job_in(None, "own", &calls[..1], 0).is_none(),
         "one job is not a batch"
     );
     let outer = Some(BatchStep {
@@ -260,7 +259,7 @@ fn a_recipe_alone_is_its_own_batch_and_inside_one_goes_ahead_of_the_rest() {
         step: "arm-a".to_string(),
         plan: "2\t4\narm-b\trecipe\t\t1\n".to_string(),
     });
-    let inside = nested_env(outer, "own", &calls, 1).unwrap();
+    let inside = BatchStep::for_recipe_job_in(outer, "own", &calls, 1).unwrap();
     assert_eq!(inside.batch, "b9");
     assert_eq!(inside.step, "arm-a: build");
     assert_eq!(

@@ -25,7 +25,7 @@ pub use hold::Guard;
 pub use kill::{Driver, DriverClaim};
 pub use local::Destination;
 pub use machine::{Asked, Bound, MachineCall};
-pub use origin::{BatchStep, Origin, RecipeJob};
+pub use origin::{BatchStep, Origin, Pending, Planned, RecipeJob};
 pub use output::Output;
 pub use sync::{Rsh, Sync};
 pub use watched::{Starter, Watched};
