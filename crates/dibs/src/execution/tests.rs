@@ -1,10 +1,4 @@
-use super::{
-    base::step_plan,
-    refs::Side,
-    schedule::Job,
-    sweep::{sweep_points, sweep_text},
-    trees::gitdb_args,
-};
+use super::{base::step_plan, refs::Side, schedule::Job, sweep::SweepPoints, trees::gitdb_args};
 use crate::{
     batch,
     cli::Invocation,
@@ -55,7 +49,7 @@ fn a_sweep_is_every_combination_over_the_values_already_given() {
         "--sweep",
         "layout=rc,cr",
     ]);
-    let points = sweep_points(&args);
+    let points = SweepPoints::of(&args).points;
     let shape: Vec<String> = points
         .iter()
         .map(|p| format!("{} {} {}", p["backend"], p["size"], p["layout"]))
@@ -77,7 +71,7 @@ fn a_value_with_a_comma_in_it_is_one_value() {
         "--sweep",
         "samples=10,30",
     ]);
-    let points = sweep_points(&args);
+    let points = SweepPoints::of(&args).points;
     assert_eq!(points.len(), 2, "only the sweep multiplies the runs");
     assert_eq!(points[0]["problems"], "topk1,topk2");
 }
@@ -97,7 +91,7 @@ fn a_swept_run_is_a_batch_of_ordinary_calls() {
         "--anyway",
         "--new-series",
     ]);
-    let text = sweep_text(&args, &sweep_points(&args));
+    let text = SweepPoints::of(&args).text();
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines.len(),
@@ -162,7 +156,7 @@ fn a_swept_shell_carries_its_reason_its_lock_and_its_command_quoted() {
         "--",
         "echo a; echo b",
     ]);
-    let text = sweep_text(&args, &sweep_points(&args));
+    let text = SweepPoints::of(&args).text();
     assert_eq!(
         text.lines().next().unwrap(),
         "[n-1] dibs shell app@main..local --bench --max 60 --reps 2 --reason 'why not' --n 1 -- 'echo a; echo b'",

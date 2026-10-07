@@ -6,7 +6,7 @@ use super::{
     record::{batch_of_caller, fetch_artifacts, measured_summary},
     refs::{Arm, Side},
     schedule::Job,
-    sweep::{sweep_points, sweep_run},
+    sweep::SweepPoints,
     trees::{Announce, TreePlan, TreeSpec, new_token, preparing_title},
 };
 use crate::{
@@ -63,15 +63,13 @@ pub struct Tree {
 }
 
 pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
-    let points = sweep_points(&args);
-    if points.len() > 1 {
-        return sweep_run(&args, &points);
+    let sweep = SweepPoints::of(&args);
+    if sweep.points.len() > 1 {
+        return sweep.run();
     }
     // One point is the ordinary call with its values filled in, not a batch of one.
-    let args = RecipeCall {
-        params: points.into_iter().next().unwrap_or_default(),
-        ..args
-    };
+    let params = sweep.points.into_iter().next().unwrap_or_default();
+    let args = RecipeCall { params, ..args };
 
     let sides = Side::list(args.reference.as_deref())?;
     let resolved = Resolved::of(&args)?;
