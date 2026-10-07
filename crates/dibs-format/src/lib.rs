@@ -19,7 +19,7 @@ pub mod wire;
 
 pub use exit::Exit;
 pub use friction::FrictionNote;
-pub use ids::{Alias, BatchId, JobId, Label, MachineName};
+pub use ids::{Alias, BatchId, FileName, JobId, Label, MachineName};
 pub use lines::{
     BatchPlan, By, Event, HistoryLine, JobMeta, LineError, LockRecord, LogLine, PendingKind,
     PendingStep,

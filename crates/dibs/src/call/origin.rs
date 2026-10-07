@@ -1,4 +1,4 @@
-use dibs_format::{Mode, wire::Tree};
+use dibs_format::{Label, Mode, wire::Tree};
 use std::fmt;
 
 /// Who makes a call.
@@ -68,7 +68,7 @@ impl BatchStep {
                 "{}\t{}\t{}\t{}\n",
                 clean(&p.name),
                 p.mode,
-                p.history_key(),
+                p.label.filed(),
                 u8::from(p.here)
             ));
         }
@@ -135,7 +135,7 @@ impl BatchStep {
 pub struct Pending {
     pub name: String,
     pub mode: Planned,
-    pub label: String,
+    pub label: Label,
     /// On the same machine as the step carrying the plan.
     pub here: bool,
 }
@@ -154,21 +154,5 @@ impl fmt::Display for Planned {
             Planned::Job(mode) => f.write_str(mode.as_str()),
             Planned::Recipe => f.write_str("recipe"),
         }
-    }
-}
-
-impl Pending {
-    /// dibs files a label with everything but `[A-Za-z0-9._-]` replaced.
-    fn history_key(&self) -> String {
-        self.label
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || "._-".contains(c) {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect()
     }
 }

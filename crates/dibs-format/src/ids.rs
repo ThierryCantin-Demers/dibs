@@ -87,17 +87,36 @@ impl BatchId {
 }
 
 impl Label {
-    /// The label as a machine files it: anything outside `[A-Za-z0-9._-]` becomes `_`.
+    /// The label as a machine files it.
     pub fn filed(&self) -> Label {
-        let filed = self
-            .0
+        Label(FileName::of(&self.0).into())
+    }
+}
+
+/// Text as a machine files it: anything outside `[A-Za-z0-9._-]` becomes `_`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileName(String);
+
+impl FileName {
+    pub fn of(text: &str) -> FileName {
+        let filed = text
             .chars()
             .map(|c| match c.is_ascii_alphanumeric() || "._-".contains(c) {
                 true => c,
                 false => '_',
             })
-            .collect::<String>();
-        Label(filed)
+            .collect();
+        FileName(filed)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<FileName> for String {
+    fn from(name: FileName) -> String {
+        name.0
     }
 }
 

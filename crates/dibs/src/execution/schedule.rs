@@ -7,7 +7,7 @@ use crate::{
     cli::RecipeCall,
     recipe::{self, Lock, Resolved},
 };
-use dibs_format::Mode;
+use dibs_format::{Label, Mode};
 
 /// One job of a recipe run, in the order they are sent.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -99,7 +99,7 @@ impl Job {
         let job = |label: String, mode: Mode, tag: String| Pending {
             name: format!("{label}{tag}"),
             mode: Planned::Job(mode),
-            label,
+            label: Label::new(label),
             here: true,
         };
         let pinned = pins.iter().map(|pin| {

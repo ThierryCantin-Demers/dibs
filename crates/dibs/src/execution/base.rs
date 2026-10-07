@@ -230,7 +230,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     for (k, p) in pins.iter_mut().enumerate() {
         let env = env_of(k);
         let setup = JobRequest {
-            label: &calls[k].label,
+            label: calls[k].label.as_str(),
             lock: Lock::Shared,
             device: None,
             job: &env,
@@ -418,7 +418,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         }
         let env = env_of(k);
         let setup = JobRequest {
-            label: &calls[k].label,
+            label: calls[k].label.as_str(),
             lock: Lock::Shared,
             // Preparing a worktree touches no GPU, so pinning it would only make the setup fail
             // on a machine whose card has been pulled.

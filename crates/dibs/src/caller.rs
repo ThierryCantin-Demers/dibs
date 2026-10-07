@@ -1,5 +1,6 @@
 //! Who is calling: the session a job belongs to, and the name a person knows it by.
 
+use dibs_format::FileName;
 use dibs_runner::short_hostname;
 use std::{ffi::OsString, path::PathBuf};
 
@@ -78,15 +79,9 @@ impl Caller {
         })
     }
 
-    /// The id as a file name: anything outside `[A-Za-z0-9._-]` becomes `_`.
+    /// The id as a file name.
     pub fn file_name(&self) -> String {
-        self.id
-            .chars()
-            .map(|c| match c.is_ascii_alphanumeric() || "._-".contains(c) {
-                true => c,
-                false => '_',
-            })
-            .collect()
+        FileName::of(&self.id).into()
     }
 }
 

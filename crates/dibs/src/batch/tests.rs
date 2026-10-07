@@ -4,7 +4,7 @@ use super::{
     plan::Batch,
 };
 use crate::call::{BatchStep, Pending, Planned};
-use dibs_format::Mode;
+use dibs_format::{Label, Mode};
 use std::path::Path;
 
 fn names(v: &[usize], steps: &[Step]) -> Vec<String> {
@@ -211,7 +211,7 @@ fn call(name: &str, mode: Mode) -> Pending {
     Pending {
         name: name.into(),
         mode: Planned::Job(mode),
-        label: format!("{name}/x"),
+        label: Label::new(format!("{name}/x")),
         here: true,
     }
 }

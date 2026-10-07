@@ -3,7 +3,7 @@ use crate::{
     cli::{CliError, Invocation, Mode, RecipeCall, RecipeVerb, RunLock},
     paths::FileError,
 };
-use dibs_format::Mode as JobMode;
+use dibs_format::{Label, Mode as JobMode};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -450,7 +450,7 @@ impl Step {
         Pending {
             name: self.name.clone(),
             mode,
-            label: self.label.clone().unwrap_or(default),
+            label: Label::new(self.label.clone().unwrap_or(default)),
             here,
         }
     }
