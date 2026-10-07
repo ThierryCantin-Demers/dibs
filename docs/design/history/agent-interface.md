@@ -1,5 +1,10 @@
 # A narrower interface for agents
 
+**Status: history.** It records how the verbs, recipes, provenance and artifacts were derived from
+a real job log, before any of them existed. All of it is built, with two changes: recipes live in
+`~/.config/dibs/recipes/<repo>.toml` over a repo's own `.dibs.toml`, and they take values. The
+guide describes what is built.
+
 `dibs` today takes an arbitrary shell command. That is why it works at all, and it is also why
 four separate problems keep recurring. This is a design for constraining it, and for finding
 out where the constraint is wrong rather than assuming.
@@ -151,7 +156,7 @@ nobody promoted.
 
 There are two different things that both look like "a DSL", and they have opposite properties.
 
-**A spec submitted per call** — an agent hands dibs a JSON graph of steps at invocation time —
+**A spec submitted per call**, where an agent hands dibs a JSON graph of steps at invocation time,
 does nothing for traceability. It is exactly as opaque as `bash /tmp/tm-sweep.sh`, just with
 more syntax: it exists only in that one invocation, nothing versions it, and three weeks later
 the number in the history still cannot be traced to what produced it.

@@ -4,7 +4,7 @@
 //!
 //! The driver is the owner and adds no state on any machine. Each step is the dibs call the
 //! agent would have made; if the driver dies its steps die with it and their locks release,
-//! which is the lifetime a single job already has. The design is `dibs-design/batch.md`.
+//! which is the lifetime a single job already has. The design is `docs/design/history/batch.md`.
 
 mod base;
 mod guard;

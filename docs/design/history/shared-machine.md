@@ -1,5 +1,10 @@
 # Sharing a machine with other people
 
+**Status: history.** It records how one machine came to be shared by several people through
+one unprivileged account. The account rules still hold: the guide's Setting it up section says
+what a machine needs, and `dibs machines` checks the rules as the `unprivileged` profile
+(`../machines.md`).
+
 What it takes for a benchmarking machine to serve several people, and why each piece is the way
 it is. Written from doing it once; the failure modes below are ones that actually happened.
 

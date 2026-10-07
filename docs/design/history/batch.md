@@ -1,5 +1,8 @@
 # One submission, one wake, one summary
 
+**Status: history.** It records the design of `dibs batch`. All of it is built, `--kill
+<batch-id>` included. The guide's Batches section describes it as it is.
+
 **Built** as the subcommand `dibs batch <file|->` rather than a `--batch` flag, to match the
 one-command form. The linkage below is built with one change: the `batch.<pid>` file carries the
 steps still to come, not only the position, so `--status` gives the time the batch has left on

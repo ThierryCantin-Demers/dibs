@@ -91,7 +91,8 @@ impl fmt::Display for FleetError {
             FleetError::Unread(e) => write!(
                 f,
                 "{e}\n  It says what each machine should have: people and their keys, and per machine how it was set\n  \
-                 up, the names it is reached by, who may log in and the profiles it needs. See dibs-design/machines.md."
+                 up, the names it is reached by, who may log in and the profiles it needs.\n  \
+                 docs/guide.md has its format, under \"What each machine should have\"."
             ),
             FleetError::Parse { path, error } => write!(f, "{}: {error}", path.display()),
             FleetError::Stranger {

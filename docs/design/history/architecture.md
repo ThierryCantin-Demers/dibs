@@ -1,5 +1,10 @@
 # Should this be rebuilt from first principles?
 
+**Status: history.** It records why dibs was split into an agent layer and a resource layer
+rather than rebuilt, and what Slurm would take over. The split held. The machine half it kept as
+a bash script sent with each call became `dibs-runner` in 2026-10. `../architecture.md` is the
+design now, and `../decisions.md` says why the script went.
+
 Asked because the design so far is shaped by what already existed, and because two things are
 coming that were not considered when any of it was written: coworkers sharing one pool of
 machines, and cloud instances instead of boxes under a desk.

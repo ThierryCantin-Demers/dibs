@@ -108,7 +108,8 @@ A hook that stops an agent sleeping under the lock is still yours to write.
 
 - [`docs/guide.md`](docs/guide.md): every feature in detail, and why it behaves the way it does.
 - `dibs --help`: every flag.
-- [`dibs-design/`](dibs-design/): the decisions and the measurements behind them.
+- [`docs/design/`](docs/design/README.md): how it is built, and the decisions and measurements
+  behind it.
 
 ## What is here
 
@@ -121,7 +122,7 @@ A hook that stops an agent sleeping under the lock is still yours to write.
 | `crates/dibstop/` | `dibstop`, a live view of who holds the machines. |
 | `crates/dibs-machines/` | `dibs-machines`, a desktop window on what each machine has against what it should. |
 | `docs/guide.md` | the detailed guide. |
-| `dibs-design/` | the plans, the settled decisions and their measurements. |
+| `docs/design/` | the design records: architecture, protocol, decisions, and history. |
 | `dibs-agent-rules.md` | the rules your agents follow. |
 | `crates/dibs/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
 | `crates/dibs/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |

@@ -1,5 +1,11 @@
 # From one machine to many
 
+**Status: history.** It records how dibs went from one machine to several. Built: the
+inventory, placement of shared work by load and build cache, `measure = false`, naming a card
+with `--device`, and a series per machine. Not built: a lock per card, so a machine is still
+locked whole. `chips.toml` was deleted, since nothing read it. The guide's More than one machine
+and Naming the card sections describe what is built.
+
 `dibs` today serializes one machine. The question is what it becomes when there are several,
 and when a machine is not one resource but five: a CPU and four GPUs that can be measured
 independently but not freely.
@@ -103,8 +109,8 @@ hardware wrong:
 | card | chip | compute capability | tensor cores |
 |---|---|---|---|
 | RTX 2060 SUPER | TU106 | 7.5 | **yes** |
-| GTX 1660 SUPER | TU116 | 7.5 | **no** — replaced by dedicated FP16 units |
-| RX 5700 XT ×2 | Navi 10, RDNA1, gfx1010 | — | **no** — WMMA arrives with RDNA3 |
+| GTX 1660 SUPER | TU116 | 7.5 | **no**: replaced by dedicated FP16 units |
+| RX 5700 XT ×2 | Navi 10, RDNA1, gfx1010 | none | **no**: WMMA arrives with RDNA3 |
 
 Two cards reporting the same number and only one having tensor cores. The problem is real;
 curating a table is the wrong answer to it, because **cubecl already detects this correctly and
@@ -170,7 +176,7 @@ so it goes to `~/.config/dibs/machines.toml`, beside the recipe overrides the re
 reads from there. This repo is public; an inventory in it would be a list of someone's hosts.
 
 ```toml
-# chips.toml — keyed by PCI vendor:device, which is what the hardware actually reports
+# chips.toml, keyed by PCI vendor:device, which is what the hardware actually reports
 [chip."10de:2705"]                  # verified by reading it off the machine
 name   = "RTX 4070 Ti SUPER"
 vendor = "nvidia"
