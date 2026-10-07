@@ -217,7 +217,7 @@ impl Visit {
         };
         state.stage = Stage::Peeking(job.pid);
         drop(state);
-        let status = job.wait(cap);
+        let status = job.wait(cap).status;
         at.stopper.state().stage = Stage::Setup;
         let took = Moment::epoch_now().saturating_sub(start);
         let journal = Journal {

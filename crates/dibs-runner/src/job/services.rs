@@ -286,10 +286,13 @@ impl Readiness<'_> {
                 self.sink,
             );
             return probe.is_ok_and(|probe| {
-                probe.wait(Some(Cap {
-                    after: left,
-                    grace: READY_GRACE,
-                })) == 0
+                probe
+                    .wait(Some(Cap {
+                        after: left,
+                        grace: READY_GRACE,
+                    }))
+                    .status
+                    == 0
             });
         };
         let (host, port) = address.rsplit_once(':').unwrap_or((LOCAL, address));

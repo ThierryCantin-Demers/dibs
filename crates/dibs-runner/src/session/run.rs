@@ -100,6 +100,8 @@ pub struct Hosted {
     pub failed: bool,
     /// Who gave the status when the job's tree ended the call before its command.
     pub laid: Option<By>,
+    /// The cap stopped the call, rather than its command ending 124 itself.
+    pub overran: bool,
 }
 
 impl Hosted {
@@ -369,6 +371,7 @@ impl Visit {
             services: None,
             failed: false,
             laid: None,
+            overran: false,
         };
         let mut spot = None;
         if let Some(tree) = &request.tree
@@ -384,6 +387,7 @@ impl Visit {
                     drop(state);
                     begun.touch_log();
                     hosted.laid = Some(by);
+                    hosted.overran = status == Exit::Overran.status();
                     return (status, hosted);
                 }
             }
@@ -490,7 +494,9 @@ impl Visit {
             self.sink
                 .record(Record::Holding(hosted.ports.picked.clone()));
         }
-        let status = work.wait(cap);
+        let end = work.wait(cap);
+        hosted.overran = end.capped;
+        let status = end.status;
         let ended = guard
             .and_then(Guard::over)
             .or_else(|| hosted.services.as_ref().and_then(Services::ended));
@@ -537,7 +543,7 @@ impl Visit {
         let ended = end.begun.log.as_ref().map(|log| {
             let by = match Exit::of_code(status) {
                 _ if !cancelled && let Some(by) = end.hosted.laid => by,
-                Some(Exit::Overran) if end.max > 0 => By::Dibs,
+                Some(Exit::Overran) if end.hosted.overran => By::Dibs,
                 Some(Exit::Cancelled) if cancelled => By::Dibs,
                 Some(Exit::ServiceFailed) if end.hosted.failed => By::Dibs,
                 _ => By::Command,
@@ -582,7 +588,7 @@ impl Visit {
         if let Some(ended) = &ended {
             ended.report();
         }
-        if status == Exit::Overran.status() {
+        if status == Exit::Overran.status() && end.hosted.overran {
             self.overran(end.max);
         }
         status

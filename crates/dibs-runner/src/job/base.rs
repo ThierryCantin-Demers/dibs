@@ -38,6 +38,14 @@ pub struct Cap {
     pub grace: Duration,
 }
 
+/// How a job ended: its status as a shell gives it, and whether its cap stopped it. A command
+/// that runs `timeout` itself can end 124 on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JobEnd {
+    pub status: i32,
+    pub capped: bool,
+}
+
 /// A job started: `bash -c` the command, in a process group of its own, stdin from `/dev/null`.
 pub struct Job {
     pub pid: u32,
@@ -135,9 +143,8 @@ impl Job {
         }
     }
 
-    /// Waits for the job, stopping its group when it overruns the cap, and returns its status as a
-    /// shell gives it.
-    pub fn wait(self, cap: Option<Cap>) -> i32 {
+    /// Waits for the job, stopping its group when it overruns the cap, and says how it ended.
+    pub fn wait(self, cap: Option<Cap>) -> JobEnd {
         let status = match cap {
             None => self.exited.recv().ok(),
             Some(cap) => match self.exited.recv_timeout(cap.after) {
@@ -153,21 +160,27 @@ impl Job {
                         }
                     };
                     self.end();
-                    return status;
+                    return JobEnd {
+                        status,
+                        capped: true,
+                    };
                 }
             },
         };
         self.end();
-        match status {
-            Some(Ok(status)) => Exit::shell_status(status),
-            _ => Exit::Failed.status(),
+        JobEnd {
+            status: match status {
+                Some(Ok(status)) => Exit::shell_status(status),
+                _ => Exit::Failed.status(),
+            },
+            capped: false,
         }
     }
 
     /// Waits for the job on a thread of its own, which hands its status on; the pid comes back.
     pub fn on_end(self, then: impl FnOnce(i32) + Send + 'static) -> u32 {
         let pid = self.pid;
-        thread::spawn(move || then(self.wait(None)));
+        thread::spawn(move || then(self.wait(None).status));
         pid
     }
 
