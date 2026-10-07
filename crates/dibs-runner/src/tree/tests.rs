@@ -869,6 +869,9 @@ fn a_sweep_leaves_a_target_a_build_holds_and_says_what_it_could_not_remove() {
     assert!(held.exists(), "a target a build holds is not swept");
     assert!(said.contains("could not remove all of"), "{said}");
     assert!(stuck.join("debug/deps").exists() && !stuck.join(".dibs-used").exists());
+    drop(build);
+    assert!(m.prepare(&local("k", &[])).0.is_ok());
+    assert!(!held.exists(), "and goes once the build has");
 }
 
 #[test]
@@ -1185,9 +1188,8 @@ fn a_sweep_leaves_caches_a_prepare_holds_and_keeps_one_revived_after_it_judged()
 fn a_prepares_copy_is_left_while_the_prepare_runs_and_taken_once_it_has_gone() {
     let m = Machine::new();
     let (scratch, home) = (m.p("scratch"), m.p("home"));
-    let mut ended = Command::new("true").spawn().unwrap();
-    let dead = ended.id();
-    ended.wait().unwrap();
+    // Above Linux's PID_MAX_LIMIT and macOS's PID_MAX, so no process can have it.
+    let dead = 4_194_304;
     let running = m.abandoned(&format!("target/demo-arm1.seed.{}-2", std::process::id()));
     let left = m.abandoned(&format!("ws/demo/local-k.old.{dead}"));
     m.sweeping(&scratch, &home).run();
