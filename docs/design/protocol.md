@@ -59,66 +59,97 @@ process ssh started for the call or the client on this computer. `TERM` and `HUP
 
 ### A tree
 
-A recipe's request names the tree its job runs in: one laid out before, or one the runner lays
-out at the head of the job, once it holds the lock and before the command, so a recipe pays for
-one place in the queue rather than two. It fetches a ref into a ref of its own, never through
-the clone's one `FETCH_HEAD`, adds the commit's worktree or makes a sent tree's directory, seeds
-a new target from a sibling's by reflinks (`FICLONE` on Linux, `clonefile` on macOS), stages
-the lockfile's packages beside it, sweeps what nobody has used, and asks cargo's git cache which
-pinned commits it lacks. The layout under the scratch and its markers (`.dibs-used`,
-`.dibs-tree`, `.dibs-packages`, `.prepare.lock`) are the ones a bash prepare left, so no build
-cache is rebuilt. A sent tree's prepare also holds `.<tree>.lock` beside it, from deciding what
-the tree starts from until its target is marked used, so a reseed that waited minutes for a
-sibling's build never replaces a tree another call has been handed since; a bash prepare takes
-no such lock. What it laid out comes back as a `prepared` record;
-what it says goes where the job's output goes. A step waiting for a git dependency exits 3 with
-`by=dibs` before its command, as does a prepare that fails. The job's `--max` counts from when
-it holds the lock, as master's `timeout` around its setup did: a git command, a lock another
-prepare holds or a seed's wait for a sibling's build that outlasts it ends the call 124 with
-`by=dibs`, and the command gets what is left. A copy makes FIFOs, sockets and devices anew rather
-than opening them. A worktree with no index, which a checkout stopped partway leaves since git
-writes it last, is removed and added again unless a process works in it. The command then runs
-in the worktree with the target as `CARGO_TARGET_DIR`, or, for a transfer, in the directory the
-transfer names the worktree in. Around a recipe step's command the runner refuses a measurement
-whose target another tree built into since (exit 78, `by=dibs`), reads the machine's state,
-claims the target for a build's tree, records a successful build's lockfile, keeps the files the
-step names, and checks that a pin took (exit 3, `by=dibs`), and says what it did in a `stepped`
-record before the trailer. A build marks its target with `.dibs-building.<pid>`, held shared
-while it runs and removed when it ends on its own; one stopped, at its cap or by a signal, leaves
-it unheld, and the next build there removes the `incremental` and `.fingerprint` entries newer
-than it, since rustc reuses a stopped session's state and links with symbols missing. A bash
-build does the same. A transfer with a tree is framed until it is laid out: the
-`prepared` record, then `transferring`, after which the runner frames nothing; `dibs __rsh`
-writes the record to a file the sync that started rsync reads.
+A recipe's request names the tree its job runs in: one an earlier call laid out, or one the
+runner lays out at the head of the job, once it holds the lock and before the command. A recipe
+so pays for one place in the queue rather than two.
+
+- **Laying it out.** The runner fetches a ref into a ref of its own, never through the clone's one
+  `FETCH_HEAD`, and adds the commit's worktree, or makes a sent tree's directory. It seeds a new
+  target from a sibling's by reflinks (`FICLONE` on Linux, `clonefile` on macOS), stages the
+  lockfile's packages beside it, sweeps what nobody has used, and asks cargo's git cache which
+  pinned commits it lacks. A copy makes FIFOs, sockets and devices anew rather than opening them.
+  A worktree with no index, which a checkout stopped partway leaves since git writes it last, is
+  removed and added again unless a process works in it.
+- **The layout** under the scratch and its markers (`.dibs-used`, `.dibs-tree`, `.dibs-packages`,
+  `.prepare.lock`) are the ones a bash prepare left, so no build cache is rebuilt.
+- **A sent tree's turn.** Its prepare holds `ws/<repo>/.<tree>.lock` from deciding what the tree
+  starts from until its target is marked used, so a reseed that waited minutes for a sibling's
+  build never replaces a tree another call has been handed since. A bash prepare takes no such
+  lock.
+- **What comes back.** What it laid out comes back as a `prepared` record, and what it says goes
+  where the job's output goes. A step waiting for a git dependency, or a prepare that fails,
+  exits 3 with `by=dibs` before its command.
+- **Its cap.** The job's `--max` counts from when it holds the lock. A git command, a lock another
+  prepare holds, or a seed's wait for a sibling's build that outlasts it ends the call 124 with
+  `by=dibs`, and the command gets what is left.
+- **The command** runs in the worktree with the target as `CARGO_TARGET_DIR`, or, for a transfer,
+  in the directory the transfer names the worktree in.
+- **Around a recipe step's command** the runner refuses a measurement whose target another tree
+  built into since (exit 78, `by=dibs`), reads the machine's state, claims the target for a
+  build's tree, records a successful build's lockfile, keeps the files the step names, and checks
+  that a pin took (exit 3, `by=dibs`). It says what it did in a `stepped` record before the
+  trailer.
+- **A transfer with a tree** is framed until the tree is laid out: the `prepared` record, then
+  `transferring`, after which the runner frames nothing. `dibs __rsh` writes the record to a file
+  that the sync which started rsync reads.
+
+### The build mark
+
+A build step marks its target with `.dibs-building.<pid>`, named by the runner's pid. The runner
+holds it shared and hands the descriptor to the build's command, so cargo, rustc and whatever
+else the build starts hold it too, and a rustc that outlives its runner keeps it held. A build
+that ends on its own removes the mark, a command's own exit 124 included. One stopped at its cap,
+or by a signal (a status above 128), leaves it. The next build of that target that finds a mark
+nobody holds removes the `incremental` and `.fingerprint` entries newer than it, then the mark,
+since rustc reuses a stopped session's state and links with symbols missing. A bash build does
+the same, its shell holding the mark as descriptor 7.
 
 ### The sweep
 
 Every prepare and `dibs --gc` walk the scratch the same way and judge it by the same clocks:
 `--gc` lists what one sweep judged, and a prepare removes the same things quietly.
 
-- **What it walks:** every repo's trees under `ws`, the build caches under `target`, the job
-  directories under `jobs`, leftovers under `tmp`, and the runners' directory; `--gc` also
-  walks results under `out`, which a prepare leaves, since a person keeps what they want there.
-- **A tree** is past once its `.dibs-used` is older than `keep_days`, and **a cache** once its
-  marker is older than `target_keep_days`, unless a build holds one of its `.cargo-lock` files.
-  One with no marker is dated rather than removed.
-- **Against a prepare reviving it.** A prepare marks a tree it may reuse, and the nest it sits
-  in, holding the repo's `.prepare.lock`, and holds `.<target>.lock` beside its target from
-  deciding what the target starts from until the target is marked used. A sweep takes the same
-  locks, without waiting, before it removes either, judges it again under them, and holds every
-  build lock in a cache through its removal. Whatever a prepare holds is left for the next sweep.
-  A copy a prepare is seeding, or a tree it set aside, carries the prepare's process in its name
-  (`.seed.<pid>`, `.old.<pid>`), and is the prepare's while that process runs.
+- **What a prepare removes**, across every repo on the machine: trees under `ws` unused for
+  `keep_days`, build caches under `target` unused for `target_keep_days`, job directories under
+  `jobs` and entries under `tmp` unchanged for `keep_days`, and runner versions. `dibs --gc` also
+  removes entries under `out` unchanged for `keep_days`. A prepare leaves `out`, where a person
+  keeps results (`decisions.md`). Anything else under the scratch is listed and never touched.
+- **The clocks.** A tree or a cache is judged by its `.dibs-used`, a job directory or an entry
+  under `tmp` or `out` by its own time. A tree or cache with no `.dibs-used` is given one, dated
+  now, rather than removed.
+- **The locks** a prepare revives a tree or a cache under, which a sweep takes too:
+  - `ws/<repo>/.prepare.lock`: a prepare holds it while it marks a tree it may reuse, and the
+    nest the tree sits in.
+  - `target/.<name>.lock`, beside a cache: a prepare holds it from deciding what the cache starts
+    from until the cache is marked used.
+  - `ws/<repo>/.<tree>.lock`, or `.<tree>-<nest>.lock` for one in a nest: a sent tree's turn.
+  - `.cargo-lock`, cargo's own, in each profile of a cache: a build holds it.
+- **Judged twice.** A sweep first judges every entry holding no lock, since a lock taken and let
+  go can stay held a moment in a child another thread forks. What is past its clock it judges
+  again holding the locks, each taken at once or not at all, and it keeps them through the
+  removal: a tree under its repo's `.prepare.lock` and the turns of the sent trees in it, a cache
+  under its `.<name>.lock` and every `.cargo-lock` in it, exclusively. What it cannot take is
+  left for the next sweep, and `--gc` says by whom:
+  - **held by a prepare**: a prepare holds one of its locks. A copy a prepare is seeding, or a
+    tree it set aside, carries the prepare's process in its name (`.seed.<pid>`, `.old.<pid>`),
+    and is the prepare's while that process runs.
+  - **held by a build**: a build holds a `.cargo-lock` in the cache.
+- **Two more fates.** An entry with no marker is **dated**, as above. A cache holding nothing but
+  a sweep's own marker is **hollow**: it was dated while another sweep removed it, and goes
+  under its lock whatever its date.
+- **A dry run** (`dibs --gc --dry-run`) judges under the same locks but a sent tree's turn, so it
+  dates unmarked entries and makes the lock files it takes. It removes nothing.
+- **The lock files** go with what they guard: a sweep removes `.<name>.lock` with its cache, and a
+  sent tree's turn with its tree or nest, each while it still holds it. Every taker checks, once
+  it holds one, that its path still names the file it locked, and takes it again if not, so two
+  prepares never hold two different files. `.prepare.lock` is never removed: a bash prepare takes
+  it too, and makes no such check. A dry run's lock file beside a past cache stays until the sweep
+  that removes the cache.
 - **Runner versions** are kept by use: each call a version serves marks its `.dibs-used`. One a
   later version replaced goes once that mark is older than `keep_days`; the newest installed
   always stays, since it builds the next. A queued `--gc` starts its version again through
   `/proc/<pid>/exe` on Linux, which a removal cannot reach; macOS starts it by its path, which
   only a removal by hand reaches, since the call that queued it marked it used.
-- **The lock files** go with what they guard: a sweep removes `.<target>.lock` with its target,
-  and a sent tree's `.<tree>.lock` (`.<tree>-<nest>.lock` for one in a nest) with its tree or
-  nest, each while it still holds it. Every taker checks, once it holds one, that its path still
-  names the file it locked, and takes it again if not, so two prepares never hold two different
-  files. `.prepare.lock` stays: a bash prepare takes it too, and makes no such check.
 
 ### Liveness
 
@@ -148,6 +179,42 @@ Every prepare and `dibs --gc` walk the scratch the same way and judge it by the 
   runner, or ssh, ignoring `INT` and `QUIT`, and the runner leaves a signal it was started
   ignoring ignored, so Ctrl-C reaches only the command run here.
 
+## Files on the machine
+
+Each of these paths comes from the environment alone, never from a settings file, so every
+account and both halves find the same ones.
+
+- **The lock directory**: `DIBS_LOCK_DIR`, else `/dev/shm/dibs-lock` when it can be written, else
+  the runtime directory, else `/tmp`.
+  - `gate` and `rw`: the lock itself.
+  - `waiting.<pid>` and `holder.<pid>`: a call queued, and the call holding, one line each.
+  - `batch.<pid>`: the steps of the holder's batch still to come on this machine.
+  - `cpu.<pid>`: what the last look at a holder's CPU saw, for the idle signal.
+  - `hold.<pid>`: the fifo a hold's job waits on for its caller's `release`.
+  - `with.<pid>`: the servers a call started.
+  - `port.<n>`: a port picked for `--port`, held while its call runs.
+  - `cancelled.<id>`: a cancelled batch, whose later steps it refuses for a day.
+- **History and log**: `/var/lib/dibs/history` and `log` when that directory can be written, so
+  every account's durations and arrivals are one record, else under `~/.local/state/dibs`. Each
+  has a `<file>.lock` beside it.
+- **The scratch**, `~/.cache/dibs` unless `DIBS_SCRATCH` says:
+  - `ws/<repo>/`: the repo's worktrees, its sent trees (`local-<key>`) and their nests,
+    `.prepare.lock`, and each sent tree's turn.
+  - `target/<name>/`: a build cache, with `.dibs-used`, `.dibs-tree` (the tree that made its last
+    build), `.dibs-packages` (every lockfile built into it) and, while a build runs,
+    `.dibs-building.<pid>`. Its turn, `.<name>.lock`, is beside it.
+  - `jobs/<job>/`: a job's `log`, `meta` and `cmd`, and the files its step kept.
+  - `tmp/`, where `TMPDIR` points, and `out/`, where people keep results.
+- **Runners**, `~/.cache/dibs/runner/`: `<hash>/dibs-runner` with its `.dibs-used`, `.target`
+  where every version is built, `.build.lock`, and while a build runs, the sent tree and its
+  unpacked copy (`.tree.<hash>.<pid>.tar.gz`, `.src.<hash>.<pid>`).
+- **Settings**: `/etc/dibs/runner.toml` and `~/.config/dibs/runner.toml` (A machine's settings).
+
+On this computer the client keeps its inventory, recipes and `fleet.toml` under
+`~/.config/dibs`, and its records under `~/.local/state/dibs`: `runs.jsonl`, `friction.jsonl`,
+the card each label's series is on, the machine that last built each repo, the job logs already
+read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
+
 ## Versions
 
 - `<hash>` is the first 16 hex digits of the SHA-256 of the runner's source tree: `dibs-runner`,
@@ -162,7 +229,18 @@ Every prepare and `dibs --gc` walk the scratch the same way and judge it by the 
   and exits 125 before it reads a byte, so the client takes it for missing and has its own built
   over it. A runner a client links knows the client's hash.
 - The one interface every runner keeps is `dibs-runner build <hash>`: the tree as a gzipped tar on
-  stdin, text on stdout and stderr, exit 0 once `<hash>` is installed.
+  stdin, text on stdout and stderr, exit 0 once `<hash>` is installed. The newest runner already on a
+  machine builds the next version, and may be older than the tree it is sent, so the build's
+  steps live in the tree, in its `install.sh`, and not in the runner.
+
+### What must stay compatible
+
+- **Frames and the request:** nothing. They change freely.
+- **The bootstrap line and `build <hash>`**, above: every version keeps them.
+- **The files on the machine:** every version reads them, and so does the bash half until the
+  last client has switched. A name keeps its meaning, a record's line only gains fields at its
+  end, and the scratch layout and its markers stay, so no build cache is rebuilt.
+- **The records on this computer**, `runs.jsonl` above all, are read back by every later client.
 
 ## Provisioning
 
@@ -223,15 +301,63 @@ without `DIBS_`, then from its environment, then its defaults.
 - A key a file may not set is ignored, and named on every call and by `dibs --check`, which also
   names every line that sets nothing a runner reads.
 
+## Platforms
+
+What differs between operating systems is behind one trait, in
+`crates/dibs-runner/src/platform/`: Linux reads `/proc`, macOS reads libproc and sysctl. macOS
+differs in four ways, and only CI's macOS job compiles its half.
+
+- It cannot say which process holds an flock, so `dibs status` names no orphan there, and an
+  orphaned lock waits for a kill by hand.
+- It shows a process's environment and working directory to its own account alone, so `LEFT
+  RUNNING`, and the check that no process works in a tree about to be replaced, see only that
+  account's processes.
+- A queued `--gc` starts its runner by its path (The sweep).
+- A transfer's caller is gone when its parent exits, since polling cannot tell (A transfer).
+
+## Viewers and the check
+
+- **`dibs status`** reads the lock directory without taking the lock. Its `LEFT RUNNING` section
+  lists processes whose environment names a job that has written its `meta`, which a job does as
+  it ends, so each status and each watch tick reads the environment of every process it can.
+  `STUCK?` marks a holder running over twice its label's 90th percentile, in `dibs status` and
+  `dibstop` alike.
+- **`dibstop`** keeps one watch per machine open in its own process, through the client library,
+  and acts by running `dibs`. It never provisions (`architecture.md`).
+- **`dibs --check` and `dibs machines`** read one probe, which the runner answers before it
+  queues: it takes no lock, and runs `nvidia-smi`, `rustup` and a listing of the clones beside
+  whatever is being measured. `dibs machines` probes only machines in the inventory, and says to
+  record any other with `dibs --check`.
+
+## The ssh hook
+
+`dibs hook ssh` refuses, as a Claude Code PreToolUse hook, a shell command that would reach a
+machine around its lock. It reads the command the way the shell would:
+
+- **Names:** each machine's inventory name, its `ssh` destination's host and its `hostname`, and
+  any of them with a domain after it.
+- **Tools:** ssh and sftp at their destination, the first operand once the values of their
+  options are skipped; scp and rsync at a `host:` or `rsync://` operand. An rsync whose `-e` is
+  dibs's own transport passes.
+- **Around them:** `;`, `&&`, pipes, `$( )` and backticks; the values of wrappers' options, for
+  `sudo`, `env`, `nice`, `timeout`, `xargs`, `sshpass` and the like; the text of `sh`, `bash`,
+  `zsh` or `dash -c`. Any other quoted string, and a heredoc's body, is text, so a commit
+  message naming a machine passes.
+- **What it cannot see:** a name that is in no inventory entry, as an alias in `~/.ssh/config`
+  or an address; a name built at run time; git over ssh; and anything a script it runs does.
+- **It fails open.** With no inventory, or input it cannot read, it knows no machine and lets the
+  command through.
+- **The word is taken.** A bare `dibs` runs its words as a command on a machine, except `hook`,
+  as `status`, `gc`, `out`, `fetch` and `friction`. `dibs run hook` runs a command named `hook`.
+
 ## What a runner and a bash payload share
 
 On switch day both run on one machine at once: a client that has updated sends requests to a
 runner, one that has not still ships `lib/machine`. They meet only in files, and agree on every
 one of them.
 
-- **The lock.** The same directory, resolved in the same order (`DIBS_LOCK_DIR`, then
-  `/dev/shm/dibs-lock` when it can be written, then the runtime directory, then `/tmp`) from the
-  environment alone, which a runner's settings file cannot change, and the same two files. Both take them with `flock(2)`, which `flock(1)` uses: everyone passes through
+- **The lock.** The same directory, found the same way (Files on the machine), and the same two
+  files. Both take them with `flock(2)`, which `flock(1)` uses: everyone passes through
   `gate` exclusively, an exclusive caller keeps holding `gate` while it waits for `rw`, and the job
   holds `rw`, shared or exclusive. The contention test in the suite runs a bash job and a runner
   job against one directory, in both orders, the bash side being master's `lib/machine` as old
