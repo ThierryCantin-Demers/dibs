@@ -58,11 +58,11 @@ impl Runner {
     }
 
     /// The line the login shell there runs, which fish, bash and dash read alike.
-    /// `command exec` lets the line say a failed exec itself: a bare exec ends the shell with a
-    /// status of the shell's choosing, 126 on Linux and 1 under macOS's sh.
+    /// Asking the runner its hash first says one that cannot run as 126 on every shell: a failed
+    /// exec ends the shell with a status of the shell's choosing, 1 under macOS's sh.
     fn far_line() -> String {
         format!(
-            "sh -c 'r=$HOME/.cache/dibs/runner/{hash}/dibs-runner; [ -x \"$r\" ] || exit {MISSING}; command exec \"$r\" serve {hash}; exit {UNEXECUTABLE}'",
+            "sh -c 'r=$HOME/.cache/dibs/runner/{hash}/dibs-runner; [ -x \"$r\" ] || exit {MISSING}; [ \"$(\"$r\" hash 2>/dev/null)\" = {hash} ] || exit {UNEXECUTABLE}; exec \"$r\" serve {hash}'",
             hash = Runner::HASH
         )
     }
