@@ -40,16 +40,31 @@ impl BuildMark {
     }
 }
 
-/// A recipe step's command in its tree: what is done before it and after it.
-pub struct Stepping<'a> {
-    pub worktree: &'a Path,
-    pub target: &'a Path,
-    /// Where the job keeps its log, and what the step keeps beside it.
-    pub job_dir: Option<&'a Path>,
-    pub say: &'a dyn Fn(&str),
+/// Where a recipe step runs: its tree, and the target it builds into.
+pub struct Spot {
+    pub worktree: PathBuf,
+    pub target: PathBuf,
 }
 
-impl Stepping<'_> {
+/// A recipe step's command in its tree: what is done before it and after it.
+pub struct Stepping<'a> {
+    worktree: &'a Path,
+    target: &'a Path,
+    /// Where the job keeps its log, and what the step keeps beside it.
+    job_dir: Option<&'a Path>,
+    say: &'a dyn Fn(&str),
+}
+
+impl<'a> Stepping<'a> {
+    pub fn new(spot: &'a Spot, job_dir: Option<&'a Path>, say: &'a dyn Fn(&str)) -> Self {
+        Stepping {
+            worktree: &spot.worktree,
+            target: &spot.target,
+            job_dir,
+            say,
+        }
+    }
+
     /// A measurement refused because another tree built into the target after this one did:
     /// the binary there may be that tree's. Read under the exclusive lock, so nothing builds in
     /// between.
@@ -148,7 +163,7 @@ impl Stepping<'_> {
     /// artifacts stay when a tree moves on, so a revision built last week still counts. The
     /// lock is for two builds of one target finishing together.
     pub fn record(&self, token: &str) {
-        let cache = Cache { dir: self.target };
+        let cache = Cache::new(self.target);
         let staged = cache.staged_by(token);
         let Some(lines) = Lines::read(&staged).filter(|l| !l.is_empty()) else {
             return;

@@ -2,9 +2,9 @@ use crate::{
     clock::{Deadline, Moment},
     job::Environment,
     tree::{
-        Clocks, Commands, Copier, Reflinks, Runners, Stepping, Trees,
+        Clocks, Commands, Reflinks, Runners, Spot, Stepping, TreeConfig, Trees,
         clocks::{Fate, Removal},
-        copy::Sharing,
+        copy::{Copier, Sharing},
         sweep::{Kind, Section, Sweep},
     },
 };
@@ -112,7 +112,7 @@ impl Machine {
         let scratch = self.p("scratch");
         let home = self.p("home");
         let cargo = self.p("home/.cargo");
-        let trees = Trees {
+        let config = TreeConfig {
             scratch: &scratch,
             home: &home,
             cargo_home: &cargo,
@@ -121,17 +121,10 @@ impl Machine {
                 target_keep_days: 5,
             },
             seed_wait: self.seed_wait,
-            copier: Copier {
-                reflinks: self.reflinks,
-            },
-            commands: Commands {
-                environment: &self.environment,
-                running: &|_| {},
-                unstopped: &*self.unstopped,
-                deadline: self.deadline,
-            },
-            say: &say,
+            reflinks: self.reflinks,
         };
+        let commands = Commands::new(&self.environment, &|_| {}, &*self.unstopped, self.deadline);
+        let trees = Trees::new(config, commands, &say);
         let prepared = trees.prepare(prepare).map_err(|error| {
             said.borrow_mut().push_str(&error.to_string());
             error.exit()
@@ -455,9 +448,7 @@ fn a_new_tree_starts_from_its_repos_latest_target_with_its_sources() {
 fn sources_are_copied_even_where_only_targets_can_be_reflinked() {
     let m = Machine::new();
     let sources = m.sources("old", "theirs.rs");
-    let plain = Copier {
-        reflinks: Reflinks::Never,
-    };
+    let plain = Copier::new(Reflinks::Never);
     assert!(
         plain
             .tree(&sources, &m.p("sources"), Sharing::Preferred)
@@ -922,12 +913,11 @@ impl Stepped {
 
     fn with<T>(&self, job_dir: Option<&Path>, act: impl FnOnce(&Stepping) -> T) -> T {
         let say = |text: &str| self.said.borrow_mut().push_str(text);
-        act(&Stepping {
-            worktree: &self.worktree,
-            target: &self.target,
-            job_dir,
-            say: &say,
-        })
+        let spot = Spot {
+            worktree: self.worktree.clone(),
+            target: self.target.clone(),
+        };
+        act(&Stepping::new(&spot, job_dir, &say))
     }
 
     fn lib_age(&self) -> u64 {
@@ -1105,10 +1095,7 @@ impl Machine {
             keep_days: 14,
             target_keep_days: 5,
         };
-        let removal = Removal {
-            commands: None,
-            say: &|_| {},
-        };
+        let removal = Removal::new(None, &|_| {});
         Sweep::new(scratch, home, clocks, removal)
     }
 
@@ -1190,20 +1177,16 @@ fn a_runner_version_is_kept_by_its_use_however_long_ago_it_was_installed() {
     let runners = Runners::in_home(&home);
     let used = "1111111111111111";
     for hash in ["0000000000000000", used, "2222222222222222"] {
-        fs::create_dir_all(runners.dir.join(hash)).unwrap();
+        fs::create_dir_all(runners.dir().join(hash)).unwrap();
         fs::write(runners.binary(hash), "").unwrap();
     }
     aged(&runners.binary("0000000000000000"));
     aged(&runners.binary(used));
-    Runners {
-        dir: runners.dir.clone(),
-        own: Some(used.to_string()),
-    }
-    .mark_used();
+    runners.mark(used);
     m.sweeping(&scratch, &home).run();
-    assert!(!runners.dir.join("0000000000000000").exists());
+    assert!(!runners.dir().join("0000000000000000").exists());
     assert!(
-        runners.dir.join(used).exists(),
+        runners.dir().join(used).exists(),
         "a version used since stays"
     );
 }

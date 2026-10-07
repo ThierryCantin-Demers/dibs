@@ -5,7 +5,7 @@ use crate::{
     session::run::Venue,
     settings::{home, var},
     stop::Stage,
-    tree::{BuildMark, Commands, Copier, Stepping, Trees},
+    tree::{BuildMark, Commands, Spot, Stepping, TreeConfig, Trees},
 };
 use dibs_format::{
     By, Exit, Mode, Pair, Pairs,
@@ -35,12 +35,6 @@ pub enum Begins {
 pub struct Running {
     pub state: Option<Pairs>,
     pub mark: Option<BuildMark>,
-}
-
-/// Where a recipe step runs: its tree, and the target it builds into.
-pub struct Spot {
-    pub worktree: PathBuf,
-    pub target: PathBuf,
 }
 
 /// A job's tree: laid out before its command, and a recipe step begun and ended around it.
@@ -76,24 +70,16 @@ impl<'a> Layout<'a> {
         let cargo_home = var("CARGO_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".cargo"));
-        let prepared = Trees {
+        let config = TreeConfig {
             scratch: &self.at.machine.scratch,
             home: &home,
             cargo_home: &cargo_home,
             clocks: self.at.settings.clocks,
             seed_wait: Duration::from_secs(self.at.settings.seed_wait),
-            copier: Copier {
-                reflinks: self.at.settings.reflinks,
-            },
-            commands: Commands {
-                environment,
-                running: &running,
-                unstopped: &unstopped,
-                deadline,
-            },
-            say: &say,
-        }
-        .prepare(prepare);
+            reflinks: self.at.settings.reflinks,
+        };
+        let commands = Commands::new(environment, &running, &unstopped, deadline);
+        let prepared = Trees::new(config, commands, &say).prepare(prepare);
         let prepared = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {

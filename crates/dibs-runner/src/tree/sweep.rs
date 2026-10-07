@@ -3,13 +3,14 @@ use crate::{
     platform::{Host, Platform as _},
     tree::{
         builds::{Builds, FileLock},
-        clocks::{Clocks, Contents as _, Fate, Removal},
+        clocks::{Clocks, Contents as _, Dates as _, Fate, Removal, USED},
+        copy::touch,
         runners::Runners,
     },
 };
 use std::{
     collections::BTreeMap,
-    fs::File,
+    fs::{self, File},
     path::{Path, PathBuf},
 };
 
@@ -19,6 +20,8 @@ pub const PREPARE_LOCK: &str = ".prepare.lock";
 /// What names a prepare's copy, or a tree it set aside, ahead of the prepare's stamp, whose first
 /// number is the prepare's process.
 const TEMPORARY: [&str; 2] = [".seed.", ".old."];
+/// What a sweep writes in a cache it found unmarked; a prepare's marker is empty.
+const DATED: &str = "swept\n";
 
 /// What a sweep walks, in the order it walks it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +134,7 @@ impl<'a> Sweep<'a> {
                 .collect(),
             Kind::Jobs => under("jobs"),
             Kind::Leftovers => [under("tmp"), under("out")].concat(),
-            Kind::Runners => Runners::in_home(self.home).dir.entries(),
+            Kind::Runners => Runners::in_home(self.home).dir().entries(),
         }
     }
 
@@ -142,21 +145,21 @@ impl<'a> Sweep<'a> {
             Kind::Trees => entries
                 .map(|tree| {
                     let fate = self.tree(&tree, now);
-                    let used = Clocks::used(&tree, now);
+                    let used = tree.used(now);
                     Verdict::of(tree, fate, used)
                 })
                 .collect(),
             Kind::Caches => entries
                 .map(|cache| {
                     let fate = self.cache(&cache, now);
-                    let used = Clocks::used(&cache, now);
+                    let used = cache.used(now);
                     Verdict::of(cache, fate, used)
                 })
                 .collect(),
             Kind::Jobs | Kind::Leftovers => entries
                 .map(|path| {
-                    let fate = self.clocks.bulk(&path, now);
-                    let used = Clocks::written(&path, now);
+                    let fate = self.bulk(&path, now);
+                    let used = path.written(now);
                     Verdict::of(path, fate, used)
                 })
                 .collect(),
@@ -222,10 +225,7 @@ impl<'a> Sweep<'a> {
             verdict.fate = Fate::Preparing;
             return;
         };
-        let Some(_builds) = (Builds {
-            target: &verdict.path,
-        })
-        .all_exclusive() else {
+        let Some(_builds) = Builds::new(&verdict.path).all_exclusive() else {
             verdict.fate = Fate::Held;
             return;
         };
@@ -241,11 +241,50 @@ impl<'a> Sweep<'a> {
     }
 
     fn tree(&self, tree: &Path, now: u64) -> Fate {
-        Sweep::temporary(tree).unwrap_or_else(|| self.clocks.tree(tree, now))
+        if let Some(fate) = Sweep::temporary(tree) {
+            return fate;
+        }
+        let used = tree.join(USED);
+        if !used.exists() {
+            let _ = touch(&used);
+            return Fate::Dated;
+        }
+        match used.unchanged_for(now, self.clocks.keep_days) {
+            true => Fate::Past,
+            false => Fate::Kept,
+        }
     }
 
+    /// By its marker alone: whether a build holds it is for the sweep to ask, holding its locks.
     fn cache(&self, cache: &Path, now: u64) -> Fate {
-        Sweep::temporary(cache).unwrap_or_else(|| self.clocks.cache(cache, now))
+        if let Some(fate) = Sweep::temporary(cache) {
+            return fate;
+        }
+        let used = cache.join(USED);
+        let marker = fs::metadata(&used).ok();
+        let alone = fs::read_dir(cache)
+            .map(|d| d.flatten().all(|e| e.file_name() == USED))
+            .unwrap_or(false);
+        if marker.as_ref().is_some_and(|m| m.is_file() && m.len() > 0) && alone {
+            return Fate::Hollow;
+        }
+        if marker.is_none() {
+            let _ = fs::write(&used, DATED);
+            return Fate::Dated;
+        }
+        match used.unchanged_for(now, self.clocks.target_keep_days) {
+            true => Fate::Past,
+            false => Fate::Kept,
+        }
+    }
+
+    /// A job's directory, or a leftover file, by its own time.
+    fn bulk(&self, path: &Path, now: u64) -> Fate {
+        let written = fs::symlink_metadata(path).map(|_| path.written(now));
+        match written.is_ok_and(|at| Clocks::days(now, at) > self.clocks.keep_days) {
+            true => Fate::Past,
+            false => Fate::Kept,
+        }
     }
 
     /// A prepare's copy or set-aside tree: its own while the prepare runs, and past once it has

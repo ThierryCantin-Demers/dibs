@@ -28,9 +28,9 @@ const HASH_DIGITS: usize = 16;
 /// The runners built on this machine: a directory per source hash, the target their builds
 /// share, and what a build unpacks beside them.
 pub struct Runners {
-    pub dir: PathBuf,
+    dir: PathBuf,
     /// This process's own version, which is never collected.
-    pub own: Option<String>,
+    own: Option<String>,
 }
 
 impl Runners {
@@ -48,6 +48,10 @@ impl Runners {
     /// Whether `name` is a source hash, as a version's directory is named.
     pub fn names_a_version(name: &str) -> bool {
         name.len() == HASH_DIGITS && name.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     pub fn binary(&self, hash: &str) -> PathBuf {
@@ -75,10 +79,15 @@ impl Runners {
     /// This process's own version marked used, where it was installed: a version is kept by its
     /// use, since a client that has not updated runs it however long ago it was built.
     pub fn mark_used(&self) {
-        if let Some(own) = &self.own
-            && self.binary(own).is_file()
-        {
-            let _ = touch(&self.dir.join(own).join(USED));
+        if let Some(own) = &self.own {
+            self.mark(own);
+        }
+    }
+
+    /// `version` marked used where it was installed.
+    pub fn mark(&self, version: &str) {
+        if self.binary(version).is_file() {
+            let _ = touch(&self.dir.join(version).join(USED));
         }
     }
 

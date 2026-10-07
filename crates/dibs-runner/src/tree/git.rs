@@ -19,13 +19,35 @@ pub type Unstopped<'a> = &'a dyn Fn(&mut dyn FnMut());
 /// own, named to whatever stops the call while it runs, so that a stop takes it too, and stopped
 /// at the job's cap, which the prepare counts against.
 pub struct Commands<'a> {
-    pub environment: &'a Environment,
-    pub running: &'a dyn Fn(Option<u32>),
-    pub unstopped: Unstopped<'a>,
-    pub deadline: Deadline,
+    environment: &'a Environment,
+    running: &'a dyn Fn(Option<u32>),
+    unstopped: Unstopped<'a>,
+    deadline: Deadline,
 }
 
-impl Commands<'_> {
+impl<'a> Commands<'a> {
+    pub fn new(
+        environment: &'a Environment,
+        running: &'a dyn Fn(Option<u32>),
+        unstopped: Unstopped<'a>,
+        deadline: Deadline,
+    ) -> Self {
+        Commands {
+            environment,
+            running,
+            unstopped,
+            deadline,
+        }
+    }
+
+    pub fn deadline(&self) -> Deadline {
+        self.deadline
+    }
+
+    pub fn unstopped(&self) -> Unstopped<'a> {
+        self.unstopped
+    }
+
     pub fn output(&self, mut command: Command) -> io::Result<Output> {
         if self.deadline.passed() {
             return Err(io::ErrorKind::TimedOut.into());

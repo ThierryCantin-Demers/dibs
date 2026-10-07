@@ -1,7 +1,7 @@
 use crate::{
     clock::Span,
     tree::{
-        copy::{remove_all, touch},
+        copy::remove_all,
         git::{Commands, Git},
     },
 };
@@ -14,8 +14,6 @@ use std::{
 
 /// The marker a prepare leaves, whose time is when a tree or a cache was last used.
 pub const USED: &str = ".dibs-used";
-/// What a sweep writes in a cache it found unmarked; a prepare's marker is empty.
-const DATED: &str = "swept\n";
 
 /// What one sweep makes of a tree or a build cache, whether a prepare or `dibs --gc` runs it, so
 /// the two never disagree on what goes.
@@ -44,67 +42,35 @@ pub struct Clocks {
 }
 
 impl Clocks {
-    pub fn tree(&self, tree: &Path, now: u64) -> Fate {
-        let used = tree.join(USED);
-        if !used.exists() {
-            let _ = touch(&used);
-            return Fate::Dated;
-        }
-        match Clocks::past(&used, now, self.keep_days) {
-            true => Fate::Past,
-            false => Fate::Kept,
-        }
-    }
-
-    /// By its marker alone: whether a build holds it is for the sweep to ask, holding its locks.
-    pub fn cache(&self, cache: &Path, now: u64) -> Fate {
-        let used = cache.join(USED);
-        let marker = fs::metadata(&used).ok();
-        let alone = fs::read_dir(cache)
-            .map(|d| d.flatten().all(|e| e.file_name() == USED))
-            .unwrap_or(false);
-        if marker.as_ref().is_some_and(|m| m.is_file() && m.len() > 0) && alone {
-            return Fate::Hollow;
-        }
-        if marker.is_none() {
-            let _ = fs::write(&used, DATED);
-            return Fate::Dated;
-        }
-        match Clocks::past(&used, now, self.target_keep_days) {
-            true => Fate::Past,
-            false => Fate::Kept,
-        }
-    }
-
-    /// A job's directory, or a leftover file, by its own time.
-    pub fn bulk(&self, path: &Path, now: u64) -> Fate {
-        let written = fs::symlink_metadata(path).map(|_| Clocks::written(path, now));
-        match written.is_ok_and(|at| Clocks::days(now, at) > self.keep_days) {
-            true => Fate::Past,
-            false => Fate::Kept,
-        }
-    }
-
-    /// When a tree or a cache was last used: its marker's time, else its own.
-    pub fn used(dir: &Path, now: u64) -> u64 {
-        fs::metadata(dir.join(USED))
-            .or_else(|_| fs::symlink_metadata(dir))
-            .map_or(now, |m| m.mtime().max(0) as u64)
-    }
-
-    /// When a job's directory or a leftover was last written.
-    pub fn written(path: &Path, now: u64) -> u64 {
-        fs::symlink_metadata(path).map_or(now, |m| m.mtime().max(0) as u64)
-    }
-
     /// Whole days from `when` to `now`.
     pub fn days(now: u64, when: u64) -> u64 {
         now.saturating_sub(when) / Span::DAY.0
     }
+}
 
+/// When a path was last used or written, by its file times.
+pub trait Dates {
+    /// When a tree or a cache was last used: its marker's time, else its own.
+    fn used(&self, now: u64) -> u64;
+    /// When a job's directory or a leftover was last written.
+    fn written(&self, now: u64) -> u64;
     /// `find -mtime +days`: unchanged for more than `days` whole days.
-    fn past(path: &Path, now: u64, days: u64) -> bool {
-        fs::metadata(path).is_ok_and(|m| Clocks::days(now, m.mtime().max(0) as u64) > days)
+    fn unchanged_for(&self, now: u64, days: u64) -> bool;
+}
+
+impl Dates for Path {
+    fn used(&self, now: u64) -> u64 {
+        fs::metadata(self.join(USED))
+            .or_else(|_| fs::symlink_metadata(self))
+            .map_or(now, |m| m.mtime().max(0) as u64)
+    }
+
+    fn written(&self, now: u64) -> u64 {
+        fs::symlink_metadata(self).map_or(now, |m| m.mtime().max(0) as u64)
+    }
+
+    fn unchanged_for(&self, now: u64, days: u64) -> bool {
+        fs::metadata(self).is_ok_and(|m| Clocks::days(now, m.mtime().max(0) as u64) > days)
     }
 }
 
@@ -112,11 +78,16 @@ impl Clocks {
 /// plain directory. What cannot all go is said and left for the next sweep, which a prepare must
 /// never fail over.
 pub struct Removal<'a> {
-    pub commands: Option<&'a Commands<'a>>,
-    pub say: &'a dyn Fn(&str),
+    commands: Option<&'a Commands<'a>>,
+    say: &'a dyn Fn(&str),
 }
 
-impl Removal<'_> {
+impl<'a> Removal<'a> {
+    /// Commands run through `commands` when given, so a prepare's cap and stop reach them.
+    pub fn new(commands: Option<&'a Commands<'a>>, say: &'a dyn Fn(&str)) -> Self {
+        Removal { commands, say }
+    }
+
     pub fn tree(&self, tree: &Path) -> bool {
         let mut git = Git(tree).command();
         git.args(["worktree", "remove", "--force"]).arg(tree);

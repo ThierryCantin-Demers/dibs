@@ -12,7 +12,7 @@ const RETRY: Duration = Duration::from_millis(25);
 /// The `.cargo-lock` files cargo holds in a target directory while it builds there.
 #[derive(Debug, Clone, Copy)]
 pub struct Builds<'a> {
-    pub target: &'a Path,
+    target: &'a Path,
 }
 
 /// A lock held: a build's, shared so that no build starts while a copy is read, or exclusive so
@@ -20,7 +20,11 @@ pub struct Builds<'a> {
 /// one tree at once.
 pub struct FileLock(#[allow(dead_code, reason = "held for its lock")] File);
 
-impl Builds<'_> {
+impl<'a> Builds<'a> {
+    pub fn new(target: &'a Path) -> Self {
+        Builds { target }
+    }
+
     /// Its locks, at most three directories down, as `find -maxdepth 3` finds them.
     pub fn locks(&self) -> Vec<PathBuf> {
         let mut found = Vec::new();

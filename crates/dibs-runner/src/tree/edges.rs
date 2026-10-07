@@ -73,11 +73,9 @@ fn a_copy_keeps_every_mode_link_and_time() {
          && touch -d '400 days ago' from/bin/tool from/private/key from/private from/bin",
     );
     let (from, to) = (m.p("from"), m.p("to"));
-    Copier {
-        reflinks: Reflinks::Copies,
-    }
-    .tree(&from, &to, Sharing::Required)
-    .unwrap();
+    Copier::new(Reflinks::Copies)
+        .tree(&from, &to, Sharing::Required)
+        .unwrap();
     assert_eq!(listing(&to, true), listing(&from, true));
     assert_eq!(
         listing(&to, true),
@@ -105,7 +103,9 @@ fn a_target_must_share_its_blocks_where_sources_may_be_copied_plainly() {
             (Sharing::Preferred, "sources"),
         ] {
             let to = m.p(&format!("to-{}", said.lines().count()));
-            let copied = Copier { reflinks }.tree(&m.p("from"), &to, sharing).is_ok();
+            let copied = Copier::new(reflinks)
+                .tree(&m.p("from"), &to, sharing)
+                .is_ok();
             said += &format!(
                 "{what} on {disk}: {}\n",
                 if copied { "copied" } else { "refused" }

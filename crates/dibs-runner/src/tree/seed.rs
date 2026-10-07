@@ -24,22 +24,34 @@ use std::{
 /// to a new dependency at once would otherwise each build it. That one is waited for, and taken if
 /// it succeeded. A filesystem that cannot share blocks gets no seed at all.
 pub struct Seed<'a> {
+    tree: Seedling<'a>,
+    /// The least a sibling must have built of the tree's lockfile to be taken at all.
+    floor: u64,
+    wait: Duration,
+    copier: Copier,
+    say: &'a dyn Fn(&str),
+}
+
+/// The tree a seed is for: where it goes, its lockfile, and what its sources start without.
+pub struct Seedling<'a> {
     pub scratch: &'a Path,
     pub repo: &'a str,
     pub target: &'a Path,
     pub worktree: &'a Path,
     /// This tree's lockfile, when it has one.
     pub packages: Option<&'a Lines>,
-    /// The least a sibling must have built of it to be taken at all.
-    pub floor: u64,
     /// Paths the copied sources start without.
     pub fresh: &'a [String],
-    pub wait: Duration,
-    pub copier: Copier,
     pub stamp: &'a Stamp,
-    /// The tree and target exist and are to be replaced, so its sources are copied anyway.
-    pub replacing: bool,
-    pub say: &'a dyn Fn(&str),
+}
+
+/// What a seed does where the tree or its target already exists.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Existing {
+    /// Left alone: the seed stops, or comes without sources.
+    Kept,
+    /// To be replaced, so the copy is made anyway.
+    Replaced,
 }
 
 /// A sibling target, ranked by what it has built of this tree's lockfile, or will have once the
@@ -69,14 +81,36 @@ pub struct Copied {
     seeded: Seeded,
 }
 
-impl Seed<'_> {
+impl<'a> Seed<'a> {
+    pub fn new(
+        tree: Seedling<'a>,
+        floor: u64,
+        wait: Duration,
+        copier: Copier,
+        say: &'a dyn Fn(&str),
+    ) -> Self {
+        Seed {
+            tree,
+            floor,
+            wait,
+            copier,
+            say,
+        }
+    }
+
     /// A new tree's target, and its sources when the sibling has some.
     pub fn run(&self, unstopped: Unstopped) -> Option<Seeded> {
-        self.copy()?.place(self.target, self.worktree, unstopped)
+        self.copy(Existing::Kept)?
+            .place(self.tree.target, self.tree.worktree, unstopped)
+    }
+
+    /// A copy to replace the tree and target that exist, which the caller places or discards.
+    pub fn replacement(&self) -> Option<Copied> {
+        self.copy(Existing::Replaced)
     }
 
     /// The best sibling's target copied, chosen before anything of this tree moves.
-    pub fn copy(&self) -> Option<Copied> {
+    fn copy(&self, existing: Existing) -> Option<Copied> {
         let siblings = self.siblings();
         let idle_best = siblings
             .iter()
@@ -84,16 +118,20 @@ impl Seed<'_> {
             .map(|s| s.have)
             .max()
             .unwrap_or(0);
-        let copy = suffixed(self.target, &format!(".seed.{}", self.stamp.as_str()));
+        let copy = suffixed(
+            self.tree.target,
+            &format!(".seed.{}", self.tree.stamp.as_str()),
+        );
         for sibling in siblings {
-            if sibling.rank < self.floor || self.target.is_dir() && !self.replacing {
+            if sibling.rank < self.floor || self.tree.target.is_dir() && existing == Existing::Kept
+            {
                 break;
             }
             let mut have = sibling.have;
             let taken = self.hold(&sibling, idle_best);
             let mut held = !taken.free;
             if taken.waited {
-                if let Some(record) = (Cache { dir: &sibling.dir }).record() {
+                if let Some(record) = Cache::new(&sibling.dir).record() {
                     have = self.shared(&record);
                 }
                 held |= have < idle_best;
@@ -106,7 +144,7 @@ impl Seed<'_> {
                     .is_ok()
                 && fs::write(
                     copy.join(".dibs-tree"),
-                    format!("{}\n", self.worktree.display()),
+                    format!("{}\n", self.tree.worktree.display()),
                 )
                 .is_ok()
                 && empty(&copy.join(USED)).is_ok();
@@ -117,9 +155,9 @@ impl Seed<'_> {
             }
             let from = name(&sibling.dir);
             return Some(Copied {
-                sources: self.sources(&from),
+                sources: self.sources(&from, existing),
                 seeded: Seeded {
-                    shared: self.packages.map(|p| Shared { have, of: p.len() }),
+                    shared: self.tree.packages.map(|p| Shared { have, of: p.len() }),
                     sources: false,
                     from,
                 },
@@ -132,15 +170,15 @@ impl Seed<'_> {
     /// The candidates `ls -t` names, newest first, ranked with `sort -s`: a stable sort keeps
     /// the newest first among equals.
     fn siblings(&self) -> Vec<Sibling> {
-        let targets = self.scratch.join("target");
-        let local = format!("{}-local-", self.repo);
-        let arm = format!("{}-arm", self.repo);
+        let targets = self.tree.scratch.join("target");
+        let local = format!("{}-local-", self.tree.repo);
+        let arm = format!("{}-arm", self.tree.repo);
         let mut found: Vec<(SystemTime, PathBuf)> = fs::read_dir(&targets)
             .map(|d| {
                 d.flatten()
                     .filter(|e| {
                         let name = e.file_name().to_string_lossy().into_owned();
-                        name == self.repo || name.starts_with(&local) || name.starts_with(&arm)
+                        name == self.tree.repo || name.starts_with(&local) || name.starts_with(&arm)
                     })
                     .filter_map(|e| {
                         let used = fs::metadata(e.path().join(".dibs-used")).ok()?;
@@ -155,7 +193,7 @@ impl Seed<'_> {
             .map(|(_, dir)| dir)
             .filter(|dir| {
                 let shown = dir.display().to_string();
-                dir != self.target && !shown.contains(".old.") && !shown.contains(".seed.")
+                dir != self.tree.target && !shown.contains(".old.") && !shown.contains(".seed.")
             })
             .map(|dir| self.ranked(dir))
             .collect();
@@ -164,9 +202,9 @@ impl Seed<'_> {
     }
 
     fn ranked(&self, dir: PathBuf) -> Sibling {
-        let building = (Builds { target: &dir }).running();
-        let cache = Cache { dir: &dir };
-        let (have, will) = match self.packages {
+        let building = Builds::new(&dir).running();
+        let cache = Cache::new(&dir);
+        let (have, will) = match self.tree.packages {
             Some(_) => (
                 cache.record().map_or(0, |record| self.shared(&record)),
                 match building {
@@ -185,7 +223,7 @@ impl Seed<'_> {
     }
 
     fn shared(&self, other: &Lines) -> u64 {
-        self.packages.map_or(0, |p| p.shared_with(other))
+        self.tree.packages.map_or(0, |p| p.shared_with(other))
     }
 
     /// The sibling's locks held shared, so no build starts in it while it is copied; a build
@@ -197,11 +235,7 @@ impl Seed<'_> {
             free: false,
             waited: false,
         };
-        for lock in (Builds {
-            target: &sibling.dir,
-        })
-        .locks()
-        {
+        for lock in Builds::new(&sibling.dir).locks() {
             if let Some(held) = FileLock::shared_now(&lock) {
                 taken.locks.push(held);
                 continue;
@@ -229,17 +263,21 @@ impl Seed<'_> {
 
     /// The sibling's sources copied, when it is a local tree's and this tree's own are new or
     /// being replaced: a fetched tree has its own.
-    fn sources(&self, from: &str) -> Option<PathBuf> {
-        let key = from.strip_prefix(&format!("{}-local-", self.repo))?;
+    fn sources(&self, from: &str, existing: Existing) -> Option<PathBuf> {
+        let key = from.strip_prefix(&format!("{}-local-", self.tree.repo))?;
         let sources = self
+            .tree
             .scratch
             .join("ws")
-            .join(self.repo)
+            .join(self.tree.repo)
             .join(format!("local-{key}"));
-        if self.worktree.exists() && !self.replacing || !sources.is_dir() {
+        if self.tree.worktree.exists() && existing == Existing::Kept || !sources.is_dir() {
             return None;
         }
-        let copy = suffixed(self.worktree, &format!(".seed.{}", self.stamp.as_str()));
+        let copy = suffixed(
+            self.tree.worktree,
+            &format!(".seed.{}", self.tree.stamp.as_str()),
+        );
         // `rm -rf` of each path: every one is tried, and all must go.
         let copied = self
             .copier
@@ -247,6 +285,7 @@ impl Seed<'_> {
             .is_ok()
             && {
                 let gone: Vec<bool> = self
+                    .tree
                     .fresh
                     .iter()
                     .map(|path| remove_all(Path::new(&format!("{}/{path}", copy.display()))))

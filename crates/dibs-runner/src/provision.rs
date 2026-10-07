@@ -89,7 +89,7 @@ pub fn build(hash: &str) -> i32 {
     if let Err(e) = fs::create_dir_all(&source).and_then(|()| fs::write(&archive, tree)) {
         sink.say(&format!(
             "dibs-runner: the tree could not be kept in {}: {e}\n",
-            runners.dir.display()
+            runners.dir().display()
         ));
         return Exit::NoRoom.status();
     }
@@ -145,7 +145,7 @@ struct BuildLock {
 
 impl BuildLock {
     fn take(runners: &Runners, sink: &Sink) -> io::Result<BuildLock> {
-        fs::create_dir_all(&runners.dir)?;
+        fs::create_dir_all(runners.dir())?;
         let file = OpenOptions::new()
             .create(true)
             .append(true)

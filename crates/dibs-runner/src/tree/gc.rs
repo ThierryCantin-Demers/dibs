@@ -9,7 +9,7 @@ use crate::{
     platform::{Host, Platform as _},
     settings::{Settings, home},
     tree::{
-        clocks::{Clocks, Contents as _, Fate, Removal},
+        clocks::{Clocks, Contents as _, Dates as _, Fate, Removal},
         runners::Runners,
         sweep::{Kind, Section, Sweep, Verdict},
     },
@@ -148,10 +148,7 @@ impl Report {
             self.host,
             scratch.display()
         ));
-        let removal = Removal {
-            commands: None,
-            say: &Report::say,
-        };
+        let removal = Removal::new(None, &Report::say);
         let sweep = Sweep::new(scratch, &self.home, self.clocks, removal);
         let sweep = match self.dry {
             true => sweep.dry(),
@@ -334,7 +331,7 @@ impl Report {
     }
 
     fn runners(&self, section: &Section, sizes: &Sizes, tally: &mut Tally) -> String {
-        let dir = Runners::in_home(&self.home).dir;
+        let dir = Runners::in_home(&self.home).dir().to_path_buf();
         let mut rows = Rows::default();
         for verdict in &section.verdicts {
             let kib = sizes.of(&verdict.path);
@@ -386,7 +383,7 @@ impl Report {
                     "    {:<40} {:>7}  written {}",
                     self.shown(other),
                     Kib(kib),
-                    Report::ago(now, Clocks::written(other, now))
+                    Report::ago(now, other.written(now))
                 ),
             });
         }

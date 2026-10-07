@@ -416,12 +416,8 @@ impl<'a> Run<'a> {
         }
         let say = |text: &str| output.tell(self.at.sink, text);
         let step = request.tree.as_ref().and_then(|t| t.step.as_ref());
-        let stepping = spot.as_ref().map(|spot| Stepping {
-            worktree: &spot.worktree,
-            target: &spot.target,
-            job_dir: begun.log.as_ref().map(|_| begun.dir.as_path()),
-            say: &say,
-        });
+        let job_dir = begun.log.as_ref().map(|_| begun.dir.as_path());
+        let stepping = spot.as_ref().map(|spot| Stepping::new(spot, job_dir, &say));
         let mut running = None;
         if let (Some(step), Some(stepping)) = (step, &stepping) {
             match layout.step_begins(step, stepping) {

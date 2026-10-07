@@ -43,10 +43,14 @@ pub enum Sharing {
 /// `cp -a`: modes, times, symlinks and hard links kept.
 #[derive(Debug, Clone, Copy)]
 pub struct Copier {
-    pub reflinks: Reflinks,
+    reflinks: Reflinks,
 }
 
 impl Copier {
+    pub fn new(reflinks: Reflinks) -> Self {
+        Copier { reflinks }
+    }
+
     /// `from` copied to `to`, which must not exist. What a failed copy made is left for the
     /// caller to remove.
     pub fn tree(&self, from: &Path, to: &Path, sharing: Sharing) -> io::Result<()> {

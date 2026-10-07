@@ -53,10 +53,14 @@ impl Lines {
 /// A target directory, as a build cache with a record of what was built into it.
 #[derive(Debug, Clone, Copy)]
 pub struct Cache<'a> {
-    pub dir: &'a Path,
+    dir: &'a Path,
 }
 
-impl Cache<'_> {
+impl<'a> Cache<'a> {
+    pub fn new(dir: &'a Path) -> Self {
+        Cache { dir }
+    }
+
     pub fn record(&self) -> Option<Lines> {
         Lines::read(&self.dir.join(RECORD))
     }
