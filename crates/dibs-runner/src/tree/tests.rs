@@ -858,8 +858,7 @@ fn a_sweep_leaves_a_target_a_build_holds_and_says_what_it_could_not_remove() {
     let m = Machine::new();
     let held = m.sibling("held", &[]);
     aged(&held.join(".dibs-used"));
-    let build = File::open(held.join("debug/.cargo-lock")).unwrap();
-    build.lock_shared().unwrap();
+    let build = Building::holding(&held.join("debug/.cargo-lock"));
     let stuck = m.sibling("stuck", &[]);
     aged(&stuck.join(".dibs-used"));
     run(&stuck, "chmod 500 debug/deps");
@@ -869,7 +868,7 @@ fn a_sweep_leaves_a_target_a_build_holds_and_says_what_it_could_not_remove() {
     assert!(held.exists(), "a target a build holds is not swept");
     assert!(said.contains("could not remove all of"), "{said}");
     assert!(stuck.join("debug/deps").exists() && !stuck.join(".dibs-used").exists());
-    drop(build);
+    build.done();
     assert!(m.prepare(&local("k", &[])).0.is_ok());
     assert!(!held.exists(), "and goes once the build has");
 }
