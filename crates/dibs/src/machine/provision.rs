@@ -39,6 +39,9 @@ pub enum Installed {
 /// What the first build's line exits with when it cannot take the lock.
 const UNLOCKABLE: i32 = 71;
 const NO_LOCK_TAKER: i32 = 73;
+/// Printed by the line that builds through the newest runner once it has found one, so a build
+/// is announced only when one starts.
+const BUILDING: &str = "dibs-runner-build-starts";
 
 /// The first build, as `sh -c` reads it with the hash and the cap as `$1` and `$2`: the lock
 /// directory found as the runner finds it, then the build lock every build of the runner takes
@@ -124,10 +127,6 @@ PERL
 impl Provision<'_> {
     /// Built by the newest runner already there, as a shared job, unless it is there already.
     pub fn through_newest(&self, delivery: &mut Delivery) -> io::Result<Installed> {
-        delivery.say(&format!(
-            "dibs: {} has no runner for this dibs yet. Building it there as a shared job, once per version.\n",
-            self.session.name
-        ));
         self.install(&Provision::newest_line(), delivery)
     }
 
@@ -200,7 +199,7 @@ impl Provision<'_> {
     fn newest_line() -> String {
         let hash = Runner::HASH;
         format!(
-            "sh -c 'd=$HOME/.cache/dibs/runner; [ \"$(\"$d/{hash}/dibs-runner\" hash 2>/dev/null)\" = {hash} ] && exit 0; r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || exit {MISSING}; exec \"$r\" build {hash}'"
+            "sh -c 'd=$HOME/.cache/dibs/runner; [ \"$(\"$d/{hash}/dibs-runner\" hash 2>/dev/null)\" = {hash} ] && exit 0; r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || exit {MISSING}; echo {BUILDING}; exec \"$r\" build {hash}'"
         )
     }
 
@@ -266,7 +265,13 @@ impl Provision<'_> {
         drop(tell);
         let mut buffers = LineBuffers::default();
         for line in heard {
-            delivery.give(Stream::Err, &line, &mut buffers);
+            match line.trim_ascii_end() == BUILDING.as_bytes() {
+                true => delivery.say(&format!(
+                    "dibs: {} has no runner for this dibs yet. Building it there as a shared job, once per version.\n",
+                    self.session.name
+                )),
+                false => delivery.give(Stream::Err, &line, &mut buffers),
+            }
         }
         delivery.flush(&mut buffers);
         for reader in readers {

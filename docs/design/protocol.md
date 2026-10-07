@@ -256,8 +256,9 @@ read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
   packed with none, and cargo judges freshness by those times) and runs the tree's own
   `install.sh`: `cargo build --locked --release` into `~/.cache/dibs/runner/.target`, which every
   version shares, then, once the binary cargo made names `<hash>`, a rename into
-  `~/.cache/dibs/runner/<hash>/dibs-runner`. The client shows the build on stderr and then makes
-  its call again, once. The build's stdin is the tree, so it watches its caller as a transfer
+  `~/.cache/dibs/runner/<hash>/dibs-runner`. The far shell prints a marker line once it has found
+  that runner, and only then does the client announce the build; it shows the build on stderr and
+  then makes its call again, once. The build's stdin is the tree, so it watches its caller as a transfer
   does, through stdout; stopped either way, or by `TERM`, `HUP` or `INT`, it removes the tree it
   was sent and the unpacked copy.
 - **Builds take turns.** Every build of the runner on a machine, the first included, holds

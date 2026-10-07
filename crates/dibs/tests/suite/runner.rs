@@ -217,6 +217,12 @@ fn a_machine_with_no_runner_refuses_the_call_and_says_how_to_install_one() {
     assert_eq!(out.code, 72, "{}", out.all());
     assert_eq!(out.stderr.lines_with("dibs --check"), 1, "{}", out.stderr);
     assert_eq!(
+        out.stderr.lines_with("Building"),
+        0,
+        "no build is announced with nothing there to build it: {}",
+        out.stderr
+    );
+    assert_eq!(
         s.log().lines_with("never"),
         0,
         "and nothing reached the lock"

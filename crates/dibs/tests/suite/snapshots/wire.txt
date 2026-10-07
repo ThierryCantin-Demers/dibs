@@ -625,7 +625,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs --on box-a --check
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''d=$HOME/.cache/dibs/runner; [ "$("$d/<hash>/dibs-runner" hash 2>/dev/null)" = <hash> ] && exit 0; r=$(ls -t "$d"/*/dibs-runner 2>/dev/null | head -n 1); [ -n "$r" ] || exit 125; exec "$r" build <hash>'\'''
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''d=$HOME/.cache/dibs/runner; [ "$("$d/<hash>/dibs-runner" hash 2>/dev/null)" = <hash> ] && exit 0; r=$(ls -t "$d"/*/dibs-runner 2>/dev/null | head -n 1); [ -n "$r" ] || exit 125; echo dibs-runner-build-starts; exec "$r" build <hash>'\'''
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
   the request the runner acts on:
     agent: 
@@ -653,7 +653,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs --check box-a --write
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''d=$HOME/.cache/dibs/runner; [ "$("$d/<hash>/dibs-runner" hash 2>/dev/null)" = <hash> ] && exit 0; r=$(ls -t "$d"/*/dibs-runner 2>/dev/null | head -n 1); [ -n "$r" ] || exit 125; exec "$r" build <hash>'\'''
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''d=$HOME/.cache/dibs/runner; [ "$("$d/<hash>/dibs-runner" hash 2>/dev/null)" = <hash> ] && exit 0; r=$(ls -t "$d"/*/dibs-runner 2>/dev/null | head -n 1); [ -n "$r" ] || exit 125; echo dibs-runner-build-starts; exec "$r" build <hash>'\'''
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
   the request the runner acts on:
     agent: 
@@ -1145,7 +1145,7 @@ call 3: ssh -v -o BatchMode=yes -o ConnectTimeout=10 dibs@box-a true
 
 == dibs --check box-c --write  (a machine the inventory does not have yet)
 -> exit 0
-call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 box-c 'sh -c '\''d=$HOME/.cache/dibs/runner; [ "$("$d/<hash>/dibs-runner" hash 2>/dev/null)" = <hash> ] && exit 0; r=$(ls -t "$d"/*/dibs-runner 2>/dev/null | head -n 1); [ -n "$r" ] || exit 125; exec "$r" build <hash>'\'''
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 box-c 'sh -c '\''d=$HOME/.cache/dibs/runner; [ "$("$d/<hash>/dibs-runner" hash 2>/dev/null)" = <hash> ] && exit 0; r=$(ls -t "$d"/*/dibs-runner 2>/dev/null | head -n 1); [ -n "$r" ] || exit 125; echo dibs-runner-build-starts; exec "$r" build <hash>'\'''
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 box-c 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
   the request the runner acts on:
     agent: 
