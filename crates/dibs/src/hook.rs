@@ -8,11 +8,71 @@ use std::io::Read;
 /// A PreToolUse hook that exits 2 stops the tool call and shows the agent its stderr.
 const BLOCKS: i32 = 2;
 /// What reaches a machine as a login or a copy.
-const TOOLS: [&str; 4] = ["ssh", "scp", "sftp", "rsync"];
-/// Words that run the command after them, as `sudo ssh box` runs ssh.
-const WRAPPERS: [&str; 8] = [
-    "sudo", "env", "command", "exec", "nohup", "time", "nice", "timeout",
+const TOOLS: [Tool; 4] = [
+    Tool {
+        name: "ssh",
+        reach: Reach::Login,
+        valued: Valued::short("BbcDEeFIiJLlmOoPpQRSWw"),
+    },
+    Tool {
+        name: "sftp",
+        reach: Reach::Login,
+        valued: Valued::short("BbcDFiJloPRSsX"),
+    },
+    Tool {
+        name: "scp",
+        reach: Reach::Copy,
+        valued: Valued::short("cDFiJloPSX"),
+    },
+    Tool {
+        name: "rsync",
+        reach: Reach::Copy,
+        valued: Valued {
+            short: "eBfMT",
+            long: &["--rsh"],
+        },
+    },
 ];
+/// Words that run the command after them, as `sudo ssh box` runs ssh.
+const WRAPPERS: [Wrapper; 10] = [
+    Wrapper::of(
+        "sudo",
+        Valued {
+            short: "ugCDprtTU",
+            long: &["--user", "--group", "--chdir", "--prompt"],
+        },
+    ),
+    Wrapper::of(
+        "env",
+        Valued {
+            short: "uC",
+            long: &["--unset", "--chdir"],
+        },
+    ),
+    Wrapper::of("command", Valued::NONE),
+    Wrapper::of("exec", Valued::short("a")),
+    Wrapper::of("nohup", Valued::NONE),
+    Wrapper::of("time", Valued::short("fo")),
+    Wrapper::of(
+        "nice",
+        Valued {
+            short: "n",
+            long: &["--adjustment"],
+        },
+    ),
+    Wrapper {
+        name: "timeout",
+        valued: Valued {
+            short: "ks",
+            long: &["--kill-after", "--signal"],
+        },
+        operands: 1,
+    },
+    Wrapper::of("xargs", Valued::short("aEdILnPs")),
+    Wrapper::of("sshpass", Valued::short("fdpP")),
+];
+/// Shells whose `-c` runs the text after it.
+const SHELLS: [&str; 4] = ["sh", "bash", "zsh", "dash"];
 
 /// The names the inventory's machines are reached by, each with the machine it names.
 pub struct SshHook {
@@ -40,7 +100,7 @@ impl SshHook {
             };
             let said = [
                 Some(machine.as_str()),
-                entry.ssh.as_deref().map(host),
+                entry.ssh.as_deref().map(|ssh| Destination(ssh).host()),
                 entry.hostname.as_deref(),
             ];
             for name in said.into_iter().flatten().filter(|n| !n.is_empty()) {
@@ -80,23 +140,26 @@ impl SshHook {
 
     /// The first machine a command reaches with one of the tools, outside dibs's own transport.
     pub fn reached(&self, text: &str) -> Option<Reached> {
-        Shell::commands(&without_heredocs(text))
+        Shell::commands(&Shell::without_heredocs(text))
             .into_iter()
-            .find_map(|words| self.reaches(&words))
+            .find_map(|words| self.reaches(Words(&words)))
     }
 
-    fn reaches(&self, words: &[String]) -> Option<Reached> {
-        let words = unwrapped(words);
-        let tool = words.first().map(|w| w.rsplit('/').next().unwrap_or(w))?;
-        if !TOOLS.contains(&tool) || (tool == "rsync" && through_dibs(words)) {
+    fn reaches(&self, words: Words) -> Option<Reached> {
+        let words = words.unwrapped();
+        let program = words.program()?;
+        if SHELLS.contains(&program) {
+            return words.shell_text().and_then(|text| self.reached(text));
+        }
+        let tool = TOOLS.iter().find(|t| t.name == program)?;
+        if tool.name == "rsync" && words.through_dibs() {
             return None;
         }
-        words[1..]
+        tool.destinations(words)
             .iter()
-            .filter(|w| !w.starts_with('-'))
-            .find_map(|w| self.machine(host(w)))
+            .find_map(|d| self.machine(d.host()))
             .map(|machine| Reached {
-                tool: tool.to_string(),
+                tool: tool.name.to_string(),
                 machine,
             })
     }
@@ -154,102 +217,239 @@ impl Reached {
     }
 }
 
-/// The host a word names: `box` of `user@box:path`, `box.local` of `rsync://box.local/m`.
-fn host(word: &str) -> &str {
-    let word = word.split_once("://").map_or(word, |(_, rest)| rest);
-    let word = word.rsplit_once('@').map_or(word, |(_, host)| host);
-    let end = word.find([':', '/']).unwrap_or(word.len());
-    &word[..end]
+/// A tool that reaches another host, and how its words name that host.
+struct Tool {
+    name: &'static str,
+    reach: Reach,
+    valued: Valued,
 }
 
-/// An rsync whose transport is dibs's own, which takes the lock.
-fn through_dibs(words: &[String]) -> bool {
-    words.iter().enumerate().any(|(i, w)| {
-        let value = match w.as_str() {
-            "-e" | "--rsh" => words.get(i + 1).map(String::as_str),
-            _ => w.strip_prefix("--rsh=").or_else(|| w.strip_prefix("-e")),
+/// Which of a tool's operands name the host it reaches.
+#[derive(Clone, Copy)]
+enum Reach {
+    /// The first, as `ssh box ls` logs in to box.
+    Login,
+    /// Any written `host:path` or as a URL, as `scp f box:` copies to box; the rest are local.
+    Copy,
+}
+
+/// The options a command takes a value with, as getopt reads them: a short one's value attached
+/// or the next word, a long one's after `=` or the next word.
+#[derive(Clone, Copy)]
+struct Valued {
+    short: &'static str,
+    long: &'static [&'static str],
+}
+
+/// What one word is to a command that takes options.
+#[derive(PartialEq, Eq)]
+enum Role {
+    Operand,
+    Flag,
+    /// An option whose value is the next word.
+    FlagThenValue,
+}
+
+/// A word that runs the command after its own options and operands.
+struct Wrapper {
+    name: &'static str,
+    valued: Valued,
+    /// Operands of its own before the command, as `timeout`'s duration.
+    operands: usize,
+}
+
+/// One simple command's words, quotes taken off.
+#[derive(Clone, Copy)]
+struct Words<'a>(&'a [String]);
+
+/// A word naming the host a tool reaches: `box` of `user@box:path`, `box.local` of
+/// `rsync://box.local/m`.
+struct Destination<'a>(&'a str);
+
+/// A heredoc a line opens: the word that ends it, and whether that word may be indented.
+struct Heredoc {
+    end: String,
+    indented: bool,
+}
+
+impl Tool {
+    fn destinations<'a>(&self, words: Words<'a>) -> Vec<Destination<'a>> {
+        let mut operands = words
+            .operands(1, self.valued)
+            .into_iter()
+            .map(|at| words.0[at].as_str());
+        match self.reach {
+            Reach::Login => operands.next().map(Destination).into_iter().collect(),
+            Reach::Copy => operands.filter_map(Destination::copied).collect(),
+        }
+    }
+}
+
+impl Valued {
+    const NONE: Valued = Valued::short("");
+
+    const fn short(short: &'static str) -> Valued {
+        Valued { short, long: &[] }
+    }
+
+    fn role(&self, word: &str) -> Role {
+        if word == "-" || !word.starts_with('-') {
+            return Role::Operand;
+        }
+        if word.starts_with("--") {
+            return match !word.contains('=') && self.long.contains(&word) {
+                true => Role::FlagThenValue,
+                false => Role::Flag,
+            };
+        }
+        let cluster = &word[1..];
+        match cluster
+            .char_indices()
+            .find(|(_, c)| self.short.contains(*c))
+        {
+            Some((at, c)) if at + c.len_utf8() == cluster.len() => Role::FlagThenValue,
+            _ => Role::Flag,
+        }
+    }
+}
+
+impl Wrapper {
+    const fn of(name: &'static str, valued: Valued) -> Wrapper {
+        Wrapper {
+            name,
+            valued,
+            operands: 0,
+        }
+    }
+
+    fn named(name: &str) -> Option<&'static Wrapper> {
+        WRAPPERS.iter().find(|w| w.name == name)
+    }
+}
+
+impl<'a> Words<'a> {
+    /// The program, by its file name.
+    fn program(&self) -> Option<&'a str> {
+        self.0.first().map(|w| w.rsplit('/').next().unwrap_or(w))
+    }
+
+    /// The command once the assignments and wrappers in front of it are gone.
+    fn unwrapped(self) -> Words<'a> {
+        let mut at = self.assignments(0);
+        while let Some(wrapper) = Words(&self.0[at..]).program().and_then(Wrapper::named) {
+            let command = self.operands(at + 1, wrapper.valued).first().copied();
+            at = command.map_or(self.0.len(), |command| {
+                (self.assignments(command) + wrapper.operands).min(self.0.len())
+            });
+        }
+        Words(&self.0[at..])
+    }
+
+    /// Where the assignments from `from` on end.
+    fn assignments(&self, from: usize) -> usize {
+        let assignment = |w: &String| {
+            w.split_once('=').is_some_and(|(name, _)| {
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
         };
-        value.is_some_and(|v| v.contains(Rsh::WORD))
-    })
-}
+        from + self.0[from..].iter().take_while(|w| assignment(w)).count()
+    }
 
-/// The command once the assignments and wrappers in front of it are gone.
-fn unwrapped(words: &[String]) -> &[String] {
-    let assignment = |w: &str| {
-        w.split_once('=').is_some_and(|(name, _)| {
-            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    /// Where its operands are from `from` on, every option and the value one takes skipped.
+    fn operands(&self, from: usize, valued: Valued) -> Vec<usize> {
+        let mut found = Vec::new();
+        let mut at = from;
+        while let Some(word) = self.0.get(at) {
+            at += 1;
+            if word == "--" {
+                found.extend(at..self.0.len());
+                break;
+            }
+            match valued.role(word) {
+                Role::Operand => found.push(at - 1),
+                Role::FlagThenValue => at += 1,
+                Role::Flag => {}
+            }
+        }
+        found
+    }
+
+    /// An rsync whose transport is dibs's own, which takes the lock.
+    fn through_dibs(&self) -> bool {
+        self.0.iter().enumerate().any(|(i, w)| {
+            let value = match w.as_str() {
+                "-e" | "--rsh" => self.0.get(i + 1).map(String::as_str),
+                _ => w.strip_prefix("--rsh=").or_else(|| w.strip_prefix("-e")),
+            };
+            value.is_some_and(|v| v.contains(Rsh::WORD))
         })
-    };
-    let mut at = 0;
-    while let Some(word) = words.get(at) {
-        let name = word.rsplit('/').next().unwrap_or(word);
-        if assignment(word) {
-            at += 1;
-        } else if WRAPPERS.contains(&name) {
-            at += 1;
-            while words
-                .get(at)
-                .is_some_and(|w| w.starts_with('-') || assignment(w))
-            {
-                at += 1;
-            }
-            if name == "timeout"
-                && words
-                    .get(at)
-                    .is_some_and(|w| w.starts_with(|c: char| c.is_ascii_digit()))
-            {
-                at += 1;
-            }
-        } else {
-            break;
-        }
     }
-    &words[at..]
+
+    /// The text a shell's `-c` runs.
+    fn shell_text(&self) -> Option<&'a str> {
+        let flag = self.0.iter().position(|w| {
+            w.len() > 1 && w.starts_with('-') && !w.starts_with("--") && w[1..].contains('c')
+        })?;
+        self.0[flag + 1..]
+            .iter()
+            .find(|w| !w.starts_with(['-', '+']))
+            .map(String::as_str)
+    }
 }
 
-/// The text with the bodies of its heredocs left out, so what a file says is never read as a
-/// command.
-fn without_heredocs(text: &str) -> String {
-    let mut out = String::new();
-    let mut until: Option<(String, bool)> = None;
-    for line in text.lines() {
-        if let Some((end, dashed)) = &until {
-            let line = if *dashed { line.trim_start() } else { line };
-            if line == end {
-                until = None;
-            }
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-        until = heredoc(line);
+impl<'a> Destination<'a> {
+    /// A copy's operand when it names a host; a word with no colon, or a slash before its first,
+    /// is a local path, as scp and rsync read it.
+    fn copied(word: &'a str) -> Option<Destination<'a>> {
+        let remote = word.contains("://")
+            || word
+                .split_once(':')
+                .is_some_and(|(before, _)| !before.is_empty() && !before.contains('/'));
+        remote.then_some(Destination(word))
     }
-    out
+
+    fn host(&self) -> &'a str {
+        let word = self.0;
+        let word = word.split_once("://").map_or(word, |(_, rest)| rest);
+        let word = word.rsplit_once('@').map_or(word, |(_, host)| host);
+        let end = word.find([':', '/']).unwrap_or(word.len());
+        &word[..end]
+    }
 }
 
-/// The word that ends a heredoc a line starts, and whether its lines may be indented.
-fn heredoc(line: &str) -> Option<(String, bool)> {
-    let mut rest = line;
-    while let Some(at) = rest.find("<<") {
-        let after = &rest[at + 2..];
-        if let Some(string) = after.strip_prefix('<') {
-            rest = string;
-            continue;
+impl Heredoc {
+    /// The heredoc a line opens, its word read as the shell reads one.
+    fn opened_by(line: &str) -> Option<Heredoc> {
+        let mut rest = line;
+        while let Some(at) = rest.find("<<") {
+            let after = &rest[at + 2..];
+            if let Some(string) = after.strip_prefix('<') {
+                rest = string;
+                continue;
+            }
+            let indented = after.starts_with('-');
+            let end: String = after
+                .strip_prefix('-')
+                .unwrap_or(after)
+                .trim_start()
+                .chars()
+                .take_while(|c| !matches!(c, ' ' | '\t' | '<' | '>' | ';' | '|' | '&'))
+                .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+                .collect();
+            if !end.is_empty() {
+                return Some(Heredoc { end, indented });
+            }
+            rest = after;
         }
-        let dashed = after.starts_with('-');
-        let word: String = after
-            .trim_start_matches('-')
-            .trim_start()
-            .trim_start_matches(['\'', '"'])
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
-        if !word.is_empty() {
-            return Some((word, dashed));
-        }
-        rest = after;
+        None
     }
-    None
+
+    fn ends_at(&self, line: &str) -> bool {
+        match self.indented {
+            true => line.trim_start() == self.end,
+            false => line == self.end,
+        }
+    }
 }
 
 /// A shell text split into its simple commands, each into its words, quotes taken off.
@@ -262,6 +462,25 @@ struct Shell {
 }
 
 impl Shell {
+    /// The text with the bodies of its heredocs left out, so what a file says is never read as a
+    /// command.
+    fn without_heredocs(text: &str) -> String {
+        let mut out = String::new();
+        let mut open: Option<Heredoc> = None;
+        for line in text.lines() {
+            if let Some(heredoc) = &open {
+                if heredoc.ends_at(line) {
+                    open = None;
+                }
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+            open = Heredoc::opened_by(line);
+        }
+        out
+    }
+
     fn commands(text: &str) -> Vec<Vec<String>> {
         let mut shell = Shell::default();
         let mut chars = text.chars().peekable();
@@ -397,6 +616,14 @@ hostname = "workstation-b"
             "FOO=1 sudo -E timeout 30 ssh box-a",
             "env A=b ssh box-a",
             "ssh \\\n  box-a",
+            "nice -n 10 ssh box-a",
+            "sudo -u root ssh box-a",
+            "timeout -k 5 30 ssh box-a",
+            "bash -c 'ssh box-a ls'",
+            "sudo sh -ec 'ls; scp f box-a:'",
+            "xargs ssh box-a",
+            "sshpass -p x ssh box-a",
+            "cat <<END-OF\nhi\nEND-OF\nssh box-a",
         ] {
             assert_eq!(reaches(command).as_deref(), Some("box-a"), "{command}");
         }
@@ -418,6 +645,21 @@ hostname = "workstation-b"
             "cat <<EOF\nssh box-a\nEOF\nls",
             "cat <<-'END'\n\tssh box-a\n\tEND\n",
             "cat <<< 'ssh box-a'",
+            "bash -c 'echo ssh box-a'",
+        ] {
+            assert_eq!(reaches(command), None, "{command}");
+        }
+    }
+
+    #[test]
+    fn a_local_path_named_like_a_machine_passes() {
+        for command in [
+            "rsync -a box-a/ /backup/",
+            "scp box-a.txt other:/tmp/",
+            "rsync -a box-a.toml backup:",
+            "scp ./box-a:notes other:",
+            "ssh -i box-a github.com",
+            "ssh -l box-a github.com",
         ] {
             assert_eq!(reaches(command), None, "{command}");
         }
