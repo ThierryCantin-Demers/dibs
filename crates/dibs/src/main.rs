@@ -12,7 +12,7 @@ use dibs::{
     paths::FileError,
     recipe,
     records::{Complaints, FrictionLog, RunLog},
-    reports,
+    reports::{self, ReportsRepo},
     update::{Build, ChangeNotice},
 };
 use std::{path::Path, process::ExitCode};
@@ -180,11 +180,11 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
 
 /// Answers to the reports `DIBS_FRICTION_BY` filed, kept for its next call.
 fn friction_replies(into: &Path) -> Result<ExitCode, RunError> {
-    let Some(repo) = reports::repo() else {
+    let Some(repo) = ReportsRepo::from_env() else {
         return Ok(ExitCode::SUCCESS);
     };
     let by = std::env::var("DIBS_FRICTION_BY").unwrap_or_default();
     let notes = FrictionLog::here()?.notes();
-    reports::fetch_replies(&repo, &notes, &by, into)?;
+    repo.fetch_replies(&notes, &by, into)?;
     Ok(ExitCode::SUCCESS)
 }

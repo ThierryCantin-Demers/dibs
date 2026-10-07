@@ -23,7 +23,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-pub const LABEL: &str = "dibs-friction";
+const LABEL: &str = "dibs-friction";
 const FORWARD_READY: Duration = Duration::from_secs(30);
 const STOPPED: &str = "DIBS-FORWARD-STOPPED";
 /// Ends every answer posted from here, hidden where GitHub renders it. A wait skips a comment
@@ -56,7 +56,7 @@ impl Notice<'_> {
             let _ = std::fs::remove_file(&mine);
             eprint!("{text}");
         }
-        if repo().is_none() {
+        if ReportsRepo::from_env().is_none() {
             return;
         }
         let Some(stamp) = paths.reports(ReportsStamp::Asked) else {
@@ -179,38 +179,246 @@ impl fmt::Display for ReportsError {
     }
 }
 
-/// Fetches the replies `by` has not seen and adds them to `into`, whole or not at all.
-pub fn fetch_replies(
-    repo: &str,
-    notes: &[FrictionNote],
-    by: &str,
-    into: &Path,
-) -> Result<(), ReportsError> {
-    std::thread::spawn(|| {
-        std::thread::sleep(FETCH_LIMIT);
-        std::process::exit(124);
-    });
-    let fetched = replies(repo, notes, by)?;
-    SharedFile { path: into }
-        .rewrite(|text| {
-            let mut text = text.to_string();
-            for reply in &fetched {
-                text.push_str(reply);
-                text.push('\n');
-            }
-            Some(text)
+/// The private repo `DIBS_REPORTS` names, `<owner>/<repo>`, where friction is filed and answered.
+pub struct ReportsRepo {
+    name: String,
+}
+
+impl ReportsRepo {
+    /// Opt-in per person, since a report says what they were doing: without it, friction stays on
+    /// the machine it was reported on.
+    pub fn from_env() -> Option<ReportsRepo> {
+        ReportsRepo::named(&std::env::var("DIBS_REPORTS").ok()?)
+    }
+
+    fn named(name: &str) -> Option<ReportsRepo> {
+        let owned = matches!(name.split_once('/'), Some((owner, repo)) if !owner.is_empty() && !repo.is_empty() && !repo.contains('/'));
+        owned.then(|| ReportsRepo {
+            name: name.to_string(),
         })
-        .map_err(ReportsError::Io)
+    }
+
+    /// Fetches the replies `by` has not seen and adds them to `into`, whole or not at all.
+    pub fn fetch_replies(
+        &self,
+        notes: &[FrictionNote],
+        by: &str,
+        into: &Path,
+    ) -> Result<(), ReportsError> {
+        std::thread::spawn(|| {
+            std::thread::sleep(FETCH_LIMIT);
+            std::process::exit(124);
+        });
+        let fetched = self.replies(notes, by)?;
+        SharedFile { path: into }
+            .rewrite(|text| {
+                let mut text = text.to_string();
+                for reply in &fetched {
+                    text.push_str(reply);
+                    text.push('\n');
+                }
+                Some(text)
+            })
+            .map_err(ReportsError::Io)
+    }
+
+    /// A public repo is refused: a report carries the paths, repos and commands of whoever filed it.
+    pub fn file(&self, n: &FrictionNote) -> Result<u64, ReportsError> {
+        let repo = self.name.as_str();
+        let visibility = gh(&[
+            "repo",
+            "view",
+            repo,
+            "--json",
+            "visibility",
+            "--jq",
+            ".visibility",
+        ])?;
+        if visibility == "PUBLIC" {
+            return Err(ReportsError::Public(repo.to_string()));
+        }
+        let title: String = n.text.chars().take(100).collect();
+        let body = format!(
+            "{}\n\n| | |\n|---|---|\n| reported by | {} |\n| dibs | {} |\n| from | {} |\n",
+            n.text,
+            n.by,
+            n.version,
+            host()
+        );
+        let create = [
+            "issue", "create", "-R", repo, "--title", &title, "--body", &body, "--label", LABEL,
+        ];
+        let url = match gh(&create) {
+            Err(ReportsError::Gh(said)) if said.contains(LABEL) => {
+                gh(&[
+                    "label",
+                    "create",
+                    LABEL,
+                    "-R",
+                    repo,
+                    "--color",
+                    "d4c5f9",
+                    "--description",
+                    "filed by dibs --friction",
+                ])?;
+                gh(&create)?
+            }
+            other => other?,
+        };
+        number(&url).ok_or(ReportsError::NoIssue(url))
+    }
+
+    fn listed(&self) -> Result<Vec<Value>, ReportsError> {
+        let repo = self.name.as_str();
+        let text = gh(&[
+            "issue",
+            "list",
+            "-R",
+            repo,
+            "--label",
+            LABEL,
+            "--state",
+            "all",
+            "--limit",
+            LISTED,
+            "--json",
+            "number,title,url,state,author,comments",
+        ])?;
+        let v: Value = serde_json::from_str(&text).map_err(ReportsError::Unreadable)?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    /// Answers to the reports this session filed, each said once.
+    fn replies(&self, notes: &[FrictionNote], by: &str) -> Result<Vec<String>, ReportsError> {
+        let filed: BTreeSet<u64> = notes
+            .iter()
+            .filter(|n| n.by == by)
+            .filter_map(|n| n.issue)
+            .collect();
+        if filed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut shown = Keys::load(ReportsStamp::Shown)?;
+        let mut out = Vec::new();
+        for issue in self.listed()? {
+            let Some(n) = issue["number"].as_u64().filter(|n| filed.contains(n)) else {
+                continue;
+            };
+            for c in issue["comments"].as_array().into_iter().flatten() {
+                let url = c["url"].as_str().unwrap_or_default();
+                if url.is_empty() || !shown.insert(url) {
+                    continue;
+                }
+                out.push(format!(
+                    "dibs: your report #{n} was answered by {}: {}\n  {url}",
+                    login(&c["author"]),
+                    first_line(&c["body"])
+                ));
+            }
+        }
+        shown.save()?;
+        Ok(out)
+    }
+
+    /// Everything not yet woken on. The first time, that is the open reports, and the rest is taken
+    /// as read rather than replayed.
+    fn catch_up(&self, woken: &mut Keys) -> Result<Vec<String>, ReportsError> {
+        let first = woken.fresh;
+        let mut out = Vec::new();
+        for issue in self.listed()? {
+            let n = issue["number"].as_u64().unwrap_or_default();
+            let open = issue["state"].as_str() == Some("OPEN");
+            if woken.insert(&format!("#{n}")) && (!first || open) {
+                out.push(format!(
+                    "report #{n} from {}: {}\n  {}",
+                    login(&issue["author"]),
+                    issue["title"].as_str().unwrap_or_default(),
+                    issue["url"].as_str().unwrap_or_default()
+                ));
+            }
+            for c in issue["comments"].as_array().into_iter().flatten() {
+                let url = c["url"].as_str().unwrap_or_default();
+                if url.is_empty() || answered_here(&c["body"]) || !woken.insert(url) || first {
+                    continue;
+                }
+                out.push(format!(
+                    "comment on #{n} from {}: {}\n  {url}",
+                    login(&c["author"]),
+                    first_line(&c["body"])
+                ));
+            }
+        }
+        woken.fresh = false;
+        Ok(out)
+    }
+
+    /// Returns once a report, or an answer that was not posted from here, lands. What landed while
+    /// nothing listened is read first, since GitHub delivers a webhook once or not at all.
+    pub fn wait(&self) -> Result<Vec<String>, ReportsError> {
+        let mut woken = Keys::load(ReportsStamp::Woken)?;
+        let news = self.catch_up(&mut woken)?;
+        if !news.is_empty() {
+            woken.save()?;
+            return Ok(news);
+        }
+        woken.save()?;
+        let listener = TcpListener::bind("127.0.0.1:0").map_err(ReportsError::NoPort)?;
+        let port = listener.local_addr().map_err(ReportsError::Io)?.port();
+        let mut short = 0;
+        let mut said = String::new();
+        while short < SHORT_LIVES {
+            let started = Instant::now();
+            let forward = Forward::start(self, port)?;
+            let news = self.catch_up(&mut woken)?;
+            if !news.is_empty() {
+                woken.save()?;
+                return Ok(news);
+            }
+            said = match Heard::listen(&listener, &mut woken) {
+                Heard::News(news) => {
+                    woken.save()?;
+                    return Ok(news);
+                }
+                Heard::Stopped(said) => said,
+            };
+            drop(forward);
+            short = match started.elapsed() < SHORT_LIVED {
+                true => short + 1,
+                false => 0,
+            };
+            if short < SHORT_LIVES {
+                eprintln!(
+                    "dibs: gh webhook forward stopped, so it is started again. It said: {}",
+                    Forward::stop_reason(&said)
+                );
+            }
+        }
+        Err(ReportsError::KeepsStopping(said.trim().to_string()))
+    }
+
+    fn reply(&self, issue: u64, text: &str, close: bool) -> Result<String, ReportsError> {
+        let repo = self.name.as_str();
+        let n = issue.to_string();
+        let url = gh(&[
+            "issue",
+            "comment",
+            &n,
+            "-R",
+            repo,
+            "--body",
+            &format!("{text}\n\n{ANSWER}"),
+        ])?;
+        if close {
+            gh(&["issue", "close", &n, "-R", repo])?;
+        }
+        Ok(url)
+    }
 }
 
-/// Opt-in per person, since a report says what they were doing: without it, friction stays on
-/// the machine it was reported on.
-pub fn repo() -> Option<String> {
-    std::env::var("DIBS_REPORTS").ok().filter(|r| is_repo(r))
-}
-
-fn is_repo(r: &str) -> bool {
-    matches!(r.split_once('/'), Some((owner, name)) if !owner.is_empty() && !name.is_empty() && !name.contains('/'))
+impl fmt::Display for ReportsRepo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.name)
+    }
 }
 
 fn gh(args: &[&str]) -> Result<String, ReportsError> {
@@ -236,51 +444,6 @@ fn host() -> String {
 
 fn number(url: &str) -> Option<u64> {
     url.trim().rsplit('/').next()?.parse().ok()
-}
-
-/// A public repo is refused: a report carries the paths, repos and commands of whoever filed it.
-pub fn file(repo: &str, n: &FrictionNote) -> Result<u64, ReportsError> {
-    let visibility = gh(&[
-        "repo",
-        "view",
-        repo,
-        "--json",
-        "visibility",
-        "--jq",
-        ".visibility",
-    ])?;
-    if visibility == "PUBLIC" {
-        return Err(ReportsError::Public(repo.to_string()));
-    }
-    let title: String = n.text.chars().take(100).collect();
-    let body = format!(
-        "{}\n\n| | |\n|---|---|\n| reported by | {} |\n| dibs | {} |\n| from | {} |\n",
-        n.text,
-        n.by,
-        n.version,
-        host()
-    );
-    let create = [
-        "issue", "create", "-R", repo, "--title", &title, "--body", &body, "--label", LABEL,
-    ];
-    let url = match gh(&create) {
-        Err(ReportsError::Gh(said)) if said.contains(LABEL) => {
-            gh(&[
-                "label",
-                "create",
-                LABEL,
-                "-R",
-                repo,
-                "--color",
-                "d4c5f9",
-                "--description",
-                "filed by dibs --friction",
-            ])?;
-            gh(&create)?
-        }
-        other => other?,
-    };
-    number(&url).ok_or(ReportsError::NoIssue(url))
 }
 
 /// What has already been said or acted on, one key a line: `#<n>` for a report, a comment's URL
@@ -333,91 +496,8 @@ fn login(v: &Value) -> &str {
     v["login"].as_str().unwrap_or("someone")
 }
 
-fn listed(repo: &str) -> Result<Vec<Value>, ReportsError> {
-    let text = gh(&[
-        "issue",
-        "list",
-        "-R",
-        repo,
-        "--label",
-        LABEL,
-        "--state",
-        "all",
-        "--limit",
-        LISTED,
-        "--json",
-        "number,title,url,state,author,comments",
-    ])?;
-    let v: Value = serde_json::from_str(&text).map_err(ReportsError::Unreadable)?;
-    Ok(v.as_array().cloned().unwrap_or_default())
-}
-
-/// Answers to the reports this session filed, each said once.
-fn replies(repo: &str, notes: &[FrictionNote], by: &str) -> Result<Vec<String>, ReportsError> {
-    let filed: BTreeSet<u64> = notes
-        .iter()
-        .filter(|n| n.by == by)
-        .filter_map(|n| n.issue)
-        .collect();
-    if filed.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut shown = Keys::load(ReportsStamp::Shown)?;
-    let mut out = Vec::new();
-    for issue in listed(repo)? {
-        let Some(n) = issue["number"].as_u64().filter(|n| filed.contains(n)) else {
-            continue;
-        };
-        for c in issue["comments"].as_array().into_iter().flatten() {
-            let url = c["url"].as_str().unwrap_or_default();
-            if url.is_empty() || !shown.insert(url) {
-                continue;
-            }
-            out.push(format!(
-                "dibs: your report #{n} was answered by {}: {}\n  {url}",
-                login(&c["author"]),
-                first_line(&c["body"])
-            ));
-        }
-    }
-    shown.save()?;
-    Ok(out)
-}
-
-/// Everything not yet woken on. The first time, that is the open reports, and the rest is taken
-/// as read rather than replayed.
 fn answered_here(body: &Value) -> bool {
     body.as_str().is_some_and(|b| b.contains(ANSWER))
-}
-
-fn catch_up(repo: &str, woken: &mut Keys) -> Result<Vec<String>, ReportsError> {
-    let first = woken.fresh;
-    let mut out = Vec::new();
-    for issue in listed(repo)? {
-        let n = issue["number"].as_u64().unwrap_or_default();
-        let open = issue["state"].as_str() == Some("OPEN");
-        if woken.insert(&format!("#{n}")) && (!first || open) {
-            out.push(format!(
-                "report #{n} from {}: {}\n  {}",
-                login(&issue["author"]),
-                issue["title"].as_str().unwrap_or_default(),
-                issue["url"].as_str().unwrap_or_default()
-            ));
-        }
-        for c in issue["comments"].as_array().into_iter().flatten() {
-            let url = c["url"].as_str().unwrap_or_default();
-            if url.is_empty() || answered_here(&c["body"]) || !woken.insert(url) || first {
-                continue;
-            }
-            out.push(format!(
-                "comment on #{n} from {}: {}\n  {url}",
-                login(&c["author"]),
-                first_line(&c["body"])
-            ));
-        }
-    }
-    woken.fresh = false;
-    Ok(out)
 }
 
 fn labelled(issue: &Value) -> bool {
@@ -538,13 +618,13 @@ impl Heard {
 struct Forward(Child);
 
 impl Forward {
-    fn start(repo: &str, port: u16) -> Result<Forward, ReportsError> {
+    fn start(repo: &ReportsRepo, port: u16) -> Result<Forward, ReportsError> {
         let mut child = Command::new("gh")
             .args([
                 "webhook",
                 "forward",
                 "--repo",
-                repo,
+                &repo.name,
                 "--events",
                 "issues,issue_comment",
                 "--url",
@@ -602,74 +682,13 @@ impl Drop for Forward {
     }
 }
 
-/// Returns once a report, or an answer that was not posted from here, lands. What landed while
-/// nothing listened is read first, since GitHub delivers a webhook once or not at all.
-pub fn wait(repo: &str) -> Result<Vec<String>, ReportsError> {
-    let mut woken = Keys::load(ReportsStamp::Woken)?;
-    let news = catch_up(repo, &mut woken)?;
-    if !news.is_empty() {
-        woken.save()?;
-        return Ok(news);
-    }
-    woken.save()?;
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(ReportsError::NoPort)?;
-    let port = listener.local_addr().map_err(ReportsError::Io)?.port();
-    let mut short = 0;
-    let mut said = String::new();
-    while short < SHORT_LIVES {
-        let started = Instant::now();
-        let forward = Forward::start(repo, port)?;
-        let news = catch_up(repo, &mut woken)?;
-        if !news.is_empty() {
-            woken.save()?;
-            return Ok(news);
-        }
-        said = match Heard::listen(&listener, &mut woken) {
-            Heard::News(news) => {
-                woken.save()?;
-                return Ok(news);
-            }
-            Heard::Stopped(said) => said,
-        };
-        drop(forward);
-        short = match started.elapsed() < SHORT_LIVED {
-            true => short + 1,
-            false => 0,
-        };
-        if short < SHORT_LIVES {
-            eprintln!(
-                "dibs: gh webhook forward stopped, so it is started again. It said: {}",
-                Forward::stop_reason(&said)
-            );
-        }
-    }
-    Err(ReportsError::KeepsStopping(said.trim().to_string()))
-}
-
-fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, ReportsError> {
-    let n = issue.to_string();
-    let url = gh(&[
-        "issue",
-        "comment",
-        &n,
-        "-R",
-        repo,
-        "--body",
-        &format!("{text}\n\n{ANSWER}"),
-    ])?;
-    if close {
-        gh(&["issue", "close", &n, "-R", repo])?;
-    }
-    Ok(url)
-}
-
 /// The text arrives in the environment rather than as an argument: a report about a flag starts
 /// with the flag, and parsing that as one is how the complaint becomes the complaint.
 pub fn friction_verb(friction: Friction) -> Result<ExitCode, ReportsError> {
-    let reports_repo = || repo().ok_or(ReportsError::NoRepo);
+    let reports_repo = || ReportsRepo::from_env().ok_or(ReportsError::NoRepo);
     match friction {
         Friction::Wait => {
-            for news in wait(&reports_repo()?)? {
+            for news in reports_repo()?.wait()? {
                 println!("{news}");
             }
         }
@@ -677,7 +696,7 @@ pub fn friction_verb(friction: Friction) -> Result<ExitCode, ReportsError> {
             issue,
             answer,
             close,
-        } => println!("{}", reply(&reports_repo()?, issue, &answer, close)?),
+        } => println!("{}", reports_repo()?.reply(issue, &answer, close)?),
         Friction::Note { text } => {
             let caller = Caller::from_env();
             ChangeNotice::tell_once(&caller);
@@ -688,7 +707,7 @@ pub fn friction_verb(friction: Friction) -> Result<ExitCode, ReportsError> {
                 now_secs(),
             )
             .ok_or(RecordsError::EmptyNote)?;
-            let filed = repo().map(|repo| (file(&repo, &note), repo));
+            let filed = ReportsRepo::from_env().map(|repo| (repo.file(&note), repo));
             if let Some((Ok(n), _)) = &filed {
                 note.issue = Some(*n);
             }
@@ -812,7 +831,7 @@ mod tests {
             ("/r", false),
             ("o/", false),
         ] {
-            assert_eq!(is_repo(v), ok, "{v}");
+            assert_eq!(ReportsRepo::named(v).is_some(), ok, "{v}");
         }
     }
 }
