@@ -18,6 +18,49 @@ pub enum Side {
 }
 
 impl Side {
+    /// One tree, `A..B`, or `a,b,c`.
+    pub fn list(reference: Option<&str>) -> Result<Vec<Side>, ArmError> {
+        let one = |r: &str| {
+            if r == "local" {
+                Side::Local
+            } else {
+                Side::Ref(r.to_string())
+            }
+        };
+        let Some(r) = reference else {
+            return Ok(vec![Side::Ref("HEAD".into())]);
+        };
+        if r.contains("...") {
+            return Err(ArmError::Symmetric(r.to_string()));
+        }
+        if let Some((a, b)) = r.split_once("..") {
+            if a.is_empty() || b.is_empty() || b.contains("..") || r.contains(',') {
+                return Err(ArmError::HalfRange(r.to_string()));
+            }
+            let tip = if b == "local" {
+                Side::Local
+            } else {
+                Side::Pinned(b.to_string())
+            };
+            return Ok(vec![Side::Base(a.into(), b.into()), tip]);
+        }
+        let list: Vec<Side> = r.split(',').map(one).collect();
+        if list.iter().any(|s| s.name().is_empty()) {
+            return Err(ArmError::EmptyArm(r.to_string()));
+        }
+        if let Some(twice) = list
+            .iter()
+            .enumerate()
+            .find(|(i, s)| list[..*i].contains(s))
+        {
+            return Err(ArmError::Twice {
+                reference: r.to_string(),
+                arm: twice.1.name(),
+            });
+        }
+        Ok(list)
+    }
+
     pub fn name(&self) -> String {
         match self {
             Side::Local => "local".into(),
@@ -35,49 +78,6 @@ impl Side {
             Side::Ref(_) | Side::Pinned(_) => false,
         }
     }
-}
-
-/// One tree, `A..B`, or `a,b,c`.
-pub fn sides(reference: Option<&str>) -> Result<Vec<Side>, ArmError> {
-    let one = |r: &str| {
-        if r == "local" {
-            Side::Local
-        } else {
-            Side::Ref(r.to_string())
-        }
-    };
-    let Some(r) = reference else {
-        return Ok(vec![Side::Ref("HEAD".into())]);
-    };
-    if r.contains("...") {
-        return Err(ArmError::Symmetric(r.to_string()));
-    }
-    if let Some((a, b)) = r.split_once("..") {
-        if a.is_empty() || b.is_empty() || b.contains("..") || r.contains(',') {
-            return Err(ArmError::HalfRange(r.to_string()));
-        }
-        let tip = if b == "local" {
-            Side::Local
-        } else {
-            Side::Pinned(b.to_string())
-        };
-        return Ok(vec![Side::Base(a.into(), b.into()), tip]);
-    }
-    let list: Vec<Side> = r.split(',').map(one).collect();
-    if list.iter().any(|s| s.name().is_empty()) {
-        return Err(ArmError::EmptyArm(r.to_string()));
-    }
-    if let Some(twice) = list
-        .iter()
-        .enumerate()
-        .find(|(i, s)| list[..*i].contains(s))
-    {
-        return Err(ArmError::Twice {
-            reference: r.to_string(),
-            arm: twice.1.name(),
-        });
-    }
-    Ok(list)
 }
 
 /// One side of a comparison, looked up.
@@ -110,106 +110,94 @@ impl Arm {
             .map(|c| c.sha.as_str())
             .or(self.fetch.as_deref())
     }
-}
 
-/// `, <note>, sent from <from> since <why>`, as much of it as there is, to follow the commit.
-pub fn sent_from(c: &super::Checkout, note: Option<&str>, from: &str) -> String {
-    format!(
-        "{}, sent from {from}{}",
-        note.map(|n| format!(", {n}")).unwrap_or_default(),
-        c.why.map(|w| format!(" since {w}")).unwrap_or_default()
-    )
-}
-
-pub fn short(sha: &str) -> &str {
-    &sha[..12.min(sha.len())]
-}
-
-/// Each side looked up here. A commit the machine cannot fetch is checked out and sent instead.
-pub fn arms(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, ArmError> {
-    let here = |r: &str| {
-        if r == "local" {
-            "HEAD".to_string()
-        } else {
-            r.to_string()
-        }
-    };
-    let mut arms = Vec::with_capacity(sides.len());
-    for s in sides {
-        let name = s.name();
-        let (sha, fetch, note, ahead) = match s {
-            Side::Local => {
-                arms.push(Arm {
-                    name,
-                    fetch: None,
-                    note: None,
-                    checkout: None,
-                });
-                continue;
+    /// Each side looked up here. A commit the machine cannot fetch is checked out and sent instead.
+    pub fn look_up(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, ArmError> {
+        let here = |r: &str| {
+            if r == "local" {
+                "HEAD".to_string()
+            } else {
+                r.to_string()
             }
-            Side::Ref(r) => match Fetched::of(dir, r) {
-                Some(Fetched {
-                    commit,
-                    seen,
-                    ahead,
-                }) => (
-                    commit,
-                    r.clone(),
-                    Some(format!("as {seen} stands here")),
-                    ahead,
-                ),
-                None => {
+        };
+        let mut arms = Vec::with_capacity(sides.len());
+        for s in sides {
+            let name = s.name();
+            let (sha, fetch, note, ahead) = match s {
+                Side::Local => {
                     arms.push(Arm {
                         name,
-                        fetch: Some(r.clone()),
+                        fetch: None,
                         note: None,
                         checkout: None,
                     });
                     continue;
                 }
-            },
-            Side::Pinned(r) => {
-                let sha = Repo(dir).commit(r)?;
-                (sha.clone(), sha, None, None)
-            }
-            Side::Base(a, b) => {
-                let Base { commit, upstream } = super::merge_base(dir, &here(a), &here(b))?;
-                let note = match upstream {
-                    Some(u) => format!("where {b} left {u}, since {a} is behind it"),
-                    None => format!("where {b} left {a}"),
-                };
-                (commit.clone(), commit, Some(note), None)
-            }
-        };
-        let why = match s.sent() {
-            true => None,
-            false => ahead.or_else(|| Repo(dir).unfetchable(&sha)),
-        };
-        arms.push(match s.sent() || why.is_some() {
-            true => Arm {
-                name,
-                fetch: None,
-                note,
-                checkout: Some(super::Checkout::of(dir, repo, &sha, why)?),
-            },
-            // A ref is fetched by name, so how it stands here says nothing of what the machine takes.
-            false => Arm {
-                name,
-                fetch: Some(fetch),
-                note: note.filter(|_| !matches!(s, Side::Ref(_))),
-                checkout: None,
-            },
-        });
+                Side::Ref(r) => match Fetched::of(dir, r) {
+                    Some(Fetched {
+                        commit,
+                        seen,
+                        ahead,
+                    }) => (
+                        commit,
+                        r.clone(),
+                        Some(format!("as {seen} stands here")),
+                        ahead,
+                    ),
+                    None => {
+                        arms.push(Arm {
+                            name,
+                            fetch: Some(r.clone()),
+                            note: None,
+                            checkout: None,
+                        });
+                        continue;
+                    }
+                },
+                Side::Pinned(r) => {
+                    let sha = Repo(dir).commit(r)?;
+                    (sha.clone(), sha, None, None)
+                }
+                Side::Base(a, b) => {
+                    let Base { commit, upstream } = Base::of(dir, &here(a), &here(b))?;
+                    let note = match upstream {
+                        Some(u) => format!("where {b} left {u}, since {a} is behind it"),
+                        None => format!("where {b} left {a}"),
+                    };
+                    (commit.clone(), commit, Some(note), None)
+                }
+            };
+            let why = match s.sent() {
+                true => None,
+                false => ahead.or_else(|| Repo(dir).unfetchable(&sha)),
+            };
+            arms.push(match s.sent() || why.is_some() {
+                true => Arm {
+                    name,
+                    fetch: None,
+                    note,
+                    checkout: Some(super::Checkout::of(dir, repo, &sha, why)?),
+                },
+                // A ref is fetched by name, so how it stands here says nothing of what the machine
+                // takes.
+                false => Arm {
+                    name,
+                    fetch: Some(fetch),
+                    note: note.filter(|_| !matches!(s, Side::Ref(_))),
+                    checkout: None,
+                },
+            });
+        }
+        if let ([Side::Base(..), _], [base, tip]) = (sides, &arms[..])
+            && base.commit().is_some()
+            && base.commit() == tip.commit()
+        {
+            return Err(ArmError::NothingToCompare {
+                tip: tip.name.clone(),
+            });
+        }
+        Ok(arms)
     }
-    if let ([Side::Base(..), _], [base, tip]) = (sides, &arms[..])
-        && base.commit().is_some()
-        && base.commit() == tip.commit()
-    {
-        return Err(ArmError::NothingToCompare {
-            tip: tip.name.clone(),
-        });
-    }
-    Ok(arms)
 }
 
 /// Where a range's tip left its base.
@@ -220,50 +208,53 @@ pub struct Base {
     pub upstream: Option<String>,
 }
 
-/// Where `tip` left `from`: the commit an A/B of `from..tip` measures `tip` against. A local branch
-/// that is behind its upstream would put that point too early and credit `tip` with commits it
-/// merely did not have, so the upstream is asked too and the later of the two answers wins.
-pub fn merge_base(dir: &Path, from: &str, tip: &str) -> Result<Base, ArmError> {
-    let tip = Repo(dir).commit(tip)?;
-    let own = Repo(dir).commit(from)?;
-    let base = |c: &str| {
-        Git(dir)
-            .run(&["merge-base", c, &tip])
-            .map(|s| s.trim().to_string())
-    };
-    let mine = base(&own).map_err(|_| ArmError::NoHistory {
-        from: from.to_string(),
-        tip: tip.clone(),
-        dir: dir.to_path_buf(),
-    })?;
-    let upstream = Git(dir)
-        .run(&[
-            "rev-parse",
-            "--abbrev-ref",
-            "-q",
-            &format!("{from}@{{upstream}}"),
-        ])
-        .ok()
-        .map(|s| s.trim().to_string());
-    let theirs = upstream
-        .as_deref()
-        .and_then(|u| Some((u.to_string(), base(&Repo(dir).commit(u).ok()?).ok()?)));
-    match theirs {
-        Some((u, b))
-            if b != mine
-                && Git(dir)
-                    .run(&["merge-base", "--is-ancestor", &mine, &b])
-                    .is_ok() =>
-        {
-            Ok(Base {
-                commit: b,
-                upstream: Some(u),
-            })
+impl Base {
+    /// Where `tip` left `from`: the commit an A/B of `from..tip` measures `tip` against. A local
+    /// branch that is behind its upstream would put that point too early and credit `tip` with
+    /// commits it merely did not have, so the upstream is asked too and the later of the two
+    /// answers wins.
+    pub fn of(dir: &Path, from: &str, tip: &str) -> Result<Base, ArmError> {
+        let tip = Repo(dir).commit(tip)?;
+        let own = Repo(dir).commit(from)?;
+        let base = |c: &str| {
+            Git(dir)
+                .run(&["merge-base", c, &tip])
+                .map(|s| s.trim().to_string())
+        };
+        let mine = base(&own).map_err(|_| ArmError::NoHistory {
+            from: from.to_string(),
+            tip: tip.clone(),
+            dir: dir.to_path_buf(),
+        })?;
+        let upstream = Git(dir)
+            .run(&[
+                "rev-parse",
+                "--abbrev-ref",
+                "-q",
+                &format!("{from}@{{upstream}}"),
+            ])
+            .ok()
+            .map(|s| s.trim().to_string());
+        let theirs = upstream
+            .as_deref()
+            .and_then(|u| Some((u.to_string(), base(&Repo(dir).commit(u).ok()?).ok()?)));
+        match theirs {
+            Some((u, b))
+                if b != mine
+                    && Git(dir)
+                        .run(&["merge-base", "--is-ancestor", &mine, &b])
+                        .is_ok() =>
+            {
+                Ok(Base {
+                    commit: b,
+                    upstream: Some(u),
+                })
+            }
+            _ => Ok(Base {
+                commit: mine,
+                upstream: None,
+            }),
         }
-        _ => Ok(Base {
-            commit: mine,
-            upstream: None,
-        }),
     }
 }
 
@@ -310,28 +301,28 @@ mod tests {
         git("checkout -q -b feat origin/main");
         git("commit -q --allow-empty -m f1");
         assert_eq!(
-            merge_base(&r, "main", "feat").unwrap(),
+            Base::of(&r, "main", "feat").unwrap(),
             Base {
                 commit: c2.clone(),
                 upstream: Some("origin/main".to_string())
             }
         );
         assert_eq!(
-            merge_base(&r, "origin/main", "HEAD").unwrap(),
+            Base::of(&r, "origin/main", "HEAD").unwrap(),
             Base {
                 commit: c2.clone(),
                 upstream: None
             }
         );
         assert_eq!(
-            merge_base(&r, &c1, "feat").unwrap(),
+            Base::of(&r, &c1, "feat").unwrap(),
             Base {
                 commit: c1,
                 upstream: None
             },
             "a commit has no upstream to ask"
         );
-        assert!(merge_base(&r, "no-such", "feat").is_err());
+        assert!(Base::of(&r, "no-such", "feat").is_err());
         let _ = std::fs::remove_dir_all(&home);
     }
 }

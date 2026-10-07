@@ -218,6 +218,19 @@ impl Checkout {
         })
     }
 
+    pub fn short_sha(&self) -> &str {
+        &self.sha[..12.min(self.sha.len())]
+    }
+
+    /// `, <note>, sent from <from> since <why>`, as much of it as there is, to follow the commit.
+    pub fn sent_from(&self, note: Option<&str>, from: &str) -> String {
+        format!(
+            "{}, sent from {from}{}",
+            note.map(|n| format!(", {n}")).unwrap_or_default(),
+            self.why.map(|w| format!(" since {w}")).unwrap_or_default()
+        )
+    }
+
     pub fn local(&self) -> Result<Local, GitError> {
         Ok(Local {
             key: self.key.clone(),

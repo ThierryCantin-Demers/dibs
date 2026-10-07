@@ -1,6 +1,6 @@
 use super::{
     base::step_plan,
-    refs::{Side, sides},
+    refs::Side,
     schedule::{Job, jobs_of, schedule},
     sweep::{sweep_points, sweep_text},
     trees::gitdb_args,
@@ -288,21 +288,21 @@ fn a_recipe_s_jobs_are_what_it_will_send_and_run() {
 #[test]
 fn a_ref_is_one_tree_a_range_is_a_tip_against_its_base_and_a_list_is_arms_in_turn() {
     let r = |s: &str| Side::Ref(s.into());
-    assert_eq!(sides(None).unwrap(), [r("HEAD")]);
-    assert_eq!(sides(Some("local")).unwrap(), [Side::Local]);
+    assert_eq!(Side::list(None).unwrap(), [r("HEAD")]);
+    assert_eq!(Side::list(Some("local")).unwrap(), [Side::Local]);
     assert_eq!(
-        sides(Some("main..local")).unwrap(),
+        Side::list(Some("main..local")).unwrap(),
         [Side::Base("main".into(), "local".into()), Side::Local]
     );
     assert_eq!(
-        sides(Some("main..perf/x")).unwrap(),
+        Side::list(Some("main..perf/x")).unwrap(),
         [
             Side::Base("main".into(), "perf/x".into()),
             Side::Pinned("perf/x".into())
         ]
     );
     assert_eq!(
-        sides(Some("a1,b2,local")).unwrap(),
+        Side::list(Some("a1,b2,local")).unwrap(),
         [r("a1"), r("b2"), Side::Local]
     );
     for bad in [
@@ -315,7 +315,7 @@ fn a_ref_is_one_tree_a_range_is_a_tip_against_its_base_and_a_list_is_arms_in_tur
         "a,a",
         "local,local",
     ] {
-        assert!(sides(Some(bad)).is_err(), "{bad}");
+        assert!(Side::list(Some(bad)).is_err(), "{bad}");
     }
 }
 
@@ -369,7 +369,7 @@ fn a_comparison_s_jobs_say_which_arm_and_rep_they_are() {
     ]);
     let names: Vec<String> = jobs_of(
         &r,
-        &sides(Some("main..local")).unwrap(),
+        &Side::list(Some("main..local")).unwrap(),
         &[true, true],
         2,
         &[],

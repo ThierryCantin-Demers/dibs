@@ -3,7 +3,7 @@ use super::{
     error::{Refusal, RunError, Unprepared},
     jobs::{JobRequest, Jobs},
     local::Repo,
-    refs::{arms, sides},
+    refs::{Arm, Side},
     trees::{
         TreeSpec, announce_prepared, in_tree, new_token, preparing_title, send_missing_gitdbs,
         sync_prepared,
@@ -25,7 +25,7 @@ use std::process::ExitCode;
 /// dashboard, a client, a test suite driving them over the network. It ends by becoming that
 /// dibs call rather than waiting on one, so the command keeps this terminal.
 pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
-    let sides = sides(args.reference.as_deref())?;
+    let sides = Side::list(args.reference.as_deref())?;
     if sides.len() > 1 {
         return Err(Refusal::WithRefs.into());
     }
@@ -80,7 +80,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         }
     }
 
-    let mut arm = arms(&sides, &dir, &repo_name)?.remove(0);
+    let mut arm = Arm::look_up(&sides, &dir, &repo_name)?.remove(0);
     let local = arm.fetch.is_none().then(|| arm.local(&dir)).transpose()?;
     if args.dry_run {
         println!("label       {label}");

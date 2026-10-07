@@ -1,4 +1,4 @@
-use super::{base::sh, error::RunError, refs::sides};
+use super::{base::sh, error::RunError, refs::Side};
 use crate::{
     batch,
     cli::{RecipeCall, Sweep},
@@ -31,7 +31,7 @@ pub fn sweep_run(
 ) -> Result<ExitCode, RunError> {
     // Every point is checked before any of them is queued: a value the recipe refuses should be
     // found now, not two measurements into a sweep that is already holding the machine.
-    sides(args.reference.as_deref())?;
+    Side::list(args.reference.as_deref())?;
     for p in points {
         let probe = RecipeCall {
             params: p.clone(),

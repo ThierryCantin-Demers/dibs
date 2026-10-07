@@ -4,7 +4,7 @@ use super::{
     local::Repo,
     pins::{self, pin_spec, pins_of},
     record::{batch_of_caller, fetch_artifacts, measured_summary},
-    refs::{Arm, arms, sent_from, short, sides},
+    refs::{Arm, Side},
     schedule::{Job, jobs_of, schedule},
     sweep::{sweep_points, sweep_run},
     trees::{
@@ -34,8 +34,8 @@ pub fn preparing(repo: &str, arm: &Arm, local: Option<&super::Local>, dir: &Path
     match (&arm.checkout, local) {
         (Some(c), _) => format!(
             "{repo} at {}{}",
-            short(&c.sha),
-            sent_from(c, arm.note.as_deref(), "this computer")
+            c.short_sha(),
+            c.sent_from(arm.note.as_deref(), "this computer")
         ),
         (None, Some(l)) => format!(
             "{repo} from {} ({})",
@@ -76,9 +76,9 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         ..args
     };
 
-    let sides = sides(args.reference.as_deref())?;
+    let sides = Side::list(args.reference.as_deref())?;
     let resolved = Resolved::of(&args)?;
-    let mut arms = arms(&sides, &resolved.dir, &resolved.repo_name)?;
+    let mut arms = Arm::look_up(&sides, &resolved.dir, &resolved.repo_name)?;
     let mut pins = pins_of(&args, &resolved.repo_name, &resolved.dir, &arms)?;
     let local: Vec<bool> = arms.iter().map(|a| a.fetch.is_none()).collect();
     let pin_specs = args
@@ -150,7 +150,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 (None, Some(c)) => println!(
                     "{head}{}{}",
                     c.sha,
-                    sent_from(c, arm.note.as_deref(), &c.dir.display().to_string())
+                    c.sent_from(arm.note.as_deref(), &c.dir.display().to_string())
                 ),
                 (None, None) => {
                     let l = super::Local::of(&dir)?;
@@ -180,7 +180,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     p.repo,
                     p.reference,
                     c.sha,
-                    sent_from(c, p.note.as_deref(), &c.dir.display().to_string())
+                    c.sent_from(p.note.as_deref(), &c.dir.display().to_string())
                 ),
                 (None, Some(l)) => println!(
                     "pin         {}  local {} from {}",
@@ -292,8 +292,8 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                         "dibs: pinning {}@{} at {}{}",
                         p.repo,
                         p.reference,
-                        short(&c.sha),
-                        sent_from(c, p.note.as_deref(), "this computer")
+                        c.short_sha(),
+                        c.sent_from(p.note.as_deref(), "this computer")
                     ),
                     None => eprintln!(
                         "dibs: pinning {} from {} ({})",

@@ -1,7 +1,4 @@
-use super::{
-    pins::pin_spec,
-    refs::{Side, sides},
-};
+use super::{pins::pin_spec, refs::Side};
 use crate::{
     batch,
     cli::RecipeCall,
@@ -138,7 +135,7 @@ pub fn recipe_jobs(args: &RecipeCall) -> Option<Vec<batch::Pending>> {
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
     // Whether a ref is sent is only known once it is looked up, so a ref is planned as fetched.
-    let sides = sides(args.reference.as_deref()).ok()?;
+    let sides = Side::list(args.reference.as_deref()).ok()?;
     let local: Vec<bool> = sides.iter().map(Side::sent).collect();
     Some(jobs_of(&r, &sides, &local, args.reps, &pins))
 }

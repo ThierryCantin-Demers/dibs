@@ -19,7 +19,6 @@ pub use base::{raw, run_recipe};
 pub use build::{build_signature, packages};
 pub use error::{ArmError, CheckoutError, PinError, Refusal, RunError, Unprepared};
 pub use local::{Checkout, Fetched, Local, Repo};
-pub use refs::{Base, merge_base};
 pub use schedule::recipe_jobs;
 pub use trees::Nest;
 pub use with::with_service;
