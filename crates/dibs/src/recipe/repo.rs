@@ -53,6 +53,6 @@ pub fn resolve_repo(repo: &str, root: &Path) -> Result<PathBuf, RepoError> {
     })
 }
 
-pub fn canon(p: PathBuf) -> Result<PathBuf, RepoError> {
+fn canon(p: PathBuf) -> Result<PathBuf, RepoError> {
     Ok(p.canonicalize().map_err(FileError::at(&p))?)
 }

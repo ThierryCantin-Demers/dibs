@@ -85,7 +85,7 @@ pub fn jobs(stderr: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn state_dir() -> PathBuf {
+fn state_dir() -> PathBuf {
     Paths::from_env().batches().unwrap_or_default()
 }
 
@@ -119,7 +119,7 @@ pub fn batch_id() -> String {
     format!("{stamp}-{}", std::process::id())
 }
 
-pub fn collect_old(dir: &Path) {
+fn collect_old(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };

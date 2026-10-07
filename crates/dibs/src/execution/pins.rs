@@ -18,7 +18,7 @@ use std::{
 };
 
 /// The crates a tree defines: name, and the directory of its manifest relative to the root.
-pub fn crates<'a>(manifests: impl Iterator<Item = (&'a str, String)>) -> BTreeMap<String, String> {
+fn crates<'a>(manifests: impl Iterator<Item = (&'a str, String)>) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for (path, text) in manifests {
         let Ok(v) = toml::from_str::<toml::Value>(&text) else {

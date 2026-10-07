@@ -649,7 +649,7 @@ pub fn wait(repo: &str) -> Result<Vec<String>, ReportsError> {
     Err(ReportsError::KeepsStopping(said.trim().to_string()))
 }
 
-pub fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, ReportsError> {
+fn reply(repo: &str, issue: u64, text: &str, close: bool) -> Result<String, ReportsError> {
     let n = issue.to_string();
     let url = gh(&[
         "issue",

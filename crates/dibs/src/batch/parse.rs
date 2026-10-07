@@ -255,7 +255,7 @@ pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
 }
 
 /// Fails on a cycle, naming a step in it.
-pub fn order(steps: &[Step]) -> Result<Vec<usize>, BatchError> {
+fn order(steps: &[Step]) -> Result<Vec<usize>, BatchError> {
     let index: HashMap<&str, usize> = steps
         .iter()
         .enumerate()

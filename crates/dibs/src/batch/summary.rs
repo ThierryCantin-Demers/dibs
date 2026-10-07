@@ -4,7 +4,7 @@ use super::{
 };
 use std::path::Path;
 
-pub fn duration(s: u64) -> String {
+fn duration(s: u64) -> String {
     match s {
         s if s >= 3600 => format!("{}h{:02}m", s / 3600, s / 60 % 60),
         s if s >= 60 => format!("{}m{:02}s", s / 60, s % 60),

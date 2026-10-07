@@ -33,13 +33,13 @@ fn affinity_live(text: &str, now: u64) -> impl Iterator<Item = Claim<'_>> {
     })
 }
 
-pub fn affinity_lookup(text: &str, repo: &str, now: u64) -> Option<String> {
+fn affinity_lookup(text: &str, repo: &str, now: u64) -> Option<String> {
     affinity_live(text, now)
         .find(|c| c.repo == repo)
         .map(|c| c.machine.to_string())
 }
 
-pub fn affinity_update(text: &str, repo: &str, machine: &str, now: u64) -> String {
+fn affinity_update(text: &str, repo: &str, machine: &str, now: u64) -> String {
     let mut lines: Vec<String> = affinity_live(text, now)
         .filter(|c| c.repo != repo)
         .map(|c| format!("{}\t{}\t{}", c.repo, c.machine, c.used))

@@ -668,7 +668,7 @@ pub fn survey(only: Option<&str>) -> Result<Overview, FleetError> {
 }
 
 /// Every machine in fleet.toml, or the one named, probed at once.
-pub fn overview(
+fn overview(
     only: Option<&str>,
     root: &Path,
     recipe_repos: Vec<String>,
@@ -719,7 +719,7 @@ pub fn overview(
     })
 }
 
-pub fn inventory_path() -> Option<PathBuf> {
+fn inventory_path() -> Option<PathBuf> {
     Paths::from_env().inventory()
 }
 
