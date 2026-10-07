@@ -183,11 +183,11 @@ fn a_runner_that_does_not_build_stops_the_call_with_72() {
 }
 
 #[test]
-fn a_runner_gone_between_its_check_and_its_start_is_built_again() {
+fn a_runner_that_passes_its_check_and_cannot_exec_is_built_again() {
     let mut s = Sandbox::new();
     without_this_runner(&mut s, true);
-    // It passes the far shell's `[ -x ]`, and its exec fails as a removed file's would; aged, so
-    // the older runner is the newest one there to build.
+    // It passes the far shell's `[ -x ]`, and its exec fails with 126; aged, so the older runner
+    // is the newest one there to build.
     let runner = format!("home/{}", runner_path());
     s.write_exec(&runner, "\u{7f}ELF\0\0\0\0");
     s.command("touch", ["-d", "400 days ago", &s.p(&runner)])

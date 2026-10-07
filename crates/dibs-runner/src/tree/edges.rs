@@ -179,7 +179,8 @@ fn a_new_tree_waits_only_for_a_build_that_leaves_more_than_anything_idle_has() {
     let mut said = String::new();
     for (will, finishes) in [(2, true), (3, true), (3, false)] {
         let mut m = Machine::new();
-        m.seed_wait = Duration::from_secs(1);
+        // Only a build that outlasts the wait needs it short; one that finishes ends it at once.
+        m.seed_wait = Duration::from_secs(if finishes { 600 } else { 1 });
         m.sibling("demo-local-idle", &["aaa", "bbb"]);
         let busy = m.sibling("demo-local-busy", &["aaa"]);
         let after = &["aaa", "bbb", "ccc"][..will];
@@ -206,7 +207,7 @@ fn a_new_tree_waits_only_for_a_build_that_leaves_more_than_anything_idle_has() {
                 " but outlasts the wait"
             },
             prepared.unwrap().seeded.unwrap().from,
-            if heard.contains("waiting up to 1s") {
+            if heard.contains("waiting up to ") {
                 ", after waiting"
             } else {
                 ""
