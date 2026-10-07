@@ -100,6 +100,10 @@ impl FileLock {
     /// `lock`, made if missing, exclusively before `deadline`; None once it has passed.
     pub fn exclusive_by(lock: &Path, deadline: Deadline) -> io::Result<Option<FileLock>> {
         let file = File::create(lock)?;
+        if deadline.left().is_none() {
+            file.lock()?;
+            return Ok(Some(FileLock(file)));
+        }
         Ok(deadline
             .until(RETRY, || file.try_lock().is_ok())
             .then_some(FileLock(file)))
