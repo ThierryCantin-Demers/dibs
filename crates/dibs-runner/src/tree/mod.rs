@@ -14,6 +14,7 @@ mod glob;
 mod packages;
 mod runners;
 mod seed;
+mod spread;
 mod step;
 mod sweep;
 #[cfg(test)]

@@ -1,9 +1,9 @@
 use crate::{
     platform::{Host, Platform as _},
-    tree::clocks::Dates as _,
+    tree::{clocks::Dates as _, spread::Spread as _},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map},
     ffi::CString,
     fs, io,
     os::unix::{
@@ -11,6 +11,7 @@ use std::{
         fs::{MetadataExt as _, symlink},
     },
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, SystemTime},
 };
@@ -53,47 +54,33 @@ impl Copier {
         Copier { reflinks }
     }
 
-    /// `from` copied to `to`, which must not exist. What a failed copy made is left for the
-    /// caller to remove.
+    /// `from` copied to `to`, which must not exist, its files shared out among the cores. What a
+    /// failed copy made is left for the caller to remove.
     pub fn tree(&self, from: &Path, to: &Path, sharing: Sharing) -> io::Result<()> {
-        let mut linked = HashMap::new();
-        self.entry(from, to, sharing, &mut linked)
+        let mut laid = Laid::default();
+        laid.out(from, to, &mut HashMap::new())?;
+        let failed = AtomicBool::new(false);
+        let made = laid
+            .files
+            .spread(|file| match failed.load(Ordering::Relaxed) {
+                true => Ok(()),
+                false => self
+                    .made(file, sharing)
+                    .inspect_err(|_| failed.store(true, Ordering::Relaxed)),
+            });
+        made.into_iter().collect::<io::Result<()>>()?;
+        for link in &laid.links {
+            fs::hard_link(&link.first, &link.to)?;
+        }
+        laid.dirs.iter().try_for_each(Entry::dated)
     }
 
-    fn entry(
-        &self,
-        from: &Path,
-        to: &Path,
-        sharing: Sharing,
-        linked: &mut HashMap<(u64, u64), PathBuf>,
-    ) -> io::Result<()> {
-        let meta = fs::symlink_metadata(from)?;
-        if meta.file_type().is_symlink() {
-            return symlink(fs::read_link(from)?, to);
+    fn made(&self, entry: &Entry, sharing: Sharing) -> io::Result<()> {
+        match entry.meta.is_file() {
+            true => self.file(&entry.from, &entry.to, sharing)?,
+            false => special(&entry.to, &entry.meta)?,
         }
-        if meta.is_dir() {
-            fs::create_dir(to)?;
-            for entry in fs::read_dir(from)? {
-                let entry = entry?;
-                self.entry(&entry.path(), &to.join(entry.file_name()), sharing, linked)?;
-            }
-        } else {
-            let inode = (meta.dev(), meta.ino());
-            if meta.nlink() > 1
-                && let Some(first) = linked.get(&inode)
-            {
-                return fs::hard_link(first, to);
-            }
-            match meta.is_file() {
-                true => self.file(from, to, sharing)?,
-                false => special(to, &meta)?,
-            }
-            if meta.nlink() > 1 {
-                linked.insert(inode, to.to_path_buf());
-            }
-        }
-        fs::set_permissions(to, meta.permissions())?;
-        to.date_like(&meta)
+        entry.dated()
     }
 
     fn file(&self, from: &Path, to: &Path, sharing: Sharing) -> io::Result<()> {
@@ -110,6 +97,79 @@ impl Copier {
                 from.display()
             ))),
         }
+    }
+}
+
+/// A tree's copy as one walk lays it out: its directories and symlinks made as it goes, and what
+/// is left to make once they are there.
+#[derive(Default)]
+struct Laid {
+    files: Vec<Entry>,
+    /// A file's second and later names, made once its first is copied.
+    links: Vec<Link>,
+    /// Dated last, deepest first, since writing into a directory moves its time.
+    dirs: Vec<Entry>,
+}
+
+struct Entry {
+    from: PathBuf,
+    to: PathBuf,
+    meta: fs::Metadata,
+}
+
+struct Link {
+    first: PathBuf,
+    to: PathBuf,
+}
+
+impl Laid {
+    fn out(
+        &mut self,
+        from: &Path,
+        to: &Path,
+        linked: &mut HashMap<(u64, u64), PathBuf>,
+    ) -> io::Result<()> {
+        let meta = fs::symlink_metadata(from)?;
+        if meta.file_type().is_symlink() {
+            return symlink(fs::read_link(from)?, to);
+        }
+        let entry = Entry {
+            from: from.to_path_buf(),
+            to: to.to_path_buf(),
+            meta,
+        };
+        if entry.meta.is_dir() {
+            fs::create_dir(to)?;
+            for child in fs::read_dir(from)? {
+                let child = child?;
+                self.out(&child.path(), &to.join(child.file_name()), linked)?;
+            }
+            self.dirs.push(entry);
+            return Ok(());
+        }
+        if entry.meta.nlink() > 1 {
+            match linked.entry((entry.meta.dev(), entry.meta.ino())) {
+                hash_map::Entry::Occupied(first) => {
+                    self.links.push(Link {
+                        first: first.get().clone(),
+                        to: entry.to,
+                    });
+                    return Ok(());
+                }
+                hash_map::Entry::Vacant(first) => {
+                    first.insert(entry.to.clone());
+                }
+            }
+        }
+        self.files.push(entry);
+        Ok(())
+    }
+}
+
+impl Entry {
+    fn dated(&self) -> io::Result<()> {
+        fs::set_permissions(&self.to, self.meta.permissions())?;
+        self.to.date_like(&self.meta)
     }
 }
 

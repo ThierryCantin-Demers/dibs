@@ -11,6 +11,7 @@ use crate::{
     tree::{
         clocks::{Clocks, Contents as _, Dates as _, Fate, Removal},
         runners::Runners,
+        spread::Spread as _,
         sweep::{Section, Sweep, Swept, Verdict},
     },
 };
@@ -19,13 +20,8 @@ use std::{
     ffi::CString,
     fmt, fs,
     io::{self, Write as _},
-    iter,
-    num::NonZero,
     os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _},
-    panic,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
-    thread,
 };
 
 /// Rows listed under a heading before the rest are counted; what is past its clock always is.
@@ -543,7 +539,10 @@ impl Totals {
         let mut sizes = HashMap::new();
         let mut own = HashMap::new();
         let mut shared = HashMap::new();
-        for (path, walked) in paths.iter().zip(Walked::all(paths, mapped)) {
+        for (path, walked) in paths
+            .iter()
+            .zip(paths.spread(|path| Walked::of(path, mapped)))
+        {
             let mut blocks = walked.blocks;
             for (file, held) in walked.linked {
                 if !linked.insert(file) {
@@ -566,31 +565,6 @@ impl Totals {
 }
 
 impl Walked {
-    /// Each path's walk, in order, the paths spread over the cores.
-    fn all(paths: &[PathBuf], mapped: bool) -> Vec<Walked> {
-        let next = AtomicUsize::new(0);
-        let cores = thread::available_parallelism().map_or(1, NonZero::get);
-        let mut walked: Vec<(usize, Walked)> = thread::scope(|scope| {
-            let walkers: Vec<_> = (0..cores.min(paths.len()))
-                .map(|_| {
-                    scope.spawn(|| {
-                        iter::from_fn(|| {
-                            let at = next.fetch_add(1, Ordering::Relaxed);
-                            paths.get(at).map(|path| (at, Walked::of(path, mapped)))
-                        })
-                        .collect::<Vec<_>>()
-                    })
-                })
-                .collect();
-            walkers
-                .into_iter()
-                .flat_map(|w| w.join().unwrap_or_else(|panic| panic::resume_unwind(panic)))
-                .collect()
-        });
-        walked.sort_by_key(|(at, _)| *at);
-        walked.into_iter().map(|(_, w)| w).collect()
-    }
-
     /// Everything under a path, its own entry included.
     fn of(path: &Path, mapped: bool) -> Walked {
         let mut walked = Walked::default();
