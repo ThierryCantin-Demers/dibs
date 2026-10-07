@@ -47,7 +47,7 @@ do, and `dibs --check` lists what it has.
 
 **Which machines.** The half of dibs that runs on a machine is `dibs-runner`, which each machine
 builds with its own cargo the first time a client needs it (`dibs --check` builds the first one).
-It needs cargo and a toolchain at the workspace's `rust-version`, bash for the jobs, and rsync 3
+It needs cargo and Rust 1.99 or later (the workspace's `rust-version`), bash for the jobs, and rsync 3
 and git for trees sent there. What differs between operating systems is behind one trait in
 `crates/dibs-runner/src/platform/`:
 
