@@ -4,7 +4,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, RecvTimeoutError, Sender},
     },
-    thread,
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -19,6 +19,12 @@ pub struct Deadline {
 /// Stops the call its deadline bounds when it is dropped.
 #[derive(Debug)]
 pub struct Stop(Arc<Stopping>);
+
+/// A deadline bounded by its stop alone.
+pub struct Stoppable {
+    pub deadline: Deadline,
+    pub stop: Stop,
+}
 
 #[derive(Debug, Default)]
 struct Stopping {
@@ -52,13 +58,15 @@ impl Deadline {
     }
 
     /// No bound in time: the call runs until it ends, or until the `Stop` is dropped.
-    pub fn stoppable() -> (Deadline, Stop) {
+    pub fn stoppable() -> Stoppable {
         let shared = Arc::<Stopping>::default();
-        let deadline = Deadline {
-            at: None,
-            shared: Arc::clone(&shared),
-        };
-        (deadline, Stop(shared))
+        Stoppable {
+            deadline: Deadline {
+                at: None,
+                shared: Arc::clone(&shared),
+            },
+            stop: Stop(shared),
+        }
     }
 
     pub fn passed(&self) -> bool {
@@ -66,8 +74,13 @@ impl Deadline {
     }
 
     /// Stops the process at the deadline or the stop, unless `ended` says first that it was
-    /// reaped. A stop reaches it through `tell`.
-    pub fn watch(&self, pid: u32, tell: Sender<Ended>, ended: Receiver<Ended>) {
+    /// reaped. A stop reaches it through `tell`. The watcher ends with what it heard.
+    pub fn watch(
+        &self,
+        pid: u32,
+        tell: Sender<Ended>,
+        ended: Receiver<Ended>,
+    ) -> JoinHandle<Ended> {
         let stopped = {
             let mut attempt = self.shared.lock();
             match *attempt {
@@ -103,7 +116,8 @@ impl Deadline {
                 // pid is still the call's but for that instant.
                 unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
             }
-        });
+            end
+        })
     }
 }
 
@@ -143,7 +157,7 @@ mod tests {
 
     #[test]
     fn dropping_the_stop_stops_the_call() {
-        let (deadline, stop) = Deadline::stoppable();
+        let Stoppable { deadline, stop } = Deadline::stoppable();
         let mut child = waiting();
         let _open = child.stdin.take();
         let (tell, ended) = mpsc::channel();
@@ -156,7 +170,7 @@ mod tests {
 
     #[test]
     fn a_stop_dropped_before_the_call_starts_stops_it_as_it_starts() {
-        let (deadline, stop) = Deadline::stoppable();
+        let Stoppable { deadline, stop } = Deadline::stoppable();
         drop(stop);
         let mut child = waiting();
         let _open = child.stdin.take();
@@ -170,14 +184,15 @@ mod tests {
 
     #[test]
     fn a_call_that_ended_is_not_stopped_after() {
-        let (deadline, stop) = Deadline::stoppable();
+        let Stoppable { deadline, stop } = Deadline::stoppable();
         let mut child = waiting();
         let (tell, ended) = mpsc::channel();
-        deadline.watch(child.id(), tell.clone(), ended);
+        let watcher = deadline.watch(child.id(), tell.clone(), ended);
         drop(child.stdin.take());
         assert!(child.wait().expect("cat is reaped").success());
         tell.send(Ended::Reaped).expect("the watcher listens");
         drop(stop);
+        assert_eq!(watcher.join().expect("the watcher ends"), Ended::Reaped);
         assert!(!deadline.passed());
     }
 }

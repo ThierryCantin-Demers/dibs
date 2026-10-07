@@ -2,7 +2,7 @@ use crate::{
     call::machine::{Asked, MachineCall},
     caller::Caller,
     cli::Call,
-    machine::{Deadline, Stop, Stream},
+    machine::{Deadline, Stop, Stoppable, Stream},
 };
 use dibs_format::{Label, MachineName, Mode, status::Status};
 use std::thread;
@@ -32,7 +32,7 @@ impl StatusFeed {
         every: u64,
         mut on: impl FnMut(Fed) + Send + 'static,
     ) -> StatusFeed {
-        let (deadline, stop) = Deadline::stoppable();
+        let Stoppable { deadline, stop } = Deadline::stoppable();
         thread::spawn(move || {
             let call = Call {
                 on: machine,

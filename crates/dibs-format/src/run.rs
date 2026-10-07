@@ -1,4 +1,4 @@
-use crate::{Alias, BatchId, JobId, Lock, MachineName};
+use crate::{Alias, BatchId, JobId, Lock, MachineName, wire::Revision};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{MapAccess, Visitor},
@@ -73,6 +73,18 @@ impl From<Vec<(String, String)>> for Pairs {
                 .map(|(name, value)| Pair { name, value })
                 .collect(),
         )
+    }
+}
+
+impl From<Vec<Revision>> for Pairs {
+    fn from(revisions: Vec<Revision>) -> Self {
+        revisions
+            .into_iter()
+            .map(|r| Pair {
+                name: r.repo,
+                value: r.sha,
+            })
+            .collect()
     }
 }
 

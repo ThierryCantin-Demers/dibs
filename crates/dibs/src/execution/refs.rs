@@ -6,7 +6,7 @@ use crate::{
     git::{Git, GitError},
     recipe::Lock,
 };
-use dibs_format::{JobId, StepRecord};
+use dibs_format::{JobId, StepRecord, wire::Revision};
 use std::{collections::BTreeMap, path::Path};
 
 /// What `@<ref>` names, before anything is looked up.
@@ -208,7 +208,7 @@ impl Arm {
     pub fn measured_summary(
         arms: &[Arm],
         steps: &[StepRecord],
-        revisions: &dyn Fn(usize) -> Vec<(String, String)>,
+        revisions: &dyn Fn(usize) -> Vec<Revision>,
     ) -> String {
         let width = arms.iter().map(|a| a.name.len()).max().unwrap_or(0);
         let mut out = String::from(
@@ -233,7 +233,7 @@ impl Arm {
                 .collect();
             let revs: Vec<String> = revisions(a)
                 .iter()
-                .map(|(r, sha)| format!("{r}@{sha}"))
+                .map(|r| format!("{}@{}", r.repo, r.sha))
                 .collect();
             out += &format!(
                 "  {:<width$}  {}  {}  jobs {}\n",

@@ -1,4 +1,7 @@
-use super::{pins::PinSpec, refs::Side};
+use super::{
+    pins::{PinSpec, PinnedRepo},
+    refs::Side,
+};
 use crate::{
     call::{Pending, Planned},
     cli::RecipeCall,
@@ -78,7 +81,7 @@ impl Job {
         sides: &[Side],
         local: &[bool],
         reps: u32,
-        pins: &[(String, bool)],
+        pins: &[PinnedRepo],
     ) -> Vec<Pending> {
         let of = |arm: usize, rep: Option<u32>| {
             let mut tags = Vec::new();
@@ -99,11 +102,11 @@ impl Job {
             label,
             here: true,
         };
-        let pinned = pins.iter().map(|(repo, local)| {
+        let pinned = pins.iter().map(|pin| {
             job(
                 format!("{}:pin", r.label),
-                if *local { Mode::Rsh } else { Mode::Shared },
-                format!(" ({repo})"),
+                if pin.local { Mode::Rsh } else { Mode::Shared },
+                format!(" ({})", pin.repo),
             )
         });
         pinned
@@ -134,7 +137,12 @@ impl Job {
         let pins = args
             .pins
             .iter()
-            .map(|p| PinSpec::parse(p).map(|s| (s.repo.to_string(), s.reference == "local")))
+            .map(|p| {
+                PinSpec::parse(p).map(|s| PinnedRepo {
+                    repo: s.repo.to_string(),
+                    local: s.reference == "local",
+                })
+            })
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
         // Whether a ref is sent is only known once it is looked up, so a ref is planned as fetched.

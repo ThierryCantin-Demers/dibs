@@ -12,7 +12,7 @@ mod target;
 mod unreachable;
 mod values;
 
-pub use deadline::{Deadline, Stop};
+pub use deadline::{Deadline, Stop, Stoppable};
 pub use held::{Held, Holder, Release};
 pub use interrupt::{Interrupt, Relayed};
 pub use lines::{Lines, Listener, Stream};

@@ -31,9 +31,33 @@ const TIME_WIDTH: usize = 7;
 const CORES_WIDTH: usize = 7;
 const NOTE_MIN_WIDTH: usize = 24;
 
+const OVERLAY_SIZE: Share = Share {
+    width: 86,
+    height: 84,
+};
+const CONFIRM_SIZE: Share = Share {
+    width: 56,
+    height: 22,
+};
+
 /// Percent of the screen an overlay takes, across and down.
-const OVERLAY_SIZE: (u16, u16) = (86, 84);
-const CONFIRM_SIZE: (u16, u16) = (56, 22);
+#[derive(Clone, Copy)]
+struct Share {
+    width: u16,
+    height: u16,
+}
+
+/// A table column: its heading, and its width in cells.
+struct Column {
+    heading: &'static str,
+    width: usize,
+}
+
+/// A machine's lock state as the header words and colours it.
+struct Worded {
+    text: &'static str,
+    style: Style,
+}
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let rows = app.rows();
@@ -93,7 +117,7 @@ fn header(app: &App) -> Line<'static> {
                 Style::new().fg(Color::Red),
             )),
             (None, Some(s)) => {
-                let (text, style) = state_style(s.state);
+                let Worded { text, style } = Worded::of(s.state);
                 head.push(Span::styled(
                     if multi {
                         text.to_string()
@@ -183,9 +207,9 @@ fn jobs_table(f: &mut Frame, app: &mut App, rows: &[Item], area: Rect) {
     let (heads, widths): (Vec<&str>, Vec<Constraint>) = columns
         .into_iter()
         .enumerate()
-        .map(|(i, (head, n))| match i == last {
-            true => (head, Constraint::Min(n as u16)),
-            false => (head, Constraint::Length(n as u16)),
+        .map(|(i, column)| match i == last {
+            true => (column.heading, Constraint::Min(column.width as u16)),
+            false => (column.heading, Constraint::Length(column.width as u16)),
         })
         .unzip();
 
@@ -228,7 +252,7 @@ impl Widths {
             note: NOTE_MIN_WIDTH,
         };
         let columns = w.columns();
-        let taken = columns.iter().map(|(_, n)| n).sum::<usize>() + columns.len() - 1;
+        let taken = columns.iter().map(|c| c.width).sum::<usize>() + columns.len() - 1;
         let mut spare = inner.saturating_sub(taken);
         let mut grow = [
             (
@@ -268,28 +292,28 @@ impl Widths {
 
     /// Each column shown, its heading and its width. The machine and device columns carry a
     /// space of their own past what they print.
-    fn columns(&self) -> Vec<(&'static str, usize)> {
-        let mut c = vec![("", 1)];
+    fn columns(&self) -> Vec<Column> {
+        let mut c = vec![Column::new("", 1)];
         if self.multi {
-            c.push(("MACHINE", self.machine + 1));
+            c.push(Column::new("MACHINE", self.machine + 1));
         }
         c.extend([
-            ("WHAT", WHAT_WIDTH),
-            ("MODE", MODE_WIDTH),
-            ("LABEL", self.label),
+            Column::new("WHAT", WHAT_WIDTH),
+            Column::new("MODE", MODE_WIDTH),
+            Column::new("LABEL", self.label),
         ]);
         if self.any_device {
-            c.push(("DEVICE", self.device + 1));
+            c.push(Column::new("DEVICE", self.device + 1));
         }
         c.extend([
-            ("AGENT", self.agent),
-            ("TIME", TIME_WIDTH),
-            ("CORES", CORES_WIDTH),
+            Column::new("AGENT", self.agent),
+            Column::new("TIME", TIME_WIDTH),
+            Column::new("CORES", CORES_WIDTH),
         ]);
         if self.any_step {
-            c.push(("STEP", self.step));
+            c.push(Column::new("STEP", self.step));
         }
-        c.push(("NOTE", self.note));
+        c.push(Column::new("NOTE", self.note));
         c
     }
 }
@@ -526,20 +550,29 @@ fn mode_style(mode: Mode, base: Style) -> Style {
     .add_modifier(Modifier::BOLD)
 }
 
-fn state_style(state: LockState) -> (&'static str, Style) {
-    let bold = |c: Color| Style::new().fg(c).add_modifier(Modifier::BOLD);
-    match state {
-        LockState::Bench => ("BUSY, benchmark in progress", bold(Color::Red)),
-        LockState::Shared => ("in use, shared", bold(Color::Yellow)),
-        LockState::Idle => ("idle", bold(Color::Green)),
-        LockState::Busy => ("in use", bold(Color::Yellow)),
-        LockState::Orphan => ("LOCKED BY AN ORPHAN", bold(Color::Red)),
+impl Column {
+    fn new(heading: &'static str, width: usize) -> Column {
+        Column { heading, width }
     }
 }
 
-fn centred(area: Rect, (pct_x, pct_y): (u16, u16)) -> Rect {
-    let h = area.height * pct_y / 100;
-    let w = area.width * pct_x / 100;
+impl Worded {
+    fn of(state: LockState) -> Worded {
+        let bold = |c: Color| Style::new().fg(c).add_modifier(Modifier::BOLD);
+        let (text, style) = match state {
+            LockState::Bench => ("BUSY, benchmark in progress", bold(Color::Red)),
+            LockState::Shared => ("in use, shared", bold(Color::Yellow)),
+            LockState::Idle => ("idle", bold(Color::Green)),
+            LockState::Busy => ("in use", bold(Color::Yellow)),
+            LockState::Orphan => ("LOCKED BY AN ORPHAN", bold(Color::Red)),
+        };
+        Worded { text, style }
+    }
+}
+
+fn centred(area: Rect, share: Share) -> Rect {
+    let h = area.height * share.height / 100;
+    let w = area.width * share.width / 100;
     Rect {
         x: area.x + (area.width.saturating_sub(w)) / 2,
         y: area.y + (area.height.saturating_sub(h)) / 2,
@@ -575,7 +608,7 @@ mod tests {
             "never narrower than the defaults"
         );
         let base: usize =
-            narrow.columns().iter().map(|(_, n)| n).sum::<usize>() + narrow.columns().len() - 1;
+            narrow.columns().iter().map(|c| c.width).sum::<usize>() + narrow.columns().len() - 1;
         let some = Widths::new(&rows, base + 6, false, false);
         assert_eq!(
             (some.label, some.agent, some.note),

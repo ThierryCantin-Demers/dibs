@@ -3,7 +3,7 @@ use super::{
     error::{Refusal, RunError, Unprepared},
     jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
     local::Repo,
-    pins::{Nest, PinSpec, Pinned, PinnedTree},
+    pins::{Nest, PinSpec, Pinned, PinnedRepo, PinnedTree},
     refs::{Arm, Side},
     schedule::Job,
     sweep::SweepPoints,
@@ -18,7 +18,8 @@ use crate::{
 };
 use dibs_format::{
     Alias, ArmRecord, BatchId, Exit, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
-    RunVerb, StepRecord, wire,
+    RunVerb, StepRecord,
+    wire::{self, Revision},
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -51,7 +52,12 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         .pins
         .iter()
         .zip(&pins)
-        .map(|(spec, p)| PinSpec::parse(spec).map(|s| (s.repo.to_string(), p.local.is_some())))
+        .map(|(spec, p)| {
+            PinSpec::parse(spec).map(|s| PinnedRepo {
+                repo: s.repo.to_string(),
+                local: p.local.is_some(),
+            })
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let calls = Job::pending(&resolved, &sides, &local, args.reps, &pin_specs);
     let Resolved {
@@ -599,10 +605,10 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     }
     backend.fetch_artifacts(&steps, args.artifacts_to.as_deref(), compared);
 
-    let revision = |p: &wire::Prepared| (p.revision.repo.clone(), p.revision.sha.clone());
-    let pinned_revisions: Vec<(String, String)> = pinned.iter().map(revision).collect();
+    let revision = |p: &wire::Prepared| p.revision.clone();
+    let pinned_revisions: Vec<Revision> = pinned.iter().map(revision).collect();
     let prepared = |a: usize| trees[a].prepared.as_ref();
-    let revisions_of = |a: usize| -> Vec<(String, String)> {
+    let revisions_of = |a: usize| -> Vec<Revision> {
         prepared(a)
             .map(revision)
             .into_iter()

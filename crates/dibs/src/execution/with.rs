@@ -41,7 +41,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         let have: Vec<String> = manifest
             .service_listing()
             .iter()
-            .map(|(n, _)| n.to_string())
+            .map(|listed| listed.name.to_string())
             .collect();
         match have.is_empty() {
             true => Refusal::NoServices(repo_name.clone()),

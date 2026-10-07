@@ -135,6 +135,12 @@ pub enum Source {
     Local,
 }
 
+/// A recipe or a service by name, and the file it came from, as `dibs list` shows it.
+pub struct Listed<'a> {
+    pub name: &'a str,
+    pub source: Source,
+}
+
 impl Manifest {
     /// This computer's recipes, which override a repo's own.
     pub fn local_dir() -> PathBuf {
@@ -257,10 +263,13 @@ impl Manifest {
         self.service.get(name)
     }
 
-    pub fn service_listing(&self) -> Vec<(&str, Source)> {
+    pub fn service_listing(&self) -> Vec<Listed<'_>> {
         self.service
             .iter()
-            .map(|(k, v)| (k.as_str(), v.source))
+            .map(|(name, v)| Listed {
+                name,
+                source: v.source,
+            })
             .collect()
     }
 
@@ -278,10 +287,13 @@ impl Manifest {
         self.table(verb).keys().cloned().collect()
     }
 
-    pub fn listing(&self, verb: Verb) -> Vec<(&str, Source)> {
+    pub fn listing(&self, verb: Verb) -> Vec<Listed<'_>> {
         self.table(verb)
             .iter()
-            .map(|(k, v)| (k.as_str(), v.source))
+            .map(|(name, v)| Listed {
+                name,
+                source: v.source,
+            })
             .collect()
     }
 

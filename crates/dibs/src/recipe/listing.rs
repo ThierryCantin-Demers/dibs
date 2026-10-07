@@ -1,6 +1,6 @@
 use super::{
     error::RecipeError,
-    manifest::{Manifest, Source, Verb},
+    manifest::{Listed, Manifest, Source, Verb},
     repo::Checkouts,
 };
 use crate::{cli::RecipeCall, execution::Repo};
@@ -14,8 +14,8 @@ pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
         let listing = manifest.listing(v);
         if !listing.is_empty() {
             println!("{}:", v.as_str());
-            for (n, src) in listing {
-                match src {
+            for Listed { name: n, source } in listing {
+                match source {
                     Source::Repo => println!("  {n}   (from the repo)"),
                     Source::Local => println!("  {n}"),
                 }
@@ -45,8 +45,8 @@ pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
     let services = manifest.service_listing();
     if !services.is_empty() {
         println!("service:");
-        for (n, src) in services {
-            match src {
+        for Listed { name: n, source } in services {
+            match source {
                 Source::Repo => println!("  {n}   (from the repo)"),
                 Source::Local => println!("  {n}"),
             }

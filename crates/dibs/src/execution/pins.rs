@@ -170,6 +170,12 @@ impl Nest {
     }
 }
 
+/// A pinned repo as a recipe's jobs are planned: sent from here, or fetched there.
+pub struct PinnedRepo {
+    pub repo: String,
+    pub local: bool,
+}
+
 /// `--pin <repo>@<ref>`, both halves named.
 pub struct PinSpec<'a> {
     pub repo: &'a str,
