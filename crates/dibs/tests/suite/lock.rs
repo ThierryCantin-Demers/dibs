@@ -382,11 +382,12 @@ fn a_session_that_named_its_work_is_told_apart() {
             .env("DIBS_AGENT", who)
             .run()
     };
+    let record = s.read(&format!("lockdir/holder.{pid}"));
     let other = kill_as("sweep b");
     assert_eq!(
         other.code,
         2,
-        "a session that named its work is told apart from another: {}",
+        "a session that named its work is told apart from another: {}\nits record: {record}",
         other.all()
     );
     let own = kill_as("sweep a");
@@ -419,11 +420,14 @@ fn every_user_on_a_machine_takes_the_same_lock() {
         1,
         "and names both remedies, not only the group"
     );
-    assert_eq!(
-        check.lines_with(&format!("install -d -m 2775 -g dibs {shared}")),
-        1,
-        "and tells you exactly how to fix it, naming the configured path:\n{check}"
-    );
+    // Elsewhere the check offers the one account alone: the recipe is Linux's groupadd and tmpfs.
+    if cfg!(target_os = "linux") {
+        assert_eq!(
+            check.lines_with(&format!("install -d -m 2775 -g dibs {shared}")),
+            1,
+            "and tells you exactly how to fix it, naming the configured path:\n{check}"
+        );
+    }
     fs::create_dir_all(&shared).unwrap();
     let check = s
         .dibs(["--check"])

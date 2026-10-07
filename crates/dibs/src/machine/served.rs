@@ -28,9 +28,11 @@ use std::{
 
 /// What a far shell exits with when the runner for this source is not there.
 pub const MISSING: i32 = 125;
+/// What the far line exits with when the runner is there and cannot be started.
+const UNEXECUTABLE: i32 = 126;
 /// What a far shell exits with, nothing heard from the runner, when it was not there to start:
 /// the check's own, or the exec's when the version went between the check and the exec.
-const RUNNER_ABSENT: [i32; 3] = [MISSING, 126, 127];
+const RUNNER_ABSENT: [i32; 3] = [MISSING, UNEXECUTABLE, 127];
 /// The word the client's own binary serves the runner under, on this computer.
 pub const RUNNER_WORD: &str = "__runner";
 
@@ -56,9 +58,11 @@ impl Runner {
     }
 
     /// The line the login shell there runs, which fish, bash and dash read alike.
+    /// `command exec` lets the line say a failed exec itself: a bare exec ends the shell with a
+    /// status of the shell's choosing, 126 on Linux and 1 under macOS's sh.
     fn far_line() -> String {
         format!(
-            "sh -c 'r=$HOME/.cache/dibs/runner/{hash}/dibs-runner; [ -x \"$r\" ] || exit {MISSING}; exec \"$r\" serve {hash}'",
+            "sh -c 'r=$HOME/.cache/dibs/runner/{hash}/dibs-runner; [ -x \"$r\" ] || exit {MISSING}; command exec \"$r\" serve {hash}; exit {UNEXECUTABLE}'",
             hash = Runner::HASH
         )
     }

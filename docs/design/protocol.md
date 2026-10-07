@@ -16,7 +16,7 @@ The client starts the runner and talks to it over the runner's stdin and stdout.
 - **Over ssh:** the client asks the login shell there, whichever it is, to run
 
   ```
-  sh -c 'r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; exec "$r" serve <hash>'
+  sh -c 'r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; command exec "$r" serve <hash>; exit 126'
   ```
 
   fish, bash and dash all read that line the same way. Nothing is written on the machine to run a
