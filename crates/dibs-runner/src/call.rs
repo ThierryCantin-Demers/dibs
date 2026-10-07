@@ -26,7 +26,8 @@ pub struct Received {
 impl Received {
     pub fn of(request: Request) -> Received {
         let agent = request.agent.one_line(NAME);
-        let agent_id = request.agent_id.one_line(NAME);
+        // Compared whole by --kill, so never cut short as the name beside it is.
+        let agent_id = request.agent_id.replace(['\n', '\t'], " ");
         let batch_tag = request
             .batch
             .as_deref()
