@@ -1,7 +1,6 @@
 use crate::{
     clock::{Deadline, Moment},
-    job::{Environment, Job, Output},
-    sink::Sink,
+    job::Environment,
     tree::{
         Clocks, Commands, Reflinks, Runners, Spot, Stepping, TreeConfig, Trees,
         clocks::{Fate, Removal},
@@ -1287,14 +1286,10 @@ fn a_build_mark_stays_held_while_the_builds_own_processes_live_after_the_runner_
             .success()
     );
     let mark = s.with(None, |step| step.building()).unwrap();
-    let build = Job::spawn(
-        &format!("read -r _ < '{}'", gate.display()),
-        &Environment::default(),
-        Output::Log(Path::new("/dev/null")),
-        &Sink::plain(),
-        Some(mark.held()),
-    )
-    .unwrap();
+    let mut command = Command::new("sh");
+    command.arg("-c").arg("read -r _ < \"$0\"").arg(&gate);
+    mark.hand_to(&mut command);
+    let mut build = command.spawn().unwrap();
     mark.ended(Exit::Overran.status());
     let own = s
         .target
@@ -1302,7 +1297,7 @@ fn a_build_mark_stays_held_while_the_builds_own_processes_live_after_the_runner_
     let unheld = || File::open(&own).unwrap().try_lock().is_ok();
     assert!(!unheld(), "the build's processes hold it");
     fs::write(&gate, "\n").unwrap();
-    build.wait(None);
+    build.wait().unwrap();
     assert!(unheld(), "and nothing once they have gone");
 }
 

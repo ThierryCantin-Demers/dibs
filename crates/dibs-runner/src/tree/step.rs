@@ -7,8 +7,10 @@ use crate::tree::{
 use dibs_format::{Exit, lockfile::Package};
 use std::{
     fs::{self, File},
-    os::fd::{AsFd as _, BorrowedFd},
+    io,
+    os::{fd::AsRawFd as _, unix::process::CommandExt as _},
     path::{Path, PathBuf},
+    process::Command,
 };
 
 /// Where a target records the tree whose build it last held.
@@ -32,9 +34,16 @@ pub struct BuildMark {
 }
 
 impl BuildMark {
-    /// The lock, for the build's own processes to hold.
-    pub fn held(&self) -> BorrowedFd<'_> {
-        self.held.as_fd()
+    /// The build's own processes hold it too, from `command`'s exec on.
+    pub fn hand_to(&self, command: &mut Command) {
+        let fd = self.held.as_raw_fd();
+        // SAFETY: fcntl is async-signal-safe, on a descriptor open until exec.
+        unsafe {
+            command.pre_exec(move || match libc::fcntl(fd, libc::F_SETFD, 0) {
+                -1 => Err(io::Error::last_os_error()),
+                _ => Ok(()),
+            });
+        }
     }
 
     /// A build that ended on its own takes its mark away; one stopped, at its cap or by a signal,

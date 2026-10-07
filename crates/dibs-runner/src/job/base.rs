@@ -2,15 +2,13 @@ use crate::{
     job::{environment::Environment, tether::Tether},
     sink::Sink,
     stop::Signals,
+    tree::BuildMark,
 };
 use dibs_format::Exit;
 use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Write as _},
-    os::{
-        fd::{AsRawFd as _, BorrowedFd},
-        unix::process::CommandExt as _,
-    },
+    os::unix::process::CommandExt as _,
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
     sync::mpsc,
@@ -81,14 +79,12 @@ pub struct Job {
 }
 
 impl Job {
-    /// `holds` is a lock the job's own processes hold too, so it stays held while any of them
-    /// lives, whatever becomes of this runner.
     pub fn spawn(
         command: &str,
         environment: &Environment,
         output: Output,
         sink: &Sink,
-        holds: Option<BorrowedFd>,
+        mark: Option<&BuildMark>,
     ) -> io::Result<Job> {
         let mut bash = Command::new("bash");
         bash.arg("-c")
@@ -97,14 +93,8 @@ impl Job {
             .process_group(0);
         Signals::unblocked(&mut bash);
         environment.apply(&mut bash);
-        if let Some(fd) = holds.map(|fd| fd.as_raw_fd()) {
-            // SAFETY: fcntl is async-signal-safe, on a descriptor open until exec.
-            unsafe {
-                bash.pre_exec(move || match libc::fcntl(fd, libc::F_SETFD, 0) {
-                    -1 => Err(io::Error::last_os_error()),
-                    _ => Ok(()),
-                });
-            }
+        if let Some(mark) = mark {
+            mark.hand_to(&mut bash);
         }
         let tether = Tether::start().ok();
         if let Some(tether) = &tether {
