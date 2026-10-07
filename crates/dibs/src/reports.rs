@@ -5,13 +5,10 @@ use crate::{
     caller::Caller,
     cli::Friction,
     paths::{FileError, Paths, ReportsStamp},
-    records::{
-        RecordsError,
-        friction::{self, Note},
-        now_secs,
-    },
+    records::{FrictionLog, RecordsError, now_secs},
     update::{Build, ChangeNotice},
 };
+use dibs_format::FrictionNote;
 use dibs_runner::shared::SharedFile;
 use serde_json::Value;
 use std::{
@@ -185,7 +182,7 @@ impl fmt::Display for ReportsError {
 /// Fetches the replies `by` has not seen and adds them to `into`, whole or not at all.
 pub fn fetch_replies(
     repo: &str,
-    notes: &[Note],
+    notes: &[FrictionNote],
     by: &str,
     into: &Path,
 ) -> Result<(), ReportsError> {
@@ -242,7 +239,7 @@ fn number(url: &str) -> Option<u64> {
 }
 
 /// A public repo is refused: a report carries the paths, repos and commands of whoever filed it.
-pub fn file(repo: &str, n: &Note) -> Result<u64, ReportsError> {
+pub fn file(repo: &str, n: &FrictionNote) -> Result<u64, ReportsError> {
     let visibility = gh(&[
         "repo",
         "view",
@@ -356,7 +353,7 @@ fn listed(repo: &str) -> Result<Vec<Value>, ReportsError> {
 }
 
 /// Answers to the reports this session filed, each said once.
-fn replies(repo: &str, notes: &[Note], by: &str) -> Result<Vec<String>, ReportsError> {
+fn replies(repo: &str, notes: &[FrictionNote], by: &str) -> Result<Vec<String>, ReportsError> {
     let filed: BTreeSet<u64> = notes
         .iter()
         .filter(|n| n.by == by)
@@ -684,17 +681,18 @@ pub fn friction_verb(friction: Friction) -> Result<ExitCode, ReportsError> {
         Friction::Note { text } => {
             let caller = Caller::from_env();
             ChangeNotice::tell_once(&caller);
-            let mut note = friction::note(
+            let mut note = FrictionNote::new(
                 &text,
                 &caller.name,
                 Build::COMMIT.unwrap_or_default(),
                 now_secs(),
-            )?;
+            )
+            .ok_or(RecordsError::EmptyNote)?;
             let filed = repo().map(|repo| (file(&repo, &note), repo));
             if let Some((Ok(n), _)) = &filed {
                 note.issue = Some(*n);
             }
-            friction::append(&friction::path()?, &note)?;
+            FrictionLog::here()?.append(&note)?;
             match filed {
                 None => println!(
                     "Recorded. dibs gaps prints it, with everything else that got in the way."

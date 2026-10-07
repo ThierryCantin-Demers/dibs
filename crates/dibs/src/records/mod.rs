@@ -3,9 +3,10 @@
 
 mod affinity;
 mod error;
-pub mod friction;
+mod friction;
 pub mod runs;
 
 pub use affinity::Affinity;
 pub use error::{Kept, RecordsError};
+pub use friction::{Complaints, FrictionLog};
 pub use runs::{now_secs, runs_path, write_record};

@@ -11,150 +11,156 @@ use crate::{
         runs,
     },
 };
-pub use dibs_format::FrictionNote as Note;
-use std::{
-    collections::BTreeMap,
-    io::Write as _,
-    path::{Path, PathBuf},
-};
+use dibs_format::FrictionNote;
+use std::{collections::BTreeMap, fmt, io::Write as _, path::PathBuf};
 
-/// Beside the run records, and moved by a variable of its own: it answers for the same work, and
-/// where it should live is the user's to decide. Sharing it is theirs to choose too, with
-/// DIBS_REPORTS, and never a default.
-pub fn path() -> Result<PathBuf, RecordsError> {
-    Paths::from_env()
-        .friction()
-        .ok_or(RecordsError::NoHome(Kept::Friction))
+/// The friction notes this computer kept, one line each.
+pub struct FrictionLog {
+    path: PathBuf,
 }
 
-/// Whitespace collapsed to one line, because what makes the list readable later is that each
-/// report is one, and two sessions reporting the same thing have to land on the same text to be
-/// counted as two.
-pub fn note(text: &str, by: &str, version: &str, when: u64) -> Result<Note, RecordsError> {
-    let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.is_empty() {
-        return Err(RecordsError::EmptyNote);
+impl FrictionLog {
+    /// Beside the run records, and moved by a variable of its own: it answers for the same work,
+    /// and where it should live is the user's to decide. Sharing it is theirs to choose too, with
+    /// DIBS_REPORTS, and never a default.
+    pub fn here() -> Result<FrictionLog, RecordsError> {
+        let path = Paths::from_env()
+            .friction()
+            .ok_or(RecordsError::NoHome(Kept::Friction))?;
+        Ok(FrictionLog { path })
     }
-    Ok(Note {
-        when,
-        text: text.chars().take(280).collect(),
-        by: by.chars().take(48).collect(),
-        version: version.chars().take(40).collect(),
-        issue: None,
-    })
-}
 
-/// Appended, never rewritten, so two sessions reporting at the same moment cannot lose each
-/// other's line.
-pub fn append(path: &Path, n: &Note) -> Result<(), RecordsError> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(FileError::at(dir))?;
+    /// Appended, never rewritten, so two sessions reporting at the same moment cannot lose each
+    /// other's line.
+    pub fn append(&self, note: &FrictionNote) -> Result<(), RecordsError> {
+        let path = &self.path;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(FileError::at(dir))?;
+        }
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(FileError::at(path))?;
+        Ok(writeln!(f, "{}", note.to_line()).map_err(FileError::at(path))?)
     }
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(FileError::at(path))?;
-    Ok(writeln!(f, "{}", n.to_line()).map_err(FileError::at(path))?)
-}
 
-pub fn load(path: &Path) -> Vec<Note> {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    text.lines()
-        .filter_map(|l| l.parse::<Note>().ok())
-        .filter(|n| !n.text.is_empty())
-        .collect()
-}
-
-/// Case and a trailing stop are not a different report, and reading the same complaint as two
-/// hides the thing this exists to show: that it keeps happening.
-fn same(text: &str) -> String {
-    text.to_lowercase().trim_end_matches(['.', '!']).to_string()
-}
-
-/// One report is a nuisance somebody worked around. The same one three times is the
-/// specification for a fix, so the count leads and the recurring ones sort to the top.
-pub fn report(notes: &[Note]) -> String {
-    if notes.is_empty() {
-        return "\nNothing has been reported as friction. An agent that had to work around dibs\n\
-                records it with: dibs --friction '<one line>'\n"
-            .to_string();
+    pub fn notes(&self) -> Vec<FrictionNote> {
+        let text = std::fs::read_to_string(&self.path).unwrap_or_default();
+        text.lines()
+            .filter_map(|l| l.parse::<FrictionNote>().ok())
+            .filter(|n| !n.text.is_empty())
+            .collect()
     }
-    let mut seen: BTreeMap<String, (usize, &Note, &Note)> = BTreeMap::new();
-    for n in notes {
-        seen.entry(same(&n.text))
-            .and_modify(|e| {
-                e.0 += 1;
-                if n.when >= e.2.when {
-                    e.2 = n;
-                }
-                if n.when < e.1.when {
-                    e.1 = n;
-                }
-            })
-            .or_insert((1, n, n));
-    }
-    let mut ordered: Vec<(usize, &Note, &Note)> = seen.into_values().collect();
-    ordered.sort_by(|a, b| b.0.cmp(&a.0).then(b.2.when.cmp(&a.2.when)));
+}
 
-    let mut out = String::from("\nWhat got in the way:\n\n");
-    for (n, first, last) in &ordered {
-        out.push_str(&format!("  {n:>3}x  {}\n", last.text));
-        let by = if last.by.is_empty() {
-            String::new()
-        } else {
-            format!(" by {}", last.by)
-        };
-        let at = if last.version.is_empty() {
-            String::new()
-        } else {
-            format!(", dibs {}", last.version)
-        };
-        let (was, now) = (runs::date(first.when as i64), runs::date(last.when as i64));
-        if *n > 1 && was != now {
-            out.push_str(&format!("       first {was}, last {now}{by}{at}\n"));
-        } else {
-            out.push_str(&format!("       {now}{by}{at}\n"));
+/// One thing that got in the way, however many times it was reported.
+struct Complaint<'a> {
+    times: usize,
+    first: &'a FrictionNote,
+    last: &'a FrictionNote,
+}
+
+impl Complaint<'_> {
+    /// Case and a trailing stop are not a different report, and reading the same complaint as
+    /// two hides the thing this exists to show: that it keeps happening.
+    fn key(text: &str) -> String {
+        text.to_lowercase().trim_end_matches(['.', '!']).to_string()
+    }
+}
+
+/// What got in the way, as `dibs gaps` prints it.
+pub struct Complaints<'a> {
+    recurring_first: Vec<Complaint<'a>>,
+}
+
+impl<'a> Complaints<'a> {
+    /// One report is a nuisance somebody worked around. The same one three times is the
+    /// specification for a fix, so the count leads and the recurring ones sort to the top.
+    pub fn of(notes: &'a [FrictionNote]) -> Complaints<'a> {
+        let mut seen: BTreeMap<String, Complaint<'a>> = BTreeMap::new();
+        for n in notes {
+            seen.entry(Complaint::key(&n.text))
+                .and_modify(|c| {
+                    c.times += 1;
+                    if n.when >= c.last.when {
+                        c.last = n;
+                    }
+                    if n.when < c.first.when {
+                        c.first = n;
+                    }
+                })
+                .or_insert(Complaint {
+                    times: 1,
+                    first: n,
+                    last: n,
+                });
+        }
+        let mut recurring_first: Vec<Complaint<'a>> = seen.into_values().collect();
+        recurring_first.sort_by(|a, b| b.times.cmp(&a.times).then(b.last.when.cmp(&a.last.when)));
+        Complaints { recurring_first }
+    }
+}
+
+impl fmt::Display for Complaints<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.recurring_first.is_empty() {
+            return f.write_str(
+                "\nNothing has been reported as friction. An agent that had to work around dibs\n\
+                 records it with: dibs --friction '<one line>'\n",
+            );
+        }
+        f.write_str("\nWhat got in the way:\n\n")?;
+        for Complaint { times, first, last } in &self.recurring_first {
+            writeln!(f, "  {times:>3}x  {}", last.text)?;
+            let by = if last.by.is_empty() {
+                String::new()
+            } else {
+                format!(" by {}", last.by)
+            };
+            let at = if last.version.is_empty() {
+                String::new()
+            } else {
+                format!(", dibs {}", last.version)
+            };
+            let was = runs::date(first.when as i64);
+            let now = runs::date(last.when as i64);
+            if *times > 1 && was != now {
+                writeln!(f, "       first {was}, last {now}{by}{at}")?;
+            } else {
+                writeln!(f, "       {now}{by}{at}")?;
+            }
+        }
+        let repeated = self.recurring_first.iter().filter(|c| c.times > 1).count();
+        match repeated {
+            0 => Ok(()),
+            1 => f.write_str(
+                "\nOne of these has been hit more than once, which is where a fix pays.\n",
+            ),
+            n => write!(
+                f,
+                "\n{n} of these have been hit more than once, which is where a fix pays.\n"
+            ),
         }
     }
-    let repeated = ordered.iter().filter(|(n, _, _)| *n > 1).count();
-    match repeated {
-        0 => {}
-        1 => {
-            out.push_str("\nOne of these has been hit more than once, which is where a fix pays.\n")
-        }
-        n => out.push_str(&format!(
-            "\n{n} of these have been hit more than once, which is where a fix pays.\n"
-        )),
-    }
-    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_report_is_one_line_however_it_was_typed() {
-        let n = note(
-            "  the trailer says built=nothing\n  but it did build  ",
-            "a",
-            "abc",
-            10,
-        )
-        .unwrap();
-        assert_eq!(n.text, "the trailer says built=nothing but it did build");
-        assert!(note("   ", "a", "abc", 10).is_err());
+    fn note(text: &str, by: &str, version: &str, when: u64) -> FrictionNote {
+        FrictionNote::new(text, by, version, when).unwrap()
     }
 
     #[test]
     fn the_same_thing_said_twice_is_counted_as_twice() {
         let notes = vec![
-            note("--stream does nothing in a batch", "one", "aaa", 100).unwrap(),
-            note("Nothing else", "two", "aaa", 200).unwrap(),
-            note("--stream does nothing in a batch.", "three", "bbb", 300).unwrap(),
+            note("--stream does nothing in a batch", "one", "aaa", 100),
+            note("Nothing else", "two", "aaa", 200),
+            note("--stream does nothing in a batch.", "three", "bbb", 300),
         ];
-        let out = report(&notes);
+        let out = Complaints::of(&notes).to_string();
         assert!(
             out.contains("    2x  --stream does nothing in a batch."),
             "{out}"
@@ -177,11 +183,13 @@ mod tests {
     #[test]
     fn a_line_survives_the_trip_through_the_file() {
         let dir = std::env::temp_dir().join(format!("dibs-friction-{}", std::process::id()));
-        let path = dir.join("friction.jsonl");
+        let log = FrictionLog {
+            path: dir.join("friction.jsonl"),
+        };
         let _ = std::fs::remove_dir_all(&dir);
-        let quoted = note(r#"a "quoted" \ backslash, and a tab	here"#, "me", "abc", 7).unwrap();
-        append(&path, &quoted).unwrap();
-        let back = load(&path);
+        let quoted = note(r#"a "quoted" \ backslash, and a tab	here"#, "me", "abc", 7);
+        log.append(&quoted).unwrap();
+        let back = log.notes();
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].text, r#"a "quoted" \ backslash, and a tab here"#);
         assert_eq!(back[0].by, "me");
