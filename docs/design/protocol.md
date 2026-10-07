@@ -187,12 +187,13 @@ account and both halves find the same ones.
 - **The lock directory**: `DIBS_LOCK_DIR`, else `/dev/shm/dibs-lock` when it can be written, else
   the runtime directory, else `/tmp`.
   - `gate` and `rw`: the lock itself.
-  - `waiting.<pid>` and `holder.<pid>`: a call queued, and the call holding, one line each.
-  - `batch.<pid>`: the steps of the holder's batch still to come on this machine.
+  - `waiting.<pid>` and `holder.<pid>`: a call queued, and a call holding the lock, one line
+    each.
+  - `batch.<pid>`: a batch step's call, with the steps still to come on this machine.
   - `cpu.<pid>`: what the last look at a holder's CPU saw, for the idle signal.
   - `hold.<pid>`: the fifo a hold's job waits on for its caller's `release`.
   - `with.<pid>`: the servers a call started.
-  - `port.<n>`: a port picked for `--port`, held while its call runs.
+  - `port.<n>`: a port picked for `--port`, reserved for the call whose pid it holds.
   - `cancelled.<id>`: a cancelled batch, whose later steps it refuses for a day.
 - **History and log**: `/var/lib/dibs/history` and `log` when that directory can be written, so
   every account's durations and arrivals are one record, else under `~/.local/state/dibs`. Each
@@ -229,8 +230,8 @@ read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
   and exits 125 before it reads a byte, so the client takes it for missing and has its own built
   over it. A runner a client links knows the client's hash.
 - The one interface every runner keeps is `dibs-runner build <hash>`: the tree as a gzipped tar on
-  stdin, text on stdout and stderr, exit 0 once `<hash>` is installed. The newest runner already on a
-  machine builds the next version, and may be older than the tree it is sent, so the build's
+  stdin, text on stdout and stderr, exit 0 once `<hash>` is installed. The newest runner already
+  on a machine builds the next version, and may be older than the tree it is sent, so the build's
   steps live in the tree, in its `install.sh`, and not in the runner.
 
 ### What must stay compatible

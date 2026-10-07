@@ -7,9 +7,9 @@ and not on the next, a repo clone that was never made.
 
 This is the missing half: an expected state, a check against it, and a window that shows the
 difference. The first two are built, as `dibs machines` and `dibs-machines`; the fixes and
-offboarding below are not. It is not a provisioning system. A machine built by a playbook stays built by it, and
-a machine set up by hand stays set up by hand; this reads both, and applies a small set of safe
-fixes only where nothing else owns the machine.
+offboarding below are not. It is not a provisioning system. A machine built by a playbook stays
+built by it, and a machine set up by hand stays set up by hand; this reads both, and applies a small
+set of safe fixes only where nothing else owns the machine.
 
 ## The expected state
 

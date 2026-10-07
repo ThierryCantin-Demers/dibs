@@ -45,9 +45,9 @@ its job directory, which `dibs out <job>` reads during the run or after; the wal
 job writes elsewhere, and `dibs out` lists both.
 
 **Transfers go through `--sync`**, which is rsync pointed back at dibs through its own `-e`
-(`dibs __rsh`), so the far side holds the shared lock while rsync's protocol stream passes
-through as the workload. A copy is not free: it competes for memory bandwidth and writeback with whatever is
-being measured.
+(`dibs __rsh`), so the far side holds the shared lock while rsync's protocol stream passes through
+as the workload. A copy is not free: it competes for memory bandwidth and writeback with whatever is being
+measured.
 
 **Superseded (2026-10-01): a full Rust rewrite of the remote half was considered and
 rejected.** Shipping the remote script per call kept the target with nothing installed on it,
