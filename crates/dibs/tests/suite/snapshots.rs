@@ -461,14 +461,13 @@ fn status_of_idle_and_writing_holders() {
         .spawn(s.command("sh", ["-c", &format!("python3 -c \"{burner}\"; true")]))
         .pid;
     burned.reached();
+    // bash, as a job runs under: dash redirects in the parent too, and the parent is the holder.
     let writes = s
-        .spawn(s.command(
-            "sh",
-            [
-                "-c",
-                &format!("cat {} > {}; true", gate.path.display(), s.p("written.log")),
-            ],
-        ))
+        .spawn(s.sh(&format!(
+            "cat {} > {}; true",
+            gate.path.display(),
+            s.p("written.log")
+        )))
         .pid;
     until("the writer's redirect", || s.exists("written.log"));
     let n = status_clock(Normal::of(&s));
