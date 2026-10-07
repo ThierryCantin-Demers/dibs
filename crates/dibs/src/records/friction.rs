@@ -8,7 +8,7 @@ use crate::{
     paths::{FileError, Paths},
     records::{
         date,
-        error::{Kept, RecordsError},
+        error::{Ledger, RecordsError},
     },
 };
 use dibs_format::FrictionNote;
@@ -26,7 +26,7 @@ impl FrictionLog {
     pub fn here() -> Result<FrictionLog, RecordsError> {
         let path = Paths::from_env()
             .friction()
-            .ok_or(RecordsError::NoHome(Kept::Friction))?;
+            .ok_or(RecordsError::NoHome(Ledger::Friction))?;
         Ok(FrictionLog { path })
     }
 

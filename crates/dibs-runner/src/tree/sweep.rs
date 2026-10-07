@@ -24,7 +24,7 @@ const DATED: &str = "swept\n";
 
 /// What a sweep walks, in the order it walks it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
+pub enum Swept {
     Trees,
     Caches,
     Jobs,
@@ -32,13 +32,13 @@ pub enum Kind {
     Runners,
 }
 
-impl Kind {
-    pub const ALL: [Kind; 5] = [
-        Kind::Trees,
-        Kind::Caches,
-        Kind::Jobs,
-        Kind::Leftovers,
-        Kind::Runners,
+impl Swept {
+    pub const ALL: [Swept; 5] = [
+        Swept::Trees,
+        Swept::Caches,
+        Swept::Jobs,
+        Swept::Leftovers,
+        Swept::Runners,
     ];
 }
 
@@ -65,13 +65,13 @@ impl Verdict {
 /// One kind's entries as judged, with whatever lock keeps them judged until what is past them
 /// is gone.
 pub struct Section {
-    pub kind: Kind,
+    pub kind: Swept,
     pub verdicts: Vec<Verdict>,
     _lock: Option<File>,
 }
 
 impl Section {
-    pub fn holding(kind: Kind, verdicts: Vec<Verdict>, lock: Option<File>) -> Section {
+    pub fn holding(kind: Swept, verdicts: Vec<Verdict>, lock: Option<File>) -> Section {
         Section {
             kind,
             verdicts,
@@ -111,7 +111,7 @@ impl<'a> Sweep<'a> {
     /// Every kind judged, and what is past its clock removed.
     pub fn run(&self) {
         let now = Moment::epoch_now();
-        for kind in Kind::ALL {
+        for kind in Swept::ALL {
             if let Some(mut section) = self.judged(kind, now) {
                 self.collect(&mut section, now);
             }
@@ -119,50 +119,50 @@ impl<'a> Sweep<'a> {
     }
 
     /// What there is of one kind, before anything is judged, which dates what has no marker.
-    pub fn entries(&self, kind: Kind) -> Vec<PathBuf> {
+    pub fn entries(&self, kind: Swept) -> Vec<PathBuf> {
         let under = |dir: &str| self.scratch.join(dir).entries();
         match kind {
-            Kind::Trees => under("ws")
+            Swept::Trees => under("ws")
                 .iter()
                 .flat_map(|repo| repo.entries())
                 .filter(|tree| tree.is_dir())
                 .collect(),
-            Kind::Caches => under("target")
+            Swept::Caches => under("target")
                 .into_iter()
                 .filter(|cache| cache.is_dir())
                 .collect(),
-            Kind::Jobs => under("jobs"),
-            Kind::Leftovers => [under("tmp"), under("out")].concat(),
-            Kind::Runners => Runners::in_home(self.home).dir().entries(),
+            Swept::Jobs => under("jobs"),
+            Swept::Leftovers => [under("tmp"), under("out")].concat(),
+            Swept::Runners => Runners::in_home(self.home).dir().entries(),
         }
     }
 
     /// One kind judged; None for the runners while one of them builds.
-    pub fn judged(&self, kind: Kind, now: u64) -> Option<Section> {
+    pub fn judged(&self, kind: Swept, now: u64) -> Option<Section> {
         let entries = self.entries(kind).into_iter();
         let verdicts = match kind {
-            Kind::Trees => entries
+            Swept::Trees => entries
                 .map(|tree| {
                     let fate = self.tree(&tree, now);
                     let used = tree.used(now);
                     Verdict::of(tree, fate, used)
                 })
                 .collect(),
-            Kind::Caches => entries
+            Swept::Caches => entries
                 .map(|cache| {
                     let fate = self.cache(&cache, now);
                     let used = cache.used(now);
                     Verdict::of(cache, fate, used)
                 })
                 .collect(),
-            Kind::Jobs | Kind::Leftovers => entries
+            Swept::Jobs | Swept::Leftovers => entries
                 .map(|path| {
                     let fate = self.bulk(&path, now);
                     let used = path.written(now);
                     Verdict::of(path, fate, used)
                 })
                 .collect(),
-            Kind::Runners => return Runners::in_home(self.home).judged(&self.clocks, now),
+            Swept::Runners => return Runners::in_home(self.home).judged(&self.clocks, now),
         };
         Some(Section::holding(kind, verdicts, None))
     }
@@ -172,14 +172,14 @@ impl<'a> Sweep<'a> {
     /// one taken and let go can stay held a moment in a process another thread forks.
     pub fn collect(&self, section: &mut Section, now: u64) {
         match section.kind {
-            Kind::Trees => self.collect_trees(&mut section.verdicts, now),
-            Kind::Caches => {
+            Swept::Trees => self.collect_trees(&mut section.verdicts, now),
+            Swept::Caches => {
                 for verdict in &mut section.verdicts {
                     self.collect_cache(verdict, now);
                 }
             }
-            Kind::Jobs | Kind::Leftovers | Kind::Runners if self.dry => {}
-            Kind::Jobs | Kind::Leftovers | Kind::Runners => {
+            Swept::Jobs | Swept::Leftovers | Swept::Runners if self.dry => {}
+            Swept::Jobs | Swept::Leftovers | Swept::Runners => {
                 for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
                     verdict.removed = self.removal.path(&verdict.path);
                 }

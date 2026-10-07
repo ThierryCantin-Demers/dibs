@@ -2,7 +2,7 @@ use crate::{
     settings::home,
     tree::{
         clocks::{Clocks, Contents as _, Dates as _, Fate, USED},
-        sweep::{Kind, Section, Verdict},
+        sweep::{Section, Swept, Verdict},
     },
 };
 use dibs_format::wire::SOURCE_HASH;
@@ -97,7 +97,7 @@ impl Runners {
     /// is gone, so nothing a build is using is among it; None while a build runs.
     pub fn judged(&self, clocks: &Clocks, now: u64) -> Option<Section> {
         if !self.dir.is_dir() {
-            return Some(Section::holding(Kind::Runners, Vec::new(), None));
+            return Some(Section::holding(Swept::Runners, Vec::new(), None));
         }
         let lock = OpenOptions::new()
             .create(true)
@@ -152,7 +152,7 @@ impl Runners {
             entries.push(Verdict::of(target, Runners::fate(past), built));
         }
         entries.sort_by(|a, b| a.path.cmp(&b.path));
-        Some(Section::holding(Kind::Runners, entries, Some(lock)))
+        Some(Section::holding(Swept::Runners, entries, Some(lock)))
     }
 
     fn fate(past: bool) -> Fate {

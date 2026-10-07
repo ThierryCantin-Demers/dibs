@@ -5,7 +5,7 @@ use std::fmt;
 #[derive(Debug)]
 pub enum RecordsError {
     /// No HOME, so nowhere to keep the record.
-    NoHome(Kept),
+    NoHome(Ledger),
     File(FileError),
     /// A friction note with nothing in it.
     EmptyNote,
@@ -13,7 +13,7 @@ pub enum RecordsError {
 
 /// Which record has nowhere to go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kept {
+pub enum Ledger {
     Runs,
     Friction,
 }
@@ -27,8 +27,10 @@ impl From<FileError> for RecordsError {
 impl fmt::Display for RecordsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RecordsError::NoHome(Kept::Runs) => f.write_str("no HOME, and nowhere to record runs"),
-            RecordsError::NoHome(Kept::Friction) => {
+            RecordsError::NoHome(Ledger::Runs) => {
+                f.write_str("no HOME, and nowhere to record runs")
+            }
+            RecordsError::NoHome(Ledger::Friction) => {
                 f.write_str("no HOME, and nowhere to record this")
             }
             RecordsError::File(e) => e.fmt(f),

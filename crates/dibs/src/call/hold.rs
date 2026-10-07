@@ -102,7 +102,7 @@ impl Hold<'_> {
 
     /// The first `--ready tcp:` service this computer cannot connect to, which the command here
     /// would fail at: ready on the machine, but behind its firewall or on its loopback only.
-    fn unreached(&self, ports: &[Picked]) -> Option<Unreached> {
+    fn unreached(&self, ports: &[Picked]) -> Option<Unconnected> {
         let mut host = None;
         for service in self.services {
             let Some(ready) = service
@@ -128,13 +128,13 @@ impl Hold<'_> {
                     None => address,
                 }
             });
-            let cause = match Attempt::connect(host, port) {
-                Attempt::Refused => Cause::Refused,
-                Attempt::NoRoute => Cause::Rejected,
-                Attempt::TimedOut if Attempt::resolves(host) => Cause::Dropped,
-                Attempt::Connected | Attempt::TimedOut | Attempt::Failed => continue,
+            let cause = match Connection::connect(host, port) {
+                Connection::Refused => Cause::Refused,
+                Connection::NoRoute => Cause::Rejected,
+                Connection::TimedOut if Connection::resolves(host) => Cause::Dropped,
+                Connection::Connected | Connection::TimedOut | Connection::Failed => continue,
             };
-            return Some(Unreached {
+            return Some(Unconnected {
                 service: service.name.0.clone(),
                 at: self.at.clone(),
                 host: host.clone(),
@@ -182,7 +182,7 @@ fn done(shared: &Mutex<Shared>) {
 }
 
 /// How a connection from here to a ready service went.
-enum Attempt {
+enum Connection {
     Connected,
     Refused,
     NoRoute,
@@ -191,35 +191,35 @@ enum Attempt {
     Failed,
 }
 
-impl Attempt {
+impl Connection {
     /// One connection, its name's lookup included, within `REACH_WITHIN`.
-    fn connect(host: &str, port: u16) -> Attempt {
+    fn connect(host: &str, port: u16) -> Connection {
         let (tell, heard) = mpsc::channel();
         let host = host.to_string();
         std::thread::spawn(move || {
             let deadline = Instant::now() + REACH_WITHIN;
             let Ok(addresses) = (host.as_str(), port).to_socket_addrs() else {
-                let _ = tell.send(Attempt::Failed);
+                let _ = tell.send(Connection::Failed);
                 return;
             };
-            let mut last = Attempt::Failed;
+            let mut last = Connection::Failed;
             for address in addresses {
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
                     break;
                 }
                 last = match TcpStream::connect_timeout(&address, left) {
-                    Ok(_) => Attempt::Connected,
+                    Ok(_) => Connection::Connected,
                     Err(e) => match e.kind() {
-                        ErrorKind::ConnectionRefused => Attempt::Refused,
+                        ErrorKind::ConnectionRefused => Connection::Refused,
                         ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable => {
-                            Attempt::NoRoute
+                            Connection::NoRoute
                         }
-                        ErrorKind::TimedOut => Attempt::TimedOut,
-                        _ => Attempt::Failed,
+                        ErrorKind::TimedOut => Connection::TimedOut,
+                        _ => Connection::Failed,
                     },
                 };
-                if matches!(last, Attempt::Connected) {
+                if matches!(last, Connection::Connected) {
                     break;
                 }
             }
@@ -227,7 +227,7 @@ impl Attempt {
         });
         heard
             .recv_timeout(REACH_WITHIN)
-            .unwrap_or(Attempt::TimedOut)
+            .unwrap_or(Connection::TimedOut)
     }
 
     /// Whether the name resolves quickly, without which a timeout may be a slow lookup and says
@@ -251,7 +251,7 @@ enum Cause {
 }
 
 /// A ready service this computer cannot connect to.
-struct Unreached {
+struct Unconnected {
     service: String,
     at: String,
     host: String,
@@ -259,9 +259,9 @@ struct Unreached {
     cause: Cause,
 }
 
-impl fmt::Display for Unreached {
+impl fmt::Display for Unconnected {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Unreached {
+        let Unconnected {
             service,
             at,
             host,

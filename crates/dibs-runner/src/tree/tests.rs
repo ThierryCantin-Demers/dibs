@@ -5,7 +5,7 @@ use crate::{
         Clocks, Commands, Reflinks, Runners, Spot, Stepping, TreeConfig, Trees,
         clocks::{Fate, Removal},
         copy::{Copier, Sharing},
-        sweep::{Kind, Section, Sweep},
+        sweep::{Section, Sweep, Swept},
     },
 };
 use dibs_format::{
@@ -1149,7 +1149,7 @@ fn a_sweep_leaves_trees_a_prepare_holds_and_keeps_one_revived_after_it_judged() 
         m.abandoned("ws/other/held"),
     );
     let sweep = m.sweeping(&scratch, &home);
-    let mut trees = sweep.judged(Kind::Trees, Moment::epoch_now()).unwrap();
+    let mut trees = sweep.judged(Swept::Trees, Moment::epoch_now()).unwrap();
     assert!(trees.verdicts.iter().all(|v| v.fate == Fate::Past));
     fs::write(revived.join(".dibs-used"), "").unwrap();
     let prepare = Building::holding(&m.p("scratch/ws/other/.prepare.lock"));
@@ -1170,7 +1170,7 @@ fn a_sweep_leaves_caches_a_prepare_holds_and_keeps_one_revived_after_it_judged()
         m.abandoned("target/held"),
     );
     let sweep = m.sweeping(&scratch, &home);
-    let mut caches = sweep.judged(Kind::Caches, Moment::epoch_now()).unwrap();
+    let mut caches = sweep.judged(Swept::Caches, Moment::epoch_now()).unwrap();
     assert!(caches.verdicts.iter().all(|v| v.fate == Fate::Past));
     fs::write(revived.join(".dibs-used"), "").unwrap();
     let prepare = Building::holding(&m.p("scratch/target/.held.lock"));

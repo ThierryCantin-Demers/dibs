@@ -69,7 +69,7 @@ impl Stamp {
 }
 
 /// A tree and its target, laid out.
-struct Laid {
+struct Placed {
     worktree: PathBuf,
     target: PathBuf,
     sha: String,
@@ -176,7 +176,7 @@ impl<'a> Trees<'a> {
         slot: u32,
         packages: Option<&Lines>,
         stamp: &Stamp,
-    ) -> Result<Laid, PrepareError> {
+    ) -> Result<Placed, PrepareError> {
         let repo = &prepare.repo;
         let source = self.config.home.join("prog").join(repo);
         if !source.join(".git").is_dir() {
@@ -221,7 +221,7 @@ impl<'a> Trees<'a> {
         if let Ok(pruned) = self.commands.git(&source, &["worktree", "prune"]) {
             (self.say)(&String::from_utf8_lossy(&pruned.stderr));
         }
-        Ok(Laid {
+        Ok(Placed {
             worktree,
             target,
             sha: short,
@@ -345,7 +345,7 @@ impl<'a> Trees<'a> {
         key: &str,
         packages: Option<&Lines>,
         stamp: &Stamp,
-    ) -> Result<Laid, PrepareError> {
+    ) -> Result<Placed, PrepareError> {
         let repo = &prepare.repo;
         let worktree = self.nested(prepare).join(format!("local-{key}"));
         let nest = prepare
@@ -390,7 +390,7 @@ impl<'a> Trees<'a> {
         drop(turn);
         self.nest(prepare, stamp)?;
         self.sweep();
-        Ok(Laid {
+        Ok(Placed {
             worktree,
             target,
             sha: String::new(),

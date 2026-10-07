@@ -26,8 +26,8 @@ use std::{
     process::ExitCode,
 };
 
-/// A tree on its way to the machine, and what it became there.
-pub struct Tree {
+/// An arm's tree on its way to the machine, and what it became there.
+pub struct ArmTree {
     pub token: String,
     pub plan: TreePlan,
     pub local: Option<super::Local>,
@@ -378,7 +378,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         }
         .plan();
         slot += usize::from(arm.fetch.is_some());
-        trees.push(Tree {
+        trees.push(ArmTree {
             token,
             plan,
             local,

@@ -10,7 +10,7 @@
 
 use crate::{
     paths::{FileError, Paths},
-    records::{Kept, RecordsError},
+    records::{Ledger, RecordsError},
 };
 use dibs_format::{Lock, Pairs, RunRecord, RunVerb, Span};
 use std::{collections::BTreeMap, io::Write as _, path::PathBuf};
@@ -24,7 +24,7 @@ impl RunLog {
     pub fn here() -> Result<RunLog, RecordsError> {
         let path = Paths::from_env()
             .runs()
-            .ok_or(RecordsError::NoHome(Kept::Runs))?;
+            .ok_or(RecordsError::NoHome(Ledger::Runs))?;
         Ok(RunLog { path })
     }
 

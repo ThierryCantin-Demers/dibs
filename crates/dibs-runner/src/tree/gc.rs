@@ -11,7 +11,7 @@ use crate::{
     tree::{
         clocks::{Clocks, Contents as _, Dates as _, Fate, Removal},
         runners::Runners,
-        sweep::{Kind, Section, Sweep, Verdict},
+        sweep::{Section, Sweep, Swept, Verdict},
     },
 };
 use std::{
@@ -30,7 +30,7 @@ const DIBS_OWN: [&str; 7] = ["ws", "target", "jobs", "tmp", "out", "runner", "ru
 
 /// `dibs --gc`'s listing of one sweep, a section at a time as the sweep goes: what each holds,
 /// biggest first, and what went or would.
-pub struct Report {
+pub struct SweepReport {
     scratch: PathBuf,
     /// Where the runners live, and the clones a removed worktree was added from.
     home: PathBuf,
@@ -42,7 +42,7 @@ pub struct Report {
 
 /// KiB measured, reclaimed and past their clocks.
 #[derive(Default)]
-struct Tally {
+struct Totals {
     total: u64,
     freed: u64,
     would: u64,
@@ -109,11 +109,11 @@ impl Asked {
     }
 
     /// The report, with the machine's own clocks unless days were given.
-    pub fn report(&self) -> Report {
+    pub fn report(&self) -> SweepReport {
         let settings = Settings::load();
         let machine = Site::set_up().ok();
         let home = home();
-        Report {
+        SweepReport {
             scratch: machine
                 .as_ref()
                 .map_or_else(|| home.join(".cache/dibs"), |m| m.scratch.clone()),
@@ -131,67 +131,69 @@ impl Asked {
     }
 }
 
-impl Report {
+impl SweepReport {
     pub fn run(&self) -> i32 {
         let scratch = &self.scratch;
         if !scratch.is_dir() {
-            Report::say(&format!(
+            SweepReport::say(&format!(
                 "dibs: nothing at {} to sweep.\n",
                 scratch.display()
             ));
             return 0;
         }
         let now = Moment::epoch_now();
-        let mut tally = Tally::default();
-        Report::say(&format!(
+        let mut tally = Totals::default();
+        SweepReport::say(&format!(
             "dibs --gc on {}, under {}\n",
             self.host,
             scratch.display()
         ));
-        let removal = Removal::new(None, &Report::say);
+        let removal = Removal::new(None, &SweepReport::say);
         let sweep = Sweep::new(scratch, &self.home, self.clocks, removal);
         let sweep = match self.dry {
             true => sweep.dry(),
             false => sweep,
         };
-        for kind in Kind::ALL {
+        for kind in Swept::ALL {
             let entries = sweep.entries(kind);
             let sizes = tally.measure(&entries);
-            let sharing = (kind == Kind::Caches && Host::shares_blocks(&scratch.join("target")))
+            let sharing = (kind == Swept::Caches && Host::shares_blocks(&scratch.join("target")))
                 .then(|| Sharing::of(&entries));
             if let Some(sharing) = &sharing {
                 tally.total = tally.total - sizes.sum() + sharing.together();
             }
             let Some(mut section) = sweep.judged(kind, now) else {
-                Report::say("  runners: a build of one is running, so none is collected now\n");
+                SweepReport::say(
+                    "  runners: a build of one is running, so none is collected now\n",
+                );
                 continue;
             };
             sweep.collect(&mut section, now);
             let listed = match kind {
-                Kind::Trees => self.trees(&section, &sizes, now, &mut tally),
-                Kind::Caches => self.caches(&section, &sizes, sharing.as_ref(), now, &mut tally),
-                Kind::Jobs => {
+                Swept::Trees => self.trees(&section, &sizes, now, &mut tally),
+                Swept::Caches => self.caches(&section, &sizes, sharing.as_ref(), now, &mut tally),
+                Swept::Jobs => {
                     self.bulk("job logs and artifacts", &section, &sizes, now, &mut tally)
                 }
-                Kind::Leftovers => self.bulk(
+                Swept::Leftovers => self.bulk(
                     "leftover temporary files",
                     &section,
                     &sizes,
                     now,
                     &mut tally,
                 ),
-                Kind::Runners => self.runners(&section, &sizes, &mut tally),
+                Swept::Runners => self.runners(&section, &sizes, &mut tally),
             };
-            Report::say(&listed);
+            SweepReport::say(&listed);
         }
         self.others(now, &mut tally);
         match self.dry {
-            true => Report::say(&format!(
+            true => SweepReport::say(&format!(
                 "  {} of {} is past its clock and would go. Run it without --dry-run.\n",
                 Kib(tally.would),
                 Kib(tally.total)
             )),
-            false => Report::say(&format!(
+            false => SweepReport::say(&format!(
                 "  reclaimed {} of {}\n",
                 Kib(tally.freed),
                 Kib(tally.total)
@@ -200,7 +202,7 @@ impl Report {
         let mut mounts = Vec::new();
         for dir in [scratch.clone(), scratch.join("target")] {
             if let Some(free) = Free::of(&dir).filter(|f| !mounts.contains(&f.mount)) {
-                Report::say(&format!(
+                SweepReport::say(&format!(
                     "  {} free of {} on {}\n",
                     Bytes(free.available),
                     Bytes(free.size),
@@ -224,7 +226,7 @@ impl Report {
     }
 
     /// What went, or would, added to the tally.
-    fn count(&self, verdict: &Verdict, kib: u64, tally: &mut Tally) -> bool {
+    fn count(&self, verdict: &Verdict, kib: u64, tally: &mut Totals) -> bool {
         let past = verdict.fate == Fate::Past;
         if verdict.removed {
             tally.freed += kib;
@@ -234,7 +236,7 @@ impl Report {
         past
     }
 
-    fn trees(&self, section: &Section, sizes: &Sizes, now: u64, tally: &mut Tally) -> String {
+    fn trees(&self, section: &Section, sizes: &Sizes, now: u64, tally: &mut Totals) -> String {
         let mut rows = Rows::default();
         for verdict in &section.verdicts {
             let kib = sizes.of(&verdict.path);
@@ -245,7 +247,7 @@ impl Report {
                     "    {:<40} {:>7}  used {}{}",
                     self.shown(&verdict.path),
                     Kib(kib),
-                    Report::ago(now, verdict.used),
+                    SweepReport::ago(now, verdict.used),
                     self.verdict(verdict)
                 ),
             });
@@ -264,7 +266,7 @@ impl Report {
         sizes: &Sizes,
         sharing: Option<&Sharing>,
         now: u64,
-        tally: &mut Tally,
+        tally: &mut Totals,
     ) -> String {
         let mut rows = Rows::default();
         for verdict in section.verdicts.iter().filter(|v| v.fate != Fate::Hollow) {
@@ -280,7 +282,7 @@ impl Report {
                     "    {:<40} {:>7}{own}  used {}{}",
                     self.shown(&verdict.path),
                     Kib(sizes.of(&verdict.path)),
-                    Report::ago(now, verdict.used),
+                    SweepReport::ago(now, verdict.used),
                     self.verdict(verdict)
                 ),
             });
@@ -313,7 +315,7 @@ impl Report {
         section: &Section,
         sizes: &Sizes,
         now: u64,
-        tally: &mut Tally,
+        tally: &mut Totals,
     ) -> String {
         let (mut kib, mut oldest) = (0, 0);
         let (mut past, mut past_kib, mut removed, mut removed_kib) = (0, 0, 0, 0);
@@ -357,7 +359,7 @@ impl Report {
         )
     }
 
-    fn runners(&self, section: &Section, sizes: &Sizes, tally: &mut Tally) -> String {
+    fn runners(&self, section: &Section, sizes: &Sizes, tally: &mut Totals) -> String {
         let dir = Runners::in_home(&self.home).dir().to_path_buf();
         let mut rows = Rows::default();
         for verdict in &section.verdicts {
@@ -386,7 +388,7 @@ impl Report {
 
     /// Nothing dibs made, so nothing dibs deletes: a directory written by hand may be the only
     /// copy of somebody's work. Sized and dated, so they can be asked.
-    fn others(&self, now: u64, tally: &mut Tally) {
+    fn others(&self, now: u64, tally: &mut Totals) {
         let others: Vec<PathBuf> = self
             .scratch
             .entries()
@@ -410,11 +412,11 @@ impl Report {
                     "    {:<40} {:>7}  written {}",
                     self.shown(other),
                     Kib(kib),
-                    Report::ago(now, other.written(now))
+                    SweepReport::ago(now, other.written(now))
                 ),
             });
         }
-        Report::say(&rows.out("  not dibs's, never removed by this"));
+        SweepReport::say(&rows.out("  not dibs's, never removed by this"));
     }
 
     /// A path as it is under scratch.
@@ -539,13 +541,13 @@ impl Free {
     }
 }
 
-impl Tally {
+impl Totals {
     /// What `du -sk` gives each path, a file linked twice counted once, added to the total.
     fn measure(&mut self, paths: &[PathBuf]) -> Sizes {
         let mut seen = HashSet::new();
         let sizes: HashMap<PathBuf, u64> = paths
             .iter()
-            .map(|path| (path.clone(), Tally::allocated(path, &mut seen).div_ceil(2)))
+            .map(|path| (path.clone(), Totals::allocated(path, &mut seen).div_ceil(2)))
             .collect();
         self.total += sizes.values().sum::<u64>();
         Sizes(sizes)
@@ -564,7 +566,7 @@ impl Tally {
                 .into_iter()
                 .flatten()
                 .flatten()
-                .map(|e| Tally::allocated(&e.path(), seen))
+                .map(|e| Totals::allocated(&e.path(), seen))
                 .sum(),
             false => 0,
         };
@@ -622,7 +624,7 @@ impl fmt::Display for Bytes {
     }
 }
 
-impl Report {
+impl SweepReport {
     fn ago(now: u64, when: u64) -> String {
         match Clocks::days(now, when) {
             0 => "today".to_string(),
@@ -650,7 +652,7 @@ mod tests {
         assert_eq!(Kib(1_572_864).to_string(), "1.5G");
         assert_eq!(Bytes(10 * 1024 * 1024 * 1024 + 1).to_string(), "11G");
         assert_eq!(Bytes(9 * 1024 * 1024 * 1024 + 1).to_string(), "9.1G");
-        assert_eq!(Report::ago(Span::DAY.0 * 3, 0), "3 days ago");
+        assert_eq!(SweepReport::ago(Span::DAY.0 * 3, 0), "3 days ago");
     }
 
     #[test]

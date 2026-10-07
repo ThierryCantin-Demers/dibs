@@ -374,12 +374,12 @@ impl ReportsRepo {
                 woken.save()?;
                 return Ok(news);
             }
-            said = match Heard::listen(&listener, &mut woken) {
-                Heard::News(news) => {
+            said = match Forwarded::listen(&listener, &mut woken) {
+                Forwarded::News(news) => {
                     woken.save()?;
                     return Ok(news);
                 }
-                Heard::Stopped(said) => said,
+                Forwarded::Stopped(said) => said,
             };
             drop(forward);
             short = match started.elapsed() < SHORT_LIVED {
@@ -589,27 +589,27 @@ impl Arrival {
 }
 
 /// What one forwarder brought before it stopped: news, or what it said as it stopped.
-enum Heard {
+enum Forwarded {
     News(Vec<String>),
     Stopped(String),
 }
 
-impl Heard {
+impl Forwarded {
     /// Listens until a delivery is news or the forwarder says it stopped.
-    fn listen(listener: &TcpListener, woken: &mut Keys) -> Heard {
+    fn listen(listener: &TcpListener, woken: &mut Keys) -> Forwarded {
         listener
             .incoming()
             .filter_map(Result::ok)
             .filter_map(Arrival::new)
             .find_map(|arrival| match arrival {
-                Arrival::Stopped(said) => Some(Heard::Stopped(said)),
+                Arrival::Stopped(said) => Some(Forwarded::Stopped(said)),
                 Arrival::Delivery(event, body) => {
                     let news = on_event(&event, &body, woken);
-                    (!news.is_empty()).then_some(Heard::News(news))
+                    (!news.is_empty()).then_some(Forwarded::News(news))
                 }
             })
             // `incoming` never ends; were it to, the forwarder would be started again.
-            .unwrap_or_else(|| Heard::Stopped(String::new()))
+            .unwrap_or_else(|| Forwarded::Stopped(String::new()))
     }
 }
 

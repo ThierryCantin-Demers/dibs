@@ -7,6 +7,6 @@ mod friction;
 mod runs;
 
 pub use affinity::Affinity;
-pub use error::{Kept, RecordsError};
+pub use error::{Ledger, RecordsError};
 pub use friction::{Complaints, FrictionLog};
 pub use runs::{RunLog, Runs, date, now_secs};
