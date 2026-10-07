@@ -209,11 +209,13 @@ fn a_job_an_account_started_is_not_anyones_to_stop_by_default() {
 #[test]
 fn a_session_that_named_its_work_is_told_apart() {
     let mut s = Sandbox::new();
+    // An id names the user and the machine before what tells two sessions apart.
+    let user = "someone-whose-login-alone-runs-past-forty-eight-characters";
     let n = s.gate("n");
-    let job = s.spawn(s.dibs(["--label", "named", &n.hold()]).no_session().env("DIBS_AGENT", "sweep a"));
+    let job = s.spawn(s.dibs(["--label", "named", &n.hold()]).no_session().env("USER", user).env("DIBS_AGENT", "sweep a"));
     s.held(1);
     let pid = s.pid_of("named").to_string();
-    let kill_as = |who: &str| s.dibs(["--kill", &pid]).no_session().env("DIBS_AGENT", who).code();
+    let kill_as = |who: &str| s.dibs(["--kill", &pid]).no_session().env("USER", user).env("DIBS_AGENT", who).code();
     assert_eq!(kill_as("sweep b"), 2, "a session that named its work is told apart from another");
     assert_eq!(kill_as("sweep a"), 0, "and can stop its own");
     s.wait(job);

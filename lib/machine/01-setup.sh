@@ -7,7 +7,8 @@ done
 : "$MODE" "$LABEL" "$WAIT" "$MAXHOLD" "$VERBOSE" "$JSON" "$CMD" "$NO_WATCH" "$TTY" "$HOLD" \
   "$DEV_PCI" "$DEV_RT" "$DEV_NAME" "$DEV_CHIP" "$DEV_TWINS" "$STREAM" "$MAXFROM" "$FINGERPRINT"
 AGENT=$(printf %s "$AGENT" | tr '\n\t' '  ' | cut -c1-48)
-AGENT_ID=$(printf %s "$AGENT_ID" | tr '\n\t' '  ' | cut -c1-48)
+# Compared whole by --kill, so never cut short as the name above it is.
+AGENT_ID=$(printf %s "$AGENT_ID" | tr '\n\t' '  ')
 BATCH_TAG=$(printf '%s\n' "$BATCH" | head -1 | tr '\t' ' ')
 case "$LEASE" in ''|*[!0-9]*) LEASE=0 ;; esac
 case "$READY_WITHIN" in ''|*[!0-9]*) READY_WITHIN=300 ;; esac
