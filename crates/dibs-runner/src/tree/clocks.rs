@@ -184,8 +184,6 @@ impl<'a> Removal<'a> {
 pub trait Contents {
     /// Its entries, hidden ones included, sorted as the shell's glob lists them.
     fn entries(&self) -> Vec<PathBuf>;
-    /// Every regular file below it.
-    fn files(&self) -> Vec<PathBuf>;
     /// `: >`: emptied, or made, and dated now.
     fn make_empty(&self) -> io::Result<()>;
     /// `rm -rf`: everything that can go goes, and whether all of it did.
@@ -201,21 +199,6 @@ impl Contents for Path {
             .map(|e| e.path())
             .collect();
         found.sort();
-        found
-    }
-
-    fn files(&self) -> Vec<PathBuf> {
-        let mut found = Vec::new();
-        let mut pending = vec![self.to_path_buf()];
-        while let Some(next) = pending.pop() {
-            for entry in fs::read_dir(&next).into_iter().flatten().flatten() {
-                match entry.file_type() {
-                    Ok(kind) if kind.is_dir() => pending.push(entry.path()),
-                    Ok(kind) if kind.is_file() => found.push(entry.path()),
-                    _ => {}
-                }
-            }
-        }
         found
     }
 

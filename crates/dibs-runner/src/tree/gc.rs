@@ -19,8 +19,13 @@ use std::{
     ffi::CString,
     fmt, fs,
     io::{self, Write as _},
+    iter,
+    num::NonZero,
     os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _},
+    panic,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
+    thread,
 };
 
 /// Rows listed under a heading before the rest are counted; what is past its clock always is.
@@ -64,6 +69,25 @@ struct Row {
 struct Sharing {
     own: HashMap<PathBuf, u64>,
     shared: u64,
+}
+
+struct Measured {
+    sizes: Sizes,
+    sharing: Option<Sharing>,
+}
+
+/// One path's sizes, read in a single walk of it.
+#[derive(Default)]
+struct Walked {
+    /// 512-byte blocks, a file linked twice under the path counted once.
+    blocks: u64,
+    /// Its files linked more than once, by device and inode, with their blocks: `du` counts each
+    /// in the first path given that holds it.
+    linked: HashMap<(u64, u64), u64>,
+    /// KiB in extents no other file shares.
+    alone: u64,
+    /// KiB in shared extents, by where each starts on the disk, so two caches' copies count once.
+    shared: HashMap<u64, u64>,
 }
 
 /// What `--gc` was asked, as the request carries it in the command's place: `<days|default>
@@ -156,9 +180,8 @@ impl SweepReport {
         };
         for kind in Swept::ALL {
             let entries = sweep.entries(kind);
-            let sizes = tally.measure(&entries);
-            let sharing = (kind == Swept::Caches && Host::shares_blocks(&scratch.join("target")))
-                .then(|| Sharing::of(&entries));
+            let mapped = kind == Swept::Caches && Host::shares_blocks(&scratch.join("target"));
+            let Measured { sizes, sharing } = tally.measure(&entries, mapped);
             if let Some(sharing) = &sharing {
                 tally.total = tally.total - sizes.sum() + sharing.together();
             }
@@ -404,7 +427,7 @@ impl SweepReport {
         if others.is_empty() {
             return;
         }
-        let sizes = tally.measure(&others);
+        let sizes = tally.measure(&others, false).sizes;
         let mut rows = Rows::default();
         for other in &others {
             let kib = sizes.of(other);
@@ -465,38 +488,6 @@ impl Rows {
 }
 
 impl Sharing {
-    /// Each cache's blocks no other file shares, and the shared ones counted once, by where they
-    /// sit on the disk.
-    fn of(caches: &[PathBuf]) -> Sharing {
-        let mut own = HashMap::new();
-        let mut shared: HashMap<u64, u64> = HashMap::new();
-        for cache in caches {
-            let mut seen = HashSet::new();
-            let mut alone = 0;
-            for file in cache.files() {
-                let Ok(meta) = fs::symlink_metadata(&file) else {
-                    continue;
-                };
-                if !seen.insert(meta.ino()) {
-                    continue;
-                }
-                for extent in Host::extents(&file).unwrap_or_default() {
-                    match extent.shared {
-                        true => {
-                            shared.insert(extent.physical / 1024, extent.length / 1024);
-                        }
-                        false => alone += extent.length / 1024,
-                    }
-                }
-            }
-            own.insert(cache.clone(), alone);
-        }
-        Sharing {
-            own,
-            shared: shared.values().sum(),
-        }
-    }
-
     /// What they hold on the disk together, shared blocks once.
     fn together(&self) -> u64 {
         self.shared + self.own.values().sum::<u64>()
@@ -545,35 +536,110 @@ impl Free {
 }
 
 impl Totals {
-    /// What `du -sk` gives each path, a file linked twice counted once, added to the total.
-    fn measure(&mut self, paths: &[PathBuf]) -> Sizes {
-        let mut seen = HashSet::new();
-        let sizes: HashMap<PathBuf, u64> = paths
-            .iter()
-            .map(|path| (path.clone(), Totals::allocated(path, &mut seen).div_ceil(2)))
-            .collect();
+    /// What `du -sk` gives each path, a file linked twice counted once, added to the total; and,
+    /// when `mapped`, what each holds alone.
+    fn measure(&mut self, paths: &[PathBuf], mapped: bool) -> Measured {
+        let mut linked = HashSet::new();
+        let mut sizes = HashMap::new();
+        let mut own = HashMap::new();
+        let mut shared = HashMap::new();
+        for (path, walked) in paths.iter().zip(Walked::all(paths, mapped)) {
+            let mut blocks = walked.blocks;
+            for (file, held) in walked.linked {
+                if !linked.insert(file) {
+                    blocks -= held;
+                }
+            }
+            sizes.insert(path.clone(), blocks.div_ceil(2));
+            own.insert(path.clone(), walked.alone);
+            shared.extend(walked.shared);
+        }
         self.total += sizes.values().sum::<u64>();
-        Sizes(sizes)
+        Measured {
+            sizes: Sizes(sizes),
+            sharing: mapped.then(|| Sharing {
+                own,
+                shared: shared.values().sum(),
+            }),
+        }
+    }
+}
+
+impl Walked {
+    /// Each path's walk, in order, the paths spread over the cores.
+    fn all(paths: &[PathBuf], mapped: bool) -> Vec<Walked> {
+        let next = AtomicUsize::new(0);
+        let cores = thread::available_parallelism().map_or(1, NonZero::get);
+        let mut walked: Vec<(usize, Walked)> = thread::scope(|scope| {
+            let walkers: Vec<_> = (0..cores.min(paths.len()))
+                .map(|_| {
+                    scope.spawn(|| {
+                        iter::from_fn(|| {
+                            let at = next.fetch_add(1, Ordering::Relaxed);
+                            paths.get(at).map(|path| (at, Walked::of(path, mapped)))
+                        })
+                        .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            walkers
+                .into_iter()
+                .flat_map(|w| w.join().unwrap_or_else(|panic| panic::resume_unwind(panic)))
+                .collect()
+        });
+        walked.sort_by_key(|(at, _)| *at);
+        walked.into_iter().map(|(_, w)| w).collect()
     }
 
-    /// 512-byte blocks allocated under a path, its own included.
-    fn allocated(path: &Path, seen: &mut HashSet<(u64, u64)>) -> u64 {
+    /// Everything under a path, its own entry included.
+    fn of(path: &Path, mapped: bool) -> Walked {
+        let mut walked = Walked::default();
         let Ok(meta) = fs::symlink_metadata(path) else {
-            return 0;
+            return walked;
         };
-        if meta.nlink() > 1 && !meta.is_dir() && !seen.insert((meta.dev(), meta.ino())) {
-            return 0;
+        walked.add(path, &meta, mapped);
+        let mut pending = match meta.is_dir() {
+            true => vec![path.to_path_buf()],
+            false => Vec::new(),
+        };
+        while let Some(dir) = pending.pop() {
+            for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let Ok(meta) = entry.metadata() else {
+                    continue;
+                };
+                let path = entry.path();
+                walked.add(&path, &meta, mapped);
+                if meta.is_dir() {
+                    pending.push(path);
+                }
+            }
         }
-        let below: u64 = match meta.is_dir() {
-            true => fs::read_dir(path)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|e| Totals::allocated(&e.path(), seen))
-                .sum(),
-            false => 0,
-        };
-        meta.blocks() + below
+        walked
+    }
+
+    fn add(&mut self, path: &Path, meta: &fs::Metadata, mapped: bool) {
+        if meta.nlink() > 1
+            && !meta.is_dir()
+            && self
+                .linked
+                .insert((meta.dev(), meta.ino()), meta.blocks())
+                .is_some()
+        {
+            return;
+        }
+        self.blocks += meta.blocks();
+        if !mapped || !meta.is_file() {
+            return;
+        }
+        for extent in Host::extents(path).unwrap_or_default() {
+            match extent.shared {
+                true => {
+                    self.shared
+                        .insert(extent.physical / 1024, extent.length / 1024);
+                }
+                false => self.alone += extent.length / 1024,
+            }
+        }
     }
 }
 
