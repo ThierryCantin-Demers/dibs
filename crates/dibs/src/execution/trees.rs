@@ -11,11 +11,11 @@
 
 use super::{
     build::hex,
-    jobs::{JobRequest, Jobs, Reported},
+    jobs::{JobRequest, Jobs},
+    local::Repo,
 };
 use crate::{
     call::RecipeJob,
-    git::Git,
     gitdeps::{CargoHome, Db, GitPin},
     recipe::Lock,
 };
@@ -41,20 +41,6 @@ impl Nest {
     }
 }
 
-/// How a local tree is sent. `--checksum` without `--times` is what the seed relies on: a file
-/// whose bytes match is left alone with the time it was copied with, and any other is rewritten
-/// and takes the current time.
-/// The marker is excluded so `--delete` leaves it, or collection could never date the tree.
-const SYNC_ARGS: &[&str] = &[
-    "-rlpgo",
-    "--checksum",
-    "--no-times",
-    "--delete",
-    "--exclude=.git",
-    "--exclude=/.dibs-used",
-    "--filter=:- .gitignore",
-];
-
 /// What the machine needs to know to prepare one tree.
 pub struct TreeSpec<'a> {
     pub dir: &'a Path,
@@ -76,7 +62,7 @@ pub struct TreePlan {
 
 impl TreeSpec<'_> {
     pub fn plan(&self) -> TreePlan {
-        let lock = lockfile(self.dir, self.local.is_none().then_some(self.reference));
+        let lock = Repo(self.dir).lockfile(self.local.is_none().then_some(self.reference));
         let lock = lock.as_deref().unwrap_or("");
         let gitdbs = CargoHome::here().dbs(&GitPin::all(lock));
         let lines = super::packages(lock, self.signature);
@@ -122,31 +108,37 @@ impl TreePlan {
             step: None,
         }
     }
-}
 
-/// A step in a tree laid out before.
-pub fn in_tree(prepared: &wire::Prepared) -> wire::Tree {
-    wire::Tree {
-        place: wire::Place::At(wire::At {
-            worktree: prepared.worktree.clone(),
-            target: prepared.target.clone(),
-        }),
-        then: wire::Then::Step,
-        step: None,
+    /// Sends each git database the machine said it lacks.
+    pub fn send_missing(&self, backend: &Jobs, prepared: &wire::Prepared) {
+        let Some(asked) = &prepared.gitdbs else {
+            return;
+        };
+        for missing in &asked.missing {
+            let Some(db) = self
+                .gitdbs
+                .iter()
+                .find(|d| d.name == missing.name && d.commit == missing.commit)
+            else {
+                continue;
+            };
+            eprintln!(
+                "dibs: sending {} at {:.8}, which the machine does not have and may not be able to fetch",
+                db.name, db.commit
+            );
+            if !sync_gitdb(backend, &db.path, &format!("{}/{}", asked.dir, db.name)) {
+                eprintln!(
+                    "dibs: sending {} failed; the build will try to fetch it itself",
+                    db.path.display()
+                );
+            }
+        }
     }
 }
 
 /// What a job that only lays out a tree runs, which `--status` and `--log` show of it.
 pub fn preparing_title(repo: &str, reference: &str) -> String {
     format!("# prepare {repo}@{reference}")
-}
-
-/// The lockfile of the tree here, or of a ref in its history.
-pub fn lockfile(dir: &Path, reference: Option<&str>) -> Option<String> {
-    match reference {
-        None => std::fs::read_to_string(dir.join("Cargo.lock")).ok(),
-        Some(r) => Git(dir).run(&["show", &format!("{r}:Cargo.lock")]).ok(),
-    }
 }
 
 /// Unique per invocation, and what a build's package list is staged under until it succeeds.
@@ -161,92 +153,41 @@ pub fn new_token() -> String {
     )
 }
 
-pub fn send_missing_gitdbs(backend: &Jobs, prepared: &wire::Prepared, gitdbs: &[Db]) {
-    let Some(asked) = &prepared.gitdbs else {
-        return;
-    };
-    for missing in &asked.missing {
-        let Some(db) = gitdbs
-            .iter()
-            .find(|d| d.name == missing.name && d.commit == missing.commit)
-        else {
-            continue;
+/// What a prepare left, said to the person reading along.
+pub trait Announce {
+    fn announce(&self);
+}
+
+impl Announce for wire::Prepared {
+    fn announce(&self) {
+        eprintln!("dibs: {}", self.worktree);
+        let Some(seeded) = &self.seeded else {
+            return;
         };
-        eprintln!(
-            "dibs: sending {} at {:.8}, which the machine does not have and may not be able to fetch",
-            db.name, db.commit
-        );
-        if !sync_gitdb(backend, &db.path, &format!("{}/{}", asked.dir, db.name)) {
+        let from = &seeded.from;
+        if let (Some(mine), Some(shared)) = (self.reseeded, seeded.shared) {
             eprintln!(
-                "dibs: sending {} failed; the build will try to fetch it itself",
-                db.path.display()
+                "dibs: this tree's target had built {mine} of the {} groups in its lockfile and {from} has {}, so the tree now starts from {from}'s",
+                shared.of, shared.have
             );
+            return;
         }
-    }
-}
-
-/// Whether a step's tree waits for a git dependency to be sent before it can build.
-pub fn held(prepared: &wire::Prepared) -> bool {
-    prepared
-        .gitdbs
-        .as_ref()
-        .is_some_and(|g| !g.missing.is_empty())
-}
-
-/// Prepares the worktree and sends the local tree into it, as one job under one lock.
-///
-/// `--no-times` is the load-bearing option and it is not tidiness. rsync's `-a` implies `-t`,
-/// which is right for a transfer and wrong for sources about to be compiled: files that arrive
-/// carrying an older mtime than the artifacts already beside them leave cargo with nothing to
-/// do, so the build finishes in a fraction of a second and the previous binary is what gets
-/// measured. It reads exactly like a fast incremental build. `--checksum` is what makes
-/// dropping `-t` affordable, because without it every destination mtime differs on the next
-/// pass and the whole tree goes again each time.
-///
-/// The filter follows the repo's own ignore rules, so a target directory or an editor's
-/// droppings never make the trip, and `--delete` means a file deleted locally stops existing
-/// there too rather than going on compiling.
-pub fn sync_prepared(
-    backend: &Jobs,
-    from: &Path,
-    key: &str,
-    req: &JobRequest,
-    on_prepared: &mut dyn FnMut(&wire::Prepared),
-) -> Reported {
-    let args: Vec<String> = SYNC_ARGS
-        .iter()
-        .map(|a| a.to_string())
-        .chain([format!("{}/", from.display()), format!(":local-{key}/")])
-        .collect();
-    backend.sync(req, &args, on_prepared)
-}
-
-pub fn announce_prepared(prepared: &wire::Prepared) {
-    eprintln!("dibs: {}", prepared.worktree);
-    let Some(seeded) = &prepared.seeded else {
-        return;
-    };
-    let from = &seeded.from;
-    if let (Some(mine), Some(shared)) = (prepared.reseeded, seeded.shared) {
-        eprintln!(
-            "dibs: this tree's target had built {mine} of the {} groups in its lockfile and {from} has {}, so the tree now starts from {from}'s",
-            shared.of, shared.have
-        );
-        return;
-    }
-    match seeded.shared {
-        Some(shared) => eprintln!(
-            "dibs: target directory copied from {from}, whose builds match {} of the {} groups in this tree's lockfile{}",
-            shared.have,
-            shared.of,
-            if seeded.sources {
-                ", with its sources so unchanged crates stay built"
-            } else {
-                ""
+        match seeded.shared {
+            Some(shared) => eprintln!(
+                "dibs: target directory copied from {from}, whose builds match {} of the {} groups in this tree's lockfile{}",
+                shared.have,
+                shared.of,
+                if seeded.sources {
+                    ", with its sources so unchanged crates stay built"
+                } else {
+                    ""
+                }
+            ),
+            None => {
+                eprintln!(
+                    "dibs: target directory copied from {from}, so only what differs rebuilds"
+                )
             }
-        ),
-        None => {
-            eprintln!("dibs: target directory copied from {from}, so only what differs rebuilds")
         }
     }
 }

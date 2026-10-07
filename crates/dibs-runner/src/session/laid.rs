@@ -93,10 +93,7 @@ impl<'a> Layout<'a> {
         self.at
             .sink
             .record(Record::Prepared(Box::new(prepared.clone())));
-        let missing = prepared
-            .gitdbs
-            .as_ref()
-            .is_some_and(|g| !g.missing.is_empty());
+        let missing = prepared.held();
         let worktree = PathBuf::from(&prepared.worktree);
         match tree.then {
             Then::Nothing => Laid::Done {

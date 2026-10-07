@@ -9,7 +9,6 @@ use super::{
     error::PinError,
     local::{Checkout, Fetched, Local, Repo},
     refs::Arm,
-    trees::lockfile,
 };
 use crate::{
     cli::RecipeCall,
@@ -219,7 +218,7 @@ pub fn pins_of(
                 None,
                 None,
                 local_crates(&pdir)?,
-                lockfile(&pdir, None),
+                Repo(&pdir).lockfile(None),
             ),
             _ => {
                 let Fetched {
@@ -231,7 +230,7 @@ pub fn pins_of(
                     reference: reference.to_string(),
                     dir: pdir.clone(),
                 })?;
-                let (crates, lock) = (ref_crates(&pdir, &sha)?, lockfile(&pdir, Some(&sha)));
+                let (crates, lock) = (ref_crates(&pdir, &sha)?, Repo(&pdir).lockfile(Some(&sha)));
                 match ahead.or_else(|| Repo(&pdir).unfetchable(&sha)) {
                     Some(why) => {
                         let c = Checkout::of(&pdir, &identity, &sha, Some(why))?;
@@ -261,7 +260,7 @@ pub fn pins_of(
     }
     let locks: Vec<String> = arms
         .iter()
-        .filter_map(|a| lockfile(a.dir(dir), a.fetch.as_deref()))
+        .filter_map(|a| Repo(a.dir(dir)).lockfile(a.fetch.as_deref()))
         .chain(pins.iter().filter_map(|p| p.lock.clone()))
         .collect();
     for p in &mut pins {

@@ -6,10 +6,12 @@ use crate::{
     execution::{
         build::hex,
         error::{ArmError, CheckoutError},
+        jobs::{JobRequest, Jobs, Reported},
     },
     git::{Git, GitError},
     paths::{FileError, Paths},
 };
+use dibs_format::wire;
 use dibs_runner::shared::SharedFile;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -86,7 +88,29 @@ impl Repo<'_> {
         private(url.trim())
             .then_some("its remote needs credentials, which the machines do not hold")
     }
+
+    /// The lockfile of the tree here, or of a ref in its history.
+    pub fn lockfile(self, reference: Option<&str>) -> Option<String> {
+        match reference {
+            None => std::fs::read_to_string(self.0.join("Cargo.lock")).ok(),
+            Some(r) => Git(self.0).run(&["show", &format!("{r}:Cargo.lock")]).ok(),
+        }
+    }
 }
+
+/// How a local tree is sent. `--checksum` without `--times` is what the seed relies on: a file
+/// whose bytes match is left alone with the time it was copied with, and any other is rewritten
+/// and takes the current time.
+/// The marker is excluded so `--delete` leaves it, or collection could never date the tree.
+const SYNC_ARGS: &[&str] = &[
+    "-rlpgo",
+    "--checksum",
+    "--no-times",
+    "--delete",
+    "--exclude=.git",
+    "--exclude=/.dibs-used",
+    "--filter=:- .gitignore",
+];
 
 /// What a local tree is, for a run that was never pushed.
 ///
@@ -138,6 +162,37 @@ impl Local {
             content,
             dirty,
         })
+    }
+
+    /// Prepares the worktree and sends the tree at `from` into it, as one job under one lock.
+    ///
+    /// `--no-times` is the load-bearing option and it is not tidiness. rsync's `-a` implies `-t`,
+    /// which is right for a transfer and wrong for sources about to be compiled: files that arrive
+    /// carrying an older mtime than the artifacts already beside them leave cargo with nothing to
+    /// do, so the build finishes in a fraction of a second and the previous binary is what gets
+    /// measured. It reads exactly like a fast incremental build. `--checksum` is what makes
+    /// dropping `-t` affordable, because without it every destination mtime differs on the next
+    /// pass and the whole tree goes again each time.
+    ///
+    /// The filter follows the repo's own ignore rules, so a target directory or an editor's
+    /// droppings never make the trip, and `--delete` means a file deleted locally stops existing
+    /// there too rather than going on compiling.
+    pub fn send(
+        &self,
+        from: &Path,
+        backend: &Jobs,
+        req: &JobRequest,
+        on_prepared: &mut dyn FnMut(&wire::Prepared),
+    ) -> Reported {
+        let args: Vec<String> = SYNC_ARGS
+            .iter()
+            .map(|a| a.to_string())
+            .chain([
+                format!("{}/", from.display()),
+                format!(":local-{}/", self.key),
+            ])
+            .collect();
+        backend.sync(req, &args, on_prepared)
     }
 }
 

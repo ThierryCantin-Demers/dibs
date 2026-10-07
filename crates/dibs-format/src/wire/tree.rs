@@ -125,6 +125,25 @@ pub struct Prepared {
     pub gitdbs: Option<GitDbs>,
 }
 
+impl Prepared {
+    /// This tree as laid out, for a step that runs in it.
+    pub fn tree(&self) -> Tree {
+        Tree {
+            place: Place::At(At {
+                worktree: self.worktree.clone(),
+                target: self.target.clone(),
+            }),
+            then: Then::Step,
+            step: None,
+        }
+    }
+
+    /// Whether the tree waits for a git dependency to be sent before it can build.
+    pub fn held(&self) -> bool {
+        self.gitdbs.as_ref().is_some_and(|g| !g.missing.is_empty())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revision {
     pub repo: String,

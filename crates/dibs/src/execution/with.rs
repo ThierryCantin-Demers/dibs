@@ -4,10 +4,7 @@ use super::{
     jobs::{JobRequest, Jobs},
     local::Repo,
     refs::{Arm, Side},
-    trees::{
-        TreeSpec, announce_prepared, in_tree, new_token, preparing_title, send_missing_gitdbs,
-        sync_prepared,
-    },
+    trees::{Announce, TreeSpec, new_token, preparing_title},
 };
 use crate::{
     call::{Destination, LockedCall, Origin, RecipeJob},
@@ -163,7 +160,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
                 tree: Some(plan.tree(wire::Then::Transfer)),
                 ..setup
             };
-            let reported = sync_prepared(&backend, &from, &l.key, &send, &mut announce_prepared);
+            let reported = l.send(&from, &backend, &send, &mut |p| p.announce());
             if let Some(c) = &mut arm.checkout {
                 c.lock = None;
             }
@@ -195,7 +192,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
                 });
             }
             if let Some(prepared) = &reported.prepared {
-                announce_prepared(prepared);
+                prepared.announce();
             }
             reported
         }
@@ -206,7 +203,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             failed: Unprepared::NoPath,
         });
     };
-    send_missing_gitdbs(&backend, &prepared, &plan.gitdbs);
+    plan.send_missing(&backend, &prepared);
 
     // A server and a command run there are started in the tree, with the repo's build cache.
     let in_tree_shell = |run: &str| {
@@ -231,7 +228,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
                     claim: super::build_signature(build).is_some(),
                     ..wire::Step::default()
                 }),
-                ..in_tree(&prepared)
+                ..prepared.tree()
             }),
         };
         let out = backend.run(&req, build);
@@ -270,7 +267,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
                 check: guarded,
                 ..wire::Step::default()
             }),
-            ..in_tree(&prepared)
+            ..prepared.tree()
         }),
         ..RecipeJob::default()
     };

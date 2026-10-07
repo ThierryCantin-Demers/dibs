@@ -7,10 +7,7 @@ use super::{
     refs::{Arm, Side},
     schedule::{Job, jobs_of, schedule},
     sweep::{sweep_points, sweep_run},
-    trees::{
-        TreePlan, TreeSpec, announce_prepared, held, in_tree, new_token, preparing_title,
-        send_missing_gitdbs, sync_prepared,
-    },
+    trees::{Announce, TreePlan, TreeSpec, new_token, preparing_title},
 };
 use crate::{
     batch,
@@ -252,7 +249,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         fingerprint: Some(fingerprint.clone()),
         tree: None,
     };
-    let mut announce = |prepared: &wire::Prepared| announce_prepared(prepared);
+    let mut announce = |prepared: &wire::Prepared| prepared.announce();
 
     // The pinned trees go first: the patch names where they landed.
     let mut pinned = Vec::with_capacity(pins.len());
@@ -310,7 +307,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     tree: Some(plan.tree(wire::Then::Transfer)),
                     ..setup
                 };
-                let reported = sync_prepared(&backend, from, &l.key, &send, &mut announce);
+                let reported = l.send(from, &backend, &send, &mut announce);
                 drop(lock);
                 if reported.prepared.is_none() || reported.outcome.status != 0 {
                     return Err(RunError::Call {
@@ -349,7 +346,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 failed: Unprepared::NoPath,
             });
         };
-        send_missing_gitdbs(&backend, &prepared, &plan.gitdbs);
+        plan.send_missing(&backend, &prepared);
         pinned.push(prepared);
     }
     let nest = (!pins.is_empty()).then(|| {
@@ -460,7 +457,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         let (arm, step, rep, fold) = match job {
             Job::Send(a) => {
                 let t = &mut trees[a];
-                let key = &t.local.as_ref().expect("a sent tree is local").key;
+                let local = t.local.as_ref().expect("a sent tree is local");
                 let send = JobRequest {
                     tree: Some(t.plan.tree(wire::Then::Transfer)),
                     ..setup
@@ -469,7 +466,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     outcome: out,
                     prepared,
                     ..
-                } = sync_prepared(&backend, arms[a].dir(&dir), key, &send, &mut announce);
+                } = local.send(arms[a].dir(&dir), &backend, &send, &mut announce);
                 checkout_locks[a] = None;
                 let Some(prepared) = prepared else {
                     return Err(RunError::Call {
@@ -483,7 +480,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                         failed: Unprepared::Send(arms[a].dir(&dir).to_path_buf()),
                     });
                 }
-                send_missing_gitdbs(&backend, &prepared, &t.plan.gitdbs);
+                t.plan.send_missing(&backend, &prepared);
                 t.prepared = Some(prepared);
                 continue;
             }
@@ -506,7 +503,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     });
                 };
                 announce(&prepared);
-                send_missing_gitdbs(&backend, &prepared, &t.plan.gitdbs);
+                t.plan.send_missing(&backend, &prepared);
                 t.prepared = Some(prepared);
                 continue;
             }
@@ -570,8 +567,8 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     failed: Unprepared::Prepare(what(arm)),
                 });
             };
-            send_missing_gitdbs(&backend, &prepared, &t.plan.gitdbs);
-            let waited = held(&prepared);
+            t.plan.send_missing(&backend, &prepared);
+            let waited = prepared.held();
             t.prepared = Some(prepared);
             if !waited {
                 if stepped.as_ref().is_some_and(|s| s.refused) {
@@ -598,7 +595,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         let there = JobRequest {
             tree: Some(wire::Tree {
                 step: Some(around),
-                ..in_tree(p)
+                ..p.tree()
             }),
             ..req
         };
