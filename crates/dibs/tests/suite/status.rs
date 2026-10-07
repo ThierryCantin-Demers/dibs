@@ -114,9 +114,15 @@ fn a_job_that_never_starts_working_is_flagged() {
     // -1 flags anything the rate is willing to call idle, whatever its age, and an hour flags
     // nothing: the age guard and the CPU reading are separate claims, checked as such.
     let mut s = Sandbox::new();
-    let w = s.gate("w");
-    let job = s.spawn(s.dibs(["--bench", "--label", "wedged", &w.hold()]));
-    s.held(1);
+    let (up, w) = (s.gate("up"), s.gate("w"));
+    let job = s.spawn(s.dibs([
+        "--bench",
+        "--label",
+        "wedged",
+        &format!("{}; {}", up.signal(), w.hold()),
+    ]));
+    // Where CPU time is counted exactly, a shell still starting between two looks has worked.
+    up.reached();
     let look = |after: &str| {
         s.dibs(["--status"])
             .env("DIBS_IDLE_AFTER", after)

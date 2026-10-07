@@ -45,6 +45,8 @@ struct Service {
     /// How it went, as the trailer says.
     end: String,
     bad: bool,
+    /// Its exit is collected on another thread, so a second stop cannot go by its status.
+    stopped: bool,
 }
 
 /// Where the services' logs go and what they are given.
@@ -113,6 +115,7 @@ impl Services {
                     status,
                     end: String::new(),
                     bad: false,
+                    stopped: false,
                 }
             })
             .collect();
@@ -218,9 +221,13 @@ impl Services {
     pub fn stop(&mut self) {
         let mut alive = Vec::new();
         for service in &mut self.list {
-            let Some(pid) = service.pid.filter(|_| service.status.get().is_none()) else {
+            let Some(pid) = service
+                .pid
+                .filter(|_| service.status.get().is_none() && !service.stopped)
+            else {
                 continue;
             };
+            service.stopped = true;
             alive.push(pid);
             service.end = match (service.bad, service.end.is_empty()) {
                 (true, _) => format!("{}, and stopped", service.end),
