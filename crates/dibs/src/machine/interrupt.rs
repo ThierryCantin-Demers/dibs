@@ -1,16 +1,28 @@
 use std::{
     os::unix::process::ExitStatusExt as _,
     process::ExitStatus,
-    sync::atomic::{AtomicBool, AtomicI32, Ordering},
+    sync::{
+        Mutex, PoisonError,
+        atomic::{AtomicBool, AtomicI32, Ordering},
+    },
 };
 
 /// Ctrl-C while a child runs belongs to the child: this process carries on, and dies of it only
 /// if the child did, as a shell does.
-pub struct Interrupt {
+pub struct Interrupt(());
+
+/// The calls deferring Ctrl-C at once, which threads of one viewer make, and the handler the
+/// first of them replaced, put back by the last to end.
+struct Deferrals {
+    calls: usize,
     previous: libc::sighandler_t,
 }
 
 static HEARD: AtomicBool = AtomicBool::new(false);
+static DEFERRALS: Mutex<Deferrals> = Mutex::new(Deferrals {
+    calls: 0,
+    previous: libc::SIG_DFL,
+});
 
 extern "C" fn noted(_: libc::c_int) {
     HEARD.store(true, Ordering::Relaxed);
@@ -19,14 +31,19 @@ extern "C" fn noted(_: libc::c_int) {
 impl Interrupt {
     /// A Ctrl-C this process was started ignoring stays ignored.
     pub fn defer() -> Interrupt {
-        let handler = noted as extern "C" fn(libc::c_int);
-        // SAFETY: the handler does nothing, and is replaced again on drop.
-        let previous = unsafe { libc::signal(libc::SIGINT, handler as libc::sighandler_t) };
-        if previous == libc::SIG_IGN {
-            // SAFETY: puts back the disposition just replaced.
-            unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+        let mut deferrals = DEFERRALS.lock().unwrap_or_else(PoisonError::into_inner);
+        if deferrals.calls == 0 {
+            let handler = noted as extern "C" fn(libc::c_int);
+            // SAFETY: the handler does nothing, and is replaced again by the last drop.
+            let previous = unsafe { libc::signal(libc::SIGINT, handler as libc::sighandler_t) };
+            if previous == libc::SIG_IGN {
+                // SAFETY: puts back the disposition just replaced.
+                unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+            }
+            deferrals.previous = previous;
         }
-        Interrupt { previous }
+        deferrals.calls += 1;
+        Interrupt(())
     }
 
     /// Whether Ctrl-C arrived while a child had it, whatever the child did with it.
@@ -53,8 +70,12 @@ impl Interrupt {
 
 impl Drop for Interrupt {
     fn drop(&mut self) {
-        // SAFETY: puts back the handler `defer` replaced.
-        unsafe { libc::signal(libc::SIGINT, self.previous) };
+        let mut deferrals = DEFERRALS.lock().unwrap_or_else(PoisonError::into_inner);
+        deferrals.calls -= 1;
+        if deferrals.calls == 0 {
+            // SAFETY: puts back the handler the first `defer` replaced.
+            unsafe { libc::signal(libc::SIGINT, deferrals.previous) };
+        }
     }
 }
 
@@ -126,5 +147,34 @@ impl Drop for Relayed {
             // SAFETY: puts back the handler `to` replaced.
             unsafe { libc::signal(*signal, previous) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn disposition() -> libc::sighandler_t {
+        // SAFETY: a null action only reads the current one into `current`.
+        unsafe {
+            let mut current: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(libc::SIGINT, std::ptr::null(), &mut current);
+            current.sa_sigaction
+        }
+    }
+
+    #[test]
+    fn calls_that_end_out_of_order_put_back_the_handler_the_first_found() {
+        let before = disposition();
+        let deferred = match before {
+            libc::SIG_IGN => libc::SIG_IGN,
+            _ => noted as extern "C" fn(libc::c_int) as libc::sighandler_t,
+        };
+        let first = Interrupt::defer();
+        let second = Interrupt::defer();
+        drop(first);
+        assert_eq!(disposition(), deferred, "while the second still runs");
+        drop(second);
+        assert_eq!(disposition(), before);
     }
 }
