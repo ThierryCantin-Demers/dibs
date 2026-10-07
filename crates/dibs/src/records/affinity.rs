@@ -1,4 +1,4 @@
-use crate::{paths::Paths, records::runs::now_secs};
+use crate::{paths::Paths, records::now_secs};
 use dibs_format::Span;
 use dibs_runner::shared::SharedFile;
 use std::path::PathBuf;

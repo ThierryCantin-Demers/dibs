@@ -7,8 +7,8 @@
 use crate::{
     paths::{FileError, Paths},
     records::{
+        date,
         error::{Kept, RecordsError},
-        runs,
     },
 };
 use dibs_format::FrictionNote;
@@ -123,8 +123,8 @@ impl fmt::Display for Complaints<'_> {
             } else {
                 format!(", dibs {}", last.version)
             };
-            let was = runs::date(first.when as i64);
-            let now = runs::date(last.when as i64);
+            let was = date(first.when as i64);
+            let now = date(last.when as i64);
             if *times > 1 && was != now {
                 writeln!(f, "       first {was}, last {now}{by}{at}")?;
             } else {

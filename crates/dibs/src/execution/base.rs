@@ -16,7 +16,7 @@ use crate::{
     call::{Destination, RecipeJob},
     cli::{RecipeCall, ShellWord},
     recipe::{self, Lock, Manifest, NotTaken, Resolved, resolve},
-    records::{Affinity, now_secs, write_record},
+    records::{Affinity, RunLog, now_secs},
 };
 use dibs_format::{
     Alias, ArmRecord, Exit, MachineName, Outcome, Pairs, ProcedureStep, RunRecord, RunVerb,
@@ -714,7 +714,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         outcome: Some(Outcome::of_steps(&steps)),
         steps,
     };
-    write_record(&record)?;
+    RunLog::here()?.append(&record)?;
 
     Ok(match failed {
         Some(c) => ExitCode::from(c.clamp(1, 255) as u8),
@@ -867,7 +867,7 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
         command,
     );
     let steps = vec![out.step_record(Lock::Shared)];
-    write_record(&RunRecord {
+    RunLog::here()?.append(&RunRecord {
         when: now_secs(),
         verb: RunVerb::Raw,
         label: "raw".into(),

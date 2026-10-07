@@ -11,7 +11,7 @@ use dibs::{
     machine::Runner,
     paths::FileError,
     recipe,
-    records::{self, Complaints, FrictionLog, runs},
+    records::{Complaints, FrictionLog, RunLog},
     reports,
     update::{Build, ChangeNotice},
 };
@@ -145,7 +145,7 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
     }
 
     if args.verb == RecipeVerb::Gaps {
-        print!("{}", runs::gaps(&runs::load(&records::runs_path()?)?));
+        print!("{}", RunLog::here()?.runs()?.gaps());
         let notes = FrictionLog::here()?.notes();
         print!("{}", Complaints::of(&notes));
         return Ok(ExitCode::SUCCESS);
@@ -162,8 +162,8 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
         } else {
             Some(args.repo.as_str())
         };
-        let records = runs::load(&records::runs_path()?)?;
-        print!("{}", runs::report(&records, label, 30, args.all));
+        let runs = RunLog::here()?.runs()?;
+        print!("{}", runs.report(label, 30, args.all));
         return Ok(ExitCode::SUCCESS);
     }
 
