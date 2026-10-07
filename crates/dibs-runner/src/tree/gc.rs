@@ -182,6 +182,9 @@ impl SweepReport {
                     now,
                     &mut tally,
                 ),
+                Swept::Results => {
+                    self.bulk("results kept under out", &section, &sizes, now, &mut tally)
+                }
                 Swept::Runners => self.runners(&section, &sizes, &mut tally),
             };
             SweepReport::say(&listed);

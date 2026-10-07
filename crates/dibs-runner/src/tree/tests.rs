@@ -875,6 +875,19 @@ fn a_sweep_leaves_a_target_a_build_holds_and_says_what_it_could_not_remove() {
 }
 
 #[test]
+fn a_prepare_sweeps_old_leftovers_under_tmp_and_leaves_results_under_out() {
+    let m = Machine::new();
+    let (left, result) = (m.p("scratch/tmp/left"), m.p("scratch/out/result"));
+    for old in [&left, &result] {
+        fs::create_dir_all(old).unwrap();
+        aged(old);
+    }
+    assert!(m.prepare(&local("k", &[])).0.is_ok());
+    assert!(!left.exists(), "an old leftover goes on a prepare");
+    assert!(result.exists(), "an old result stays until a person's --gc");
+}
+
+#[test]
 fn a_sweep_never_removes_the_tree_just_prepared() {
     let m = Machine::new();
     let ws = m.sources("k", "f.rs");

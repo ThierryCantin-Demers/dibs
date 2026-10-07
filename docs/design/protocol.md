@@ -97,7 +97,8 @@ Every prepare and `dibs --gc` walk the scratch the same way and judge it by the 
 `--gc` lists what one sweep judged, and a prepare removes the same things quietly.
 
 - **What it walks:** every repo's trees under `ws`, the build caches under `target`, the job
-  directories under `jobs`, leftovers under `tmp` and `out`, and the runners' directory.
+  directories under `jobs`, leftovers under `tmp`, and the runners' directory; `--gc` also
+  walks results under `out`, which a prepare leaves, since a person keeps what they want there.
 - **A tree** is past once its `.dibs-used` is older than `keep_days`, and **a cache** once its
   marker is older than `target_keep_days`, unless a build holds one of its `.cargo-lock` files.
   One with no marker is dated rather than removed.
@@ -258,9 +259,10 @@ one of them.
   - A runner's job is in its own process group, where a script's shared the script's, and the
     group is swept when the job ends or its runner dies.
   - A runner does not sweep old job directories as a plain job starts. It sweeps them, with old
-    trees, caches, leftovers in `tmp` and `out`, and runner versions, whenever it lays out a
-    tree, as `--gc` does. A script's prepare swept trees and caches alone, took no lock to, and
-    could remove one a runner's prepare was reviving.
+    trees, caches, leftovers in `tmp`, and runner versions, whenever it lays out a tree, as
+    `--gc` does; results in `out` go on `--gc` alone, as with a script. A script's prepare swept
+    trees and caches alone, took no lock to, and could remove one a runner's prepare was
+    reviving.
   - A runner keeps the pids it would stop in memory, so it writes no `work.<pid>`, which only the
     script that wrote one ever read.
   - A runner lays a recipe's tree out itself, so a job's log holds none of a prepare's `DIBS-`

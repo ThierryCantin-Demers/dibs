@@ -28,12 +28,25 @@ pub enum Swept {
     Trees,
     Caches,
     Jobs,
+    /// Under `tmp`.
     Leftovers,
+    /// Under `out`, where a person keeps what a job made.
+    Results,
     Runners,
 }
 
 impl Swept {
-    pub const ALL: [Swept; 5] = [
+    /// What `dibs --gc` sweeps.
+    pub const ALL: [Swept; 6] = [
+        Swept::Trees,
+        Swept::Caches,
+        Swept::Jobs,
+        Swept::Leftovers,
+        Swept::Results,
+        Swept::Runners,
+    ];
+    /// What a prepare sweeps: results go only when a person asks, with `dibs --gc`.
+    pub const BY_PREPARE: [Swept; 5] = [
         Swept::Trees,
         Swept::Caches,
         Swept::Jobs,
@@ -108,10 +121,10 @@ impl<'a> Sweep<'a> {
         Sweep { dry: true, ..self }
     }
 
-    /// Every kind judged, and what is past its clock removed.
+    /// What a prepare sweeps judged, and what is past its clock removed.
     pub fn run(&self) {
         let now = Moment::epoch_now();
-        for kind in Swept::ALL {
+        for kind in Swept::BY_PREPARE {
             if let Some(mut section) = self.judged(kind, now) {
                 self.collect(&mut section, now);
             }
@@ -132,7 +145,8 @@ impl<'a> Sweep<'a> {
                 .filter(|cache| cache.is_dir())
                 .collect(),
             Swept::Jobs => under("jobs"),
-            Swept::Leftovers => [under("tmp"), under("out")].concat(),
+            Swept::Leftovers => under("tmp"),
+            Swept::Results => under("out"),
             Swept::Runners => Runners::in_home(self.home).dir().entries(),
         }
     }
@@ -155,7 +169,7 @@ impl<'a> Sweep<'a> {
                     Verdict::of(cache, fate, used)
                 })
                 .collect(),
-            Swept::Jobs | Swept::Leftovers => entries
+            Swept::Jobs | Swept::Leftovers | Swept::Results => entries
                 .map(|path| {
                     let fate = self.bulk(&path, now);
                     let used = path.written(now);
@@ -178,8 +192,8 @@ impl<'a> Sweep<'a> {
                     self.collect_cache(verdict, now);
                 }
             }
-            Swept::Jobs | Swept::Leftovers | Swept::Runners if self.dry => {}
-            Swept::Jobs | Swept::Leftovers | Swept::Runners => {
+            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners if self.dry => {}
+            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners => {
                 for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
                     verdict.removed = self.removal.path(&verdict.path);
                 }

@@ -122,6 +122,24 @@ fn job_logs_count_in_what_would_go_and_only_what_went_in_what_came_back() {
 }
 
 #[test]
+fn an_old_result_under_out_goes_on_gc() {
+    let s = Sandbox::new();
+    s.write("gc/out/result/numbers", "1\n");
+    let result = s.p("gc/out/result");
+    assert_eq!(s.command("touch", ["-d", "30 days ago", &result]).code(), 0);
+    let gc = |args: &[&str]| s.dibs(args).env("DIBS_SCRATCH", s.p("gc")).run().all();
+    let dry = gc(&["--gc", "--dry-run"]);
+    assert_eq!(
+        dry.lines_matching("results kept under out, .* 1 past it holding .* which would go"),
+        1,
+        "{dry}"
+    );
+    assert!(s.exists("gc/out/result"), "a dry run leaves it");
+    gc(&["--gc"]);
+    assert!(!s.exists("gc/out/result"), "and --gc removes it");
+}
+
+#[test]
 fn a_dry_run_names_what_is_past_its_clock_and_removes_nothing() {
     let s = Sandbox::new();
     let g = scratch_to_sweep(&s);
