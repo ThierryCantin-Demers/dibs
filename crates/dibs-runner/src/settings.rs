@@ -307,8 +307,8 @@ impl Settings {
             idle_after: signed("DIBS_IDLE_AFTER", 60),
             wrote_within: signed("DIBS_WROTE_WITHIN", 120),
             clocks: Clocks {
-                keep_days: number("DIBS_KEEP_DAYS", 14),
-                target_keep_days: number("DIBS_TARGET_KEEP_DAYS", 5),
+                keep_days: number("DIBS_KEEP_DAYS", Clocks::DEFAULT.keep_days),
+                target_keep_days: number("DIBS_TARGET_KEEP_DAYS", Clocks::DEFAULT.target_keep_days),
             },
             seed_wait: number("DIBS_SEED_WAIT", 900),
             reflinks: Reflinks::of(var("DIBS_REFLINK").as_deref()),

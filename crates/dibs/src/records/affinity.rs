@@ -1,10 +1,11 @@
 use crate::paths::Paths;
 use dibs_format::{Moment, Span};
-use dibs_runner::shared::SharedFile;
+use dibs_runner::{Clocks, shared::SharedFile};
 use std::path::PathBuf;
 
-/// The machine deletes a target directory unused this long, so a memo of one is kept no longer.
-const AFFINITY_SECS: u64 = 5 * Span::DAY.0;
+/// A machine deletes a target directory unused this long unless set otherwise, so a memo of one
+/// is kept no longer.
+const AFFINITY_SECS: u64 = Clocks::DEFAULT.target_keep_days * Span::DAY.0;
 
 /// Which machine holds each repo's build cache. Kept beside the run record, on this side, since
 /// it describes the pool rather than any one machine in it.

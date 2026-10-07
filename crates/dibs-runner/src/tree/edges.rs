@@ -6,6 +6,7 @@ use crate::tree::{
     copy::{Copier, Reflinks, Sharing},
     tests::{Building, Machine, lines, local, run},
 };
+use dibs_format::Span;
 use std::{
     fs,
     os::unix::fs::{MetadataExt as _, PermissionsExt as _},
@@ -28,7 +29,7 @@ fn shown(path: &Path, rel: &str, modes: bool) -> String {
     if modes {
         line += &format!("  {:o}", meta.permissions().mode() & 0o7777);
     }
-    line += match age > Duration::from_secs(86_400) {
+    line += match age > Duration::from_secs(Span::DAY.0) {
         true => "  old",
         false => "  new",
     };

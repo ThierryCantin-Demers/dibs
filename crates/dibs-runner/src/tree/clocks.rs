@@ -42,6 +42,12 @@ pub struct Clocks {
 }
 
 impl Clocks {
+    /// What a machine keeps when nothing sets it.
+    pub const DEFAULT: Clocks = Clocks {
+        keep_days: 14,
+        target_keep_days: 5,
+    };
+
     /// Whole days from `when` to `now`.
     pub fn days(now: u64, when: u64) -> u64 {
         now.saturating_sub(when) / Span::DAY.0

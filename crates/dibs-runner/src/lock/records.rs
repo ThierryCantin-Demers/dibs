@@ -1,5 +1,5 @@
 use crate::platform::{Host, Platform as _};
-use dibs_format::LockRecord;
+use dibs_format::{LockRecord, Span};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -10,7 +10,7 @@ use std::{
 /// it now; two seconds of slack for the rounding.
 const SAME_PROCESS_SLACK: u64 = 2;
 /// A batch's cancellation refuses its later steps here for a day.
-const CANCELLED_FOR: Duration = Duration::from_secs(24 * 3600);
+const CANCELLED_FOR: Duration = Duration::from_secs(Span::DAY.0);
 
 /// The lock directory: the lock files, and the records that say who holds and who waits.
 #[derive(Debug, Clone)]
