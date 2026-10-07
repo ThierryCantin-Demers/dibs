@@ -7,6 +7,7 @@ spoiled without it.
 - Anything measured runs on a benchmarking machine, never on a laptop: a laptop throttles and
   shares memory bandwidth with everything else on it, so its timings are noise.
 - Never `ssh` a machine to do work. An unlocked command ruins whoever is benchmarking at the time.
+  Where `dibs hook ssh` is wired, it refuses one and names the dibs call to make instead.
 - Never delete anything on a shared machine to make room, and never work around a permission
   error. Tell the person you work for.
 
@@ -53,7 +54,9 @@ spoiled without it.
   start the work, then `read -r _ < f`.
 - Scratch on a machine goes under `$DIBS_SCRATCH`, never `/tmp`, which is a small tmpfs shared by
   everyone that one build tree fills for all of us. dibs exports it and points `TMPDIR` into it;
-  put build trees, logs and binaries in a subdirectory you name.
+  put build trees, logs and binaries in a subdirectory you name, which dibs never removes. What
+  sits under `TMPDIR` unchanged for two weeks, by default, goes at the next recipe's prepare; what
+  is under `$DIBS_SCRATCH/out` goes only when a person runs `dibs --gc`.
 - **A full machine is read with `dibs --gc --dry-run`**, which says what is there, how big it is
   and when each of it was last used, and deletes nothing. Report that; removing it is the
   person's call, since a build cache you would reclaim may be the one someone is measuring
@@ -249,7 +252,7 @@ spoiled without it.
   `127.0.0.1:$DIBS_PORT_<NAME>`: client and server on one box, with no network between them.
 - **If no recipe fits, say so where it is counted**: `dibs raw --reason '<why>'`, or `--reason` on
   `dibs shell`. `dibs gaps` prints those, and a reason that keeps coming up is the specification
-  for the next recipe.
+  for the next recipe. Neither starts a server: `--with`, `--port` and `--ready` go on `dibs run`.
 - **Anything else that got in the way goes in `dibs --friction '<one line>'`**: a flag that is
   missing, a message that misled, a refusal you had to work around, a bug. One line, in your own
   words, at the moment it annoyed you, which is the only moment you know. It is read back by
@@ -265,7 +268,8 @@ spoiled without it.
 ### When dibs says no
 
 - The first call after dibs has changed says so on stderr, once per session, with the commits that
-  arrived. Flags and output you remember may be wrong from then on: read `dibs --help`.
+  arrived. Flags and output you remember may be wrong from then on: read `dibs --help`. The first
+  call it makes to each machine also builds dibs's runner there, once, as a shared job.
 - Exits 69, 70, 71 and 72 are for telling the person you work for, never for working around:
   - **69** unreachable: off, asleep, or its network needs a login. Do what does not need the
     machine, and do not retry in a loop.

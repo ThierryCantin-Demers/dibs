@@ -7,8 +7,8 @@ lists every flag.
 ## Setting it up
 
 **What you need first.** An account on the machine you can already `ssh` into with a key, and
-that is all: dibs installs nothing on the far side, ships itself over the connection, and needs
-no root anywhere. One account shared by everyone is the intended shape rather than a compromise,
+cargo there. dibs needs no root anywhere, and nobody installs anything on the machine by hand:
+dibs builds its own half there, as Which machines says below. One account shared by everyone is the intended shape rather than a compromise,
 because it is what lets one build cache serve the whole team, and because a lock keyed to a uid
 tells two people the machine is idle at the same time.
 
@@ -82,7 +82,10 @@ connection, so one never outlives a dibstop that was killed.
 It fast-forwards the clone `dibs` was built from, lists the commits that arrived, and reruns
 `install.sh` when anything changed or when the running `dibs` was built from another commit. The
 reinstall goes where the running `dibs` is installed, so a trial under its own prefix updates
-itself and not the one on PATH.
+itself and not the one on PATH. It then pulls your recipes, when they are a git clone.
+
+A new `dibs` usually brings a new runner. The first call it makes to each machine builds that
+runner there, once, as a shared job, and says so before the call goes on.
 
 ## Where recipes come from
 
@@ -182,7 +185,9 @@ tagged by its arm and rep. The seconds are the steps' wall time, a first look; t
 the recipe's own output, which `dibs out <job>` reads.
 
 `dibs shell` takes `--bench` for a one-off that is a measurement, and `--max <seconds>` where the
-default cap is too short for it. Named with no repo, it sends the tree it was called from, as
+default cap is too short for it. `dibs raw` and `dibs shell` refuse any other `--name value`
+rather than drop it, and point `--with`, `--port` and `--ready` at `dibs run`, which starts
+servers. Named with no repo, it sends the tree it was called from, as
 `.@local` would, and inside a worktree a bare name may be the worktree's directory as well as its
 repo.
 
@@ -306,27 +311,34 @@ A git dependency pinned in `Cargo.lock` that the machine lacks is sent from this
 before the build, when this cargo has that commit. A machine holds no credentials, so a private
 repo would otherwise fail the build after it had queued. Files are only added, never replaced.
 
-Worktrees and target directories are both collected, by every prepare, local or fetched, across
-every repo on the machine. A worktree goes after `DIBS_KEEP_DAYS` (14) unused. A target directory
-goes after `DIBS_TARGET_KEEP_DAYS` (5): disk is what runs out first on a machine, and a
-compilation cache makes refilling one cheap, except while a build holds it. The same sweep, with
-the same clocks, is what `dibs --gc` runs. It also collects the runners built on the machine: a
-version a later one replaced and that nobody has installed for `DIBS_KEEP_DAYS`, since a client
-that has not updated builds its own again, what a build that died left, and the target their
-builds share once unused for `DIBS_TARGET_KEEP_DAYS`; never while a build of one runs. An entry
-under `$DIBS_SCRATCH/tmp` goes once unchanged for `DIBS_KEEP_DAYS`, on a prepare as well; one
-under `$DIBS_SCRATCH/out`, where results are kept, goes by the same clock but only on `dibs --gc`.
+Every prepare, local or fetched, sweeps the machine's whole scratch, across every repo, and
+`dibs --gc` runs the same sweep with the same clocks:
+
+- A worktree goes once unused for `keep_days` (14).
+- A target directory goes once unused for `target_keep_days` (5): disk is what runs out first on
+  a machine, and a cache that went costs one cold build.
+- A job's directory, and an entry under `$DIBS_SCRATCH/tmp`, go once unchanged for `keep_days`.
+- A runner version a later one replaced goes once unused for `keep_days`, since a client that has
+  not updated builds its own again. So does what a runner build that died left, and the target
+  those builds share goes once unused for `target_keep_days`.
+- An entry under `$DIBS_SCRATCH/out`, where results are kept, goes by `keep_days` too, but only
+  on `dibs --gc`.
+
+Nothing goes while a build or a prepare holds it.
 
 ## What is filling the machine
 
-`dibs --gc` lists what is under the machine's scratch directory, each worktree and build cache
-with its size and when it was last used, and the job directories and leftover temporary files
-counted together. It then removes what is past the clock above, and says how much that was.
+`dibs --gc` lists what is under the machine's scratch directory: each worktree and build cache
+with its size and when it was last used; the job directories, the leftover temporary files and
+the results kept under `out`, each counted together; and each runner version built there. It
+then removes what is past the clock above, and says how much that was and what is free.
 
-`--dry-run` removes nothing and marks what would go. `--days <n>` treats anything unused for n
-days as past its clock, for worktrees and caches alike, which is the knob when a machine is full
-now. Anything under scratch that dibs did not put there is listed with its size and never
-touched: a directory somebody wrote by hand may be the only copy of what they are working on.
+`--dry-run` removes nothing and marks what would go. An entry past its clock that a prepare or a
+build is using says `held by a prepare` or `held by a build`, and is left for the next sweep.
+`--days <n>` treats anything unused for n days as past its clock, everything listed alike, which
+is the knob when a machine is full now. Anything under scratch that dibs did not put there is
+listed under "not dibs's" with its size and never touched: a directory somebody wrote by hand
+may be the only copy of what they are working on.
 
 It takes the shared lock, because deleting gigabytes is as much IO as writing them, so it queues
 behind a measurement rather than competing with one, and it is recorded like any other job.
@@ -657,7 +669,7 @@ The rest may differ by account, in `~/.config/dibs/runner.toml` in the account d
 over the same names in `/etc/dibs/runner.toml`:
 
 ```toml
-keep_days = 14         # worktrees, job directories and temporary files
+keep_days = 14         # worktrees, job directories, tmp, out, and replaced runners
 target_keep_days = 5   # build caches
 ports = "20000-29999"  # what --port picks from
 ```
@@ -714,6 +726,10 @@ shell does after Ctrl-Z, counts as gone after `DIBS_LEASE` seconds (120, and 0 t
 gets debugged when it misbehaves. `DIBS_NO_CHILDREN` forces the fallback way of finding a holder's
 descendants, which is otherwise unreachable on a kernel built the ordinary way.
 
+When a job ends, whatever it started in its process group is stopped with it. What started a
+session of its own outlives it, holding no lock, and `dibs status` lists it under `LEFT RUNNING`
+with the job it came from; `dibs --kill <pid>` stops it and what it started.
+
 An unreachable machine fails in seconds with a diagnosis, including whether Tailscale needs a
 login, rather than hanging on a connection or a password prompt. Never retry that in a loop.
 
@@ -729,7 +745,8 @@ agent says so, and a session with no title yet is named by its id.
 A holder is called idle when the CPU under it has not moved between two looks, which catches a
 job that hangs after an hour of work as well as one that never started. That takes two looks,
 and a `--watch` left running is what supplies them. `DIBS_IDLE_AFTER` sets how long a stretch of
-nothing has to be, in seconds, before it is worth mentioning.
+nothing has to be, in seconds, before it is worth mentioning. A holder running over twice its
+label's 90th percentile is marked `STUCK?`, in `dibs status` and dibstop alike.
 
 Never poll dibs. Launch it in the background and do other work: queueing then costs nothing, and
 the notification arrives when the command is done.
@@ -766,12 +783,12 @@ and a digit is just `5`.
 
 `dibs hook ssh` is the hook that stops an agent reaching a machine directly. As a Claude Code
 PreToolUse hook on Bash, it reads the tool call on stdin and exits 2, which refuses it and shows
-the agent why, when a command runs ssh, scp, sftp or rsync at any name a machine in the inventory
-goes by: its name, its ssh target's host, its hostname, or any of them with a domain after it.
-It reads past `;`, `&&`, pipes, `$( )`, backticks and wrappers such as `sudo` and `timeout`, and
-takes a quoted string or a heredoc body as text, so a commit message that names a machine
-passes. An rsync whose `-e` is dibs's own transport passes, and so does everything when there is
-no inventory. The README has the lines for `~/.claude/settings.json`; wiring it is yours to do.
+the agent the dibs call to use instead, when a command would reach a machine in the inventory
+with ssh, sftp, scp or rsync. A commit message that names a machine passes, and so does an rsync
+through dibs's own transport. It knows a machine only by the names the inventory gives it, so an
+alias in `~/.ssh/config` or an address gets through, and with no inventory everything does.
+`docs/design/protocol.md` says exactly what it reads. The README has the lines for
+`~/.claude/settings.json`; wiring it is yours to do.
 
 A hook that stops an agent sleeping under the exclusive lock is not here: `dibs-agent-rules.md`
 describes what it enforces, so you can write your own.

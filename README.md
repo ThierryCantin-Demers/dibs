@@ -32,9 +32,10 @@ it" into one command that records what was actually measured.
 
 ## Setting it up
 
-You need an account on each machine that you can already `ssh` into with a key. Nothing is
-installed on the machine and no root is needed. One account shared by the whole team is the
-intended setup, since it lets one build cache serve everyone.
+You need an account on each machine that you can already `ssh` into with a key, and cargo there.
+No root is needed, and nobody installs anything on the machine by hand: dibs builds its own half
+there the first time it needs it. One account shared by the whole team is the intended setup,
+since it lets one build cache serve everyone.
 
     git clone https://github.com/ThierryCantin-Demers/dibs
     cd dibs && ./install.sh
@@ -59,7 +60,8 @@ see who holds each machine:
     dibs status                         # once
     dibstop                             # live, and a way to act on what is holding it
 
-`dibs --update` pulls the clone and your recipes, and reinstalls when something changed.
+`dibs --update` pulls the clone and your recipes, and reinstalls when something changed. The
+first call the new version makes to each machine builds its half there, once.
 
 ## Recipes
 
@@ -89,8 +91,8 @@ so an update updates the rules too. In Claude Code, a line `@~/<clone>/dibs-agen
 
 The rules tell an agent never to ssh a machine; `dibs hook ssh` makes it so. It is a Claude Code
 PreToolUse hook: it reads the tool call on stdin and refuses, with exit 2 and the dibs call to
-use instead, an ssh, scp, sftp or rsync aimed at any name a machine in your inventory goes by. An
-rsync through dibs's own transport passes. To wire it, add to `~/.claude/settings.json`:
+use instead, an ssh, scp, sftp or rsync aimed at any name your inventory gives a machine. An
+rsync through dibs's own transport passes, and with no inventory everything does. To wire it, add to `~/.claude/settings.json`:
 
 ```json
 {
