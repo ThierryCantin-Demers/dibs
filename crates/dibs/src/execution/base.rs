@@ -22,37 +22,8 @@ use dibs_format::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
     process::ExitCode,
 };
-
-/// What is about to be prepared, for the person reading along.
-pub fn preparing(repo: &str, arm: &Arm, local: Option<&super::Local>, dir: &Path) -> String {
-    match (&arm.checkout, local) {
-        (Some(c), _) => format!(
-            "{repo} at {}{}",
-            c.short_sha(),
-            c.sent_from(arm.note.as_deref(), "this computer")
-        ),
-        (None, Some(l)) => format!(
-            "{repo} from {} ({})",
-            dir.display(),
-            if l.dirty {
-                "uncommitted changes included"
-            } else {
-                "clean"
-            }
-        ),
-        (None, None) => format!(
-            "{repo}@{}{}",
-            arm.fetch.as_deref().unwrap_or_default(),
-            arm.note
-                .as_ref()
-                .map(|n| format!(", {n}"))
-                .unwrap_or_default()
-        ),
-    }
-}
 
 /// A tree on its way to the machine, and what it became there.
 pub struct Tree {
@@ -386,7 +357,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         } else {
             "dibs: preparing ".to_string()
         };
-        eprintln!("{lead}{}", preparing(&repo_name, arm, local.as_ref(), &dir));
+        eprintln!("{lead}{}", arm.preparing(&repo_name, local.as_ref(), &dir));
         let reference = arm.fetch.as_deref().unwrap_or("local");
         let plan = TreeSpec {
             dir: arm.dir(&dir),
@@ -533,7 +504,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         let StepPlan {
             command: run,
             around,
-        } = step_plan(rec, step, &t.token, &fresh, args.anyway, patched.as_ref());
+        } = StepPlan::of(rec, step, &t.token, &fresh, args.anyway, patched.as_ref());
         let record = |out: &JobOutcome, stepped: Option<&wire::Stepped>| StepRecord {
             arm: compared.then(|| arms[arm].name.clone()),
             rep: rep.filter(|_| args.reps > 1),
@@ -664,7 +635,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 let exports: String = st
                     .env
                     .iter()
-                    .map(|(k, v)| format!("export {k}={}; ", sh(v)))
+                    .map(|(k, v)| format!("export {k}={}; ", ShellWord(v)))
                     .collect();
                 ProcedureStep {
                     lock: st.lock,
@@ -723,7 +694,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
 /// A recipe with any exclusive step is a measurement, and a measurement goes where it is told:
 /// its history keys on the machine, and bindings that would make moving one safe do not exist
 /// yet. So only a wholly shared recipe, which is every build and test, is placed.
-pub fn destination(
+fn destination(
     rec: &recipe::Recipe,
     repo_name: &str,
     name: &str,
@@ -777,54 +748,56 @@ fn refused_before_building(
     false
 }
 
-/// What step `i` runs in its tree, and what the machine does around it. A build claims the
-/// target for this tree, and a measurement after one refuses a target some other tree has built
-/// into since, unless told `anyway`. `token` is the tree's prepare, whose package list a build
-/// records; `fresh` is this run's. A shared build against pins checks they took.
-pub fn step_plan(
-    rec: &recipe::Recipe,
-    i: usize,
-    token: &str,
-    fresh: &str,
-    anyway: bool,
-    pinned: Option<&BTreeSet<String>>,
-) -> StepPlan {
-    let step = &rec.steps[i];
-    let builds = BuildSignature::of(&step.run).is_some();
-    let built = rec.steps[..i]
-        .iter()
-        .any(|s| s.lock == Lock::Shared && BuildSignature::of(&s.run).is_some());
-    let measured = step.lock == Lock::Exclusive;
-    // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop in the
-    // step as well as the first word of it.
-    let exports: String = fresh_values(rec, fresh)
-        .iter()
-        .chain(&step.env)
-        .map(|(k, v)| format!("export {k}={}; ", sh(v)))
-        .collect();
-    StepPlan {
-        command: format!("{exports}{}", step.run),
-        around: wire::Step {
-            claim: builds && step.lock == Lock::Shared,
-            record: builds.then(|| token.to_string()),
-            check: measured && built && !anyway,
-            state: measured,
-            artifacts: rec.artifacts.clone(),
-            pinned: match pinned {
-                Some(names) if builds && step.lock == Lock::Shared => {
-                    names.iter().cloned().collect()
-                }
-                _ => Vec::new(),
-            },
-        },
-    }
-}
-
 /// A step's command, and what the machine does around it.
 #[derive(Debug, PartialEq)]
 pub struct StepPlan {
     pub command: String,
     pub around: wire::Step,
+}
+
+impl StepPlan {
+    /// What step `i` runs in its tree, and what the machine does around it. A build claims the
+    /// target for this tree, and a measurement after one refuses a target some other tree has built
+    /// into since, unless told `anyway`. `token` is the tree's prepare, whose package list a build
+    /// records; `fresh` is this run's. A shared build against pins checks they took.
+    pub fn of(
+        rec: &recipe::Recipe,
+        i: usize,
+        token: &str,
+        fresh: &str,
+        anyway: bool,
+        pinned: Option<&BTreeSet<String>>,
+    ) -> StepPlan {
+        let step = &rec.steps[i];
+        let builds = BuildSignature::of(&step.run).is_some();
+        let built = rec.steps[..i]
+            .iter()
+            .any(|s| s.lock == Lock::Shared && BuildSignature::of(&s.run).is_some());
+        let measured = step.lock == Lock::Exclusive;
+        // Exported rather than prefixed onto the command, so it reaches a pipeline or a loop in the
+        // step as well as the first word of it.
+        let exports: String = fresh_values(rec, fresh)
+            .iter()
+            .chain(&step.env)
+            .map(|(k, v)| format!("export {k}={}; ", ShellWord(v)))
+            .collect();
+        StepPlan {
+            command: format!("{exports}{}", step.run),
+            around: wire::Step {
+                claim: builds && step.lock == Lock::Shared,
+                record: builds.then(|| token.to_string()),
+                check: measured && built && !anyway,
+                state: measured,
+                artifacts: rec.artifacts.clone(),
+                pinned: match pinned {
+                    Some(names) if builds && step.lock == Lock::Shared => {
+                        names.iter().cloned().collect()
+                    }
+                    _ => Vec::new(),
+                },
+            },
+        }
+    }
 }
 
 /// One value per run for each of the recipe's `fresh` variables, the same in every step of it.
@@ -833,10 +806,6 @@ fn fresh_values(rec: &recipe::Recipe, token: &str) -> BTreeMap<String, String> {
         .iter()
         .map(|v| (v.clone(), format!("dibs-{token}")))
         .collect()
-}
-
-pub fn sh(s: &str) -> String {
-    ShellWord(s).to_string()
 }
 
 /// `dibs raw`: nothing prepared and nothing looked up, the last resort, and recorded so that

@@ -1,4 +1,4 @@
-use super::{base::step_plan, refs::Side, schedule::Job, sweep::SweepPoints, trees::gitdb_args};
+use super::{base::StepPlan, refs::Side, schedule::Job, sweep::SweepPoints, trees::gitdb_args};
 use crate::{
     batch,
     cli::Invocation,
@@ -171,7 +171,7 @@ fn a_build_claims_its_target_and_the_measurement_after_it_checks_the_claim() {
         step(Lock::Exclusive, "cargo bench"),
     ])
     .rec;
-    let build = step_plan(&rec, 0, "t", "t", false, None);
+    let build = StepPlan::of(&rec, 0, "t", "t", false, None);
     assert_eq!(build.command, "cargo build --release");
     assert_eq!(
         build.around,
@@ -187,13 +187,13 @@ fn a_build_claims_its_target_and_the_measurement_after_it_checks_the_claim() {
         ..wire::Step::default()
     };
     assert_eq!(
-        step_plan(&rec, 1, "t", "t", false, None).around,
+        StepPlan::of(&rec, 1, "t", "t", false, None).around,
         wire::Step {
             check: true,
             ..measured.clone()
         }
     );
-    assert_eq!(step_plan(&rec, 1, "t", "t", true, None).around, measured);
+    assert_eq!(StepPlan::of(&rec, 1, "t", "t", true, None).around, measured);
 }
 
 // Nothing was built into the target, so whatever claimed it last says nothing about this run.
@@ -205,7 +205,7 @@ fn a_measurement_after_no_build_is_not_checked() {
     ])
     .rec;
     assert_eq!(
-        step_plan(&rec, 1, "t", "t", false, None).around,
+        StepPlan::of(&rec, 1, "t", "t", false, None).around,
         wire::Step {
             state: true,
             ..wire::Step::default()
@@ -222,13 +222,13 @@ fn only_a_shared_build_against_pins_checks_they_took() {
     .rec;
     let names: BTreeSet<String> = ["serde".to_string()].into();
     assert_eq!(
-        step_plan(&rec, 0, "t", "t", false, Some(&names))
+        StepPlan::of(&rec, 0, "t", "t", false, Some(&names))
             .around
             .pinned,
         ["serde"]
     );
     assert!(
-        step_plan(&rec, 1, "t", "t", false, Some(&names))
+        StepPlan::of(&rec, 1, "t", "t", false, Some(&names))
             .around
             .pinned
             .is_empty()
@@ -403,13 +403,13 @@ fn a_fresh_variable_has_one_value_per_run_in_every_step() {
     rec.fresh = vec!["CUBECL_ENVIRONMENT".into()];
     for i in 0..2 {
         assert!(
-            step_plan(&rec, i, "t1", "t1", false, None)
+            StepPlan::of(&rec, i, "t1", "t1", false, None)
                 .command
                 .starts_with("export CUBECL_ENVIRONMENT=dibs-t1; ")
         );
     }
     assert!(
-        step_plan(&rec, 1, "t2", "t2", false, None)
+        StepPlan::of(&rec, 1, "t2", "t2", false, None)
             .command
             .starts_with("export CUBECL_ENVIRONMENT=dibs-t2; ")
     );

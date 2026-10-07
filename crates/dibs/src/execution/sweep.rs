@@ -1,7 +1,7 @@
-use super::{base::sh, error::RunError, refs::Side};
+use super::{error::RunError, refs::Side};
 use crate::{
     batch,
-    cli::{RecipeCall, Sweep},
+    cli::{RecipeCall, ShellWord, Sweep},
     recipe::Resolved,
 };
 use std::{collections::BTreeMap, process::ExitCode};
@@ -69,7 +69,7 @@ impl<'a> SweepPoints<'a> {
         };
         let mut text = String::new();
         for p in &self.points {
-            let mut line = format!("dibs {} {}", args.verb, sh(&target));
+            let mut line = format!("dibs {} {}", args.verb, ShellWord(&target));
             if let Some(r) = &args.recipe {
                 line += &format!(" {r}");
             }
@@ -85,11 +85,11 @@ impl<'a> SweepPoints<'a> {
             if let Some(d) = &args.artifacts_to {
                 line += &format!(
                     " --artifacts {}",
-                    sh(&format!("{d}/{}", self.point_name(p)))
+                    ShellWord(&format!("{d}/{}", self.point_name(p)))
                 );
             }
             for pin in &args.pins {
-                line += &format!(" --pin {}", sh(pin));
+                line += &format!(" --pin {}", ShellWord(pin));
             }
             if args.anyway {
                 line += " --anyway";
@@ -101,13 +101,13 @@ impl<'a> SweepPoints<'a> {
                 line += &format!(" --device {d}");
             }
             if let Some(r) = &args.reason {
-                line += &format!(" --reason {}", sh(r));
+                line += &format!(" --reason {}", ShellWord(r));
             }
             for (k, v) in p {
-                line += &format!(" --{k} {}", sh(v));
+                line += &format!(" --{k} {}", ShellWord(v));
             }
             if let Some(c) = &args.command {
-                line += &format!(" -- {}", sh(c));
+                line += &format!(" -- {}", ShellWord(c));
             }
             text += &format!("[{}] {line}\n", self.point_name(p));
         }

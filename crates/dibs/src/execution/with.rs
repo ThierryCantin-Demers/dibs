@@ -1,5 +1,4 @@
 use super::{
-    base::{preparing, sh},
     build::BuildSignature,
     error::{Refusal, RunError, Unprepared},
     jobs::{JobRequest, Jobs},
@@ -12,6 +11,7 @@ use crate::{
     caller::Caller,
     cli::{
         Call, CliError, Command as ShellCommand, Mode, PortName, RecipeCall, Run, RunLock, Service,
+        ShellWord,
     },
     recipe::{self, Checkouts, Lock, Manifest, run_label},
     records::Affinity,
@@ -91,7 +91,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         );
         println!(
             "tree        {}",
-            preparing(&repo_name, &arm, local.as_ref(), &dir)
+            arm.preparing(&repo_name, local.as_ref(), &dir)
         );
         if let Some(d) = &args.device {
             println!("device      {d}");
@@ -124,7 +124,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     }
     eprintln!(
         "dibs: preparing {}",
-        preparing(&repo_name, &arm, local.as_ref(), &dir)
+        arm.preparing(&repo_name, local.as_ref(), &dir)
     );
     let reference = arm.fetch.as_deref().unwrap_or("local");
     let from = arm.dir(&dir).to_path_buf();
@@ -210,8 +210,8 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let in_tree_shell = |run: &str| {
         format!(
             "cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}",
-            sh(&prepared.worktree),
-            sh(&prepared.target)
+            ShellWord(&prepared.worktree),
+            ShellWord(&prepared.target)
         )
     };
     if let Some(build) = &svc.build {
@@ -278,7 +278,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
 }
 
 /// The call `with` ends in: its servers, its ports and the command, held here unless `--there`.
-pub fn served(
+fn served(
     svc: &recipe::Service,
     args: &RecipeCall,
     command: &str,

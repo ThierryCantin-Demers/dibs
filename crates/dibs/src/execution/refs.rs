@@ -253,6 +253,34 @@ impl Arm {
         }
         out
     }
+
+    /// What is about to be prepared, for the person reading along.
+    pub fn preparing(&self, repo: &str, local: Option<&super::Local>, dir: &Path) -> String {
+        match (&self.checkout, local) {
+            (Some(c), _) => format!(
+                "{repo} at {}{}",
+                c.short_sha(),
+                c.sent_from(self.note.as_deref(), "this computer")
+            ),
+            (None, Some(l)) => format!(
+                "{repo} from {} ({})",
+                dir.display(),
+                if l.dirty {
+                    "uncommitted changes included"
+                } else {
+                    "clean"
+                }
+            ),
+            (None, None) => format!(
+                "{repo}@{}{}",
+                self.fetch.as_deref().unwrap_or_default(),
+                self.note
+                    .as_ref()
+                    .map(|n| format!(", {n}"))
+                    .unwrap_or_default()
+            ),
+        }
+    }
 }
 
 /// Where a range's tip left its base.
