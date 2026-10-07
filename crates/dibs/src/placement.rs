@@ -7,14 +7,13 @@ use crate::{
     machine::Kept,
     render::Answered,
 };
-use dibs_format::{Exit, MachineName, Mode};
+use dibs_format::{Exit, MachineName, Mode, Moment};
 use serde::Deserialize;
 use std::{
     collections::hash_map::RandomState,
     fmt::{self, Write as _},
     hash::{BuildHasher as _, Hasher as _},
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 const PICK_POLL_SECS: u64 = 5;
@@ -285,10 +284,7 @@ impl RouteDown {
         RouteDown {
             dir,
             backoff: env_number("DIBS_ROUTE_BACKOFF").unwrap_or(DEFAULT_BACKOFF_SECS),
-            now: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or_default(),
+            now: Moment::epoch_now(),
         }
     }
 

@@ -2,7 +2,7 @@ use crate::{
     platform::base::{Extent, Platform, Process, Slot},
     settings::Settings,
 };
-use dibs_format::Span;
+use dibs_format::{Moment, Span};
 use std::{
     ffi::CString,
     fs,
@@ -311,9 +311,7 @@ impl Platform for Linux {
 
     fn describe(pid: u32) -> Option<String> {
         let started = Linux::started_at(pid)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let now = Moment::epoch_now();
         let uid = fs::metadata(format!("/proc/{pid}")).ok()?.uid();
         let args = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
         let args = String::from_utf8_lossy(&args)
@@ -502,10 +500,7 @@ mod tests {
     fn this_process_is_running_and_started_before_now() {
         let me = std::process::id();
         assert!(Linux::exists(me) && Linux::running(me));
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = Moment::epoch_now();
         assert!(Linux::started_at(me).is_some_and(|s| s <= now + 1));
         assert!(
             Linux::processes()

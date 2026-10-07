@@ -10,14 +10,13 @@ use super::{
     trees::{Announce, TreePlan, TreeSpec, new_token, preparing_title},
 };
 use crate::{
-    batch,
     call::{BatchStep, Destination, RecipeJob},
     cli::{RecipeCall, ShellWord},
     recipe::{self, Lock, Manifest, NotTaken, Resolved},
-    records::{Affinity, RunLog, now_secs},
+    records::{Affinity, RunLog},
 };
 use dibs_format::{
-    Alias, ArmRecord, BatchId, Exit, MachineName, Outcome, Pairs, ProcedureStep, RunRecord,
+    Alias, ArmRecord, BatchId, Exit, MachineName, Moment, Outcome, Pairs, ProcedureStep, RunRecord,
     RunVerb, StepRecord,
     wire::{self, Revision},
 };
@@ -217,7 +216,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     }
 
     // Trees are prepared under the shared lock, so no fetch or checkout runs inside a hold.
-    let own_batch = batch::batch_id();
+    let own_batch = BatchId::starting().to_string();
     // The fingerprint is of the bound recipe: two runs sharing it are the same work.
     let env_of = |k: usize| RecipeJob {
         batch: BatchStep::for_recipe_job(&own_batch, &calls, k),
@@ -619,7 +618,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         eprint!("{}", Arm::measured_summary(&arms, &steps, &revisions_of));
     }
     let record = RunRecord {
-        when: now_secs(),
+        when: Moment::epoch_now(),
         label,
         repo: repo_name.clone(),
         variant: Repo(&dir).variant(&repo_name),
@@ -839,7 +838,7 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
     );
     let steps = vec![out.step_record(Lock::Shared)];
     RunLog::here()?.append(&RunRecord {
-        when: now_secs(),
+        when: Moment::epoch_now(),
         verb: RunVerb::Raw,
         label: "raw".into(),
         repo: String::new(),

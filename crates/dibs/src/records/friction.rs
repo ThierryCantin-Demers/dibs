@@ -6,12 +6,9 @@
 
 use crate::{
     paths::{FileError, Paths},
-    records::{
-        date,
-        error::{Ledger, RecordsError},
-    },
+    records::error::{Ledger, RecordsError},
 };
-use dibs_format::FrictionNote;
+use dibs_format::{FrictionNote, Moment};
 use std::{collections::BTreeMap, fmt, io::Write as _, path::PathBuf};
 
 /// The friction notes this computer kept, one line each.
@@ -123,8 +120,8 @@ impl fmt::Display for Complaints<'_> {
             } else {
                 format!(", dibs {}", last.version)
             };
-            let was = date(first.when as i64);
-            let now = date(last.when as i64);
+            let was = Moment::in_zone(first.when, 0).minute();
+            let now = Moment::in_zone(last.when, 0).minute();
             if *times > 1 && was != now {
                 writeln!(f, "       first {was}, last {now}{by}{at}")?;
             } else {

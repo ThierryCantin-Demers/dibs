@@ -653,7 +653,7 @@ fn a_pid_that_comes_round_again_is_not_the_job_that_had_it() {
     // Written ten minutes ago by a job that has since ended, and the pid now belongs to a process
     // that started well after it, which is what a wraparound leaves behind.
     let ghost = |s: &Sandbox| {
-        let then = (now() - 600).to_string();
+        let then = (Moment::epoch_now() - 600).to_string();
         let pid = other.pid.to_string();
         s.record(
             "holder",

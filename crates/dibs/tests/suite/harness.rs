@@ -2,6 +2,7 @@
 //! beside every other and none of them reads or writes the real ones. Nothing here reaches a real
 //! machine: `DIBS_LOCAL=1` by default, and an ssh that fails at once for any name.
 
+pub use dibs_format::Moment;
 use dibs_format::{
     Label, Mode,
     wire::{Frame, MaxFrom, Request, Watch},
@@ -17,7 +18,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 pub const DIBS: &str = env!("CARGO_BIN_EXE_dibs");
 
@@ -39,13 +40,6 @@ pub fn hostname() -> &'static str {
         let out = Command::new("hostname").arg("-s").output().unwrap();
         String::from_utf8(out.stdout).unwrap().trim().to_string()
     })
-}
-
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
 }
 
 /// The hash of the runner source this build carries, which names the runner it calls.

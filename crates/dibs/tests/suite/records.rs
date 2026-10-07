@@ -193,7 +193,9 @@ fn lock_records() {
     s.status();
     for (name, text) in lock_files(&s, "cpu") {
         let sample: Vec<&str> = text.split_whitespace().collect();
-        let recent = |word: &str| match word.parse::<u64>().is_ok_and(|at| at.abs_diff(now()) < 60)
+        let recent = |word: &str| match word
+            .parse::<u64>()
+            .is_ok_and(|at| at.abs_diff(Moment::epoch_now()) < 60)
         {
             true => "<a second since the epoch, within the last minute>".to_string(),
             false => word.to_string(),

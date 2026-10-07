@@ -13,6 +13,6 @@ mod plan;
 #[cfg(test)]
 mod tests;
 
-pub use base::{Options, batch_id, run};
+pub use base::{Options, run};
 pub use guard::StepGuard;
 pub use parse::{BadLine, BatchError};

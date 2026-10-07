@@ -2,12 +2,9 @@
 //! histories, so a benchmark that moves to another card without saying so is refused.
 
 use crate::machine::Fleet;
+use dibs_format::Moment;
 use dibs_runner::shared::SharedFile;
-use std::{
-    fmt,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fmt, path::PathBuf};
 
 /// A file without this first line is from another keying and is ignored whole.
 const HEADER: &str = "#dibs-series 1";
@@ -148,10 +145,7 @@ impl Series {
                     written.push('\n');
                 }
             }
-            let when = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or_default();
+            let when = Moment::epoch_now();
             written.push_str(&format!(
                 "{}\t{}\t{}\t{by}\t{when}\t{}\n",
                 entry.label,

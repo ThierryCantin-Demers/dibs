@@ -10,12 +10,11 @@ use crate::{
     execution::Job,
     paths::{FileError, Paths},
 };
-use dibs_format::{Exit, MachineName, Span};
+use dibs_format::{BatchId, Exit, MachineName, Span};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::Command,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -89,16 +88,6 @@ fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String> {
     }
 }
 
-pub fn batch_id() -> String {
-    let stamp = Command::new("date")
-        .arg("+%Y%m%d-%H%M%S")
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-    format!("{stamp}-{}", std::process::id())
-}
-
 fn collect_old(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -145,7 +134,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         .into_iter()
         .map(|m| m.unwrap_or_else(|| "?".into()))
         .collect();
-    let id = batch_id();
+    let id = BatchId::starting().to_string();
     let batch = Batch {
         steps: &steps,
         machines: &machines,

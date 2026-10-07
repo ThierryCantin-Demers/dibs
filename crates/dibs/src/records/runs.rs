@@ -12,7 +12,7 @@ use crate::{
     paths::{FileError, Paths},
     records::{Ledger, RecordsError},
 };
-use dibs_format::{Lock, Pairs, RunRecord, RunVerb, Span};
+use dibs_format::{Lock, Moment, Pairs, RunRecord, RunVerb};
 use std::{collections::BTreeMap, io::Write as _, path::PathBuf};
 
 /// The run records this computer wrote, one line per run.
@@ -192,41 +192,6 @@ fn matches(label: &str, query: &str) -> bool {
         || path.rsplit('/').next() == Some(query)
 }
 
-/// Seconds east of UTC here, asked once of `date` rather than of a time zone database.
-fn local_offset() -> i64 {
-    let out = std::process::Command::new("date").arg("+%z").output().ok();
-    let z = out
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-    let (sign, digits) = match z.split_at_checked(1) {
-        Some(("-", d)) => (-1, d),
-        Some(("+", d)) => (1, d),
-        _ => return 0,
-    };
-    let n: i64 = digits.parse().unwrap_or(0);
-    sign * (n / 100 * 3600 + n % 100 * 60)
-}
-
-/// `YYYY-MM-DD HH:MM` for seconds since the epoch, by the days-to-civil conversion.
-pub fn date(t: i64) -> String {
-    let day = Span::DAY.0 as i64;
-    let (days, secs) = (t.div_euclid(day), t.rem_euclid(day));
-    let z = days + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
-        secs / 3600,
-        secs / 60 % 60
-    )
-}
-
 fn words(kv: &[(String, String)], join: &str) -> String {
     kv.iter()
         .map(|(k, v)| format!("{k}{join}{v}"))
@@ -291,7 +256,7 @@ impl Runs {
             };
         }
 
-        let offset = local_offset();
+        let offset = Moment::now().offset();
         let width = |f: fn(&Record) -> usize| shown.iter().map(|r| f(r)).max().unwrap_or(0);
         let machine_w = width(|r| r.machine.as_deref().map_or(1, str::len));
         let label_w = width(|r| r.label.len());
@@ -319,7 +284,7 @@ impl Runs {
             if !r.arms.is_empty() {
                 out.push_str(&format!(
                     "{}  {:<machine_w$}  {:<label_w$}  {} arms, {} each{extra}\n",
-                    date(r.when as i64 + offset),
+                    Moment::in_zone(r.when, offset).minute(),
                     r.machine.as_deref().unwrap_or("-"),
                     r.label,
                     r.refs.as_deref().unwrap_or("compared"),
@@ -353,7 +318,7 @@ impl Runs {
             }
             out.push_str(&format!(
                 "{}  {:<machine_w$}  {:<label_w$} {:>6}s {:<9}  {}{extra}\n",
-                date(r.when as i64 + offset),
+                Moment::in_zone(r.when, offset).minute(),
                 r.machine.as_deref().unwrap_or("-"),
                 r.label,
                 secs,
@@ -536,13 +501,6 @@ impl Runs {
         }
         out
     }
-}
-
-pub fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -810,13 +768,6 @@ mod tests {
             records: vec![parse_line(A).unwrap()],
         };
         assert!(!recs.report(None, 10, false).contains("different recipes"));
-    }
-
-    #[test]
-    fn a_date_is_civil_time() {
-        assert_eq!(date(0), "1970-01-01 00:00");
-        assert_eq!(date(1789745748), "2026-09-18 15:35");
-        assert_eq!(date(951782400), "2000-02-29 00:00");
     }
 
     #[test]

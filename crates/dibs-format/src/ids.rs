@@ -1,3 +1,4 @@
+use crate::Moment;
 use serde::{Deserialize, Serialize};
 use std::{convert::Infallible, fmt, str::FromStr};
 
@@ -75,6 +76,13 @@ impl JobId {
     pub fn checked(text: &str) -> Option<JobId> {
         (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit() || b == b'-'))
             .then(|| JobId::new(text))
+    }
+}
+
+impl BatchId {
+    /// A new batch's: the time it starts here, then this process's id.
+    pub fn starting() -> BatchId {
+        BatchId(format!("{}-{}", Moment::now().dashed(), std::process::id()))
     }
 }
 

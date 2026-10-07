@@ -11,7 +11,7 @@ use crate::{
     git::{Git, GitError},
     paths::{FileError, Paths},
 };
-use dibs_format::wire;
+use dibs_format::{Moment, Span, wire};
 use dibs_runner::shared::SharedFile;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -341,16 +341,14 @@ impl Fetched {
 /// trip to the host; a remote that cannot be asked counts as public, which is what it was taken
 /// for before anything asked.
 fn private(url: &str) -> bool {
-    const WEEK: u64 = 7 * 24 * 3600;
+    const WEEK: u64 = 7 * Span::DAY.0;
     let Some(url) = anonymous_url(url) else {
         return false;
     };
     let Some(file) = Paths::from_env().remotes() else {
         return false;
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+    let now = Moment::epoch_now();
     let known = std::fs::read_to_string(&file).unwrap_or_default();
     let seen = known.lines().rev().find_map(|l| {
         let mut f = l.split('\t');

@@ -6,6 +6,7 @@ rust-version.workspace = true
 description = "What dibs writes and reads: ids, exits, records and the lines machines keep"
 
 [dependencies]
+libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

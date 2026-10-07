@@ -614,7 +614,7 @@ fn routing_ranks_the_machines_that_answered() {
     );
     // A machine that did not answer costs the whole probe timeout on every dispatch until it is
     // back, so it is left out of the ranking for a while, and said so.
-    s.write("down/two", &now().to_string());
+    s.write("down/two", &Moment::epoch_now().to_string());
     let down = s.p("down");
     let verbose = |s: &Sandbox| {
         s.dibs(["--pick", "-v"])

@@ -5,10 +5,10 @@ use crate::{
     caller::Caller,
     cli::Friction,
     paths::{FileError, Paths, ReportsStamp},
-    records::{FrictionLog, RecordsError, now_secs},
+    records::{FrictionLog, RecordsError},
     update::{Build, ChangeNotice},
 };
-use dibs_format::FrictionNote;
+use dibs_format::{FrictionNote, Moment};
 use dibs_runner::shared::SharedFile;
 use serde_json::Value;
 use std::{
@@ -704,7 +704,7 @@ pub fn friction_verb(friction: Friction) -> Result<ExitCode, ReportsError> {
                 &text,
                 &caller.name,
                 Build::COMMIT.unwrap_or_default(),
-                now_secs(),
+                Moment::epoch_now(),
             )
             .ok_or(RecordsError::EmptyNote)?;
             let filed = ReportsRepo::from_env().map(|repo| (repo.file(&note), repo));

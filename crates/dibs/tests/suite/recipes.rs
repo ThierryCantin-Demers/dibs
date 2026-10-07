@@ -1402,10 +1402,7 @@ fn a_comparison_is_one_call_measured_against_where_the_branch_left_main() {
 fn private(s: &Sandbox, repo: &str) {
     let url = format!("https://example.invalid/{repo}.git");
     s.git(repo, &["remote", "set-url", "origin", &url]);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let now = Moment::epoch_now();
     s.write(
         "home/.cache/dibs/remotes",
         &format!("{url}\tprivate\t{now}\n"),

@@ -196,7 +196,10 @@ impl Default for Rec<'_> {
 
 impl Rec<'_> {
     fn write(&self, s: &Sandbox, kind: &str, pid: u32) {
-        let (pid_s, start) = (pid.to_string(), (now() - self.age).to_string());
+        let (pid_s, start) = (
+            pid.to_string(),
+            (Moment::epoch_now() - self.age).to_string(),
+        );
         s.record(
             kind,
             pid,
@@ -417,7 +420,7 @@ fn status() {
         r.write(&s, "holder", *pid);
     }
     let old = pids[shared.len()];
-    let (pid, start) = (old.to_string(), (now() - 40).to_string());
+    let (pid, start) = (old.to_string(), (Moment::epoch_now() - 40).to_string());
     s.record(
         "holder",
         old,
@@ -700,7 +703,7 @@ fn acquired_after_waiting() {
     // Only a wait of five seconds or more is said, so the benchmark ends six after it arrived.
     let arrived: u64 = s.records("waiting")[0][2].parse().unwrap();
     until("the waiter to have waited six seconds", || {
-        now() >= arrived + 6
+        Moment::epoch_now() >= arrived + 6
     });
     ends.open();
     s.wait(slow);

@@ -1,5 +1,5 @@
-use crate::{paths::Paths, records::now_secs};
-use dibs_format::Span;
+use crate::paths::Paths;
+use dibs_format::{Moment, Span};
 use dibs_runner::shared::SharedFile;
 use std::path::PathBuf;
 
@@ -23,14 +23,14 @@ impl Affinity {
     /// The machine holding `repo`'s build cache, while its cache can still be there.
     pub fn get(&self, repo: &str) -> Option<String> {
         let text = std::fs::read_to_string(self.path.as_ref()?).ok()?;
-        Claims(&text).holder(repo, now_secs())
+        Claims(&text).holder(repo, Moment::epoch_now())
     }
 
     /// `machine` holds `repo`'s build cache from now on.
     pub fn set(&self, repo: &str, machine: &str) {
         let Some(path) = &self.path else { return };
-        let _ =
-            SharedFile { path }.rewrite(|text| Some(Claims(text).with(repo, machine, now_secs())));
+        let _ = SharedFile { path }
+            .rewrite(|text| Some(Claims(text).with(repo, machine, Moment::epoch_now())));
     }
 }
 

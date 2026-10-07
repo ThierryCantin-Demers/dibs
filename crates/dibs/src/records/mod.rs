@@ -9,4 +9,4 @@ mod runs;
 pub use affinity::Affinity;
 pub use error::{Ledger, RecordsError};
 pub use friction::{Complaints, FrictionLog};
-pub use runs::{RunLog, Runs, date, now_secs};
+pub use runs::{RunLog, Runs};

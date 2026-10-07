@@ -2,7 +2,7 @@ use crate::harness::*;
 use std::time::Duration;
 
 fn holder_record(s: &Sandbox, mode: &str, label: &str, agent: &str, what: &str, age: u64) {
-    let (pid, then) = (live_pid(), (now() - age).to_string());
+    let (pid, then) = (live_pid(), (Moment::epoch_now() - age).to_string());
     s.record(
         "holder",
         pid,
@@ -219,7 +219,7 @@ fn queued_shared_jobs_do_not_wait_out_each_other() {
     // Real pids, because prune drops any record whose process is gone.
     let q = s.gate("q");
     let waiters: Vec<Job> = (0..3).map(|_| s.spawn(s.sh(&q.hold()))).collect();
-    let t = now();
+    let t = Moment::epoch_now();
     holder_record(&s, "bench", "blocker", "an agent", "the holder", 0);
     for (job, (mode, label, dt)) in waiters.iter().zip([
         ("shared", "build-a", 0),
@@ -357,7 +357,7 @@ fn a_run_with_other_values_is_not_accused_by_their_history() {
     s.set_history(
         "bench\tsweep\t20\ta\tsmall\nbench\tsweep\t20\ta\tsmall\nbench\tsweep\t20\ta\tsmall\n",
     );
-    let (pid, then) = (live_pid(), (now() - 600).to_string());
+    let (pid, then) = (live_pid(), (Moment::epoch_now() - 600).to_string());
     let holder = |fp: &str| {
         s.record(
             "holder",
@@ -441,7 +441,7 @@ fn an_overdue_job_promises_nothing_behind_it() {
         &[
             "shared",
             &parent.to_string(),
-            &now().to_string(),
+            &Moment::epoch_now().to_string(),
             "behind-it",
             "some agent",
             "the waiting job",
