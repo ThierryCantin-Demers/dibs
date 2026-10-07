@@ -1,5 +1,5 @@
 use crate::tree::{
-    base::Stamp,
+    base::{LOCAL, Stamp},
     builds::{Builds, FileLock},
     clocks::{Contents as _, USED},
     copy::{Copier, Sharing},
@@ -270,7 +270,7 @@ impl<'a> Seed<'a> {
             .scratch
             .join("ws")
             .join(self.tree.repo)
-            .join(format!("local-{key}"));
+            .join(format!("{LOCAL}{key}"));
         if self.tree.worktree.exists() && existing == Existing::Kept || !sources.is_dir() {
             return None;
         }

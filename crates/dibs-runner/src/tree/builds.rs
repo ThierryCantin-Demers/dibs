@@ -1,13 +1,12 @@
 use crate::clock::Deadline;
 use std::{
     fs::{self, File},
-    io,
     path::{Path, PathBuf},
     time::Duration,
 };
 
 /// How often a lock waited for is tried again.
-const RETRY: Duration = Duration::from_millis(25);
+pub const RETRY: Duration = Duration::from_millis(25);
 
 /// The `.cargo-lock` files cargo holds in a target directory while it builds there.
 #[derive(Debug, Clone, Copy)]
@@ -15,9 +14,8 @@ pub struct Builds<'a> {
     target: &'a Path,
 }
 
-/// A lock held: a build's, shared so that no build starts while a copy is read, or exclusive so
-/// that none runs in a target being moved or removed; or a prepare's, so that two never lay out
-/// one tree at once.
+/// A build's lock held: shared so that no build starts while a copy is read, or exclusive so that
+/// none runs in a target being moved or removed.
 pub struct FileLock(#[allow(dead_code, reason = "held for its lock")] File);
 
 impl<'a> Builds<'a> {
@@ -81,31 +79,5 @@ impl FileLock {
         Deadline::after(Some(wait))
             .until(RETRY, || file.try_lock_shared().is_ok())
             .then_some(FileLock(file))
-    }
-
-    /// `lock`, made if missing, exclusively at once.
-    pub fn exclusive_now(lock: &Path) -> Option<FileLock> {
-        let file = File::create(lock).ok()?;
-        file.try_lock().ok()?;
-        Some(FileLock(file))
-    }
-
-    /// The lock a prepare holds beside a tree or a target while it decides what to make of it,
-    /// and a sweep while it removes it.
-    pub fn beside(path: &Path) -> PathBuf {
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-        path.with_file_name(format!(".{name}.lock"))
-    }
-
-    /// `lock`, made if missing, exclusively before `deadline`; None once it has passed.
-    pub fn exclusive_by(lock: &Path, deadline: Deadline) -> io::Result<Option<FileLock>> {
-        let file = File::create(lock)?;
-        if deadline.left().is_none() {
-            file.lock()?;
-            return Ok(Some(FileLock(file)));
-        }
-        Ok(deadline
-            .until(RETRY, || file.try_lock().is_ok())
-            .then_some(FileLock(file)))
     }
 }

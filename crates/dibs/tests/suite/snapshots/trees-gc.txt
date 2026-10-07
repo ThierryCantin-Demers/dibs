@@ -44,11 +44,9 @@ jobs after, apart from those dibs ran: recent
 jobs/  (3 job directories)
 out/
 target/
-  .abandoned.lock
   .app-local-<key>.lock
   .held.lock
   .stuck.lock
-  .swept-only.lock
   app-local-<key>/
     .dibs-used  (empty)
   held/
@@ -91,11 +89,8 @@ jobs after, apart from those dibs ran: recent
 jobs/  (5 job directories)
 out/
 target/
-  .abandoned.lock
   .app-local-<key>.lock
-  .held.lock
   .stuck.lock
-  .swept-only.lock
   app-local-<key>/
     .dibs-used  (empty)
   recent/

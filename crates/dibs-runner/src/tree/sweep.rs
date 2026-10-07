@@ -2,9 +2,11 @@ use crate::{
     clock::Moment,
     platform::{Host, Platform as _},
     tree::{
-        builds::{Builds, FileLock},
+        base::LOCAL,
+        builds::Builds,
         clocks::{Clocks, Contents as _, Dates as _, Fate, Removal, USED},
         runners::Runners,
+        turn::Turn,
     },
 };
 use std::{
@@ -14,7 +16,7 @@ use std::{
 };
 
 /// The lock a prepare holds over a repo's trees while it adds or revives one, and a sweep while
-/// it removes one.
+/// it removes one. Never removed: a bash prepare takes it without checking it names its file.
 pub const PREPARE_LOCK: &str = ".prepare.lock";
 /// What names a prepare's copy, or a tree it set aside, ahead of the prepare's stamp, whose first
 /// number is the prepare's process.
@@ -210,17 +212,25 @@ impl<'a> Sweep<'a> {
             repos.entry(repo).or_default().push(verdict);
         }
         for (repo, past) in repos {
-            let Some(_lock) = FileLock::exclusive_now(&repo.join(PREPARE_LOCK)) else {
+            let Some(_lock) = Turn::now(&repo.join(PREPARE_LOCK)) else {
                 past.into_iter().for_each(|v| v.fate = Fate::Preparing);
                 continue;
             };
             let mut pruned = false;
             for verdict in past {
                 verdict.fate = self.tree(&verdict.path, now);
-                if verdict.fate == Fate::Past && !self.dry {
-                    verdict.removed = self.removal.tree(&verdict.path);
-                    pruned = true;
+                if verdict.fate != Fate::Past || self.dry {
+                    continue;
                 }
+                let Some(turns) = Sweep::sent_turns(&repo, &verdict.path) else {
+                    verdict.fate = Fate::Preparing;
+                    continue;
+                };
+                verdict.removed = self.removal.tree(&verdict.path);
+                pruned = true;
+                turns
+                    .into_iter()
+                    .for_each(|turn| turn.remove_with(&verdict.path));
             }
             if pruned && let Some(name) = repo.file_name() {
                 self.removal.prune(&self.home.join("prog").join(name));
@@ -229,16 +239,16 @@ impl<'a> Sweep<'a> {
     }
 
     /// A past cache under the lock a prepare revives it under, with every build lock in it held,
-    /// judged again there.
+    /// judged again there, and the lock removed with it.
     fn collect_cache(&self, verdict: &mut Verdict, now: u64) {
         if !matches!(verdict.fate, Fate::Past | Fate::Hollow) {
             return;
         }
-        let Some(_turn) = FileLock::exclusive_now(&FileLock::beside(&verdict.path)) else {
+        let Some(turn) = Turn::now(&Turn::beside(&verdict.path)) else {
             verdict.fate = Fate::Preparing;
             return;
         };
-        let Some(_builds) = Builds::new(&verdict.path).all_exclusive() else {
+        let Some(builds) = Builds::new(&verdict.path).all_exclusive() else {
             verdict.fate = Fate::Held;
             return;
         };
@@ -251,6 +261,29 @@ impl<'a> Sweep<'a> {
             Fate::Hollow => self.removal.hollow(&verdict.path),
             _ => {}
         }
+        drop(builds);
+        turn.remove_with(&verdict.path);
+    }
+
+    /// The turns of the sent trees `tree` is or nests, each taken at once; None when a prepare
+    /// holds one. Only a turn whose file is there can be held.
+    fn sent_turns(trees: &Path, tree: &Path) -> Option<Vec<Turn>> {
+        let name = tree.file_name().unwrap_or_default().to_string_lossy();
+        let turns = match name.starts_with(LOCAL) {
+            true => vec![Turn::of_sent(trees, &name, None)],
+            false => tree
+                .entries()
+                .iter()
+                .filter_map(|sent| sent.file_name()?.to_str().map(str::to_string))
+                .filter(|sent| sent.starts_with(LOCAL))
+                .map(|sent| Turn::of_sent(trees, &sent, Some(&name)))
+                .collect(),
+        };
+        turns
+            .iter()
+            .filter(|turn| turn.exists())
+            .map(|turn| Turn::now(turn))
+            .collect()
     }
 
     fn tree(&self, tree: &Path, now: u64) -> Fate {

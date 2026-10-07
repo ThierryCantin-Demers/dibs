@@ -116,10 +116,7 @@ impl Machine {
             scratch: &scratch,
             home: &home,
             cargo_home: &cargo,
-            clocks: Clocks {
-                keep_days: 14,
-                target_keep_days: 5,
-            },
+            clocks: Clocks::DEFAULT,
             seed_wait: self.seed_wait,
             reflinks: self.reflinks,
         };
@@ -1131,12 +1128,8 @@ fn a_sweep_collects_replaced_runners_and_dead_builds_but_never_beside_a_build() 
 impl Machine {
     /// A sweep of this scratch on the machine's usual clocks, saying nothing.
     fn sweeping<'a>(&'a self, scratch: &'a Path, home: &'a Path) -> Sweep<'a> {
-        let clocks = Clocks {
-            keep_days: 14,
-            target_keep_days: 5,
-        };
         let removal = Removal::new(None, &|_| {});
-        Sweep::new(scratch, home, clocks, removal)
+        Sweep::new(scratch, home, Clocks::DEFAULT, removal)
     }
 
     /// A directory under scratch with a marker unused for 400 days.
@@ -1194,6 +1187,49 @@ fn a_sweep_leaves_caches_a_prepare_holds_and_keeps_one_revived_after_it_judged()
     assert!(!gone.exists());
     assert!(revived.exists() && fate_of(&caches, &revived) == Fate::Kept);
     assert!(held.exists() && fate_of(&caches, &held) == Fate::Preparing);
+}
+
+#[test]
+fn a_sweep_removes_the_turns_of_what_it_removed_and_leaves_one_a_prepare_holds() {
+    let m = Machine::new();
+    let (scratch, home) = (m.p("scratch"), m.p("home"));
+    let s = |rel: &str| m.p(&format!("scratch/{rel}"));
+    let (cache, sent, nest, held) = (
+        m.abandoned("target/gone"),
+        m.abandoned("ws/demo/local-k"),
+        m.abandoned("ws/demo/pin-x"),
+        m.abandoned("ws/demo/local-held"),
+    );
+    fs::create_dir_all(nest.join("local-n")).unwrap();
+    let turns = [
+        s("target/.gone.lock"),
+        s("ws/demo/.local-k.lock"),
+        s("ws/demo/.local-n-pin-x.lock"),
+    ];
+    for turn in &turns {
+        fs::write(turn, "").unwrap();
+    }
+    let prepare = Building::holding(&s("ws/demo/.local-held.lock"));
+    let sweep = m.sweeping(&scratch, &home);
+    let mut trees = sweep.judged(Swept::Trees, Moment::epoch_now()).unwrap();
+    sweep.collect(&mut trees, Moment::epoch_now());
+    let mut caches = sweep.judged(Swept::Caches, Moment::epoch_now()).unwrap();
+    sweep.collect(&mut caches, Moment::epoch_now());
+    prepare.done();
+    assert!(!cache.exists() && !sent.exists() && !nest.exists());
+    for turn in &turns {
+        assert!(
+            !turn.exists(),
+            "{} outlived what it guarded",
+            turn.display()
+        );
+    }
+    assert_eq!(fate_of(&trees, &held), Fate::Preparing);
+    assert!(held.exists() && s("ws/demo/.local-held.lock").exists());
+    assert!(
+        s("ws/demo/.prepare.lock").exists(),
+        "a bash prepare takes it unchecked"
+    );
 }
 
 #[test]

@@ -114,8 +114,11 @@ Every prepare and `dibs --gc` walk the scratch the same way and judge it by the 
   always stays, since it builds the next. A queued `--gc` starts its version again through
   `/proc/<pid>/exe` on Linux, which a removal cannot reach; macOS starts it by its path, which
   only a removal by hand reaches, since the call that queued it marked it used.
-- **The lock files** beside the targets stay after their targets go, so two prepares of one
-  target never hold two different files.
+- **The lock files** go with what they guard: a sweep removes `.<target>.lock` with its target,
+  and a sent tree's `.<tree>.lock` (`.<tree>-<nest>.lock` for one in a nest) with its tree or
+  nest, each while it still holds it. Every taker checks, once it holds one, that its path still
+  names the file it locked, and takes it again if not, so two prepares never hold two different
+  files. `.prepare.lock` stays: a bash prepare takes it too, and makes no such check.
 
 ### Liveness
 
