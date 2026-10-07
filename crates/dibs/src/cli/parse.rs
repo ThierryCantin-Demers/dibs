@@ -290,7 +290,7 @@ impl Parser {
                         "status" if shared => self.word = Word::Status,
                         "gc" if shared => self.word = Word::Gc,
                         "friction" if shared => return Friction::parse(&words[at..]),
-                        "hook" if shared => return Hook::parse(&words[at..]),
+                        "hook" if shared => return Hook::parse(&words[..at - 1], &words[at..]),
                         "out" if shared => at += self.out(words.get(at)),
                         "fetch" if shared => at += self.fetch(&words[at..]),
                         verb => match RecipeVerb::of_word(verb) {
@@ -679,7 +679,14 @@ impl FromStr for KillTarget {
 }
 
 impl Hook {
-    fn parse(words: &[String]) -> Result<Invocation, CliError> {
+    /// `before` is what came ahead of the word `hook`, which a hook would drop.
+    fn parse(before: &[String], words: &[String]) -> Result<Invocation, CliError> {
+        if !before.is_empty() {
+            return Err(CliError::new(format!(
+                "dibs: hook takes no flags, so it would drop {}",
+                before.join(" ")
+            )));
+        }
         match words {
             [kind] if kind == "ssh" => Ok(Invocation::Hook(Hook::Ssh)),
             _ => Err(CliError::new("dibs: hook takes one kind of hook: ssh")),

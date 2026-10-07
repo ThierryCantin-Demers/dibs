@@ -68,3 +68,13 @@ fn hook_takes_one_kind() {
         (2, "dibs: hook takes one kind of hook: ssh")
     );
 }
+
+#[test]
+fn hook_refuses_a_flag_it_would_drop() {
+    let s = Sandbox::new();
+    let out = s.dibs(["--on", "box-a", "hook", "ssh"]).run();
+    assert_eq!(
+        (out.code, out.stderr.trim()),
+        (2, "dibs: hook takes no flags, so it would drop --on box-a")
+    );
+}
