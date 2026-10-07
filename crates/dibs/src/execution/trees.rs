@@ -13,7 +13,12 @@ use super::{
     build::hex,
     jobs::{JobRequest, Jobs, Reported},
 };
-use crate::{call::RecipeJob, git::Git, gitdeps, recipe::Lock};
+use crate::{
+    call::RecipeJob,
+    git::Git,
+    gitdeps::{CargoHome, Db, GitPin},
+    recipe::Lock,
+};
 use dibs_format::wire;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -66,14 +71,14 @@ pub struct TreeSpec<'a> {
 /// A tree as the machine is asked to lay it out, and the git databases it may need sent.
 pub struct TreePlan {
     pub prepare: wire::Prepare,
-    pub gitdbs: Vec<gitdeps::Db>,
+    pub gitdbs: Vec<Db>,
 }
 
 impl TreeSpec<'_> {
     pub fn plan(&self) -> TreePlan {
         let lock = lockfile(self.dir, self.local.is_none().then_some(self.reference));
         let lock = lock.as_deref().unwrap_or("");
-        let gitdbs = gitdeps::local(&gitdeps::cargo_home(), &gitdeps::pinned(lock));
+        let gitdbs = CargoHome::here().dbs(&GitPin::all(lock));
         let lines = super::packages(lock, self.signature);
         let prepare = wire::Prepare {
             repo: self.repo_name.to_string(),
@@ -156,7 +161,7 @@ pub fn new_token() -> String {
     )
 }
 
-pub fn send_missing_gitdbs(backend: &Jobs, prepared: &wire::Prepared, gitdbs: &[gitdeps::Db]) {
+pub fn send_missing_gitdbs(backend: &Jobs, prepared: &wire::Prepared, gitdbs: &[Db]) {
     let Some(asked) = &prepared.gitdbs else {
         return;
     };
