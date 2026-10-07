@@ -2,7 +2,7 @@ use super::{
     error::{Refusal, RunError, Unprepared},
     jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
     local::Repo,
-    pins::{self, pin_spec, pins_of},
+    pins::{Nest, PinSpec, Pinned, PinnedTree},
     record::{batch_of_caller, fetch_artifacts, measured_summary},
     refs::{Arm, Side},
     schedule::{Job, jobs_of, schedule},
@@ -76,13 +76,13 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     let sides = Side::list(args.reference.as_deref())?;
     let resolved = Resolved::of(&args)?;
     let mut arms = Arm::look_up(&sides, &resolved.dir, &resolved.repo_name)?;
-    let mut pins = pins_of(&args, &resolved.repo_name, &resolved.dir, &arms)?;
+    let mut pins = Pinned::all(&args, &resolved.repo_name, &resolved.dir, &arms)?;
     let local: Vec<bool> = arms.iter().map(|a| a.fetch.is_none()).collect();
     let pin_specs = args
         .pins
         .iter()
         .zip(&pins)
-        .map(|(spec, p)| pin_spec(spec).map(|s| (s.repo.to_string(), p.local.is_some())))
+        .map(|(spec, p)| PinSpec::parse(spec).map(|s| (s.repo.to_string(), p.local.is_some())))
         .collect::<Result<Vec<_>, _>>()?;
     let calls = jobs_of(&resolved, &sides, &local, args.reps, &pin_specs);
     let Resolved {
@@ -350,17 +350,17 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         pinned.push(prepared);
     }
     let nest = (!pins.is_empty()).then(|| {
-        super::Nest::new(pins::config(
+        Nest::new(
             &pins
                 .iter()
                 .zip(&pinned)
-                .map(|(p, t)| pins::PinnedTree {
+                .map(|(p, t)| PinnedTree {
                     worktree: t.worktree.clone(),
                     crates: p.crates.clone(),
                     sources: p.sources.clone(),
                 })
                 .collect::<Vec<_>>(),
-        ))
+        )
     });
 
     let signature = rec

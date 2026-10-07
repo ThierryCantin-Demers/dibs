@@ -1,4 +1,4 @@
-use super::{pins::pin_spec, refs::Side};
+use super::{pins::PinSpec, refs::Side};
 use crate::{
     batch,
     cli::RecipeCall,
@@ -131,7 +131,7 @@ pub fn recipe_jobs(args: &RecipeCall) -> Option<Vec<batch::Pending>> {
     let pins = args
         .pins
         .iter()
-        .map(|p| pin_spec(p).map(|s| (s.repo.to_string(), s.reference == "local")))
+        .map(|p| PinSpec::parse(p).map(|s| (s.repo.to_string(), s.reference == "local")))
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
     // Whether a ref is sent is only known once it is looked up, so a ref is planned as fetched.

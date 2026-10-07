@@ -6,6 +6,7 @@
 //! A pinned build still gets a tree of its own, since resolving the patch rewrites the lockfile.
 
 use super::{
+    build::hex,
     error::PinError,
     local::{Checkout, Fetched, Local, Repo},
     refs::Arm,
@@ -16,6 +17,7 @@ use crate::{
     recipe::Checkouts,
 };
 use dibs_format::lockfile::Package;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -77,7 +79,7 @@ fn ref_crates(dir: &Path, reference: &str) -> Result<BTreeMap<String, String>, G
 
 /// Where a lockfile takes each of `names` from, as the key a `[patch]` table names the source by.
 /// A crate taken from a path is already local and has nothing to patch.
-pub fn sources(
+fn sources(
     lock: &str,
     names: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, BTreeSet<String>>, PinError> {
@@ -113,40 +115,59 @@ pub struct PinnedTree {
     pub sources: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// The config that points each patched crate at its directory in a tree on the machine.
-pub fn config(pins: &[PinnedTree]) -> String {
-    let mut tables: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    for PinnedTree {
-        worktree: tree,
-        crates,
-        sources,
-    } in pins
-    {
-        for (key, names) in sources {
-            for n in names {
-                let dir = crates.get(n).map(String::as_str).unwrap_or_default();
-                let path = if dir.is_empty() {
-                    tree.clone()
-                } else {
-                    format!("{tree}/{dir}")
-                };
-                tables
-                    .entry(key)
-                    .or_default()
-                    .push(format!("{n} = {{ path = \"{path}\" }}"));
-            }
+/// Where a pinned tree lives, and the `[patch]` that points its build at the pinned trees. The
+/// config sits in the directory above the tree, where cargo reads it after the tree's own, so the
+/// tree stays exactly what was sent or checked out. The name is a hash of the config, so every
+/// tree built against one set of pins shares it and no two sets write the same file.
+pub struct Nest {
+    pub name: String,
+    pub config: String,
+}
+
+impl Nest {
+    pub fn new(pins: &[PinnedTree]) -> Nest {
+        let config = Nest::config(pins);
+        Nest {
+            name: format!("pin-{:.10}", hex(&Sha256::digest(config.as_bytes()))),
+            config,
         }
     }
-    let mut s = String::new();
-    for (key, lines) in tables {
-        let header = if key == "crates-io" {
-            "[patch.crates-io]".to_string()
-        } else {
-            format!("[patch.\"{key}\"]")
-        };
-        s += &format!("{header}\n{}\n", lines.join("\n"));
+
+    /// The config that points each patched crate at its directory in a tree on the machine.
+    fn config(pins: &[PinnedTree]) -> String {
+        let mut tables: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        for PinnedTree {
+            worktree: tree,
+            crates,
+            sources,
+        } in pins
+        {
+            for (key, names) in sources {
+                for n in names {
+                    let dir = crates.get(n).map(String::as_str).unwrap_or_default();
+                    let path = if dir.is_empty() {
+                        tree.clone()
+                    } else {
+                        format!("{tree}/{dir}")
+                    };
+                    tables
+                        .entry(key)
+                        .or_default()
+                        .push(format!("{n} = {{ path = \"{path}\" }}"));
+                }
+            }
+        }
+        let mut s = String::new();
+        for (key, lines) in tables {
+            let header = if key == "crates-io" {
+                "[patch.crates-io]".to_string()
+            } else {
+                format!("[patch.\"{key}\"]")
+            };
+            s += &format!("{header}\n{}\n", lines.join("\n"));
+        }
+        s
     }
-    s
 }
 
 /// `--pin <repo>@<ref>`, both halves named.
@@ -155,17 +176,19 @@ pub struct PinSpec<'a> {
     pub reference: &'a str,
 }
 
-pub fn pin_spec(p: &str) -> Result<PinSpec<'_>, PinError> {
-    match p.split_once('@') {
-        Some((repo, reference))
-            if !repo.is_empty()
-                && !reference.is_empty()
-                && !reference.contains("..")
-                && !reference.contains(',') =>
-        {
-            Ok(PinSpec { repo, reference })
+impl PinSpec<'_> {
+    pub fn parse(p: &str) -> Result<PinSpec<'_>, PinError> {
+        match p.split_once('@') {
+            Some((repo, reference))
+                if !repo.is_empty()
+                    && !reference.is_empty()
+                    && !reference.contains("..")
+                    && !reference.contains(',') =>
+            {
+                Ok(PinSpec { repo, reference })
+            }
+            _ => Err(PinError::Malformed(p.to_string())),
         }
-        _ => Err(PinError::Malformed(p.to_string())),
     }
 }
 
@@ -184,99 +207,102 @@ pub struct Pinned {
     pub sources: BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
-/// Every pin, resolved against every arm's lockfile and every pin's: one pinned crate may reach
-/// the build through another pinned repo rather than through this one.
-pub fn pins_of(
-    args: &RecipeCall,
-    repo: &str,
-    dir: &Path,
-    arms: &[Arm],
-) -> Result<Vec<Pinned>, PinError> {
-    let mut pins = Vec::new();
-    for p in &args.pins {
-        let PinSpec {
-            repo: name,
-            reference,
-        } = pin_spec(p)?;
-        let pdir = Checkouts::of(args)?.find(name)?;
-        let identity = Repo(&pdir).identity();
-        if identity == repo {
-            return Err(PinError::Itself {
-                pin: p.clone(),
-                repo: repo.to_string(),
-            });
-        }
-        if pins.iter().any(|q: &Pinned| q.repo == identity) {
-            return Err(PinError::Twice {
-                pin: p.clone(),
-                repo: identity,
-            });
-        }
-        let (local, checkout, note, crates, lock) = match reference {
-            "local" => (
-                Some(Local::of(&pdir)?),
-                None,
-                None,
-                local_crates(&pdir)?,
-                Repo(&pdir).lockfile(None),
-            ),
-            _ => {
-                let Fetched {
-                    commit: sha,
-                    seen,
-                    ahead,
-                } = Fetched::of(&pdir, reference).ok_or_else(|| PinError::NoRef {
+impl Pinned {
+    /// Every pin, resolved against every arm's lockfile and every pin's: one pinned crate may reach
+    /// the build through another pinned repo rather than through this one.
+    pub fn all(
+        args: &RecipeCall,
+        repo: &str,
+        dir: &Path,
+        arms: &[Arm],
+    ) -> Result<Vec<Pinned>, PinError> {
+        let mut pins = Vec::new();
+        for p in &args.pins {
+            let PinSpec {
+                repo: name,
+                reference,
+            } = PinSpec::parse(p)?;
+            let pdir = Checkouts::of(args)?.find(name)?;
+            let identity = Repo(&pdir).identity();
+            if identity == repo {
+                return Err(PinError::Itself {
                     pin: p.clone(),
-                    reference: reference.to_string(),
-                    dir: pdir.clone(),
-                })?;
-                let (crates, lock) = (ref_crates(&pdir, &sha)?, Repo(&pdir).lockfile(Some(&sha)));
-                match ahead.or_else(|| Repo(&pdir).unfetchable(&sha)) {
-                    Some(why) => {
-                        let c = Checkout::of(&pdir, &identity, &sha, Some(why))?;
-                        (
-                            Some(c.local()?),
-                            Some(c),
-                            Some(format!("as {seen} stands here")),
-                            crates,
-                            lock,
-                        )
+                    repo: repo.to_string(),
+                });
+            }
+            if pins.iter().any(|q: &Pinned| q.repo == identity) {
+                return Err(PinError::Twice {
+                    pin: p.clone(),
+                    repo: identity,
+                });
+            }
+            let (local, checkout, note, crates, lock) = match reference {
+                "local" => (
+                    Some(Local::of(&pdir)?),
+                    None,
+                    None,
+                    local_crates(&pdir)?,
+                    Repo(&pdir).lockfile(None),
+                ),
+                _ => {
+                    let Fetched {
+                        commit: sha,
+                        seen,
+                        ahead,
+                    } = Fetched::of(&pdir, reference).ok_or_else(|| PinError::NoRef {
+                        pin: p.clone(),
+                        reference: reference.to_string(),
+                        dir: pdir.clone(),
+                    })?;
+                    let (crates, lock) =
+                        (ref_crates(&pdir, &sha)?, Repo(&pdir).lockfile(Some(&sha)));
+                    match ahead.or_else(|| Repo(&pdir).unfetchable(&sha)) {
+                        Some(why) => {
+                            let c = Checkout::of(&pdir, &identity, &sha, Some(why))?;
+                            (
+                                Some(c.local()?),
+                                Some(c),
+                                Some(format!("as {seen} stands here")),
+                                crates,
+                                lock,
+                            )
+                        }
+                        None => (None, None, None, crates, lock),
                     }
-                    None => (None, None, None, crates, lock),
+                }
+            };
+            pins.push(Pinned {
+                repo: identity,
+                reference: reference.to_string(),
+                dir: pdir,
+                local,
+                checkout,
+                note,
+                crates,
+                lock,
+                sources: BTreeMap::new(),
+            });
+        }
+        let locks: Vec<String> = arms
+            .iter()
+            .filter_map(|a| Repo(a.dir(dir)).lockfile(a.fetch.as_deref()))
+            .chain(pins.iter().filter_map(|p| p.lock.clone()))
+            .collect();
+        for p in &mut pins {
+            for lock in &locks {
+                for (source, names) in sources(lock, &p.crates)? {
+                    p.sources.entry(source).or_default().extend(names);
                 }
             }
-        };
-        pins.push(Pinned {
-            repo: identity,
-            reference: reference.to_string(),
-            dir: pdir,
-            local,
-            checkout,
-            note,
-            crates,
-            lock,
-            sources: BTreeMap::new(),
-        });
-    }
-    let locks: Vec<String> = arms
-        .iter()
-        .filter_map(|a| Repo(a.dir(dir)).lockfile(a.fetch.as_deref()))
-        .chain(pins.iter().filter_map(|p| p.lock.clone()))
-        .collect();
-    for p in &mut pins {
-        for lock in &locks {
-            for (source, names) in sources(lock, &p.crates)? {
-                p.sources.entry(source).or_default().extend(names);
+            if p.sources.is_empty() {
+                return Err(PinError::NothingToReplace {
+                    pinned: p.repo.clone(),
+                    repo: repo.to_string(),
+                });
             }
         }
-        if p.sources.is_empty() {
-            return Err(PinError::NothingToReplace {
-                pinned: p.repo.clone(),
-                repo: repo.to_string(),
-            });
-        }
+        Ok(pins)
     }
-    Ok(pins)
 }
 
 #[cfg(test)]
@@ -350,11 +376,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             ["cubecl", "cubecl-core"],
             "cubecl-cpp is not in the graph, so a patch for it would only warn"
         );
-        let text = config(&[PinnedTree {
+        let text = Nest::new(&[PinnedTree {
             worktree: "/m/ws/cubecl/local-k".into(),
             crates: cubecl(),
             sources: s,
-        }]);
+        }])
+        .config;
         assert_eq!(
             text,
             "[patch.\"https://github.com/tracel-ai/cubecl\"]\ncubecl = { path = \"/m/ws/cubecl/local-k/crates/cubecl\" }\ncubecl-core = { path = \"/m/ws/cubecl/local-k/crates/cubecl-core\" }\n"
@@ -371,11 +398,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         );
         let s = sources(LOCK, &serde).unwrap();
         assert!(
-            config(&[PinnedTree {
+            Nest::new(&[PinnedTree {
                 worktree: "/t".into(),
                 crates: serde,
                 sources: s
             }])
+            .config
             .starts_with("[patch.crates-io]\nserde = { path = \"/t\" }")
         );
     }

@@ -10,9 +10,9 @@
 //! tolerates neighbours perfectly and must never hold the exclusive lock.
 
 use super::{
-    build::hex,
     jobs::{JobRequest, Jobs},
     local::Repo,
+    pins::Nest,
 };
 use crate::{
     call::RecipeJob,
@@ -20,26 +20,7 @@ use crate::{
     recipe::Lock,
 };
 use dibs_format::wire;
-use sha2::{Digest, Sha256};
 use std::path::Path;
-
-/// Where a pinned tree lives, and the `[patch]` that points its build at the pinned trees. The
-/// config sits in the directory above the tree, where cargo reads it after the tree's own, so the
-/// tree stays exactly what was sent or checked out. The name is a hash of the config, so every
-/// tree built against one set of pins shares it and no two sets write the same file.
-pub struct Nest {
-    pub name: String,
-    pub config: String,
-}
-
-impl Nest {
-    pub fn new(config: String) -> Nest {
-        Nest {
-            name: format!("pin-{:.10}", hex(&Sha256::digest(config.as_bytes()))),
-            config,
-        }
-    }
-}
 
 /// What the machine needs to know to prepare one tree.
 pub struct TreeSpec<'a> {
