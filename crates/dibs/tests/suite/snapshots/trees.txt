@@ -575,6 +575,7 @@ tmp/
 ws/
   app/
     .local-<app-topk>.lock
+    .local-<app>-pin-<hash>.lock
     .local-<app>.lock
     .prepare.lock  (empty)
     <decoy>/
@@ -613,7 +614,6 @@ ws/
           | [patch.crates-io]
           | serde = { path = "<root>/scratch/ws/lib/local-<lib>" }
       .dibs-used  (empty)
-      .local-<app>.lock
       local-<app>/
         .dibs-used  (empty)
         .dibs.toml

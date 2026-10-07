@@ -198,8 +198,8 @@ impl<'a> Trees<'a> {
             .scratch
             .join("target")
             .join(format!("{repo}{suffix}"));
-        self.made(worktree.parent().unwrap_or(self.config.scratch))?;
         let trees = self.repo_turn(repo)?;
+        self.made(worktree.parent().unwrap_or(self.config.scratch))?;
         self.add(&source, &worktree, &sha)?;
         self.made_used(&worktree)?;
         self.revive(prepare, &worktree);
@@ -284,8 +284,10 @@ impl<'a> Trees<'a> {
     /// and both add it, the prune after touches every worktree of the repo, and a sweep removes
     /// none of them meanwhile.
     fn repo_turn(&self, repo: &str) -> Result<FileLock, PrepareError> {
+        let trees = self.config.scratch.join("ws").join(repo);
+        self.made(&trees)?;
         self.held(
-            &self.config.scratch.join("ws").join(repo).join(PREPARE_LOCK),
+            &trees.join(PREPARE_LOCK),
             self.commands.deadline(),
             "could not lock the repo's trees",
         )
@@ -356,11 +358,17 @@ impl<'a> Trees<'a> {
             .scratch
             .join("target")
             .join(format!("{repo}-local-{key}{nest}"));
-        self.made(worktree.parent().unwrap_or(self.config.scratch))?;
         let trees = self.repo_turn(repo)?;
+        self.made(worktree.parent().unwrap_or(self.config.scratch))?;
         self.revive(prepare, &worktree);
         drop(trees);
-        let turn = self.turn(&worktree)?;
+        let lock = self
+            .config
+            .scratch
+            .join("ws")
+            .join(repo)
+            .join(format!(".local-{key}{nest}.lock"));
+        let turn = self.turn(&worktree, &lock)?;
         let target_turn = self.target_turn(&target)?;
         let (mut seeded, mut reseeded) = (None, None);
         if !worktree.is_dir() && !target.is_dir() {
@@ -459,9 +467,9 @@ impl<'a> Trees<'a> {
 
     /// A sent tree to this prepare alone, from deciding what it starts from until its target is
     /// marked used, so a reseed that copied for minutes never replaces a tree handed over since.
-    fn turn(&self, worktree: &Path) -> Result<FileLock, PrepareError> {
-        let path = FileLock::beside(worktree);
-        if let Ok(Some(held)) = FileLock::exclusive_by(&path, Deadline::after(Some(Duration::ZERO)))
+    /// `lock` sits outside a nest, which a sweep may remove whole.
+    fn turn(&self, worktree: &Path, lock: &Path) -> Result<FileLock, PrepareError> {
+        if let Ok(Some(held)) = FileLock::exclusive_by(lock, Deadline::after(Some(Duration::ZERO)))
         {
             return Ok(held);
         }
@@ -469,7 +477,7 @@ impl<'a> Trees<'a> {
             "dibs: waiting for another prepare of {}\n",
             worktree.display()
         ));
-        self.held(&path, self.commands.deadline(), "could not lock the tree")
+        self.held(lock, self.commands.deadline(), "could not lock the tree")
     }
 
     /// `lock` taken before `deadline`, or the prepare overran.

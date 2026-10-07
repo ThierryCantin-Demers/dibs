@@ -405,6 +405,31 @@ fn a_pinned_tree_is_nested_under_its_config_and_has_a_target_of_its_own() {
     assert!(nested.join(".dibs-used").exists());
 }
 
+/// A sweep removes a past nest whole, holding the repo's turn.
+#[test]
+fn a_pinned_local_prepare_makes_its_nest_only_under_the_repos_turn_and_locks_outside_it() {
+    let mut m = Machine::new();
+    let pinned = Prepare {
+        nest: Some(Nest {
+            name: "pin-0123456789".into(),
+            config: String::new(),
+        }),
+        ..local("k", &[])
+    };
+    fs::create_dir_all(m.p("scratch/ws/demo")).unwrap();
+    let sweep = Building::holding(&m.p("scratch/ws/demo/.prepare.lock"));
+    m.deadline = Deadline::after(Some(Duration::ZERO));
+    let (waited, _) = m.prepare(&pinned);
+    sweep.done();
+    assert!(waited.is_err());
+    assert!(!m.p("scratch/ws/demo/pin-0123456789").exists());
+
+    m.deadline = Deadline::default();
+    m.prepared(&pinned);
+    assert!(m.p("scratch/ws/demo/.local-k-pin-0123456789.lock").exists());
+    assert!(!m.p("scratch/ws/demo/pin-0123456789/.local-k.lock").exists());
+}
+
 #[test]
 fn a_local_tree_is_keyed_and_marked_and_its_lockfile_staged() {
     let m = Machine::new();
