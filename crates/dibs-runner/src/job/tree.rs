@@ -13,11 +13,12 @@ impl Tree {
         }
     }
 
-    /// What the whole tree has run on a CPU, the children it has reaped included, in clock
-    /// ticks: a supervisor running one benchmark after another owns almost none of it itself.
-    pub fn ticks(&self) -> u64 {
+    /// What runs under the root, which holds the lock for it: the root's own CPU is dibs's, and
+    /// a runner's threads would make a job waiting on a pipe look busy.
+    pub fn work_ticks(&self) -> u64 {
         self.pids
             .iter()
+            .skip(1)
             .filter_map(|&pid| Host::cpu_ticks(pid))
             .sum()
     }

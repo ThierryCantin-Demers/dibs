@@ -157,7 +157,7 @@ impl Look<'_> {
         let pid = record.pid;
         let elapsed = now.saturating_sub(record.start);
         let tree = Tree::of(pid);
-        let ticks = tree.ticks();
+        let ticks = tree.work_ticks();
         let output = tree
             .written()
             .into_iter()

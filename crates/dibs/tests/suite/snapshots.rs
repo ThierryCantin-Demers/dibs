@@ -222,7 +222,7 @@ impl Rec<'_> {
 fn idlers(s: &mut Sandbox, gate: &Gate, count: usize) -> Vec<u32> {
     let mut pids: Vec<u32> = (0..count)
         .map(|_| {
-            let call = s.command("cat", [gate.path.display().to_string()]);
+            let call = s.command("sh", ["-c", &format!("cat {}; true", gate.path.display())]);
             s.spawn(call).pid
         })
         .collect();
@@ -457,14 +457,16 @@ fn status_of_idle_and_writing_holders() {
         burned.path.display(),
         gate.path.display()
     );
-    let worked = s.spawn(s.command("python3", ["-c", &burner])).pid;
+    let worked = s
+        .spawn(s.command("sh", ["-c", &format!("python3 -c \"{burner}\"; true")]))
+        .pid;
     burned.reached();
     let writes = s
         .spawn(s.command(
             "sh",
             [
                 "-c",
-                &format!("cat {} > {}", gate.path.display(), s.p("written.log")),
+                &format!("cat {} > {}; true", gate.path.display(), s.p("written.log")),
             ],
         ))
         .pid;
