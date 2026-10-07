@@ -20,6 +20,6 @@ pub use provision::{Installed, Provision};
 pub use served::{Delivery, RUNNER_WORD, Runner};
 pub use session::{Answer, Diagnosis, Here, Kept, Liveness, Message, Reach, Route, Session};
 pub use ssh::Ssh;
-pub use target::{Fleet, Named, Target, TargetEnv, TargetError, after_at};
+pub use target::{Fleet, Named, Target, TargetEnv, TargetError};
 pub use unreachable::Unreachable;
 pub use values::{CallValues, Card, MaxFrom, Watch};

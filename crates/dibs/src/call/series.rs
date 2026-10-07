@@ -178,13 +178,13 @@ impl Series {
                     .to_string()
             })
     }
-}
 
-/// A `--new-series` run that failed claims nothing, and says so, or the flag reads as ignored.
-pub fn stayed_put(label: &str) -> String {
-    format!(
-        "dibs: the command failed, so '{label}' did not start its series here again and is still filed as it was.\n  --new-series takes effect only when the run it is passed with succeeds. Pass it\n  again with a run that works, once, rather than on every run from here on.\n"
-    )
+    /// A `--new-series` run that failed claims nothing, and says so, or the flag reads as ignored.
+    pub fn stayed_put(label: &str) -> String {
+        format!(
+            "dibs: the command failed, so '{label}' did not start its series here again and is still filed as it was.\n  --new-series takes effect only when the run it is passed with succeeds. Pass it\n  again with a run that works, once, rather than on every run from here on.\n"
+        )
+    }
 }
 
 impl fmt::Display for Moved {

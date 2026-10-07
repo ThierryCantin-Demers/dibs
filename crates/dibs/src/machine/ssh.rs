@@ -41,14 +41,19 @@ impl Ssh {
             .find_map(|l| l.strip_prefix("hostname ").map(str::to_string))
             .filter(|h| !h.is_empty())
     }
-}
 
-/// The kernel signals the child when this process dies, SIGKILL included.
-#[cfg(target_os = "linux")]
-pub fn parent_death_signal() {
-    // SAFETY: prctl with these arguments only sets a flag on the calling process.
-    unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) };
-}
+    /// The kernel signals the child when this process dies, SIGKILL included.
+    #[cfg(target_os = "linux")]
+    pub fn parent_death_signal() {
+        // SAFETY: prctl with these arguments only sets a flag on the calling process.
+        unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) };
+    }
 
-#[cfg(not(target_os = "linux"))]
-pub fn parent_death_signal() {}
+    #[cfg(not(target_os = "linux"))]
+    pub fn parent_death_signal() {}
+
+    /// The host of an ssh destination: the part after its last `@`.
+    pub fn host_of(destination: &str) -> &str {
+        destination.rsplit('@').next().unwrap_or(destination)
+    }
+}

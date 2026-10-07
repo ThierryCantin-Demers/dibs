@@ -1,11 +1,11 @@
 use crate::{
     call::{
-        card::{CardError, unpinned},
+        card::CardError,
         hold::Hold,
         machine::MachineCall,
         origin::{BatchStep, Origin, RecipeJob},
         output::Output,
-        series::{Entry, Moved, Series, stayed_put},
+        series::{Entry, Moved, Series},
     },
     caller::Caller,
     cli::{Call, Command, PortName, Run, RunLock, Service},
@@ -134,7 +134,7 @@ impl<'a> LockedCall<'a> {
             && !self.hold
             && !call.preflight
             && !env.unpinned_quiet
-            && let Some(note) = target.entry(&fleet).and_then(unpinned)
+            && let Some(note) = target.entry(&fleet).and_then(Card::unpinned)
         {
             output.say(&note);
         }
@@ -203,7 +203,7 @@ impl<'a> LockedCall<'a> {
             series.record(&entry, &caller.name, call.new_series);
         }
         if self.bench() && call.new_series && status != 0 {
-            output.say(&stayed_put(label.as_str()));
+            output.say(&Series::stayed_put(label.as_str()));
         }
         let diagnosis = session.diagnose(status, &target);
         output.say(&diagnosis.said);

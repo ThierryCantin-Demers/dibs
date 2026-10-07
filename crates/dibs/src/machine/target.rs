@@ -1,4 +1,7 @@
-use crate::inventory::{Inventory, InventoryError, Machine};
+use crate::{
+    inventory::{Inventory, InventoryError, Machine},
+    machine::ssh::Ssh,
+};
 use dibs_format::{Exit, MachineName};
 use std::{fmt, path::PathBuf};
 
@@ -145,7 +148,7 @@ impl Target {
             hostname: env
                 .hostname
                 .clone()
-                .unwrap_or_else(|| after_at(&env.host).to_string()),
+                .unwrap_or_else(|| Ssh::host_of(&env.host).to_string()),
             measurable: true,
             named: Named::Unnamed,
             unheeded: None,
@@ -232,11 +235,6 @@ impl Target {
             unheeded: self.unheeded.clone(),
         }
     }
-}
-
-/// The part of an ssh string after its last `@`.
-pub fn after_at(host: &str) -> &str {
-    host.rsplit('@').next().unwrap_or(host)
 }
 
 impl TargetError {

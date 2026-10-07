@@ -2,7 +2,7 @@ use crate::machine::{
     lines::Stream,
     served::{Delivery, LineBuffers, MISSING, Runner},
     session::{Liveness, Route, SSH_FAILED, Session},
-    ssh::{Ssh, parent_death_signal},
+    ssh::Ssh,
 };
 use dibs_format::Exit;
 use dibs_runner::BUILD_MAX;
@@ -221,7 +221,7 @@ impl Provision<'_> {
         unsafe {
             ssh.pre_exec(move || {
                 if die_with_me {
-                    parent_death_signal();
+                    Ssh::parent_death_signal();
                 }
                 Ok(())
             });

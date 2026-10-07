@@ -56,21 +56,21 @@ impl Card {
             chip,
         })
     }
-}
 
-/// A benchmark that names no card on a machine with several is not reproducible, and nothing
-/// downstream can tell its number from a pinned one.
-pub fn unpinned(entry: &Machine) -> Option<String> {
-    let gpus = entry
-        .aliases()
-        .filter(|a| a.as_str().starts_with("gpu:"))
-        .count();
-    (gpus > 1).then(|| {
-        format!(
-            "dibs: {} has {gpus} GPUs and this benchmark named none of them.\n  It will run on whichever the runtime picks, which is not something you\n  can repeat on purpose, and the number will look like any other.\n  Name one with --device. The aliases are in:  dibs --machines -v\n",
-            entry.name
-        )
-    })
+    /// A benchmark that names no card on a machine with several is not reproducible, and nothing
+    /// downstream can tell its number from a pinned one.
+    pub fn unpinned(entry: &Machine) -> Option<String> {
+        let gpus = entry
+            .aliases()
+            .filter(|a| a.as_str().starts_with("gpu:"))
+            .count();
+        (gpus > 1).then(|| {
+            format!(
+                "dibs: {} has {gpus} GPUs and this benchmark named none of them.\n  It will run on whichever the runtime picks, which is not something you\n  can repeat on purpose, and the number will look like any other.\n  Name one with --device. The aliases are in:  dibs --machines -v\n",
+                entry.name
+            )
+        })
+    }
 }
 
 impl fmt::Display for CardError {

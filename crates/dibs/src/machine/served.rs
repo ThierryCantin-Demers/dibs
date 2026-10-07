@@ -5,7 +5,7 @@ use crate::machine::{
     lines::{Listener, Stream},
     provision::{Installed, Provision},
     session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Session},
-    ssh::{Ssh, parent_death_signal},
+    ssh::Ssh,
     values::{CallValues, Watch},
 };
 use dibs_format::{
@@ -207,7 +207,7 @@ impl Served<'_> {
                 unsafe {
                     ssh.pre_exec(move || {
                         if die_with_me {
-                            parent_death_signal();
+                            Ssh::parent_death_signal();
                         }
                         Ok(())
                     });

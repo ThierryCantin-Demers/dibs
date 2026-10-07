@@ -1,6 +1,6 @@
 use crate::machine::{
     ssh::Ssh,
-    target::{Named, Target, after_at},
+    target::{Named, Target},
 };
 use std::{
     fmt::Write as _,
@@ -50,7 +50,7 @@ impl Unreachable<'_> {
             _ => {}
         }
         let said = |needle: &str| why.contains(needle);
-        let bare = after_at(host);
+        let bare = Ssh::host_of(host);
         let lines: Option<Vec<String>> = if said("REMOTE HOST IDENTIFICATION HAS CHANGED") {
             Some(vec![
                 "  Its host key is not the one recorded. The machine answered, so it is up;".into(),
