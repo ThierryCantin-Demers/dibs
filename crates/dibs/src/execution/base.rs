@@ -5,7 +5,7 @@ use super::{
     pins::{Nest, PinSpec, Pinned, PinnedTree},
     record::{batch_of_caller, fetch_artifacts, measured_summary},
     refs::{Arm, Side},
-    schedule::{Job, jobs_of, schedule},
+    schedule::Job,
     sweep::{sweep_points, sweep_run},
     trees::{Announce, TreePlan, TreeSpec, new_token, preparing_title},
 };
@@ -84,7 +84,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         .zip(&pins)
         .map(|(spec, p)| PinSpec::parse(spec).map(|s| (s.repo.to_string(), p.local.is_some())))
         .collect::<Result<Vec<_>, _>>()?;
-    let calls = jobs_of(&resolved, &sides, &local, args.reps, &pin_specs);
+    let calls = Job::pending(&resolved, &sides, &local, args.reps, &pin_specs);
     let Resolved {
         dir,
         repo_name,
@@ -104,7 +104,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             .flat_map(|p| p.sources.values().flatten().cloned())
             .collect()
     });
-    let jobs = schedule(&local, &rec.steps, args.reps);
+    let jobs = Job::schedule(&local, &rec.steps, args.reps);
     let compared = arms.len() > 1;
     let order = |jobs: &[Job]| -> String {
         let mut reps: BTreeMap<u32, Vec<&str>> = BTreeMap::new();

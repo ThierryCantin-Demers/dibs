@@ -8,7 +8,7 @@ use crate::{
     call::{Destination, Driver, MachineCall},
     caller::Caller,
     cli::Call,
-    execution::recipe_jobs,
+    execution::Job,
     paths::{FileError, Paths},
 };
 use dibs_format::{Exit, MachineName, Span};
@@ -191,7 +191,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         .iter()
         .map(|s| {
             if s.lock == StepKind::Recipe {
-                s.recipe.as_ref().and_then(recipe_jobs)
+                s.recipe.as_ref().and_then(Job::of_batch_line)
             } else {
                 None
             }

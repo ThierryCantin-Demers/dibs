@@ -19,5 +19,5 @@ pub use base::{raw, run_recipe};
 pub use build::{build_signature, packages};
 pub use error::{ArmError, CheckoutError, PinError, Refusal, RunError, Unprepared};
 pub use local::{Checkout, Fetched, Local, Repo};
-pub use schedule::recipe_jobs;
+pub use schedule::Job;
 pub use with::with_service;

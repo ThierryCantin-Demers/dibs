@@ -1,7 +1,7 @@
 use super::{
     base::step_plan,
     refs::Side,
-    schedule::{Job, jobs_of, schedule},
+    schedule::Job,
     sweep::{sweep_points, sweep_text},
     trees::gitdb_args,
 };
@@ -253,7 +253,13 @@ fn a_recipe_s_jobs_are_what_it_will_send_and_run() {
         step(Lock::Exclusive, "cargo bench"),
     ]);
     assert_eq!(
-        names(jobs_of(&build_then_bench, &[Side::Local], &[true], 1, &[])),
+        names(Job::pending(
+            &build_then_bench,
+            &[Side::Local],
+            &[true],
+            1,
+            &[]
+        )),
         [
             "rsh app/bench/r:send",
             "shared app/bench/r",
@@ -261,7 +267,7 @@ fn a_recipe_s_jobs_are_what_it_will_send_and_run() {
         ]
     );
     assert_eq!(
-        names(jobs_of(
+        names(Job::pending(
             &build_then_bench,
             &[Side::Ref("main".into())],
             &[false],
@@ -273,7 +279,7 @@ fn a_recipe_s_jobs_are_what_it_will_send_and_run() {
     );
     let bench_only = resolved(vec![step(Lock::Exclusive, "cargo bench")]);
     assert_eq!(
-        names(jobs_of(
+        names(Job::pending(
             &bench_only,
             &[Side::Ref("main".into())],
             &[false],
@@ -332,7 +338,7 @@ fn every_arm_is_built_before_any_is_measured_and_the_order_turns_each_rep() {
         setup,
     };
     assert_eq!(
-        schedule(&[false, true], &build_then_bench, 2),
+        Job::schedule(&[false, true], &build_then_bench, 2),
         [
             s(0, 0, None, true),
             Job::Send(1),
@@ -345,7 +351,7 @@ fn every_arm_is_built_before_any_is_measured_and_the_order_turns_each_rep() {
     );
     let bench_only = [step(Lock::Exclusive, "./bench")];
     assert_eq!(
-        schedule(&[false], &bench_only, 2),
+        Job::schedule(&[false], &bench_only, 2),
         [
             Job::Setup(0),
             s(0, 0, Some(1), false),
@@ -355,7 +361,7 @@ fn every_arm_is_built_before_any_is_measured_and_the_order_turns_each_rep() {
     );
     let test = [step(Lock::Shared, "cargo test")];
     assert_eq!(
-        schedule(&[false], &test, 2),
+        Job::schedule(&[false], &test, 2),
         [s(0, 0, Some(1), true), s(0, 0, Some(2), false)],
         "nothing exclusive, so all of it repeats"
     );
@@ -367,7 +373,7 @@ fn a_comparison_s_jobs_say_which_arm_and_rep_they_are() {
         step(Lock::Shared, "cargo build"),
         step(Lock::Exclusive, "cargo bench"),
     ]);
-    let names: Vec<String> = jobs_of(
+    let names: Vec<String> = Job::pending(
         &r,
         &Side::list(Some("main..local")).unwrap(),
         &[true, true],
