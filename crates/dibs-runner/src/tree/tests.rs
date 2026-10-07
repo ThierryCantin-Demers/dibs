@@ -1306,11 +1306,14 @@ fn a_build_mark_stays_held_while_the_builds_own_processes_live_after_the_runner_
     let own = s
         .target
         .join(format!(".dibs-building.{}", std::process::id()));
-    let unheld = || File::open(&own).unwrap().try_lock().is_ok();
-    assert!(!unheld(), "the build's processes hold it");
+    assert!(
+        File::open(&own).unwrap().try_lock().is_err(),
+        "the build's processes hold it"
+    );
     fs::write(&gate, "\n").unwrap();
     build.wait().unwrap();
-    assert!(unheld(), "and nothing once they have gone");
+    // Blocking: a child another test forks holds a copy of the mark until it execs.
+    File::open(&own).unwrap().lock().unwrap();
 }
 
 #[test]
