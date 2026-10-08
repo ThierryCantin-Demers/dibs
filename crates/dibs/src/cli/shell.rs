@@ -109,18 +109,32 @@ impl fmt::Display for ShellWord<'_> {
 mod tests {
     use super::*;
 
-    /// What bash itself prints, to hold the quoting to it rather than to a reading of its source.
-    fn bash_q(word: &str) -> String {
+    fn bash(script: &str, args: &[&str]) -> String {
         let out = std::process::Command::new("bash")
-            .args(["-c", "printf %q \"$1\"", "_", word])
+            .arg("-c")
+            .arg(script)
+            .arg("_")
+            .args(args)
             .env("LC_ALL", "C.UTF-8")
             .output()
             .expect("bash runs");
         String::from_utf8(out.stdout).expect("utf-8")
     }
 
+    /// What bash itself prints, to hold the quoting to it rather than to a reading of its source.
+    fn bash_q(word: &str) -> String {
+        bash("printf %q \"$1\"", &[word])
+    }
+
     #[test]
     fn a_word_is_quoted_as_bash_quotes_it() {
+        // The quoting is bash 4's and later's; macOS's own bash 3.2 leaves a leading ~ bare, and
+        // reads the escaped one back the same.
+        let modern = bash("echo ${BASH_VERSINFO[0]}", &[])
+            .trim()
+            .parse::<u32>()
+            .unwrap_or(0)
+            >= 4;
         for word in [
             "plain",
             "with space",
@@ -149,7 +163,15 @@ mod tests {
             "naïve space",
             "%+-./:=@_",
         ] {
-            assert_eq!(BashQuoted(word).to_string(), bash_q(word), "{word:?}");
+            let quoted = BashQuoted(word).to_string();
+            assert_eq!(
+                bash(&format!("printf %s {quoted}"), &[]),
+                word,
+                "{word:?} read back"
+            );
+            if modern {
+                assert_eq!(quoted, bash_q(word), "{word:?}");
+            }
         }
     }
 
