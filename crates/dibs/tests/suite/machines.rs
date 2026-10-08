@@ -954,3 +954,31 @@ fn a_leased_machine_is_dialled_with_its_own_ssh_config_until_its_lease_ends() {
         "and is no longer listed"
     );
 }
+
+#[test]
+fn an_unreachable_machine_with_its_own_ssh_config_names_it() {
+    let mut s = Sandbox::new();
+    s.machines("");
+    s.write(
+        "gone.ssh",
+        "# opened by a second factor, as this header would say\n",
+    );
+    s.write(
+        "machines.d/gone.toml",
+        &format!(
+            "[machine.gone]\nssh = \"nowhere.invalid\"\nhostname = \"gone\"\nssh_config = \"{}\"\n",
+            s.p("gone.ssh")
+        ),
+    );
+    let out = away(s.dibs(["--on", "gone", "--label", "gone", "true"])).run();
+    assert_eq!(
+        (
+            out.code,
+            out.stderr
+                .lines_with(&format!("It is reached through {}", s.p("gone.ssh")))
+        ),
+        (69, 1),
+        "{}",
+        out.all()
+    );
+}

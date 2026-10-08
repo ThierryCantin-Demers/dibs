@@ -38,6 +38,13 @@ impl Unreachable<'_> {
             ),
         };
         let mut text = format!("dibs: cannot reach '{host}' over ssh.\n");
+        if let Some(config) = &self.target.ssh_config {
+            let _ = writeln!(
+                text,
+                "  It is reached through {}, alone; whatever opens the way in, such as a bastion's second factor, is said there.",
+                config.display()
+            );
+        }
         match (self.target.named, &self.target.machine) {
             (Named::DibsHost, _) => {
                 text.push_str("  Nothing on this call named a machine, so it went to DIBS_HOST.\n");
