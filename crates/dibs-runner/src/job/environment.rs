@@ -53,20 +53,22 @@ impl Environment {
     }
 
     /// A command over ssh runs in a shell that reads no profile, so a toolchain installed the
-    /// ordinary way is not on its path.
+    /// ordinary way is not on its path, nor are the platform's tools that come first.
     fn path() -> String {
-        let mut path = var("PATH").unwrap_or_default();
-        for dir in [
-            home().join(".cargo/bin"),
-            PathBuf::from("/usr/local/cuda/bin"),
-        ] {
-            let dir = dir.display().to_string();
-            let present = path.split(':').any(|d| d == dir);
-            if !present && PathBuf::from(&dir).is_dir() {
-                path = format!("{dir}:{path}");
-            }
-        }
-        path
+        let ahead: Vec<String> = [home().join(".cargo/bin"), "/usr/local/cuda/bin".into()]
+            .into_iter()
+            .filter(|dir| dir.is_dir())
+            .chain(Host::tools_first())
+            .map(|dir| dir.display().to_string())
+            .collect();
+        let path = var("PATH").unwrap_or_default();
+        let rest = path.split(':').filter(|d| !ahead.iter().any(|a| a == d));
+        ahead
+            .iter()
+            .map(String::as_str)
+            .chain(rest)
+            .collect::<Vec<_>>()
+            .join(":")
     }
 
     pub fn set(&mut self, name: &'static str, value: String) {

@@ -1,4 +1,9 @@
-use crate::{machine::short_hostname, settings::home, stop::Signals};
+use crate::{
+    machine::short_hostname,
+    platform::{Host, Platform as _},
+    settings::home,
+    stop::Signals,
+};
 use dibs_format::fleet::Facts;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -20,9 +25,12 @@ pub struct Tools {
 }
 
 impl Tools {
+    /// The platform's tools first, as a job has them, so the rsync the check finds is the one a
+    /// transfer runs.
     pub fn here() -> Tools {
         let path = std::env::var_os("PATH").unwrap_or_default();
-        let mut dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+        let mut dirs = Host::tools_first();
+        dirs.extend(std::env::split_paths(&path));
         dirs.push(home().join(".cargo/bin"));
         dirs.extend(ALSO.iter().map(PathBuf::from));
         Tools { dirs }

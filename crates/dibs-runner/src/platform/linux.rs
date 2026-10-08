@@ -390,6 +390,10 @@ impl Platform for Linux {
             .any(|e| e.file_name().to_string_lossy().starts_with("BAT"))
     }
 
+    fn tools_first() -> Vec<PathBuf> {
+        Vec::new()
+    }
+
     /// A pipe's write end polled for nothing wakes only with an error once its reader has gone.
     fn await_caller_gone() {
         let mut fd = libc::pollfd {

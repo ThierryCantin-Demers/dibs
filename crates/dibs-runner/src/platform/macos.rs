@@ -392,6 +392,17 @@ impl Platform for MacOs {
         output_of("pmset", &["-g", "batt"]).contains("InternalBattery")
     }
 
+    /// Homebrew's GNU userland, then the rest of Homebrew: macOS ships openrsync as rsync, which
+    /// cannot receive a tree, and BSD tools that commands written for Linux misread.
+    fn tools_first() -> Vec<PathBuf> {
+        ["coreutils", "findutils", "gnu-sed", "grep", "gawk"]
+            .iter()
+            .map(|tool| PathBuf::from(format!("/opt/homebrew/opt/{tool}/libexec/gnubin")))
+            .chain([PathBuf::from("/opt/homebrew/bin")])
+            .filter(|dir| dir.is_dir())
+            .collect()
+    }
+
     /// A pipe polled for nothing never wakes here, so kqueue watches stdout for its reader closing,
     /// edge-triggered since its write filter is otherwise ready whenever the pipe has room, and
     /// the parent for its exit: the process ssh started for the call, or the client here.

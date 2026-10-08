@@ -138,6 +138,10 @@ pub trait Platform {
     /// A battery means a laptop, which throttles, shares memory between CPU and GPU, and moves.
     fn on_battery() -> bool;
 
+    /// Put ahead of `PATH`, first first, for jobs and for the tools the check looks for, where
+    /// the system's own are not the ones work is written for.
+    fn tools_first() -> Vec<PathBuf>;
+
     /// Returns once this process's caller has gone, for a call whose stdin carries something
     /// else: whoever reads its stdout closing it, or its parent, ssh's or the client's, exiting.
     fn await_caller_gone();
