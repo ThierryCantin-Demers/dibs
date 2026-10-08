@@ -631,7 +631,7 @@ impl<'a> Run<'a> {
         if !a_job || request.max_from != MaxFrom::Default || request.watch.hold || max == 0 {
             return max;
         }
-        let Some(estimate) = history.estimate(Key {
+        let Some(estimate) = history.estimate_kept(Key {
             mode: self.at.call.mode(),
             label: self.at.call.label(),
             agent: Some(&self.at.call.agent),

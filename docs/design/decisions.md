@@ -22,8 +22,13 @@ middle rung earns its place.
 than a kind of work, so one label can cover a `git status` and a full build across 29 runs, and
 its median is honestly zero. Wide spread is reported as a range rather than a number, a job past
 its median is bounded by p90 rather than abandoned, and "stuck" is measured against p90.
-Windowing to recent runs was tried first and rejected on measurement: 1.1x median error either
-way, because the spread is inside the labels rather than in their age.
+
+**An estimate reads the newest 10 runs of its procedure or label.** Replaying two machines'
+histories (846 predictions), that window was never worse than every run and better at the
+tail: p90 error 9.5x to 8.6x on one, 5.7x to 5.0x on the other. It also follows a dependency
+that halves a build within a few runs, where the whole history waits for the fast runs to
+outnumber the old. The `--max` a long label is given still reads every run kept, so a run
+slower than the recent ones is not killed for it.
 
 **Queued shared jobs do not wait for each other.** The shared lock admits all of them at once,
 so a queue only advances at a benchmark, and that benchmark waits for the longest shared run

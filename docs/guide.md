@@ -733,8 +733,8 @@ with the job it came from; `dibs --kill <pid>` stops it and what it started.
 An unreachable machine fails in seconds with a diagnosis, including whether Tailscale needs a
 login, rather than hanging on a connection or a password prompt. Never retry that in a loop.
 
-Every completed run's duration is recorded per label, and `--status` uses the median of those to
-say how much longer the holder has and when each queued caller should start. It says nothing
+Every completed run's duration is recorded per label, and `--status` uses the median of its newest
+runs to say how much longer the holder has and when each queued caller should start. It says nothing
 rather than guessing when it has no history to go on.
 
 Every job records which agent started it, taken from the title of its Claude Code session, which

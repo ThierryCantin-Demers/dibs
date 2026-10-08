@@ -9,6 +9,9 @@ const BOUND: usize = 4000;
 const PER_LABEL: usize = 50;
 /// The most lines a compaction keeps, newest first, however many labels there are.
 const KEPT: usize = 3000;
+/// The newest runs an estimate is drawn from, so work that got faster or slower is predicted by
+/// what it takes now rather than once most of its history has caught up.
+const RECENT: usize = 10;
 
 /// Every successful run's duration on this machine, which estimates are drawn from.
 pub struct History {
@@ -48,9 +51,19 @@ impl History {
         History { lines }
     }
 
-    /// The median and its spread, by the sharpest key that has any runs: the procedure, the
-    /// label, the agent, then the mode. None when the mode has never run here.
+    /// The median and its spread by the sharpest key that has any runs: the newest of the
+    /// procedure's or the label's, else all of the agent's, then the mode's. None when the mode
+    /// has never run here.
     pub fn estimate(&self, key: Key) -> Option<Estimate> {
+        self.drawn(key, RECENT)
+    }
+
+    /// The same over every run kept, for a bound that has to hold for the slowest of them.
+    pub fn estimate_kept(&self, key: Key) -> Option<Estimate> {
+        self.drawn(key, usize::MAX)
+    }
+
+    fn drawn(&self, key: Key, newest: usize) -> Option<Estimate> {
         let mode: Vec<&HistoryLine> = self.lines.iter().filter(|l| l.mode == key.mode).collect();
         let label: Vec<&HistoryLine> = mode
             .iter()
@@ -83,7 +96,12 @@ impl History {
         } else {
             (mode, Scope::Mode, false)
         };
-        let mut seconds: Vec<u64> = runs.iter().map(|l| l.seconds).collect();
+        // The other scopes mix labels, so their newest runs say nothing about this job's trend.
+        let from = match scope {
+            Scope::This => runs.len().saturating_sub(newest),
+            Scope::Agent | Scope::Mode => 0,
+        };
+        let mut seconds: Vec<u64> = runs[from..].iter().map(|l| l.seconds).collect();
         seconds.sort_unstable();
         Estimate::of(&seconds, scope, other)
     }
@@ -212,5 +230,22 @@ mod tests {
         let e = h.estimate(key(&unseen, None)).unwrap();
         assert_eq!((e.runs, e.scope), (3, Scope::Agent));
         assert!(history("").estimate(key(&label, None)).is_none());
+    }
+
+    #[test]
+    fn an_estimate_follows_the_newest_runs_and_a_bound_every_run_kept() {
+        let label = Label::new("build");
+        let mut lines = String::new();
+        for _ in 0..20 {
+            lines.push_str("shared\tbuild\t600\tme\t\n");
+        }
+        for _ in 0..RECENT {
+            lines.push_str("shared\tbuild\t300\tme\t\n");
+        }
+        let h = history(&lines);
+        let e = h.estimate(key(&label, None)).unwrap();
+        assert_eq!((e.median, e.runs), (300, RECENT));
+        let e = h.estimate_kept(key(&label, None)).unwrap();
+        assert_eq!((e.median, e.high, e.runs), (600, 600, 20 + RECENT));
     }
 }
