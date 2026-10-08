@@ -223,6 +223,7 @@ fn a_step_carries_what_is_still_to_come_under_the_keys_its_history_is_filed_by()
         "build",
         1,
         3,
+        None,
         &[
             call("bench", Mode::Bench),
             Pending {
@@ -262,8 +263,8 @@ fn a_recipe_alone_is_its_own_batch_and_inside_one_goes_ahead_of_the_rest() {
     assert_eq!(inside.batch, "b9");
     assert_eq!(inside.step, "arm-a: build");
     assert_eq!(
-        inside.plan,
-        "2\t4\nbench\tbench\tbench_x\t1\narm-b\trecipe\t\t1\n"
+        inside.plan, "2\t4\t2\t3\nbench\tbench\tbench_x\t1\narm-b\trecipe\t\t1\n",
+        "and says which of the recipe's jobs it is, since the batch's step stays put meanwhile"
     );
 }
 

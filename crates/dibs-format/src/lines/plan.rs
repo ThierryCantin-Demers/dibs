@@ -1,6 +1,7 @@
 use crate::{
     BatchId, Label, Mode,
     lines::base::{Field, Fields, LineError},
+    status::Within,
 };
 use std::{fmt, str::FromStr};
 
@@ -95,6 +96,7 @@ pub struct BatchPlan {
     /// The step's number, counting from 1.
     pub position: usize,
     pub total: usize,
+    pub within: Option<Within>,
     pub pending: Vec<PendingStep>,
 }
 
@@ -114,6 +116,13 @@ impl FromStr for BatchPlan {
             step: head.text().to_string(),
             position: count.parsed("position")?,
             total: count.parsed("total")?,
+            within: match count.count() {
+                4.. => Some(Within {
+                    job: count.parsed("job")?,
+                    jobs: count.parsed("jobs")?,
+                }),
+                _ => None,
+            },
             pending: lines
                 .filter(|line| !line.is_empty())
                 .map(str::parse)
@@ -125,7 +134,11 @@ impl FromStr for BatchPlan {
 impl fmt::Display for BatchPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "{}\t{}", Field(self.batch.as_str()), Field(&self.step))?;
-        writeln!(f, "{}\t{}", self.position, self.total)?;
+        write!(f, "{}\t{}", self.position, self.total)?;
+        if let Some(within) = self.within {
+            write!(f, "\t{}\t{}", within.job, within.jobs)?;
+        }
+        writeln!(f)?;
         self.pending
             .iter()
             .try_for_each(|pending| writeln!(f, "{pending}"))
@@ -142,6 +155,7 @@ mod tests {
             "20261001-120000-77\tapp/bench/held@cpu\n2\t2\n",
             "20261001-120000-78\tserve\n1\t2\nnext\tshared\trec-next\t1\n",
             "20261001-120000-79\tsweep: a\n1\t3\nb\trecipe\t\t1\nc\tbench\tc-bench\t0\n",
+            "20261001-120000-80\tab: app/bench/x (b r2)\n1\t11\t17\t20\nnext\tbench\tapp_bench_x\t1\n",
         ] {
             assert_eq!(text.parse::<BatchPlan>().unwrap().to_string(), text);
         }
@@ -152,7 +166,7 @@ mod tests {
         let plan: BatchPlan = "b1\tsweep: a\n1\t3\nb\trecipe\t\t1\nc\tpeek\tps\t0\n"
             .parse()
             .unwrap();
-        assert_eq!((plan.position, plan.total), (1, 3));
+        assert_eq!((plan.position, plan.total, plan.within), (1, 3, None));
         assert_eq!(plan.pending[0].kind, PendingKind::Recipe);
         assert_eq!(plan.pending[1].kind, PendingKind::Job(Mode::Peek));
         assert!(plan.pending[0].here && !plan.pending[1].here);

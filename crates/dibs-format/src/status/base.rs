@@ -240,6 +240,8 @@ pub struct BatchShown {
     pub step: String,
     pub k: usize,
     pub n: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within: Option<Within>,
     /// Steps still to come here, then elsewhere.
     pub here: usize,
     pub elsewhere: usize,
@@ -248,6 +250,14 @@ pub struct BatchShown {
     pub far: String,
     #[serde(flatten)]
     pub left: Option<Left>,
+}
+
+/// A job's place among its recipe's jobs, when the recipe is one step of a batch: the step's own
+/// count stays put for as long as all of them take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Within {
+    pub job: usize,
+    pub jobs: usize,
 }
 
 /// How long the batch has left on this machine, queue included.

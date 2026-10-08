@@ -108,6 +108,7 @@ impl Plan<'_> {
             step: self.plan.step,
             k: self.plan.position,
             n: self.plan.total,
+            within: self.plan.within,
             here,
             elsewhere,
             next: named(next),

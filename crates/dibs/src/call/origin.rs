@@ -1,4 +1,4 @@
-use dibs_format::{Label, Mode, wire::Tree};
+use dibs_format::{Label, Mode, status::Within, wire::Tree};
 use std::fmt;
 
 /// Who makes a call.
@@ -60,9 +60,19 @@ impl BatchStep {
 
     /// What a step of a batch is started with. `DIBS_BATCH_PLAN` is `k<TAB>n` and then one pending
     /// step per line; dibs sends it with the job and the machine keeps it beside the holder.
-    pub fn new(id: &str, step: &str, k: usize, n: usize, pending: &[Pending]) -> BatchStep {
+    pub fn new(
+        id: &str,
+        step: &str,
+        k: usize,
+        n: usize,
+        within: Option<Within>,
+        pending: &[Pending],
+    ) -> BatchStep {
         let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
-        let mut plan = format!("{k}\t{n}\n");
+        let mut plan = match within {
+            Some(w) => format!("{k}\t{n}\t{}\t{}\n", w.job, w.jobs),
+            None => format!("{k}\t{n}\n"),
+        };
         for p in pending {
             plan.push_str(&format!(
                 "{}\t{}\t{}\t{}\n",
@@ -104,7 +114,11 @@ impl BatchStep {
                     .map(|x| x.trim().parse::<usize>().unwrap_or(0));
                 let (bk, bn) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0));
                 let step = format!("{}: {}", outer.step, calls[k].name);
-                let mut env = BatchStep::new(&outer.batch, &step, bk, bn, pending);
+                let within = (calls.len() > 1).then(|| Within {
+                    job: k + 1,
+                    jobs: calls.len(),
+                });
+                let mut env = BatchStep::new(&outer.batch, &step, bk, bn, within, pending);
                 env.plan.push_str(rest);
                 Some(env)
             }
@@ -113,6 +127,7 @@ impl BatchStep {
                 &calls[k].name,
                 k + 1,
                 calls.len(),
+                None,
                 pending,
             )),
             None => None,

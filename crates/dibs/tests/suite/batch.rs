@@ -113,6 +113,40 @@ fn a_batch_keeps_its_own_dibs_when_an_update_renames_another_over_it() {
 }
 
 #[test]
+fn a_recipe_step_says_which_of_its_jobs_is_running() {
+    let mut s = Sandbox::new();
+    let app = crate::recipes::app(&s);
+    let (up, hold) = (s.gate("up"), s.gate("hold"));
+    crate::recipes::recipes(
+        &s,
+        &format!(
+            "[build.two]\n  [[build.two.step]]\n  lock = \"shared\"\n  run = \"true\"\n  [[build.two.step]]\n  lock = \"shared\"\n  run = \"{}; {}\"\n",
+            up.signal(),
+            hold.hold()
+        ),
+    );
+    let file = batch_file(
+        &s,
+        "b-within",
+        &[
+            &format!("[two] dibs build {app}@local two"),
+            "[after] dibs --label batch-within-after true",
+        ],
+    );
+    let driver = s.spawn(s.dibs(["batch", &file]));
+    up.reached();
+    let status = s.dibs(["status"]).run().stdout;
+    assert_eq!(
+        status
+            .lines_matching(r"^    batch [0-9]{8}-[0-9]{6}-[0-9]+, step 1 of 2, job 3 of 3: two: "),
+        1,
+        "the step stays put while its recipe's jobs go by, so which of them runs is said:\n{status}"
+    );
+    hold.open();
+    assert_eq!(s.wait(driver), 0);
+}
+
+#[test]
 fn an_on_before_the_batch_is_the_machine_of_every_step_that_names_none() {
     let mut s = Sandbox::new();
     s.machines(&format!(

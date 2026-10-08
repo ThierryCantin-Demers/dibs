@@ -436,9 +436,13 @@ fn services(out: &mut String, p: &Palette, services: &[Service]) {
 
 /// The batch's lines under a job; an idle holder's time left is not estimated.
 fn batch_lines(out: &mut String, p: &Palette, batch: &BatchShown, estimated: bool) {
+    let within = batch
+        .within
+        .map(|w| format!(", job {} of {}", w.job, w.jobs))
+        .unwrap_or_default();
     let _ = writeln!(
         out,
-        "    {}batch{} {}{}, step {} of {}: {}{}",
+        "    {}batch{} {}{}, step {} of {}{within}: {}{}",
         p.dim, p.off, batch.id, p.dim, batch.k, batch.n, batch.step, p.off
     );
     if batch.here > 0 {

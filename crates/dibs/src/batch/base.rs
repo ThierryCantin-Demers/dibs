@@ -279,8 +279,14 @@ impl Driving<'_> {
                     }
                 })
                 .collect();
-            let batch =
-                BatchStep::new(self.id, &step.name, i + 1, self.batch.steps.len(), &pending);
+            let batch = BatchStep::new(
+                self.id,
+                &step.name,
+                i + 1,
+                self.batch.steps.len(),
+                None,
+                &pending,
+            );
             let tx = self.tx.clone();
             let verbose = self.opts.verbose;
             let t = Instant::now();

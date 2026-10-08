@@ -106,10 +106,14 @@ pub trait Progress {
 
 impl Progress for BatchShown {
     fn progress(&self) -> String {
-        match &self.left {
-            Some(l) if l.left_partial => format!("{}/{} >{}", self.k, self.n, Span(l.left)),
-            Some(l) => format!("{}/{} ~{}", self.k, self.n, Span(l.left)),
+        let step = match self.within {
+            Some(w) => format!("{}/{} job {}/{}", self.k, self.n, w.job, w.jobs),
             None => format!("{}/{}", self.k, self.n),
+        };
+        match &self.left {
+            Some(l) if l.left_partial => format!("{step} >{}", Span(l.left)),
+            Some(l) => format!("{step} ~{}", Span(l.left)),
+            None => step,
         }
     }
 
@@ -284,6 +288,17 @@ mod tests {
             Some("2/5 >10m20s")
         );
         assert!(v[1].batch.is_none(), "a job outside a batch has no step");
+        let inner = batch.replace(r#""n":5,"#, r#""n":5,"within":{"job":17,"jobs":20},"#);
+        let s = status(&holder("b", &inner), "");
+        assert_eq!(
+            Item::all("m", &s)[0]
+                .batch
+                .as_ref()
+                .map(Progress::progress)
+                .as_deref(),
+            Some("2/5 job 17/20 >10m20s"),
+            "a recipe's job says which of its jobs it is"
+        );
     }
 
     #[test]
