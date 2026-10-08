@@ -27,10 +27,6 @@ use std::{
 const LABEL: &str = "dibs-friction";
 const FORWARD_READY: Duration = Duration::from_secs(30);
 const STOPPED: &str = "DIBS-FORWARD-STOPPED";
-/// Ends every answer posted from here, hidden where GitHub renders it. A wait skips a comment
-/// carrying it, which a list of posted comments could not do: the webhook can arrive before
-/// the answer's own call has finished, let alone written anything down.
-const ANSWER: &str = "<!-- dibs --friction --reply -->";
 /// A forwarder that lives less than this, this many times running, is not coming back.
 const SHORT_LIVED: Duration = Duration::from_secs(60);
 const SHORT_LIVES: u32 = 3;
@@ -297,6 +293,7 @@ impl ReportsRepo {
             return Ok(Vec::new());
         }
         let mut shown = Keys::load(ReportsStamp::Shown)?;
+        let own = ReportsRepo::own_login();
         let mut out = Vec::new();
         for issue in self.listed()? {
             let Some(n) = issue["number"].as_u64().filter(|n| filed.contains(n)) else {
@@ -304,7 +301,7 @@ impl ReportsRepo {
             };
             for c in issue["comments"].as_array().into_iter().flatten() {
                 let url = c["url"].as_str().unwrap_or_default();
-                if url.is_empty() || !shown.insert(url) {
+                if url.is_empty() || posted_by(&c["author"], own.as_deref()) || !shown.insert(url) {
                     continue;
                 }
                 out.push(format!(
@@ -320,7 +317,7 @@ impl ReportsRepo {
 
     /// Everything not yet woken on. The first time, that is the open reports, and the rest is taken
     /// as read rather than replayed.
-    fn catch_up(&self, woken: &mut Keys) -> Result<Vec<String>, ReportsError> {
+    fn catch_up(&self, woken: &mut Keys, own: Option<&str>) -> Result<Vec<String>, ReportsError> {
         let first = woken.fresh;
         let mut out = Vec::new();
         for issue in self.listed()? {
@@ -336,7 +333,7 @@ impl ReportsRepo {
             }
             for c in issue["comments"].as_array().into_iter().flatten() {
                 let url = c["url"].as_str().unwrap_or_default();
-                if url.is_empty() || answered_here(&c["body"]) || !woken.insert(url) || first {
+                if url.is_empty() || posted_by(&c["author"], own) || !woken.insert(url) || first {
                     continue;
                 }
                 out.push(format!(
@@ -350,11 +347,13 @@ impl ReportsRepo {
         Ok(out)
     }
 
-    /// Returns once a report, or an answer that was not posted from here, lands. What landed while
-    /// nothing listened is read first, since GitHub delivers a webhook once or not at all.
+    /// Returns once a report, or a comment from another account, lands. What landed while nothing
+    /// listened is read first, since GitHub delivers a webhook once or not at all.
     pub fn wait(&self) -> Result<Vec<String>, ReportsError> {
         let mut woken = Keys::load(ReportsStamp::Woken)?;
-        let news = self.catch_up(&mut woken)?;
+        let own = ReportsRepo::own_login();
+        let own = own.as_deref();
+        let news = self.catch_up(&mut woken, own)?;
         if !news.is_empty() {
             woken.save()?;
             return Ok(news);
@@ -367,12 +366,12 @@ impl ReportsRepo {
         while short < SHORT_LIVES {
             let started = Instant::now();
             let forward = Forward::start(self, port)?;
-            let news = self.catch_up(&mut woken)?;
+            let news = self.catch_up(&mut woken, own)?;
             if !news.is_empty() {
                 woken.save()?;
                 return Ok(news);
             }
-            said = match Forwarded::listen(&listener, &mut woken) {
+            said = match Forwarded::listen(&listener, &mut woken, own) {
                 Forwarded::News(news) => {
                     woken.save()?;
                     return Ok(news);
@@ -397,19 +396,19 @@ impl ReportsRepo {
     fn reply(&self, issue: u64, text: &str, close: bool) -> Result<String, ReportsError> {
         let repo = self.name.as_str();
         let n = issue.to_string();
-        let url = gh(&[
-            "issue",
-            "comment",
-            &n,
-            "-R",
-            repo,
-            "--body",
-            &format!("{text}\n\n{ANSWER}"),
-        ])?;
+        let url = gh(&["issue", "comment", &n, "-R", repo, "--body", text])?;
         if close {
             gh(&["issue", "close", &n, "-R", repo])?;
         }
         Ok(url)
+    }
+
+    /// The account gh acts as here, which every reply from here is posted under. None when gh
+    /// cannot say, and then every comment counts as news.
+    fn own_login() -> Option<String> {
+        gh(&["api", "user", "--jq", ".login"])
+            .ok()
+            .filter(|login| !login.is_empty())
     }
 }
 
@@ -494,8 +493,10 @@ fn login(v: &Value) -> &str {
     v["login"].as_str().unwrap_or("someone")
 }
 
-fn answered_here(body: &Value) -> bool {
-    body.as_str().is_some_and(|b| b.contains(ANSWER))
+/// Whether a comment's author is this computer's own GitHub account. Its replies are known here
+/// already, and every other account's are news, a reporter answering through dibs included.
+fn posted_by(author: &Value, own: Option<&str>) -> bool {
+    own.is_some_and(|own| author["login"].as_str() == Some(own))
 }
 
 fn labelled(issue: &Value) -> bool {
@@ -506,7 +507,7 @@ fn labelled(issue: &Value) -> bool {
         .any(|l| l["name"].as_str() == Some(LABEL))
 }
 
-fn on_event(event: &str, body: &Value, woken: &mut Keys) -> Vec<String> {
+fn on_event(event: &str, body: &Value, woken: &mut Keys, own: Option<&str>) -> Vec<String> {
     let issue = &body["issue"];
     if !labelled(issue) {
         return Vec::new();
@@ -522,7 +523,7 @@ fn on_event(event: &str, body: &Value, woken: &mut Keys) -> Vec<String> {
         ("issue_comment", "created") => {
             let c = &body["comment"];
             let url = c["html_url"].as_str().unwrap_or_default();
-            if url.is_empty() || answered_here(&c["body"]) || !woken.insert(url) {
+            if url.is_empty() || posted_by(&c["user"], own) || !woken.insert(url) {
                 return Vec::new();
             }
             vec![format!(
@@ -594,7 +595,7 @@ enum Forwarded {
 
 impl Forwarded {
     /// Listens until a delivery is news or the forwarder says it stopped.
-    fn listen(listener: &TcpListener, woken: &mut Keys) -> Forwarded {
+    fn listen(listener: &TcpListener, woken: &mut Keys, own: Option<&str>) -> Forwarded {
         listener
             .incoming()
             .filter_map(Result::ok)
@@ -602,7 +603,7 @@ impl Forwarded {
             .find_map(|arrival| match arrival {
                 Arrival::Stopped(said) => Some(Forwarded::Stopped(said)),
                 Arrival::Delivery(event, body) => {
-                    let news = on_event(&event, &body, woken);
+                    let news = on_event(&event, &body, woken, own);
                     (!news.is_empty()).then_some(Forwarded::News(news))
                 }
             })
@@ -748,37 +749,65 @@ mod tests {
     }
 
     #[test]
-    fn a_comment_wakes_once_and_never_on_an_answer_posted_from_here() {
-        let body = |u: &str, text: &str| {
+    fn a_comment_wakes_once_and_never_on_one_this_account_posted() {
+        let body = |u: &str, by: &str, text: &str| {
             serde_json::json!({
                 "action": "created",
                 "issue": { "number": 3, "labels": [{ "name": LABEL }] },
-                "comment": { "html_url": u, "user": { "login": "someone" }, "body": text },
+                "comment": { "html_url": u, "user": { "login": by }, "body": text },
             })
         };
+        let own = Some("maintainer");
         let url = "https://github.com/o/r/issues/3#issuecomment-9";
         let mut woken = keys();
         assert_eq!(
             on_event(
                 "issue_comment",
-                &body(url, "still broken\nmore"),
-                &mut woken
+                &body(url, "someone", "still broken\nmore"),
+                &mut woken,
+                own
             ),
             vec![format!("comment on #3 from someone: still broken\n  {url}")]
         );
         assert!(
-            on_event("issue_comment", &body(url, "still broken"), &mut woken).is_empty(),
+            on_event(
+                "issue_comment",
+                &body(url, "someone", "still broken"),
+                &mut woken,
+                own
+            )
+            .is_empty(),
             "once"
         );
-        let answer = format!("fixed in abc\n\n{ANSWER}");
         assert!(
             on_event(
                 "issue_comment",
-                &body("https://github.com/o/r/issues/3#issuecomment-10", &answer),
-                &mut woken
+                &body(
+                    "https://github.com/o/r/issues/3#issuecomment-10",
+                    "maintainer",
+                    "fixed in abc"
+                ),
+                &mut woken,
+                own
             )
             .is_empty(),
             "not its own"
+        );
+        let through_dibs = "the source was an absolute path\n\n<!-- dibs --friction --reply -->";
+        assert_eq!(
+            on_event(
+                "issue_comment",
+                &body(
+                    "https://github.com/o/r/issues/3#issuecomment-11",
+                    "someone",
+                    through_dibs
+                ),
+                &mut woken,
+                own
+            )
+            .len(),
+            1,
+            "a reporter answering through dibs is news"
         );
     }
 
@@ -795,7 +824,8 @@ mod tests {
             on_event(
                 "issues",
                 &opened(serde_json::json!([]), "opened"),
-                &mut woken
+                &mut woken,
+                None
             )
             .is_empty(),
             "unlabelled"
@@ -804,7 +834,8 @@ mod tests {
             on_event(
                 "issues",
                 &opened(serde_json::json!([{ "name": LABEL }]), "closed"),
-                &mut woken
+                &mut woken,
+                None
             )
             .is_empty(),
             "closing"
@@ -813,7 +844,8 @@ mod tests {
             on_event(
                 "issues",
                 &opened(serde_json::json!([{ "name": LABEL }]), "opened"),
-                &mut woken
+                &mut woken,
+                None
             )
             .len(),
             1

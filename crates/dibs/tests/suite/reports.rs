@@ -1,11 +1,13 @@
 use crate::harness::*;
 use crate::snapshot::*;
 
-/// A gh that answers from files in `ghd/` and writes down every call. Its webhook forward posts
-/// `ghd/event.json` to dibs's listener once it has said it is forwarding, then holds until killed.
+/// A gh that answers from files in `ghd/` and writes down every call, acting as the account in
+/// `ghd/login`. Its webhook forward posts `ghd/event.json` to dibs's listener once it has said it
+/// is forwarding, then holds until killed.
 fn fake_gh(s: &Sandbox, visibility: &str) {
     let d = s.p("ghd");
     s.write("ghd/visibility", &format!("{visibility}\n"));
+    s.write("ghd/login", "here\n");
     s.write("ghd/issues.json", "[]\n");
     s.write_exec(
         "bin/gh",
@@ -15,6 +17,7 @@ d={d}
 printf '%s\n' "$*" >> "$d/gh.log"
 case "$1 $2" in
     "repo view") cat "$d/visibility" ;;
+    "api user") cat "$d/login" ;;
     "issue create") echo "https://github.com/o/r/issues/7" ;;
     "issue list") cat "$d/issues.json" ;;
     "issue comment") echo "https://github.com/o/r/issues/$3#issuecomment-99" ;;
@@ -100,7 +103,7 @@ fn an_answer_reaches_the_session_that_reported_it_once() {
     );
     s.write(
         "ghd/issues.json",
-        r#"[{"number":7,"state":"OPEN","comments":[{"url":"https://github.com/o/r/issues/7#issuecomment-3","author":{"login":"maintainer"},"body":"fixed in abc, run dibs --update\nmore"}]}]"#,
+        r#"[{"number":7,"state":"OPEN","comments":[{"url":"https://github.com/o/r/issues/7#issuecomment-2","author":{"login":"here"},"body":"it still fails"},{"url":"https://github.com/o/r/issues/7#issuecomment-3","author":{"login":"maintainer"},"body":"fixed in abc, run dibs --update\nmore"}]}]"#,
     );
     let call = |who: &str| {
         s.dibs(["--label", "l", "true"])
@@ -129,7 +132,13 @@ fn an_answer_reaches_the_session_that_reported_it_once() {
         "not on the call that fetches it"
     );
     fetched(&s);
-    assert_eq!(call("me").stderr.lines_with(answered), 1, "but on the next");
+    let next = call("me").stderr;
+    assert_eq!(next.lines_with(answered), 1, "but on the next");
+    assert_eq!(
+        next.lines_with("answered by here"),
+        0,
+        "and never with its own comment"
+    );
     ask_again();
     call("me");
     fetched(&s);
@@ -223,10 +232,30 @@ fn a_wait_reads_what_landed_before_it_listened_then_wakes_on_the_next_one() {
         "{}",
         out.all()
     );
+
+    s.write(
+        "ghd/issues.json",
+        r#"[{"number":5,"title":"the flag is missing","url":"https://github.com/o/r/issues/5","state":"OPEN","author":{"login":"someone"},"comments":[{"url":"https://github.com/o/r/issues/5#issuecomment-2","author":{"login":"here"},"body":"fixed in abc"},{"url":"https://github.com/o/r/issues/5#issuecomment-3","author":{"login":"someone"},"body":"it was an absolute path\n\n<!-- dibs --friction --reply -->"}]}]"#,
+    );
+    let out = s
+        .dibs(["--friction", "--wait"])
+        .env("DIBS_REPORTS", "o/r")
+        .run();
+    assert_eq!(
+        (
+            out.code,
+            out.stdout
+                .lines_with("comment on #5 from someone: it was an absolute path"),
+            out.stdout.lines_with("from here")
+        ),
+        (0, 1, 0),
+        "a reporter answering through dibs wakes it, and its own account does not: {}",
+        out.all()
+    );
 }
 
 #[test]
-fn an_answer_posted_from_here_is_its_own() {
+fn a_reply_is_posted_and_closes_the_report() {
     let s = Sandbox::new();
     fake_gh(&s, "PRIVATE");
     let out = s
@@ -244,11 +273,6 @@ fn an_answer_posted_from_here_is_its_own() {
         1,
         "{}",
         gh_log(&s)
-    );
-    assert_eq!(
-        gh_log(&s).lines_with("<!-- dibs --friction --reply -->"),
-        1,
-        "marked, so a wait never wakes on it"
     );
     assert_eq!(gh_log(&s).lines_with("issue close 5 -R o/r"), 1);
 }
