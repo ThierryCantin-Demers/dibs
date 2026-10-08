@@ -31,7 +31,11 @@ impl Repo<'_> {
         if self.toplevel() != dir.canonicalize().ok() {
             return fallback;
         }
-        let Ok(common) = Git(dir).run(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        // A clone of a checkout here, such as a scratch copy for a review, is that checkout's
+        // repo; a bare origin stands in for a host, and its name is not the repo's.
+        let origin = self.checkout_origin();
+        let own = origin.as_deref().unwrap_or(dir);
+        let Ok(common) = Git(own).run(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
         else {
             return fallback;
         };
@@ -42,6 +46,20 @@ impl Repo<'_> {
             folder(&common).map(|n| n.trim_end_matches(".git").to_string())
         };
         named.filter(|n| !n.is_empty()).unwrap_or(fallback)
+    }
+
+    /// The checkout on this computer that `origin` points at, if it is one.
+    fn checkout_origin(self) -> Option<PathBuf> {
+        let url = Git(self.0)
+            .run(&["config", "--get", "remote.origin.url"])
+            .ok()?;
+        let url = url.trim();
+        let path = self
+            .0
+            .join(url.strip_prefix("file://").unwrap_or(url))
+            .canonicalize()
+            .ok()?;
+        Repo(&path).toplevel().filter(|top| *top == path)
     }
 
     /// The checkout this directory is inside, if any.

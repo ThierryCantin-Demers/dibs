@@ -1225,6 +1225,33 @@ fn a_worktree_is_a_line_of_work_on_its_repo_not_a_repo_of_its_own() {
 }
 
 #[test]
+fn a_clone_of_a_checkout_here_is_that_checkouts_repo() {
+    let mut s = Sandbox::new();
+    app(&s);
+    recipes(&s, PARAMS);
+    s.machines("[machine.lap]\nssh = \"me@lap\"\nhostname = \"lap\"\nmeasure = false\n");
+    s.git("app", &["worktree", "add", "-q", &s.p("app-topk")]);
+    s.git(".", &["clone", "-q", &s.p("app-topk"), "review"]);
+    fs::copy(s.path("app/.dibs.toml"), s.path("review/.dibs.toml")).unwrap();
+    s.dibs(["build", "app@local", "p"])
+        .dir(&s.path("review"))
+        .env("DIBS_ROOT", s.root.display().to_string())
+        .run();
+    assert_eq!(
+        last_run(&s, "app/build/p").lines_with(r#""repo":"app","variant":"review""#),
+        1,
+        "a bare name inside a clone of a worktree is that clone, filed under the repo"
+    );
+    s.dibs(["build", &format!("{}@local", s.p("review")), "p"])
+        .run();
+    assert_eq!(
+        runs(&s).lines_with(r#""repo":"app","variant":"review""#),
+        2,
+        "and so is its path"
+    );
+}
+
+#[test]
 fn reps_build_once_and_measure_each_time_into_one_record() {
     let s = Sandbox::new();
     let app = app(&s);
