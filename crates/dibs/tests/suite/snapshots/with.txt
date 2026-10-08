@@ -1,6 +1,6 @@
 == dibs with <root>/app@local servers -- 'echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API'
 -> exit 0
-1| port=<port> service=<host>:<port>
+1| port=<port> service=127.0.0.1:<port>
 2| dibs: preparing app from <root>/app (uncommitted changes included)
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| job <job>  shared  app_with_servers_send  queued <s>  ran <s>  exit 0  by=command
@@ -30,7 +30,7 @@
 
 == dibs --hold --port api --with 'srv=read -r _ < <root>/f-never' --label held 'echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API'
 -> exit 0
-1| port=<port> service=<host>:<port>
+1| port=<port> service=127.0.0.1:<port>
 2| dibs: holding the shared lock on <host>, running here: echo port=$DIBS_PORT_API service=$DIBS_SERVICE_API
 2| job <job>  shared  held  queued <s>  ran <s>  exit 0  by=command
 2|   port api: <port> on <host>

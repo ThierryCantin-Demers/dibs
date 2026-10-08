@@ -11,6 +11,7 @@ use crate::machine::{
 use dibs_format::Exit;
 use std::{
     io,
+    net::Ipv4Addr,
     path::Path,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::Duration,
@@ -189,9 +190,10 @@ impl Session {
         session
     }
 
+    /// On this computer, loopback: its own short name need not resolve, and a Mac's does not.
     pub fn reach(&self, target: &Target, here: &Here) -> Reach {
         match &self.route {
-            Route::Here => Reach::Known(here.name.clone()),
+            Route::Here => Reach::Known(Ipv4Addr::LOCALHOST.to_string()),
             Route::Ssh { host } => Reach::Dialled {
                 host: host.clone(),
                 otherwise: match target.hostname.is_empty() {

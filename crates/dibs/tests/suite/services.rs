@@ -332,9 +332,8 @@ fn a_holds_command_is_told_where_to_reach_the_service() {
         .stdout;
     let (at, port) = out.trim_end().rsplit_once(':').unwrap();
     assert_eq!(
-        at,
-        format!("answered at {}", hostname()),
-        "by machine and port"
+        at, "answered at 127.0.0.1",
+        "on loopback, since it runs where the lock is"
     );
     assert!(port.parse::<u16>().is_ok(), "{out}");
 }
@@ -403,13 +402,12 @@ fn a_port_in_use_is_not_handed_out() {
     );
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn a_ready_service_this_computer_cannot_reach_stops_the_call_before_its_command() {
     let s = Sandbox::new();
     s.write(
         "lserve.py",
-        "import os, signal, socket\ns = socket.socket()\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\ns.bind((\"127.0.0.1\", int(os.environ[\"DIBS_PORT_API\"])))\ns.listen()\nsignal.pause()\n",
+        "import os, signal, socket\ns = socket.socket(socket.AF_INET6)\ns.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\ns.bind((\"::1\", int(os.environ[\"DIBS_PORT_API\"])))\ns.listen()\nsignal.pause()\n",
     );
     let srv = format!("srv=python3 {}", s.p("lserve.py"));
     let ran = s.p("unreached-ran");
@@ -423,7 +421,7 @@ fn a_ready_service_this_computer_cannot_reach_stops_the_call_before_its_command(
             "--with",
             &srv,
             "--ready",
-            "tcp:api",
+            "tcp:::1:api",
             &format!("touch {ran}"),
         ])
         .run();
@@ -435,7 +433,7 @@ fn a_ready_service_this_computer_cannot_reach_stops_the_call_before_its_command(
     );
     assert_eq!(
         out.all()
-            .lines_with(&format!("this computer cannot connect to {}:", hostname())),
+            .lines_with("this computer cannot connect to 127.0.0.1:"),
         1,
         "and says where it could not connect: {}",
         out.all()
