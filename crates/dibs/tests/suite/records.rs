@@ -353,13 +353,21 @@ fn log_and_history() {
 
     let mut t = Transcript::default();
     let log = s.log();
-    for line in log.lines() {
-        let event = line.split('\t').nth(1).unwrap_or("?");
-        let label = line.split('\t').nth(4).unwrap_or("?");
-        t.section(
-            &n.apply(&format!("log: {event}, {label}")),
-            &n.apply(&fields(line, &LOG_FIELDS)),
-        );
+    // Sorted, since a kill and the job it kills each log a line in whichever order they land.
+    let mut entries: Vec<_> = log
+        .lines()
+        .map(|line| {
+            let event = line.split('\t').nth(1).unwrap_or("?");
+            let label = line.split('\t').nth(4).unwrap_or("?");
+            (
+                n.apply(&format!("log: {event}, {label}")),
+                n.apply(&fields(line, &LOG_FIELDS)),
+            )
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (heading, body) in &entries {
+        t.section(heading, body);
     }
     for line in s.read("history").lines() {
         t.section(
