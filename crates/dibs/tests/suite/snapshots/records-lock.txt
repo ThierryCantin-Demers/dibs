@@ -21,7 +21,7 @@
   agent id     local_suite
   device       -
   command      echo up > <root>/f-up; read -r _ < <root>/f-served
-  fingerprint  
+  fingerprint  -
   job          <job>
 
 == batch.<pid>, the plan of the batch the queued job is a step of
@@ -43,7 +43,7 @@ next	shared	rec-next	1
   agent id     local_suite
   device       -
   command      echo up > <root>/f-up; read -r _ < <root>/f-served
-  fingerprint  
+  fingerprint  -
   job          <job>
 
 == with.<pid>, once the queued job holds the lock
@@ -72,7 +72,7 @@ next	shared	rec-next	1
   agent id     local_suite
   device       -
   command      held for a command run elsewhere: read -r _ < <root>/f-held
-  fingerprint  
+  fingerprint  -
   job          <job>
 
 == hold.<pid>, beside the hold's record

@@ -71,7 +71,7 @@ use File::Path qw(remove_tree);
 my ($l, $d, $h, $m) = @ARGV;
 sub record {
     open(my $f, ">", "$l/waiting.$$") or return;
-    print $f join(chr(9), "shared", $$, time, "dibs-runner", "dibs --check", "", "-", "the first build of dibs-runner $h", ""), chr(10);
+    print $f join(chr(9), "shared", $$, time, "dibs-runner", "dibs --check", "-", "-", "the first build of dibs-runner $h", "-"), chr(10);
     close($f);
 }
 sub unlockable { unlink("$l/waiting.$$"); exit 71; }

@@ -75,6 +75,25 @@ impl<'a> Fields<'a> {
             .filter(|v| !v.is_empty())
             .map(str::to_string)
     }
+
+    /// Free text written as `-` when empty, read back from either.
+    pub fn filled(&mut self) -> Option<String> {
+        Some(self.text())
+            .filter(|v| !v.is_empty() && *v != "-")
+            .map(str::to_string)
+    }
+}
+
+/// Free text written as `-` when empty.
+pub struct Filled<'a>(pub &'a str);
+
+impl fmt::Display for Filled<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0.is_empty() {
+            true => f.write_str("-"),
+            false => Field(self.0).fmt(f),
+        }
+    }
 }
 
 /// Free text made safe for one field: a tab or a newline in it would end the field or the line.

@@ -1,6 +1,6 @@
 use crate::{
     Alias, JobId, Label, Mode,
-    lines::base::{Dashed, Field, Fields, LineError},
+    lines::base::{Dashed, Field, Fields, Filled, LineError},
 };
 use std::{fmt, str::FromStr};
 
@@ -44,37 +44,39 @@ impl FromStr for LockRecord {
             pid: f.parsed("pid")?,
             start: f.parsed("start")?,
             label: f.parsed("label")?,
-            agent: f.text().to_string(),
-            agent_id: (found >= 7).then(|| f.optional()).flatten(),
+            agent: f.filled().unwrap_or_default(),
+            agent_id: (found >= 7).then(|| f.filled()).flatten(),
             device: match found >= 8 {
                 true => f.dashed("device")?,
                 false => None,
             },
             command: f.text().to_string(),
-            fingerprint: f.optional(),
+            fingerprint: f.filled(),
             job: f.optional().map(JobId::new),
         })
     }
 }
 
 impl fmt::Display for LockRecord {
+    /// A field with nothing to say is `-` wherever another follows it: bash reads these lines
+    /// splitting on tabs, which takes two in a row for one and moves every later field along.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t",
             self.mode,
             self.pid,
             self.start,
             Field(self.label.as_str()),
-            Field(&self.agent),
-            Field(self.agent_id.as_deref().unwrap_or_default()),
+            Filled(&self.agent),
+            Filled(self.agent_id.as_deref().unwrap_or_default()),
             Dashed(self.device.as_ref()),
             Field(&self.command),
-            Field(self.fingerprint.as_deref().unwrap_or_default()),
         )?;
+        let fingerprint = self.fingerprint.as_deref().unwrap_or_default();
         match &self.job {
-            Some(job) => write!(f, "\t{}", Field(job.as_str())),
-            None => Ok(()),
+            Some(job) => write!(f, "{}\t{}", Filled(fingerprint), Field(job.as_str())),
+            None => write!(f, "{}", Field(fingerprint)),
         }
     }
 }
@@ -130,9 +132,30 @@ mod tests {
         let record: LockRecord = line.parse().unwrap();
         assert_eq!(record.job, Some(JobId::new("20261001120000-4243")));
         assert_eq!(record.fingerprint, None);
-        assert_eq!(record.to_string(), line);
+        let written = format!("{PLAIN_WAITER}-\t20261001120000-4243");
+        assert_eq!(record.to_string(), written);
+        assert_eq!(written.parse::<LockRecord>().unwrap(), record);
         let nine: LockRecord = PLAIN_WAITER.parse().unwrap();
         assert_eq!(nine.job, None);
+    }
+
+    #[test]
+    fn no_field_is_empty_where_another_follows_it() {
+        let record = LockRecord {
+            mode: Mode::Shared,
+            pid: 7,
+            start: 100,
+            label: Label::new("dibs-runner"),
+            agent: String::new(),
+            agent_id: None,
+            device: None,
+            command: "cmd".into(),
+            fingerprint: None,
+            job: Some(JobId::new("20261001120000-7")),
+        };
+        let line = record.to_string();
+        assert!(!line.contains("\t\t"), "{line:?}");
+        assert_eq!(line.parse::<LockRecord>().unwrap(), record);
     }
 
     #[test]
