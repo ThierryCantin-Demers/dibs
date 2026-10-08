@@ -110,8 +110,11 @@ fn an_answer_reaches_the_session_that_reported_it_once() {
             .run()
     };
     let answered = "your report #7 was answered by maintainer: fixed in abc, run dibs --update";
-    let ask_again =
-        || std::fs::remove_file(s.path("home/.local/state/dibs/reports-asked")).unwrap();
+    // The news of an earlier fetch is cleared too, or the wait for the next one ends at once.
+    let ask_again = || {
+        std::fs::remove_file(s.path("home/.local/state/dibs/reports-asked")).unwrap();
+        let _ = std::fs::remove_dir_all(s.path("home/.local/state/dibs/reports-news"));
+    };
     call("other");
     fetched(&s);
     assert_eq!(
@@ -164,10 +167,13 @@ fn an_answer_reaches_a_session_that_only_runs_recipe_verbs() {
 }
 
 /// Replies are fetched in the background of one call, for the next to print.
+/// A fetch's news has landed, which a fetch's lock beside it does not say.
 fn fetched(s: &Sandbox) {
     until("the replies to be fetched", || {
-        std::fs::read_dir(s.path("home/.local/state/dibs/reports-news"))
-            .is_ok_and(|mut d| d.next().is_some())
+        std::fs::read_dir(s.path("home/.local/state/dibs/reports-news")).is_ok_and(|d| {
+            d.flatten()
+                .any(|e| !e.file_name().to_string_lossy().ends_with(".lock"))
+        })
     });
 }
 

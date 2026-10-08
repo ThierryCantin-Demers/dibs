@@ -181,6 +181,9 @@ impl Sandbox {
             ("XDG_CACHE_HOME", at("home/.cache")),
             ("XDG_RUNTIME_DIR", at("runtime")),
             ("TMPDIR", at("tmp")),
+            // A system config, as macOS's Command Line Tools ship one naming main the default
+            // branch, would give the fixtures a different shape there.
+            ("GIT_CONFIG_NOSYSTEM", "1".into()),
             ("DIBS_LOCAL", "1".into()),
             ("DIBS_LOCK_DIR", at("lockdir")),
             ("DIBS_HISTORY", at("history")),

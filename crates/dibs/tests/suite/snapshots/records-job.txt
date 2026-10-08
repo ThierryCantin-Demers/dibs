@@ -64,11 +64,12 @@
     who = local_suite
 
 == jobs/<job>, a recipe's job, with the files it kept
+  artifacts/out/r.json
   cmd
   log
   meta
-    mode = shared
-    label = app_bench_kept_send
+    mode = bench
+    label = app_bench_kept
     queued = <s>
     ran = <s>
     exit = 0
@@ -78,12 +79,11 @@
     who = local_suite
 
 == jobs/<job>, a recipe's job, with the files it kept
-  artifacts/out/r.json
   cmd
   log
   meta
-    mode = bench
-    label = app_bench_kept
+    mode = shared
+    label = app_bench_kept_send
     queued = <s>
     ran = <s>
     exit = 0

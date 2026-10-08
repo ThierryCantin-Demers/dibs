@@ -518,15 +518,15 @@ fn job_directories() {
     );
     let before = job_dirs(&scratch);
     s.dibs(["bench", &format!("{dir}@local"), "kept"]).run();
-    let new: Vec<_> = job_dirs(&scratch)
+    // Sorted by what they hold: two jobs begun in one second are named in the order of their pids.
+    let mut kept: Vec<String> = job_dirs(&scratch)
         .into_iter()
         .filter(|d| !before.contains(d))
+        .map(|d| job_directory(&n, &d, true))
         .collect();
-    for d in new {
-        t.section(
-            "jobs/<job>, a recipe's job, with the files it kept",
-            &job_directory(&n, &d, true),
-        );
+    kept.sort();
+    for job in &kept {
+        t.section("jobs/<job>, a recipe's job, with the files it kept", job);
     }
     snapshot("records-job", t.text());
 }

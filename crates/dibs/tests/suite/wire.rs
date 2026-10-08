@@ -55,9 +55,22 @@ case $host in *@*) set -- -l "${host%@*}" "${host#*@}" ;; *) set -- "$host" ;; e
 exec $rsh "$@" rsync --server -logDtprze.iLsfxCIvu . "${remote#*:}"
 "#;
 
-/// A terminal for a call to write to, so it says what it would say to a person.
-const PTY: &str =
-    "import os, pty, sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))";
+/// A terminal for a call to write to, so it says what it would say to a person. Copied until
+/// the terminal's end: pty.spawn before Python 3.10 waits on its own stdin after that on macOS.
+const PTY: &str = "import os, pty, sys
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+while True:
+    try:
+        data = os.read(fd, 65536)
+    except OSError:
+        break
+    if not data:
+        break
+    os.write(1, data)
+sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))
+";
 
 const MACHINES: &str = "[machine.box-a]\nssh      = \"dibs@box-a\"\nhostname = \"box-a\"\n\n  [[machine.box-a.device]]\n  kind     = \"gpu\"\n  alias    = \"gpu:card\"\n  name     = \"a card\"\n  pci      = \"0000:01:00.0\"\n  chip     = \"10de:2786\"\n  runtimes = [\"cuda\", \"vulkan\"]\n\n[machine.box-b]\nssh      = \"dibs@box-b\"\nhostname = \"box-b\"\n";
 
