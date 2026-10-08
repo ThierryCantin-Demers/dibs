@@ -242,6 +242,39 @@ fn a_measurement_that_would_compile_under_the_exclusive_lock_is_refused() {
 }
 
 #[test]
+fn a_shell_measurement_builds_its_cargo_bench_first_under_the_shared_lock() {
+    let steps = |command: &str| {
+        Step::of_shell(command, true)
+            .into_iter()
+            .map(|s| (s.lock, s.run))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        steps("cargo bench --bench gemm -- rows"),
+        [
+            (
+                Lock::Shared,
+                "cargo bench --no-run --bench gemm -- rows".into()
+            ),
+            (Lock::Exclusive, "cargo bench --bench gemm -- rows".into()),
+        ]
+    );
+    assert_eq!(
+        steps("cd x && cargo +nightly test")[0].1,
+        "cd x && cargo +nightly test --no-run"
+    );
+    assert_eq!(steps("cargo build --release && cargo bench").len(), 1);
+    assert_eq!(steps("./target/release/gemm").len(), 1);
+    assert_eq!(
+        Step::of_shell("cargo bench", false)
+            .into_iter()
+            .map(|s| s.lock)
+            .collect::<Vec<_>>(),
+        [Lock::Shared]
+    );
+}
+
+#[test]
 fn the_last_layer_to_describe_the_tree_decides_what_a_new_one_starts_without() {
     let tmp = std::env::temp_dir().join(format!("dibs-tree-{}", std::process::id()));
     let (repo, cfg) = (tmp.join("app"), tmp.join("cfg"));

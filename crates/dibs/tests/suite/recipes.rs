@@ -99,6 +99,37 @@ fn gate_recipes(cargo: &str) -> String {
 }
 
 #[test]
+fn a_shell_measurement_of_cargo_bench_builds_it_first_under_the_shared_lock() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    s.write_exec("said/cargo", "#!/bin/sh\necho \"cargo $*\"\n");
+    let out = s
+        .dibs([
+            "shell",
+            &format!("{app}@local"),
+            "--reason",
+            "test",
+            "--bench",
+            "--",
+            "cargo bench --bench gemm",
+        ])
+        .env("PATH", format!("{}:{}", s.p("said"), s.var("PATH")))
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let log = s.log();
+    assert_eq!(
+        (
+            log.lines_matching(
+                "\tarrived\t[0-9]+\tshared\t.*\tcargo bench --no-run --bench gemm\t"
+            ),
+            log.lines_matching("\tarrived\t[0-9]+\tbench\t.*\tcargo bench --bench gemm\t")
+        ),
+        (1, 1),
+        "{log}"
+    );
+}
+
+#[test]
 fn a_local_recipe_runs_in_the_tree_it_sent() {
     let s = Sandbox::new();
     let app = app(&s);
@@ -837,11 +868,11 @@ fn shell_takes_bench_and_max() {
             "measure",
             "--bench",
             "--",
-            "cargo bench --bench gemm"
+            "cargo build --release && cargo bench --bench gemm"
         ])
         .run()
         .all()
-        .lines_with("then measure with --bench"),
+        .lines_with("then measure what it built"),
         1,
         "a shell that would compile under --bench is refused, with the two calls to use instead"
     );

@@ -326,12 +326,14 @@ impl Flaw {
                  puts outside the tree. Use $CARGO_TARGET_DIR/... instead."
             ),
             // shell has no steps to split, so it is told the two calls instead.
-            Flaw::CompilesExclusive(run) if recipe == "shell" => write!(
+            Flaw::CompilesExclusive(_) if recipe == "shell" => write!(
                 f,
                 "a command that compiles cannot take the exclusive lock, which holds the whole\n             \
-                 machine for work that tolerates neighbours. Build it first without --bench:\n               \
-                 dibs shell <repo>@<ref> --reason <why> -- '{run} --no-run'\n             \
-                 then measure with --bench."
+                 machine for work that tolerates neighbours. --bench builds a cargo bench or cargo test\n             \
+                 first by itself, and this compiles some other way. Build it without --bench,\n             \
+                 then measure what it built:\n               \
+                 dibs shell <repo>@<ref> --reason <why> -- 'cargo build --release'\n               \
+                 dibs shell <repo>@<ref> --reason <why> --bench -- '$CARGO_TARGET_DIR/release/<binary>'"
             ),
             Flaw::CompilesExclusive(run) => write!(
                 f,

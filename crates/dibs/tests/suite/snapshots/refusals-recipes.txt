@@ -21,7 +21,7 @@ exit  call
 78    dibs bench <root>/app@main stolen
 2     dibs shell <root>/app@local -- true
 2     dibs shell <root>/app@local --reason r --label mine -- true
-2     dibs shell <root>/app@local --reason r --bench -- 'cargo bench --bench gemm'
+2     dibs shell <root>/app@local --reason r --bench -- 'cargo build --release && cargo bench --bench gemm'
 2     dibs shell <root>/loose --reason r -- true
 2     dibs raw -- true
 2     dibs raw --reason r
@@ -159,12 +159,14 @@ exit  call
 2|   dibs gaps counts to say so.
 2|   usage: dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>
 
-== dibs shell <root>/app@local --reason r --bench -- 'cargo bench --bench gemm'
+== dibs shell <root>/app@local --reason r --bench -- 'cargo build --release && cargo bench --bench gemm'
 -> exit 2
 2| dibs: a command that compiles cannot take the exclusive lock, which holds the whole
-2|              machine for work that tolerates neighbours. Build it first without --bench:
-2|                dibs shell <repo>@<ref> --reason <why> -- 'cargo bench --bench gemm --no-run'
-2|              then measure with --bench.
+2|              machine for work that tolerates neighbours. --bench builds a cargo bench or cargo test
+2|              first by itself, and this compiles some other way. Build it without --bench,
+2|              then measure what it built:
+2|                dibs shell <repo>@<ref> --reason <why> -- 'cargo build --release'
+2|                dibs shell <repo>@<ref> --reason <why> --bench -- '$CARGO_TARGET_DIR/release/<binary>'
 
 == dibs shell <root>/loose --reason r -- true
 -> exit 2

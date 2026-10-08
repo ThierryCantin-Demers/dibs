@@ -1660,7 +1660,7 @@ fn recipe_refusals() {
             "r",
             "--bench",
             "--",
-            "cargo bench --bench gemm",
+            "cargo build --release && cargo bench --bench gemm",
         ]),
         r(&["shell", &s.p("loose"), "--reason", "r", "--", "true"]),
         r(&["raw", "--", "true"]),

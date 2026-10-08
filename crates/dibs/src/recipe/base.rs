@@ -27,6 +27,52 @@ pub struct Step {
     pub env: BTreeMap<String, String>,
 }
 
+/// The cargo commands that build what they would run and run none of it, given `--no-run`.
+const BUILD_WITHOUT_RUNNING: [&str; 2] = ["bench", "test"];
+
+impl Step {
+    /// A shell's steps: its command, under the exclusive lock for a measurement, after a build
+    /// of it under the shared lock when every cargo it runs can build alone.
+    pub fn of_shell(command: &str, bench: bool) -> Vec<Step> {
+        let step = |lock, run: &str| Step {
+            lock,
+            run: run.to_string(),
+            env: BTreeMap::new(),
+        };
+        match (bench, Step::no_run(command)) {
+            (true, Some(build)) => vec![step(Lock::Shared, &build), step(Lock::Exclusive, command)],
+            (true, None) => vec![step(Lock::Exclusive, command)],
+            (false, _) => vec![step(Lock::Shared, command)],
+        }
+    }
+
+    /// `run` with `--no-run` after each cargo bench or test. None when it runs no cargo, or one
+    /// that cannot build without running.
+    fn no_run(run: &str) -> Option<String> {
+        let mut built = String::with_capacity(run.len() + 16);
+        let (mut cargos, mut after_cargo) = (0, false);
+        for piece in run.split_inclusive(char::is_whitespace) {
+            let word = piece.trim_end();
+            built.push_str(piece);
+            if word.is_empty() || (after_cargo && word.starts_with('+')) {
+                continue;
+            }
+            if after_cargo {
+                if !BUILD_WITHOUT_RUNNING.contains(&word) {
+                    return None;
+                }
+                if piece == word {
+                    built.push(' ');
+                }
+                built.push_str("--no-run ");
+            }
+            after_cargo = word == "cargo";
+            cargos += usize::from(after_cargo);
+        }
+        (cargos > 0 && !after_cargo).then(|| built.trim_end().to_string())
+    }
+}
+
 /// One knob a recipe takes. Declaring them is what keeps the set of valid invocations
 /// enumerable, so `dibs list` can say what a recipe accepts instead of the caller reading it.
 #[derive(Debug, Deserialize, Clone, Default)]

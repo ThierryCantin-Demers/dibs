@@ -9,7 +9,6 @@ use crate::{
     cli::{RecipeCall, RecipeVerb},
     execution::Repo,
 };
-use dibs_format::Lock;
 use std::{collections::BTreeMap, path::PathBuf};
 
 /// A recipe invocation resolved as far as it can be without a machine: which recipe, and the
@@ -87,15 +86,7 @@ impl Resolved {
             params: BTreeMap::new(),
             fresh: Vec::new(),
             artifacts: Vec::new(),
-            steps: vec![Step {
-                lock: if args.bench {
-                    Lock::Exclusive
-                } else {
-                    Lock::Shared
-                },
-                run: args.command.clone().unwrap_or_default(),
-                env: BTreeMap::new(),
-            }],
+            steps: Step::of_shell(args.command.as_deref().unwrap_or_default(), args.bench),
         });
 
         let verb = Verb::parse(args.verb.as_str())
