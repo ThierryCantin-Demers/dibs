@@ -9,7 +9,6 @@ use std::{
     os::unix::{
         ffi::OsStrExt as _,
         fs::{FileTypeExt as _, MetadataExt as _, symlink},
-        net::UnixListener,
     },
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
@@ -134,6 +133,11 @@ impl Laid {
         if meta.file_type().is_symlink() {
             return symlink(fs::read_link(from)?, to);
         }
+        // Nothing listens on a copy of a socket, and a server binding its path would find it in
+        // the way.
+        if meta.file_type().is_socket() {
+            return Ok(());
+        }
         let entry = Entry {
             from: from.to_path_buf(),
             to: to.to_path_buf(),
@@ -174,17 +178,13 @@ impl Entry {
     }
 }
 
-/// A FIFO, socket or device made anew, as `cp -a` makes one: opening a FIFO to read it waits for
-/// a writer that may never come. macOS lets only root mknod, so a FIFO is made by mkfifo and a
-/// socket by binding one, which leaves it once nothing listens.
+/// A FIFO or device made anew, as `cp -a` makes one: opening a FIFO to read it waits for a writer
+/// that may never come. macOS lets only root mknod, so a FIFO is made by mkfifo.
 #[allow(
     clippy::unnecessary_cast,
     reason = "mode_t and dev_t are narrower on macOS"
 )]
 fn special(to: &Path, of: &fs::Metadata) -> io::Result<()> {
-    if of.file_type().is_socket() {
-        return UnixListener::bind(to).map(drop);
-    }
     let path = CString::new(to.as_os_str().as_bytes())?;
     // SAFETY: mkfifo and mknod read a NUL-terminated path, alive here.
     let made = unsafe {

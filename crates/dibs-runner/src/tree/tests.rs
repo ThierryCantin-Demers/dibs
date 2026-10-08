@@ -485,7 +485,7 @@ fn sources_are_copied_even_where_only_targets_can_be_reflinked() {
 }
 
 #[test]
-fn a_fifo_or_socket_in_a_siblings_sources_is_made_anew_rather_than_read() {
+fn a_fifo_in_a_siblings_sources_is_made_anew_rather_than_read_and_a_socket_left_out() {
     let m = Machine::new();
     m.sibling("demo-local-old", &[]);
     let sources = m.sources("old", "theirs.rs");
@@ -495,12 +495,12 @@ fn a_fifo_or_socket_in_a_siblings_sources_is_made_anew_rather_than_read() {
     let p = m.prepared(&local("new", &[]));
     drop(socket);
     assert!(p.seeded.unwrap().sources);
-    let kind = |name: &str| {
-        fs::symlink_metadata(Path::new(&p.worktree).join(name))
-            .unwrap()
-            .file_type()
-    };
-    assert!(kind("pipe").is_fifo() && kind("socket").is_socket());
+    let made = |name: &str| fs::symlink_metadata(Path::new(&p.worktree).join(name));
+    assert!(made("pipe").unwrap().file_type().is_fifo());
+    assert!(
+        made("socket").is_err(),
+        "nothing listens on a copy of a socket"
+    );
 }
 
 #[test]
