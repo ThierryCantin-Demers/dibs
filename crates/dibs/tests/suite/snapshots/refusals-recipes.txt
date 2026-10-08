@@ -25,6 +25,8 @@ exit  call
 2     dibs shell <root>/loose --reason r -- true
 2     dibs raw -- true
 2     dibs raw --reason r
+2     dibs raw --reason r --bench -- true
+2     dibs raw --reason r --reps 3 --anyway -- true
 2     dibs with <root>/app@local servers
 2     dibs with <root>/app@local nope -- true
 2     dibs with <root>/app@main..local servers -- true
@@ -180,6 +182,16 @@ exit  call
 == dibs raw --reason r
 -> exit 2
 2| dibs: raw needs -- <command>
+
+== dibs raw --reason r --bench -- true
+-> exit 2
+2| dibs: raw takes no --bench: it only ever runs under the shared lock. A measurement is
+2|   dibs shell <repo>@<ref> --reason <why> --bench -- '<cmd>', or dibs run --bench '<cmd>'.
+
+== dibs raw --reason r --reps 3 --anyway -- true
+-> exit 2
+2| dibs: raw takes no --reps;
+2|   and takes no --anyway.
 
 == dibs with <root>/app@local servers
 -> exit 2

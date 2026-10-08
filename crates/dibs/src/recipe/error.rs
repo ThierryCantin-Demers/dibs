@@ -87,6 +87,8 @@ pub enum ShellWords {
 #[derive(Debug)]
 pub enum NotTaken {
     Value(String),
+    /// `--bench` on raw, which only ever takes the shared lock.
+    Bench,
     /// What only `dibs run` acts on: `--with`, `--port`, `--ready` and `--ready-within`.
     Server(Vec<String>),
 }
@@ -272,6 +274,10 @@ impl fmt::Display for NotTaken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             NotTaken::Value(name) => write!(f, "takes no --{name}"),
+            NotTaken::Bench => f.write_str(
+                "takes no --bench: it only ever runs under the shared lock. A measurement is\n  \
+                 dibs shell <repo>@<ref> --reason <why> --bench -- '<cmd>', or dibs run --bench '<cmd>'",
+            ),
             NotTaken::Server(names) => {
                 let flags: Vec<String> = names.iter().map(|n| format!("--{n}")).collect();
                 write!(

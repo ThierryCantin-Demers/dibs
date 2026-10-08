@@ -1665,6 +1665,10 @@ fn recipe_refusals() {
         r(&["shell", &s.p("loose"), "--reason", "r", "--", "true"]),
         r(&["raw", "--", "true"]),
         r(&["raw", "--reason", "r"]),
+        r(&["raw", "--reason", "r", "--bench", "--", "true"]),
+        r(&[
+            "raw", "--reason", "r", "--reps", "3", "--anyway", "--", "true",
+        ]),
         r(&["with", &local, "servers"]),
         r(&["with", &local, "nope", "--", "true"]),
         r(&[

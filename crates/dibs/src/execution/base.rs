@@ -818,7 +818,23 @@ fn fresh_values(rec: &recipe::Recipe, token: &str) -> BTreeMap<String, String> {
 pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let reason = args.reason.as_deref().ok_or(Refusal::RawReason)?;
     let command = args.command.as_deref().ok_or(Refusal::RawCommand)?;
-    let not_taken = NotTaken::of(args.params.keys());
+    let mut not_taken = NotTaken::of(args.params.keys());
+    let value = |name: &str| NotTaken::Value(name.to_string());
+    let recipe_only = [
+        (args.bench, NotTaken::Bench),
+        (!args.sweep.is_empty(), value("sweep")),
+        (args.reps > 1, value("reps")),
+        (args.artifacts_to.is_some(), value("artifacts")),
+        (!args.pins.is_empty(), value("pin")),
+        (args.anyway, value("anyway")),
+        (args.there, value("there")),
+        (args.all, value("all")),
+    ];
+    not_taken.extend(
+        recipe_only
+            .into_iter()
+            .filter_map(|(given, refused)| given.then_some(refused)),
+    );
     if !not_taken.is_empty() {
         return Err(Refusal::RawNotTaken(not_taken).into());
     }

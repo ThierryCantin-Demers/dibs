@@ -186,9 +186,10 @@ the recipe's own output, which `dibs out <job>` reads.
 
 `dibs shell` takes `--bench` for a one-off that is a measurement, and `--max <seconds>` where the
 default cap is too short for it. A measured `cargo bench` or `cargo test` is built first with
-`--no-run` under the shared lock, as a recipe's steps would be. `dibs raw` and `dibs shell` refuse any other `--name value`
-rather than drop it, and point `--with`, `--port` and `--ready` at `dibs run`, which starts
-servers. Named with no repo, it sends the tree it was called from, as
+`--no-run` under the shared lock, as a recipe's steps would be. `dibs raw` and `dibs shell` refuse
+any other `--name value` rather than drop it, `raw` also refuses the flags only a recipe acts on,
+such as `--bench` and `--reps`, and both point `--with`, `--port` and `--ready` at `dibs run`,
+which starts servers. Named with no repo, `dibs shell` sends the tree it was called from, as
 `.@local` would, and inside a worktree a bare name may be the worktree's directory as well as its
 repo.
 
