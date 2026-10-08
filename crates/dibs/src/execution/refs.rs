@@ -204,7 +204,8 @@ impl Arm {
     }
 
     /// Each arm's measured seconds per rep, and the jobs whose logs hold its numbers. The seconds
-    /// are the steps' wall time, which is only a first look: the recipe's own output is the result.
+    /// are how long the steps held the lock, which is only a first look: the recipe's own output
+    /// is the result.
     pub fn measured_summary(
         arms: &[Arm],
         steps: &[StepRecord],

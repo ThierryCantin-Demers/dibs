@@ -37,6 +37,7 @@ pub struct JobRequest<'a> {
 
 pub struct JobOutcome {
     pub status: i32,
+    /// How long the job held the lock, by its trailer; the call's own time when it printed none.
     pub seconds: u64,
     /// What the job's trailer said, when its stderr passed through here and it printed one.
     pub trailer: Option<Trailer>,
@@ -83,6 +84,8 @@ pub struct Trailer {
     pub built: Option<String>,
     /// `<host>:<path>` of the job's whole log.
     pub log: Option<String>,
+    /// `ran Ns`: the seconds it held the lock, its queue apart.
+    pub ran: Option<u64>,
 }
 
 impl Trailer {
@@ -92,13 +95,20 @@ impl Trailer {
         if let Some(rest) = line.strip_prefix("job ") {
             let mut words = rest.split_whitespace();
             if let Some(job) = words.next() {
+                let words: Vec<&str> = words.collect();
                 let built = words
+                    .iter()
                     .find_map(|w| w.strip_prefix("built="))
                     .map(str::to_string);
+                let ran = words
+                    .windows(2)
+                    .find(|w| w[0] == "ran")
+                    .and_then(|w| w[1].strip_suffix('s')?.parse().ok());
                 *into = Some(Trailer {
                     job: job.to_string(),
                     built,
                     log: None,
+                    ran,
                 });
             }
         } else if let (Some(rest), Some(t)) = (line.strip_prefix("  log "), into.as_mut()) {
@@ -144,7 +154,11 @@ impl<'a> Reader<'a> {
         Reported {
             outcome: JobOutcome {
                 status,
-                seconds: self.start.elapsed().as_secs(),
+                seconds: self
+                    .trailer
+                    .as_ref()
+                    .and_then(|t| t.ran)
+                    .unwrap_or_else(|| self.start.elapsed().as_secs()),
                 trailer: self.trailer,
             },
             prepared: self.prepared,
@@ -386,8 +400,28 @@ mod tests {
         }
         let t = t.unwrap();
         assert_eq!(
-            (t.job.as_str(), t.built.as_deref(), t.log.as_deref()),
-            ("1-2", Some("nothing"), Some("m:/j/1-2/log"))
+            (t.job.as_str(), t.built.as_deref(), t.log.as_deref(), t.ran),
+            ("1-2", Some("nothing"), Some("m:/j/1-2/log"), Some(9))
+        );
+    }
+
+    #[test]
+    fn a_steps_seconds_are_the_time_it_held_the_lock_not_its_queue() {
+        let mut on_prepared = |_: &Prepared| {};
+        let mut reader = Reader::new(&mut on_prepared);
+        reader.start = Instant::now() - std::time::Duration::from_secs(122);
+        reader.line(
+            Stream::Err,
+            b"job 1-3  bench  a/bench/x  queued 93s  ran 28s  exit 0  by=command\n",
+        );
+        assert_eq!(reader.reported(0).outcome.seconds, 28);
+        let mut on_prepared = |_: &Prepared| {};
+        let mut reader = Reader::new(&mut on_prepared);
+        reader.start = Instant::now() - std::time::Duration::from_secs(5);
+        assert_eq!(
+            reader.reported(0).outcome.seconds,
+            5,
+            "a call that printed no trailer is timed here"
         );
     }
 
