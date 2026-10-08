@@ -64,17 +64,19 @@ pub struct View {
 }
 
 impl View {
-    /// ssh's refusal of the login, which lists the methods it tried; a remote file's "Permission
-    /// denied" does not. The machine answered, so waiting will not bring it back.
+    /// Why a machine that answered gives no status, which waiting alone will not change: ssh
+    /// refused the login, which lists the methods it tried where a remote file's "Permission
+    /// denied" does not, or it has no runner for this version, which a watch never builds.
     pub fn refusal(&self) -> Option<&'static str> {
-        let t = self
-            .trouble
-            .as_deref()
-            .filter(|t| t.contains("Permission denied ("))?;
-        Some(match t.contains("It accepts your key") {
-            true => "key locked",
-            false => "no key",
-        })
+        let t = self.trouble.as_deref()?;
+        if t.contains("has no runner for this dibs yet") {
+            return Some("no runner yet");
+        }
+        t.contains("Permission denied (")
+            .then(|| match t.contains("It accepts your key") {
+                true => "key locked",
+                false => "no key",
+            })
     }
 }
 
@@ -372,5 +374,9 @@ mod tests {
             None
         );
         assert_eq!(with("cat: /x: Permission denied"), None);
+        assert_eq!(
+            with("dibs: m has no runner for this dibs yet, so it was not asked."),
+            Some("no runner yet")
+        );
     }
 }
