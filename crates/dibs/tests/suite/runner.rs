@@ -134,6 +134,30 @@ fn a_machine_without_this_runner_has_the_one_it_has_build_it() {
 }
 
 #[test]
+fn shared_work_naming_no_machine_is_placed_on_one_without_this_runner_and_builds_it() {
+    let mut s = Sandbox::new();
+    s.machines(
+        "[machine.there]\nssh      = \"there\"\nhostname = \"there\"\n\n[machine.gone]\nssh      = \"nowhere.invalid\"\nhostname = \"gone\"\n",
+    );
+    without_this_runner(&mut s, true);
+    let placed = || {
+        s.remote(s.dibs(["--label", "placed", "echo ran"]))
+            .env("DIBS_LOCAL", "0")
+            .env("DIBS_CONNECT_TIMEOUT", "2")
+            .run()
+    };
+    let out = placed();
+    assert_eq!(
+        (out.code, out.stdout.lines_with("ran")),
+        (0, 1),
+        "{}",
+        out.all()
+    );
+    assert!(installed(&s), "{}", out.all());
+    assert_eq!(placed().code, 0, "and it is not taken for down afterwards");
+}
+
+#[test]
 fn a_runner_that_does_not_build_stops_the_call_with_72() {
     let mut s = Sandbox::new();
     without_this_runner(&mut s, true);

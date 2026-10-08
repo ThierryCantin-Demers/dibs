@@ -81,7 +81,9 @@ impl Reading {
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub name: MachineName,
-    pub reading: Reading,
+    /// None from a machine that answered without one: it has no runner for this dibs yet, which
+    /// a question never builds and the call placed there does.
+    pub reading: Option<Reading>,
     pub workstation: bool,
     pub measures: bool,
 }
@@ -120,10 +122,25 @@ impl Ranking {
         let mut said = String::new();
         let mut best: Option<(&MachineName, u64)> = None;
         let mut cached: Option<(&MachineName, u64)> = None;
+        let mut unread: Option<&MachineName> = None;
         let mut preferred_answered = false;
         for candidate in candidates {
             let name = &candidate.name;
-            let reading = &candidate.reading;
+            let preferred = self.prefer.as_deref() == Some(name.as_str());
+            let Some(reading) = &candidate.reading else {
+                let _ = writeln!(
+                    said,
+                    "  {:<18} no runner for this dibs yet, so ranked last{}",
+                    name.as_str(),
+                    match preferred {
+                        true => " but for its cache",
+                        false => "",
+                    }
+                );
+                preferred_answered |= preferred;
+                unread = unread.or(Some(name));
+                continue;
+            };
             if let (Some(repo), Some(clones)) = (&self.repo, &reading.clones)
                 && !clones.contains(repo)
             {
@@ -141,7 +158,6 @@ impl Ranking {
             if !candidate.measures {
                 score += UNMEASURED_PENALTY;
             }
-            let preferred = self.prefer.as_deref() == Some(name.as_str());
             preferred_answered |= preferred;
             let holds = self.repo.as_ref().is_some_and(|repo| {
                 reading
@@ -174,11 +190,12 @@ impl Ranking {
                 best = Some((name, score));
             }
         }
-        let placed = match (&self.prefer, cached, best) {
-            (Some(prefer), _, _) if preferred_answered => Ok(MachineName::new(prefer.as_str())),
-            (_, Some((cached, _)), _) => Ok(cached.clone()),
-            (_, None, Some((best, _))) => Ok(best.clone()),
-            (_, None, None) => Err(match (&self.repo, candidates.is_empty()) {
+        let placed = match (&self.prefer, cached, best, unread) {
+            (Some(prefer), _, _, _) if preferred_answered => Ok(MachineName::new(prefer.as_str())),
+            (_, Some((cached, _)), _, _) => Ok(cached.clone()),
+            (_, None, Some((best, _)), _) => Ok(best.clone()),
+            (_, None, None, Some(unread)) => Ok(unread.clone()),
+            (_, None, None, None) => Err(match (&self.repo, candidates.is_empty()) {
                 (Some(repo), false) => Unplaced::NoClone { repo: repo.clone() },
                 _ => Unplaced::NoneAnswered {
                     inventory: String::new(),
@@ -230,6 +247,17 @@ impl Placement<'_> {
             answer,
         } in answers
         {
+            if answer.output.is_empty() && answer.exit == Some(i32::from(Exit::NoRunner.code())) {
+                down.clear(&name);
+                let entry = self.machine.fleet.entry(name.as_str());
+                candidates.push(Candidate {
+                    workstation: entry.is_some_and(|m| m.workstation),
+                    measures: entry.is_none_or(|m| m.measure),
+                    name,
+                    reading: None,
+                });
+                continue;
+            }
             if answer.output.is_empty() {
                 if call.verbose {
                     eprintln!("  {:<18} no answer", name.as_str());
@@ -250,7 +278,7 @@ impl Placement<'_> {
                 workstation: entry.is_some_and(|m| m.workstation),
                 measures: entry.is_none_or(|m| m.measure),
                 name,
-                reading,
+                reading: Some(reading),
             });
         }
         let ranking = Ranking {
@@ -358,16 +386,49 @@ mod tests {
     fn machine(name: &str, state: LockState, load: u64) -> Candidate {
         Candidate {
             name: MachineName::new(name),
-            reading: Reading {
+            reading: Some(Reading {
                 state,
                 cores: Some(1),
                 load: Some(load),
                 caches: Some(Vec::new()),
                 clones: Some(vec!["app".into()]),
-            },
+            }),
             workstation: false,
             measures: true,
         }
+    }
+
+    #[test]
+    fn a_machine_without_this_runner_is_placed_only_when_nothing_else_answered_or_for_its_cache() {
+        let unread = |name: &str| Candidate {
+            reading: None,
+            ..machine(name, LockState::Idle, 0)
+        };
+        let placed = |ranking: &Ranking, candidates: &[Candidate]| {
+            ranking.place(candidates, || false).placed.unwrap()
+        };
+        let any = Ranking::default();
+        assert_eq!(
+            placed(
+                &any,
+                &[unread("new"), machine("busy", LockState::Bench, 900)]
+            )
+            .as_str(),
+            "busy"
+        );
+        assert_eq!(placed(&any, &[unread("new")]).as_str(), "new");
+        let cache = Ranking {
+            prefer: Some("new".into()),
+            ..Ranking::default()
+        };
+        assert_eq!(
+            placed(
+                &cache,
+                &[unread("new"), machine("idle", LockState::Idle, 0)]
+            )
+            .as_str(),
+            "new"
+        );
     }
 
     #[test]
@@ -386,7 +447,7 @@ mod tests {
     #[test]
     fn the_cache_wins_over_load_and_a_missing_clone_is_dropped() {
         let mut cached = machine("a", LockState::Idle, 80);
-        cached.reading.caches = Some(vec!["app".into()]);
+        cached.reading.as_mut().unwrap().caches = Some(vec!["app".into()]);
         let ranking = Ranking {
             repo: Some("app".into()),
             ..Ranking::default()
