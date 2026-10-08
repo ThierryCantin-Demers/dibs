@@ -47,6 +47,9 @@ pub struct Service {
     pub ports: Vec<String>,
     #[serde(default, rename = "serve")]
     pub serves: Vec<Serve>,
+    /// Seconds its servers have to become ready, for ones slower to start than the default.
+    #[serde(default)]
+    pub ready_within: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]

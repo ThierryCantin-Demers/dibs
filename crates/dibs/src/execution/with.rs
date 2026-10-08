@@ -19,6 +19,9 @@ use crate::{
 use dibs_format::{Alias, Exit, Label, MachineName, wire};
 use std::process::ExitCode;
 
+/// The one value `with` takes for itself: how long its servers have to become ready.
+const READY_WITHIN: &str = "ready-within";
+
 /// A repo's servers, running on the machine under one lock while the command runs here: a
 /// dashboard, a client, a test suite driving them over the network. It ends by becoming that
 /// dibs call rather than waiting on one, so the command keeps this terminal.
@@ -56,6 +59,21 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         return Err(Refusal::StartsNothing(name.to_string()).into());
     }
     let command = args.command.as_deref().ok_or(Refusal::WithCommand)?;
+    let not_taken: Vec<String> = args
+        .params
+        .keys()
+        .filter(|name| *name != READY_WITHIN)
+        .cloned()
+        .collect();
+    if !not_taken.is_empty() {
+        return Err(Refusal::WithNotTaken(not_taken).into());
+    }
+    let ready_within = match args.params.get(READY_WITHIN) {
+        Some(value) => value
+            .parse()
+            .map_err(|_| Refusal::WithReadyWithin(value.clone()))?,
+        None => svc.ready_within.unwrap_or(Run::default().ready_within),
+    };
 
     let backend = Jobs::on(match Jobs::destination(args.machine())? {
         Destination::Named(m) => Some(m),
@@ -102,7 +120,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         for serve in &svc.serves {
             println!("serve       {}: {}", serve.name, serve.run);
             if let Some(r) = &serve.ready {
-                println!("            ready {r}");
+                println!("            ready {r}, within {ready_within}s");
             }
         }
         for p in &svc.ports {
@@ -241,7 +259,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     // Timed against a server this call built, a server another tree has built over since is refused.
     let guarded =
         args.bench && !args.anyway && svc.build.as_deref().and_then(BuildSignature::of).is_some();
-    let run = match served(svc, args, command, &in_tree_shell) {
+    let run = match served(svc, args, command, ready_within, &in_tree_shell) {
         Ok(run) => run,
         Err(e) => {
             eprintln!("{e}");
@@ -282,6 +300,7 @@ fn served(
     svc: &recipe::Service,
     args: &RecipeCall,
     command: &str,
+    ready_within: u32,
     in_tree: &dyn Fn(&str) -> String,
 ) -> Result<Run, CliError> {
     let mut ports = Vec::new();
@@ -309,7 +328,7 @@ fn served(
             true => in_tree(command),
             false => command.to_string(),
         }]),
-        ..Run::default()
+        ready_within,
     };
     run.refuse_unknown_ports()?;
     Ok(run)

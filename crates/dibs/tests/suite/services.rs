@@ -439,3 +439,47 @@ fn a_ready_service_this_computer_cannot_reach_stops_the_call_before_its_command(
         out.all()
     );
 }
+
+#[test]
+fn a_declared_service_waits_as_long_as_it_says_or_as_with_is_told() {
+    let s = Sandbox::new();
+    let app = crate::recipes::app(&s);
+    crate::recipes::recipes(
+        &s,
+        "[service.slow]\nports = [\"api\"]\nready_within = 1800\n\n[[service.slow.serve]]\nname = \"api\"\nrun = \"true\"\nready = \"tcp:api\"\n",
+    );
+    let with = |extra: &[&str]| {
+        let local = format!("{app}@local");
+        let mut words = vec!["with", local.as_str(), "slow", "--dry-run"];
+        words.extend_from_slice(extra);
+        words.extend(["--", "true"]);
+        s.dibs(words).run()
+    };
+    assert_eq!(
+        with(&[]).stdout.lines_with("ready tcp:api, within 1800s"),
+        1,
+        "the service's own wait"
+    );
+    assert_eq!(
+        with(&["--ready-within", "60"])
+            .stdout
+            .lines_with("ready tcp:api, within 60s"),
+        1,
+        "or the call's"
+    );
+    let refused = with(&["--ready-within", "soon"]);
+    assert_eq!(
+        (refused.code, refused.stderr.lines_with("takes seconds")),
+        (2, 1)
+    );
+    let refused = with(&["--samples", "3"]);
+    assert_eq!(
+        (
+            refused.code,
+            refused.stderr.lines_with("with takes no --samples")
+        ),
+        (2, 1),
+        "and anything else it would drop is refused: {}",
+        refused.all()
+    );
+}

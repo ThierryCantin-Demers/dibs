@@ -239,6 +239,10 @@ pub enum Refusal {
     RawNotTaken(Vec<NotTaken>),
     WithRefs,
     WithPin,
+    /// `--ready-within` with something other than seconds.
+    WithReadyWithin(String),
+    /// Values `with` has no use for, which it refuses rather than drops.
+    WithNotTaken(Vec<String>),
     /// `with` given no service, by the repo it was given.
     WithService(String),
     NoServices(String),
@@ -361,6 +365,18 @@ impl fmt::Display for Refusal {
             }
             Refusal::WithRefs => f.write_str("with runs against one tree, so it takes one ref"),
             Refusal::WithPin => f.write_str("with does not take --pin; a recipe does"),
+            Refusal::WithReadyWithin(value) => {
+                write!(f, "--ready-within takes seconds, not '{value}'")
+            }
+            Refusal::WithNotTaken(names) => write!(
+                f,
+                "with takes no {}: it starts the servers the repo declares, and of their values only --ready-within",
+                names
+                    .iter()
+                    .map(|n| format!("--{n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Refusal::WithService(repo) => write!(
                 f,
                 "with needs a service: dibs with {repo} <service> -- <command>"

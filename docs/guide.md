@@ -489,6 +489,10 @@ run = "target/debug/app-gpu-server --backend cuda --listen 0.0.0.0:$DIBS_PORT_CU
 ready = "tcp:cuda"
 ```
 
+Its servers have five minutes to become ready. One that takes longer, because it builds a compute
+environment on start, says so with `ready_within = <seconds>` beside `ports`, and
+`dibs with ... --ready-within <seconds>` overrides that for one call.
+
 ## More than one machine
 
 `dibs --check <host> --write` records what it finds there as an entry in
