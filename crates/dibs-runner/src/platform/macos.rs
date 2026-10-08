@@ -392,33 +392,64 @@ impl Platform for MacOs {
         output_of("pmset", &["-g", "batt"]).contains("InternalBattery")
     }
 
-    /// A pipe polled for nothing never wakes here, so the parent's exit is what is waited on: the
-    /// process ssh started for the call, or the client on this computer.
+    /// A pipe polled for nothing never wakes here, so kqueue watches stdout for its reader closing,
+    /// edge-triggered since its write filter is otherwise ready whenever the pipe has room, and
+    /// the parent for its exit: the process ssh started for the call, or the client here.
     fn await_caller_gone() {
         // SAFETY: getppid cannot fail.
         let parent = unsafe { libc::getppid() };
         if parent <= 1 {
             return;
         }
-        // SAFETY: one kqueue, watching one pid for its exit; a parent already gone comes back
-        // as an event flagged EV_ERROR, which is as much an answer.
-        unsafe {
-            let queue = libc::kqueue();
-            if queue < 0 {
-                return;
-            }
-            let change = libc::kevent {
+        let watched = [
+            libc::kevent {
+                ident: libc::STDOUT_FILENO as usize,
+                filter: libc::EVFILT_WRITE,
+                flags: libc::EV_ADD | libc::EV_CLEAR,
+                fflags: 0,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            },
+            libc::kevent {
                 ident: parent as usize,
                 filter: libc::EVFILT_PROC,
                 flags: libc::EV_ADD | libc::EV_ONESHOT,
                 fflags: libc::NOTE_EXIT,
                 data: 0,
                 udata: std::ptr::null_mut(),
-            };
-            let mut event = change;
-            while libc::kevent(queue, &change, 1, &mut event, 1, std::ptr::null()) < 0
-                && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
-            {
+            },
+        ];
+        // A parent already gone comes back as its event flagged EV_ERROR, as much an answer; a
+        // stdout kqueue cannot watch comes back the same way, and leaves the parent to say it.
+        let gone = |e: &libc::kevent| {
+            e.filter == libc::EVFILT_PROC
+                || e.filter == libc::EVFILT_WRITE && e.flags & libc::EV_EOF != 0
+        };
+        // SAFETY: one kqueue, owned here and closed before returning; the changes are registered
+        // by the first call, and each call fills at most the one event it is given.
+        unsafe {
+            let queue = libc::kqueue();
+            if queue < 0 {
+                return;
+            }
+            let mut changes = watched.as_slice();
+            let mut event: libc::kevent = std::mem::zeroed();
+            let mut heard = false;
+            while !heard {
+                let n = libc::kevent(
+                    queue,
+                    changes.as_ptr(),
+                    changes.len() as libc::c_int,
+                    &mut event,
+                    1,
+                    std::ptr::null(),
+                );
+                changes = &[];
+                heard = match n {
+                    1 => gone(&event),
+                    0 => false,
+                    _ => std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted,
+                };
             }
             libc::close(queue);
         }

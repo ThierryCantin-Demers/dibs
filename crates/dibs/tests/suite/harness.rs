@@ -427,6 +427,7 @@ impl Sandbox {
     }
 
     /// Every process started under this sandbox's home, which no other sandbox shares.
+    #[cfg(target_os = "linux")]
     fn own_pids(&self) -> Vec<u32> {
         let home = format!("HOME={}/home", self.root.display()).into_bytes();
         fs::read_dir("/proc")
@@ -444,6 +445,7 @@ impl Sandbox {
     }
 
     /// The runners serving this sandbox's calls.
+    #[cfg(target_os = "linux")]
     pub fn runners(&self) -> Vec<u32> {
         self.own_pids()
             .into_iter()
@@ -451,6 +453,42 @@ impl Sandbox {
                 let args = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
                 let args: Vec<&[u8]> = args.split(|b| *b == 0).collect();
                 args.contains(&b"__runner".as_slice()) && args.contains(&b"serve".as_slice())
+            })
+            .collect()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn own_pids(&self) -> Vec<u32> {
+        self.listed().into_iter().map(|p| p.pid).collect()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn runners(&self) -> Vec<u32> {
+        self.listed()
+            .into_iter()
+            .filter(|p| p.line.contains(" __runner serve "))
+            .map(|p| p.pid)
+            .collect()
+    }
+
+    /// This sandbox's processes as `ps -E` lists them, the environment after the arguments, which
+    /// it shows for this account's own.
+    #[cfg(not(target_os = "linux"))]
+    fn listed(&self) -> Vec<Listed> {
+        let home = format!("HOME={}/home", self.root.display());
+        let out = std::process::Command::new("ps")
+            .args(["-wwEax", "-o", "pid=,command="])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        out.lines()
+            .filter(|l| l.split_whitespace().any(|w| w == home))
+            .filter_map(|l| {
+                let (pid, line) = l.trim_start().split_once(' ')?;
+                Some(Listed {
+                    pid: pid.parse().ok()?,
+                    line: line.to_string(),
+                })
             })
             .collect()
     }
@@ -918,6 +956,12 @@ fn record_line(path: &Path) -> String {
 }
 
 /// A fifo a job blocks on, so a holder costs no CPU and ends exactly when it is told.
+#[cfg(not(target_os = "linux"))]
+struct Listed {
+    pid: u32,
+    line: String,
+}
+
 pub struct Gate {
     pub path: PathBuf,
 }
