@@ -7,6 +7,8 @@ use std::{
 
 /// How long a reap waits between its rounds.
 const REAP_ROUND: Duration = Duration::from_millis(250);
+/// Where the system's own tools are.
+const SYSTEM_DIRS: [&str; 4] = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
 /// Rounds of TERM to what is below, then of KILL, before the named processes themselves.
 const REAP_BELOW_ROUNDS: usize = 50;
 const REAP_BELOW_TERM_ROUNDS: usize = 40;
@@ -138,9 +140,27 @@ pub trait Platform {
     /// A battery means a laptop, which throttles, shares memory between CPU and GPU, and moves.
     fn on_battery() -> bool;
 
-    /// Put ahead of `PATH`, first first, for jobs and for the tools the check looks for, where
-    /// the system's own are not the ones work is written for.
+    /// Put ahead of the system's own directories, first first, for jobs and for the tools the
+    /// check looks for, where the system's tools are not the ones work is written for.
     fn tools_first() -> Vec<PathBuf>;
+
+    /// `path` with `tools_first` just before its first system directory: ahead of the system's
+    /// tools, and behind whatever was put before those, as a caller's own wrappers are.
+    fn ahead_of_the_system(path: Vec<PathBuf>) -> Vec<PathBuf> {
+        let first = Self::tools_first();
+        let rest: Vec<PathBuf> = path.into_iter().filter(|d| !first.contains(d)).collect();
+        let at = rest
+            .iter()
+            .position(|d| SYSTEM_DIRS.iter().any(|s| d == Path::new(s)))
+            .unwrap_or(rest.len());
+        let (before, after) = rest.split_at(at);
+        before
+            .iter()
+            .cloned()
+            .chain(first)
+            .chain(after.iter().cloned())
+            .collect()
+    }
 
     /// Returns once this process's caller has gone, for a call whose stdin carries something
     /// else: whoever reads its stdout closing it, or its parent, ssh's or the client's, exiting.

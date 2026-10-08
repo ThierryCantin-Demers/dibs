@@ -55,18 +55,16 @@ impl Environment {
     /// A command over ssh runs in a shell that reads no profile, so a toolchain installed the
     /// ordinary way is not on its path, nor are the platform's tools that come first.
     fn path() -> String {
-        let ahead: Vec<String> = [home().join(".cargo/bin"), "/usr/local/cuda/bin".into()]
+        let toolchains: Vec<PathBuf> = [home().join(".cargo/bin"), "/usr/local/cuda/bin".into()]
             .into_iter()
             .filter(|dir| dir.is_dir())
-            .chain(Host::tools_first())
-            .map(|dir| dir.display().to_string())
             .collect();
         let path = var("PATH").unwrap_or_default();
-        let rest = path.split(':').filter(|d| !ahead.iter().any(|a| a == d));
-        ahead
+        let rest = Host::ahead_of_the_system(path.split(':').map(PathBuf::from).collect());
+        toolchains
             .iter()
-            .map(String::as_str)
-            .chain(rest)
+            .chain(rest.iter().filter(|d| !toolchains.contains(d)))
+            .map(|d| d.display().to_string())
             .collect::<Vec<_>>()
             .join(":")
     }
