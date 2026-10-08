@@ -315,7 +315,9 @@ differs in five ways.
   RUNNING`, and the check that no process works in a tree about to be replaced, see only that
   account's processes.
 - A queued `--gc` starts its runner by its path (The sweep).
-- A transfer's caller is gone when its parent exits, since polling cannot tell (A transfer).
+- A pipe's reader closing wakes no `poll`, so a transfer or a build sees its caller go through
+  kqueue, edge-triggered on stdout, or its parent exiting (A transfer); a first build, which
+  perl runs, writes a line the client drops once a second and stops when the write fails.
 - It cannot say which blocks a cloned cache shares with the one it was seeded from, so `dibs
   --gc` sizes a clone by its whole length.
 
