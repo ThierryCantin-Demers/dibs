@@ -355,8 +355,10 @@ impl Driving<'_> {
             self.cancelled = Some(format!("with dibs --kill on {}", self.batch.machines[i]));
             self.stop_running();
         }
-        if exit != 0 && (!self.batch.steps[i].cont || self.cancelled.is_some()) {
+        if self.cancelled.is_some() {
             self.stopped = true;
+        } else if exit != 0 && !self.batch.steps[i].cont {
+            self.batch.stop_after(i, &mut self.states);
         }
     }
 

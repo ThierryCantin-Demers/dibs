@@ -101,8 +101,9 @@ spoiled without it.
 
 - A step waits for the line before it. `[name after=a,b]` waits for those steps instead, and a bare
   `after=` waits for nothing. Steps that wait for nothing in common overlap on different machines
-  and take turns on one, so work on two machines is one batch. A failed step stops the rest; mark
-  `cont` on a step whose failure should not, such as one configuration of a sweep.
+  and take turns on one, so work on two machines is one batch. A failed step stops the steps that
+  wait on it, which by default is every line after it; mark `cont` on a step whose failure should
+  not, such as one configuration of a sweep.
 - **Do not batch across a decision.** If a later step depends on what an earlier one *said*, you
   will not see that until the whole batch is done. Two batches with a look in between is still far
   cheaper than one call per job. When the criterion can be stated up front, put it in the step and

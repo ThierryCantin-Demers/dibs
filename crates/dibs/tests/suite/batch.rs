@@ -185,6 +185,39 @@ fn a_failed_step_stops_the_batch_unless_it_says_cont() {
 }
 
 #[test]
+fn a_failed_step_stops_what_waits_on_it_and_nothing_else() {
+    let s = Sandbox::new();
+    let file = batch_file(
+        &s,
+        "b-apart",
+        &[
+            "[x] dibs --label batch-x 'exit 3'",
+            &format!("[y] dibs --label batch-y 'echo ran > {}'", s.p("waits")),
+            &format!(
+                "[z after=y] dibs --label batch-z 'echo ran > {}'",
+                s.p("through")
+            ),
+            &format!(
+                "[w after=] dibs --label batch-w 'echo ran > {}'",
+                s.p("apart")
+            ),
+        ],
+    );
+    let out = s.dibs(["batch", &file]).run();
+    assert_eq!(
+        (
+            s.exists("waits"),
+            s.exists("through"),
+            s.exists("apart"),
+            out.code
+        ),
+        (false, false, true, 1),
+        "{}",
+        out.stdout
+    );
+}
+
+#[test]
 fn a_batch_reads_stdin_and_refuses_what_is_not_a_dibs_call() {
     let s = Sandbox::new();
     let out = s

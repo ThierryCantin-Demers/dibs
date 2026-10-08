@@ -39,6 +39,30 @@ impl Batch<'_> {
         s
     }
 
+    /// Every waiting step that waits on `failed`, directly or through another, will not run. A
+    /// step that waits on nothing of it still does: it never asked for what failed.
+    pub fn stop_after(&self, failed: usize, states: &mut [State]) {
+        let mut stopped = vec![self.steps[failed].name.as_str()];
+        loop {
+            let more: Vec<usize> = (0..self.steps.len())
+                .filter(|&i| {
+                    states[i] == State::Waiting
+                        && self.steps[i]
+                            .after
+                            .iter()
+                            .any(|a| stopped.contains(&a.as_str()))
+                })
+                .collect();
+            if more.is_empty() {
+                return;
+            }
+            for i in more {
+                states[i] = State::NotRun;
+                stopped.push(self.steps[i].name.as_str());
+            }
+        }
+    }
+
     /// The steps that may start now, lowest first. A step waits for everything it names, and for
     /// its machine to have no other step of this batch on it: two steps on one machine overlapping
     /// is the surprise the lock exists to prevent, and nothing is lost by running them in turn.
