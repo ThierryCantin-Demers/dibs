@@ -1,0 +1,46 @@
+== dibs status  (never-worked, a first look with nothing to compare against)
+-> exit 0
+1| dibs: in use, shared
+1|   shared  never-worked  <dur>  pid <pid>   [IDLE: no CPU at all in <dur>, it is waiting on something]
+1|     stop it with: dibs --kill <pid>
+1|     never-worked
+1|     from an agent
+
+== dibs status  (never-worked, the next look)
+-> exit 0
+1| dibs: in use, shared
+1|   shared  never-worked  <dur>  pid <pid>   [IDLE: no CPU at all in <dur>, it is waiting on something]
+1|     stop it with: dibs --kill <pid>
+1|     never-worked
+1|     from an agent
+
+== dibs status  (worked-once, a first look with nothing to compare against)
+-> exit 0
+1| dibs: in use, shared
+1|   shared  worked-once  <dur>  pid <pid>   [no history for this one yet]
+1|     worked-once
+1|     from an agent
+
+== dibs status  (worked-once, the next look)
+-> exit 0
+1| dibs: in use, shared
+1|   shared  worked-once  <dur>  pid <pid>   [IDLE: <n>s of CPU, none of it in the last <dur>, it is waiting on something]
+1|     stop it with: dibs --kill <pid>
+1|     worked-once
+1|     from an agent
+
+== dibs status  (writes-a-log, a first look with nothing to compare against)
+-> exit 0
+1| dibs: in use, shared
+1|   shared  writes-a-log  <dur>  pid <pid>   [no history for this one yet]
+1|     writes-a-log
+1|     from an agent
+1|     writing <root>/written.log   (dibs --on <host> --out <pid>)
+
+== dibs status  (writes-a-log, the next look)
+-> exit 0
+1| dibs: in use, shared
+1|   shared  writes-a-log  <dur>  pid <pid>   [no history for this one yet]
+1|     writes-a-log
+1|     from an agent
+1|     writing <root>/written.log   (dibs --on <host> --out <pid>)

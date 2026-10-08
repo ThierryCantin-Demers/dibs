@@ -1,0 +1,203 @@
+Run a command on a remote machine under a lock, so concurrent agents cannot spoil each other's
+measurements.
+
+Recipes: a repo's builds, tests and benchmarks, prepared and recorded.
+
+  dibs <verb> <repo>[@<ref>] <recipe>   run one of the repo's recipes. @local sends your
+                               working tree, unpushed and uncommitted changes included, and
+                               is the only path for a private repo: the machines carry no
+                               GitHub credentials
+  dibs list <repo>             what that repo defines
+  dibs runs [label] [--all]    what has run here, and what is comparable. A failed run is
+                               listed only with --all
+  dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>
+                               a command in a prepared worktree
+  dibs raw --reason <why> -- <cmd>
+                               a command with nothing prepared
+  dibs with <repo>[@<ref>] <service> [--bench] [--there] -- <cmd>
+                               run the command here while the repo's servers run on the
+                               machine under its lock, started once they are ready and
+                               stopped when the command ends. --bench times it: the servers
+                               are built under the shared lock, then run with the machine
+                               held alone. --there runs the command on the machine instead,
+                               in the tree beside them, reaching them at
+                               127.0.0.1:$DIBS_PORT_<NAME>
+  dibs gaps                    what did not fit a recipe, what got in the way, and which of
+                               it recurs
+  dibs machines [<machine>] [--json]
+                               each machine in ~/.config/dibs/fleet.toml against what it
+                               should have: tools, toolchains, GPU stack, repo clones, whose
+                               keys are there, and whether its names answer here. A machine
+                               in the pool is probed under its shared lock
+  dibs batch <file|->          a list of dibs command lines as one submission, with one
+                               summary at the end. One line per step, optionally prefixed
+                               [name after=a,b cont]. A step without after= waits for the
+                               one before it; steps that wait for nothing in common overlap
+                               only on different machines. A failed step stops the batch
+                               unless it is marked cont.
+
+  <verb>       bench, build or test
+  <repo>       a path to a checkout, or a name: the checkout you are in when it is that
+               repo, a worktree of it included, else the one under --root
+  <ref>        a branch, tag or commit the machine fetches, or local. Two or more are one
+               comparison with one record: A..B measures B against where it left A, their
+               merge base, so what landed on A since is not credited to B; a,b,c measures
+               each in turn. Every arm is built in a tree and target directory of its own,
+               then each rep measures them all, the order reversed every other rep (A B B A),
+               which cancels a drift such as a card warming up
+  --root       where named repos live (default $DIBS_ROOT, then `root` in machines.toml,
+               else the current directory)
+  --reason     why this does not fit a recipe. Required for shell and raw, and recorded: a
+               reason that keeps recurring is the specification for the next recipe.
+  --device     the card to run on, named from the machine's inventory. It is part of the
+               derived label, so each card keeps its own history and running a recipe on a
+               second one neither mixes with the first nor replaces it.
+  --<name>     a value for a parameter the recipe declares, such as --backend vulkan.
+               `dibs list <repo>` prints what each recipe takes, with its default and its
+               choices. The label does not carry them, so one recipe keeps one duration
+               history; the run record carries them.
+  --sweep      <name>=<a,b,c>, one run per value, submitted as one batch with one summary.
+               Repeatable, and the combinations are the cross product. A value is never
+               split on commas, so --sweep is how a sweep is asked for and --<name> always
+               means one value.
+  --reps       measure this many times. The build runs once, and the record holds each rep
+  --pin <repo>@<ref>   build against that repo's tree instead of the revision the lockfile
+               names: @local sends your checkout of it, unpushed changes included, and a ref
+               is fetched. dibs points cargo at it with a [patch] outside the tree, checks
+               after the build that cargo used it, and records its revision. Repeatable, and
+               shell takes it too. <repo> may be a path, such as a worktree
+  --artifacts <dir>   copy the files the recipe's `artifacts` name into dir, at their paths
+               in the tree, under <arm>/r<rep>/ when there are several. They are fetched and
+               kept beside each job's log either way
+  --bench      shell only: the exclusive lock, for a one-off that is a measurement
+  --anyway     measure even when another tree built into the target after this one did,
+               which is otherwise refused with exit 78
+  --dry-run    print what would run, take no lock, record nothing
+  --verbose    with batch, each step's output as it comes, prefixed with the step's name
+
+A recipe declares the procedure and names no revisions: the invocation supplies the code and
+the run record captures what it resolved to.
+
+Calls: one command under the lock, and what the machines are doing.
+
+  dibs run <command>          shared: builds, tests, inspection. Many at once. The bare
+                               form, dibs <command>, still works.
+  dibs run --bench <command>  exclusive: benchmarks. One at a time, nothing else running.
+  dibs --hold <command>       take the lock on the machine and run the command here, on this
+                               computer: for work aimed at the machine from outside, such as
+                               provisioning it. With --bench nothing else runs there meanwhile.
+                               The lock goes when the command ends, and the command is stopped
+                               if the lock goes first, through --max or --kill.
+  --with <name>='<command>'    run a service on the machine for the length of this call: a
+                               server the command talks to. It starts once the lock is taken
+                               and is stopped before the lock is released, however the call
+                               ends. Repeatable.
+  --port <name>                have the machine pick a free port and reserve it for this call:
+                               the service and the command read it as $DIBS_PORT_<NAME>, and a
+                               --hold command also gets $DIBS_SERVICE_<NAME> as host:port. A
+                               port written into both by hand is one two agents can collide on.
+  --ready tcp:<port|name>      when the --with before it can be used, as a port that answers
+  --ready '<command>'          or a command that exits 0 once it does. --ready-within bounds
+                               the wait (300s). A service that exits early, or is never
+                               ready, stops the call with exit 77 and its log is shown.
+  dibs status, dibs out [job], dibs fetch <job> [dir]   the same as --status, --out, --fetch
+  --device <alias>             run on one named card. Two runs naming one alias are two
+                               runs on the same silicon, which is what makes their numbers
+                               comparable. `dibs --machines -v` lists the aliases. `cpu`
+                               names the processor, which pins nothing and has nothing to
+                               choose between, but records what a CPU run ran on.
+  --stream                     the job's whole output, as it happens. Without it a job's
+                               stdout is a digest: its first and last lines, a count of
+                               what was left out, and where the whole log is. Nothing
+                               is lost either way, since the log is kept on the machine.
+  --new-series                 with --bench, or a recipe that measures: this label is moving
+                               to another card of this machine on purpose. Its series here
+                               starts again rather than mixing the new numbers in with the
+                               old ones. Each machine keeps its own series, so another
+                               machine needs no flag.
+  dibs --sync [opts] a b      rsync between here and the machine, under the shared lock.
+                               Prefix the machine's side with a colon: --sync ./tree :~/x
+  dibs --status               who holds it, how much longer, and the queue with ETAs
+  dibs --watch [secs]         --status on a loop, one connection (default 5s, minimum 2)
+  --json                       with --status or --watch: one JSON document per line
+  dibs --peek <command>       look at the machine without taking the lock. Free things
+                               only: ps, nvidia-smi, ls, tail, git status. It runs beside
+                               a benchmark, so anything that costs CPU or IO spoils it.
+  dibs --check [host]          install dibs's runner there, with its cargo, then say whether
+                               the machine is usable and what is in it. Run it first on a
+                               machine you have never used. --write records what it found
+                               as that machine's inventory entry.
+  dibs --on <machine>         send this call to a named machine from the inventory. There is
+                               no default: a call that names none is placed when it is shared
+                               work, and refused otherwise, a benchmark most of all
+  dibs --machines             what the inventory knows
+  dibs --forget <machine>     drop a machine from your own inventory
+  dibs --update               pull the clone dibs was installed from and reinstall, then
+                               pull the recipe directory too when it is a git clone
+  --all                        with --status: every machine in the inventory, at once, which
+                               is also what a status naming no machine shows
+  dibs --pick                 print the machine a shared job naming none would be placed on:
+                               the one holding the repo's build cache, else the least busy.
+                               -v shows the ranking. A benchmark is never placed.
+  dibs --which                print the machine this call names, without placing it
+  --prefer <machine>           with --pick: this machine holds the build cache, so choose it
+                               unless it cannot run the job at all
+  dibs --out [pid|job]        what a job wrote. Every job's output is kept whole on the
+                               machine under $DIBS_SCRATCH/jobs/<job>/log, and the trailer
+                               every job ends with names the job. --out <job> tails it,
+                               during the run or after; --out <pid> reads a redirect a
+                               running job made itself. The first read of a finished job
+                               keeps its whole log in ~/.local/state/dibs/jobs, which
+                               answers later reads even once the machine is gone.
+  dibs --fetch <job> [dir]    the files a recipe's job kept, the ones its `artifacts` name
+                               and it wrote itself. Kept beside the job's log in
+                               ~/.local/state/dibs/jobs/<job>/artifacts, and copied into dir
+                               at their paths when one is given. Takes no lock, so a job's
+                               are capped at 64MB. A recipe run fetches its own.
+  dibs --kill <batch-id>      stop a whole batch: at its driver when that runs here, else on
+                               every machine, which also refuses the batch's later steps
+  dibs --kill <pid>           stop a holder that is wedged (also takes no lock). Refuses a
+                               job that is someone else's until you add --anyone.
+  dibs --release              drop metadata left by processes that are already dead, and
+                               reclaim the lock when an orphan holds it: a process that
+                               outlived its caller holds it with no record to show for it,
+                               and nothing on the machine can run until it goes
+  dibs --gc                   what is filling the machine's scratch, and reclaim it:
+                               worktrees and job logs nobody has used for 14 days, build
+                               caches for 5. It takes the shared lock, since deleting
+                               gigabytes is as much IO as writing them. --dry-run removes
+                               nothing, --days <n> lowers every clock to n days, and what
+                               dibs did not put under scratch is listed but never touched.
+  dibs --friction '<line>'    what got in the way: a flag that is missing, a message that
+                               misled, a bug. One line, kept where the next session reads
+                               it, and printed by dibs gaps beside the recipes nothing
+                               fitted. Nothing else records a problem that is not a
+                               missing recipe. With DIBS_REPORTS=<owner>/<repo>, also
+                               filed there as an issue, and its answers shown later.
+  dibs --friction --wait      returns when a report or a comment lands in DIBS_REPORTS
+  dibs --friction --reply <n> '<answer>' [--close]
+                               answers report n there
+  dibs --log [n]              the last n arrivals and outcomes, killings included
+  dibs hook ssh               a Claude Code PreToolUse hook: reads the tool call on stdin and
+                               refuses, with exit 2, ssh, scp, sftp or rsync aimed at a
+                               machine in the inventory. rsync through dibs passes.
+
+A shared job quick enough to be gone before a queued benchmark could have started anyway
+goes around it rather than waiting for the whole benchmark. DIBS_PATIENCE (60s) is how long
+a benchmark tolerates that, DIBS_QUICK (10s) is how quick a job has to be to qualify, and
+DIBS_BYPASS=0 turns it off. A benchmark can be delayed by their sum and no more.
+
+  --on <machine>     send this call there; before a recipe verb, the only flag that may come
+                     first. DIBS_ON=<machine> does the same for every call, which is the form
+                     a step added to a script later cannot forget. An inventory of one
+                     machine, or DIBS_HOST without one, needs neither.
+  --wait <seconds>   give up rather than queue past this
+  --max <seconds>    kill the command if it holds the lock longer than this (default 7200
+                     for --bench and 1800 otherwise, or twice the label's 90th percentile
+                     where its history runs longer, said when it starts)
+  --label <name>     what shows up in --status (default: the caller's directory)
+  -v                 with --status, also dump the raw lock directory; with a call that
+                     queues, the whole queue rather than one line
+
+docs/guide.md in the clone says why each of these behaves as it does.
+

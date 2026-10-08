@@ -1,0 +1,103 @@
+== dibs --on box-a --abi
+-> exit 2
+
+== DIBS_REMOTE_DIR=/dev/shm dibs --on box-a --label step true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: true
+    fingerprint: null
+    json: false
+    label: step
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs --machines  (with a shared registry under your own)
+-> exit 0
+1|    box-a dibs@box-a
+1|    box-b box-b.local  (no measurements)
+2|   A 'default =' line in the inventory is no longer read: a call names its machine.
+
+== dibs --forget team-box
+-> exit 2
+2| dibs: no machine named 'team-box'
+
+== dibs --forget box-b
+-> exit 0
+1| forgot box-b
+
+== dibs --machines
+-> exit 0
+1|    box-a dibs@box-a
+2|   A 'default =' line in the inventory is no longer read: a call names its machine.
+
+== refused
+exit  call
+2     dibs --job
+2     dibs --cancel
+2     HOME=/nonexistent dibs list app
+2     dibs --rsh
+2     dibs --rsh host rsync --server
+2     DIBS_QUEUE='' dibs --job 12345
+2     DIBS_QUEUE='' dibs --cancel 12345
+2     DIBS_QUEUE='' dibs --detach true
+2     DIBS_QUEUE=box@elsewhere dibs --bench --detach true
+2     DIBS_QUEUE=box@elsewhere dibs --detach --wait 5 true
+
+== dibs --job
+-> exit 2
+2| dibs: --job is gone: the detach queue was removed.
+
+== dibs --cancel
+-> exit 2
+2| dibs: --cancel is gone: the detach queue was removed.
+
+== HOME=/nonexistent dibs list app
+-> exit 2
+2| dibs: no repo at 'app' and none at ./app.
+2|   A bare name is looked up under DIBS_ROOT, then --root, then the `root` key of
+2|   ~/.config/dibs/machines.toml, then the current directory. Give a path, or set one of those.
+
+== dibs --rsh
+-> exit 2
+2| dibs: --rsh is gone: --sync starts rsync's transport itself.
+
+== dibs --rsh host rsync --server
+-> exit 2
+2| dibs: --rsh is gone: --sync starts rsync's transport itself.
+
+== DIBS_QUEUE='' dibs --job 12345
+-> exit 2
+2| dibs: --job is gone: the detach queue was removed.
+
+== DIBS_QUEUE='' dibs --cancel 12345
+-> exit 2
+2| dibs: --cancel is gone: the detach queue was removed.
+
+== DIBS_QUEUE='' dibs --detach true
+-> exit 2
+2| dibs: --detach is gone: the detach queue was removed.
+
+== DIBS_QUEUE=box@elsewhere dibs --bench --detach true
+-> exit 2
+2| dibs: --detach is gone: the detach queue was removed.
+
+== DIBS_QUEUE=box@elsewhere dibs --detach --wait 5 true
+-> exit 2
+2| dibs: --detach is gone: the detach queue was removed.

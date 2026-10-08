@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/dibs",
+    "crates/dibs-format",
+    "crates/dibs-runner",
+    "crates/dibstop",
+    "crates/dibs-machines",
+]
+# The window builds a GUI toolkit, which most installs never ask for and every test run would.
+default-members = [
+    "crates/dibs",
+    "crates/dibs-format",
+    "crates/dibs-runner",
+    "crates/dibstop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Every machine builds the runner too, so its rustc must be at least this.
+rust-version = "1.99"
+
+[workspace.dependencies]
+dibs = { path = "crates/dibs" }
+dibs-format = { path = "crates/dibs-format" }
+dibs-runner = { path = "crates/dibs-runner" }
+flate2 = "1"
+crossterm = "0.28"
+eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
+libc = "0.2"
+ratatui = "0.29"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.10"
+toml = "0.8"
+toml_edit = "0.22"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[profile.release]
+opt-level = 2
+strip = true

@@ -1,0 +1,54 @@
+== dibs batch --dry-run steps
+-> exit 0
+1| batch (dry run), 5 steps
+1|   build    ?        shared  after -
+1|   measure  ?        bench   after build
+1|   sweep-a  ?        shared  after measure, cont
+1|   sweep-b  ?        shared  after sweep-a
+1|   never    ?        shared  after sweep-b
+
+== dibs batch steps
+-> exit 1
+1| batch <batch>  5 steps, 2 failed, 1 not run, <dur>
+1| name     machine  lock       wall    exit  jobs
+1| build    ?        shared       <dur>       0  <job>
+1| measure  ?        bench        <dur>       0  <job> built=nothing
+1| sweep-a  ?        shared       <dur>       3  <job>
+1| sweep-b  ?        shared       <dur>       4  <job>
+1| never    ?        shared        -  not run  
+1| each step's output: <root>/home/.local/state/dibs/batch/<batch>/<name>.out and .err; a job's whole log: dibs --out <job>
+2| dibs: batch <batch>, 5 steps. You are told when it ends; there is nothing to watch.
+2|   build    ?        shared  after -
+2|   measure  ?        bench   after build
+2|   sweep-a  ?        shared  after measure, cont
+2|   sweep-b  ?        shared  after sweep-a
+2|   never    ?        shared  after sweep-b
+
+== dibs batch -  (one line from stdin)
+-> exit 0
+1| batch <batch>  1 steps, <dur>
+1| name  machine  lock       wall    exit  jobs
+1| 1     ?        shared       <dur>       0  <job>
+1| each step's output: <root>/home/.local/state/dibs/batch/<batch>/<name>.out and .err; a job's whole log: dibs --out <job>
+2| dibs: batch <batch>, 1 steps. You are told when it ends; there is nothing to watch.
+2|   1     ?        shared  after -
+
+== dibs --kill <batch>  (where its driver runs)
+-> exit 0
+1| batch <batch>  2 steps, cancelled with dibs --kill, 1 failed, 1 not run, <dur>
+1| name   machine  lock       wall    exit  jobs
+1| hold   ?        shared       <dur>  killed  
+1| after  ?        shared        -  not run  
+1| each step's output: <root>/home/.local/state/dibs/batch/<batch>/<name>.out and .err; a job's whole log: dibs --out <job>
+2| dibs: cancelling batch <batch> here: nothing more starts, and its running steps are stopped.
+
+== what the cancelled batch's driver printed
+-> exit 76
+1| batch <batch>  2 steps, cancelled with dibs --kill, 1 failed, 1 not run, <dur>
+1| name   machine  lock       wall    exit  jobs
+1| hold   ?        shared       <dur>  killed  
+1| after  ?        shared        -  not run  
+1| each step's output: <root>/home/.local/state/dibs/batch/<batch>/<name>.out and .err; a job's whole log: dibs --out <job>
+2| dibs: batch <batch>, 2 steps. You are told when it ends; there is nothing to watch.
+2|   hold   ?        shared  after -, cont
+2|   after  ?        shared  after hold

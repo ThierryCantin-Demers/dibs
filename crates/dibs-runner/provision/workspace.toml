@@ -1,0 +1,26 @@
+# The workspace a machine builds the runner in: the runner, the format, and what they need.
+[workspace]
+resolver = "3"
+members = ["crates/dibs-format", "crates/dibs-runner"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+
+[workspace.dependencies]
+dibs-format = { path = "crates/dibs-format" }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[profile.release]
+opt-level = 2
+strip = true

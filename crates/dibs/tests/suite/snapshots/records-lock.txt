@@ -1,0 +1,83 @@
+== holder.<pid>, a recipe's measurement holding and a batch step queued behind it
+  10 fields
+  mode         bench
+  pid          <pid>
+  start        <epoch>
+  label        app_bench_held_cpu
+  agent        session suite
+  agent id     local_suite
+  device       cpu
+  command      read -r _ < "$REC_GATE"
+  fingerprint  21eafeca56a1b2ba
+  job          <job>
+
+== waiting.<pid>, a recipe's measurement holding and a batch step queued behind it
+  10 fields
+  mode         shared
+  pid          <pid>
+  start        <epoch>
+  label        rec-served
+  agent        session suite
+  agent id     local_suite
+  device       -
+  command      echo up > <root>/f-up; read -r _ < <root>/f-served
+  fingerprint  -
+  job          <job>
+
+== batch.<pid>, the plan of the batch the queued job is a step of
+<batch>	app/bench/held@cpu
+2	2
+
+== batch.<pid>, the plan of the batch the queued job is a step of
+<batch>	serve
+1	2
+next	shared	rec-next	1
+
+== holder.<pid>, once the queued job holds the lock
+  10 fields
+  mode         shared
+  pid          <pid>
+  start        <epoch>
+  label        rec-served
+  agent        session suite
+  agent id     local_suite
+  device       -
+  command      echo up > <root>/f-up; read -r _ < <root>/f-served
+  fingerprint  -
+  job          <job>
+
+== with.<pid>, once the queued job holds the lock
+  3 fields
+  service      srv
+  pid          <pid>
+  command      read -r _ < <root>/f-server
+
+== port.<port>, once the queued job holds the lock
+  1 fields
+  pid          <pid>
+
+== cpu.<pid>, the CPU sample a status leaves
+  3 words: ticks, when it last worked, when sampled
+  ticks    <clock ticks, a whole number>
+  worked   <- for never, or a second within the last minute>
+  sampled  <a second since the epoch, within the last minute>
+
+== holder.<pid>, a hold
+  10 fields
+  mode         shared
+  pid          <pid>
+  start        <epoch>
+  label        rec-hold
+  agent        session suite
+  agent id     local_suite
+  device       -
+  command      held for a command run elsewhere: read -r _ < <root>/f-held
+  fingerprint  -
+  job          <job>
+
+== hold.<pid>, beside the hold's record
+<a fifo>
+
+== what the lock directory holds once every job has gone
+gate
+rw

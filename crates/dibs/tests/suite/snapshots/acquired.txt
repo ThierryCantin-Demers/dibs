@@ -1,0 +1,6 @@
+== dibs --label waits-it-out true  (behind a benchmark that ends six seconds after it arrives)
+-> exit 0
+2| dibs: queued and has not started, behind the benchmark six-seconds. dibs status shows the queue.
+2| dibs: acquired the shared lock after <dur>
+2| job <job>  shared  waits-it-out  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>

@@ -1,0 +1,895 @@
+== dibs build <root>/app@main p --on box-a --samples 3
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: export SAMPLES=3; echo ran cuda samples=$SAMPLES
+    fingerprint: de78f4497d16258e
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs bench <root>/app@local gate --on box-a
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/gate:send
+      | 1	3
+      | app/bench/gate	shared	app_bench_gate	1
+      | app/bench/gate	bench	app_bench_gate	1
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/gate
+      | 2	3
+      | app/bench/gate	bench	app_bench_gate	1
+    card: null
+    command: cargo build --release
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":true,"pinned":[],"record":"<token>","state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/gate
+      | 3	3
+    card: null
+    command: echo measured
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 7200
+    max_from: default
+    mode: bench
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":true,"claim":false,"pinned":[],"record":null,"state":true}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs shell <root>/app@local --reason 'a look' --on box-a -- 'cat a.txt'
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/shell:send
+      | 1	2
+      | app/shell	shared	app_shell	1
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: ae20812789dc44ec
+    json: false
+    label: app_shell_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/shell
+      | 2	2
+    card: null
+    command: cat a.txt
+    fingerprint: ae20812789dc44ec
+    json: false
+    label: app_shell
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs build <root>/app@main p --on box-a --device gpu:card
+-> exit 2
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card.alias: "gpu:card"
+    card.chip: "10de:2786"
+    card.pci: "0000:01:00.0"
+    card.runtimes: ["cuda","vulkan"]
+    card.twins: 1
+    command: export SAMPLES=10; echo ran cuda samples=$SAMPLES
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p_gpu_card
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs build <root>/app@main p --on box-a --sweep samples=1,2
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	samples-1: app/build/p
+      | 1	2
+      | samples-2: app/build/p	shared	app_build_p	1
+    card: null
+    command: export SAMPLES=1; echo ran cuda samples=$SAMPLES
+    fingerprint: 83480f9a8587b084
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	samples-2: app/build/p
+      | 2	2
+    card: null
+    command: export SAMPLES=2; echo ran cuda samples=$SAMPLES
+    fingerprint: eb8f9d64e6207555
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs bench <root>/app@origin/main..local gate --on box-a --reps 1
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/gate:send (base)
+      | 1	6
+      | app/bench/gate (base)	shared	app_bench_gate	1
+      | app/bench/gate:send (local)	rsh	app_bench_gate_send	1
+      | app/bench/gate (local)	shared	app_bench_gate	1
+      | app/bench/gate (base)	bench	app_bench_gate	1
+      | app/bench/gate (local)	bench	app_bench_gate	1
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/gate (base)
+      | 2	6
+      | app/bench/gate:send (local)	rsh	app_bench_gate_send	1
+      | app/bench/gate (local)	shared	app_bench_gate	1
+      | app/bench/gate (base)	bench	app_bench_gate	1
+      | app/bench/gate (local)	bench	app_bench_gate	1
+    card: null
+    command: cargo build --release
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":true,"pinned":[],"record":"<token>","state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/gate:send (local)
+      | 3	6
+      | app/bench/gate (local)	shared	app_bench_gate	1
+      | app/bench/gate (base)	bench	app_bench_gate	1
+      | app/bench/gate (local)	bench	app_bench_gate	1
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/gate (local)
+      | 4	6
+      | app/bench/gate (base)	bench	app_bench_gate	1
+      | app/bench/gate (local)	bench	app_bench_gate	1
+    card: null
+    command: cargo build --release
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":true,"pinned":[],"record":"<token>","state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 5: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/gate (base)
+      | 5	6
+      | app/bench/gate (local)	bench	app_bench_gate	1
+    card: null
+    command: echo measured
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 7200
+    max_from: default
+    mode: bench
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":true,"claim":false,"pinned":[],"record":null,"state":true}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/gate (local)
+      | 6	6
+    card: null
+    command: echo measured
+    fingerprint: 6bc29855bfd0b3e9
+    json: false
+    label: app_bench_gate
+    max: 7200
+    max_from: default
+    mode: bench
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":true,"claim":false,"pinned":[],"record":null,"state":true}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs bench <root>/app@local art --on box-a --artifacts <root>/got
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/art:send
+      | 1	2
+      | app/bench/art	bench	app_bench_art	1
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: 29dcff772dc1e4fa
+    json: false
+    label: app_bench_art_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/bench/art
+      | 2	2
+    card: null
+    command: mkdir -p results && echo measured > results/new.json
+    fingerprint: 29dcff772dc1e4fa
+    json: false
+    label: app_bench_art
+    max: 7200
+    max_from: default
+    mode: bench
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":["results/*.json"],"check":false,"claim":false,"pinned":[],"record":null,"state":true}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: false
+    label: <job>
+    max: 1800
+    max_from: default
+    mode: fetch
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs with <root>/app@local servers --on box-a -- true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: null
+    json: false
+    label: app_with_servers_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: true
+    fingerprint: null
+    json: false
+    label: app_with_servers_build
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: true
+    fingerprint: null
+    json: false
+    label: app_with_servers
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: ["api"]
+    ready_within: 300
+    services: [{"command":"cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { read -r _ < \"$WIRE_NEVER\"; }","name":"api","ready":null}]
+    stream: false
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: true
+    watch.lease: 120
+    watch.off: false
+
+== dibs with <root>/app@local servers --there --on box-a -- true
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: null
+    json: false
+    label: app_with_servers_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: true
+    fingerprint: null
+    json: false
+    label: app_with_servers_build
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { true; }
+    fingerprint: null
+    json: false
+    label: app_with_servers
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: ["api"]
+    ready_within: 300
+    services: [{"command":"cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { read -r _ < \"$WIRE_NEVER\"; }","name":"api","ready":null}]
+    stream: false
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs build <root>/app@local p --on box-a --pin <root>/lib@local
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/build/p:pin (<root>/lib)
+      | 1	3
+      | app/build/p:send	rsh	app_build_p_send	1
+      | app/build/p	shared	app_build_p	1
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p_pin
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":null,"repo":"lib","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/build/p:send
+      | 2	3
+      | app/build/p	shared	app_build_p	1
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":{"config":"[patch.crates-io]\nserde = { path = \"<root>/scratch/ws/lib/local-<key>\" }\n","name":"pin-<hash>"},"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/build/p
+      | 3	3
+    card: null
+    command: export SAMPLES=10; echo ran cuda samples=$SAMPLES
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>-pin-<hash>","worktree":"<root>/scratch/ws/app/pin-<hash>/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+
+== dibs build app@local p --on box-a  (a git dependency the machine lacks)
+-> exit 0
+call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/build/p:send
+      | 1	2
+      | app/build/p	shared	app_build_p	1
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p_send
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[{"commit":"<commit>","name":"dep-0123456789abcdef"}],"nest":null,"packages":{"lines":["<sha>","<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.then: "transfer"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch: null
+    card: null
+    command: rsync --server <what this rsync asks of its far side>
+    fingerprint: null
+    json: false
+    label: sync
+    max: 3600
+    max_from: default
+    mode: rsh
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 0
+    watch.off: true
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: session suite
+    agent_id: local_suite
+    batch:
+      | <batch>	app/build/p
+      | 2	2
+    card: null
+    command: export SAMPLES=10; echo ran cuda samples=$SAMPLES
+    fingerprint: 70e532912455d091
+    json: false
+    label: app_build_p
+    max: 1800
+    max_from: default
+    mode: shared
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: true
+    tree.place: {"at":{"target":"<root>/scratch/target/app-local-<key>","worktree":"<root>/scratch/ws/app/local-<key>"}}
+    tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
+    tree.then: "step"
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false

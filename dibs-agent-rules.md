@@ -7,6 +7,7 @@ spoiled without it.
 - Anything measured runs on a benchmarking machine, never on a laptop: a laptop throttles and
   shares memory bandwidth with everything else on it, so its timings are noise.
 - Never `ssh` a machine to do work. An unlocked command ruins whoever is benchmarking at the time.
+  Where `dibs hook ssh` is wired, it refuses one and names the dibs call to make instead.
 - Never delete anything on a shared machine to make room, and never work around a permission
   error. Tell the person you work for.
 
@@ -53,7 +54,9 @@ spoiled without it.
   start the work, then `read -r _ < f`.
 - Scratch on a machine goes under `$DIBS_SCRATCH`, never `/tmp`, which is a small tmpfs shared by
   everyone that one build tree fills for all of us. dibs exports it and points `TMPDIR` into it;
-  put build trees, logs and binaries in a subdirectory you name.
+  put build trees, logs and binaries in a subdirectory you name, which dibs never removes. What
+  sits under `TMPDIR` unchanged for two weeks, by default, goes at the next recipe's prepare; what
+  is under `$DIBS_SCRATCH/out` goes only when a person runs `dibs --gc`.
 - **A full machine is read with `dibs --gc --dry-run`**, which says what is there, how big it is
   and when each of it was last used, and deletes nothing. Report that; removing it is the
   person's call, since a build cache you would reclaim may be the one someone is measuring
@@ -134,9 +137,10 @@ spoiled without it.
 
 ### Status, labels and names
 
-- `dibs status` says who holds each machine, who is queued and roughly how long, and never blocks;
-  `--on <machine>` narrows it to one. For a step of a batch it says which step of how many,
-  what is still to come on that machine, and how long the batch has left there, queue included.
+- `dibs status` says who holds each machine, and its job id, for `dibs out`; who is queued and
+  roughly how long; and never blocks. `--on <machine>` narrows it to one. For a step of a batch it
+  says which step of how many, what is still to come on that machine, and how long the batch has
+  left there, queue included.
   **Asked how long your work will take, run it rather than guessing.** The later calls of a script
   are invisible to it.
 - **Label the kind of work, not the run**: `--label yield-sweep`, never `yield-sweep-run3`. The
@@ -158,9 +162,9 @@ spoiled without it.
 
 ### Machines
 
-- `dibs --machines` lists the known machines. `dibs --check <host>` says whether a
-  machine is usable and what is in it; run it before first use and read its warnings, not only its
-  exit code, and `--write` records the machine.
+- `dibs --machines` lists the known machines. `dibs --check <host>` installs dibs's runner there,
+  which needs cargo on the machine, and says whether it is usable and what is in it; run it before
+  first use and read its warnings, not only its exit code, and `--write` records the machine.
 - A machine marked `measure = false` refuses `--bench`. That is not an obstacle to route around: its
   numbers would mean nothing. Send the benchmark to a machine that measures, or run it shared if it
   was never a measurement. Such a machine is still good for builds and tests through `--on`.
@@ -182,9 +186,9 @@ spoiled without it.
   a forgotten `--on` is exactly that line. Keep the plain label for new work; `-kd` and `-mg`
   suffixes are not needed.
 - On one machine, every run under one label must name the same card, so dibs refuses a second card
-  and says what the first was. To move a label to another card on purpose, pass `--new-series`:
-  its series on that machine starts again instead of mixing. A recipe takes it too, and is checked
-  before it builds anything.
+  and says what the first was and whoever ran it. To move a label to another card on purpose, pass
+  `--new-series`: its series on that machine starts again instead of mixing. A recipe takes it too,
+  and is checked before it builds anything.
 - `dibs bench ... --dry-run` prints which card it would use. On a measurement worth keeping, read
   that line first.
 - Never set `CUDA_VISIBLE_DEVICES` yourself. dibs sets it from the alias, resolved on the machine
@@ -248,7 +252,7 @@ spoiled without it.
   `127.0.0.1:$DIBS_PORT_<NAME>`: client and server on one box, with no network between them.
 - **If no recipe fits, say so where it is counted**: `dibs raw --reason '<why>'`, or `--reason` on
   `dibs shell`. `dibs gaps` prints those, and a reason that keeps coming up is the specification
-  for the next recipe.
+  for the next recipe. Neither starts a server: `--with`, `--port` and `--ready` go on `dibs run`.
 - **Anything else that got in the way goes in `dibs --friction '<one line>'`**: a flag that is
   missing, a message that misled, a refusal you had to work around, a bug. One line, in your own
   words, at the moment it annoyed you, which is the only moment you know. It is read back by
@@ -264,14 +268,17 @@ spoiled without it.
 ### When dibs says no
 
 - The first call after dibs has changed says so on stderr, once per session, with the commits that
-  arrived. Flags and output you remember may be wrong from then on: read `dibs --help`.
-- Exits 69, 70 and 71 are for telling the person you work for, never for working around:
+  arrived. Flags and output you remember may be wrong from then on: read `dibs --help`. The first
+  call it makes to each machine also builds dibs's runner there, once, as a shared job.
+- Exits 69, 70, 71 and 72 are for telling the person you work for, never for working around:
   - **69** unreachable: off, asleep, or its network needs a login. Do what does not need the
     machine, and do not retry in a loop.
   - **70** no room: the machine's scratch is full or over quota, so nothing can run there.
     `dibs --gc --dry-run` says what is filling it, which is what to tell them.
   - **71** the lock directory cannot be written, so **nothing ran**; a sandboxed shell is the usual
     cause. Never point `DIBS_LOCK_DIR` somewhere writable: a lock nobody else uses excludes nobody.
+  - **72** dibs could not install its runner on the machine, so **nothing ran**: it has none yet,
+    which `dibs --check <machine>` installs, or the build failed and its output says why.
 - **75** it was busy and you passed `--wait`.
 - **76** its batch was cancelled with `dibs --kill <batch-id>`. It was meant to stop: do not run it
   again unless asked.

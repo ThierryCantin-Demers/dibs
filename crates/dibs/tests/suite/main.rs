@@ -1,0 +1,33 @@
+//! dibs end to end, on this computer only: every test in a sandbox of its own, run in parallel.
+//! What needs a real ssh channel is in tests/live, which runs only when asked for by name.
+
+mod harness;
+
+mod baselines;
+mod batch;
+mod cli;
+mod client;
+mod contention;
+mod hold;
+mod hook;
+mod identity;
+mod lock;
+mod machines;
+mod output;
+mod prepares;
+mod recipes;
+mod records;
+mod removed;
+mod reports;
+mod runner;
+mod sandbox;
+mod scratch;
+mod services;
+mod snapshot;
+mod snapshots;
+mod status;
+mod sync;
+mod transport;
+mod trees;
+mod update;
+mod wire;

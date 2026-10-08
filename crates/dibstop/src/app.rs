@@ -1,0 +1,376 @@
+//! What the screen shows and what the keys act on: one view per machine, the selection, and
+//! whatever is open over the table.
+
+use std::{
+    collections::BTreeMap,
+    sync::mpsc::Sender,
+    time::{Duration, Instant},
+};
+
+use crate::{
+    action::Action,
+    feed::{Feed, Msg},
+    item::Item,
+};
+use dibs_format::{Label, status::Status};
+
+const MIN_INTERVAL: u64 = 1;
+const MAX_INTERVAL: u64 = 60;
+
+/// How long a feed that ended waits before it is started again.
+const RETRY_ENDED: Duration = Duration::from_secs(30);
+
+/// A feed this many intervals late, plus some slack, is called out as behind.
+const LATE_INTERVALS: u64 = 3;
+const LATE_SLACK_SECS: u64 = 2;
+
+pub fn interval(secs: u64) -> u64 {
+    secs.clamp(MIN_INTERVAL, MAX_INTERVAL)
+}
+
+pub struct Overlay {
+    pub title: String,
+    pub body: String,
+    pub scroll: u16,
+}
+
+impl Overlay {
+    pub fn new(title: impl Into<String>, body: impl Into<String>) -> Overlay {
+        Overlay {
+            title: title.into(),
+            body: body.into(),
+            scroll: 0,
+        }
+    }
+}
+
+/// A kill waiting for its `y`.
+pub struct PendingKill {
+    pub machine: String,
+    pub pid: u32,
+    pub label: Label,
+}
+
+/// One machine's side of the world. Held apart rather than merged, because "the feed is down"
+/// and "it is idle" are different answers and a merged view can only give one of them.
+#[derive(Default)]
+pub struct View {
+    pub status: Option<Status>,
+    pub seen_at: Option<Instant>,
+    pub trouble: Option<String>,
+    pub dead: Option<String>,
+    /// When a feed that ended is started again; none while one is running.
+    pub retry_at: Option<Instant>,
+}
+
+impl View {
+    /// ssh's refusal of the login, which lists the methods it tried; a remote file's "Permission
+    /// denied" does not. The machine answered, so waiting will not bring it back.
+    pub fn refusal(&self) -> Option<&'static str> {
+        let t = self
+            .trouble
+            .as_deref()
+            .filter(|t| t.contains("Permission denied ("))?;
+        Some(match t.contains("It accepts your key") {
+            true => "key locked",
+            false => "no key",
+        })
+    }
+}
+
+pub struct App {
+    pub views: BTreeMap<String, View>,
+    pub sel: usize,
+    pub top: usize,
+    pub overlay: Option<Overlay>,
+    pub confirm: Option<PendingKill>,
+    pub busy: Option<String>,
+    pub interval: u64,
+    feeds: Vec<Feed>,
+    generation: u64,
+    /// Where the first job landed on screen last frame, so a click knows what it hit.
+    pub table_top: u16,
+    pub table_rows: u16,
+    /// Capturing the mouse takes the terminal's own text selection away, which is worth
+    /// having back sometimes. The wheel and clicks go with it while it is off.
+    pub mouse: bool,
+    /// When the round now being collected began, and when the last complete one ended. A round
+    /// is every live feed having reported, which is the only moment the whole screen was current.
+    round_from: Instant,
+    pub refreshed: Option<Instant>,
+}
+
+impl App {
+    pub fn new(interval: u64) -> App {
+        App {
+            views: BTreeMap::new(),
+            sel: 0,
+            top: 0,
+            overlay: None,
+            confirm: None,
+            busy: None,
+            interval,
+            feeds: Vec::new(),
+            generation: 0,
+            table_top: 0,
+            table_rows: 0,
+            mouse: true,
+            round_from: Instant::now(),
+            refreshed: None,
+        }
+    }
+
+    /// One feed per machine. No inventory means one unnamed feed, going wherever a bare `dibs`
+    /// would, so a single machine looks exactly as it did before there was more than one.
+    pub fn start(machines: Vec<String>, interval: u64, tx: &Sender<Msg>) -> App {
+        let names = if machines.is_empty() {
+            vec![String::new()]
+        } else {
+            machines
+        };
+        let mut app = App::new(interval);
+        for m in names {
+            app.views.entry(m.clone()).or_default();
+            app.feeds
+                .push(Feed::spawn(tx.clone(), m, interval, app.generation));
+        }
+        app
+    }
+
+    pub fn rows(&self) -> Vec<Item> {
+        self.views
+            .iter()
+            .filter_map(|(m, v)| v.status.as_ref().map(|s| Item::all(m, s)))
+            .flatten()
+            .collect()
+    }
+
+    pub fn selected(&self) -> Option<Item> {
+        self.rows().into_iter().nth(self.sel)
+    }
+
+    /// Whose log, whose GPU, whose lock directory. The row under the cursor answers it; with
+    /// nothing selected the first machine does, which is the only one when there is one.
+    pub fn current_machine(&self) -> String {
+        self.selected()
+            .map(|it| it.machine)
+            .or_else(|| self.views.keys().next().cloned())
+            .unwrap_or_default()
+    }
+
+    /// The column is worth its width only when there is more than one machine to tell apart.
+    pub fn multi(&self) -> bool {
+        self.views.len() > 1
+    }
+
+    pub fn start_action(&mut self, action: Action, tx: &Sender<Msg>) {
+        self.busy = Some(action.doing.clone());
+        action.start(tx.clone());
+    }
+
+    pub fn move_by(&mut self, delta: i32) {
+        let n = self.rows().len();
+        if n == 0 {
+            return;
+        }
+        self.sel = (self.sel as i32 + delta).clamp(0, n as i32 - 1) as usize;
+    }
+
+    /// The interval lives in the feed, so changing it means a new one. The generation
+    /// counter is what stops the old feed's closing breath from being read as this one
+    /// dying.
+    pub fn set_interval(&mut self, secs: u64, tx: &Sender<Msg>) {
+        let secs = interval(secs);
+        if secs == self.interval {
+            return;
+        }
+        self.interval = secs;
+        self.generation += 1;
+        let names: Vec<String> = std::mem::take(&mut self.feeds)
+            .iter()
+            .map(|f| f.machine.clone())
+            .collect();
+        for m in names {
+            self.feeds.push(Feed::spawn(
+                tx.clone(),
+                m.clone(),
+                self.interval,
+                self.generation,
+            ));
+            self.views.entry(m).or_default().dead = None;
+        }
+        self.busy = Some(format!("reconnecting every {secs}s"));
+    }
+
+    pub fn receive(&mut self, msg: Msg) {
+        match msg {
+            Msg::State {
+                generation,
+                machine,
+                status,
+            } if generation == self.generation => {
+                let now = Instant::now();
+                let v = self.views.entry(machine).or_default();
+                v.status = Some(*status);
+                v.seen_at = Some(now);
+                v.dead = None;
+                v.trouble = None;
+                self.busy = None;
+                self.close_round(now);
+            }
+            Msg::Trouble {
+                generation,
+                machine,
+                text,
+            } if generation == self.generation => {
+                self.views.entry(machine).or_default().trouble = Some(text);
+            }
+            Msg::Ended {
+                generation,
+                machine,
+                why,
+            } if generation == self.generation => {
+                let now = Instant::now();
+                let v = self.views.entry(machine).or_default();
+                v.dead = Some(why);
+                v.retry_at = Some(now + RETRY_ENDED);
+                self.close_round(now);
+            }
+            Msg::State { .. } | Msg::Trouble { .. } | Msg::Ended { .. } => {}
+            Msg::Action { title, body } => {
+                self.busy = None;
+                self.overlay = Some(Overlay::new(title, body));
+            }
+        }
+    }
+
+    /// A machine asleep or off the network comes back without restarting this. It keeps showing
+    /// as down until the new feed reports, so a retry that fails again changes nothing on screen.
+    pub fn retry_ended(&mut self, tx: &Sender<Msg>) {
+        let now = Instant::now();
+        for (m, v) in self
+            .views
+            .iter_mut()
+            .filter(|(_, v)| v.retry_at.is_some_and(|t| t <= now))
+        {
+            self.feeds.retain(|f| f.machine != *m);
+            self.feeds.push(Feed::spawn(
+                tx.clone(),
+                m.clone(),
+                self.interval,
+                self.generation,
+            ));
+            v.retry_at = None;
+        }
+    }
+
+    fn close_round(&mut self, now: Instant) {
+        if self.round_over() {
+            self.refreshed = Some(now);
+            self.round_from = now;
+        }
+    }
+
+    /// Every feed that can still report has reported since the round began. The header dates the
+    /// screen by that, because it is the one moment all of it was current: the newest feed resets
+    /// the number several times an interval with several machines, and the oldest walks up and
+    /// down as they drift apart. A feed that has stopped reporting holds the round open until it
+    /// is marked behind, which says so for that machine alone: one asleep would otherwise freeze
+    /// the date of every other.
+    fn round_over(&self) -> bool {
+        self.views
+            .values()
+            // After the round began, not at the moment it did: the feed whose report ended the
+            // last round is the one that starts this one, and counting it twice leaves the round
+            // needing only the others, which ends it early and by a different amount each time.
+            .all(|v| {
+                v.dead.is_some()
+                    || v.seen_at
+                        .is_some_and(|t| t > self.round_from || self.behind(t))
+            })
+    }
+
+    /// Reported last more than a few intervals ago.
+    pub fn behind(&self, seen: Instant) -> bool {
+        seen.elapsed().as_secs() > self.interval * LATE_INTERVALS + LATE_SLACK_SECS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn view(seen: Option<Instant>, dead: bool) -> View {
+        View {
+            status: None,
+            seen_at: seen,
+            trouble: None,
+            dead: dead.then(|| "gone".to_string()),
+            retry_at: None,
+        }
+    }
+
+    #[test]
+    fn a_round_is_over_when_every_feed_that_can_report_has() {
+        let mut app = App::new(5);
+        let now = Instant::now();
+        app.views.insert("a".into(), view(Some(now), false));
+        app.views.insert(
+            "b".into(),
+            view(Some(app.round_from - Duration::from_secs(1)), false),
+        );
+        assert!(
+            !app.round_over(),
+            "b has not reported since the round began"
+        );
+        app.views.insert("b".into(), view(Some(now), false));
+        assert!(app.round_over());
+        app.views
+            .insert("c".into(), view(Some(app.round_from), false));
+        assert!(
+            !app.round_over(),
+            "the report that ended the last round does not count in this one"
+        );
+        app.views.insert("c".into(), view(None, false));
+        assert!(
+            !app.round_over(),
+            "a feed yet to say anything holds the round open"
+        );
+        app.views.insert("c".into(), view(None, true));
+        assert!(app.round_over(), "one that has ended cannot report at all");
+        app.views.insert(
+            "c".into(),
+            view(Some(app.round_from - Duration::from_secs(60)), false),
+        );
+        assert!(
+            app.round_over(),
+            "nor does one already marked behind hold it"
+        );
+    }
+
+    #[test]
+    fn a_refused_login_is_told_from_a_machine_that_did_not_answer() {
+        let with = |t: &str| {
+            View {
+                trouble: Some(t.to_string()),
+                ..view(None, true)
+            }
+            .refusal()
+        };
+        let refused = "m@host: Permission denied (publickey,password).";
+        assert_eq!(with(refused), Some("no key"));
+        assert_eq!(
+            with(&format!(
+                "{refused}\n  It accepts your key /k/id, which needs its passphrase"
+            )),
+            Some("key locked")
+        );
+        assert_eq!(
+            with("ssh: Could not resolve hostname host: Name or service not known"),
+            None
+        );
+        assert_eq!(with("cat: /x: Permission denied"), None);
+    }
+}

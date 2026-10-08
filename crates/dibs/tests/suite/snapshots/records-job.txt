@@ -1,0 +1,93 @@
+== jobs/<job>, a job that printed to both streams: dibs --label rec-plain 'echo out; echo err >&2'
+  cmd
+    | echo out; echo err >&2
+  log
+    | out
+    | err
+  meta
+    mode = shared
+    label = rec-plain
+    queued = <s>
+    ran = <s>
+    exit = 0
+    by = command
+    agent = session suite
+    lines = 2
+    who = local_suite
+
+== jobs/<job>, a job that failed: dibs --label rec-fails 'exit 3'
+  cmd
+    | exit 3
+  log
+  meta
+    mode = shared
+    label = rec-fails
+    queued = <s>
+    ran = <s>
+    exit = 3
+    by = command
+    agent = session suite
+    lines = 0
+    who = local_suite
+
+== jobs/<job>, a job with a service: dibs --label rec-with --with 'srv=echo serving; : > "$DIBS_SCRATCH/srv-up"; read -r _ < "$DIBS_SCRATCH/never"' --ready 'test -e "$DIBS_SCRATCH/srv-up"' true
+  cmd
+    | true
+  log
+  meta
+    mode = shared
+    label = rec-with
+    queued = <s>
+    ran = <s>
+    exit = 0
+    by = command
+    agent = session suite
+    lines = 0
+    who = local_suite
+  with-srv.log
+    | serving
+
+== jobs/<job>, a benchmark that compiled nothing: dibs --bench --label rec-bench 'echo '\''    Finished `release` profile [optimized] target(s) in 0.01s'\'''
+  cmd
+    | echo '    Finished `release` profile [optimized] target(s) in 0.01s'
+  log
+    |     Finished `release` profile [optimized] target(s) in 0.01s
+  meta
+    mode = bench
+    label = rec-bench
+    queued = <s>
+    ran = <s>
+    exit = 0
+    by = command
+    agent = session suite
+    lines = 1
+    who = local_suite
+
+== jobs/<job>, a recipe's job, with the files it kept
+  artifacts/out/r.json
+  cmd
+  log
+  meta
+    mode = bench
+    label = app_bench_kept
+    queued = <s>
+    ran = <s>
+    exit = 0
+    by = command
+    agent = session suite
+    lines = 0
+    who = local_suite
+
+== jobs/<job>, a recipe's job, with the files it kept
+  cmd
+  log
+  meta
+    mode = shared
+    label = app_bench_kept_send
+    queued = <s>
+    ran = <s>
+    exit = 0
+    by = command
+    agent = session suite
+    lines = 0
+    who = local_suite

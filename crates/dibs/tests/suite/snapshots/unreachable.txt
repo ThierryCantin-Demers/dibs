@@ -1,0 +1,121 @@
+== dibs --on box-a --status  (a host key that changed)
+-> exit 69
+2| @@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   Its host key is not the one recorded. The machine answered, so it is up;
+2|   ssh will not talk to it until you say which key is right.
+2|   If it was reinstalled or its key regenerated, that is expected:
+2|     ssh-keygen -R box-a
+2|   then connect once by hand. If it was not, find out why the key changed
+2|   before trusting it.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a host key never recorded)
+-> exit 69
+2| Host key verification failed.
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   Its host key is not in your known_hosts, and dibs connects with BatchMode,
+2|   which cannot answer the question ssh is asking. The machine is almost
+2|   certainly up: this is about trust, not reachability.
+2|   Record the key by connecting once by hand:  ssh dibs@box-a
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a refused login, with no key it takes)
+-> exit 69
+2| dibs@box-a: Permission denied (publickey).
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   It answered and refused the login, so it is up and this is about keys.
+2|   It accepted none of your keys: check yours is in that account's authorized_keys.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a refused login, with a key it takes locked)
+-> exit 69
+2| dibs@box-a: Permission denied (publickey).
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   It answered and refused the login, so it is up and this is about keys.
+2|   It accepts your key /keys/id_ed25519, which needs its passphrase, and no ssh agent holds it.
+2|   Load it once:  ssh-add /keys/id_ed25519
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a refused connection)
+-> exit 69
+2| ssh: connect to host box-a port 22: Connection refused
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   It answered and nothing is listening on the ssh port, so the machine is up
+2|   and sshd is not.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a name that does not resolve)
+-> exit 69
+2| ssh: Could not resolve hostname box-a: Name or service not known
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   The name 'box-a' does not resolve from here. A .local name needs mDNS
+2|   and the same network; anything else needs DNS.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (no route from here)
+-> exit 69
+2| ssh: connect to host box-a port 22: Network is unreachable
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   This side has no route to it: the problem is your own network or VPN, not the
+2|   machine. Nothing about it can be known from here until that is back.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (nothing at its address)
+-> exit 69
+2| ssh: connect to host box-a port 22: No route to host
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   Nothing answered at its address: it is asleep, off, or no longer at that address.
+2|   A laptop asleep on its lid or battery looks exactly like this.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a timeout, with tailscale logged out)
+-> exit 69
+2| ssh: connect to host box-a port 22: Connection timed out
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   Tailscale is logged out, which it is after a reboot.
+2|   Log in with: tailscale up
+2|   ssh said: ssh: connect to host box-a port 22: Connection timed out
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a timeout, with tailscale stopped)
+-> exit 69
+2| ssh: connect to host box-a port 22: Connection timed out
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   Tailscale is stopped. Start it with: tailscale up
+2|   ssh said: ssh: connect to host box-a port 22: Connection timed out
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a timeout, with the peer offline)
+-> exit 69
+2| ssh: connect to host box-a port 22: Connection timed out
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   Tailscale reports box-a offline: 100.64.0.2   box-a   someone@   linux   offline
+2|   ssh said: ssh: connect to host box-a port 22: Connection timed out
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a timeout, with the peer up)
+-> exit 69
+2| ssh: connect to host box-a port 22: Connection timed out
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   Tailscale reports box-a up (100.64.0.2   box-a   someone@   linux   -), so this is an ssh problem.
+2|   ssh said: ssh: connect to host box-a port 22: Connection timed out
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== dibs --on box-a --status  (a timeout, and not a peer)
+-> exit 69
+2| ssh: connect to host box-a port 22: Connection timed out
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   It did not answer: off, asleep, or not on this network. It is not
+2|   a tailnet peer either, so tailscale has nothing to say about it.
+2|   ssh said: ssh: connect to host box-a port 22: Connection timed out
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
+== DIBS_HOST=dibs@box-z dibs --status  (with no inventory, and box-z timing out)
+-> exit 69
+2| ssh: connect to host box-a port 22: Connection timed out
+2| dibs: cannot reach 'dibs@box-z' over ssh.
+2|   It did not answer: off, asleep, or not on this network. It is not
+2|   a tailnet peer either, so tailscale has nothing to say about it.
+2|   ssh said: ssh: connect to host box-a port 22: Connection timed out
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.

@@ -1,0 +1,116 @@
+== dibs build <root>/app@local p
+-> exit 0
+1| ran cuda samples=10
+2| dibs: preparing app from <root>/app (clean)
+2| dibs: <root>/scratch/ws/app/local-<key>
+2| job <job>  shared  app_build_p_send  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| dibs: step 1/1 [Shared]
+2| job <job>  shared  app_build_p  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+
+== dibs bench <root>/app-topk@local gate
+-> exit 0
+1|    Compiling app v0.1.0
+1|     Finished `release` profile [optimized] target(s) in <dur>
+1| measured
+2| dibs: preparing app from <root>/app-topk (clean)
+2| dibs: <root>/scratch/ws/app/local-<key>
+2| dibs: target directory copied from app-local-<key>, so only what differs rebuilds
+2| job <job>  shared  app_bench_gate_send  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| dibs: step 1/2 [Shared]
+2| job <job>  shared  app_bench_gate  queued <s>  ran <s>  exit 0  by=command  built=1
+2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2| dibs: step 2/2 [Exclusive]
+2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+
+== dibs bench <root>/app@origin/main..local gate --reps 2
+-> exit 0
+1|    Compiling app v0.1.0
+1|     Finished `release` profile [optimized] target(s) in <dur>
+1| dibs: this tree did not make the last build in <root>/scratch/target/app-local-<key>, so cargo rebuilds its crates
+1|    Compiling app v0.1.0
+1|     Finished `release` profile [optimized] target(s) in <dur>
+1| measured
+1| measured
+1| measured
+1| measured
+2| dibs: comparing 2 arms of app, measured base local | local base
+2|   base: app at <sha>, where local left origin/main, sent from this computer
+2|   local: app from <root>/app (clean)
+2| dibs: <root>/scratch/ws/app/local-<key>
+2| dibs: target directory copied from app-local-<key>, so only what differs rebuilds
+2| job <job>  shared  app_bench_gate_send  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| dibs: base: step 1/2 [Shared]
+2| job <job>  shared  app_bench_gate  queued <s>  ran <s>  exit 0  by=command  built=1
+2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2| dibs: <root>/scratch/ws/app/local-<key>
+2| job <job>  shared  app_bench_gate_send  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| dibs: local: step 1/2 [Shared]
+2| job <job>  shared  app_bench_gate  queued <s>  ran <s>  exit 0  by=command  built=1
+2|   log <host>:<root>/scratch/jobs/<job>/log  (3 lines)  dibs --on <host> --out <job>
+2| dibs: base: rep 1/2, step 2/2 [Exclusive]
+2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2| dibs: local: rep 1/2, step 2/2 [Exclusive]
+2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2| dibs: local: rep 2/2, step 2/2 [Exclusive]
+2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2| dibs: base: rep 2/2, step 2/2 [Exclusive]
+2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2| dibs: measured, each rep's exclusive seconds and the jobs with its output:
+2|   base   app@local:<sha>-<sha>  <dur> <dur>  jobs <job> <job>
+2|   local  app@local:<sha>-<sha>  <dur> <dur>  jobs <job> <job>
+
+== dibs build <root>/app@local p --sweep samples=1,2
+-> exit 0
+1| batch <batch>  2 steps, <dur>
+1| name       machine  lock       wall    exit  jobs
+1| samples-1  ?        recipe       <dur>       0  <job>, <job>
+1| samples-2  ?        recipe       <dur>       0  <job>, <job>
+1| each step's output: <root>/home/.local/state/dibs/batch/<batch>/<name>.out and .err; a job's whole log: dibs --out <job>
+2| dibs: batch <batch>, 2 steps. You are told when it ends; there is nothing to watch.
+2|   samples-1  ?        recipe  after -
+2|   samples-2  ?        recipe  after samples-1
+
+== dibs bench <root>/app@local gate --reps 2
+-> exit 0
+1|    Compiling app v0.1.0
+1|     Finished `release` profile [optimized] target(s) in <dur>
+1| measured
+1| measured
+2| dibs: preparing app from <root>/app (clean)
+2| dibs: <root>/scratch/ws/app/local-<key>
+2| job <job>  shared  app_bench_gate_send  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
+2| dibs: step 1/2 [Shared]
+2| job <job>  shared  app_bench_gate  queued <s>  ran <s>  exit 0  by=command  built=1
+2|   log <host>:<root>/scratch/jobs/<job>/log  (2 lines)  dibs --on <host> --out <job>
+2| dibs: rep 1/2, step 2/2 [Exclusive]
+2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2| dibs: rep 2/2, step 2/2 [Exclusive]
+2| job <job>  bench  app_bench_gate  queued <s>  ran <s>  exit 0  by=command
+2|   log <host>:<root>/scratch/jobs/<job>/log  (1 lines)  dibs --on <host> --out <job>
+2| dibs: measured, each rep's exclusive seconds and the jobs with its output:
+2|   local  app@local:<sha>-<sha>  <dur> <dur>  jobs <job> <job>
+
+== dibs bench <root>/app@local gate --on box-a --device gpu:card --dry-run
+-> exit 0
+1| label       app/bench/gate@gpu:card
+1| recipe      gate  (6bc29855bfd0b3e9)
+1| isolation   Machine
+1| ref         local <sha>-<sha> from <root>/app
+1|             clean, so this is the commit as it stands
+1| device      gpu:card
+1| step 1      [Shared] cargo build --release
+1|             label app/bench/gate@gpu:card
+1| step 2      [Exclusive] echo measured
+1|             label app/bench/gate@gpu:card

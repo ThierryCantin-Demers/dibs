@@ -1,0 +1,25 @@
+== dibs list <app>
+-> exit 0
+1| bench:
+1|   fresh   (from the repo)
+1|       fresh each run: STORE
+1|   hot   (from the repo)
+1| build:
+1|   need   (from the repo)
+1|       --size <value>, required
+1|   p   (from the repo)
+1|       --backend cuda  one of cuda, vulkan
+1|       --samples 10
+1|   rel   (from the repo)
+1| test:
+1|   mine
+1| service:
+1|   servers   (from the repo)
+1| 
+1| a new tree starts without: cache
+1| 
+1| local recipes: <root>/home/.config/dibs/recipes
+
+== dibs list <a clone with no recipes>
+-> exit 2
+2| dibs: no recipes for app: nothing in <root>/home/prog/app/.dibs.toml or <root>/home/.config/dibs/recipes/app.toml

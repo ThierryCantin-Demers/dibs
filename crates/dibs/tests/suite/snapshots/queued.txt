@@ -1,0 +1,57 @@
+== dibs --wait 1 --label queued true  (behind a benchmark with no history of its own)
+-> exit 75
+2| dibs: queued and has not started, behind the benchmark no-history, ~{10m00s} until it starts. dibs status shows the queue.
+2| dibs: still busy after 1s, gave up.
+2| dibs: BUSY, benchmark in progress (1 queued)
+2|   bench  no-history  <dur>  pid <pid>  job <job>   [nothing on this one; every bench job on the machine: usually 10m00s over 3 runs, ~{9m59s} left]
+2|     read -r _ < <root>/f-h1
+2|     from session suite
+2|   queued 1 of 1: shared  queued  waiting <dur>  pid <pid>   [~{9m59s} until it starts]
+2|     true
+2|     from session suite
+
+== dibs --bench --wait 1 --label a-bench true  (a benchmark behind two shared holders)
+-> exit 75
+2| dibs: queued and has not started, behind build and 1 more, ~{1m00s} until it starts. dibs status shows the queue.
+2| dibs: still busy after 1s, gave up.
+2| dibs: in use, shared (1 queued)
+2|   shared  build  <dur>  pid <pid>  job <job>   [usually 1m00s over 3 runs, ~{59s} left]
+2|     read -r _ < <root>/f-s1
+2|     from session suite
+2|   shared  build  <dur>  pid <pid>  job <job>   [usually 1m00s over 3 runs, ~{59s} left]
+2|     read -r _ < <root>/f-s1
+2|     from session suite
+2|   queued 1 of 1: bench  a-bench  waiting <dur>  pid <pid>   [~{59s} until it starts]
+2|     true
+2|     from session suite
+
+== dibs --wait 1 --label quick true  (a quick job going around a queued benchmark, behind the one running)
+-> exit 75
+2| dibs: queued and has not started, behind the benchmark long-bench, with 1 queued first, ~{10m01s} until it starts. dibs status shows the queue.
+2| dibs: still busy after 1s, gave up.
+2| dibs: BUSY, benchmark in progress (2 queued)
+2|   bench  long-bench  <dur>  pid <pid>  job <job>   [usually 10m00s over 3 runs, ~{9m59s} left]
+2|     read -r _ < <root>/f-h2
+2|     from session suite
+2|   queued 1 of 2: bench  queued-bench  waiting <dur>  pid <pid>   [~{9m59s} until it starts]
+2|     true
+2|     from session suite
+2|   queued 2 of 2: shared  quick  waiting <dur>  pid <pid>   [~{10m00s} until it starts]
+2|     true
+2|     from session suite
+2|   (queued in arrival order; the kernel picks the actual wake order)
+
+== dibs --wait 1 --label gated true  (with a benchmark queued ahead, holding the gate)
+-> exit 75
+2| dibs: busy, a benchmark is queued ahead of you. Gave up after 1s.
+2| dibs: BUSY, benchmark in progress (2 queued)
+2|   bench  long-bench  <dur>  pid <pid>  job <job>   [usually 10m00s over 3 runs, ~{9m58s} left]
+2|     read -r _ < <root>/f-h2
+2|     from session suite
+2|   queued 1 of 2: bench  queued-bench  waiting <dur>  pid <pid>   [~{9m58s} until it starts]
+2|     true
+2|     from session suite
+2|   queued 2 of 2: shared  gated  waiting <dur>  pid <pid>   [~{9m59s} until it starts]
+2|     true
+2|     from session suite
+2|   (queued in arrival order; the kernel picks the actual wake order)

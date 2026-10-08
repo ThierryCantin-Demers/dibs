@@ -1,0 +1,368 @@
+//! `--hold`: the machine's lock is held by a job there that only waits, while the command runs
+//! here with the terminal; the command is stopped if the lock goes first.
+
+use crate::{
+    call::watched::{Starter, Watched},
+    cli::{Command, Service},
+    machine::{Held, Holder, Interrupt, Reach, Relayed},
+};
+use dibs_format::{Exit, Mode, wire::Picked};
+use std::{
+    fmt,
+    io::ErrorKind,
+    net::{TcpStream, ToSocketAddrs as _},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    time::{Duration, Instant},
+};
+
+/// How long a connection to a ready service may take, its name's lookup included.
+const REACH_WITHIN: Duration = Duration::from_secs(3);
+/// How long a name may take to resolve before a connection that timed out is put down to it.
+const RESOLVE_WITHIN: Duration = Duration::from_secs(2);
+
+/// What runs here while the lock is held.
+pub struct Hold<'a> {
+    pub command: &'a Command,
+    /// The lock, as the notice names it: `shared` or `bench`.
+    pub lock: Mode,
+    /// The machine as the notices name it.
+    pub at: String,
+    /// The lock's machine, lowercased, which a call inside the hold must not take again.
+    pub lock_at: String,
+    /// Where the command reaches the machine's services.
+    pub reach: Reach,
+    /// The services the machine runs for the call, which the command here has to reach.
+    pub services: &'a [Service],
+}
+
+#[derive(Default)]
+struct Shared {
+    command: Option<u32>,
+    command_done: bool,
+    holder_gone: bool,
+}
+
+impl Hold<'_> {
+    /// Runs the command once the machine holds the lock; the exit is the holder's.
+    pub fn run(&self, holder: Holder) -> std::io::Result<i32> {
+        let Holder { held, ended } = holder;
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let at = self.at.clone();
+        let watched = Arc::clone(&shared);
+        let holder = std::thread::spawn(move || {
+            let exit = ended.join();
+            let mut state = watched.lock().unwrap_or_else(|e| e.into_inner());
+            state.holder_gone = true;
+            if let Some(pid) = state.command.filter(|_| !state.command_done) {
+                stop_early(&at, pid);
+            }
+            exit
+        });
+        let Ok(Held { ports, release }) = held.recv() else {
+            return Ok(holder_exit(holder.join()));
+        };
+        if let Some(unreached) = self.unreached(&ports) {
+            eprintln!("{unreached}");
+            done(&shared);
+            release.send(i32::from(Exit::ServiceFailed.code()));
+            return Ok(holder_exit(holder.join()));
+        }
+        eprintln!(
+            "dibs: holding the {} lock on {}, running here: {}",
+            self.lock.as_str(),
+            self.at,
+            self.command.shell_string()
+        );
+        let interrupt = Interrupt::defer();
+        let status = match self.guard(&ports).and_then(Watched::spawn) {
+            Ok(mut guarded) => {
+                {
+                    let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
+                    state.command = Some(guarded.id());
+                    if state.holder_gone {
+                        stop_early(&self.at, guarded.id());
+                    }
+                }
+                guarded.wait().map(Exit::shell_status).unwrap_or(1)
+            }
+            Err(e) => {
+                eprintln!("dibs: could not run {}: {e}", self.command.shell_string());
+                127
+            }
+        };
+        drop(interrupt);
+        done(&shared);
+        release.send(status);
+        Ok(holder_exit(holder.join()))
+    }
+
+    /// The first `--ready tcp:` service this computer cannot connect to, which the command here
+    /// would fail at: ready on the machine, but behind its firewall or on its loopback only.
+    fn unreached(&self, ports: &[Picked]) -> Option<Unconnected> {
+        let mut host = None;
+        for service in self.services {
+            let Some(ready) = service
+                .ready
+                .as_deref()
+                .and_then(|r| r.strip_prefix("tcp:"))
+            else {
+                continue;
+            };
+            let named = ready.rsplit(':').next().unwrap_or_default();
+            let port = ports
+                .iter()
+                .find(|p| p.name == named)
+                .map(|p| p.port)
+                .or_else(|| named.parse().ok());
+            let Some(port) = port else {
+                continue;
+            };
+            let host: &String = host.get_or_insert_with(|| {
+                let address = self.reach.address();
+                match address.split_once('@') {
+                    Some((_, host)) => host.to_string(),
+                    None => address,
+                }
+            });
+            let cause = match Connection::connect(host, port) {
+                Connection::Refused => Cause::Refused,
+                Connection::NoRoute => Cause::Rejected,
+                Connection::TimedOut if Connection::resolves(host) => Cause::Dropped,
+                Connection::Connected | Connection::TimedOut | Connection::Failed => continue,
+            };
+            return Some(Unconnected {
+                service: service.name.0.clone(),
+                at: self.at.clone(),
+                host: host.clone(),
+                port,
+                cause,
+            });
+        }
+        None
+    }
+
+    /// The guard that runs the command, with the machine's ports and the hold it runs inside in
+    /// its environment.
+    fn guard(&self, ports: &[Picked]) -> std::io::Result<std::process::Command> {
+        let mut command = std::process::Command::new(std::env::current_exe()?);
+        command
+            .arg(Guard::WORD)
+            .arg(&self.at)
+            .args(self.command.words());
+        let holding = match std::env::var("DIBS_HOLDING") {
+            Ok(outer) if !outer.is_empty() => format!("{outer} {}", self.lock_at),
+            _ => self.lock_at.clone(),
+        };
+        command.env("DIBS_HOLDING", holding);
+        if !ports.is_empty() {
+            let reach = self.reach.address();
+            for picked in ports {
+                let name = picked.name.to_ascii_uppercase();
+                command.env(format!("DIBS_PORT_{name}"), picked.port.to_string());
+                command.env(
+                    format!("DIBS_SERVICE_{name}"),
+                    format!("{reach}:{}", picked.port),
+                );
+            }
+        }
+        Ok(command)
+    }
+}
+
+/// The command here has ended, so the lock going now stops nothing.
+fn done(shared: &Mutex<Shared>) {
+    shared
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .command_done = true;
+}
+
+/// How a connection from here to a ready service went.
+enum Connection {
+    Connected,
+    Refused,
+    NoRoute,
+    TimedOut,
+    /// Anything else, which says nothing about the machine's firewall.
+    Failed,
+}
+
+impl Connection {
+    /// One connection, its name's lookup included, within `REACH_WITHIN`.
+    fn connect(host: &str, port: u16) -> Connection {
+        let (tell, heard) = mpsc::channel();
+        let host = host.to_string();
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + REACH_WITHIN;
+            let Ok(addresses) = (host.as_str(), port).to_socket_addrs() else {
+                let _ = tell.send(Connection::Failed);
+                return;
+            };
+            let mut last = Connection::Failed;
+            for address in addresses {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                last = match TcpStream::connect_timeout(&address, left) {
+                    Ok(_) => Connection::Connected,
+                    Err(e) => match e.kind() {
+                        ErrorKind::ConnectionRefused => Connection::Refused,
+                        ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable => {
+                            Connection::NoRoute
+                        }
+                        ErrorKind::TimedOut => Connection::TimedOut,
+                        _ => Connection::Failed,
+                    },
+                };
+                if matches!(last, Connection::Connected) {
+                    break;
+                }
+            }
+            let _ = tell.send(last);
+        });
+        heard
+            .recv_timeout(REACH_WITHIN)
+            .unwrap_or(Connection::TimedOut)
+    }
+
+    /// Whether the name resolves quickly, without which a timeout may be a slow lookup and says
+    /// nothing about the port.
+    fn resolves(host: &str) -> bool {
+        let (tell, heard) = mpsc::channel();
+        let host = host.to_string();
+        std::thread::spawn(move || {
+            let _ = tell.send((host.as_str(), 0).to_socket_addrs().is_ok());
+        });
+        heard.recv_timeout(RESOLVE_WITHIN).unwrap_or(false)
+    }
+}
+
+/// What a connection that failed most likely ran into.
+enum Cause {
+    /// Nothing listens there from outside: a loopback-only server, or a reset.
+    Refused,
+    Rejected,
+    Dropped,
+}
+
+/// A ready service this computer cannot connect to.
+struct Unconnected {
+    service: String,
+    at: String,
+    host: String,
+    port: u16,
+    cause: Cause,
+}
+
+impl fmt::Display for Unconnected {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Unconnected {
+            service,
+            at,
+            host,
+            port,
+            cause,
+        } = self;
+        let why = match cause {
+            Cause::Refused => "nothing answers there from outside the machine: the server listens on its loopback only, or a firewall resets the connection".to_string(),
+            Cause::Rejected => format!("a firewall on {at} most likely rejects it"),
+            Cause::Dropped => format!("a firewall on {at} most likely drops it"),
+        };
+        write!(
+            f,
+            "dibs: {service} is ready on {at}, but this computer cannot connect to {host}:{port}, so the command was not run: {why}. dibs with --there runs the command on the machine instead."
+        )
+    }
+}
+
+/// Runs a held command in the terminal's process group, and stops it and everything under it
+/// when the dibs holding its lock dies, however it dies.
+pub struct Guard;
+
+impl Guard {
+    /// The word a guard is started with, outside the grammar.
+    pub const WORD: &'static str = "__hold-guard";
+
+    /// The guard's own side: runs the command, and stops it if its dibs goes first.
+    pub fn serve(at: &str, words: &[String]) -> i32 {
+        let starter = Starter::take();
+        let mut command = match words {
+            [one] => {
+                let mut bash = std::process::Command::new("bash");
+                bash.args(["-c", one]);
+                bash
+            }
+            [first, rest @ ..] => {
+                let mut direct = std::process::Command::new(first);
+                direct.args(rest);
+                direct
+            }
+            [] => std::process::Command::new("true"),
+        };
+        let interrupt = Interrupt::defer();
+        // Told to stop, the guard goes only once its command has, so nothing it ran outlives it.
+        let relayed = Relayed::catch();
+        let mut running = match command.spawn() {
+            Ok(running) => running,
+            Err(e) => {
+                eprintln!("dibs: could not run {}: {e}", words.join(" "));
+                relayed.pass_on();
+                return 127;
+            }
+        };
+        let pid = running.id();
+        let done = Arc::new(AtomicBool::new(false));
+        let watched = Arc::clone(&done);
+        let at = at.to_string();
+        std::thread::spawn(move || {
+            starter.gone();
+            if !watched.load(Ordering::SeqCst) {
+                stop_early(&at, pid);
+            }
+        });
+        relayed.to(pid);
+        let status = running.wait().map(Exit::shell_status).unwrap_or(1);
+        drop(interrupt);
+        done.store(true, Ordering::SeqCst);
+        relayed.pass_on();
+        status
+    }
+}
+
+fn holder_exit(joined: std::thread::Result<std::thread::Result<std::io::Result<i32>>>) -> i32 {
+    match joined {
+        Ok(Ok(Ok(code))) => code,
+        _ => 1,
+    }
+}
+
+/// The lock went first, so the command would go on unlocked: it and everything under it stop.
+fn stop_early(at: &str, pid: u32) {
+    eprintln!("dibs: the lock on {at} ended before the command did, so the command was stopped.");
+    for p in tree(pid) {
+        // SAFETY: a plain signal to a process found under the command.
+        unsafe { libc::kill(p as libc::pid_t, libc::SIGTERM) };
+    }
+}
+
+/// A process and everything below it.
+fn tree(pid: u32) -> Vec<u32> {
+    let children = std::process::Command::new("pgrep")
+        .args(["-P", &pid.to_string()])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    std::iter::once(pid)
+        .chain(
+            children
+                .split_whitespace()
+                .filter_map(|c| c.parse().ok())
+                .flat_map(tree),
+        )
+        .collect()
+}

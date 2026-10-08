@@ -1,0 +1,14 @@
+[package]
+name = "dibs-format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "What dibs writes and reads: ids, exits, records and the lines machines keep"
+
+[dependencies]
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

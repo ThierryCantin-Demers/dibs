@@ -1,0 +1,18 @@
+[package]
+name = "dibs-machines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "A window on dibs machines: what each machine lacks against what it should have"
+
+[[bin]]
+name = "dibs-machines"
+path = "src/main.rs"
+
+[dependencies]
+dibs.workspace = true
+dibs-format.workspace = true
+eframe.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "dibstop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Live view of the benchmark machine's lock, and a way to act on what is holding it"
+
+[[bin]]
+name = "dibstop"
+path = "src/main.rs"
+
+[dependencies]
+crossterm.workspace = true
+dibs.workspace = true
+dibs-format.workspace = true
+ratatui.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

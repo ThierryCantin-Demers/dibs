@@ -1,0 +1,31 @@
+[package]
+name = "dibs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+dibs-format.workspace = true
+dibs-runner.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+
+[build-dependencies]
+flate2.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+regex.workspace = true
+
+# Against a real machine, taking its lock: never part of a plain `cargo test`.
+[[test]]
+name = "live"
+path = "tests/live/main.rs"
+test = false
+
+[lints]
+workspace = true

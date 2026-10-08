@@ -1,0 +1,98 @@
+== dibs runs  (with nothing recorded)
+-> exit 0
+1| nothing recorded yet
+
+== dibs gaps  (with nothing recorded)
+-> exit 0
+1| Nothing has needed the escape hatch. Either everything fits a recipe, or nobody
+1| is using the verbs yet.
+1| 
+1| Nothing has been reported as friction. An agent that had to work around dibs
+1| records it with: dibs --friction '<one line>'
+
+== TZ=UTC dibs runs
+-> exit 0
+1| 2026-01-01 20:00  -      raw                           0s shared     
+1| 2026-01-01 19:00  -      raw                           0s shared     
+1| 2026-01-01 18:00  box-a  app/shell                     3s shared     app@abc123def456
+1| 2026-01-01 16:00  box-a  app/bench/ab              main..local arms, 2 reps each
+1|     base   app@626548f5aa  median 41s exclusive, 40s to 42s
+1|     local  app@local:8f12+dirty-ab  median 31s exclusive, 30s to 32s
+1| 2026-01-01 15:00  box-b  app/bench/sweep@gpu:card     11s exclusive  app@local:abc123-0123456789ab  from app-topk  median of 3 reps, 10s to 12s  backend=vulkan samples=30  seeded from app-local-0123456789  a new series starts here
+1| 2026-01-01 14:00  box-a  app/bench/gemm              118s exclusive  app@abc123def456  measured with --anyway
+1| 2026-01-01 13:00  box-a  app/bench/gemm              126s exclusive  app@abc123def456
+1| 2026-01-01 12:00  box-a  app/bench/gemm              120s exclusive  app@abc123def456
+1| 
+1| repeated on the same code, measured step only:
+1|   app/bench/gemm on box-a at app@abc123def456: measured 2 times, median 123s, 120s to 126s
+1|   app/bench/sweep@gpu:card on box-b at app@local:abc123-0123456789ab, backend=vulkan samples=30, governor=performance: measured 3 times, median 11s, 10s to 12s
+1| 
+1|   app/bench/gemm: 2 different recipes have run under this name, and runs under one are not comparable with runs under another. The latest change is step 1: `[shared] cargo build` became `[shared] cargo build --release`.
+1| 
+1| 1 failed run is not shown:  dibs runs --all
+
+== TZ=UTC dibs runs --all
+-> exit 0
+1| 2026-01-01 20:00  -      raw                           0s shared     
+1| 2026-01-01 19:00  -      raw                           0s shared     
+1| 2026-01-01 18:00  box-a  app/shell                     3s shared     app@abc123def456
+1| 2026-01-01 17:00  box-a  app/build/fails               1s shared     app@abc123def456  FAILED
+1| 2026-01-01 16:00  box-a  app/bench/ab              main..local arms, 2 reps each
+1|     base   app@626548f5aa  median 41s exclusive, 40s to 42s
+1|     local  app@local:8f12+dirty-ab  median 31s exclusive, 30s to 32s
+1| 2026-01-01 15:00  box-b  app/bench/sweep@gpu:card     11s exclusive  app@local:abc123-0123456789ab  from app-topk  median of 3 reps, 10s to 12s  backend=vulkan samples=30  seeded from app-local-0123456789  a new series starts here
+1| 2026-01-01 14:00  box-a  app/bench/gemm              118s exclusive  app@abc123def456  measured with --anyway
+1| 2026-01-01 13:00  box-a  app/bench/gemm              126s exclusive  app@abc123def456
+1| 2026-01-01 12:00  box-a  app/bench/gemm              120s exclusive  app@abc123def456
+1| 
+1| repeated on the same code, measured step only:
+1|   app/bench/gemm on box-a at app@abc123def456: measured 2 times, median 123s, 120s to 126s
+1|   app/bench/sweep@gpu:card on box-b at app@local:abc123-0123456789ab, backend=vulkan samples=30, governor=performance: measured 3 times, median 11s, 10s to 12s
+1| 
+1|   app/bench/gemm: 2 different recipes have run under this name, and runs under one are not comparable with runs under another. The latest change is step 1: `[shared] cargo build` became `[shared] cargo build --release`.
+
+== TZ=UTC dibs runs gemm
+-> exit 0
+1| 2026-01-01 14:00  box-a  app/bench/gemm    118s exclusive  app@abc123def456  measured with --anyway
+1| 2026-01-01 13:00  box-a  app/bench/gemm    126s exclusive  app@abc123def456
+1| 2026-01-01 12:00  box-a  app/bench/gemm    120s exclusive  app@abc123def456
+1| 
+1| repeated on the same code, measured step only:
+1|   app/bench/gemm on box-a at app@abc123def456: measured 2 times, median 123s, 120s to 126s
+1| 
+1|   app/bench/gemm: 2 different recipes have run under this name, and runs under one are not comparable with runs under another. The latest change is step 1: `[shared] cargo build` became `[shared] cargo build --release`.
+
+== TZ=UTC dibs runs app/build/fails
+-> exit 0
+1| nothing but failed runs for app/build/fails.
+1|   dibs runs app/build/fails --all   lists them.
+
+== TZ=UTC dibs runs app/build/fails --all
+-> exit 0
+1| 2026-01-01 17:00  box-a  app/build/fails      1s shared     app@abc123def456  FAILED
+
+== TZ=UTC dibs runs nothing-by-this-name
+-> exit 0
+1| nothing recorded for nothing-by-this-name, out of 9 runs recorded.
+1|   dibs runs   lists them; a label is repo/verb/recipe.
+
+== TZ=UTC dibs gaps
+-> exit 0
+1| What did not fit a recipe:
+1| 
+1|     2x  a one-off nan check
+1|        app/shell, raw
+1|     1x  checking a pull request by hand
+1|        raw
+1| 
+1| 1 of these have happened more than once. Those are the ones worth a recipe;
+1| the rest are one-offs and are meant to stay here.
+1| 
+1| What got in the way:
+1| 
+1|     2x  --stream does nothing inside a batch.
+1|        first 2026-01-01 12:00, last 2026-01-02 12:00 by another agent, dibs def5678
+1|     1x  the trailer says built=nothing but the recipe did build
+1|        2026-01-03 12:00
+1| 
+1| One of these has been hit more than once, which is where a fix pays.

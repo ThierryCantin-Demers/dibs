@@ -1,0 +1,1124 @@
+//! A sandbox per test: its own lock directory, home, history and scratch, so every test runs
+//! beside every other and none of them reads or writes the real ones. Nothing here reaches a real
+//! machine: `DIBS_LOCAL=1` by default, and an ssh that fails at once for any name.
+
+pub use dibs_format::Moment;
+use dibs_format::{
+    Label, Mode,
+    wire::{Frame, MaxFrom, Request, Watch},
+};
+use regex::Regex;
+use std::collections::BTreeMap;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
+use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
+
+pub const DIBS: &str = env!("CARGO_BIN_EXE_dibs");
+
+const CALL_LIMIT: Duration = Duration::from_secs(120);
+const WAIT_LIMIT: Duration = Duration::from_secs(30);
+const POLL: Duration = Duration::from_millis(5);
+
+pub fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .to_path_buf()
+}
+
+pub fn hostname() -> &'static str {
+    static NAME: OnceLock<String> = OnceLock::new();
+    NAME.get_or_init(|| {
+        let out = Command::new("hostname").arg("-s").output().unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    })
+}
+
+/// The hash of the runner source this build carries, which names the runner it calls.
+pub const RUNNER_HASH: &str = env!("DIBS_RUNNER_HASH");
+
+/// Where a machine keeps the runner for this build, under its home.
+pub fn runner_path() -> String {
+    format!(".cache/dibs/runner/{RUNNER_HASH}/dibs-runner")
+}
+
+/// The runner this build links, as a machine would have built it: the binary serves it.
+pub fn prebuilt_runner() -> String {
+    format!("#!/bin/sh\nexec '{DIBS}' __runner \"$@\"\n")
+}
+
+/// Master's machine half, as the clients that have not updated send it on switch day.
+const MACHINE_HALF: &str = include_str!("fixtures/machine-half.sh");
+
+/// A pid that stays alive for the whole test, for records that prune would drop otherwise.
+pub fn live_pid() -> u32 {
+    std::process::id()
+}
+
+/// What a client sends `dibs __runner serve` first: the call, unwatched, as a request frame.
+pub fn request_frame(mode: Mode, label: &str, command: &str) -> String {
+    frame(request(mode, label, command))
+}
+
+/// The same, with the runner watching its stdin, whose end is the caller gone.
+pub fn watched_request_frame(mode: Mode, label: &str, command: &str) -> String {
+    let request = request(mode, label, command);
+    frame(Request {
+        watch: Watch {
+            off: false,
+            ..request.watch
+        },
+        ..request
+    })
+}
+
+pub fn frame(request: Request) -> String {
+    String::from_utf8(Frame::Request(Box::new(request)).encode()).unwrap()
+}
+
+/// A call as a client sends it, unwatched.
+pub fn request(mode: Mode, label: &str, command: &str) -> Request {
+    Request {
+        mode,
+        label: Label::new(label),
+        command: command.into(),
+        wait: None,
+        max: 0,
+        max_from: MaxFrom::Given,
+        verbose: false,
+        json: false,
+        stream: false,
+        tty: false,
+        card: None,
+        fingerprint: None,
+        agent: "session suite".into(),
+        agent_id: "local_suite".into(),
+        batch: None,
+        watch: Watch {
+            off: true,
+            hold: false,
+            lease: 0,
+        },
+        ports: Vec::new(),
+        services: Vec::new(),
+        ready_within: 0,
+        new_series: false,
+        tree: None,
+    }
+}
+
+pub struct Sandbox {
+    pub root: PathBuf,
+    env: BTreeMap<String, String>,
+    children: Vec<Spawned>,
+}
+
+/// A background job, reaped the moment it ends the way a shell reaps one: dibs asks whether a
+/// pid is still there, and an unreaped zombie answers yes.
+struct Spawned {
+    pid: u32,
+    /// Ends with the job, giving its exit status.
+    reaper: thread::JoinHandle<i32>,
+}
+
+impl Sandbox {
+    pub fn new() -> Sandbox {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "dibs-suite.{}.{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&root);
+        for dir in [
+            "lockdir",
+            "scratch",
+            "runtime",
+            "tmp",
+            "bin",
+            "nossh",
+            "home/.cargo/bin",
+        ] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        // macOS's temporary directory is under a symlink, and dibs names a tree by its real path.
+        let root = root.canonicalize().unwrap();
+        std::os::unix::fs::symlink(DIBS, root.join("bin/dibs")).unwrap();
+        // Every machine named in a test is made up, and a real lookup of one takes seconds to
+        // fail. This fails at once, the way ssh does for a name that does not resolve.
+        let nossh = "#!/bin/bash\n\
+            while [ $# -gt 0 ]; do case $1 in -[oiFJlpP]) shift 2 ;; -*) shift ;; *) break ;; esac; done\n\
+            host=${1%%:*}; host=${host##*@}\n\
+            echo \"$(basename \"$0\"): Could not resolve hostname $host: Name or service not known\" >&2\n\
+            exit 255\n";
+        write_exec(&root.join("nossh/ssh"), nossh);
+        write_exec(&root.join("nossh/scp"), nossh);
+        let runner = root.join(format!("home/{}", runner_path()));
+        fs::create_dir_all(runner.parent().unwrap()).unwrap();
+        write_exec(&runner, &prebuilt_runner());
+
+        let at = |p: &str| root.join(p).display().to_string();
+        let mut env = BTreeMap::new();
+        let path = format!(
+            "{}:{}:{}",
+            at("bin"),
+            at("nossh"),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        for (k, v) in [
+            ("PATH", path),
+            ("HOME", at("home")),
+            ("XDG_CONFIG_HOME", at("home/.config")),
+            ("XDG_STATE_HOME", at("home/.local/state")),
+            ("XDG_CACHE_HOME", at("home/.cache")),
+            ("XDG_RUNTIME_DIR", at("runtime")),
+            ("TMPDIR", at("tmp")),
+            // A system config, as macOS's Command Line Tools ship one naming main the default
+            // branch, would give the fixtures a different shape there.
+            ("GIT_CONFIG_NOSYSTEM", "1".into()),
+            ("DIBS_LOCAL", "1".into()),
+            ("DIBS_LOCK_DIR", at("lockdir")),
+            ("DIBS_HISTORY", at("history")),
+            ("DIBS_LOG", at("log")),
+            ("DIBS_SERIES", at("series")),
+            ("DIBS_SEEN", at("seen")),
+            ("DIBS_MACHINE_SETTINGS", at("etc/runner.toml")),
+            ("DIBS_SCRATCH", at("scratch")),
+            ("CLAUDE_CODE_HOST_SESSION_ID", "local_suite".into()),
+        ] {
+            env.insert(k.to_string(), v);
+        }
+        for k in ["USER", "LOGNAME"] {
+            env.insert(k.to_string(), "someone".into());
+        }
+        for k in ["LANG", "RUSTUP_HOME"] {
+            if let Ok(v) = std::env::var(k) {
+                env.insert(k.to_string(), v);
+            }
+        }
+        Sandbox {
+            root,
+            env,
+            children: Vec::new(),
+        }
+    }
+
+    /// The toolchain's own cargo, ahead of any wrapper on PATH, since a wrapper that gates builds
+    /// expects the real home and session and hangs under the sandbox's.
+    pub fn real_cargo(&mut self) {
+        let real_home = std::env::var("HOME").unwrap();
+        if self.var("RUSTUP_HOME").is_empty() {
+            self.set("RUSTUP_HOME", format!("{real_home}/.rustup"));
+        }
+        let toolchain = format!("{real_home}/.cargo/bin");
+        if Path::new(&format!("{toolchain}/cargo")).exists() {
+            let path = self.var("PATH");
+            let (ours, rest) = path.split_once(':').unwrap();
+            self.set("PATH", format!("{ours}:{toolchain}:{rest}"));
+        }
+    }
+
+    pub fn path(&self, rel: &str) -> PathBuf {
+        self.root.join(rel)
+    }
+
+    /// The same path as a string, for splicing into a command.
+    pub fn p(&self, rel: &str) -> String {
+        self.path(rel).display().to_string()
+    }
+
+    pub fn var(&self, key: &str) -> String {
+        self.env.get(key).cloned().unwrap_or_default()
+    }
+
+    pub fn set(&mut self, key: &str, value: impl Into<String>) {
+        self.env.insert(key.to_string(), value.into());
+    }
+
+    pub fn unset(&mut self, key: &str) {
+        self.env.remove(key);
+    }
+
+    /// Writes an inventory and points every later call at it.
+    pub fn machines(&mut self, toml: &str) {
+        let path = self.path("machines.toml");
+        fs::write(&path, toml).unwrap();
+        self.set("DIBS_MACHINES", path.display().to_string());
+    }
+
+    pub fn dibs<I, S>(&self, args: I) -> Call
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.command(DIBS, args)
+    }
+
+    /// Any program, with the sandbox's environment.
+    pub fn command<I, S>(&self, program: &str, args: I) -> Call
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut cmd = Command::new(program);
+        cmd.env_clear().envs(&self.env).current_dir(&self.root);
+        for a in args {
+            cmd.arg(a.as_ref());
+        }
+        Call::wrap(cmd)
+    }
+
+    pub fn sh(&self, script: &str) -> Call {
+        self.command("bash", ["-c", script])
+    }
+
+    /// `args` in a session of their own. macOS has no setsid, and its perl does the same.
+    pub fn new_session<I, S>(&self, args: I) -> Call
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let args: Vec<String> = args.into_iter().map(|a| a.as_ref().to_string()).collect();
+        match self.command("sh", ["-c", "command -v setsid"]).run().code {
+            0 => self.command("setsid", args),
+            _ => self.command(
+                "perl",
+                ["-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV or die"]
+                    .into_iter()
+                    .map(String::from)
+                    .chain(args),
+            ),
+        }
+    }
+
+    pub fn status(&self) -> String {
+        self.dibs(["--status"]).run().stdout
+    }
+
+    pub fn status_json(&self) -> serde_json::Value {
+        let out = self.dibs(["--status", "--json"]).run();
+        serde_json::from_str(&out.stdout)
+            .unwrap_or_else(|e| panic!("--status --json: {e}\n{}", out.stdout))
+    }
+
+    /// Starts a call in the background, owned by the sandbox and killed with it.
+    pub fn spawn(&mut self, call: Call) -> Job {
+        let child = call.background();
+        self.adopt(child)
+    }
+
+    /// Starts a call whose stdin is a pipe held here, as a machine's is the ssh channel: dropping
+    /// it is how that side learns its caller has gone.
+    pub fn spawn_fed(&mut self, mut call: Call) -> (Job, std::process::ChildStdin) {
+        call.feed = true;
+        let mut child = call.background();
+        let feed = child.stdin.take().unwrap();
+        (self.adopt(child), feed)
+    }
+
+    fn adopt(&mut self, mut child: Child) -> Job {
+        let pid = child.id();
+        let reaper = thread::spawn(move || child.wait().map(exit_code).unwrap_or(-1));
+        self.children.push(Spawned { pid, reaper });
+        Job { pid }
+    }
+
+    /// Waits for a job started with `spawn` and returns its exit status.
+    pub fn wait(&mut self, job: Job) -> i32 {
+        let i = self
+            .children
+            .iter()
+            .position(|c| c.pid == job.pid)
+            .expect("not a job of this sandbox");
+        let child = self.children.remove(i);
+        let deadline = Instant::now() + CALL_LIMIT;
+        if polled(deadline, || child.reaper.is_finished().then_some(())).is_none() {
+            unsafe { libc::kill(job.pid as i32, libc::SIGKILL) };
+            panic!("job {} did not end within {CALL_LIMIT:?}", job.pid);
+        }
+        child.reaper.join().expect("a reaper does not panic")
+    }
+
+    pub fn gate(&self, name: &str) -> Gate {
+        let path = self.path(&format!("f-{name}"));
+        let _ = fs::remove_file(&path);
+        let c = std::ffi::CString::new(path.display().to_string()).unwrap();
+        assert_eq!(
+            unsafe { libc::mkfifo(c.as_ptr(), 0o600) },
+            0,
+            "mkfifo {}",
+            path.display()
+        );
+        Gate { path }
+    }
+
+    pub fn count(&self, kind: &str) -> usize {
+        let prefix = format!("{kind}.");
+        fs::read_dir(self.lockdir())
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    pub fn lockdir(&self) -> PathBuf {
+        PathBuf::from(self.var("DIBS_LOCK_DIR"))
+    }
+
+    pub fn holders(&self) -> usize {
+        self.count("holder")
+    }
+
+    pub fn waiters(&self) -> usize {
+        self.count("waiting")
+    }
+
+    pub fn held(&self, n: usize) {
+        self.until_records(&format!("{n} holder(s)"), || self.holders() >= n);
+    }
+
+    pub fn queued(&self, n: usize) {
+        self.until_records(&format!("{n} waiter(s)"), || self.waiters() >= n);
+    }
+
+    /// Waits for a queued benchmark to hold the gate, which it takes after writing its record.
+    pub fn gate_taken(&self) {
+        let gate = fs::File::open(self.lockdir().join("gate")).unwrap();
+        self.until_records("the queued benchmark to take the gate", || {
+            let free = gate.try_lock().is_ok();
+            let _ = gate.unlock();
+            !free
+        });
+    }
+
+    pub fn gone(&self) {
+        self.until_records("every holder to go", || self.holders() == 0);
+    }
+
+    /// `until`, failing with what the lock directory held, which is the first thing to know.
+    pub fn until_records(&self, what: &str, mut cond: impl FnMut() -> bool) {
+        let deadline = Instant::now() + WAIT_LIMIT;
+        while !cond() {
+            if Instant::now() > deadline {
+                let records: Vec<String> = fs::read_dir(self.lockdir())
+                    .map(|d| d.flatten().map(|e| record_line(&e.path())).collect())
+                    .unwrap_or_default();
+                panic!(
+                    "timed out waiting for {what}; the lock directory holds:\n{}\nthe log ends:\n{}\nand the sandbox's processes are:\n{}",
+                    records.join("\n"),
+                    self.log()
+                        .lines()
+                        .rev()
+                        .take(6)
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    self.processes()
+                );
+            }
+            thread::sleep(POLL);
+        }
+    }
+
+    /// Every process started under this sandbox's home, which no other sandbox shares.
+    #[cfg(target_os = "linux")]
+    fn own_pids(&self) -> Vec<u32> {
+        let home = format!("HOME={}/home", self.root.display()).into_bytes();
+        fs::read_dir("/proc")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let pid = e.file_name().to_string_lossy().parse::<u32>().ok()?;
+                let env = fs::read(e.path().join("environ")).ok()?;
+                env.split(|b| *b == 0)
+                    .any(|v| v == home.as_slice())
+                    .then_some(pid)
+            })
+            .collect()
+    }
+
+    /// The runners serving this sandbox's calls.
+    #[cfg(target_os = "linux")]
+    pub fn runners(&self) -> Vec<u32> {
+        self.own_pids()
+            .into_iter()
+            .filter(|pid| {
+                let args = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+                let args: Vec<&[u8]> = args.split(|b| *b == 0).collect();
+                args.contains(&b"__runner".as_slice()) && args.contains(&b"serve".as_slice())
+            })
+            .collect()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn own_pids(&self) -> Vec<u32> {
+        self.listed().into_iter().map(|p| p.pid).collect()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn runners(&self) -> Vec<u32> {
+        self.listed()
+            .into_iter()
+            .filter(|p| p.line.contains(" __runner serve "))
+            .map(|p| p.pid)
+            .collect()
+    }
+
+    /// This sandbox's processes as `ps -E` lists them, the environment after the arguments, which
+    /// it shows for this account's own.
+    #[cfg(not(target_os = "linux"))]
+    fn listed(&self) -> Vec<Listed> {
+        let home = format!("HOME={}/home", self.root.display());
+        let out = std::process::Command::new("ps")
+            .args(["-wwEax", "-o", "pid=,command="])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        out.lines()
+            .filter(|l| l.split_whitespace().any(|w| w == home))
+            .filter_map(|l| {
+                let (pid, line) = l.trim_start().split_once(' ')?;
+                Some(Listed {
+                    pid: pid.parse().ok()?,
+                    line: line.to_string(),
+                })
+            })
+            .collect()
+    }
+
+    /// This sandbox's processes and what each waits in, for a failure to show.
+    pub fn processes(&self) -> String {
+        let pids: Vec<String> = self.own_pids().iter().map(u32::to_string).collect();
+        if pids.is_empty() {
+            let root = self.root.display().to_string();
+            return self
+                .command("ps", ["-eo", "pid,ppid,pgid,stat,args"])
+                .run()
+                .stdout
+                .lines()
+                .filter(|l| l.contains(&root))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        self.command(
+            "ps",
+            [
+                "-o",
+                "pid,ppid,pgid,sid,stat,wchan:24,args",
+                "-p",
+                &pids.join(","),
+            ],
+        )
+        .run()
+        .stdout
+    }
+
+    /// Writes a lock record by hand, tab-separated, as a job would have.
+    pub fn record(&self, kind: &str, pid: u32, fields: &[&str]) {
+        fs::write(
+            self.lockdir().join(format!("{kind}.{pid}")),
+            format!("{}\n", fields.join("\t")),
+        )
+        .unwrap();
+    }
+
+    /// The fields of every record of one kind, in no particular order.
+    pub fn records(&self, kind: &str) -> Vec<Vec<String>> {
+        let prefix = format!("{kind}.");
+        let mut out = Vec::new();
+        for e in fs::read_dir(self.lockdir()).unwrap().flatten() {
+            if e.file_name().to_string_lossy().starts_with(&prefix) {
+                let text = fs::read_to_string(e.path()).unwrap_or_default();
+                out.push(
+                    text.lines()
+                        .next()
+                        .unwrap_or("")
+                        .split('\t')
+                        .map(str::to_string)
+                        .collect(),
+                );
+            }
+        }
+        out
+    }
+
+    /// The pid `--status` gives for the job under a label.
+    pub fn pid_of(&self, label: &str) -> u32 {
+        let status = self.status();
+        let needle = format!(" {label} ");
+        status
+            .lines()
+            .filter(|l| l.contains(&needle))
+            .find_map(|l| {
+                let words: Vec<_> = l.split_whitespace().collect();
+                words
+                    .iter()
+                    .position(|w| *w == "pid")
+                    .and_then(|i| words.get(i + 1)?.parse().ok())
+            })
+            .unwrap_or_else(|| panic!("no pid for {label} in:\n{status}"))
+    }
+
+    pub fn history(&self, lines: &str) {
+        append(&self.path("history"), lines);
+    }
+
+    pub fn set_history(&self, lines: &str) {
+        fs::write(self.path("history"), lines).unwrap();
+    }
+
+    pub fn log(&self) -> String {
+        fs::read_to_string(self.path("log")).unwrap_or_default()
+    }
+
+    pub fn read(&self, rel: &str) -> String {
+        fs::read_to_string(self.path(rel)).unwrap_or_default()
+    }
+
+    pub fn write(&self, rel: &str, text: &str) {
+        let path = self.path(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    pub fn write_exec(&self, rel: &str, text: &str) {
+        let path = self.path(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_exec(&path, text);
+    }
+
+    pub fn exists(&self, rel: &str) -> bool {
+        self.path(rel).exists()
+    }
+
+    /// Waits for a line the log has not had yet, as a job's end is only visible there.
+    pub fn log_line(&self, re: &str) {
+        let re = Regex::new(re).unwrap();
+        until(&format!("a log line matching {re}"), || {
+            self.log().lines().any(|l| re.is_match(l))
+        });
+    }
+
+    /// The bash machine half a client that has not updated still sends: the call's values as
+    /// assignments, then master's `lib/machine`, frozen in `fixtures/machine-half.sh`. The values
+    /// are an ordinary shared job's, with `values` over them.
+    pub fn machine_script(&self, values: &[(&str, &str)]) -> String {
+        let mut call: Vec<(&str, &str)> = vec![
+            ("MODE", "shared"),
+            ("LABEL", "test"),
+            ("WAIT", ""),
+            ("MAXHOLD", "0"),
+            ("VERBOSE", "0"),
+            ("JSON", "0"),
+            ("CMD", ""),
+            ("NO_WATCH", "0"),
+            ("TTY", "0"),
+            ("HOLD", "0"),
+            ("LEASE", "0"),
+            ("AGENT", ""),
+            ("AGENT_ID", ""),
+            ("BATCH", ""),
+            ("DEV_PCI", ""),
+            ("DEV_RT", ""),
+            ("DEV_NAME", ""),
+            ("DEV_CHIP", ""),
+            ("DEV_TWINS", "1"),
+            ("STREAM", "0"),
+            ("READY_WITHIN", "300"),
+            ("MAXFROM", "given"),
+            ("FINGERPRINT", ""),
+        ];
+        for (k, v) in values {
+            let slot = call
+                .iter_mut()
+                .find(|(name, _)| name == k)
+                .unwrap_or_else(|| panic!("the machine script reads no {k}"));
+            slot.1 = v;
+        }
+        let mut script: String = call
+            .iter()
+            .map(|(k, v)| format!("{k}='{}'\n", v.replace('\'', r"'\''")))
+            .collect();
+        script.push_str("PORT_NAME=()\nWITH_NAME=()\nWITH_READY=()\nWITH_CMD=()\n");
+        script.push_str(MACHINE_HALF);
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let path = self.path(&format!("payload.{}", NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, script).unwrap();
+        path.display().to_string()
+    }
+
+    /// A call that crosses a transport to a machine that is this one: an ssh whose far side is
+    /// a process of its own, in a session of its own, as a remote one is. Signalling or stopping
+    /// the client then leaves the far side to learn of it the way a machine does, through its
+    /// stdin, and never by a signal a real remote could not receive.
+    pub fn remote(&self, call: Call) -> Call {
+        self.write_exec(
+            "fakessh/ssh",
+            "#!/bin/bash\n\
+             while [ $# -gt 0 ]; do case $1 in -o) shift 2 ;; -*) shift ;; *) break ;; esac; done\n\
+             shift\n\
+             if command -v setsid >/dev/null; then setsid bash -c \"$*\" <&0 &\n\
+             else perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die' bash -c \"$*\" <&0 & fi\n\
+             far=$!\n\
+             trap 'exit 255' TERM\n\
+             wait $far\n",
+        );
+        call.env(
+            "PATH",
+            format!("{}:{}", self.p("fakessh"), self.var("PATH")),
+        )
+        .env("DIBS_LOCAL", "0")
+        .env("DIBS_HOST", "fake-remote")
+        .env("DIBS_HOSTNAME", "laptop-here")
+    }
+
+    pub fn git(&self, dir: &str, args: &[&str]) -> String {
+        let out = self
+            .command(
+                "git",
+                ["-c", "user.email=t@t", "-c", "user.name=t"]
+                    .iter()
+                    .chain(args),
+            )
+            .dir(&self.path(dir))
+            .run();
+        assert_eq!(out.code, 0, "git {args:?} in {dir}: {}", out.stderr);
+        out.stdout.trim().to_string()
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        for c in self.children.drain(..) {
+            if !c.reaper.is_finished() {
+                unsafe { libc::kill(c.pid as i32, libc::SIGKILL) };
+            }
+            let _ = c.reaper.join();
+        }
+        // Holders block on a fifo under the root, and removing the directory does not release them.
+        for pid in self.own_pids() {
+            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+        }
+        let _ = Command::new("pkill")
+            .arg("-f")
+            .arg(format!("{}/", self.root.display()))
+            .status();
+        if !thread::panicking() || std::env::var_os("DIBS_SUITE_KEEP").is_none() {
+            let _ = Command::new("chmod")
+                .args(["-R", "u+w"])
+                .arg(&self.root)
+                .status();
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+}
+
+pub struct Job {
+    pub pid: u32,
+}
+
+pub struct Call {
+    cmd: Command,
+    stdin: Option<String>,
+    sink: Sink,
+    limit: Duration,
+    feed: bool,
+    own_group: bool,
+}
+
+enum Sink {
+    Null,
+    Stdout(PathBuf),
+    Both(PathBuf, PathBuf),
+}
+
+impl Call {
+    pub fn wrap(mut cmd: Command) -> Call {
+        // What this process inherited, the cargo wrapper's lock among it, must not reach what the
+        // tests start: a stray process holding that lock stops every cargo on the computer.
+        unsafe {
+            cmd.pre_exec(|| {
+                for fd in 3..1024 {
+                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                }
+                Ok(())
+            });
+        }
+        Call {
+            cmd,
+            stdin: None,
+            sink: Sink::Null,
+            limit: CALL_LIMIT,
+            feed: false,
+            own_group: false,
+        }
+    }
+
+    pub fn env(mut self, key: &str, value: impl AsRef<str>) -> Call {
+        self.cmd.env(key, value.as_ref());
+        self
+    }
+
+    pub fn env_remove(mut self, key: &str) -> Call {
+        self.cmd.env_remove(key);
+        self
+    }
+
+    /// A caller with no session: a person at a shell, or a runtime that publishes none.
+    pub fn no_session(self) -> Call {
+        self.env_remove("CLAUDE_CODE_HOST_SESSION_ID")
+            .env_remove("CLAUDE_CODE_SESSION_ID")
+    }
+
+    pub fn session(self, id: &str) -> Call {
+        self.env("CLAUDE_CODE_HOST_SESSION_ID", format!("local_{id}"))
+    }
+
+    pub fn dir(mut self, dir: &Path) -> Call {
+        self.cmd.current_dir(dir);
+        self
+    }
+
+    pub fn stdin(mut self, text: &str) -> Call {
+        self.stdin = Some(text.to_string());
+        self
+    }
+
+    /// A tighter bound than the default, for a call whose failure mode is hanging.
+    pub fn within(mut self, limit: Duration) -> Call {
+        self.limit = limit;
+        self
+    }
+
+    pub fn run(mut self) -> Output {
+        self.cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        self.cmd.stdin(if self.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
+        // A group of its own only where the call may be cut short, so that cutting it takes
+        // everything it started; process groups are otherwise part of what dibs reads.
+        let bounded = self.limit < CALL_LIMIT;
+        if bounded {
+            self.cmd.process_group(0);
+        }
+        let what = format!("{:?}", self.cmd);
+        let mut child = self.cmd.spawn().unwrap_or_else(|e| panic!("{what}: {e}"));
+        if let Some(text) = self.stdin.take() {
+            let mut pipe = child.stdin.take().unwrap();
+            thread::spawn(move || {
+                let _ = pipe.write_all(text.as_bytes());
+            });
+        }
+        let out = drain(child.stdout.take().unwrap());
+        let err = drain(child.stderr.take().unwrap());
+        let deadline = Instant::now() + self.limit;
+        let Some(status) = polled(deadline, || child.try_wait().unwrap()) else {
+            if bounded {
+                unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return Output {
+                code: 124,
+                stdout: out.take(),
+                stderr: err.take(),
+            };
+        };
+        Output {
+            code: exit_code(status),
+            stdout: out.take(),
+            stderr: err.take(),
+        }
+    }
+
+    /// The exit status alone, with the output thrown away.
+    pub fn code(self) -> i32 {
+        self.run().code
+    }
+
+    /// Keeps a background job's stdout in a file, to be read after it ends.
+    pub fn stdout_to(mut self, path: &Path) -> Call {
+        self.sink = Sink::Stdout(path.to_path_buf());
+        self
+    }
+
+    pub fn streams_to(mut self, stdout: &Path, stderr: &Path) -> Call {
+        self.sink = Sink::Both(stdout.to_path_buf(), stderr.to_path_buf());
+        self
+    }
+
+    /// Starts it as a terminal starts a foreground command, in a process group of its own, which
+    /// is what Ctrl+C signals as a whole.
+    pub fn own_group(mut self) -> Call {
+        self.own_group = true;
+        self
+    }
+
+    fn background(mut self) -> Child {
+        self.cmd.stdin(if self.feed {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
+        if self.own_group {
+            self.cmd.process_group(0);
+        }
+        match &self.sink {
+            Sink::Null => self.cmd.stdout(Stdio::null()).stderr(Stdio::null()),
+            Sink::Stdout(p) => self
+                .cmd
+                .stdout(fs::File::create(p).unwrap())
+                .stderr(Stdio::null()),
+            Sink::Both(o, e) => self
+                .cmd
+                .stdout(fs::File::create(o).unwrap())
+                .stderr(fs::File::create(e).unwrap()),
+        };
+        self.cmd.spawn().unwrap()
+    }
+}
+
+/// A stream read to its end on a thread of its own, as far as it gets.
+struct Drain {
+    buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    done: thread::JoinHandle<()>,
+}
+
+fn drain(mut r: impl Read + Send + 'static) -> Drain {
+    let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let fill = buf.clone();
+    let done = thread::spawn(move || {
+        let mut chunk = [0u8; 8192];
+        while let Ok(n) = r.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            fill.lock().unwrap().extend_from_slice(&chunk[..n]);
+        }
+    });
+    Drain { buf, done }
+}
+
+impl Drain {
+    /// What was read, once the stream ends or a moment after: something the call left running
+    /// may hold the pipe open for ever, and that is a leak to see, not a reason to hang.
+    fn take(self) -> String {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !self.done.is_finished() && Instant::now() < deadline {
+            thread::sleep(POLL);
+        }
+        let buf = self.buf.lock().unwrap();
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+}
+
+fn exit_code(st: std::process::ExitStatus) -> i32 {
+    st.code().unwrap_or_else(|| 128 + st.signal().unwrap_or(0))
+}
+
+#[derive(Debug)]
+pub struct Output {
+    pub code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl Output {
+    /// Both streams, stdout first. Their interleaving is lost, which counting lines never needs.
+    pub fn all(&self) -> String {
+        let mut s = self.stdout.clone();
+        if !s.is_empty() && !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s + &self.stderr
+    }
+}
+
+/// A lock record's name and text; a fifo is only named, since reading one blocks.
+fn record_line(path: &Path) -> String {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_fifo() => format!("{name}: a fifo"),
+        _ => format!(
+            "{name}: {}",
+            fs::read_to_string(path).unwrap_or_default().trim_end()
+        ),
+    }
+}
+
+/// A fifo a job blocks on, so a holder costs no CPU and ends exactly when it is told.
+#[cfg(not(target_os = "linux"))]
+struct Listed {
+    pid: u32,
+    line: String,
+}
+
+pub struct Gate {
+    pub path: PathBuf,
+}
+
+impl Gate {
+    /// The command that blocks until the gate opens.
+    pub fn hold(&self) -> String {
+        format!("read -r _ < {}", self.path.display())
+    }
+
+    /// The command that says a point was reached, for `reached` to wait on.
+    pub fn signal(&self) -> String {
+        format!("echo up > {}", self.path.display())
+    }
+
+    /// Releases whoever is blocked on it, waiting for one to arrive if nobody is yet.
+    pub fn open(&self) {
+        let deadline = Instant::now() + WAIT_LIMIT;
+        let open = || {
+            OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&self.path)
+        };
+        let mut opened = open();
+        while opened.is_err() && Instant::now() < deadline {
+            thread::sleep(POLL);
+            opened = open();
+        }
+        match opened {
+            Ok(mut f) => {
+                let _ = f.write_all(b"go\n");
+            }
+            Err(e) => panic!("nothing ever read {}: {e}", self.path.display()),
+        }
+    }
+
+    /// Blocks until something writes to it.
+    pub fn reached(&self) {
+        let mut f = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&self.path)
+            .unwrap();
+        let deadline = Instant::now() + WAIT_LIMIT;
+        let mut buf = [0u8; 64];
+        let written = polled(deadline, || {
+            matches!(f.read(&mut buf), Ok(n) if n > 0).then_some(())
+        });
+        assert!(written.is_some(), "nothing reached {}", self.path.display());
+    }
+}
+
+/// Says that the calling test did not run, on the terminal past the harness's capture, so a pass
+/// that tested nothing is never taken for one that did.
+pub fn skip(why: &str) {
+    let name = thread::current().name().unwrap_or("a test").to_string();
+    let _ = writeln!(std::io::stderr(), "skipped {name}: {why}");
+}
+
+/// What `probe` finds by `deadline`, asked again every POLL.
+fn polled<T>(deadline: Instant, mut probe: impl FnMut() -> Option<T>) -> Option<T> {
+    let mut found = probe();
+    while found.is_none() && Instant::now() < deadline {
+        thread::sleep(POLL);
+        found = probe();
+    }
+    found
+}
+
+/// Polls a condition until it holds, failing the test after a bound rather than hanging it.
+pub fn until(what: &str, mut cond: impl FnMut() -> bool) {
+    let deadline = Instant::now() + WAIT_LIMIT;
+    while !cond() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        thread::sleep(POLL);
+    }
+}
+
+pub fn alive(pid: u32) -> bool {
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+pub trait Text {
+    /// How many lines contain `needle`, as `grep -c` counts.
+    fn lines_with(&self, needle: &str) -> usize;
+    /// How many lines match `re`.
+    fn lines_matching(&self, re: &str) -> usize;
+}
+
+impl<T: AsRef<str>> Text for T {
+    fn lines_with(&self, needle: &str) -> usize {
+        self.as_ref().lines().filter(|l| l.contains(needle)).count()
+    }
+
+    fn lines_matching(&self, re: &str) -> usize {
+        let re = Regex::new(re).unwrap();
+        self.as_ref().lines().filter(|l| re.is_match(l)).count()
+    }
+}
+
+/// The first group of `re` on the first line it matches.
+pub fn capture(text: &str, re: &str) -> Option<String> {
+    let re = Regex::new(re).unwrap();
+    text.lines()
+        .find_map(|l| re.captures(l).map(|c| c[1].to_string()))
+}
+
+/// The lines from the first holding `from` through the next holding `to`, as `sed -n '/from/,/to/p'`.
+pub fn between(text: &str, from: &str, to: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    for l in text.lines() {
+        inside |= l.contains(from);
+        if inside {
+            out.push_str(l);
+            out.push('\n');
+            if l.contains(to) {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// The job id a trailer names.
+pub fn job_id(stderr: &str) -> String {
+    capture(stderr, r"^job ([0-9-]+) ").unwrap_or_else(|| panic!("no trailer in:\n{stderr}"))
+}
+
+/// Written by a process of its own: a fork from a parallel test would hold this one's write
+/// descriptor across the exec of it, which then fails with ETXTBSY.
+pub fn write_exec(path: &Path, text: &str) {
+    let mut writer = Command::new("sh")
+        .args(["-c", "cat > \"$0\" && chmod 755 \"$0\""])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writer
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(text.as_bytes())
+        .unwrap();
+    assert!(writer.wait().unwrap().success(), "{}", path.display());
+}
+
+pub fn append(path: &Path, text: &str) {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap()
+        .write_all(text.as_bytes())
+        .unwrap();
+}

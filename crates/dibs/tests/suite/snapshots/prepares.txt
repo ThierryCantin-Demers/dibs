@@ -1,0 +1,306 @@
+== after a ref, fetched: dibs build <root>/app@main p
+jobs/  (1 job directories)
+out/
+target/
+  .app.lock
+  app/
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .prepare.lock  (empty)
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+
+== after a measurement at that ref, which builds: dibs bench <root>/app@main gate
+jobs/  (3 job directories)
+out/
+target/
+  .app.lock
+  app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/<main>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .prepare.lock  (empty)
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+
+== after the working tree: dibs build <root>/app@local p
+jobs/  (5 job directories)
+out/
+target/
+  .app-local-<app>.lock
+  .app.lock
+  app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/<main>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>/
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .local-<app>.lock
+    .prepare.lock  (empty)
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+
+== after the working tree, measured: dibs bench <root>/app@local gate
+jobs/  (8 job directories)
+out/
+target/
+  .app-local-<app>.lock
+  .app.lock
+  app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/<main>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .local-<app>.lock
+    .prepare.lock  (empty)
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+
+== after a second checkout of the repo: dibs bench <root>/app-topk@local gate
+jobs/  (11 job directories)
+out/
+target/
+  .app-local-<app-topk>.lock
+  .app-local-<app>.lock
+  .app.lock
+  app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/<main>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app-topk>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app-topk>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .local-<app-topk>.lock
+    .local-<app>.lock
+    .prepare.lock  (empty)
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app-topk>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+
+== after a comparison of main and the working tree: dibs bench <root>/app@origin/main..local gate
+jobs/  (17 job directories)
+out/
+target/
+  .app-local-<app-topk>.lock
+  .app-local-<app>.lock
+  .app-local-<main, sent>.lock
+  .app.lock
+  app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/<main>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app-topk>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app-topk>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<app>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<app>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+  app-local-<main, sent>/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-tree:
+      | <root>/scratch/ws/app/local-<main, sent>
+    .dibs-tree.lock  (empty)
+    .dibs-used  (empty)
+tmp/
+ws/
+  app/
+    .local-<app-topk>.lock
+    .local-<app>.lock
+    .local-<main, sent>.lock
+    .prepare.lock  (empty)
+    <main>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .git:
+        | gitdir: <root>/home/prog/app/.git/worktrees/<main>
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app-topk>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<app>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+    local-<main, sent>/
+      .dibs-used  (empty)
+      .dibs.toml
+      .gitignore
+      Cargo.lock
+      a.txt
+
+== the clone's own record of its worktrees
+worktree <root>/home/prog/app
+branch refs/heads/<the default branch>
+
+worktree <root>/scratch/ws/app/<main>
+detached
+
+== refs a prepare left under refs/dibs
+0

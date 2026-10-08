@@ -1,0 +1,13 @@
+[package]
+name = "dibs-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The machine half of dibs: takes the lock and runs the job"
+
+[dependencies]
+dibs-format.workspace = true
+libc.workspace = true
+
+[lints]
+workspace = true

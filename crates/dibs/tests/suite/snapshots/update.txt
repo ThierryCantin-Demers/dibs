@@ -1,0 +1,40 @@
+== dibs --update  (one commit behind, and the recipes one behind theirs)
+-> exit 0
+1| dibs <sha> -> <sha>
+1|   <sha> two
+1| recipes <sha> -> <sha>
+1|   <sha> r2
+
+== the change notice  (in a session that last ran it before that update)
+-> exit 0
+2| dibs changed since this session last ran it: <sha> -> <sha>
+2|   <sha> two
+2|   Flags and output you remember may be wrong now. Read dibs --help, and
+2|   <root>/update/clone/dibs-agent-rules.md for how it is meant to be used.
+
+== the change notice  (after twelve more commits arrived)
+-> exit 0
+2| dibs changed since this session last ran it: <sha> -> <sha>
+2|   <sha> more-11
+2|   <sha> more-10
+2|   <sha> more-09
+2|   <sha> more-08
+2|   <sha> more-07
+2|   <sha> more-06
+2|   <sha> more-05
+2|   <sha> more-04
+2|   <sha> more-03
+2|   <sha> more-02
+2|   and 2 more:  git -C <root>/update/clone log <sha>..<sha>
+2|   Flags and output you remember may be wrong now. Read dibs --help, and
+2|   <root>/update/clone/dibs-agent-rules.md for how it is meant to be used.
+
+== dibs --update  (with nothing to pull)
+-> exit 0
+1| dibs <sha>, already current
+1| recipes <sha>, already current
+
+== dibs --update  (with recipes that are not a clone)
+-> exit 0
+1| dibs <sha>, already current
+1| recipes in <root>/update are not a clone with an upstream, so they were left alone

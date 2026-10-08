@@ -1,0 +1,65 @@
+== dibs --check
+-> exit 1
+1| dibs --check on <host>
+1| 
+1|   ok    this dibs's runner is installed, and the login shell started it
+1|   ok    bash <version>, which every job runs under
+1|   ok    rsync <version>, so a tree can be sent here
+1|   ok    the CPU of reaped children is counted, so idle detection sees a job's whole tree
+1|   warn  lock directory set explicitly: <root>/lockdir (only what set it will agree)
+1|   FAIL  scratch <root>/ro-scratch is not writable
+1|   warn  history is per-user: <root>/history
+1|         Estimates are built only from your own runs, and the log shows only
+1|         your own jobs. Shared, as root:  install -d -m 2775 -g dibs /var/lib/dibs
+1| 
+1|   repos it can build:  app 
+1| 
+1|   devices
+1|     cpu   <model>, <n> threads
+1|     gpu   NVIDIA GeForce RTX 4090  00000000:7F:00.0  24564 MiB  sm8.9
+1| 
+1|   1 blocking, <n> to look at. This machine is not ready.
+
+== dibs --on box-a --check --write  (on box-a itself)
+-> exit 1
+1| dibs --check on <host>
+1| 
+1|   ok    this dibs's runner is installed, and the login shell started it
+1|   ok    bash <version>, which every job runs under
+1|   ok    rsync <version>, so a tree can be sent here
+1|   ok    the CPU of reaped children is counted, so idle detection sees a job's whole tree
+1|   warn  lock directory set explicitly: <root>/lockdir (only what set it will agree)
+1|   FAIL  scratch <root>/ro-scratch is not writable
+1|   warn  history is per-user: <root>/history
+1|         Estimates are built only from your own runs, and the log shows only
+1|         your own jobs. Shared, as root:  install -d -m 2775 -g dibs /var/lib/dibs
+1| 
+1|   repos it can build:  app 
+1| 
+1|   devices
+1|     cpu   <model>, <n> threads
+1|     gpu   NVIDIA GeForce RTX 4090  00000000:7F:00.0  24564 MiB  sm8.9
+1| 
+1| 
+1|   1 blocking, <n> to look at. This machine is not ready.
+1|   recorded as [machine.box-a] in <root>/machines.toml
+
+== the inventory it wrote
+
+[machine.box-a]
+ssh      = "dibs@box-a"
+hostname = "<host>"
+probed   = "<date>"
+
+  [[machine.box-a.device]]
+  kind  = "cpu"
+  name  = "<model>"
+  cores = <n>
+
+  [[machine.box-a.device]]
+  kind     = "gpu"
+  alias    = "gpu:rtx4090"
+  name     = "NVIDIA GeForce RTX 4090"
+  pci      = "0000:7f:00.0"
+  chip     = "10de:2684"
+  runtimes = ["cuda"]

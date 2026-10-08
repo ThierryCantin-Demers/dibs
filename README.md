@@ -32,16 +32,19 @@ it" into one command that records what was actually measured.
 
 ## Setting it up
 
-You need an account on each machine that you can already `ssh` into with a key. Nothing is
-installed on the machine and no root is needed. One account shared by the whole team is the
-intended setup, since it lets one build cache serve everyone.
+You need an account on each machine that you can already `ssh` into with a key, and cargo there.
+No root is needed, and nobody installs anything on the machine by hand: dibs builds its own half
+there the first time it needs it. One account shared by the whole team is the intended setup,
+since it lets one build cache serve everyone.
 
     git clone https://github.com/ThierryCantin-Demers/dibs
     cd dibs && ./install.sh
 
-`install.sh` links `dibs` into `~/.local/bin`, so pulling the clone updates it. With cargo
-installed it also builds the recipe layer and `dibstop`, and with `--machines` the
-`dibs-machines` window; without cargo you still get the lock.
+`install.sh` builds `dibs` and `dibstop` with cargo and installs them in `~/.local/bin`, or
+`$PREFIX/bin` when `PREFIX` is set, and with `--machines` the `dibs-machines` window too. The
+part of dibs it sends to the machines is built into the binary, so an edit in the clone changes
+nothing until the next install, and only `dibs --update` needs the clone. Installed over a dibs
+from before, it replaces it, the bash script included.
 
 Record each machine, and say where your checkouts live:
 
@@ -57,7 +60,8 @@ see who holds each machine:
     dibs status                         # once
     dibstop                             # live, and a way to act on what is holding it
 
-`dibs --update` pulls the clone and your recipes, and reinstalls when something changed.
+`dibs --update` pulls the clone and your recipes, and reinstalls when something changed. The
+first call the new version makes to each machine builds its half there, once.
 
 ## Recipes
 
@@ -83,35 +87,59 @@ dibs ships no recipes. You describe a repo's builds and benchmarks in
 
 Load [`dibs-agent-rules.md`](dibs-agent-rules.md) into your agents' instructions from your clone,
 so an update updates the rules too. In Claude Code, a line `@~/<clone>/dibs-agent-rules.md` in
-`~/.claude/CLAUDE.md` does it. The rules mention hooks that stop an agent from reaching a machine
-over plain ssh or sleeping under the lock. Those live in your own config, not here.
+`~/.claude/CLAUDE.md` does it.
+
+The rules tell an agent never to ssh a machine; `dibs hook ssh` makes it so. It is a Claude Code
+PreToolUse hook: it reads the tool call on stdin and refuses, with exit 2 and the dibs call to
+use instead, an ssh, scp, sftp or rsync aimed at any name your inventory gives a machine. An
+rsync through dibs's own transport passes, and with no inventory everything does. To wire it, add to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "dibs hook ssh" }] }
+    ]
+  }
+}
+```
+
+A hook that stops an agent sleeping under the lock is still yours to write.
 
 ## Learn more
 
 - [`docs/guide.md`](docs/guide.md): every feature in detail, and why it behaves the way it does.
 - `dibs --help`: every flag.
-- [`dibs-design/`](dibs-design/): the decisions and the measurements behind them.
+- [`docs/design/`](docs/design/README.md): how it is built, and the decisions and measurements
+  behind it.
 
 ## What is here
 
 | | |
 |---|---|
-| `bin/dibs` | the lock's entry point: the help text, then it loads `lib/`. |
-| `lib/client/`, `lib/steps/` | what runs on your side: functions by topic, and the steps of a call in order. |
-| `lib/machine/` | what runs on the machine, joined into one script and sent over ssh with every call, so nothing is installed there. |
-| `core/` | the recipe layer behind `dibs build`, `test` and `bench`: recipes, labels, worktrees, provenance. |
-| `dibs-tui/` | `dibstop`, a live view of who holds the machines. |
-| `dibs-report/` | builds a single-page handoff report from the sources themselves. |
-| `config/chips.toml` | what to assume about a chip when no runtime can probe it. |
+| `crates/dibs/` | the `dibs` command: the grammar, a call to a machine, placement, status, and the recipe layer behind `dibs build`, `test` and `bench`. |
+| `crates/dibs-format/` | the ids, exits, records and line formats both halves read and write. |
+| `crates/dibs-runner/` | what runs on the machine: the lock, the job and the status. Each machine builds the version a client needs, the first time it needs it. |
+| `bin/dibs` | where the bash dibs was: for a dibs still linked here, it says how to install the binary, and runs nothing. |
+| `crates/dibstop/` | `dibstop`, a live view of who holds the machines. |
+| `crates/dibs-machines/` | `dibs-machines`, a desktop window on what each machine has against what it should. |
 | `docs/guide.md` | the detailed guide. |
-| `dibs-design/` | the plans, the settled decisions and their measurements. |
+| `docs/design/` | the design records: architecture, protocol, decisions, and history. |
 | `dibs-agent-rules.md` | the rules your agents follow. |
-| `core/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
-| `core/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |
+| `crates/dibs/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
+| `crates/dibs/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |
+| `.github/workflows/ci.yml` | formatting, clippy, the tests on Linux and macOS, the window's build, and a scan for private names whose patterns live in the `PRIVATE_STRINGS` secret. |
 
 ## Tests
 
-    cd core && cargo test          # everything local, about 10 s, safe while others are working
+    # dibs's unit tests and suite, dibs-format's and dibstop's: about 15 s, safe while others work.
+    cargo test
+
+    # dibs-machines, which a plain cargo test leaves out for its GUI toolkit.
+    cargo test -p dibs-machines
+
+    # What a call costs, timed in the sandbox, to compare one version of dibs with another.
+    cargo test --test suite -- --ignored --test-threads=1 baselines
 
     # A real, idle machine: takes its lock and kills its own jobs there, so it is named twice.
     DIBS_LIVE_MACHINE=<machine> DIBS_LIVE_CONFIRM=<machine> cargo test --test live

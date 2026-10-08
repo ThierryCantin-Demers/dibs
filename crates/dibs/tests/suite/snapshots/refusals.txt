@@ -1,0 +1,358 @@
+exit  call
+2     dibs --bogus
+2     dibs --kill
+2     dibs --forget
+2     dibs --prefer
+2     dibs --repo
+2     dibs --gc --days
+2     dibs --wait
+2     dibs --max
+2     dibs --label
+2     dibs --device
+2     dibs --with s=true --ready
+2     dibs --with ./serve true
+2     dibs --with a-b=true true
+2     dibs --with s=true --with s=false true
+2     dibs --ready tcp:1 true
+2     dibs --port 8080 true
+2     dibs --port api --port api true
+2     dibs --ready-within soon true
+2     dibs --with s=true --ready tcp:nope true
+2     dibs --peek --with s=true true
+2     dibs --peek --hold true
+2     dibs --hold --device gpu:x true
+2     dibs --label x list app
+2     dibs
+2     dibs --status extra
+2     dibs --release extra
+2     dibs --log 5 extra
+2     dibs --check a b
+2     dibs --fetch
+2     dibs --fetch notanid
+2     dibs --fetch 1-2 dir extra
+2     dibs --out 5 extra
+2     dibs --kill notapid
+2     dibs --watch 1
+2     dibs --watch 5 extra
+2     dibs --gc extra
+2     dibs --gc --days x
+2     dibs --dry-run true
+2     dibs --days 3 true
+2     dibs --sync ':~/x'
+2     dibs --sync ./a ./b
+2     dibs --sync --on x ./a ':~/b'
+2     dibs --sync ./x ':$DIBS_SCRATCH/x'
+71    DIBS_LOCK_DIR=<root>/ro-lock dibs --label x true
+2     DIBS_HOLDING=<host> dibs --label x true
+2     dibs --friction '   '
+2     DIBS_MACHINES=/nonexistent/machines.toml dibs --machines
+2     DIBS_MACHINES=/nonexistent/machines.toml dibs --on nope --status
+2     DIBS_MACHINES=<root>/two.toml dibs --on nope --status
+2     DIBS_MACHINES=<root>/two.toml dibs --forget nope
+2     DIBS_MACHINES=<root>/two.toml dibs --on box-b --bench true
+2     DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs --bench true
+2     DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 DIBS_HOST=dibs@box-z dibs --bench true
+2     DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs --peek true
+2     DIBS_MACHINES=/nonexistent/machines.toml DIBS_LOCAL=0 dibs true
+2     DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs --which
+1     DIBS_MACHINES=/nonexistent/machines.toml DIBS_LOCAL=0 DIBS_HOST=dibs@box-z dibs --which
+1     DIBS_MACHINES=/nonexistent/machines.toml dibs --which
+2     DIBS_MACHINES=/nonexistent/machines.toml DIBS_LOCAL=0 dibs --check --write
+2     DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device gpu:nope true
+2     DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device card true
+2     DIBS_MACHINES=<root>/two.toml dibs --on box-a --device gpu:card true
+2     DIBS_MACHINES=/nonexistent/machines.toml dibs --device gpu:card true
+69    DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 DIBS_POLL_TIMEOUT=3 dibs --pick --repo absent
+
+== dibs --bogus
+-> exit 2
+1| <what dibs --help prints>
+2| unknown option: --bogus
+
+== dibs --kill
+-> exit 2
+2| dibs: --kill needs a value.
+
+== dibs --forget
+-> exit 2
+2| dibs: --forget needs a value.
+
+== dibs --prefer
+-> exit 2
+2| dibs: --prefer needs a value.
+
+== dibs --repo
+-> exit 2
+2| dibs: --repo needs a value.
+
+== dibs --gc --days
+-> exit 2
+2| dibs: --days needs a value.
+
+== dibs --wait
+-> exit 2
+2| dibs: --wait needs a value.
+
+== dibs --max
+-> exit 2
+2| dibs: --max needs a value.
+
+== dibs --label
+-> exit 2
+2| dibs: --label needs a value.
+
+== dibs --device
+-> exit 2
+2| dibs: --device needs a value.
+
+== dibs --with s=true --ready
+-> exit 2
+2| dibs: --ready needs a value.
+
+== dibs --with ./serve true
+-> exit 2
+2| dibs: --with takes name='<command>', as in --with server='./serve --port 7700'
+
+== dibs --with a-b=true true
+-> exit 2
+2| dibs: a --with name is lowercase letters, digits and _, and 'a-b' is not
+
+== dibs --with s=true --with s=false true
+-> exit 2
+2| dibs: two services are called s
+
+== dibs --ready tcp:1 true
+-> exit 2
+2| dibs: --ready says when the --with before it is ready, and none comes before it
+
+== dibs --port 8080 true
+-> exit 2
+2| dibs: --port names a port for the machine to pick, as in --port api, which the
+2|   service and the command then read as $DIBS_PORT_API. It does not ask for a
+2|   number: a number everyone writes down is the collision this avoids.
+
+== dibs --port api --port api true
+-> exit 2
+2| dibs: two ports are called api
+
+== dibs --ready-within soon true
+-> exit 2
+2| dibs: --ready-within takes seconds
+
+== dibs --with s=true --ready tcp:nope true
+-> exit 2
+2| dibs: --ready tcp:nope names no port. Use a number, or --port nope to have one picked.
+
+== dibs --peek --with s=true true
+-> exit 2
+2| dibs: --with and --port belong to a call that takes a lock: a run, --bench, or --hold.
+
+== dibs --peek --hold true
+-> exit 2
+2| dibs: --hold takes a lock for a command run on this computer. It goes alone or with --bench.
+
+== dibs --hold --device gpu:x true
+-> exit 2
+2| dibs: --hold runs its command on this computer, so it cannot be pinned to a card there.
+
+== dibs --label x list app
+-> exit 2
+2| dibs: only --on can come before list. Put the rest after it:  dibs list ... <flags>
+
+== dibs
+-> exit 2
+1| <what dibs --help prints>
+2| no command given
+
+== dibs --status extra
+-> exit 2
+2| status takes no command
+
+== dibs --release extra
+-> exit 2
+2| release takes no command
+
+== dibs --log 5 extra
+-> exit 2
+2| --log takes only a line count
+
+== dibs --check a b
+-> exit 2
+2| --check takes only a host
+
+== dibs --fetch
+-> exit 2
+2| --fetch needs a job id, the one after 'job' in the trailer
+
+== dibs --fetch notanid
+-> exit 2
+2| --fetch needs a job id, the one after 'job' in the trailer
+
+== dibs --fetch 1-2 dir extra
+-> exit 2
+2| --fetch takes a job id and, optionally, a directory to copy into
+
+== dibs --out 5 extra
+-> exit 2
+2| --out takes only a pid or a job id
+
+== dibs --kill notapid
+-> exit 2
+2| not a pid or a batch id: notapid
+
+== dibs --watch 1
+-> exit 2
+2| --watch: 2 seconds is the floor. Anything faster costs the benchmark more than it tells you.
+
+== dibs --watch 5 extra
+-> exit 2
+2| --watch takes only an interval in seconds
+
+== dibs --gc extra
+-> exit 2
+2| --gc takes no command: it sweeps what is under the machine's scratch
+
+== dibs --gc --days x
+-> exit 2
+2| --days takes a number of days
+
+== dibs --dry-run true
+-> exit 2
+2| dibs: --dry-run belongs to --gc. A recipe run takes it after its verb.
+
+== dibs --days 3 true
+-> exit 2
+2| dibs: --days belongs to --gc.
+
+== dibs --sync ':~/x'
+-> exit 2
+1| <what dibs --help prints>
+2| --sync takes rsync options, a source and a destination
+
+== dibs --sync ./a ./b
+-> exit 2
+2| --sync: mark the machine's side with a leading colon, as in :~/.cache/dibs/x
+
+== dibs --sync --on x ./a ':~/b'
+-> exit 2
+2| dibs: --on is a dibs flag, and after --sync everything is rsync's.
+2|   Put it before:  dibs --on ... --sync <opts> <src> <dst>
+
+== dibs --sync ./x ':$DIBS_SCRATCH/x'
+-> exit 2
+2| dibs: --sync does not expand variables on the machine: :$DIBS_SCRATCH/x
+2|   Name the directory: :~/.cache/dibs/... is $DIBS_SCRATCH, :~/... is $HOME
+
+== DIBS_LOCK_DIR=<root>/ro-lock dibs --label x true
+-> exit 71
+2| dibs: <root>/ro-lock cannot be written, so no lock can be taken. Nothing was run.
+2|   A sandboxed shell is the usual cause: it sees the lock directory and cannot
+2|   write in it. Unlocked work beside a measurement is the one outcome this exists
+2|   to prevent, and another directory would not exclude the sessions using this one.
+
+== DIBS_HOLDING=<host> dibs --label x true
+-> exit 2
+2| dibs: this runs inside a --hold of the lock on <host>, so it would queue behind that hold and never start.
+2|   Take the lock once: run this outside the --hold, or peek if it is free to run.
+
+== dibs --friction '   '
+-> exit 2
+2| dibs: --friction takes one line: what got in the way, in your own words
+
+== DIBS_MACHINES=/nonexistent/machines.toml dibs --machines
+-> exit 2
+2| no inventory at /nonexistent/machines.toml
+2| Write one with:  dibs --check <host> --write
+
+== DIBS_MACHINES=/nonexistent/machines.toml dibs --on nope --status
+-> exit 2
+2| dibs: no machine named 'nope' in /nonexistent/machines.toml
+2|   There is no inventory yet. Write one with:  dibs --check <host> --write
+
+== DIBS_MACHINES=<root>/two.toml dibs --on nope --status
+-> exit 2
+2| dibs: no machine named 'nope' in <root>/two.toml
+2|   known:
+2|     box-a
+2|     box-b
+
+== DIBS_MACHINES=<root>/two.toml dibs --forget nope
+-> exit 2
+2| dibs: no machine named 'nope'
+
+== DIBS_MACHINES=<root>/two.toml dibs --on box-b --bench true
+-> exit 2
+2| dibs: box-b is marked measure = false, so a benchmark cannot run there.
+2|   Name one that measures with --on <machine>, or run it shared if it is not a measurement.
+
+== DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs --bench true
+-> exit 2
+2| dibs: this call names no machine. Name one of: box-a, box-b
+2|   with --on <machine>, or export DIBS_ON=<machine> to cover every call that follows.
+2|   A measurement is never placed for you: its series belongs to the machine it ran on.
+
+== DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 DIBS_HOST=dibs@box-z dibs --bench true
+-> exit 2
+2| dibs: this call names no machine. Name one of: box-a, box-b
+2|   with --on <machine>, or export DIBS_ON=<machine> to cover every call that follows.
+2|   A measurement is never placed for you: its series belongs to the machine it ran on.
+2|   DIBS_HOST=dibs@box-z does not choose one when the inventory has several.
+
+== DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs --peek true
+-> exit 2
+2| dibs: this call names no machine. Name one of: box-a, box-b
+2|   with --on <machine>, or export DIBS_ON=<machine> to cover every call that follows.
+
+== DIBS_MACHINES=/nonexistent/machines.toml DIBS_LOCAL=0 dibs true
+-> exit 2
+2| dibs: no machine. Record one with:  dibs --check <host> --write
+2|   Or, for a single machine and no inventory, set DIBS_HOST to it.
+
+== DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs --which
+-> exit 2
+2| dibs: no machine: this call names none, and <root>/two.toml has 2 to choose from.
+
+== DIBS_MACHINES=/nonexistent/machines.toml DIBS_LOCAL=0 DIBS_HOST=dibs@box-z dibs --which
+-> exit 1
+2| dibs: this call goes to 'dibs@box-z' from DIBS_HOST, which is not in the inventory at /nonexistent/machines.toml.
+2|   It has no name to give --on. Record it with:  dibs --check dibs@box-z --write
+
+== DIBS_MACHINES=/nonexistent/machines.toml dibs --which
+-> exit 1
+2| dibs: this call runs on this computer, under DIBS_LOCAL.
+
+== DIBS_MACHINES=/nonexistent/machines.toml DIBS_LOCAL=0 dibs --check --write
+-> exit 2
+2| dibs: no machine. Record one with:  dibs --check <host> --write
+2|   Or, for a single machine and no inventory, set DIBS_HOST to it.
+
+== DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device gpu:nope true
+-> exit 2
+2| dibs: box-a has no device called 'gpu:nope'.
+2|   it has:
+2|     gpu:card
+2|     gpu:other
+2|     cpu
+
+== DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device card true
+-> exit 2
+2| dibs: box-a has no device called 'card'.
+2|   Did you mean gpu:card?
+2|   it has:
+2|     gpu:card
+2|     gpu:other
+2|     cpu
+
+== DIBS_MACHINES=<root>/two.toml dibs --on box-a --device gpu:card true
+-> exit 2
+2| dibs: box-a has no device called 'gpu:card'.
+2|   Its entry lists no devices. Re-probe it:  dibs --check box-a --write
+
+== DIBS_MACHINES=/nonexistent/machines.toml dibs --device gpu:card true
+-> exit 2
+2| dibs: --device names a card from a machine's entry, and this call has none.
+2|   Record one with:  dibs --check <host> --write
+
+== DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 DIBS_POLL_TIMEOUT=3 dibs --pick --repo absent
+-> exit 69
+2| dibs: no machine in <root>/two.toml answered, so there was nowhere to place this.
