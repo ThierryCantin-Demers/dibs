@@ -4,6 +4,7 @@
 use crate::{
     call::watched::{Starter, Watched},
     cli::{Command, Service},
+    itself::Itself,
     machine::{Held, Holder, Interrupt, Reach, Relayed},
 };
 use dibs_format::{Exit, Mode, wire::Picked};
@@ -148,7 +149,7 @@ impl Hold<'_> {
     /// The guard that runs the command, with the machine's ports and the hold it runs inside in
     /// its environment.
     fn guard(&self, ports: &[Picked]) -> std::io::Result<std::process::Command> {
-        let mut command = std::process::Command::new(std::env::current_exe()?);
+        let mut command = Itself::command();
         command
             .arg(Guard::WORD)
             .arg(&self.at)

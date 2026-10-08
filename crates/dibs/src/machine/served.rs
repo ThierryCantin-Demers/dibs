@@ -1,12 +1,15 @@
-use crate::machine::{
-    deadline::{Deadline, Ended},
-    held::{Held, Holder, Release},
-    interrupt::Interrupt,
-    lines::{Listener, Stream},
-    provision::{Installed, Provision},
-    session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Said, Session},
-    ssh::Ssh,
-    values::{CallValues, Watch},
+use crate::{
+    itself::Itself,
+    machine::{
+        deadline::{Deadline, Ended},
+        held::{Held, Holder, Release},
+        interrupt::Interrupt,
+        lines::{Listener, Stream},
+        provision::{Installed, Provision},
+        session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Said, Session},
+        ssh::Ssh,
+        values::{CallValues, Watch},
+    },
 };
 use dibs_format::{
     Exit,
@@ -19,7 +22,7 @@ use std::{
         fd::{AsFd as _, AsRawFd as _},
         unix::process::CommandExt as _,
     },
-    path::{Path, PathBuf},
+    path::Path,
     process::{ChildStderr, ChildStdin, Command, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
     thread,
@@ -69,18 +72,9 @@ impl Runner {
         )
     }
 
-    /// This binary, which links the runner. Through `/proc` on Linux, so a binary an update has
-    /// replaced still starts the runner it was built with.
+    /// This binary, which links the runner.
     fn here() -> Command {
-        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("dibs"));
-        let mut command = match cfg!(target_os = "linux") {
-            true => {
-                let mut command = Command::new("/proc/self/exe");
-                command.arg0(&exe);
-                command
-            }
-            false => Command::new(&exe),
-        };
+        let mut command = Itself::command();
         command.args([RUNNER_WORD, "serve", Runner::HASH]);
         command
     }

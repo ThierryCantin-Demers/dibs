@@ -79,6 +79,40 @@ fn a_batch_runs_its_steps_with_its_own_dibs_not_the_first_on_the_path() {
 }
 
 #[test]
+fn a_batch_keeps_its_own_dibs_when_an_update_renames_another_over_it() {
+    let mut s = Sandbox::new();
+    let app = crate::recipes::app(&s);
+    std::fs::create_dir_all(s.path("own")).unwrap();
+    let copied = std::process::Command::new("cp")
+        .args([DIBS, &s.p("own/dibs")])
+        .status()
+        .unwrap();
+    assert!(copied.success());
+    let (up, go) = (s.gate("up"), s.gate("go"));
+    let file = batch_file(
+        &s,
+        "b-renamed",
+        &[
+            &format!(
+                "[a] dibs --label batch-renamed '{}; {}'",
+                up.signal(),
+                go.hold()
+            ),
+            &format!("[b] dibs shell {app}@local --reason test -- 'cat a.txt'"),
+        ],
+    );
+    let batch = s.spawn(s.remote(s.command(&s.p("own/dibs"), ["batch", &file])));
+    up.reached();
+    s.write_exec(
+        "own/.dibs.new",
+        "#!/bin/sh\necho another dibs >&2\nexit 3\n",
+    );
+    std::fs::rename(s.path("own/.dibs.new"), s.path("own/dibs")).unwrap();
+    go.open();
+    assert_eq!(s.wait(batch), 0);
+}
+
+#[test]
 fn an_on_before_the_batch_is_the_machine_of_every_step_that_names_none() {
     let mut s = Sandbox::new();
     s.machines(&format!(

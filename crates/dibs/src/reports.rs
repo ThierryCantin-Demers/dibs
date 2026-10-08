@@ -4,6 +4,7 @@
 use crate::{
     caller::Caller,
     cli::Friction,
+    itself::Itself,
     paths::{FileError, Paths, ReportsStamp},
     records::{FrictionLog, RecordsError},
     update::{Build, ChangeNotice},
@@ -75,10 +76,7 @@ impl Notice<'_> {
             return;
         }
         let _ = std::fs::write(&stamp, "");
-        let Ok(me) = std::env::current_exe() else {
-            return;
-        };
-        let mut fetch = Command::new(me);
+        let mut fetch = Itself::command();
         fetch
             .args(["friction", "--replies"])
             .arg(&mine)

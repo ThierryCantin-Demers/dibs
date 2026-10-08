@@ -392,26 +392,41 @@ impl Unprepared {
         match self {
             Unprepared::SendPinned { repo, from } => write!(
                 f,
-                "could not send the pinned {repo} from {} (exit {exit})",
-                from.display()
+                "could not send the pinned {repo} from {} {}",
+                from.display(),
+                Ended(exit)
             ),
             Unprepared::PreparePinned { repo, reference } => write!(
                 f,
-                "could not prepare the pinned {repo}@{reference} (exit {exit})"
+                "could not prepare the pinned {repo}@{reference} {}",
+                Ended(exit)
             ),
             Unprepared::NoPath => {
                 f.write_str("the worktree setup did not report a path; see its output above")
             }
-            Unprepared::Prepare(what) => write!(f, "could not prepare {what} (exit {exit})"),
+            Unprepared::Prepare(what) => write!(f, "could not prepare {what} {}", Ended(exit)),
             Unprepared::PrepareFrom { repo, from } => write!(
                 f,
-                "could not prepare {repo} from {} (exit {exit})",
-                from.display()
+                "could not prepare {repo} from {} {}",
+                from.display(),
+                Ended(exit)
             ),
             Unprepared::PrepareRef { repo, reference } => {
-                write!(f, "could not prepare {repo}@{reference} (exit {exit})")
+                write!(f, "could not prepare {repo}@{reference} {}", Ended(exit))
             }
             Unprepared::Send(dir) => write!(f, "sending {} failed (exit {exit})", dir.display()),
+        }
+    }
+}
+
+/// A failed prepare's exit. A 0 means the call ended well and never said what tree it laid out.
+struct Ended(i32);
+
+impl fmt::Display for Ended {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            0 => f.write_str("(exit 0, yet no tree was reported back)"),
+            exit => write!(f, "(exit {exit})"),
         }
     }
 }

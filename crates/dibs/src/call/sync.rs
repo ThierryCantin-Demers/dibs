@@ -7,6 +7,7 @@ use crate::{
     },
     caller::Caller,
     cli::{BashQuoted, Call, Command as Words},
+    itself::Itself,
     machine::{CallValues, Interrupt, Lines, Liveness, Relayed, Route, Session, Target},
     paths::Paths,
     scratch::ScratchFile,
@@ -223,8 +224,7 @@ impl<'a> Transport<'a> {
 
     /// rsync's `-e`, which it splits on whitespace and follows with the host and its command.
     fn words(&self) -> io::Result<String> {
-        let me = std::env::current_exe()?;
-        let mut words = vec![me.display().to_string(), Rsh::WORD.to_string()];
+        let mut words = vec![Itself::path().display().to_string(), Rsh::WORD.to_string()];
         if self.sync.machine.call.stream {
             words.push(Rsh::STREAM.into());
         }
