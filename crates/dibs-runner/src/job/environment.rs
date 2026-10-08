@@ -5,7 +5,11 @@ use crate::{
     stop::Signals,
 };
 use dibs_format::wire::{Card, Picked};
-use std::{collections::BTreeMap, path::PathBuf, process::Command};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::PathBuf,
+    process::Command,
+};
 
 /// What a job finds in its environment besides what the runner inherited.
 #[derive(Debug, Clone, Default)]
@@ -61,9 +65,11 @@ impl Environment {
             .collect();
         let path = var("PATH").unwrap_or_default();
         let rest = Host::ahead_of_the_system(path.split(':').map(PathBuf::from).collect());
+        let mut seen = HashSet::new();
         toolchains
             .iter()
-            .chain(rest.iter().filter(|d| !toolchains.contains(d)))
+            .chain(&rest)
+            .filter(|d| seen.insert(*d))
             .map(|d| d.display().to_string())
             .collect::<Vec<_>>()
             .join(":")
