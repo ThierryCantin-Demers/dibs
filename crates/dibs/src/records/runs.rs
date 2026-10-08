@@ -69,6 +69,7 @@ struct Record {
     pub label: String,
     pub variant: Option<String>,
     pub fingerprint: String,
+    /// The series it ran under, or its machine when that names none.
     pub machine: Option<String>,
     pub params: Vec<(String, String)>,
     pub state: Vec<(String, String)>,
@@ -129,7 +130,7 @@ impl Record {
             label: run.label,
             variant: run.variant,
             fingerprint: run.fingerprint,
-            machine: run.machine.map(|m| m.to_string()),
+            machine: run.series.or_else(|| run.machine.map(|m| m.to_string())),
             params: run.params.into_iter().collect(),
             state: Record::sorted(&run.state),
             revisions: Record::sorted(&run.revisions),
@@ -675,6 +676,25 @@ mod tests {
             out.contains("governor=powersave: measured 2 times, median 30s, 30s to 31s"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn runs_on_two_machines_of_one_series_repeat_each_other() {
+        let on = |t: u64, machine: &str, measured: u64| {
+            parse_line(&format!(
+                r#"{{"t":{t},"verb":"bench","label":"app/bench/x","repo":"app","fingerprint":"f","machine":"{machine}","series":"kind","revisions":{{"app":"abc123"}},"steps":[{{"lock":"exclusive","status":0,"seconds":{measured}}}],"outcome":"ok"}}"#
+            ))
+            .unwrap()
+        };
+        let out = Runs {
+            records: vec![on(1, "lease-a", 10), on(2, "lease-b", 12)],
+        }
+        .report(None, 10, false);
+        assert!(
+            out.contains("app/bench/x on kind at app@abc123: measured 2 times"),
+            "{out}"
+        );
+        assert!(!out.contains("lease-"), "{out}");
     }
 
     #[test]

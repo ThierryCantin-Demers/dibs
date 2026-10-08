@@ -560,6 +560,27 @@ numbers would not mean anything, a laptop most of all: it throttles, it moves, a
 shares one memory pool with the CPU. `--check --write` sets it when it finds a battery. Such a
 machine is still useful for everything that is not a measurement, which is most of what runs.
 
+## Machines that come and go
+
+A machine leased for a few hours is best recorded by whatever leases it, not by hand. Every
+`machines.d/*.toml` beside `machines.toml` is read as part of the inventory, in the same
+`[machine.<name>]` form, so a tool keeps one file per lease and removes it when the lease ends,
+without touching yours. A name that two files give a machine is refused rather than shadowed.
+`dibs --check <machine> --write` records into the file the machine came from, and keeps every
+key it does not probe, such as a `measure` someone set.
+
+Three keys are for such machines:
+
+- `expires = <seconds since the epoch>`: past it the machine is gone from listings, placement,
+  status and dibstop, and a call naming it exits 69, saying its lease ended.
+- `ssh_config = "<path>"`: every ssh to it reads that file, as `ssh -F` does. A machine behind a
+  bastion is reached through a file that describes the whole path rather than through your
+  `~/.ssh/config`. ssh given `-F` reads no other configuration, so the file has to stand alone.
+- `series = "<name>"`: the name its runs are recorded under in place of its own. Machines of one
+  kind share it, so a run on this lease's machine compares with runs on the last one's in
+  `dibs runs`, and the card a label measures on carries over. Each machine keeps a name of its
+  own, which is what a call names; its duration estimates live on it and start over with it.
+
 ## Naming the card
 
 A machine with several GPUs has the same problem the lock solves, one level down: two runs of a

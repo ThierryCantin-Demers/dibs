@@ -9,7 +9,7 @@ use dibs_runner::BUILD_MAX;
 use std::{
     io::{self, BufRead as _, BufReader, Read, Write as _},
     os::unix::process::CommandExt as _,
-    process::{Command, Stdio},
+    process::Stdio,
     sync::mpsc,
     thread,
 };
@@ -219,10 +219,10 @@ impl Provision<'_> {
 
     /// Runs a line there with the tree on its stdin, its output passed on as it comes.
     fn install(&self, line: &str, delivery: &mut Delivery) -> io::Result<Installed> {
-        let Route::Ssh { host } = &self.session.route else {
+        let Route::Ssh { host, config } = &self.session.route else {
             return Ok(Installed::Done);
         };
-        let mut ssh = Command::new("ssh");
+        let mut ssh = Ssh::to(config.as_deref());
         ssh.args(Ssh::options()).arg(host).arg(line);
         let die_with_me = true;
         // SAFETY: the closure makes async-signal-safe calls only.

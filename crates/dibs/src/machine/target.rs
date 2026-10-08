@@ -2,7 +2,7 @@ use crate::{
     inventory::{Inventory, InventoryError, Machine},
     machine::ssh::Ssh,
 };
-use dibs_format::{Exit, MachineName};
+use dibs_format::{Exit, MachineName, Moment, Span};
 use std::{fmt, path::PathBuf};
 
 /// The inventory a call resolves its machine against, and where it was looked for.
@@ -50,10 +50,20 @@ pub struct Target {
     pub named: Named,
     /// `DIBS_HOST`, when an inventory of several machines means it no longer chooses one.
     pub unheeded: Option<String>,
+    /// The ssh configuration the machine is dialled with, in place of the user's own.
+    pub ssh_config: Option<PathBuf>,
+    /// The entry's `series`: what it measures under in place of its own name.
+    pub series: Option<String>,
 }
 
 #[derive(Debug)]
 pub enum TargetError {
+    /// A machine whose lease has ended, at that many seconds since the epoch.
+    Ended {
+        name: String,
+        at: u64,
+        file: PathBuf,
+    },
     NoSuchMachine {
         name: String,
         inventory: Option<PathBuf>,
@@ -98,6 +108,11 @@ impl Fleet {
         self.inventory.as_ref()?.machine(name)
     }
 
+    /// An entry whose lease has ended.
+    pub fn ended(&self, name: &str) -> Option<&Machine> {
+        self.inventory.as_ref()?.ended(name)
+    }
+
     /// Where the inventory is looked for, as messages name it.
     pub fn shown(&self) -> String {
         self.path
@@ -134,6 +149,8 @@ impl Target {
             measurable: true,
             named: Named::On,
             unheeded: None,
+            ssh_config: None,
+            series: None,
         }
     }
 
@@ -152,6 +169,8 @@ impl Target {
             measurable: true,
             named: Named::Unnamed,
             unheeded: None,
+            ssh_config: None,
+            series: None,
         };
         let count = fleet.names().len();
         if let Some(on) = on {
@@ -182,16 +201,26 @@ impl Target {
     pub fn go_to(&mut self, fleet: &Fleet, name: &str, named: Named) -> Result<(), TargetError> {
         let machine = fleet
             .reachable(name)
-            .ok_or_else(|| TargetError::NoSuchMachine {
-                name: name.to_string(),
-                inventory: fleet.path.clone(),
-                known: fleet.exists().then(|| fleet.names()),
+            .ok_or_else(|| match fleet.ended(name) {
+                Some(ended) => TargetError::Ended {
+                    name: name.to_string(),
+                    at: ended.expires.unwrap_or_default(),
+                    file: ended.source.clone(),
+                },
+                None => TargetError::NoSuchMachine {
+                    name: name.to_string(),
+                    inventory: fleet.path.clone(),
+                    known: fleet.exists().then(|| fleet.names()),
+                },
             })?;
         self.machine = Some(machine.name.clone());
         self.host = machine.ssh.clone().unwrap_or_default();
         self.hostname = machine.target().unwrap_or_default().to_string();
         self.measurable = machine.measure;
         self.named = named;
+        self.ssh_config =
+            machine.ssh_config(std::env::var_os("HOME").map(PathBuf::from).as_deref());
+        self.series = machine.series.clone();
         Ok(())
     }
 
@@ -199,6 +228,7 @@ impl Target {
     /// series.
     pub fn series_key(&self) -> String {
         [
+            self.series.clone().unwrap_or_default(),
             self.host.clone(),
             self.machine
                 .as_ref()
@@ -239,13 +269,22 @@ impl Target {
 
 impl TargetError {
     pub fn exit(&self) -> Exit {
-        Exit::Refused
+        match self {
+            TargetError::Ended { .. } => Exit::Unreachable,
+            _ => Exit::Refused,
+        }
     }
 }
 
 impl fmt::Display for TargetError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            TargetError::Ended { name, at, file } => writeln!(
+                f,
+                "dibs: {name}'s lease ended {} ago, so it is gone; {} still lists it.",
+                Span(Moment::epoch_now().saturating_sub(*at)),
+                file.display()
+            ),
             TargetError::NoSuchMachine {
                 name,
                 inventory,

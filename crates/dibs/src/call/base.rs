@@ -402,6 +402,7 @@ impl CallError {
     pub fn exit(&self) -> i32 {
         match self {
             CallError::Unplaced(e) => i32::from(e.exit().code()),
+            CallError::Target(e) => i32::from(e.exit().code()),
             CallError::Io(_) => i32::from(Exit::Failed.code()),
             _ => i32::from(Exit::Refused.code()),
         }

@@ -24,7 +24,7 @@ impl Unreachable<'_> {
         let why = match self.said.trim().is_empty() {
             false => self.said.trim_end().to_string(),
             true => bounded(
-                Command::new("ssh").args([
+                Ssh::to(self.target.ssh_config.as_deref()).args([
                     "-o",
                     "BatchMode=yes",
                     "-o",
@@ -138,7 +138,7 @@ impl Unreachable<'_> {
     /// key says so even when the key is locked.
     fn accepted_key(&self, timeout: &str, secs: u64) -> Option<String> {
         let verbose = bounded(
-            Command::new("ssh").args([
+            Ssh::to(self.target.ssh_config.as_deref()).args([
                 "-v",
                 "-o",
                 "BatchMode=yes",

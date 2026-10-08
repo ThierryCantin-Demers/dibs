@@ -193,6 +193,10 @@ pub struct RunRecord {
     pub backend: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<MachineName>,
+    /// The series its machine measures under, when the machine names one: shared by machines
+    /// of one kind, so a run on a new one compares with runs on the last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<Alias>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

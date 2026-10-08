@@ -71,16 +71,16 @@ impl MachineCall<'_> {
             .entry
             .replace("@NAME@", name.as_str())
             .replace("@SSH@", &target.host);
-        let written = self
+        let file = self
             .fleet
-            .path
-            .as_deref()
-            .is_some_and(|path| Inventory::write(path, &name, &entry).is_ok());
-        if !written {
+            .entry(name.as_str())
+            .map(|m| m.source.clone())
+            .or_else(|| self.fleet.path.clone());
+        let Some(file) = file.filter(|file| Inventory::write(file, &name, &entry).is_ok()) else {
             eprintln!("dibs: could not write {}", self.fleet.shown());
             return Ok(i32::from(Exit::Failed.code()));
-        }
-        println!("  recorded as [machine.{name}] in {}", self.fleet.shown());
+        };
+        println!("  recorded as [machine.{name}] in {}", file.display());
         Ok(status)
     }
 }

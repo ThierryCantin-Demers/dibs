@@ -660,18 +660,22 @@ impl Sandbox {
     /// A call that crosses a transport to a machine that is this one: an ssh whose far side is
     /// a process of its own, in a session of its own, as a remote one is. Signalling or stopping
     /// the client then leaves the far side to learn of it the way a machine does, through its
-    /// stdin, and never by a signal a real remote could not receive.
+    /// stdin, and never by a signal a real remote could not receive. Each `-F` it is given is
+    /// written down in `ssh-configs`.
     pub fn remote(&self, call: Call) -> Call {
         self.write_exec(
             "fakessh/ssh",
-            "#!/bin/bash\n\
-             while [ $# -gt 0 ]; do case $1 in -o) shift 2 ;; -*) shift ;; *) break ;; esac; done\n\
+            &format!(
+                "#!/bin/bash\n\
+             while [ $# -gt 0 ]; do case $1 in -o) shift 2 ;; -F) echo \"$2\" >> {}; shift 2 ;; -*) shift ;; *) break ;; esac; done\n\
              shift\n\
              if command -v setsid >/dev/null; then setsid bash -c \"$*\" <&0 &\n\
              else perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die' bash -c \"$*\" <&0 & fi\n\
              far=$!\n\
              trap 'exit 255' TERM\n\
              wait $far\n",
+                self.p("ssh-configs")
+            ),
         );
         call.env(
             "PATH",

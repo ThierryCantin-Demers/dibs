@@ -654,6 +654,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         backend: BACKEND.into(),
         device: args.device.as_deref().map(Alias::from),
         machine: backend.machine.clone(),
+        series: backend.series(),
         // Read on the machine, from the tree that was actually built, rather than from a
         // checkout here that may be at a different commit entirely.
         revisions: match compared {
@@ -864,6 +865,7 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
         isolation: "machine".into(),
         backend: BACKEND.into(),
         machine: backend.machine.clone(),
+        series: backend.series(),
         device: args.device.as_deref().map(Alias::from),
         needs: None,
         reason: Some(reason.to_string()),

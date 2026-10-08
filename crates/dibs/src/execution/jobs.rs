@@ -6,6 +6,7 @@ use crate::{
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run, RunLock},
     execution::{Refusal, RunError},
+    inventory::Inventory,
     machine::{Interrupt, Listener, Stream},
     placement::Placement,
     recipe::Lock,
@@ -194,6 +195,16 @@ pub struct Jobs {
 }
 
 impl Jobs {
+    /// The series its machine's entry measures under, when it names one.
+    pub fn series(&self) -> Option<String> {
+        let machine = self.machine.as_ref()?;
+        Inventory::here()
+            .ok()??
+            .machine(machine.as_str())?
+            .series
+            .clone()
+    }
+
     pub fn on(machine: Option<MachineName>) -> Jobs {
         Jobs {
             machine,

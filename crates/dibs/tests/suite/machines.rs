@@ -909,3 +909,48 @@ fn machines_says_what_each_one_lacks_against_what_it_should_have() {
         "and one not in fleet.toml is refused"
     );
 }
+
+#[test]
+fn a_leased_machine_is_dialled_with_its_own_ssh_config_until_its_lease_ends() {
+    let mut s = Sandbox::new();
+    s.machines("");
+    let now = Moment::epoch_now();
+    let lease = |expires: u64| {
+        s.write(
+            "machines.d/leased.toml",
+            &format!(
+                "[machine.leased]\nssh = \"leased\"\nhostname = \"leased\"\nssh_config = \"{}\"\nexpires = {expires}\n",
+                s.p("leased.ssh")
+            ),
+        )
+    };
+    let call = || {
+        s.remote(s.dibs(["--on", "leased", "--label", "leased", "echo ran"]))
+            .run()
+    };
+    lease(now + 3600);
+    let out = call();
+    assert_eq!(
+        (out.code, out.stdout.lines_with("ran")),
+        (0, 1),
+        "{}",
+        out.all()
+    );
+    assert!(
+        s.read("ssh-configs").lines_with(&s.p("leased.ssh")) > 0,
+        "it is dialled with the file it names"
+    );
+    lease(now - 60);
+    let out = call();
+    assert_eq!(
+        (out.code, out.stderr.lines_with("lease ended")),
+        (69, 1),
+        "{}",
+        out.all()
+    );
+    assert_eq!(
+        s.dibs(["--machines"]).run().stdout.lines_with("leased"),
+        0,
+        "and is no longer listed"
+    );
+}

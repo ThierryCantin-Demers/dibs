@@ -1,10 +1,12 @@
 //! `machines.toml`: the machines this computer knows, how to reach each, and the cards in it.
+//! Every `machines.d/*.toml` beside it adds machines of its own, so a tool that leases machines
+//! keeps a file of them without touching the person's.
 //!
 //! Read through serde and edited through `toml_edit`, so writing one machine's entry leaves the
 //! rest of the file, comments included, as its owner wrote it.
 
 use crate::paths::Paths;
-use dibs_format::{Alias, MachineName};
+use dibs_format::{Alias, MachineName, Moment};
 use dibs_runner::shared::SharedFile;
 use serde::Deserialize;
 use std::{
@@ -22,14 +24,27 @@ pub struct Inventory {
     /// A `default =` line, no longer read: a call names its machine.
     pub default: Option<String>,
     pub machines: Vec<Machine>,
+    /// Machines whose lease has ended, kept apart so a call naming one is told so.
+    pub ended: Vec<Machine>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Machine {
     #[serde(skip)]
     pub name: MachineName,
+    /// The file the entry is in, which `dibs --check --write` writes it back to.
+    #[serde(skip)]
+    pub source: PathBuf,
     /// What ssh dials. A machine without one is listed and never reached.
     pub ssh: Option<String>,
+    /// The ssh configuration to dial it with, in place of the user's own, for a machine reached
+    /// through a bastion that only its own file describes; `~/` is the home directory.
+    pub ssh_config: Option<String>,
+    /// When it stops being a machine, in seconds since the epoch: a leased one ends with it.
+    pub expires: Option<u64>,
+    /// The name its runs are recorded under, shared by machines of one kind so a new one
+    /// continues the series an earlier one began.
+    pub series: Option<String>,
     /// The name the machine answers to, when the ssh string does not end in it.
     pub hostname: Option<String>,
     /// When `dibs --check --write` recorded it.
@@ -85,6 +100,11 @@ pub enum InventoryError {
         error: String,
     },
     NoSuchMachine(MachineName),
+    /// A name a `machines.d` file gives a machine another file already has.
+    Twice {
+        name: MachineName,
+        path: PathBuf,
+    },
 }
 
 impl fmt::Display for InventoryError {
@@ -100,6 +120,11 @@ impl fmt::Display for InventoryError {
             } => write!(f, "{}: {error}", path.display()),
             InventoryError::Parse { path: None, error } => f.write_str(error),
             InventoryError::NoSuchMachine(name) => write!(f, "no machine named '{name}'"),
+            InventoryError::Twice { name, path } => write!(
+                f,
+                "{}: names the machine '{name}', which another inventory file already has",
+                path.display()
+            ),
         }
     }
 }
@@ -158,11 +183,43 @@ impl Inventory {
             root: file.root,
             default: file.default,
             machines,
+            ended: Vec::new(),
         })
     }
 
-    /// None when there is no file there.
+    /// None when there is no file there and no `machines.d` beside it.
     pub fn load(path: &Path) -> Result<Option<Inventory>, InventoryError> {
+        let main = Inventory::read(path)?;
+        let added = Inventory::added(path)?;
+        if main.is_none() && added.is_empty() {
+            return Ok(None);
+        }
+        let mut inventory = main.unwrap_or_default();
+        for more in added {
+            if let Some(twice) = more
+                .machines
+                .iter()
+                .find(|m| inventory.machines.iter().any(|n| n.name == m.name))
+            {
+                return Err(InventoryError::Twice {
+                    name: twice.name.clone(),
+                    path: twice.source.clone(),
+                });
+            }
+            inventory.machines.extend(more.machines);
+        }
+        let now = Moment::epoch_now();
+        let (live, ended) = inventory
+            .machines
+            .into_iter()
+            .partition(|m| m.expires.is_none_or(|at| at > now));
+        inventory.machines = live;
+        inventory.ended = ended;
+        Ok(Some(inventory))
+    }
+
+    /// One file, each machine knowing it came from there; None when there is no file.
+    fn read(path: &Path) -> Result<Option<Inventory>, InventoryError> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -173,7 +230,36 @@ impl Inventory {
                 });
             }
         };
-        Inventory::parse(&text).map(Some).map_err(|e| e.at(path))
+        let mut inventory = Inventory::parse(&text).map_err(|e| e.at(path))?;
+        for machine in &mut inventory.machines {
+            machine.source = path.to_path_buf();
+        }
+        Ok(Some(inventory))
+    }
+
+    /// The files in `machines.d` beside `path`, in name order.
+    fn added(path: &Path) -> Result<Vec<Inventory>, InventoryError> {
+        let dir = path.with_file_name("machines.d");
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(InventoryError::Read { path: dir, error }),
+        };
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+            .collect();
+        files.sort();
+        files
+            .iter()
+            .filter_map(|file| Inventory::read(file).transpose())
+            .collect()
+    }
+
+    /// The machine of that name whose lease has ended.
+    pub fn ended(&self, name: &str) -> Option<&Machine> {
+        self.ended.iter().find(|m| m.name.as_str() == name)
     }
 
     /// Every machine's name, reachable or not.
@@ -202,10 +288,28 @@ impl Inventory {
         })
     }
 
-    /// The file's text with `entry` as the machine's whole entry, replacing any it had.
+    /// The file's text with `entry` as the machine's entry. Keys the old entry set and `entry`
+    /// does not, such as a person's `measure` or a tool's `expires`, stay; its devices do not,
+    /// since `entry` is a new reading of them.
     fn with_entry(text: &str, name: &MachineName, entry: &str) -> Result<String, InventoryError> {
+        let old = Inventory::document(text)?;
+        let mut new = Inventory::document(entry)?;
+        if let (Some(old), Some(new)) = (
+            old.get("machine")
+                .and_then(|m| m.get(name.as_str()))
+                .and_then(Item::as_table),
+            new.get_mut("machine")
+                .and_then(|m| m.get_mut(name.as_str()))
+                .and_then(Item::as_table_mut),
+        ) {
+            for (key, item) in old.iter().filter(|(key, _)| *key != "device") {
+                if !new.contains_key(key) {
+                    new.insert(key, item.clone());
+                }
+            }
+        }
         let without = Inventory::without(text, name)?;
-        let written = format!("{without}\n{}\n", entry.trim_end_matches('\n'));
+        let written = format!("{without}\n{}\n", new.to_string().trim_end_matches('\n'));
         Inventory::parse(&written)?;
         Ok(written)
     }
@@ -353,6 +457,15 @@ impl Machine {
             self.ssh
                 .as_deref()
                 .map(|s| s.rsplit('@').next().unwrap_or(s))
+        })
+    }
+
+    /// `ssh_config` with a leading `~/` read as the home directory.
+    pub fn ssh_config(&self, home: Option<&Path>) -> Option<PathBuf> {
+        let file = self.ssh_config.as_deref()?;
+        Some(match (file.strip_prefix("~/"), home) {
+            (Some(rest), Some(home)) => home.join(rest),
+            _ => PathBuf::from(file),
         })
     }
 
@@ -536,13 +649,14 @@ hostname = "new"
         let entry =
             "[machine.old]\nssh      = \"dibs@old\"\nmeasure  = false        # runs on a battery\n";
         let text = Inventory::with_entry(OLD_AND_NEW, &MachineName::new("old"), entry).unwrap();
-        assert!(text.ends_with(&format!("\n{entry}")), "{text}");
+        assert!(text.contains("# runs on a battery"), "{text}");
         assert!(!text.contains("parent is going away"), "{text}");
         let inventory = Inventory::parse(&text).unwrap();
         assert_eq!(names(&inventory), ["new", "old"]);
+        let old = inventory.machine("old").unwrap();
         assert_eq!(
-            inventory.machine("old").unwrap().ssh.as_deref(),
-            Some("dibs@old")
+            (old.ssh.as_deref(), old.hostname.as_deref()),
+            (Some("dibs@old"), Some("old"))
         );
     }
 
@@ -566,5 +680,59 @@ hostname = "new"
         ));
         assert_eq!(Inventory::load(&dir.join("absent.toml")).unwrap(), None);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_machines_d_file_adds_machines_until_their_lease_ends() {
+        let dir = std::env::temp_dir().join(format!("dibs-machines-d-{}", std::process::id()));
+        let path = dir.join("machines.toml");
+        std::fs::create_dir_all(dir.join("machines.d")).unwrap();
+        let leased = dir.join("machines.d/leased.toml");
+        let now = Moment::epoch_now();
+        std::fs::write(
+            &leased,
+            format!(
+                "[machine.live]\nssh = \"live\"\nssh_config = \"~/leased.ssh\"\nseries = \"kind\"\nexpires = {}\n\n\
+                 [machine.gone]\nssh = \"gone\"\nexpires = {}\n",
+                now + 3600,
+                now - 1
+            ),
+        )
+        .unwrap();
+        std::fs::write(dir.join("machines.d/notes.txt"), "not an inventory").unwrap();
+        let read = Inventory::load(&path).unwrap().unwrap();
+        assert_eq!(names(&read), ["live"], "with no machines.toml at all");
+        let live = read.machine("live").unwrap();
+        assert_eq!(
+            (
+                live.source.as_path(),
+                live.ssh_config(Some(Path::new("/h"))),
+                live.series.as_deref()
+            ),
+            (
+                leased.as_path(),
+                Some(PathBuf::from("/h/leased.ssh")),
+                Some("kind")
+            )
+        );
+        assert!(read.ended("gone").is_some() && read.machine("gone").is_none());
+        std::fs::write(&path, "[machine.live]\nssh = \"mine\"\n").unwrap();
+        assert!(matches!(
+            Inventory::load(&path),
+            Err(InventoryError::Twice { .. })
+        ));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rewriting_an_entry_keeps_the_keys_the_new_one_does_not_set() {
+        let text = "[machine.m]\nssh = \"m\"\nmeasure = false\nexpires = 9\n\n  [[machine.m.device]]\n  kind = \"cpu\"\n";
+        let entry = "[machine.m]\nssh = \"m\"\nprobed = \"today\"\n";
+        let written = Inventory::with_entry(text, &MachineName::new("m"), entry).unwrap();
+        let m = Inventory::parse(&written).unwrap().machines.remove(0);
+        assert_eq!(
+            (m.measure, m.expires, m.probed.as_deref(), m.devices.len()),
+            (false, Some(9), Some("today"), 0)
+        );
     }
 }

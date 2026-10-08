@@ -12,7 +12,7 @@ use dibs_format::Exit;
 use std::{
     io,
     net::Ipv4Addr,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::Duration,
 };
@@ -36,6 +36,8 @@ pub enum Route {
     Here,
     Ssh {
         host: String,
+        /// The ssh configuration the machine names, in place of the user's own.
+        config: Option<PathBuf>,
     },
 }
 
@@ -86,6 +88,7 @@ pub enum Reach {
     /// The address ssh dials for the host, asked only when a service needs it.
     Dialled {
         host: String,
+        config: Option<PathBuf>,
         otherwise: String,
     },
 }
@@ -94,9 +97,11 @@ impl Reach {
     pub fn address(&self) -> String {
         match self {
             Reach::Known(name) => name.clone(),
-            Reach::Dialled { host, otherwise } => {
-                Ssh::dials(host).unwrap_or_else(|| otherwise.clone())
-            }
+            Reach::Dialled {
+                host,
+                config,
+                otherwise,
+            } => Ssh::dials(host, config.as_deref()).unwrap_or_else(|| otherwise.clone()),
         }
     }
 }
@@ -180,6 +185,7 @@ impl Session {
             false => Session {
                 route: Route::Ssh {
                     host: target.host.clone(),
+                    config: target.ssh_config.clone(),
                 },
                 lock_at: target.hostname.to_ascii_lowercase(),
                 name: String::new(),
@@ -194,8 +200,9 @@ impl Session {
     pub fn reach(&self, target: &Target, here: &Here) -> Reach {
         match &self.route {
             Route::Here => Reach::Known(Ipv4Addr::LOCALHOST.to_string()),
-            Route::Ssh { host } => Reach::Dialled {
+            Route::Ssh { host, config } => Reach::Dialled {
                 host: host.clone(),
+                config: config.clone(),
                 otherwise: match target.hostname.is_empty() {
                     true => here.name.clone(),
                     false => target.hostname.clone(),
