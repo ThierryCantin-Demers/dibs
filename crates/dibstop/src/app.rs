@@ -66,17 +66,27 @@ pub struct View {
 impl View {
     /// Why a machine that answered gives no status, which waiting alone will not change: ssh
     /// refused the login, which lists the methods it tried where a remote file's "Permission
-    /// denied" does not, or it has no runner for this version, which a watch never builds.
+    /// denied" does not, or it has no runner a watch could build this version's with.
     pub fn refusal(&self) -> Option<&'static str> {
         let t = self.trouble.as_deref()?;
-        if t.contains("has no runner for this dibs yet") {
+        if t.contains("has no dibs runner yet") {
             return Some("no runner yet");
+        }
+        if t.contains("runner for this dibs could not be built") {
+            return Some("runner build failed");
         }
         t.contains("Permission denied (")
             .then(|| match t.contains("It accepts your key") {
                 true => "key locked",
                 false => "no key",
             })
+    }
+
+    /// The watch is building this version's runner there before it can report.
+    pub fn building(&self) -> bool {
+        self.trouble
+            .as_deref()
+            .is_some_and(|t| t.contains("Building it there"))
     }
 }
 
@@ -304,6 +314,20 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn a_watch_building_the_runner_says_so_until_it_reports() {
+        let said = |text: &str| View {
+            trouble: Some(text.to_string()),
+            ..view(None, false)
+        };
+        assert!(
+            said("dibs: m has no runner for this dibs yet. Building it there as a shared job, once per version.")
+                .building()
+        );
+        assert!(!said("ssh: connect to host m port 22: No route to host").building());
+        assert!(!view(None, false).building());
+    }
+
     fn view(seen: Option<Instant>, dead: bool) -> View {
         View {
             status: None,
@@ -375,8 +399,21 @@ mod tests {
         );
         assert_eq!(with("cat: /x: Permission denied"), None);
         assert_eq!(
-            with("dibs: m has no runner for this dibs yet, so it was not asked."),
+            with(
+                "dibs: m has no dibs runner yet, so nothing ran. Install one with:  dibs --check m"
+            ),
             Some("no runner yet")
+        );
+        assert_eq!(
+            with("dibs: the runner for this dibs could not be built on m, so nothing ran."),
+            Some("runner build failed")
+        );
+        assert_eq!(
+            with(
+                "dibs: m has no runner for this dibs yet. Building it there as a shared job, once per version."
+            ),
+            None,
+            "a build the watch made is said, and is no refusal"
         );
     }
 }

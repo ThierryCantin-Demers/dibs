@@ -12,6 +12,8 @@ pub enum Fed {
     Status(Box<Status>),
     /// A line of output that is not a status document, and why.
     Unreadable(String),
+    /// A line on stderr while the watch runs, such as the runner being built before it starts.
+    Said(String),
     /// The watch is over: what it said on stderr, and why it ended.
     Ended {
         said: String,
@@ -43,7 +45,10 @@ impl StatusFeed {
             let mut on_line = |stream: Stream, line: &[u8]| {
                 let text = String::from_utf8_lossy(line);
                 match stream {
-                    Stream::Err => said.push_str(&text),
+                    Stream::Err => {
+                        said.push_str(&text);
+                        on(Fed::Said(text.trim_end().to_string()));
+                    }
                     Stream::Out if text.starts_with('{') => {
                         on(match serde_json::from_str::<Status>(text.trim_end()) {
                             Ok(status) => Fed::Status(Box::new(status)),

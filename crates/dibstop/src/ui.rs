@@ -130,7 +130,13 @@ fn header(app: &App) -> Line<'static> {
                     head.push(Span::styled(format!(" ({} queued)", s.queue.len()), DIM));
                 }
             }
-            (None, None) => head.push(Span::styled("connecting…", DIM)),
+            (None, None) => head.push(Span::styled(
+                match v.building() {
+                    true => "building runner…",
+                    false => "connecting…",
+                },
+                DIM,
+            )),
         }
         if let Some(t) = v.seen_at.filter(|t| app.behind(*t)) {
             late = true;

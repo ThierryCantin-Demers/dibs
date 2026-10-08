@@ -48,7 +48,7 @@ impl Feed {
                     machine,
                     status,
                 }],
-                Fed::Unreadable(text) => vec![Msg::Trouble {
+                Fed::Unreadable(text) | Fed::Said(text) => vec![Msg::Trouble {
                     generation,
                     machine,
                     text,

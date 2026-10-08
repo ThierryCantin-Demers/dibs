@@ -169,7 +169,7 @@ impl Served<'_> {
             session: self.session,
             live: self.live,
         };
-        if self.deadline.is_some() {
+        if self.deadline.as_ref().is_some_and(Deadline::timed) {
             return Ok(provision.not_for_a_question(delivery));
         }
         match provision.through_newest(delivery)? {

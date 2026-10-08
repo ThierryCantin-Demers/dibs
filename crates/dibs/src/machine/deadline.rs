@@ -69,6 +69,11 @@ impl Deadline {
         }
     }
 
+    /// Bounded in time, rather than by its stop alone.
+    pub fn timed(&self) -> bool {
+        self.at.is_some()
+    }
+
     pub fn passed(&self) -> bool {
         self.shared.passed.load(Ordering::SeqCst)
     }
