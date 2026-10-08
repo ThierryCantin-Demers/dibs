@@ -617,8 +617,13 @@ impl<'a> Trees<'a> {
     }
 }
 
-/// Whether a process works in one of `dirs`, or below it.
+/// Whether a process works in one of `dirs`, or below it. A process's directory comes back with
+/// its symlinks resolved, as macOS's /var to /private/var is, so the dirs are resolved too.
 fn worked_in(dirs: &[&Path]) -> bool {
+    let dirs: Vec<PathBuf> = dirs
+        .iter()
+        .map(|dir| dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()))
+        .collect();
     Host::processes()
         .iter()
         .any(|p| Host::cwd(p.pid).is_some_and(|cwd| dirs.iter().any(|dir| cwd.starts_with(dir))))

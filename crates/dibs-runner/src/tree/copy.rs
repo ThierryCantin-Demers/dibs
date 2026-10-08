@@ -8,7 +8,8 @@ use std::{
     fs, io,
     os::unix::{
         ffi::OsStrExt as _,
-        fs::{MetadataExt as _, symlink},
+        fs::{FileTypeExt as _, MetadataExt as _, symlink},
+        net::UnixListener,
     },
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
@@ -174,21 +175,29 @@ impl Entry {
 }
 
 /// A FIFO, socket or device made anew, as `cp -a` makes one: opening a FIFO to read it waits for
-/// a writer that may never come.
+/// a writer that may never come. macOS lets only root mknod, so a FIFO is made by mkfifo and a
+/// socket by binding one, which leaves it once nothing listens.
 #[allow(
     clippy::unnecessary_cast,
     reason = "mode_t and dev_t are narrower on macOS"
 )]
 fn special(to: &Path, of: &fs::Metadata) -> io::Result<()> {
+    if of.file_type().is_socket() {
+        return UnixListener::bind(to).map(drop);
+    }
     let path = CString::new(to.as_os_str().as_bytes())?;
-    // SAFETY: mknod reads a NUL-terminated path, alive here.
-    match unsafe {
-        libc::mknod(
-            path.as_ptr(),
-            of.mode() as libc::mode_t,
-            of.rdev() as libc::dev_t,
-        )
-    } {
+    // SAFETY: mkfifo and mknod read a NUL-terminated path, alive here.
+    let made = unsafe {
+        match of.file_type().is_fifo() {
+            true => libc::mkfifo(path.as_ptr(), of.mode() as libc::mode_t & 0o7777),
+            false => libc::mknod(
+                path.as_ptr(),
+                of.mode() as libc::mode_t,
+                of.rdev() as libc::dev_t,
+            ),
+        }
+    };
+    match made {
         0 => Ok(()),
         _ => Err(io::Error::last_os_error()),
     }

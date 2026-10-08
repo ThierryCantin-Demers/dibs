@@ -7,7 +7,7 @@ use std::{
     fmt,
     fs::{File, OpenOptions},
     io::{ErrorKind, Read as _, Write as _},
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener},
     str::FromStr,
 };
 
@@ -91,14 +91,21 @@ impl Ports {
 }
 
 /// Nothing is bound to it on either family's wildcard, which a listener missing from the
-/// table, in another namespace say, would show.
+/// table, in another namespace say, would show, nor on loopback: macOS lets a wildcard bind share
+/// a port with a server listening on 127.0.0.1 alone.
 fn free(port: u16) -> bool {
-    let bound = |address: SocketAddr| match TcpListener::bind(address) {
+    let bound = |address: IpAddr| match TcpListener::bind((address, port)) {
         Ok(_) => false,
         Err(e) => e.kind() == ErrorKind::AddrInUse,
     };
-    !bound(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)))
-        && !bound(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)))
+    [
+        Ipv4Addr::UNSPECIFIED.into(),
+        Ipv6Addr::UNSPECIFIED.into(),
+        Ipv4Addr::LOCALHOST.into(),
+        Ipv6Addr::LOCALHOST.into(),
+    ]
+    .into_iter()
+    .all(|address| !bound(address))
 }
 
 fn reserve(dir: &LockDir, port: u16, pid: u32) -> bool {
