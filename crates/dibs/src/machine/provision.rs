@@ -42,6 +42,9 @@ const NO_LOCK_TAKER: i32 = 73;
 /// Printed by the line that builds through the newest runner once it has found one, so a build
 /// is announced only when one starts.
 const BUILDING: &str = "dibs-runner-build-starts";
+/// Written by the first build once a second on macOS, whose pipes say nothing when their reader
+/// goes: the write failing is how it learns its caller went.
+const ALIVE: &str = "dibs-first-build-alive";
 
 /// The first build, as `sh -c` reads it with the hash and the cap as `$1` and `$2`: the lock
 /// directory found as the runner finds it, then the build lock every build of the runner takes
@@ -63,7 +66,7 @@ mkdir -p "$d" || exit 1
 exec perl /dev/fd/3 "$l" "$d" "$h" "$m" 3<<"PERL"
 use Fcntl qw(:DEFAULT :flock);
 use POSIX qw(:sys_wait_h setpgid);
-use IO::Poll qw(POLLERR POLLHUP);
+use IO::Poll qw(POLLERR POLLHUP POLLOUT);
 use File::Path qw(remove_tree);
 my ($l, $d, $h, $m) = @ARGV;
 sub record {
@@ -104,12 +107,18 @@ $SIG{HUP} = sub { stop("HUP", "HUP") };
 $SIG{INT} = sub { stop("INT", "INT") };
 $SIG{ALRM} = sub { stop("ALRM", "TERM") };
 $SIG{CHLD} = sub {};
+$SIG{PIPE} = "IGNORE";
 alarm($m);
 my $out = IO::Poll->new;
 $out->mask(*STDOUT => POLLERR | POLLHUP);
+my $room = IO::Poll->new;
+$room->mask(*STDOUT => POLLOUT);
 while (waitpid($pid, WNOHANG) == 0) {
     $out->poll(1);
     if ($out->events(*STDOUT)) { $out->remove(*STDOUT); stop("gone", "TERM"); }
+    if ($^O eq "darwin" && !$stop && $room->poll(0) > 0) {
+        defined(syswrite(STDOUT, "dibs-first-build-alive" . chr(10))) or stop("gone", "TERM");
+    }
     kill("KILL", -$pid) if $stop && time - $at > 30;
 }
 my $st = $?;
@@ -265,12 +274,13 @@ impl Provision<'_> {
         drop(tell);
         let mut buffers = LineBuffers::default();
         for line in heard {
-            match line.trim_ascii_end() == BUILDING.as_bytes() {
-                true => delivery.say(&format!(
+            match line.trim_ascii_end() {
+                said if said == BUILDING.as_bytes() => delivery.say(&format!(
                     "dibs: {} has no runner for this dibs yet. Building it there as a shared job, once per version.\n",
                     self.session.name
                 )),
-                false => delivery.give(Stream::Err, &line, &mut buffers),
+                said if said == ALIVE.as_bytes() => {}
+                _ => delivery.give(Stream::Err, &line, &mut buffers),
             }
         }
         delivery.flush(&mut buffers);
@@ -298,6 +308,7 @@ mod tests {
         assert!(!FIRST_BUILD.contains("\\\\"));
         assert!(FIRST_BUILD.contains(&format!("exit {NO_LOCK_TAKER}")));
         assert!(FIRST_BUILD.contains(&format!("exit {UNLOCKABLE}")));
+        assert!(FIRST_BUILD.contains(&format!("\"{ALIVE}\"")));
     }
 
     #[test]
