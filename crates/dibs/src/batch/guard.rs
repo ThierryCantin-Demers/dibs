@@ -32,10 +32,13 @@ impl StepGuard {
         Watched::spawn(guard)
     }
 
-    /// The guard's side: the line through bash, as a shell would read it.
+    /// The guard's side: the line through bash, as a shell would read it, its `dibs` this binary
+    /// rather than whichever is first on the PATH, which may be another version.
     pub fn serve(line: &str) -> i32 {
         let starter = Starter::take();
-        let mut step = match Command::new("bash").args(["-c", line]).spawn() {
+        let me = std::env::current_exe().map_or_else(|_| "dibs".into(), |me| me.into_os_string());
+        let script = format!("dibs() {{ \"$0\" \"$@\"; }}\n{line}");
+        let mut step = match Command::new("bash").arg("-c").arg(script).arg(me).spawn() {
             Ok(step) => step,
             Err(e) => {
                 eprintln!("dibs: could not run {line}: {e}");

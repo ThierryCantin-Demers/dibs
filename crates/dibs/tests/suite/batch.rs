@@ -64,6 +64,21 @@ fn a_batch_runs_its_steps_in_order_and_prints_one_summary() {
 }
 
 #[test]
+fn a_batch_runs_its_steps_with_its_own_dibs_not_the_first_on_the_path() {
+    let s = Sandbox::new();
+    s.write_exec(
+        "elsewhere/dibs",
+        "#!/bin/sh\necho another dibs >&2\nexit 3\n",
+    );
+    let file = batch_file(&s, "b-own", &["[a] dibs --label batch-own 'echo ran'"]);
+    let out = s
+        .dibs(["batch", &file])
+        .env("PATH", format!("{}:{}", s.p("elsewhere"), s.var("PATH")))
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+}
+
+#[test]
 fn an_on_before_the_batch_is_the_machine_of_every_step_that_names_none() {
     let mut s = Sandbox::new();
     s.machines(&format!(
