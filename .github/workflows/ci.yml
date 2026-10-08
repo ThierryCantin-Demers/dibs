@@ -12,6 +12,8 @@ env:
   CARGO_TERM_COLOR: always
   # Pinned, so a new release's lints cannot fail a push that changed nothing.
   RUST: 1.99.0
+# Each job's rust-cache saves on failure too: a job that keeps failing would otherwise rebuild
+# every dependency on every run. It keeps dependencies only, never the workspace's own crates.
 
 jobs:
   hygiene:
@@ -68,6 +70,8 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # A test target with test = false is left out of --all-targets.
       - run: cargo clippy -p dibs --test live -- -D warnings
@@ -81,6 +85,8 @@ jobs:
         with:
           toolchain: ${{ env.RUST }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: sudo apt-get update && sudo apt-get install -y rsync psmisc
       - run: cargo test --workspace
 
@@ -95,6 +101,8 @@ jobs:
         with:
           toolchain: ${{ env.RUST }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo test -p dibs --test suite -- --ignored --exact runner::a_second_source_is_built_into_the_target_the_first_left
 
   test-macos:
@@ -107,6 +115,8 @@ jobs:
           toolchain: ${{ env.RUST }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       # The lint job runs on Linux, so code behind cfg(target_os = "macos") is linted only here.
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Homebrew's bash and GNU tools, ahead of macOS's own
