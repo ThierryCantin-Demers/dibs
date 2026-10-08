@@ -1745,6 +1745,24 @@ fn a_pin_builds_against_another_trees_unpushed_changes() {
     );
     s.git("lib", &["commit", "-qam", "later"]);
     s.git("lib", &["push", "-q", "origin", "main"]);
+    s.git(
+        ".",
+        &["clone", "-q", "-b", "main", "lib.git", "lib-elsewhere"],
+    );
+    s.write(
+        "lib-elsewhere/src/lib.rs",
+        "pub fn say() -> &'static str { \"pushed elsewhere\" }\n",
+    );
+    s.git("lib-elsewhere", &["commit", "-qam", "elsewhere"]);
+    s.git("lib-elsewhere", &["push", "-q", "origin", "HEAD:elsewhere"]);
+    let sha = s.git("lib-elsewhere", &["rev-parse", "HEAD"]);
+    let out = build(&["--pin", &format!("{}@{sha}", s.p("lib"))]);
+    assert_eq!(
+        (out.code, out.all().lines_matching("^pushed elsewhere$")),
+        (0, 1),
+        "a pinned commit this checkout has not fetched is fetched from its origin: {}",
+        out.all()
+    );
     private(&s, "lib");
     let out = build(&["--pin", &format!("{}@main", s.p("lib"))]);
     assert_eq!(

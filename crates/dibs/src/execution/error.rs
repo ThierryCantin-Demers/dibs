@@ -182,7 +182,11 @@ impl fmt::Display for PinError {
                 pin,
                 reference,
                 dir,
-            } => write!(f, "--pin {pin}: no {reference} in {}", dir.display()),
+            } => write!(
+                f,
+                "--pin {pin}: no {reference} in {}, nor on its origin",
+                dir.display()
+            ),
             PinError::Unpatchable { name, source } => write!(
                 f,
                 "{name} comes from {source}, which a pin does not know how to replace"

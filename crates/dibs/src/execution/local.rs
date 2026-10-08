@@ -334,6 +334,18 @@ impl Fetched {
             }),
         }
     }
+
+    /// `name` as `of` finds it, after asking origin for it when this checkout has none.
+    pub fn fetching(dir: &Path, name: &str) -> Option<Fetched> {
+        Fetched::of(dir, name).or_else(|| {
+            eprintln!(
+                "dibs: {} has no {name}; fetching it from origin",
+                dir.display()
+            );
+            Git(dir).run(&["fetch", "--quiet", "origin", name]).ok()?;
+            Fetched::of(dir, name)
+        })
+    }
 }
 
 /// A remote that refuses an anonymous read. Remembered for a week, since asking costs a round

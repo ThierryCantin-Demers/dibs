@@ -254,7 +254,7 @@ impl Pinned {
                         commit: sha,
                         seen,
                         ahead,
-                    } = Fetched::of(&pdir, reference).ok_or_else(|| PinError::NoRef {
+                    } = Fetched::fetching(&pdir, reference).ok_or_else(|| PinError::NoRef {
                         pin: p.clone(),
                         reference: reference.to_string(),
                         dir: pdir.clone(),
