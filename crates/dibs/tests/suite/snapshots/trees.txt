@@ -133,12 +133,12 @@ ws/
 2| dibs: <root>/scratch/ws/app/<main>
 2| dibs: decoy: step 1/2 [Shared], with the setup ahead of it
 2| dibs: <root>/scratch/ws/app/<decoy>
-2| dibs: target directory copied from app-local-<app-topk>, whose builds match 2 of the 2 groups in this tree's lockfile
+2| dibs: target directory copied from app, whose builds match 2 of the 2 groups in this tree's lockfile
 2| dibs: main: step 2/2 [Exclusive]
 2| dibs: decoy: step 2/2 [Exclusive]
 2| dibs: measured, each rep's exclusive seconds and the jobs with its output:
 recorded revisions: {}
-recorded arms: [{"fetched":"main","name":"main","revisions":{"app":"<main>"}},{"fetched":"decoy","name":"decoy","revisions":{"app":"<decoy>"},"seeded":"app-local-<app-topk>"}]
+recorded arms: [{"fetched":"main","name":"main","revisions":{"app":"<main>"}},{"fetched":"decoy","name":"decoy","revisions":{"app":"<decoy>"},"seeded":"app"}]
 jobs/  (12 job directories)
 out/
 target/
@@ -147,6 +147,10 @@ target/
   .app-local-<app>.lock
   .app.lock
   app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
     .dibs-tree.lock  (empty)
@@ -156,9 +160,6 @@ target/
       | 791b0c5685df
       | b2bac97260c6
     .dibs-packages.lock  (empty)
-    .dibs-packages.pending.<token>:
-      | 666bf15ebb3d
-      | e647759d43e5
     .dibs-tree:
       | <root>/scratch/ws/app/<decoy>
     .dibs-tree.lock  (empty)
@@ -239,6 +240,10 @@ target/
   .app-local-<app>.lock
   .app.lock
   app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
     .dibs-tree.lock  (empty)
@@ -248,9 +253,6 @@ target/
       | 791b0c5685df
       | b2bac97260c6
     .dibs-packages.lock  (empty)
-    .dibs-packages.pending.<token>:
-      | 666bf15ebb3d
-      | e647759d43e5
     .dibs-tree:
       | <root>/scratch/ws/app/<decoy>
     .dibs-tree.lock  (empty)
@@ -345,6 +347,10 @@ target/
   .app-local-<app>.lock
   .app.lock
   app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
     .dibs-tree.lock  (empty)
@@ -354,9 +360,6 @@ target/
       | 791b0c5685df
       | b2bac97260c6
     .dibs-packages.lock  (empty)
-    .dibs-packages.pending.<token>:
-      | 666bf15ebb3d
-      | e647759d43e5
     .dibs-tree:
       | <root>/scratch/ws/app/<decoy>
     .dibs-tree.lock  (empty)
@@ -466,6 +469,10 @@ target/
   .app.lock
   .lib-local-<lib>.lock
   app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
     .dibs-tree.lock  (empty)
@@ -475,9 +482,6 @@ target/
       | 791b0c5685df
       | b2bac97260c6
     .dibs-packages.lock  (empty)
-    .dibs-packages.pending.<token>:
-      | 666bf15ebb3d
-      | e647759d43e5
     .dibs-tree:
       | <root>/scratch/ws/app/<decoy>
     .dibs-tree.lock  (empty)

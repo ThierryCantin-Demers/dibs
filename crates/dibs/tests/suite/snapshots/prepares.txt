@@ -4,6 +4,9 @@ out/
 target/
   .app.lock
   app/
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
     .dibs-used  (empty)
 tmp/
 ws/
@@ -24,6 +27,13 @@ out/
 target/
   .app.lock
   app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
     .dibs-tree.lock  (empty)
@@ -48,6 +58,13 @@ target/
   .app-local-<app>.lock
   .app.lock
   app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
     .dibs-tree.lock  (empty)
@@ -84,6 +101,13 @@ target/
   .app-local-<app>.lock
   .app.lock
   app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
     .dibs-tree.lock  (empty)
@@ -128,6 +152,13 @@ target/
   .app-local-<app>.lock
   .app.lock
   app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
     .dibs-tree.lock  (empty)
@@ -189,6 +220,13 @@ target/
   .app-local-<main, sent>.lock
   .app.lock
   app/
+    .dibs-packages:
+      | 791b0c5685df
+      | b2bac97260c6
+    .dibs-packages.lock  (empty)
+    .dibs-packages.pending.<token>:
+      | 666bf15ebb3d
+      | e647759d43e5
     .dibs-tree:
       | <root>/scratch/ws/app/<main>
     .dibs-tree.lock  (empty)
