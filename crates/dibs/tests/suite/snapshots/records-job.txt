@@ -30,7 +30,7 @@
     lines = 0
     who = local_suite
 
-== jobs/<job>, a job with a service: dibs --label rec-with --with 'srv=echo serving; read -r _ < "$DIBS_SCRATCH/never"' true
+== jobs/<job>, a job with a service: dibs --label rec-with --with 'srv=echo serving; : > "$DIBS_SCRATCH/srv-up"; read -r _ < "$DIBS_SCRATCH/never"' --ready 'test -e "$DIBS_SCRATCH/srv-up"' true
   cmd
     | true
   log
