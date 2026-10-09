@@ -50,6 +50,8 @@ pub struct Session {
     /// What notices call the machine: its inventory name, or the host.
     pub name: String,
     pub said: Said,
+    /// The first call builds dibs's runner there, as `--check` would.
+    pub leased: bool,
 }
 
 /// What a call's last attempt heard on stderr outside the runner's frames: ssh's reason, when
@@ -181,6 +183,7 @@ impl Session {
                 lock_at: me,
                 name: String::new(),
                 said: Said::default(),
+                leased: false,
             },
             false => Session {
                 route: Route::Ssh {
@@ -190,6 +193,7 @@ impl Session {
                 lock_at: target.hostname.to_ascii_lowercase(),
                 name: String::new(),
                 said: Said::default(),
+                leased: target.leased,
             },
         };
         session.name = session.at(target, here);

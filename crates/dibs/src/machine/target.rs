@@ -54,6 +54,8 @@ pub struct Target {
     pub ssh_config: Option<PathBuf>,
     /// The entry's `series`: what it measures under in place of its own name.
     pub series: Option<String>,
+    /// A tool keeps its entry until a lease ends, so nobody runs `--check` on it first.
+    pub leased: bool,
 }
 
 #[derive(Debug)]
@@ -151,6 +153,7 @@ impl Target {
             unheeded: None,
             ssh_config: None,
             series: None,
+            leased: false,
         }
     }
 
@@ -171,6 +174,7 @@ impl Target {
             unheeded: None,
             ssh_config: None,
             series: None,
+            leased: false,
         };
         let count = fleet.names().len();
         if let Some(on) = on {
@@ -221,6 +225,7 @@ impl Target {
         self.ssh_config =
             machine.ssh_config(std::env::var_os("HOME").map(PathBuf::from).as_deref());
         self.series = machine.series.clone();
+        self.leased = machine.expires.is_some();
         Ok(())
     }
 

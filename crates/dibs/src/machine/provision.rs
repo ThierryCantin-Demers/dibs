@@ -146,15 +146,19 @@ impl Provision<'_> {
             return Ok(Installed::Done);
         }
         match self.install(&Provision::newest_line(), delivery)? {
-            Installed::NoneThere => {
-                delivery.say(&format!(
-                    "dibs: installing dibs's runner on {}, a first build, as a shared job.\n",
-                    self.session.name
-                ));
-                self.install(&Provision::first_line(), delivery)
-            }
+            Installed::NoneThere => self.first(delivery),
             installed => Ok(installed),
         }
+    }
+
+    /// The machine's first runner. No runner exists yet to take the lock, so that build takes it
+    /// through perl.
+    pub fn first(&self, delivery: &mut Delivery) -> io::Result<Installed> {
+        delivery.say(&format!(
+            "dibs: installing dibs's runner on {}, a first build, as a shared job.\n",
+            self.session.name
+        ));
+        self.install(&Provision::first_line(), delivery)
     }
 
     /// Says nothing ran because the build failed, and gives the exit for it.

@@ -172,7 +172,11 @@ impl Served<'_> {
         if self.deadline.as_ref().is_some_and(Deadline::timed) {
             return Ok(provision.not_for_a_question(delivery));
         }
-        match provision.through_newest(delivery)? {
+        let installed = match provision.through_newest(delivery)? {
+            Installed::NoneThere if self.session.leased => provision.first(delivery)?,
+            installed => installed,
+        };
+        match installed {
             Installed::Done => match self.attempt(delivery)? {
                 Attempted::Exit(code) => Ok(code),
                 Attempted::Missing => Ok(provision.failed(delivery)),

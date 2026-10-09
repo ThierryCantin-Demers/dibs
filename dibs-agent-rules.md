@@ -280,7 +280,8 @@ spoiled without it.
   - **71** the lock directory cannot be written, so **nothing ran**; a sandboxed shell is the usual
     cause. Never point `DIBS_LOCK_DIR` somewhere writable: a lock nobody else uses excludes nobody.
   - **72** dibs could not install its runner on the machine, so **nothing ran**: it has none yet,
-    which `dibs --check <machine>` installs, or the build failed and its output says why.
+    which `dibs --check <machine>` installs, or the build failed and its output says why. A
+    leased machine, one with an `expires`, installs its first runner on its first call.
 - **75** it was busy and you passed `--wait`.
 - **76** its batch was cancelled with `dibs --kill <batch-id>`. It was meant to stop: do not run it
   again unless asked.

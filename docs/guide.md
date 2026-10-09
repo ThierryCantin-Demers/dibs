@@ -584,7 +584,9 @@ key it does not probe, such as a `measure` someone set.
 Three keys are for such machines:
 
 - `expires = <seconds since the epoch>`: past it the machine is gone from listings, placement,
-  status and dibstop, and a call naming it exits 69, saying its lease ended.
+  status and dibstop, and a call naming it exits 69, saying its lease ended. Until then, the
+  first call to it builds dibs's runner there, as `--check` would, since nobody checks a machine
+  that lives a few hours.
 - `ssh_config = "<path>"`: every ssh to it reads that file, as `ssh -F` does. A machine behind a
   bastion is reached through a file that describes the whole path rather than through your
   `~/.ssh/config`. ssh given `-F` reads no other configuration, so the file has to stand alone.

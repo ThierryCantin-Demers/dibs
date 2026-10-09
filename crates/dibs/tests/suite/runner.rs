@@ -372,6 +372,30 @@ fn check_installs_the_first_runner_on_a_machine_with_none() {
 }
 
 #[test]
+fn a_leased_machine_installs_its_first_runner_on_the_first_call() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, false);
+    let until = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    s.machines(&format!(
+        "[machine.leased]\nssh = \"fake-remote\"\nhostname = \"fake-remote\"\nexpires = {until}\n"
+    ));
+    let out = s
+        .remote(s.dibs(["--on", "leased", "--label", "first", "echo ran"]))
+        .run();
+    assert_eq!(
+        (out.code, out.stdout.lines_with("ran")),
+        (0, 1),
+        "nobody runs --check on a machine a tool leases: {}",
+        out.all()
+    );
+    assert_eq!(out.stderr.lines_with("a first build"), 1, "{}", out.stderr);
+}
+
+#[test]
 fn the_first_build_queues_behind_a_benchmark() {
     let mut s = Sandbox::new();
     without_this_runner(&mut s, false);
