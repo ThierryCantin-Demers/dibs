@@ -43,7 +43,7 @@ impl StepStderr<'_> {
                 let mut words = r.split_whitespace();
                 let id = words.next()?;
                 let verdict: Vec<&str> = words
-                    .filter(|w| *w == "by=dibs" || w.starts_with("built="))
+                    .filter(|w| *w == "by=dibs" || *w == "tests=0" || w.starts_with("built="))
                     .collect();
                 Some(if verdict.is_empty() {
                     id.to_string()

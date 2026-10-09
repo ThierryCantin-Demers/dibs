@@ -316,13 +316,14 @@ fn only_dibs_saying_so_makes_exit_76_a_cancellation() {
 
 #[test]
 fn the_job_ids_come_from_the_trailers() {
-    let err = "dibs: step 1/2\njob 20260916-1  shared  a:setup  queued 0s  ran 1s  exit 0  by=command\n  log m:/x\njob 20260916-2  bench  a  queued 3s  ran 9s  exit 0  by=command  built=nothing\njob 20260916-3  shared  a  queued 0s  ran 0s  exit 69  by=dibs\n";
+    let err = "dibs: step 1/2\njob 20260916-1  shared  a:setup  queued 0s  ran 1s  exit 0  by=command\n  log m:/x\njob 20260916-2  bench  a  queued 3s  ran 9s  exit 0  by=command  built=nothing\njob 20260916-3  shared  a  queued 0s  ran 0s  exit 69  by=dibs\njob 20260916-4  shared  t  queued 0s  ran 2s  exit 0  by=command  built=3  tests=0\n";
     assert_eq!(
         StepStderr(err).jobs(),
         [
             "20260916-1",
             "20260916-2 built=nothing",
-            "20260916-3 by=dibs"
+            "20260916-3 by=dibs",
+            "20260916-4 built=3 tests=0"
         ]
     );
 }

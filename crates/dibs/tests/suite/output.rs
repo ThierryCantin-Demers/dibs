@@ -172,6 +172,31 @@ fn a_long_output_is_a_digest_and_stream_is_the_whole() {
 }
 
 #[test]
+fn a_test_run_that_ran_no_test_says_so() {
+    let s = Sandbox::new();
+    let result = |passed: u32| {
+        format!(
+            "echo 'test result: ok. {passed} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s'"
+        )
+    };
+    let empty = s.dibs(["--label", "t0", &result(0)]).run();
+    assert_eq!(
+        (empty.code, empty.stderr.lines_with("tests=0")),
+        (0, 1),
+        "a green exit with no test run is flagged: {}",
+        empty.stderr
+    );
+    let ran = s
+        .dibs(["--label", "t1", &format!("{}; {}", result(0), result(3))])
+        .run();
+    assert_eq!(
+        ran.stderr.lines_with("tests=0"),
+        0,
+        "and nothing is said once any of its binaries ran one"
+    );
+}
+
+#[test]
 fn the_trailer_counts_what_cargo_compiled() {
     // "Finished" with nothing compiled is the sentence that invalidates the numbers after it.
     let s = Sandbox::new();

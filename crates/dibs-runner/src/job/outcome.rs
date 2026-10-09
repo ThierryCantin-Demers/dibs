@@ -77,19 +77,22 @@ impl Digest<'_> {
     }
 }
 
-/// What a job's end needs of its log, read in one pass: its newlines, and what cargo built, read
-/// from the log rather than the command, since what runs cargo may be a runner the command
-/// starts. A finished cargo that compiled nothing means a measurement after it measures the
-/// previous binary.
+/// What a job's end needs of its log, read in one pass: its newlines, what cargo built and how
+/// many tests it ran, read from the log rather than the command, since what runs cargo may be a
+/// runner the command starts. A finished cargo that compiled nothing means a measurement after
+/// it measures the previous binary.
 pub struct LogRead {
     pub lines: usize,
     pub built: Option<Built>,
+    /// The tests cargo's `test result:` lines say ran, passed or failed; None without one.
+    pub tests: Option<u64>,
 }
 
 impl LogRead {
     pub fn of(path: &Path) -> LogRead {
         let mut lines = 0;
         let (mut finished, mut compiled) = (false, 0u64);
+        let mut tests = None;
         if let Ok(file) = File::open(path) {
             let mut log = BufReader::new(file);
             let mut line = Vec::new();
@@ -103,6 +106,9 @@ impl LogRead {
                 // check and clippy print Checking for each crate they look at, and compile none.
                 compiled +=
                     u64::from(text.starts_with("Compiling ") || text.starts_with("Checking "));
+                if let Some(result) = text.strip_prefix("test result: ") {
+                    *tests.get_or_insert(0) += ran(result);
+                }
                 line.clear();
             }
         }
@@ -112,8 +118,27 @@ impl LogRead {
                 0 => Built::Nothing,
                 n => Built::Crates(n),
             }),
+            tests,
         }
     }
+}
+
+/// The passed and failed of `ok. 3 passed; 1 failed; 2 ignored; ...`: what ran.
+fn ran(result: &str) -> u64 {
+    let count = |word: &str| {
+        result
+            .split(';')
+            .find_map(|part| {
+                part.trim()
+                    .strip_suffix(word)?
+                    .rsplit(' ')
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .unwrap_or(0)
+    };
+    count(" passed") + count(" failed")
 }
 
 /// The same failing command, run again unchanged within the window, fails the same way.
@@ -223,5 +248,16 @@ mod tests {
             Some(Built::Nothing)
         );
         assert_eq!(read("   Compiling a v1\n").built, None);
+    }
+
+    #[test]
+    fn the_tests_cargo_ran_are_counted_across_its_test_binaries() {
+        let none = "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+        assert_eq!(read(none).tests, Some(0));
+        let some = format!(
+            "{none}test result: FAILED. 2 passed; 1 failed; 4 ignored; 0 measured; 0 filtered out; finished in 1.20s\n"
+        );
+        assert_eq!(read(&some).tests, Some(3));
+        assert_eq!(read("no cargo test here\n").tests, None);
     }
 }

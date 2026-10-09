@@ -127,6 +127,8 @@ spoiled without it.
   mtimes, or a stale worktree all do that. A recipe guards this itself: its build rebuilds a tree
   that did not make the target's last build, and its measurement exits 78 if another tree has
   built there since.
+- **`tests=0` means cargo's test runs ran no test**, so the green exit proves nothing: a `--lib`
+  run of a crate whose tests all live under `tests/`, or a filter that matched none.
 - A job's stdout is a digest: its first and last 20 lines and a count of the rest. Do not pipe dibs
   through `tail`, `head` or `grep`, which replaces the exit status with the filter's, and do not
   redirect inside the command to keep a log. The whole output stays on the machine for two weeks:
