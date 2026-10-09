@@ -18,8 +18,9 @@ pub use dibs_format::Lock;
 pub use error::{Flaw, ManifestError, NotTaken, ParamError, RecipeError, RepoError, ShellWords};
 pub use labels::run_label;
 pub use listing::list;
-pub use manifest::{Manifest, Service};
 #[cfg(test)]
-pub use manifest::{Source, Verb};
+pub use manifest::Source;
+pub use manifest::Verb;
+pub use manifest::{Manifest, Service};
 pub use refusals::Resolved;
 pub use repo::Checkouts;

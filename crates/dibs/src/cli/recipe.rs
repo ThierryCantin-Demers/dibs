@@ -19,7 +19,7 @@ pub enum RecipeVerb {
 }
 
 impl RecipeVerb {
-    const ALL: [RecipeVerb; 11] = [
+    pub const ALL: [RecipeVerb; 11] = [
         RecipeVerb::Build,
         RecipeVerb::Test,
         RecipeVerb::Bench,

@@ -139,6 +139,10 @@
 1|                                inventory says; off still runs builds and tests
 1|   dibs --update               pull the clone dibs was installed from and reinstall, then
 1|                                pull the recipe directory too when it is a git clone
+1|   dibs completions <fish|zsh> [--install]
+1|                                the shell's completions: machines, cards, repos, refs,
+1|                                recipes and their values. --install puts them where the shell
+1|                                looks; nothing installs them otherwise
 1|   --all                        with --status: every machine in the inventory, at once, which
 1|                                is also what a status naming no machine shows
 1|   dibs --pick                 print the machine a shared job naming none would be placed on:

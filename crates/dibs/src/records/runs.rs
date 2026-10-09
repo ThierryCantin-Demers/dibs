@@ -63,6 +63,19 @@ pub struct Runs {
     records: Vec<Record>,
 }
 
+impl Runs {
+    /// Every label that ran here, the most recent first.
+    pub fn labels(&self) -> Vec<String> {
+        let mut seen = std::collections::BTreeSet::new();
+        self.records
+            .iter()
+            .rev()
+            .filter(|r| seen.insert(r.label.as_str()))
+            .map(|r| r.label.clone())
+            .collect()
+    }
+}
+
 struct Record {
     pub when: u64,
     pub verb: RunVerb,

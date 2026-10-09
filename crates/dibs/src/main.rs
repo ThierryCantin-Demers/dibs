@@ -5,6 +5,7 @@ use dibs::{
     call::{Dispatch, Guard, MachineCall, Rsh},
     caller::Caller,
     cli::{Call, Help, Hook, Invocation, Mode, RecipeCall, RecipeVerb},
+    completion::Shell,
     execution::{self, Refusal, RunError},
     fleet,
     hook::SshHook,
@@ -17,6 +18,8 @@ use dibs::{
     update::{Build, ChangeNotice},
 };
 use std::{path::Path, process::ExitCode};
+
+const COMPLETIONS_USAGE: &str = "usage: dibs completions <fish|zsh> [--install]";
 
 fn main() -> ExitCode {
     let words: Vec<String> = std::env::args().skip(1).collect();
@@ -54,6 +57,13 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
                 batch::StepGuard::serve(line).rem_euclid(256) as u8,
             ));
         }
+        [word, shell, typed @ ..] if word == "__complete" => {
+            if let Some(shell) = Shell::named(shell) {
+                print!("{}", shell.complete(typed));
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        [word, rest @ ..] if word == "completions" => return Ok(completions(rest)),
         _ => {}
     }
     let invocation = match Invocation::parse(words) {
@@ -188,4 +198,32 @@ fn friction_replies(into: &Path) -> Result<ExitCode, RunError> {
     let notes = FrictionLog::here()?.notes();
     repo.fetch_replies(&notes, &by, into)?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// `dibs completions <shell>` prints the script, and `--install` writes it where the shell
+/// looks. Nothing installs it otherwise: completion is for whoever asks for it.
+fn completions(words: &[String]) -> ExitCode {
+    let (shell, install) = match words {
+        [shell] => (Shell::named(shell), false),
+        [shell, flag] if flag == "--install" => (Shell::named(shell), true),
+        _ => (None, false),
+    };
+    let Some(shell) = shell else {
+        eprintln!("{COMPLETIONS_USAGE}");
+        return ExitCode::from(2);
+    };
+    if !install {
+        print!("{}", shell.script());
+        return ExitCode::SUCCESS;
+    }
+    match shell.install() {
+        Ok(said) => {
+            print!("{said}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("dibs: the completions could not be installed: {e}");
+            ExitCode::from(1)
+        }
+    }
 }

@@ -4,6 +4,7 @@ pub mod batch;
 pub mod call;
 pub mod caller;
 pub mod cli;
+pub mod completion;
 pub mod execution;
 pub mod fleet;
 pub mod git;
