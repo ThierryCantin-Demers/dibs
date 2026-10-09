@@ -134,6 +134,9 @@
 1|                                work, and refused otherwise, a benchmark most of all
 1|   dibs --machines             what the inventory knows
 1|   dibs --forget <machine>     drop a machine from your own inventory
+1|   dibs --measure <machine> on|off
+1|                                whether a benchmark may run there, as its measure = in your
+1|                                inventory says; off still runs builds and tests
 1|   dibs --update               pull the clone dibs was installed from and reinstall, then
 1|                                pull the recipe directory too when it is a git clone
 1|   --all                        with --status: every machine in the inventory, at once, which

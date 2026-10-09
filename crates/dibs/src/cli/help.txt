@@ -132,6 +132,9 @@ Calls: one command under the lock, and what the machines are doing.
                                work, and refused otherwise, a benchmark most of all
   dibs --machines             what the inventory knows
   dibs --forget <machine>     drop a machine from your own inventory
+  dibs --measure <machine> on|off
+                               whether a benchmark may run there, as its measure = in your
+                               inventory says; off still runs builds and tests
   dibs --update               pull the clone dibs was installed from and reinstall, then
                                pull the recipe directory too when it is a git clone
   --all                        with --status: every machine in the inventory, at once, which

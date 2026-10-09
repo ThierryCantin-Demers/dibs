@@ -469,6 +469,37 @@ fn a_machine_that_does_not_measure_refuses_a_benchmark() {
 }
 
 #[test]
+fn measure_off_refuses_a_benchmark_until_measure_on() {
+    let mut s = Sandbox::new();
+    s.machines(DESK_AND_LAP);
+    let off = s.dibs(["--measure", "desk", "off"]).run();
+    assert_eq!(off.code, 0, "{}", off.all());
+    let out = s.dibs(["--on", "desk", "--bench", "true"]).run();
+    assert_eq!(
+        (out.code, out.all().lines_with("measure = false")),
+        (2, 1),
+        "{}",
+        out.all()
+    );
+    assert_eq!(
+        s.dibs(["--measure", "desk", "on"]).run().code,
+        0,
+        "and on lifts it"
+    );
+    assert_eq!(s.read("machines.toml"), DESK_AND_LAP);
+    let unknown = s.dibs(["--measure", "nowhere", "off"]).run();
+    assert_eq!(
+        (
+            unknown.code,
+            unknown.all().lines_with("no machine named 'nowhere'")
+        ),
+        (2, 1),
+        "{}",
+        unknown.all()
+    );
+}
+
+#[test]
 fn recording_a_machine_writes_its_entry_and_nothing_else() {
     let mut s = Sandbox::new();
     s.machines("[machine.desk]\nssh      = \"dibs@desk\"\nhostname = \"desk\"\n");

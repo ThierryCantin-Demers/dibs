@@ -102,6 +102,10 @@ impl Dispatch<'_> {
             Words::Machines => machine()?.machines(),
             Words::Which => machine()?.which(),
             Words::Forget(name) => machine()?.forget(name),
+            Words::Measure {
+                machine: name,
+                measures,
+            } => machine()?.measure(name, *measures),
             Words::Pick => {
                 println!(
                     "{}",

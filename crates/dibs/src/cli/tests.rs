@@ -319,6 +319,20 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
             of(Mode::Forget(MachineName::new("m"))),
         ),
         (
+            vec!["--measure", "m", "off"],
+            of(Mode::Measure {
+                machine: MachineName::new("m"),
+                measures: false,
+            }),
+        ),
+        (
+            vec!["--measure", "m", "on"],
+            of(Mode::Measure {
+                machine: MachineName::new("m"),
+                measures: true,
+            }),
+        ),
+        (
             vec![
                 "--label",
                 "l",
@@ -616,6 +630,16 @@ fn refusals() -> Vec<(Vec<&'static str>, &'static str, bool)> {
             false,
         ),
         (vec!["--max", "1h", "x"], "dibs: --max takes seconds", false),
+        (
+            vec!["--measure", "m"],
+            "dibs: --measure <machine> takes on or off after the machine",
+            false,
+        ),
+        (
+            vec!["--measure", "m", "no"],
+            "dibs: --measure <machine> takes on or off after the machine",
+            false,
+        ),
         (vec!["--friction"], "dibs: --friction needs a value.", false),
         (
             vec!["--friction", ""],

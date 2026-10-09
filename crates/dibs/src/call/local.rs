@@ -118,6 +118,29 @@ impl MachineCall<'_> {
             }
         }
     }
+
+    /// `dibs --measure <machine> on|off`, written in whichever file holds the machine.
+    pub fn measure(&self, name: &MachineName, measures: bool) -> Result<i32, CallError> {
+        let Some(path) = self.fleet.entry(name.as_str()).map(|m| m.source.clone()) else {
+            eprintln!("dibs: no machine named '{name}'");
+            return Ok(i32::from(Exit::Refused.code()));
+        };
+        match Inventory::set_measure(&path, name, measures) {
+            Ok(()) => {
+                match measures {
+                    true => println!("{name} measures: a benchmark may run there."),
+                    false => println!(
+                        "{name} does not measure: a benchmark is refused there, and builds and tests still run."
+                    ),
+                }
+                Ok(0)
+            }
+            Err(e) => {
+                eprintln!("dibs: {e}");
+                Ok(i32::from(Exit::Failed.code()))
+            }
+        }
+    }
 }
 
 /// A line that would have chosen a machine for calls that name none.

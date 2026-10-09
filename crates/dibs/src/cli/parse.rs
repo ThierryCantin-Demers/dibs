@@ -60,6 +60,7 @@ enum Word {
     Pick,
     Update,
     Forget,
+    Measure,
     Sync,
 }
 
@@ -82,6 +83,8 @@ struct Parser {
     fetch_into: Option<String>,
     kill: Option<String>,
     forget: Option<String>,
+    measure: Option<String>,
+    measures: bool,
     force: bool,
     anyone: bool,
     wait: Option<String>,
@@ -109,6 +112,8 @@ impl Default for Parser {
             fetch_into: None,
             kill: None,
             forget: None,
+            measure: None,
+            measures: true,
             force: false,
             anyone: false,
             wait: None,
@@ -221,6 +226,20 @@ impl Parser {
                     self.word = Word::Forget;
                     self.forget = Some(need_some("--forget")?);
                     at += 1;
+                }
+                "--measure" => {
+                    self.word = Word::Measure;
+                    self.measure = Some(need_some("--measure")?);
+                    self.measures = match words.get(at + 1).map(String::as_str) {
+                        Some("on") => true,
+                        Some("off") => false,
+                        _ => {
+                            return Err(CliError::new(
+                                "dibs: --measure <machine> takes on or off after the machine",
+                            ));
+                        }
+                    };
+                    at += 2;
                 }
                 "--prefer" => {
                     self.call.prefer = Some(need_some("--prefer")?);
@@ -398,6 +417,10 @@ impl Parser {
             Word::Forget => Some(Mode::Forget(MachineName::new(
                 self.forget.clone().unwrap_or_default(),
             ))),
+            Word::Measure => Some(Mode::Measure {
+                machine: MachineName::new(self.measure.clone().unwrap_or_default()),
+                measures: self.measures,
+            }),
             _ => None,
         };
         if let Some(mode) = local {
@@ -517,6 +540,7 @@ impl Parser {
             | Word::Pick
             | Word::Update
             | Word::Forget
+            | Word::Measure
             | Word::Sync => unreachable!("answered before a machine mode is read"),
         })
     }

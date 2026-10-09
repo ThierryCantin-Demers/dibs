@@ -383,6 +383,32 @@ impl Inventory {
         })
     }
 
+    /// `measure = false` on the machine, or no `measure` at all when it may measure, as a
+    /// machine without the key does.
+    pub fn set_measure(
+        path: &Path,
+        name: &MachineName,
+        measures: bool,
+    ) -> Result<(), InventoryError> {
+        Inventory::rewrite(path, |text| {
+            let mut document = Inventory::document(text).map_err(|e| e.at(path))?;
+            let entry = document
+                .get_mut("machine")
+                .and_then(|m| m.get_mut(name.as_str()))
+                .and_then(Item::as_table_mut)
+                .ok_or_else(|| InventoryError::NoSuchMachine(name.clone()))?;
+            match measures {
+                true => {
+                    entry.remove("measure");
+                }
+                false => {
+                    entry.insert("measure", toml_edit::value(false));
+                }
+            }
+            Ok(document.to_string())
+        })
+    }
+
     /// Removes a machine and its devices; refused for one the file does not have.
     pub fn forget(path: &Path, name: &MachineName) -> Result<(), InventoryError> {
         Inventory::rewrite(path, |text| {
@@ -679,6 +705,32 @@ hostname = "new"
             Err(InventoryError::NoSuchMachine(_))
         ));
         assert_eq!(Inventory::load(&dir.join("absent.toml")).unwrap(), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn measure_is_switched_in_the_file_and_nothing_else_moves() {
+        let dir = std::env::temp_dir().join(format!("dibs-measure-{}", std::process::id()));
+        let path = dir.join("machines.toml");
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = "# the desk\n[machine.desk]\nssh = \"dibs@desk\"\n\n  [[machine.desk.device]]\n  kind = \"cpu\"\n";
+        std::fs::write(&path, text).unwrap();
+        let name = MachineName::new("desk");
+        Inventory::set_measure(&path, &name, false).unwrap();
+        let read = Inventory::load(&path).unwrap().unwrap();
+        let desk = read.machine("desk").unwrap();
+        assert!(!desk.measure);
+        assert_eq!(desk.devices.len(), 1);
+        Inventory::set_measure(&path, &name, true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            text,
+            "on puts the file back"
+        );
+        assert!(matches!(
+            Inventory::set_measure(&path, &MachineName::new("gone"), false),
+            Err(InventoryError::NoSuchMachine(_))
+        ));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

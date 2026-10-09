@@ -99,6 +99,11 @@ pub enum Mode {
     Pick,
     Update,
     Forget(MachineName),
+    /// `--measure <machine> on|off`: whether a benchmark may run there.
+    Measure {
+        machine: MachineName,
+        measures: bool,
+    },
 }
 
 impl Default for Mode {
