@@ -564,6 +564,8 @@ An entry can say `measure = false`, and `--bench` then refuses it. That is for a
 numbers would not mean anything, a laptop most of all: it throttles, it moves, and its iGPU
 shares one memory pool with the CPU. `--check --write` sets it when it finds a battery. Such a
 machine is still useful for everything that is not a measurement, which is most of what runs.
+A machine someone is using for a while, a desktop during the day, is switched with
+`dibs --measure <machine> off` and back with `on`, in whichever file holds it.
 
 ## Machines that come and go
 
