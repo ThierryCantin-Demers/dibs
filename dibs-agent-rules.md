@@ -118,8 +118,8 @@ spoiled without it.
 ### Reading what came back
 
 - **Read the summary or the trailer, not the output.** A batch's summary has one row per step:
-  machine, lock, time, exit, and each job with `by=dibs` when dibs produced the exit and the
-  `built=` its trailer reported. A single call ends with the trailer on stderr,
+  machine, the locks its jobs took (`shared+bench` for a build then a measurement), time, exit,
+  and each job with `by=dibs` when dibs produced the exit and the `built=` its trailer reported. A single call ends with the trailer on stderr,
   `job <id>  <mode>  <label>  queued Ns  ran Ns  exit N  by=command|dibs  built=N|nothing`, then
   the log path. A pipe on your side cannot cut it off, and it carries the real exit.
 - **Read `built=` before the numbers.** `built=nothing` means cargo compiled no crate, so a

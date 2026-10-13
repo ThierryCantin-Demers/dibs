@@ -125,25 +125,42 @@ impl Batch<'_> {
         out.push_str(&format!(", {}\n", duration(seconds)));
         let w = steps.iter().map(|s| s.name.len()).max().unwrap_or(4).max(4);
         let m = machines.iter().map(String::len).max().unwrap_or(7).max(7);
+        let errs: Vec<String> = steps
+            .iter()
+            .map(|st| {
+                std::fs::read_to_string(dir.join(format!("{}.err", st.name))).unwrap_or_default()
+            })
+            .collect();
+        let locks: Vec<String> = steps
+            .iter()
+            .zip(&errs)
+            .map(|(st, err)| {
+                let taken = StepStderr(err).locks();
+                match taken.is_empty() {
+                    true => st.lock.to_string(),
+                    false => taken.join("+"),
+                }
+            })
+            .collect();
+        let l = locks.iter().map(String::len).max().unwrap_or(6).max(6);
         out.push_str(&format!(
-            "{:w$}  {:m$}  {:6}  {:>7}  {:>6}  jobs\n",
+            "{:w$}  {:m$}  {:l$}  {:>7}  {:>6}  jobs\n",
             "name", "machine", "lock", "wall", "exit"
         ));
         for (i, st) in steps.iter().enumerate() {
-            let err =
-                std::fs::read_to_string(dir.join(format!("{}.err", st.name))).unwrap_or_default();
+            let err = &errs[i];
             let (wall, exit) = match &states[i] {
                 State::Done { exit: -1, seconds } => (duration(*seconds), "killed".into()),
                 State::Done { exit, seconds } => (duration(*seconds), exit.to_string()),
                 _ => ("-".into(), "not run".into()),
             };
-            let stderr = StepStderr(&err);
+            let stderr = StepStderr(err);
             let jobs = stderr.jobs();
             out.push_str(&format!(
-                "{:w$}  {:m$}  {:6}  {:>7}  {:>6}  {}\n",
+                "{:w$}  {:m$}  {:l$}  {:>7}  {:>6}  {}\n",
                 st.name,
                 machines[i],
-                st.lock,
+                locks[i],
                 wall,
                 exit,
                 jobs.join(", ")

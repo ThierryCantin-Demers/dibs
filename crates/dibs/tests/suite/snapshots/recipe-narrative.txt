@@ -73,8 +73,8 @@
 -> exit 0
 1| batch <batch>  2 steps, <dur>
 1| name       machine  lock       wall    exit  jobs
-1| samples-1  ?        recipe       <dur>       0  <job>, <job>
-1| samples-2  ?        recipe       <dur>       0  <job>, <job>
+1| samples-1  ?        shared       <dur>       0  <job>, <job>
+1| samples-2  ?        shared       <dur>       0  <job>, <job>
 1| each step's output: <root>/home/.local/state/dibs/batch/<batch>/<name>.out and .err; a job's whole log: dibs --out <job>
 2| dibs: batch <batch>, 2 steps. You are told when it ends; there is nothing to watch.
 2|   samples-1  ?        recipe  after -

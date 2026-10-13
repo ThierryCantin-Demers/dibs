@@ -31,7 +31,7 @@ pub enum State {
 #[derive(Clone, Copy)]
 pub struct StepStderr<'a>(pub &'a str);
 
-impl StepStderr<'_> {
+impl<'a> StepStderr<'a> {
     /// The jobs a step's trailers named, in order, each with what its trailer says about the exit
     /// and the build: `by=dibs` when dibs produced the exit, and `built=`, which is what says
     /// whether a measurement ran on a fresh binary. A recipe step prints several.
@@ -52,6 +52,23 @@ impl StepStderr<'_> {
                 })
             })
             .collect()
+    }
+
+    /// The locks a step's jobs took, as their trailers name them, each once in the order taken:
+    /// what a measurement ran under, which a step's own words do not always say.
+    pub fn locks(&self) -> Vec<&'a str> {
+        let mut locks = Vec::new();
+        for lock in self
+            .0
+            .lines()
+            .filter_map(|l| l.strip_prefix("job "))
+            .filter_map(|r| r.split_whitespace().nth(1))
+        {
+            if !locks.contains(&lock) {
+                locks.push(lock);
+            }
+        }
+        locks
     }
 
     /// A command may exit 76 of its own accord, so only dibs saying so makes it a cancellation.

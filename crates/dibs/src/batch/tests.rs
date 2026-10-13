@@ -300,6 +300,51 @@ fn a_step_ended_by_a_signal_reads_as_killed_rather_than_as_an_exit_code() {
 }
 
 #[test]
+fn a_steps_lock_is_the_locks_its_jobs_took() {
+    let dir = std::env::temp_dir().join(format!("dibs-batch-locks.{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("served.err"),
+        "job 20261013-1  shared  serve:build  queued 0s  ran 20s  exit 0  by=command\n\
+         job 20261013-2  bench  serve  queued 0s  ran 90s  exit 0  by=command\n",
+    )
+    .unwrap();
+    let steps = parse(
+        "[served] dibs with app@main serve --bench --there -- 'client'\n[refused] dibs run --bench true\n",
+    )
+    .unwrap();
+    let machines = vec!["m".to_string(), "m".to_string()];
+    let states = [
+        State::Done {
+            exit: 0,
+            seconds: 110,
+        },
+        State::Done {
+            exit: 2,
+            seconds: 0,
+        },
+    ];
+    let batch = Batch {
+        steps: &steps,
+        machines: &machines,
+    };
+    let out = batch.summary("1", &states, &dir, 110, None);
+    std::fs::remove_dir_all(&dir).unwrap();
+    let lock = |step: &str| {
+        out.lines()
+            .find(|l| l.starts_with(step))
+            .and_then(|l| l.split_whitespace().nth(2))
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert_eq!(
+        (lock("served"), lock("refused")),
+        ("shared+bench".to_string(), "bench".to_string()),
+        "what ran says how it was measured; a step that ran nothing says what it asked: {out}"
+    );
+}
+
+#[test]
 fn a_step_refused_before_any_job_says_why_under_its_row() {
     let dir = std::env::temp_dir().join(format!("dibs-batch-said.{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
