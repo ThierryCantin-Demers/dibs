@@ -134,17 +134,12 @@ impl Gpus {
     pub fn entries(&self) -> String {
         let vulkan = Tools::here().find("vulkaninfo").is_some();
         let lines = lspci_gpus(&GPU_CLASSES);
-        let chips: Vec<String> = lines.iter().filter_map(|l| chip(l)).collect();
+        let cards: Vec<(&str, String, String)> = lines
+            .iter()
+            .filter_map(|l| Some((l.as_str(), chip(l)?, address(l))))
+            .collect();
         let mut out = String::new();
-        for line in &lines {
-            let Some(ids) = chip(line) else {
-                continue;
-            };
-            let first = line.split(' ').next().unwrap_or_default();
-            let bus = match first.matches(':').count() {
-                2 => first.to_string(),
-                _ => format!("0000:{first}"),
-            };
+        for (line, ids, bus) in &cards {
             let seen = self
                 .nvidia
                 .iter()
@@ -154,7 +149,7 @@ impl Gpus {
                 })
                 .and_then(|card| card.first().cloned());
             let short = seen.clone().unwrap_or_else(|| short_name(line));
-            let driver = fs::read_link(Path::new(DEVICES).join(&bus).join("driver")).is_ok();
+            let driver = fs::read_link(Path::new(DEVICES).join(bus).join("driver")).is_ok();
             let mut runtimes = Vec::new();
             match ids.split(':').next() {
                 Some("10de") if seen.is_some() => runtimes.push("\"cuda\""),
@@ -168,15 +163,19 @@ impl Gpus {
             if slug.is_empty() {
                 slug = bus.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
             }
-            if chips.iter().filter(|c| **c == ids).count() > 1 {
-                let slot = bus.split_once(':').map_or("", |(_, rest)| rest);
-                slug = format!("{slug}.{}", slot.split(':').next().unwrap_or_default());
+            let twins: Vec<&str> = cards
+                .iter()
+                .filter(|(_, chip, _)| chip == ids)
+                .map(|(_, _, address)| address.as_str())
+                .collect();
+            if twins.len() > 1 {
+                slug = format!("{slug}.{}", twin_suffix(bus, &twins));
             }
             let _ = write!(
                 out,
                 "\n  [[machine.@NAME@.device]]\n  kind     = \"gpu\"\n  alias    = \"gpu:{slug}\"\n  name     = \"{short}\"\n  pci      = \"{bus}\"\n  chip     = \"{ids}\"\n"
             );
-            if let Some(link) = Link::of(&bus) {
+            if let Some(link) = Link::of(bus) {
                 let _ = writeln!(
                     out,
                     "  link     = \"x{} of x{} at {}\"",
@@ -287,6 +286,30 @@ fn short_name(line: &str) -> String {
     }
 }
 
+/// An lspci line's PCI address with its domain, as `/sys/bus/pci/devices` names it.
+fn address(line: &str) -> String {
+    let first = line.split(' ').next().unwrap_or_default();
+    match first.matches(':').count() {
+        2 => first.to_string(),
+        _ => format!("0000:{first}"),
+    }
+}
+
+/// What tells a card from its twins: its bus, and its device on that bus where twins share one,
+/// as every card in a cloud VM does.
+fn twin_suffix(address: &str, twins: &[&str]) -> String {
+    let bus = |address: &str| address.split(':').nth(1).unwrap_or_default().to_string();
+    let device = address
+        .split(':')
+        .nth(2)
+        .and_then(|d| d.split('.').next())
+        .unwrap_or_default();
+    match twins.iter().filter(|t| bus(t) == bus(address)).count() > 1 {
+        true => format!("{}.{device}", bus(address)),
+        false => bus(address),
+    }
+}
+
 /// A card's name as an alias: lowercase, its vendor's words gone, letters and digits only.
 fn slug(name: &str) -> String {
     let mut lower = name.to_lowercase();
@@ -311,5 +334,17 @@ mod tests {
         assert_eq!(short_name(RTX), "GeForce RTX 4090");
         assert_eq!(slug("NVIDIA GeForce RTX 4090"), "rtx4090");
         assert_eq!(slug("Intel Arc A770"), "a770");
+    }
+
+    #[test]
+    fn twins_on_one_bus_are_told_apart_by_their_device() {
+        let rig = ["0000:03:00.0", "0000:06:00.0"];
+        assert_eq!(twin_suffix(rig[0], &rig), "03");
+        let vm = ["0000:00:03.0", "0000:00:04.0"];
+        assert_eq!(
+            vm.map(|address| twin_suffix(address, &vm)),
+            ["00.03", "00.04"]
+        );
+        assert_eq!(address(RTX), "0000:7f:00.0");
     }
 }
