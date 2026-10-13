@@ -24,9 +24,6 @@ use std::{
 };
 
 const SYNC_LABEL: &str = "sync";
-/// rsync's `--timeout`, which it hands its far side too: the machine's rsync holds the lock, and
-/// a connection that stalls without closing would otherwise keep it there for good.
-const STALLED_SECS: u64 = 120;
 
 /// `dibs --sync`: rsync between here and a machine, under the machine's shared lock.
 pub struct Sync<'a> {
@@ -111,11 +108,9 @@ impl Sync<'_> {
     ) -> Result<i32, CallError> {
         let transport = Transport::create(self)?;
         let mut rsync = Command::new(&found.path);
-        rsync.arg("-e").arg(transport.words()?);
-        if !args.iter().any(|a| a.starts_with("--timeout")) {
-            rsync.arg(format!("--timeout={STALLED_SECS}"));
-        }
         rsync
+            .arg("-e")
+            .arg(transport.words()?)
             .args(args)
             .env("DIBS_HOST", &target.host)
             .env("DIBS_HOSTNAME", &target.hostname);

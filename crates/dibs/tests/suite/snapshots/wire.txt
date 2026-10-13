@@ -681,7 +681,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs --on box-a --sync -a ./x ':~/y'
 -> exit 0
-call 1: rsync --timeout=120 --mkpath -a ./x 'dibs@box-a:~/y'
+call 1: rsync --mkpath -a ./x 'dibs@box-a:~/y'
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
   the request the runner acts on:
     agent: session suite
@@ -709,7 +709,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 
 == dibs --on box-a --label sent --sync --checksum ':~/y/' ./x/
 -> exit 0
-call 1: rsync --timeout=120 --mkpath --checksum 'dibs@box-a:~/y/' ./x/
+call 1: rsync --mkpath --checksum 'dibs@box-a:~/y/' ./x/
 call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
   the request the runner acts on:
     agent: session suite

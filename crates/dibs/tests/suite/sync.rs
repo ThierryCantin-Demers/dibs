@@ -189,45 +189,6 @@ fn the_transports_files_are_private_and_named_where_nobody_can_plant_one() {
 }
 
 #[test]
-fn a_stalled_transfer_times_out_rather_than_holding_the_lock() {
-    let mut s = Sandbox::new();
-    s.machines("[machine.box]\nssh = \"dibs@box\"\nhostname = \"box\"\n");
-    s.write_exec(
-        "fakersync/rsync",
-        &format!(
-            "#!/bin/bash\n\
-             case $1 in --help|--version) echo 'rsync  version 3.2.7  --mkpath'; exit 0 ;; esac\n\
-             echo \"$*\" >> {seen}\n",
-            seen = s.p("rsync-args")
-        ),
-    );
-    let path = format!("{}:{}", s.p("fakersync"), s.var("PATH"));
-    for args in [
-        ["--on", "box", "--sync", "./x", ":~/y"].as_slice(),
-        &["--on", "box", "--sync", "--timeout=600", "./x", ":~/y"],
-    ] {
-        s.dibs(args)
-            .env("DIBS_LOCAL", "0")
-            .env("PATH", &path)
-            .run();
-    }
-    let seen = s.read("rsync-args");
-    let timeouts: Vec<Vec<&str>> = seen
-        .lines()
-        .map(|line| {
-            line.split(' ')
-                .filter(|w| w.starts_with("--timeout"))
-                .collect()
-        })
-        .collect();
-    assert_eq!(
-        timeouts,
-        [vec!["--timeout=120"], vec!["--timeout=600"]],
-        "rsync is given a timeout, which it hands the machine's side, unless one was asked for"
-    );
-}
-
-#[test]
 fn a_sync_told_to_stop_stops_rsync_before_it_goes() {
     for (signal, code) in [(libc::SIGTERM, 143), (libc::SIGHUP, 129)] {
         let mut s = Sandbox::new();
