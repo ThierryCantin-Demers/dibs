@@ -166,8 +166,10 @@ impl Batch<'_> {
                 jobs.join(", ")
             ));
             let failed = matches!(states[i], State::Done { exit, .. } if exit > 0);
-            if let Some(said) = stderr.last_said().filter(|_| failed && jobs.is_empty()) {
-                out.push_str(&format!("{:w$}  {said}\n", ""));
+            if failed && jobs.is_empty() {
+                for said in stderr.why_it_stopped() {
+                    out.push_str(&format!("{:w$}  {said}\n", ""));
+                }
             }
         }
         out.push_str(&format!(

@@ -1046,3 +1046,20 @@ fn an_unreachable_machine_with_its_own_ssh_config_names_it() {
         out.all()
     );
 }
+
+#[test]
+fn a_batch_says_why_a_step_could_not_reach_its_machine() {
+    let mut s = Sandbox::new();
+    let app = crate::recipes::app(&s);
+    s.machines(DESK_AND_LAP);
+    let line = format!("[send] dibs shell {app}@local --on desk --reason test -- true\n");
+    let summary = away(s.dibs(["batch", "-"]).stdin(&line)).run().stdout;
+    assert_eq!(
+        (
+            summary.lines_with("cannot reach 'dibs@desk' over ssh."),
+            summary.lines_with("could not prepare app")
+        ),
+        (1, 1),
+        "the summary carries the cause, not only the exit it led to: {summary}"
+    );
+}

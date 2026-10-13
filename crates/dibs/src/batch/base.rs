@@ -80,10 +80,33 @@ impl<'a> StepStderr<'a> {
             })
     }
 
-    /// The last line dibs said, which for a step that failed before any job ran is why: a
-    /// refusal, or the prepare that could not be done.
-    pub fn last_said(&self) -> Option<&str> {
-        self.0.lines().rev().find(|l| l.starts_with("dibs: "))
+    /// Why a step that failed before any job ran stopped: the last thing dibs said, a refusal
+    /// or the prepare that could not be done, after the last explanation it gave, which is
+    /// where the cause is when that last line only restates the exit.
+    pub fn why_it_stopped(&self) -> Vec<&str> {
+        let lines: Vec<&str> = self.0.lines().collect();
+        let paragraphs: Vec<&[&str]> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.starts_with("dibs: "))
+            .map(|(at, _)| {
+                let explained = lines[at + 1..]
+                    .iter()
+                    .take_while(|l| l.starts_with("  "))
+                    .count();
+                &lines[at..=at + explained]
+            })
+            .collect();
+        let Some((last, earlier)) = paragraphs.split_last() else {
+            return Vec::new();
+        };
+        let explanation = earlier.iter().rev().find(|p| p.len() > 1);
+        match explanation {
+            Some(explanation) if last.len() == 1 => {
+                explanation.iter().chain(last.iter()).copied().collect()
+            }
+            _ => last.to_vec(),
+        }
     }
 }
 

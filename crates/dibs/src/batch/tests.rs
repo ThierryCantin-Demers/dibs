@@ -385,6 +385,34 @@ fn a_step_refused_before_any_job_says_why_under_its_row() {
 }
 
 #[test]
+fn a_step_that_only_restates_its_exit_is_explained_by_what_dibs_said_before_it() {
+    let stderr = StepStderr(
+        "dibs: syncing with box once its lock is held\n\
+         user@10.0.0.2: Permission denied (publickey).\n\
+         dibs: cannot reach 'box' over ssh.\n  \
+         It answered and refused the login, so it is up and this is about keys.\n  \
+         Load it once:  ssh-add ~/.ssh/key\n\
+         rsync: connection unexpectedly closed (0 bytes received so far) [sender]\n\
+         dibs: could not prepare app from ./tree (exit 69)\n",
+    );
+    assert_eq!(
+        stderr.why_it_stopped(),
+        [
+            "dibs: cannot reach 'box' over ssh.",
+            "  It answered and refused the login, so it is up and this is about keys.",
+            "  Load it once:  ssh-add ~/.ssh/key",
+            "dibs: could not prepare app from ./tree (exit 69)",
+        ]
+    );
+    assert_eq!(
+        StepStderr("dibs: preparing app\ndibs: no recipe 'x'.\n  dibs list app says what it has\n")
+            .why_it_stopped(),
+        ["dibs: no recipe 'x'.", "  dibs list app says what it has"],
+        "a last line that explains itself stands alone"
+    );
+}
+
+#[test]
 fn only_dibs_saying_so_makes_exit_76_a_cancellation() {
     assert!(
         StepStderr("dibs: batch 1 was cancelled with dibs --kill, so this step does not run.\n")
