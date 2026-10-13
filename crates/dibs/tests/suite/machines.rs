@@ -672,6 +672,37 @@ fn routing_ranks_the_machines_that_answered() {
 }
 
 #[test]
+fn routing_leaves_out_the_machines_without_the_card_named() {
+    let mut s = Sandbox::new();
+    s.machines(&format!(
+        "[machine.one]\nssh      = \"one\"\nhostname = \"{}\"\n\n\
+         [machine.two]\nssh      = \"two\"\nhostname = \"two\"\n\n\
+         [[machine.two.device]]\nalias = \"gpu:card\"\npci   = \"0000:01:00.0\"\n",
+        hostname()
+    ));
+    let placed = s.dibs(["--pick", "-v", "--device", "gpu:card"]).run();
+    assert_eq!(
+        (
+            placed.stdout.trim_end(),
+            placed.stderr.lines_with("one                has no gpu:card")
+        ),
+        ("two", 1),
+        "a machine without the card is not placed on, and -v says why"
+    );
+    let nowhere = s.dibs(["--pick", "--device", "gpu:other"]).run();
+    assert_eq!(
+        (
+            nowhere.code,
+            nowhere
+                .all()
+                .lines_with("no machine has a device called 'gpu:other'")
+        ),
+        (2, 1),
+        "a card no machine has is refused rather than tried on one"
+    );
+}
+
+#[test]
 fn routing_prefers_the_cache_over_an_idle_machine() {
     let mut s = Sandbox::new();
     one_and_two(&mut s);

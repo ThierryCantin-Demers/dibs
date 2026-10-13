@@ -48,6 +48,11 @@ impl Card {
         let entry = target.entry(fleet).ok_or_else(|| CardError::NoEntry {
             host: target.host.clone(),
         })?;
+        Card::on(alias, entry)
+    }
+
+    /// The card `alias` names on the machine `entry` describes.
+    pub fn on(alias: &Alias, entry: &Machine) -> Result<Card, CardError> {
         let device = entry.device(alias.as_str());
         let field =
             |f: fn(&Device) -> Option<&String>| device.and_then(f).cloned().unwrap_or_default();

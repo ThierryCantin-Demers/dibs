@@ -4,10 +4,10 @@
 use crate::{
     call::{Asked, Bound, MachineCall},
     cli::Call,
-    machine::Kept,
+    machine::{Card, Kept},
     render::Answered,
 };
-use dibs_format::{Exit, MachineName, Mode, Moment};
+use dibs_format::{Alias, Exit, MachineName, Mode, Moment};
 use serde::Deserialize;
 use std::{
     collections::hash_map::RandomState,
@@ -113,6 +113,10 @@ pub enum Unplaced {
     NoneAnswered {
         inventory: String,
     },
+    /// `--device` named a card no machine's entry lists.
+    NoCard {
+        alias: Alias,
+    },
 }
 
 impl Ranking {
@@ -216,7 +220,25 @@ impl Placement<'_> {
     pub fn pick(&self) -> Result<MachineName, Unplaced> {
         let call = self.machine.call;
         let down = RouteDown::from_env(self.machine.paths.route_down());
-        let names = self.machine.fleet.names();
+        let mut names = self.machine.fleet.names();
+        if let Some(alias) = &call.device {
+            names.retain(|name| {
+                let carries = self
+                    .machine
+                    .fleet
+                    .entry(name.as_str())
+                    .is_some_and(|entry| Card::on(alias, entry).is_ok());
+                if !carries && call.verbose {
+                    eprintln!("  {:<18} has no {alias}", name.as_str());
+                }
+                carries
+            });
+            if names.is_empty() {
+                return Err(Unplaced::NoCard {
+                    alias: alias.clone(),
+                });
+            }
+        }
         let mut asked = Vec::new();
         for name in &names {
             match down.recently(name) {
@@ -341,7 +363,10 @@ impl RouteDown {
 
 impl Unplaced {
     pub fn exit(&self) -> Exit {
-        Exit::Unreachable
+        match self {
+            Unplaced::NoCard { .. } => Exit::Refused,
+            Unplaced::NoClone { .. } | Unplaced::NoneAnswered { .. } => Exit::Unreachable,
+        }
     }
 }
 
@@ -366,6 +391,13 @@ impl fmt::Display for Unplaced {
                 f,
                 "dibs: no machine in {inventory} answered, so there was nowhere to place this."
             ),
+            Unplaced::NoCard { alias } => {
+                writeln!(
+                    f,
+                    "dibs: no machine has a device called '{alias}', so there is nowhere to place this."
+                )?;
+                writeln!(f, "  dibs --machines -v lists each machine's cards by alias.")
+            }
         }
     }
 }

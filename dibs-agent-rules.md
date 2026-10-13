@@ -181,7 +181,8 @@ spoiled without it.
 ### Cards, on a machine with more than one
 
 - `dibs --machines -v` lists each machine's cards by the alias to name them with.
-- `--device <alias>` runs a job, or a recipe, on that card only. **A benchmark on a multi-GPU
+- `--device <alias>` runs a job, or a recipe, on that card only, and shared work naming no
+  machine is placed only on a machine that has it. **A benchmark on a multi-GPU
   machine that names no card is not reproducible**, because which card the runtime picks is
   recorded nowhere.
 - Each machine keeps its own series of a label, since numbers from two machines never compare.

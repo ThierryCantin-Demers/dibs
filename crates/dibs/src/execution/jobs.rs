@@ -8,7 +8,7 @@ use crate::{
     execution::{Refusal, RunError},
     inventory::Inventory,
     machine::{Interrupt, Listener, Stream},
-    placement::Placement,
+    placement::{Placement, Unplaced},
     recipe::Lock,
 };
 use dibs_format::{
@@ -212,34 +212,28 @@ impl Jobs {
         }
     }
 
-    /// Where shared work goes: the machine named, or the only one there is, or else a placement
-    /// among them by build cache and then by load. Only for work that is shared throughout: a
-    /// measurement's history keys on the machine it ran on.
+    /// Where shared work goes: the machine `call` names, or the only one there is, or else a
+    /// placement among those with its `device` by build cache and then by load. Only for work
+    /// that is shared throughout: a measurement's history keys on the machine it ran on.
     ///
     /// `prefer` names the machine already holding this repo's build cache; `repo` asks which
     /// machines hold it, which is what makes the first run for a repo land somewhere useful.
-    pub fn placed(
-        on: Option<MachineName>,
-        prefer: Option<&str>,
-        repo: Option<&str>,
-    ) -> Result<Jobs, RunError> {
+    pub fn placed(call: Call) -> Result<Jobs, RunError> {
         let call = Call {
             mode: Mode::Pick,
-            on,
-            prefer: prefer.map(str::to_string),
-            repo: repo.map(str::to_string),
-            ..Call::default()
+            ..call
         };
         let caller = Caller::default();
         let machine = MachineCall::new(&call, &caller)?;
         let placed = match machine.destination()? {
             Destination::Named(m) => Some(m),
             Destination::Unnamed => None,
-            Destination::Unchosen => Some(
-                Placement { machine: &machine }
-                    .pick()
-                    .map_err(|_| Refusal::Nowhere(repo.map(str::to_string)))?,
-            ),
+            Destination::Unchosen => Some(Placement { machine: &machine }.pick().map_err(
+                |unplaced| match unplaced {
+                    Unplaced::NoCard { .. } => RunError::Unsent(unplaced.into()),
+                    _ => Refusal::Nowhere(call.repo.clone()).into(),
+                },
+            )?),
         };
         Ok(Jobs::on(placed))
     }

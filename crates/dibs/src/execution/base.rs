@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     call::{BatchStep, Destination, RecipeJob},
-    cli::{RecipeCall, ShellWord},
+    cli::{Call, RecipeCall, ShellWord},
     recipe::{self, Lock, Manifest, NotTaken, Resolved},
     records::{Affinity, RunLog},
 };
@@ -707,11 +707,13 @@ fn destination(
     args: &RecipeCall,
 ) -> Result<Option<MachineName>, RunError> {
     if rec.steps.iter().all(|s| s.lock == Lock::Shared) {
-        let placed = Jobs::placed(
-            args.machine(),
-            Affinity::here().get(repo_name).as_deref(),
-            Some(repo_name),
-        )?;
+        let placed = Jobs::placed(Call {
+            on: args.machine(),
+            prefer: Affinity::here().get(repo_name),
+            repo: Some(repo_name.to_string()),
+            device: args.device.as_deref().map(Alias::from),
+            ..Call::default()
+        })?;
         return Ok(placed.machine);
     }
     match Jobs::destination(args.machine())? {
@@ -840,7 +842,11 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
         return Err(Refusal::RawNotTaken(not_taken).into());
     }
     // Always shared, and nothing is prepared for it, so it is placed like any other shared work.
-    let backend = Jobs::placed(args.machine(), None, None)?;
+    let backend = Jobs::placed(Call {
+        on: args.machine(),
+        device: args.device.as_deref().map(Alias::from),
+        ..Call::default()
+    })?;
     let out = backend.run(
         &JobRequest {
             label: "raw",

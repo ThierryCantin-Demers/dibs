@@ -511,7 +511,8 @@ default is where a forgotten `--on` starts a series nobody meant, with nothing b
 stderr to show for it. So with several machines, a call that names none is one of three things:
 
 - **Shared work is placed**: on the machine holding the repo's build cache, else the least busy
-  one, as below. A plain `dibs <command>`, a build or test recipe, and `dibs raw` all are.
+  one, as below, among those whose entry lists the card its `--device` names. A plain
+  `dibs <command>`, a build or test recipe, `dibs shell` and `dibs raw` all are.
 - **A status shows every machine**, as `--status --all` does.
 - **Anything else is refused**, with the machines to choose from: a benchmark, a benchmark
   recipe, a `--hold`, `--with` servers, a peek, a sync, a kill of a pid, a log, a gc, a check.
