@@ -62,6 +62,12 @@ impl StepStderr<'_> {
                     && l.contains(&format!("  exit {}  by=dibs", Exit::Cancelled.code()))
             })
     }
+
+    /// The last line dibs said, which for a step that failed before any job ran is why: a
+    /// refusal, or the prepare that could not be done.
+    pub fn last_said(&self) -> Option<&str> {
+        self.0.lines().rev().find(|l| l.starts_with("dibs: "))
+    }
 }
 
 fn state_dir() -> PathBuf {

@@ -137,6 +137,8 @@ impl Batch<'_> {
                 State::Done { exit, seconds } => (duration(*seconds), exit.to_string()),
                 _ => ("-".into(), "not run".into()),
             };
+            let stderr = StepStderr(&err);
+            let jobs = stderr.jobs();
             out.push_str(&format!(
                 "{:w$}  {:m$}  {:6}  {:>7}  {:>6}  {}\n",
                 st.name,
@@ -144,8 +146,12 @@ impl Batch<'_> {
                 st.lock,
                 wall,
                 exit,
-                StepStderr(&err).jobs().join(", ")
+                jobs.join(", ")
             ));
+            let failed = matches!(states[i], State::Done { exit, .. } if exit > 0);
+            if let Some(said) = stderr.last_said().filter(|_| failed && jobs.is_empty()) {
+                out.push_str(&format!("{:w$}  {said}\n", ""));
+            }
         }
         out.push_str(&format!(
             "each step's output: {}/<name>.out and .err; a job's whole log: dibs --out <job>\n",

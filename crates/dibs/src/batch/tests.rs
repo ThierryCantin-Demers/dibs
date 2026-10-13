@@ -300,6 +300,46 @@ fn a_step_ended_by_a_signal_reads_as_killed_rather_than_as_an_exit_code() {
 }
 
 #[test]
+fn a_step_refused_before_any_job_says_why_under_its_row() {
+    let dir = std::env::temp_dir().join(format!("dibs-batch-said.{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("a.err"),
+        "dibs: preparing app from ./tree (clean)\ndibs: could not prepare app from ./tree (exit 30)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("b.err"),
+        "dibs: step 2\njob 20260916-2  shared  b  queued 0s  ran 1s  exit 1  by=command\n",
+    )
+    .unwrap();
+    let steps = parse("[a] dibs run true\n[b cont] dibs run true\n").unwrap();
+    let machines = vec!["m".to_string(), "m".to_string()];
+    let states = [
+        State::Done {
+            exit: 2,
+            seconds: 0,
+        },
+        State::Done {
+            exit: 1,
+            seconds: 1,
+        },
+    ];
+    let batch = Batch {
+        steps: &steps,
+        machines: &machines,
+    };
+    let out = batch.summary("1", &states, &dir, 1, None);
+    std::fs::remove_dir_all(&dir).unwrap();
+    let said: Vec<&str> = out.lines().filter(|l| l.contains("dibs: ")).collect();
+    assert_eq!(
+        said,
+        ["      dibs: could not prepare app from ./tree (exit 30)"],
+        "only the step with no job to read is explained, by the last thing dibs said: {out}"
+    );
+}
+
+#[test]
 fn only_dibs_saying_so_makes_exit_76_a_cancellation() {
     assert!(
         StepStderr("dibs: batch 1 was cancelled with dibs --kill, so this step does not run.\n")
