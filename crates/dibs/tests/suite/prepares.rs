@@ -44,6 +44,9 @@ fn entry(name: &str, p: &Path, n: &Normal) -> Vec<String> {
             let n = fs::read_dir(p).map(|d| d.count()).unwrap_or(0);
             return vec![format!("{name}/  ({n} job directories)")];
         }
+        if name == ".git" {
+            return vec![format!("{name}/  (a repository)")];
+        }
         let mut out = vec![format!("{name}/")];
         out.extend(tree(p, n).into_iter().map(|l| format!("  {l}")));
         return out;

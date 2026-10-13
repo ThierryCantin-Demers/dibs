@@ -219,7 +219,9 @@ mod tests {
             ["rocm"]
         );
         assert_eq!(
-            runtimes_built_for("cd x && cargo test -F 'burn/cuda,fusion' && cargo test --features=hip"),
+            runtimes_built_for(
+                "cd x && cargo test -F 'burn/cuda,fusion' && cargo test --features=hip"
+            ),
             ["cuda", "rocm"]
         );
         assert!(runtimes_built_for("cargo bench --bench rows -- rocm").is_empty());

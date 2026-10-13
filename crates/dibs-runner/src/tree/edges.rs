@@ -39,12 +39,15 @@ fn shown(path: &Path, rel: &str, modes: bool) -> String {
     line + "\n"
 }
 
-/// Every entry under `root`, sorted by path.
+/// Every entry under `root` but a repository's own, sorted by path.
 fn listing(root: &Path, modes: bool) -> String {
     let mut found: Vec<PathBuf> = Vec::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         for entry in fs::read_dir(&dir).unwrap().flatten() {
+            if entry.file_name() == ".git" {
+                continue;
+            }
             if entry.file_type().unwrap().is_dir() {
                 pending.push(entry.path());
             }

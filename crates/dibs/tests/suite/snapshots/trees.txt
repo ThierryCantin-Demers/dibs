@@ -21,6 +21,7 @@ ws/
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -59,6 +60,7 @@ ws/
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -112,12 +114,14 @@ ws/
     local-<app-topk>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -213,12 +217,14 @@ ws/
     local-<app-topk>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -318,12 +324,14 @@ ws/
     local-<app-topk>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -437,12 +445,14 @@ ws/
     local-<app-topk>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -601,12 +611,14 @@ ws/
     local-<app-topk>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -621,6 +633,7 @@ ws/
       local-<app>/
         .dibs-used  (empty)
         .dibs.toml
+        .git/  (a repository)
         .gitignore
         Cargo.lock
         a.txt
@@ -629,6 +642,7 @@ ws/
     .prepare.lock  (empty)
     local-<lib>/
       .dibs-used  (empty)
+      .git/  (a repository)
       Cargo.toml
       src/
         lib.rs

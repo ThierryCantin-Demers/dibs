@@ -684,7 +684,9 @@ fn routing_leaves_out_the_machines_without_the_card_named() {
     assert_eq!(
         (
             placed.stdout.trim_end(),
-            placed.stderr.lines_with("one                has no gpu:card")
+            placed
+                .stderr
+                .lines_with("one                has no gpu:card")
         ),
         ("two", 1),
         "a machine without the card is not placed on, and -v says why"

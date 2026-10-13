@@ -35,7 +35,9 @@ pub enum Installed {
     /// Its lock directory cannot be written.
     Unlockable,
     /// The build would wait for the lock, as the runner's line on its queue says.
-    Queued { behind: String },
+    Queued {
+        behind: String,
+    },
 }
 
 /// Whether a build that must queue for the lock goes on waiting.

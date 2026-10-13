@@ -387,6 +387,7 @@ impl<'a> Trees<'a> {
         }
         self.made(&worktree)?;
         self.made_used(&worktree)?;
+        self.made_repo(&worktree);
         self.cache(&target, prepare, packages)?;
         drop(target_turn);
         drop(turn);
@@ -614,6 +615,23 @@ impl<'a> Trees<'a> {
             .join(USED)
             .touch()
             .map_err(|e| PrepareError::io("could not mark the tree", e))
+    }
+
+    /// A sent tree arrives without its `.git`, and typos, ripgrep and the like follow
+    /// `.gitignore` only inside a repository, so they would read every build leftover in it.
+    /// Without a template, so no hook a machine's git installs by default runs in it.
+    fn made_repo(&self, worktree: &Path) {
+        if worktree.join(".git").exists() {
+            return;
+        }
+        let init = self.commands.git(worktree, &["init", "-q", "--template="]);
+        if !init.as_ref().is_ok_and(|o| o.status.success()) {
+            (self.say)(&format!(
+                "dibs: {} is no git repository, so tools there will not follow its .gitignore: {}\n",
+                worktree.display(),
+                init.said().trim()
+            ));
+        }
     }
 }
 

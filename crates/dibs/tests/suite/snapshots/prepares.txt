@@ -90,6 +90,7 @@ ws/
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -140,6 +141,7 @@ ws/
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -201,12 +203,14 @@ ws/
     local-<app-topk>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
@@ -279,18 +283,21 @@ ws/
     local-<app-topk>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
     local-<app>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt
     local-<main, sent>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       Cargo.lock
       a.txt

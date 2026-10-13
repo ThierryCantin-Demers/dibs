@@ -444,6 +444,22 @@ fn a_local_tree_is_keyed_and_marked_and_its_lockfile_staged() {
 }
 
 #[test]
+fn a_sent_tree_is_a_repository_of_its_own_so_its_gitignore_holds() {
+    let m = Machine::new();
+    let wt = PathBuf::from(m.prepared(&local("k1", &[])).worktree);
+    fs::write(wt.join(".gitignore"), "target\n").unwrap();
+    fs::create_dir_all(wt.join("crate/target")).unwrap();
+    fs::write(wt.join("crate/target/compilation.log"), "teh\n").unwrap();
+    run(&wt, "git check-ignore -q crate/target/compilation.log");
+    fs::write(wt.join(".git/marker"), "").unwrap();
+    m.prepared(&local("k1", &[]));
+    assert!(
+        wt.join(".git/marker").exists(),
+        "a tree's repository is kept"
+    );
+}
+
+#[test]
 fn a_new_tree_starts_from_its_repos_latest_target_with_its_sources() {
     let m = Machine::new();
     let old = m.sibling("demo-local-old", &[]);

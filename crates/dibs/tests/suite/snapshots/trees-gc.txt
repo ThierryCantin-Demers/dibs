@@ -70,6 +70,7 @@ ws/
     local-<key>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       a.txt
     recent/
@@ -112,6 +113,7 @@ ws/
     local-<key>/
       .dibs-used  (empty)
       .dibs.toml
+      .git/  (a repository)
       .gitignore
       a.txt
     recent/

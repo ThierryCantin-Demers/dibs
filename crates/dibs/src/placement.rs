@@ -396,7 +396,10 @@ impl fmt::Display for Unplaced {
                     f,
                     "dibs: no machine has a device called '{alias}', so there is nowhere to place this."
                 )?;
-                writeln!(f, "  dibs --machines -v lists each machine's cards by alias.")
+                writeln!(
+                    f,
+                    "  dibs --machines -v lists each machine's cards by alias."
+                )
             }
         }
     }
