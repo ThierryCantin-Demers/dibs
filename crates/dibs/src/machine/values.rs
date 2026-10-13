@@ -54,6 +54,21 @@ pub struct Watch {
 }
 
 impl CallValues {
+    /// Answered beside whatever holds the machine, so as never to wait behind it.
+    pub fn takes_no_lock(&self) -> bool {
+        matches!(
+            self.mode,
+            Mode::Peek
+                | Mode::Status
+                | Mode::Watch
+                | Mode::Log
+                | Mode::Out
+                | Mode::Kill
+                | Mode::KillForce
+                | Mode::Release
+        )
+    }
+
     /// The values as the runner is asked for them.
     pub fn request(&self, watch: Watch) -> Request {
         let some = |text: &str| Some(text.to_string()).filter(|t| !t.is_empty());

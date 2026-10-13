@@ -427,6 +427,43 @@ fn the_first_build_queues_behind_a_benchmark() {
 }
 
 #[test]
+fn a_call_that_takes_no_lock_gives_its_runners_build_up_behind_a_benchmark() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, true);
+    let (up, hold) = (s.gate("up"), s.gate("hold"));
+    let bench = s.spawn(s.dibs([
+        "--bench",
+        "--label",
+        "measured",
+        &format!("{}; {}", up.signal(), hold.hold()),
+    ]));
+    up.reached();
+    s.held(1);
+    for asked in [&["--status"][..], &["--kill", "1"]] {
+        let out = s.remote(s.dibs(asked)).run();
+        assert_eq!(
+            (
+                out.code,
+                out.stderr.lines_with(
+                    "building it waits for the lock: queued and has not started, behind the benchmark measured"
+                )
+            ),
+            (72, 1),
+            "{asked:?} answers at once rather than queue behind what it may mean to stop: {}",
+            out.all()
+        );
+        s.until_records("the build it gave up left the queue", || {
+            s.records("waiting")
+                .iter()
+                .all(|r| r.get(3).is_none_or(|label| label != "dibs-runner"))
+        });
+    }
+    assert!(!installed(&s), "nothing is built beside the benchmark");
+    hold.open();
+    assert_eq!(s.wait(bench), 0);
+}
+
+#[test]
 fn what_the_first_build_leaves_running_holds_no_lock() {
     let mut s = Sandbox::new();
     without_this_runner(&mut s, false);

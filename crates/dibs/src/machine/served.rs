@@ -5,7 +5,7 @@ use crate::{
         held::{Held, Holder, Release},
         interrupt::Interrupt,
         lines::{Listener, Stream},
-        provision::{Installed, Provision},
+        provision::{Installed, Provision, Queueing},
         session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Said, Session},
         ssh::Ssh,
         values::{CallValues, Watch},
@@ -172,7 +172,11 @@ impl Served<'_> {
         if self.deadline.as_ref().is_some_and(Deadline::timed) {
             return Ok(provision.not_for_a_question(delivery));
         }
-        let installed = match provision.through_newest(delivery)? {
+        let queueing = match self.values.takes_no_lock() {
+            true => Queueing::GivesUp,
+            false => Queueing::Waits,
+        };
+        let installed = match provision.through_newest(queueing, delivery)? {
             Installed::NoneThere if self.session.leased => provision.first(delivery)?,
             installed => installed,
         };
@@ -182,6 +186,7 @@ impl Served<'_> {
                 Attempted::Missing => Ok(provision.failed(delivery)),
             },
             Installed::NoneThere => Ok(provision.none_there(delivery)),
+            Installed::Queued { behind } => Ok(provision.queued(&behind, delivery)),
             Installed::Failed | Installed::NoLockTaker | Installed::Unlockable => {
                 Ok(provision.failed(delivery))
             }
@@ -251,12 +256,13 @@ impl Served<'_> {
                     live: self.live,
                 };
                 let delivery = &mut Delivery::Inherit;
-                match provision.through_newest(delivery)? {
+                match provision.through_newest(Queueing::Waits, delivery)? {
                     Installed::Done => match self.carry(prepared)? {
                         Attempted::Exit(code) => code,
                         Attempted::Missing => provision.failed(delivery),
                     },
                     Installed::NoneThere => provision.none_there(delivery),
+                    Installed::Queued { behind } => provision.queued(&behind, delivery),
                     Installed::Unreached => SSH_FAILED,
                     Installed::Failed | Installed::NoLockTaker | Installed::Unlockable => {
                         provision.failed(delivery)

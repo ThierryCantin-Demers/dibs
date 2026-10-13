@@ -22,7 +22,7 @@ pub struct Provision<'a> {
 }
 
 /// How putting the runner there went.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Installed {
     Done,
     /// The machine has no runner at all to build it with.
@@ -34,7 +34,19 @@ pub enum Installed {
     NoLockTaker,
     /// Its lock directory cannot be written.
     Unlockable,
+    /// The build would wait for the lock, as the runner's line on its queue says.
+    Queued { behind: String },
 }
+
+/// Whether a build that must queue for the lock goes on waiting.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Queueing {
+    Waits,
+    GivesUp,
+}
+
+/// How every runner begins the line saying a job waits for the lock.
+const QUEUED: &str = "dibs: queued and has not started";
 
 /// What the first build's line exits with when it cannot take the lock.
 const UNLOCKABLE: i32 = 71;
@@ -135,8 +147,12 @@ PERL
 
 impl Provision<'_> {
     /// Built by the newest runner already there, as a shared job, unless it is there already.
-    pub fn through_newest(&self, delivery: &mut Delivery) -> io::Result<Installed> {
-        self.install(&Provision::newest_line(), delivery)
+    pub fn through_newest(
+        &self,
+        queueing: Queueing,
+        delivery: &mut Delivery,
+    ) -> io::Result<Installed> {
+        self.install(&Provision::newest_line(), queueing, delivery)
     }
 
     /// `dibs --check`: the runner there, building the first one if the machine has none. No
@@ -145,7 +161,7 @@ impl Provision<'_> {
         if self.session.route == Route::Here {
             return Ok(Installed::Done);
         }
-        match self.install(&Provision::newest_line(), delivery)? {
+        match self.install(&Provision::newest_line(), Queueing::Waits, delivery)? {
             Installed::NoneThere => self.first(delivery),
             installed => Ok(installed),
         }
@@ -158,7 +174,7 @@ impl Provision<'_> {
             "dibs: installing dibs's runner on {}, a first build, as a shared job.\n",
             self.session.name
         ));
-        self.install(&Provision::first_line(), delivery)
+        self.install(&Provision::first_line(), Queueing::Waits, delivery)
     }
 
     /// Says nothing ran because the build failed, and gives the exit for it.
@@ -198,6 +214,19 @@ impl Provision<'_> {
         i32::from(Exit::NoRunner.code())
     }
 
+    /// A call that takes no lock gives its build up rather than queue behind what holds the
+    /// machine, which is often the very job it means to stop.
+    pub fn queued(&self, behind: &str, delivery: &mut Delivery) -> i32 {
+        let name = &self.session.name;
+        delivery.say(&format!(
+            "dibs: {name} has no runner for this dibs yet, and building it waits for the lock: {}\n  \
+             A call that takes no lock does not wait for it. The runner is built by the next call\n  \
+             there that may wait, such as:  dibs --on {name} true\n",
+            behind.trim_start_matches("dibs: ")
+        ));
+        i32::from(Exit::NoRunner.code())
+    }
+
     /// A question asked within a bound builds nothing: the build would queue behind whatever
     /// holds the machine, for as long as that takes.
     pub fn not_for_a_question(&self, delivery: &mut Delivery) -> i32 {
@@ -222,7 +251,12 @@ impl Provision<'_> {
     }
 
     /// Runs a line there with the tree on its stdin, its output passed on as it comes.
-    fn install(&self, line: &str, delivery: &mut Delivery) -> io::Result<Installed> {
+    fn install(
+        &self,
+        line: &str,
+        queueing: Queueing,
+        delivery: &mut Delivery,
+    ) -> io::Result<Installed> {
         let Route::Ssh { host, config } = &self.session.route else {
             return Ok(Installed::Done);
         };
@@ -277,17 +311,30 @@ impl Provision<'_> {
             .collect();
         drop(tell);
         let mut buffers = LineBuffers::default();
+        let mut queued = None;
         for line in heard {
             match line.trim_ascii_end() {
-                said if said == BUILDING.as_bytes() => delivery.say(&format!(
-                    "dibs: {} has no runner for this dibs yet. Building it there as a shared job, once per version.\n",
-                    self.session.name
-                )),
-                said if said == ALIVE.as_bytes() => {}
+                said if queueing == Queueing::GivesUp && said.starts_with(QUEUED.as_bytes()) => {
+                    queued = Some(String::from_utf8_lossy(said).into_owned());
+                    let _ = child.kill();
+                    break;
+                }
+                said if said == BUILDING.as_bytes() && queueing == Queueing::Waits => delivery
+                    .say(&format!(
+                        "dibs: {} has no runner for this dibs yet. Building it there as a shared job, once per version.\n",
+                        self.session.name
+                    )),
+                said if said == BUILDING.as_bytes() || said == ALIVE.as_bytes() => {}
                 _ => delivery.give(Stream::Err, &line, &mut buffers),
             }
         }
         delivery.flush(&mut buffers);
+        if let Some(behind) = queued {
+            // The build there holds its pipes until it learns its caller went, which closing them
+            // as this process exits tells it; waiting for them here would wait out the lock.
+            child.wait()?;
+            return Ok(Installed::Queued { behind });
+        }
         for reader in readers {
             let _ = reader.join();
         }

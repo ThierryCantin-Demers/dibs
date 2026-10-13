@@ -233,6 +233,9 @@ read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
   stdin, text on stdout and stderr, exit 0 once `<hash>` is installed. The newest runner already
   on a machine builds the next version, and may be older than the tree it is sent, so the build's
   steps live in the tree, in its `install.sh`, and not in the runner.
+- That build takes the shared lock. A call that takes no lock gives it up as soon as the runner
+  says it is queued, rather than wait behind the job it may be asking about or stopping; so until
+  a call that may wait has built it, such a call cannot reach a machine across a version change.
 
 ### What must stay compatible
 

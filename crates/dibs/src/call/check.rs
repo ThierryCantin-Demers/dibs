@@ -37,6 +37,7 @@ impl MachineCall<'_> {
             unlocked @ (Installed::NoLockTaker | Installed::Unlockable) => {
                 return Ok(provision.unlocked(unlocked, &mut delivery));
             }
+            Installed::Queued { behind } => return Ok(provision.queued(&behind, &mut delivery)),
         }
         if !self.call.write {
             return self.send(Asked::plain(Mode::Check, Label::new("check")), &target);
