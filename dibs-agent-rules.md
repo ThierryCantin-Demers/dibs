@@ -180,7 +180,9 @@ spoiled without it.
 
 ### Cards, on a machine with more than one
 
-- `dibs --machines -v` lists each machine's cards by the alias to name them with.
+- `dibs --machines -v` lists each machine's cards by the alias to name them with, and the
+  runtimes each runs. A pinned job whose cargo features build only for runtimes its card lacks
+  is refused: the program would fall back to another without a word.
 - `--device <alias>` runs a job, or a recipe, on that card only, and shared work naming no
   machine is placed only on a machine that has it. **A benchmark on a multi-GPU
   machine that names no card is not reproducible**, because which card the runtime picks is

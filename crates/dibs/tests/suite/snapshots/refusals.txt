@@ -60,6 +60,7 @@ exit  call
 2     DIBS_MACHINES=/nonexistent/machines.toml DIBS_LOCAL=0 dibs --check --write
 2     DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device gpu:nope true
 2     DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device card true
+2     DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device gpu:card 'cargo bench --features rocm'
 2     DIBS_MACHINES=<root>/two.toml dibs --on box-a --device gpu:card true
 2     DIBS_MACHINES=/nonexistent/machines.toml dibs --device gpu:card true
 69    DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 DIBS_POLL_TIMEOUT=3 dibs --pick --repo absent
@@ -342,6 +343,13 @@ exit  call
 2|     gpu:card
 2|     gpu:other
 2|     cpu
+
+== DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device gpu:card 'cargo bench --features rocm'
+-> exit 2
+2| dibs: gpu:card runs cuda, vulkan, and this command builds for rocm.
+2|   Built for a runtime the card lacks, the program falls back to another without a word,
+2|   and its numbers pass for the runtime it asked for.
+2|   Name a card that runs it (dibs --machines -v lists each card's runtimes).
 
 == DIBS_MACHINES=<root>/two.toml dibs --on box-a --device gpu:card true
 -> exit 2

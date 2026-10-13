@@ -1598,6 +1598,14 @@ fn refusals() {
             .env("DIBS_LOCAL", "0"),
         r(&["--on", "box-a", "--device", "gpu:nope", "true"]).env("DIBS_MACHINES", &cards),
         r(&["--on", "box-a", "--device", "card", "true"]).env("DIBS_MACHINES", &cards),
+        r(&[
+            "--on",
+            "box-a",
+            "--device",
+            "gpu:card",
+            "cargo bench --features rocm",
+        ])
+        .env("DIBS_MACHINES", &cards),
         r(&["--on", "box-a", "--device", "gpu:card", "true"]).env("DIBS_MACHINES", &two),
         r(&["--device", "gpu:card", "true"]).env("DIBS_MACHINES", none),
         r(&["--pick", "--repo", "absent"])

@@ -33,6 +33,12 @@ pub enum CardError {
         aliases: Vec<Alias>,
         cpu: bool,
     },
+    /// The command builds for GPU runtimes the card has none of.
+    NoRuntime {
+        alias: String,
+        has: String,
+        asked: Vec<&'static str>,
+    },
 }
 
 impl Card {
@@ -96,6 +102,50 @@ impl Card {
             )
         })
     }
+
+    /// Refuses a command whose cargo features build for GPU runtimes the card has none of: the
+    /// program falls back to another runtime without a word, measured as the one asked for.
+    pub fn runs(&self, command: &str) -> Result<(), CardError> {
+        let asked = runtimes_built_for(command);
+        let has: Vec<&str> = self.runtimes.split(',').filter(|r| !r.is_empty()).collect();
+        if asked.is_empty() || has.is_empty() || asked.iter().any(|r| has.contains(r)) {
+            return Ok(());
+        }
+        Err(CardError::NoRuntime {
+            alias: self.alias.clone(),
+            has: has.join(", "),
+            asked,
+        })
+    }
+}
+
+/// The GPU runtimes a cargo command enables by feature, a feature of a dependency included.
+fn runtimes_built_for(command: &str) -> Vec<&'static str> {
+    let words: Vec<&str> = command
+        .split_whitespace()
+        .map(|w| w.trim_matches(['\'', '"']))
+        .collect();
+    let lists = words.iter().enumerate().filter_map(|(at, word)| {
+        word.strip_prefix("--features=").or_else(|| {
+            matches!(*word, "--features" | "-F")
+                .then(|| words.get(at + 1).copied())
+                .flatten()
+        })
+    });
+    let mut runtimes = Vec::new();
+    for feature in lists.flat_map(|list| list.split(',')) {
+        let runtime = match feature.rsplit('/').next().unwrap_or_default() {
+            "cuda" => "cuda",
+            "rocm" | "hip" => "rocm",
+            "vulkan" => "vulkan",
+            "metal" => "metal",
+            _ => continue,
+        };
+        if !runtimes.contains(&runtime) {
+            runtimes.push(runtime);
+        }
+    }
+    runtimes
 }
 
 impl fmt::Display for CardError {
@@ -138,6 +188,57 @@ impl fmt::Display for CardError {
                 }
                 Ok(())
             }
+            CardError::NoRuntime { alias, has, asked } => {
+                writeln!(
+                    f,
+                    "dibs: {alias} runs {has}, and this command builds for {}.",
+                    asked.join(", ")
+                )?;
+                writeln!(
+                    f,
+                    "  Built for a runtime the card lacks, the program falls back to another without a word,"
+                )?;
+                writeln!(f, "  and its numbers pass for the runtime it asked for.")?;
+                writeln!(
+                    f,
+                    "  Name a card that runs it (dibs --machines -v lists each card's runtimes)."
+                )
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_command_builds_for_the_runtimes_its_features_name() {
+        assert_eq!(
+            runtimes_built_for("cargo bench --features rocm --bench rows"),
+            ["rocm"]
+        );
+        assert_eq!(
+            runtimes_built_for("cd x && cargo test -F 'burn/cuda,fusion' && cargo test --features=hip"),
+            ["cuda", "rocm"]
+        );
+        assert!(runtimes_built_for("cargo bench --bench rows -- rocm").is_empty());
+    }
+
+    #[test]
+    fn a_card_refuses_only_a_command_built_for_none_of_its_runtimes() {
+        let card = Card {
+            alias: "gpu:rx5600".into(),
+            runtimes: "vulkan".into(),
+            ..Card::none()
+        };
+        assert!(card.runs("cargo bench --features rocm").is_err());
+        assert!(card.runs("cargo bench --features rocm,vulkan").is_ok());
+        assert!(card.runs("cargo bench").is_ok());
+        let unknown = Card {
+            runtimes: String::new(),
+            ..card
+        };
+        assert!(unknown.runs("cargo bench --features rocm").is_ok());
     }
 }

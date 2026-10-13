@@ -128,6 +128,7 @@ impl<'a> LockedCall<'a> {
             Some(alias) => Card::resolve(alias, &target, &fleet)?,
             None => Card::none(),
         };
+        card.runs(&self.command.shell_string())?;
         if self.bench()
             && call.device.is_none()
             && !self.hold
