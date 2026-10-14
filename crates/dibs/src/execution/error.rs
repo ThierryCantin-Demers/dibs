@@ -238,7 +238,6 @@ pub enum Refusal {
     RawCommand,
     RawNotTaken(Vec<NotTaken>),
     WithRefs,
-    WithPin,
     /// `--ready-within` with something other than seconds.
     WithReadyWithin(String),
     /// Values `with` has no use for, which it refuses rather than drops.
@@ -364,7 +363,6 @@ impl fmt::Display for Refusal {
                 f.write_str(".")
             }
             Refusal::WithRefs => f.write_str("with runs against one tree, so it takes one ref"),
-            Refusal::WithPin => f.write_str("with does not take --pin; a recipe does"),
             Refusal::WithReadyWithin(value) => {
                 write!(f, "--ready-within takes seconds, not '{value}'")
             }

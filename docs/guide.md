@@ -485,7 +485,8 @@ lock, then the servers and the command hold the machine alone, and a server whos
 another tree has built into since refuses to start, exiting 78, unless `--anyway` says to time
 what is there. `--there` runs the command on the machine instead, in the tree beside the servers
 with its build cache, reaching them at `127.0.0.1:$DIBS_PORT_<NAME>`: a loopback measurement,
-with no network between the two to pay for.
+with no network between the two to pay for. `--pin <repo>@<ref>` builds the servers against that
+tree, as it does a recipe's build.
 
 ```toml
 [service.gpu-servers]

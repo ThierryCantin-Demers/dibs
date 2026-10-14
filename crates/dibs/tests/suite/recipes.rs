@@ -1669,10 +1669,8 @@ fn a_recipes_artifacts_come_back_by_themselves() {
     );
 }
 
-#[test]
-fn a_pin_replaces_what_the_trees_own_patch_takes_from_the_pinned_repo() {
-    let mut s = Sandbox::new();
-    s.real_cargo();
+/// `lib.git`, whose `say` returns "pushed", and a clone of it at `lib`.
+fn pushed_lib(s: &Sandbox) {
     s.git(".", &["init", "-q", "--bare", "lib.git"]);
     s.git(".", &["clone", "-q", "lib.git", "lib"]);
     s.git("lib", &["checkout", "-q", "-b", "main"]);
@@ -1688,6 +1686,68 @@ fn a_pin_replaces_what_the_trees_own_patch_takes_from_the_pinned_repo() {
     s.git("lib", &["add", "-A"]);
     s.git("lib", &["commit", "-qm", "lib"]);
     s.git("lib", &["push", "-q", "origin", "main"]);
+}
+
+#[test]
+fn a_services_build_takes_a_pin() {
+    let mut s = Sandbox::new();
+    s.real_cargo();
+    pushed_lib(&s);
+    let never = s.gate("never");
+    s.git(".", &["init", "-q", "consumer"]);
+    s.write("consumer/.gitignore", "target\n");
+    s.write(
+        "consumer/Cargo.toml",
+        &format!("[package]\nname = \"bin\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nlib = {{ git = \"file://{}\", branch = \"main\" }}\n", s.p("lib.git")),
+    );
+    s.write(
+        "consumer/src/main.rs",
+        "fn main() { println!(\"{}\", lib::say()); }\n",
+    );
+    assert_eq!(
+        s.command("cargo", ["generate-lockfile", "-q"])
+            .dir(&s.path("consumer"))
+            .code(),
+        0
+    );
+    s.write(
+        "consumer/.dibs.toml",
+        &format!(
+            "[service.idle]\nbuild = \"cargo build -q\"\n\n[[service.idle.serve]]\nname = \"idle\"\nrun = \"read -r _ < {}\"\n",
+            never.path.display()
+        ),
+    );
+    s.git("consumer", &["add", "-A"]);
+    s.git("consumer", &["commit", "-qm", "consumer"]);
+    s.write(
+        "lib/src/lib.rs",
+        "pub fn say() -> &'static str { \"unpushed\" }\n",
+    );
+    let out = s
+        .dibs([
+            "with",
+            &format!("{}@local", s.p("consumer")),
+            "idle",
+            "--pin",
+            &format!("{}@local", s.p("lib")),
+            "--there",
+            "--",
+            "$CARGO_TARGET_DIR/debug/bin",
+        ])
+        .run();
+    assert_eq!(
+        (out.code, out.all().lines_matching("^unpushed$")),
+        (0, 1),
+        "the servers are built against the pinned tree: {}",
+        out.all()
+    );
+}
+
+#[test]
+fn a_pin_replaces_what_the_trees_own_patch_takes_from_the_pinned_repo() {
+    let mut s = Sandbox::new();
+    s.real_cargo();
+    pushed_lib(&s);
     s.git(".", &["clone", "-q", "--bare", "lib.git", "other.git"]);
     s.git(".", &["init", "-q", "consumer"]);
     s.write("consumer/.gitignore", "target\n");

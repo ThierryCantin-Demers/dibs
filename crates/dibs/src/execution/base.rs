@@ -144,30 +144,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 ),
             }
         }
-        for p in &pins {
-            match (&p.checkout, &p.local) {
-                (Some(c), _) => println!(
-                    "pin         {}  {} {}{}",
-                    p.repo,
-                    p.reference,
-                    c.sha,
-                    c.sent_from(p.note.as_deref(), &c.dir.display().to_string())
-                ),
-                (None, Some(l)) => println!(
-                    "pin         {}  local {} from {}",
-                    p.repo,
-                    l.content,
-                    p.dir.display()
-                ),
-                (None, None) => println!("pin         {}  {}", p.repo, p.reference),
-            }
-            for (source, names) in &p.sources {
-                println!(
-                    "            patches {source}: {}",
-                    names.iter().cloned().collect::<Vec<_>>().join(" ")
-                );
-            }
-        }
+        pins.iter().for_each(Pinned::show);
         if compared || args.reps > 1 {
             println!("measured    {}", order(&jobs));
         }
@@ -226,116 +203,19 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     let mut announce = |prepared: &wire::Prepared| prepared.announce();
 
     // The pinned trees go first: the patch names where they landed.
-    let mut pinned = Vec::with_capacity(pins.len());
-    for (k, p) in pins.iter_mut().enumerate() {
-        let env = env_of(k);
-        let setup = JobRequest {
-            label: calls[k].label.as_str(),
-            lock: Lock::Shared,
-            device: None,
-            job: &env,
-            max: None,
-            new_series: false,
-            tree: None,
-        };
-        let fresh = Manifest::load_any(&p.dir, &p.repo)?;
-        let lock = p.checkout.as_mut().and_then(|c| c.lock.take());
-        let from = p
-            .checkout
-            .as_ref()
-            .map_or(p.dir.as_path(), |c| c.dir.as_path());
-        let plan = TreeSpec {
-            dir: from,
-            repo_name: &p.repo,
-            reference: &p.reference,
-            local: p.local.as_ref(),
-            signature: &BuildSignature::default(),
-            token: &new_token(),
-            slot: 0,
-            nest: None,
-            fresh: fresh.tree_fresh(),
-        }
-        .plan();
-        let reported = match &p.local {
-            Some(l) => {
-                match &p.checkout {
-                    Some(c) => eprintln!(
-                        "dibs: pinning {}@{} at {}{}",
-                        p.repo,
-                        p.reference,
-                        c.short_sha(),
-                        c.sent_from(p.note.as_deref(), "this computer")
-                    ),
-                    None => eprintln!(
-                        "dibs: pinning {} from {} ({})",
-                        p.repo,
-                        p.dir.display(),
-                        if l.dirty {
-                            "uncommitted changes included"
-                        } else {
-                            "clean"
-                        }
-                    ),
-                }
-                let send = JobRequest {
-                    tree: Some(plan.tree(wire::Then::Transfer)),
-                    ..setup
-                };
-                let reported = l.send(from, &backend, &send, &mut announce);
-                drop(lock);
-                if reported.prepared.is_none() || reported.outcome.status != 0 {
-                    return Err(RunError::Call {
-                        exit: reported.outcome.status,
-                        failed: Unprepared::SendPinned {
-                            repo: p.repo.clone(),
-                            from: from.to_path_buf(),
-                        },
-                    });
-                }
-                reported
-            }
-            None => {
-                eprintln!("dibs: pinning {}@{}", p.repo, p.reference);
-                let prepare = JobRequest {
-                    tree: Some(plan.tree(wire::Then::Nothing)),
-                    ..setup
-                };
-                let title = preparing_title(&p.repo, &p.reference);
-                let reported = backend.run_reporting(&prepare, &title, &mut |_| {});
-                if reported.outcome.status != 0 {
-                    return Err(RunError::Call {
-                        exit: reported.outcome.status,
-                        failed: Unprepared::PreparePinned {
-                            repo: p.repo.clone(),
-                            reference: p.reference.clone(),
-                        },
-                    });
-                }
-                reported
-            }
-        };
-        let Some(prepared) = reported.prepared else {
-            return Err(RunError::Call {
-                exit: Exit::Setup.status(),
-                failed: Unprepared::NoPath,
-            });
-        };
-        plan.send_missing(&backend, &prepared);
-        pinned.push(prepared);
-    }
-    let nest = (!pins.is_empty()).then(|| {
-        Nest::new(
-            &pins
-                .iter()
-                .zip(&pinned)
-                .map(|(p, t)| PinnedTree {
-                    worktree: t.worktree.clone(),
-                    crates: p.crates.clone(),
-                    sources: p.sources.clone(),
-                })
-                .collect::<Vec<_>>(),
-        )
-    });
+    let pin_jobs: Vec<RecipeJob> = (0..pins.len()).map(env_of).collect();
+    let LaidPins {
+        trees: pinned,
+        nest,
+    } = Pinned::lay_out(&mut pins, &backend, &|k| JobRequest {
+        label: calls[k].label.as_str(),
+        lock: Lock::Shared,
+        device: None,
+        job: &pin_jobs[k],
+        max: None,
+        new_series: false,
+        tree: None,
+    })?;
 
     let signature = rec
         .steps
@@ -757,6 +637,156 @@ fn refused_before_building(
 }
 
 /// A step's command, and what the machine does around it.
+/// The pinned trees as the machine laid them out, and the nest whose patch points a build at them.
+pub struct LaidPins {
+    pub trees: Vec<wire::Prepared>,
+    pub nest: Option<Nest>,
+}
+
+impl Pinned {
+    /// What a dry run says of it: where its tree comes from, and what it patches.
+    pub fn show(&self) {
+        match (&self.checkout, &self.local) {
+            (Some(c), _) => println!(
+                "pin         {}  {} {}{}",
+                self.repo,
+                self.reference,
+                c.sha,
+                c.sent_from(self.note.as_deref(), &c.dir.display().to_string())
+            ),
+            (None, Some(l)) => println!(
+                "pin         {}  local {} from {}",
+                self.repo,
+                l.content,
+                self.dir.display()
+            ),
+            (None, None) => println!("pin         {}  {}", self.repo, self.reference),
+        }
+        for (source, names) in &self.sources {
+            println!(
+                "            patches {source}: {}",
+                names.iter().cloned().collect::<Vec<_>>().join(" ")
+            );
+        }
+    }
+
+    /// The pinned trees laid out on the machine, each under the job `request` describes.
+    pub fn lay_out<'a>(
+        pins: &mut [Pinned],
+        backend: &Jobs,
+        request: &dyn Fn(usize) -> JobRequest<'a>,
+    ) -> Result<LaidPins, RunError> {
+        let mut pinned = Vec::with_capacity(pins.len());
+        for (k, p) in pins.iter_mut().enumerate() {
+            let setup = request(k);
+            let fresh = Manifest::load_any(&p.dir, &p.repo)?;
+            let lock = p.checkout.as_mut().and_then(|c| c.lock.take());
+            let from = p
+                .checkout
+                .as_ref()
+                .map_or(p.dir.as_path(), |c| c.dir.as_path());
+            let plan = TreeSpec {
+                dir: from,
+                repo_name: &p.repo,
+                reference: &p.reference,
+                local: p.local.as_ref(),
+                signature: &BuildSignature::default(),
+                token: &new_token(),
+                slot: 0,
+                nest: None,
+                fresh: fresh.tree_fresh(),
+            }
+            .plan();
+            let reported = match &p.local {
+                Some(l) => {
+                    match &p.checkout {
+                        Some(c) => eprintln!(
+                            "dibs: pinning {}@{} at {}{}",
+                            p.repo,
+                            p.reference,
+                            c.short_sha(),
+                            c.sent_from(p.note.as_deref(), "this computer")
+                        ),
+                        None => eprintln!(
+                            "dibs: pinning {} from {} ({})",
+                            p.repo,
+                            p.dir.display(),
+                            if l.dirty {
+                                "uncommitted changes included"
+                            } else {
+                                "clean"
+                            }
+                        ),
+                    }
+                    let send = JobRequest {
+                        tree: Some(plan.tree(wire::Then::Transfer)),
+                        ..setup
+                    };
+                    let reported =
+                        l.send(from, backend, &send, &mut |prepared: &wire::Prepared| {
+                            prepared.announce()
+                        });
+                    drop(lock);
+                    if reported.prepared.is_none() || reported.outcome.status != 0 {
+                        return Err(RunError::Call {
+                            exit: reported.outcome.status,
+                            failed: Unprepared::SendPinned {
+                                repo: p.repo.clone(),
+                                from: from.to_path_buf(),
+                            },
+                        });
+                    }
+                    reported
+                }
+                None => {
+                    eprintln!("dibs: pinning {}@{}", p.repo, p.reference);
+                    let prepare = JobRequest {
+                        tree: Some(plan.tree(wire::Then::Nothing)),
+                        ..setup
+                    };
+                    let title = preparing_title(&p.repo, &p.reference);
+                    let reported = backend.run_reporting(&prepare, &title, &mut |_| {});
+                    if reported.outcome.status != 0 {
+                        return Err(RunError::Call {
+                            exit: reported.outcome.status,
+                            failed: Unprepared::PreparePinned {
+                                repo: p.repo.clone(),
+                                reference: p.reference.clone(),
+                            },
+                        });
+                    }
+                    reported
+                }
+            };
+            let Some(prepared) = reported.prepared else {
+                return Err(RunError::Call {
+                    exit: Exit::Setup.status(),
+                    failed: Unprepared::NoPath,
+                });
+            };
+            plan.send_missing(backend, &prepared);
+            pinned.push(prepared);
+        }
+        let nest = (!pins.is_empty()).then(|| {
+            Nest::new(
+                &pins
+                    .iter()
+                    .zip(&pinned)
+                    .map(|(p, t)| PinnedTree {
+                        worktree: t.worktree.clone(),
+                        crates: p.crates.clone(),
+                        sources: p.sources.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        });
+        Ok(LaidPins {
+            trees: pinned,
+            nest,
+        })
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct StepPlan {
     pub command: String,

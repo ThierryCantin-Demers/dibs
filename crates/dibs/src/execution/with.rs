@@ -1,8 +1,10 @@
 use super::{
+    base::LaidPins,
     build::BuildSignature,
     error::{Refusal, RunError, Unprepared},
     jobs::{JobRequest, Jobs},
     local::Repo,
+    pins::Pinned,
     refs::{Arm, Side},
     trees::{Announce, TreeSpec, new_token, preparing_title},
 };
@@ -17,7 +19,7 @@ use crate::{
     records::Affinity,
 };
 use dibs_format::{Alias, Exit, Label, MachineName, wire};
-use std::process::ExitCode;
+use std::{collections::BTreeSet, process::ExitCode};
 
 /// The one value `with` takes for itself: how long its servers have to become ready.
 const READY_WITHIN: &str = "ready-within";
@@ -29,9 +31,6 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let sides = Side::list(args.reference.as_deref())?;
     if sides.len() > 1 {
         return Err(Refusal::WithRefs.into());
-    }
-    if !args.pins.is_empty() {
-        return Err(Refusal::WithPin.into());
     }
     let dir = Checkouts::of(args)?.find(&args.repo)?;
     let repo_name = Repo(&dir).identity();
@@ -96,7 +95,9 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         }
     }
 
-    let mut arm = Arm::look_up(&sides, &dir, &repo_name)?.remove(0);
+    let mut arms = Arm::look_up(&sides, &dir, &repo_name)?;
+    let mut pins = Pinned::all(args, &repo_name, &dir, &arms)?;
+    let mut arm = arms.remove(0);
     let local = arm.fetch.is_none().then(|| arm.local(&dir)).transpose()?;
     if args.dry_run {
         println!("label       {label}");
@@ -111,6 +112,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             "tree        {}",
             arm.preparing(&repo_name, local.as_ref(), &dir)
         );
+        pins.iter().for_each(Pinned::show);
         if let Some(d) = &args.device {
             println!("device      {d}");
         }
@@ -140,6 +142,21 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     if let Some(m) = backend.machine.as_ref().filter(|_| !args.pinned()) {
         Affinity::here().set(&repo_name, m.as_str());
     }
+    let pin_label = format!("{label}:pin");
+    let no_batch = RecipeJob::default();
+    let LaidPins { nest, .. } = Pinned::lay_out(&mut pins, &backend, &|_| JobRequest {
+        label: &pin_label,
+        lock: Lock::Shared,
+        device: None,
+        job: &no_batch,
+        max: None,
+        new_series: false,
+        tree: None,
+    })?;
+    let patched: BTreeSet<String> = pins
+        .iter()
+        .flat_map(|p| p.sources.values().flatten().cloned())
+        .collect();
     eprintln!(
         "dibs: preparing {}",
         arm.preparing(&repo_name, local.as_ref(), &dir)
@@ -159,7 +176,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         signature: &signature,
         token: &new_token(),
         slot: 0,
-        nest: None,
+        nest: nest.as_ref(),
         fresh: manifest.tree_fresh(),
     }
     .plan();
@@ -245,6 +262,10 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             tree: Some(wire::Tree {
                 step: Some(wire::Step {
                     claim: BuildSignature::of(build).is_some(),
+                    pinned: match BuildSignature::of(build) {
+                        Some(_) => patched.iter().cloned().collect(),
+                        None => Vec::new(),
+                    },
                     ..wire::Step::default()
                 }),
                 ..prepared.tree()
