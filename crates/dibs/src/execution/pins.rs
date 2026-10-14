@@ -106,6 +106,43 @@ fn sources(
     Ok(out)
 }
 
+/// The crates a manifest's own `[patch]` tables take from one of `sources`, by table. Cargo
+/// resolves a patch against its real source and patches no patch, so it would fetch the pinned
+/// repo whatever its own table says; a config's patch of the same crate in the same table wins.
+fn patched_from(
+    manifest: &str,
+    crates: &BTreeMap<String, String>,
+    sources: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let repo = |url: &str| {
+        url.trim_end_matches('/')
+            .trim_end_matches(".git")
+            .to_string()
+    };
+    let pinned: BTreeSet<String> = sources.keys().map(|key| repo(key)).collect();
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let Ok(manifest) = toml::from_str::<toml::Value>(manifest) else {
+        return out;
+    };
+    let tables = manifest.get("patch").and_then(toml::Value::as_table);
+    for (table, entries) in tables.into_iter().flatten() {
+        for (name, entry) in entries.as_table().into_iter().flatten() {
+            let from = entry.get("git").and_then(toml::Value::as_str);
+            let renamed = entry
+                .get("package")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|package| package != name);
+            if !renamed
+                && crates.contains_key(name)
+                && from.is_some_and(|url| pinned.contains(&repo(url)))
+            {
+                out.entry(table.clone()).or_default().insert(name.clone());
+            }
+        }
+    }
+    out
+}
+
 /// A pinned tree as the machine holds it: where it was prepared, the crates in it by directory,
 /// and which of them the lockfile takes from each source.
 pub struct PinnedTree {
@@ -293,10 +330,19 @@ impl Pinned {
             .filter_map(|a| Repo(a.dir(dir)).lockfile(a.fetch.as_deref()))
             .chain(pins.iter().filter_map(|p| p.lock.clone()))
             .collect();
+        let manifests: Vec<String> = arms
+            .iter()
+            .filter_map(|a| Repo(a.dir(dir)).manifest(a.fetch.as_deref()))
+            .collect();
         for p in &mut pins {
             for lock in &locks {
                 for (source, names) in sources(lock, &p.crates)? {
                     p.sources.entry(source).or_default().extend(names);
+                }
+            }
+            for manifest in &manifests {
+                for (table, names) in patched_from(manifest, &p.crates, &p.sources) {
+                    p.sources.entry(table).or_default().extend(names);
                 }
             }
             if p.sources.is_empty() {
@@ -392,6 +438,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             "[patch.\"https://github.com/tracel-ai/cubecl\"]\ncubecl = { path = \"/m/ws/cubecl/local-k/crates/cubecl\" }\ncubecl-core = { path = \"/m/ws/cubecl/local-k/crates/cubecl-core\" }\n"
         );
         assert!(toml::from_str::<toml::Value>(&text).is_ok());
+    }
+
+    #[test]
+    fn a_crate_the_manifest_patches_from_the_pinned_repo_is_patched_in_that_table_too() {
+        let kit = crates(
+            [
+                ("crates/kit/Cargo.toml", "[package]\nname = \"kit\"\n"),
+                ("vendor/eframe/Cargo.toml", "[package]\nname = \"eframe\"\n"),
+            ]
+            .iter()
+            .map(|(p, t)| (*p, t.to_string())),
+        );
+        let lock = "[[package]]\nname = \"eframe\"\nversion = \"0.36.2\"\nsource = \"git+https://github.com/acme/kit?tag=v1#b2b1\"\n\n[[package]]\nname = \"kit\"\nversion = \"0.10.1\"\nsource = \"git+https://github.com/acme/kit?tag=v1#b2b1\"\n";
+        let manifest = "[patch.crates-io]\neframe = { git = \"https://github.com/acme/kit.git\", tag = \"v1\" }\negui = { git = \"https://github.com/emilk/egui\" }\nwgpu = { git = \"https://github.com/acme/kit\", package = \"kit\" }\n";
+        let mut s = sources(lock, &kit).unwrap();
+        for (table, names) in patched_from(manifest, &kit, &s) {
+            s.entry(table).or_default().extend(names);
+        }
+        let text = Nest::new(&[PinnedTree {
+            worktree: "/m/ws/kit/local-k".into(),
+            crates: kit,
+            sources: s,
+        }])
+        .config;
+        assert_eq!(
+            text,
+            "[patch.crates-io]\neframe = { path = \"/m/ws/kit/local-k/vendor/eframe\" }\n[patch.\"https://github.com/acme/kit\"]\neframe = { path = \"/m/ws/kit/local-k/vendor/eframe\" }\nkit = { path = \"/m/ws/kit/local-k/crates/kit\" }\n",
+            "not egui, from another repo, nor a renamed entry"
+        );
     }
 
     #[test]

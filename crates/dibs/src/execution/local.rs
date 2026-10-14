@@ -108,9 +108,18 @@ impl Repo<'_> {
 
     /// The lockfile of the tree here, or of a ref in its history.
     pub fn lockfile(self, reference: Option<&str>) -> Option<String> {
+        self.root_file("Cargo.lock", reference)
+    }
+
+    /// The root manifest of the tree here, or of a ref in its history.
+    pub fn manifest(self, reference: Option<&str>) -> Option<String> {
+        self.root_file("Cargo.toml", reference)
+    }
+
+    fn root_file(self, name: &str, reference: Option<&str>) -> Option<String> {
         match reference {
-            None => std::fs::read_to_string(self.0.join("Cargo.lock")).ok(),
-            Some(r) => Git(self.0).run(&["show", &format!("{r}:Cargo.lock")]).ok(),
+            None => std::fs::read_to_string(self.0.join(name)).ok(),
+            Some(r) => Git(self.0).run(&["show", &format!("{r}:{name}")]).ok(),
         }
     }
 }

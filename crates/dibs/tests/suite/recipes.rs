@@ -1670,6 +1670,74 @@ fn a_recipes_artifacts_come_back_by_themselves() {
 }
 
 #[test]
+fn a_pin_replaces_what_the_trees_own_patch_takes_from_the_pinned_repo() {
+    let mut s = Sandbox::new();
+    s.real_cargo();
+    s.git(".", &["init", "-q", "--bare", "lib.git"]);
+    s.git(".", &["clone", "-q", "lib.git", "lib"]);
+    s.git("lib", &["checkout", "-q", "-b", "main"]);
+    s.write(
+        "lib/Cargo.toml",
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    s.write(
+        "lib/src/lib.rs",
+        "pub fn say() -> &'static str { \"pushed\" }\n",
+    );
+    s.write("lib/.gitignore", "target\n");
+    s.git("lib", &["add", "-A"]);
+    s.git("lib", &["commit", "-qm", "lib"]);
+    s.git("lib", &["push", "-q", "origin", "main"]);
+    s.git(".", &["clone", "-q", "--bare", "lib.git", "other.git"]);
+    s.git(".", &["init", "-q", "consumer"]);
+    s.write("consumer/.gitignore", "target\n");
+    s.write(
+        "consumer/Cargo.toml",
+        &format!(
+            "[workspace]\nmembers = [\"bin\"]\nresolver = \"2\"\n[patch.\"file://{}\"]\nlib = {{ git = \"file://{}\", branch = \"main\" }}\n",
+            s.p("other.git"),
+            s.p("lib.git")
+        ),
+    );
+    s.write(
+        "consumer/bin/Cargo.toml",
+        &format!("[package]\nname = \"bin\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nlib = {{ git = \"file://{}\", branch = \"main\" }}\n", s.p("other.git")),
+    );
+    s.write(
+        "consumer/bin/src/main.rs",
+        "fn main() { println!(\"{}\", lib::say()); }\n",
+    );
+    assert_eq!(
+        s.command("cargo", ["generate-lockfile", "-q"])
+            .dir(&s.path("consumer"))
+            .code(),
+        0
+    );
+    s.git("consumer", &["add", "-A"]);
+    s.git("consumer", &["commit", "-qm", "consumer"]);
+    s.write("consumer/.dibs.toml", "[build.say]\n  [[build.say.step]]\n  lock = \"shared\"\n  run = \"cargo build -q && $CARGO_TARGET_DIR/debug/bin\"\n");
+    s.write(
+        "lib/src/lib.rs",
+        "pub fn say() -> &'static str { \"unpushed\" }\n",
+    );
+    let out = s
+        .dibs([
+            "build",
+            &format!("{}@local", s.p("consumer")),
+            "say",
+            "--pin",
+            &format!("{}@local", s.p("lib")),
+        ])
+        .run();
+    assert_eq!(
+        (out.code, out.all().lines_matching("^unpushed$")),
+        (0, 1),
+        "cargo resolves a patch against its own source, so the pin replaces the patch too: {}",
+        out.all()
+    );
+}
+
+#[test]
 fn a_pin_builds_against_another_trees_unpushed_changes() {
     // With a real cargo: what is checked is that cargo reads the patch dibs puts above the tree.
     let mut s = Sandbox::new();
