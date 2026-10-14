@@ -113,8 +113,22 @@ pub struct Holder {
     pub idle: Option<Idle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<BatchShown>,
+    /// What the machine last said while it lays out the job's tree, which comes before the
+    /// command and none of whose time is the command's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<String>,
     #[serde(skip)]
     pub services: Vec<Service>,
+}
+
+impl Holder {
+    /// What it is doing, while its tree is laid out.
+    pub fn preparing(&self) -> Option<&str> {
+        self.prepare.as_deref().map(|said| match said {
+            "" => "laying out its tree",
+            said => said,
+        })
+    }
 }
 
 /// A job waiting for the lock.

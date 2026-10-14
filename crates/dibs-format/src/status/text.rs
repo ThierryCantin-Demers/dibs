@@ -184,12 +184,19 @@ impl Text<'_> {
             return;
         }
         let overrun = holder.estimate.as_ref().and_then(Shown::overrun);
-        match (&holder.estimate, overrun) {
-            (_, Some(overrun)) => {
+        match (holder.preparing(), &holder.estimate, overrun) {
+            (Some(doing), _, _) => {
+                let _ = writeln!(
+                    out,
+                    "{lead}   {}[preparing its tree, before the command: {doing}]{}",
+                    p.dim, p.off
+                );
+            }
+            (None, _, Some(overrun)) => {
                 let _ = writeln!(out, "{lead}   {}[STUCK? {overrun}]{}", p.warn, p.off);
                 let _ = writeln!(out, "{stop}");
             }
-            (Some(shown), None) => {
+            (None, Some(shown), None) => {
                 let _ = writeln!(
                     out,
                     "{lead}   {}[{}]{}",
@@ -198,7 +205,7 @@ impl Text<'_> {
                     p.off
                 );
             }
-            (None, None) => {
+            (None, None, None) => {
                 let _ = writeln!(
                     out,
                     "{lead}   {}[no history for this one yet]{}",
@@ -210,7 +217,7 @@ impl Text<'_> {
         services(out, p, &holder.services);
         row.from(out);
         if let Some(batch) = &holder.batch {
-            batch_lines(out, p, batch, true);
+            batch_lines(out, p, batch, holder.prepare.is_none());
         }
         if let Some(output) = &holder.output {
             let _ = writeln!(
@@ -526,12 +533,18 @@ mod tests {
             cpu_rate: None,
             idle: None,
             batch: None,
+            prepare: None,
             services: Vec::new(),
         });
         let said = text(&held);
         assert!(
             said.contains("  shared  build  1m05s  pid 42  job 20261001120000-42   [no history"),
             "{said}"
+        );
+        held.holders[0].prepare = Some("copying a-target's target to start this tree from".into());
+        assert!(
+            text(&held).contains("pid 42  job 20261001120000-42   [preparing its tree, before the command: copying a-target's target to start this tree from]"),
+            "a prepare is what it is doing, not a time against the command's history"
         );
     }
 

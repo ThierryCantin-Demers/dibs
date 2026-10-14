@@ -35,7 +35,7 @@ ws/
 
 == after a prepare, while a build holds one old target: dibs build app@local p
 -> exit 0
-1| dibs: could not remove all of <root>/scratch/target/stuck; the next sweep tries again
+1| dibs: could not remove all of <root>/scratch/target/stuck.old.<pid>-swept; the next sweep tries again
 2| dibs: preparing app from <root>/app (clean)
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| dibs: step 1/1 [Shared]
@@ -46,7 +46,6 @@ out/
 target/
   .app-local-<key>.lock
   .held.lock
-  .stuck.lock
   app-local-<key>/
     .dibs-used  (empty)
   held/
@@ -55,7 +54,7 @@ target/
       .cargo-lock
   recent/
     .dibs-used  (empty)
-  stuck/
+  stuck.old.<pid>-swept/
     sub/
       f
   unmarked/
@@ -91,16 +90,10 @@ jobs/  (5 job directories)
 out/
 target/
   .app-local-<key>.lock
-  .stuck.lock
   app-local-<key>/
     .dibs-used  (empty)
   recent/
     .dibs-used  (empty)
-  stuck/
-    .dibs-used:
-      | swept
-    sub/
-      f
   unmarked/
     .dibs-used:
       | swept

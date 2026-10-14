@@ -24,6 +24,15 @@ pub struct Preparing {
     path: PathBuf,
 }
 
+impl Preparing {
+    /// What the prepare said last, which is what status shows it doing.
+    pub fn doing(&self, said: &str) {
+        if let Some(line) = said.lines().rev().map(str::trim).find(|l| !l.is_empty()) {
+            let _ = fs::write(&self.path, line.strip_prefix("dibs: ").unwrap_or(line));
+        }
+    }
+}
+
 impl Drop for Preparing {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
@@ -74,6 +83,12 @@ impl LockDir {
         let path = self.file("prep", pid);
         let _ = fs::write(&path, "");
         Preparing { path }
+    }
+
+    /// What the holder's prepare last said, empty before it says anything; None once its tree
+    /// is laid out.
+    pub fn prepare_of(&self, pid: u32) -> Option<String> {
+        fs::read_to_string(self.file("prep", pid)).ok()
     }
 
     /// Whether the holder's CPU says nothing of its work: a hold's command runs elsewhere, and
@@ -246,8 +261,17 @@ mod tests {
         let preparing = dir.preparing(7);
         assert!(dir.works_unseen(7));
         assert!(!dir.works_unseen(8), "only the holder preparing");
+        assert_eq!(dir.prepare_of(7).as_deref(), Some(""));
+        preparing.doing("dibs: waiting for another prepare of /t\n");
+        preparing.doing("\n");
+        assert_eq!(
+            dir.prepare_of(7).as_deref(),
+            Some("waiting for another prepare of /t"),
+            "the last line it said, without dibs's prefix"
+        );
         drop(preparing);
         assert!(!dir.works_unseen(7));
+        assert_eq!(dir.prepare_of(7), None);
         let _ = fs::remove_dir_all(&dir.path);
     }
 }

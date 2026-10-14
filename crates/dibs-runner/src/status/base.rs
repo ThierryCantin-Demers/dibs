@@ -198,6 +198,7 @@ impl Look<'_> {
             cpu_rate: sample.rate,
             idle,
             batch: self.batch(pid, left, tail),
+            prepare: self.dir.prepare_of(pid),
             services: self.services(pid),
         }
     }

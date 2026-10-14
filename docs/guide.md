@@ -331,7 +331,10 @@ Every prepare, local or fetched, sweeps the machine's whole scratch, across ever
 - An entry under `$DIBS_SCRATCH/out`, where results are kept, goes by `keep_days` too, but only
   on `dibs --gc`.
 
-Nothing goes while a build or a prepare holds it.
+Nothing goes while a build or a prepare holds it. A prepare's call waits on its sweep, so the sweep
+renames an expired build cache aside at once, where nothing seeds from it, and spends at most
+`sweep_budget` seconds (5) deleting: on a slow disk one cache can take minutes. What is left goes at
+a later prepare, or with `dibs --gc`, which has no budget.
 
 ## What is filling the machine
 
@@ -713,7 +716,7 @@ ports = "20000-29999"  # what --port picks from
 ```
 
 Also `idle_after`, `wrote_within`, `peek_warn`, `digest_head`, `digest_tail`, `repeat_window`,
-`seed_wait` and `no_children`. The files come first, then the variable, which only a call on this
+`seed_wait`, `sweep_budget` and `no_children`. The files come first, then the variable, which only a call on this
 computer can set, then the default.
 
 Where the lock and the shared files are is not policy: `DIBS_LOCK_DIR`, `DIBS_SHARED_LOCK_DIR`,
@@ -784,7 +787,10 @@ A holder is called idle when the CPU under it has not moved between two looks, w
 job that hangs after an hour of work as well as one that never started. That takes two looks,
 and a `--watch` left running is what supplies them. `DIBS_IDLE_AFTER` sets how long a stretch of
 nothing has to be, in seconds, before it is worth mentioning. A holder running over twice its
-label's 90th percentile is marked `STUCK?`, in `dibs status` and dibstop alike.
+label's 90th percentile is marked `STUCK?`, in `dibs status` and dibstop alike. Neither is said of
+a job whose tree the machine is still laying out: that part is dibs's, not the command's, so its
+line says `preparing its tree` and what the machine said last, such as the copy a new tree starts
+from or the build it waits for.
 
 Never poll dibs. Launch it in the background and do other work: queueing then costs nothing, and
 the notification arrives when the command is done.

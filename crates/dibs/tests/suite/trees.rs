@@ -262,14 +262,22 @@ fn the_scratch_a_prepare_sweeps() {
         ),
     );
     drop(build);
-    s.command(
-        "chmod",
-        [
-            "700",
-            &scratch.join("target/stuck/sub").display().to_string(),
-        ],
-    )
-    .run();
+    let aside = fs::read_dir(scratch.join("target"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("stuck.old.")
+        })
+        .expect("the stuck target set aside");
+    assert_eq!(
+        s.command("chmod", ["700", &aside.join("sub").display().to_string()])
+            .code(),
+        0
+    );
     let out = s.dibs(["build", &local, "p"]).run();
     t.section(
         "after another, once nothing holds it and the stuck one can go: dibs build app@local p",

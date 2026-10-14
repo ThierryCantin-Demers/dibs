@@ -41,6 +41,8 @@ pub struct TreeConfig<'a> {
     /// How long a new tree waits for a sibling's build that will leave it more of its lockfile.
     pub seed_wait: Duration,
     pub reflinks: Reflinks,
+    /// How long a prepare's sweep spends removing caches.
+    pub sweep_budget: Duration,
 }
 
 /// What names a sent tree, ahead of its key.
@@ -572,7 +574,7 @@ impl<'a> Trees<'a> {
     }
 
     fn sweep(&self) {
-        let removal = Removal::new(Some(&self.commands), self.say);
+        let removal = Removal::new(Some(&self.commands), self.say).within(self.config.sweep_budget);
         Sweep::new(
             self.config.scratch,
             self.config.home,

@@ -60,7 +60,11 @@ impl<'a> Layout<'a> {
             }
             Place::Prepare(prepare) => prepare,
         };
-        let say = |text: &str| self.output.tell(self.at.sink, text);
+        let preparing = self.at.dir.preparing(self.at.call.pid);
+        let say = |text: &str| {
+            preparing.doing(text);
+            self.output.tell(self.at.sink, text);
+        };
         let running = |pid| self.at.stopper.state().stage = Stage::Preparing(pid);
         let unstopped = |act: &mut dyn FnMut()| {
             let _state = self.at.stopper.state();
@@ -77,11 +81,10 @@ impl<'a> Layout<'a> {
             clocks: self.at.settings.clocks,
             seed_wait: Duration::from_secs(self.at.settings.seed_wait),
             reflinks: self.at.settings.reflinks,
+            sweep_budget: Duration::from_secs(self.at.settings.sweep_budget),
         };
         let commands = Commands::new(environment, &running, &unstopped, deadline);
-        let preparing = self.at.dir.preparing(self.at.call.pid);
         let prepared = Trees::new(config, commands, &say).prepare(prepare);
-        drop(preparing);
         let prepared = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {

@@ -45,7 +45,7 @@ enum Whose {
 }
 
 impl Key {
-    const ALL: [Key; 21] = [
+    const ALL: [Key; 22] = [
         Key::of_setter("bypass", Setter::Machine),
         Key::of_setter("quick", Setter::Machine),
         Key::of_setter("patience", Setter::Machine),
@@ -60,6 +60,7 @@ impl Key {
         Key::of_setter("keep_days", Setter::Account),
         Key::of_setter("target_keep_days", Setter::Account),
         Key::of_setter("seed_wait", Setter::Account),
+        Key::of_setter("sweep_budget", Setter::Account),
         Key::of_setter("no_children", Setter::Account),
         Key::of_setter("lock_dir", Setter::Environment),
         Key::of_setter("shared_lock_dir", Setter::Environment),
@@ -277,6 +278,8 @@ pub struct Settings {
     pub clocks: Clocks,
     /// Seconds a new tree waits for a sibling's build that will leave it more of its lockfile.
     pub seed_wait: u64,
+    /// Seconds a prepare's sweep spends removing caches before the call goes on.
+    pub sweep_budget: u64,
     /// How a seed shares blocks; `DIBS_REFLINK`, read from the environment alone, is a test's.
     pub reflinks: Reflinks,
     /// The machine holds every label's measurements to one card, whoever runs them.
@@ -312,6 +315,7 @@ impl Settings {
                 target_keep_days: number("DIBS_TARGET_KEEP_DAYS", Clocks::DEFAULT.target_keep_days),
             },
             seed_wait: number("DIBS_SEED_WAIT", 900),
+            sweep_budget: number("DIBS_SWEEP_BUDGET", 5),
             reflinks: Reflinks::of(var("DIBS_REFLINK").as_deref()),
             machine_series: setting("DIBS_MACHINE_SERIES").is_some_and(|v| v == "1"),
             bypass: setting("DIBS_BYPASS").is_none_or(|v| v == "1"),

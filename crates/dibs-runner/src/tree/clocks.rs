@@ -9,7 +9,7 @@ use std::{
     os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::SystemTime,
+    time::{Duration, Instant, SystemTime},
 };
 
 /// The marker a prepare leaves, whose time is when a tree or a cache was last used.
@@ -129,12 +129,50 @@ impl Dates for Path {
 pub struct Removal<'a> {
     commands: Option<&'a Commands<'a>>,
     say: &'a dyn Fn(&str),
+    /// When a prepare's share of removing caches is spent.
+    until: Option<Instant>,
 }
 
 impl<'a> Removal<'a> {
     /// Commands run through `commands` when given, so a prepare's cap and stop reach them.
     pub fn new(commands: Option<&'a Commands<'a>>, say: &'a dyn Fn(&str)) -> Self {
-        Removal { commands, say }
+        Removal {
+            commands,
+            say,
+            until: None,
+        }
+    }
+
+    /// One that spends at most `budget` removing caches: a prepare's call waits on it, and on a
+    /// slow disk one cache can take minutes.
+    pub fn within(self, budget: Duration) -> Self {
+        Removal {
+            until: Some(Instant::now() + budget),
+            ..self
+        }
+    }
+
+    pub fn spent(&self) -> bool {
+        self.until.is_some_and(|until| Instant::now() >= until)
+    }
+
+    /// A cache renamed to `aside` first, so nothing seeds from it or builds in it while it goes,
+    /// then removed as far as the budget allows; what is left is a temporary a later sweep ends.
+    pub fn cache(&self, cache: &Path, aside: &Path) -> bool {
+        if cache != aside
+            && let Err(e) = fs::rename(cache, aside)
+        {
+            (self.say)(&format!(
+                "dibs: could not set {} aside to remove it: {e}\n",
+                cache.display()
+            ));
+            return false;
+        }
+        let gone = aside.removed_by(self.until);
+        if !gone && !self.spent() {
+            self.unremoved(aside);
+        }
+        gone
     }
 
     pub fn tree(&self, tree: &Path) -> bool {
@@ -153,12 +191,16 @@ impl<'a> Removal<'a> {
     pub fn path(&self, path: &Path) -> bool {
         let gone = path.remove_all();
         if !gone {
-            (self.say)(&format!(
-                "dibs: could not remove all of {}; the next sweep tries again\n",
-                path.display()
-            ));
+            self.unremoved(path);
         }
         gone
+    }
+
+    fn unremoved(&self, path: &Path) {
+        (self.say)(&format!(
+            "dibs: could not remove all of {}; the next sweep tries again\n",
+            path.display()
+        ));
     }
 
     /// A cache holding only a sweep's marker, removed quietly.
@@ -188,6 +230,8 @@ pub trait Contents {
     fn make_empty(&self) -> io::Result<()>;
     /// `rm -rf`: everything that can go goes, and whether all of it did.
     fn remove_all(&self) -> bool;
+    /// As `remove_all`, stopping at `until`.
+    fn removed_by(&self, until: Option<Instant>) -> bool;
 }
 
 impl Contents for Path {
@@ -208,6 +252,13 @@ impl Contents for Path {
     }
 
     fn remove_all(&self) -> bool {
+        self.removed_by(None)
+    }
+
+    fn removed_by(&self, until: Option<Instant>) -> bool {
+        if until.is_some_and(|until| Instant::now() >= until) {
+            return false;
+        }
         let Ok(meta) = fs::symlink_metadata(self) else {
             return true;
         };
@@ -219,7 +270,7 @@ impl Contents for Path {
             .unwrap_or_default();
         let mut all = true;
         for entry in entries {
-            all &= entry.remove_all();
+            all &= entry.removed_by(until);
         }
         all && fs::remove_dir(self).is_ok()
     }

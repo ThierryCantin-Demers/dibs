@@ -133,6 +133,17 @@ struct Verdict {
 
 impl Verdict {
     fn of_holder(h: &Holder) -> Verdict {
+        if let Some(doing) = h.preparing() {
+            return Verdict {
+                note: format!("preparing: {doing}"),
+                long: format!(
+                    "The machine is laying out its tree before the command runs, and said last: \
+                     {doing}. A copy or a cleanup on a slow disk can take minutes, none of it the \
+                     command's."
+                ),
+                alarm: false,
+            };
+        }
         if let Some(idle) = &h.idle {
             let f = Span(idle.idle_for);
             let never = idle.idle_kind == IdleKind::Never;
@@ -286,6 +297,19 @@ mod tests {
             Some("step 2/5, >10m20s left")
         );
         assert!(v[1].batch.is_none(), "a job outside a batch has no step");
+        let preparing = status(
+            &holder(
+                "b",
+                r#","est":1,"est_lo":1,"est_hi":1,"est_n":9,"est_scope":"this","prepare":"""#,
+            ),
+            "",
+        );
+        let v = Item::all("m", &preparing);
+        assert_eq!(
+            (v[0].note.as_str(), v[0].alarm),
+            ("preparing: laying out its tree", false),
+            "a prepare is not timed against the command's history"
+        );
     }
 
     #[test]

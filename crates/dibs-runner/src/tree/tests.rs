@@ -119,6 +119,7 @@ impl Machine {
             clocks: Clocks::DEFAULT,
             seed_wait: self.seed_wait,
             reflinks: self.reflinks,
+            sweep_budget: Duration::from_secs(60),
         };
         let commands = Commands::new(&self.environment, &|_| {}, &*self.unstopped, self.deadline);
         let trees = Trees::new(config, commands, &say);
@@ -876,11 +877,19 @@ fn a_sweep_leaves_a_target_a_build_holds_and_says_what_it_could_not_remove() {
     aged(&stuck.join(".dibs-used"));
     run(&stuck, "chmod 500 debug/deps");
     let (prepared, said) = m.prepare(&local("k", &[]));
-    run(&stuck, "chmod 700 debug/deps");
+    let aside = PathBuf::from(format!(
+        "{}.old.{}-swept",
+        stuck.display(),
+        std::process::id()
+    ));
+    run(&aside, "chmod 700 debug/deps");
     assert!(prepared.is_ok());
     assert!(held.exists(), "a target a build holds is not swept");
     assert!(said.contains("could not remove all of"), "{said}");
-    assert!(stuck.join("debug/deps").exists() && !stuck.join(".dibs-used").exists());
+    assert!(
+        !stuck.exists() && aside.join("debug/deps").exists() && !aside.join(".dibs-used").exists(),
+        "what could not go is left set aside, where nothing seeds from it"
+    );
     build.done();
     assert!(m.prepare(&local("k", &[])).0.is_ok());
     assert!(!held.exists(), "and goes once the build has");
@@ -1259,6 +1268,31 @@ fn a_prepares_copy_is_left_while_the_prepare_runs_and_taken_once_it_has_gone() {
     m.sweeping(&scratch, &home).run();
     assert!(running.exists(), "a running prepare's copy is its own");
     assert!(!left.exists(), "a gone prepare's set-aside tree is past");
+}
+
+#[test]
+fn a_cache_is_set_aside_before_it_goes_and_what_the_budget_leaves_a_later_sweep_ends() {
+    let m = Machine::new();
+    let (scratch, home) = (m.p("scratch"), m.p("home"));
+    let cache = m.abandoned("target/demo-local-k");
+    fs::write(cache.join("built"), "").unwrap();
+    // Above Linux's PID_MAX_LIMIT and macOS's PID_MAX, so no process can have it.
+    let aside = m.p("scratch/target/demo-local-k.old.4194304-swept");
+    let spent = || Removal::new(None, &|_| {}).within(Duration::ZERO);
+    assert!(!spent().cache(&cache, &aside));
+    assert!(
+        !cache.exists() && aside.join("built").exists(),
+        "renamed at once, so nothing seeds from it, then nothing removed past the budget"
+    );
+    let past = m.abandoned("target/demo-local-j");
+    Sweep::new(&scratch, &home, Clocks::DEFAULT, spent()).run();
+    assert!(past.exists(), "a spent budget sets nothing more aside");
+    m.sweeping(&scratch, &home).run();
+    assert_eq!(
+        fs::read_dir(m.p("scratch/target")).unwrap().count(),
+        0,
+        "a sweep within its budget ends what a gone prepare left, and leaves no turn behind"
+    );
 }
 
 #[test]

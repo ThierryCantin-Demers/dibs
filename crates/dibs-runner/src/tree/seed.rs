@@ -137,6 +137,12 @@ impl<'a> Seed<'a> {
                 held |= have < idle_best;
             }
             held |= have < self.floor;
+            if !held {
+                (self.say)(&format!(
+                    "dibs: copying {}'s target to start this tree from\n",
+                    name(&sibling.dir)
+                ));
+            }
             let copied = !held
                 && self
                     .copier

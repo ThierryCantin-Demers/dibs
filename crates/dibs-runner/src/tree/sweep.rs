@@ -241,7 +241,7 @@ impl<'a> Sweep<'a> {
     /// A past cache under the lock a prepare revives it under, with every build lock in it held,
     /// judged again there, and the lock removed with it.
     fn collect_cache(&self, verdict: &mut Verdict, now: u64) {
-        if !matches!(verdict.fate, Fate::Past | Fate::Hollow) {
+        if !matches!(verdict.fate, Fate::Past | Fate::Hollow) || self.removal.spent() {
             return;
         }
         let Some(turn) = Turn::now(&Turn::beside(&verdict.path)) else {
@@ -257,7 +257,17 @@ impl<'a> Sweep<'a> {
             return;
         }
         match verdict.fate {
-            Fate::Past => verdict.removed = self.removal.path(&verdict.path),
+            Fate::Past => {
+                let aside = match Sweep::temporary(&verdict.path) {
+                    Some(_) => verdict.path.clone(),
+                    None => PathBuf::from(format!(
+                        "{}.old.{}-swept",
+                        verdict.path.display(),
+                        std::process::id()
+                    )),
+                };
+                verdict.removed = self.removal.cache(&verdict.path, &aside);
+            }
             Fate::Hollow => self.removal.hollow(&verdict.path),
             _ => {}
         }
