@@ -79,7 +79,9 @@ impl<'a> Layout<'a> {
             reflinks: self.at.settings.reflinks,
         };
         let commands = Commands::new(environment, &running, &unstopped, deadline);
+        let preparing = self.at.dir.preparing(self.at.call.pid);
         let prepared = Trees::new(config, commands, &say).prepare(prepare);
+        drop(preparing);
         let prepared = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {

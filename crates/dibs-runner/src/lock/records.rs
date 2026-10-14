@@ -18,6 +18,18 @@ pub struct LockDir {
     pub path: PathBuf,
 }
 
+/// A prepare under way, for as long as this lives.
+#[must_use]
+pub struct Preparing {
+    path: PathBuf,
+}
+
+impl Drop for Preparing {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 /// Who holds `rw` this moment, as the kernel says.
 #[derive(Debug, Clone, Default)]
 pub struct Takers {
@@ -54,6 +66,22 @@ impl LockDir {
 
     pub fn file(&self, kind: &str, pid: u32) -> PathBuf {
         self.path.join(format!("{kind}.{pid}"))
+    }
+
+    /// `prep.<pid>` until the guard goes: a prepare's work is the runner's own, which a holder's
+    /// CPU leaves out, so status would otherwise call a tree being copied idle.
+    pub fn preparing(&self, pid: u32) -> Preparing {
+        let path = self.file("prep", pid);
+        let _ = fs::write(&path, "");
+        Preparing { path }
+    }
+
+    /// Whether the holder's CPU says nothing of its work: a hold's command runs elsewhere, and
+    /// a prepare's runs in the runner.
+    pub fn works_unseen(&self, pid: u32) -> bool {
+        ["hold", "prep"]
+            .iter()
+            .any(|kind| self.file(kind, pid).exists())
     }
 
     pub fn write(&self, kind: Kind, record: &LockRecord) {
@@ -98,7 +126,9 @@ impl LockDir {
 
     /// Everything this process wrote, gone, as its end leaves the directory.
     pub fn clear(&self, pid: u32) {
-        for kind in ["waiting", "holder", "work", "cpu", "batch", "hold", "with"] {
+        for kind in [
+            "waiting", "holder", "work", "cpu", "batch", "hold", "prep", "with",
+        ] {
             let _ = fs::remove_file(self.file(kind, pid));
         }
         for port in self.named("port") {
@@ -151,7 +181,7 @@ impl LockDir {
                 let _ = fs::remove_file(&file);
             }
         }
-        for prefix in ["cpu", "batch", "hold", "with"] {
+        for prefix in ["cpu", "batch", "hold", "prep", "with"] {
             for file in self.named(prefix) {
                 if !RecordFile(&file).pid().is_some_and(Host::exists) {
                     let _ = fs::remove_file(&file);
@@ -199,5 +229,25 @@ impl RecordFile<'_> {
     /// Whether the process that wrote it is still there.
     fn alive(self) -> bool {
         self.pid().is_some_and(|pid| self.written_by(pid))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_holder_works_unseen_only_while_it_prepares() {
+        let dir = LockDir {
+            path: std::env::temp_dir().join(format!("dibs-prep-{}", std::process::id())),
+        };
+        fs::create_dir_all(&dir.path).unwrap();
+        assert!(!dir.works_unseen(7));
+        let preparing = dir.preparing(7);
+        assert!(dir.works_unseen(7));
+        assert!(!dir.works_unseen(8), "only the holder preparing");
+        drop(preparing);
+        assert!(!dir.works_unseen(7));
+        let _ = fs::remove_dir_all(&dir.path);
     }
 }

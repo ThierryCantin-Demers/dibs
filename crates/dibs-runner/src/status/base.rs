@@ -171,11 +171,11 @@ impl Look<'_> {
             start: record.start,
         }
         .sample();
-        let held_elsewhere = self.dir.file("hold", pid).exists();
+        let unseen = self.dir.works_unseen(pid);
         let writing = output.as_deref().is_some_and(|file| {
             age(Path::new(file)).is_some_and(|age| (age as i64) < self.settings.wrote_within)
         });
-        let idle = sample.idle.filter(|_| !writing && !held_elsewhere);
+        let idle = sample.idle.filter(|_| !writing && !unseen);
         let estimate = self.estimate(record, record.fingerprint.as_deref());
         let left = estimate.and_then(|e| e.remaining(elapsed));
         match left {
