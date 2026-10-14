@@ -99,20 +99,18 @@ fn runs(n: usize) -> String {
 /// How the table and the pane write a batch's progress.
 pub trait Progress {
     /// Which step of how many, and how long the batch has left on this machine: `>` where that
-    /// is a floor, `~` where it is an estimate.
+    /// is a floor, `~` where it is an estimate. A recipe step's own job count is the pane's,
+    /// since a second bare count in one cell reads as part of the first.
     fn progress(&self) -> String;
     fn left_text(&self) -> Option<String>;
 }
 
 impl Progress for BatchShown {
     fn progress(&self) -> String {
-        let step = match self.within {
-            Some(w) => format!("{}/{} job {}/{}", self.k, self.n, w.job, w.jobs),
-            None => format!("{}/{}", self.k, self.n),
-        };
+        let step = format!("step {}/{}", self.k, self.n);
         match &self.left {
-            Some(l) if l.left_partial => format!("{step} >{}", Span(l.left)),
-            Some(l) => format!("{step} ~{}", Span(l.left)),
+            Some(l) if l.left_partial => format!("{step}, >{} left", Span(l.left)),
+            Some(l) => format!("{step}, ~{} left", Span(l.left)),
             None => step,
         }
     }
@@ -285,20 +283,9 @@ mod tests {
         assert_eq!(v[0].note, "usually 10s over 3 runs");
         assert_eq!(
             v[0].batch.as_ref().map(Progress::progress).as_deref(),
-            Some("2/5 >10m20s")
+            Some("step 2/5, >10m20s left")
         );
         assert!(v[1].batch.is_none(), "a job outside a batch has no step");
-        let inner = batch.replace(r#""n":5,"#, r#""n":5,"within":{"job":17,"jobs":20},"#);
-        let s = status(&holder("b", &inner), "");
-        assert_eq!(
-            Item::all("m", &s)[0]
-                .batch
-                .as_ref()
-                .map(Progress::progress)
-                .as_deref(),
-            Some("2/5 job 17/20 >10m20s"),
-            "a recipe's job says which of its jobs it is"
-        );
     }
 
     #[test]

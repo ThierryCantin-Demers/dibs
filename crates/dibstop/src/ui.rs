@@ -254,7 +254,7 @@ impl Widths {
             label: LABEL_WIDTH,
             device: DEVICE_WIDTH,
             agent: AGENT_WIDTH,
-            step: step.max(count("STEP")),
+            step: step.max(count("BATCH")),
             note: NOTE_MIN_WIDTH,
         };
         let columns = w.columns();
@@ -317,7 +317,7 @@ impl Widths {
             Column::new("CORES", CORES_WIDTH),
         ]);
         if self.any_step {
-            c.push(Column::new("STEP", self.step));
+            c.push(Column::new("BATCH", self.step));
         }
         c.push(Column::new("NOTE", self.note));
         c
@@ -435,6 +435,12 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
             Span::styled(format!("   step {} of {}: ", b.k, b.n), DIM),
             Span::raw(b.step.clone()),
         ];
+        if let Some(w) = b.within {
+            first.push(Span::styled(
+                format!("   job {} of {} in this step", w.job, w.jobs),
+                DIM,
+            ));
+        }
         if let Some(l) = b.left_text() {
             first.extend([Span::styled("   left here ", DIM), Span::raw(l)]);
         }
