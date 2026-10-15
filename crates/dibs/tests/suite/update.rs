@@ -66,6 +66,7 @@ fn update(s: &Sandbox, installed: &str, recipes: &str, caller: &str) -> Output {
     let code = Update {
         clone: s.path("update/clone"),
         installed: Some(installed.into()),
+        team: Some(s.path("update/team")),
         recipes: Some(s.path(recipes)),
         notice: Some(notice(s, "seen")),
         caller: session(caller),
@@ -143,6 +144,34 @@ fn an_update_pulls_reinstalls_and_says_what_arrived() {
 }
 
 #[test]
+fn a_recipes_clone_pulled_to_the_teams_layout_moves_to_where_the_teams_is_read() {
+    let s = Sandbox::new();
+    let c = clones(&s);
+    s.git("update/rorigin", &["mv", "r.toml", "recipes.toml"]);
+    s.write("update/rorigin/recipes/r.toml", "[build.x]\n");
+    s.write(
+        "update/rorigin/machines.toml",
+        "[machine.rig]\nssh = \"rig\"\n",
+    );
+    s.git("update/rorigin", &["add", "-A"]);
+    s.git("update/rorigin", &["commit", "-qm", "the team's layout"]);
+    let out = update(&s, &c.head, "update/recipes", "u");
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert!(
+        s.path("update/team/recipes/r.toml").is_file() && !s.path("update/recipes").exists(),
+        "{}",
+        out.all()
+    );
+    assert_eq!(
+        update(&s, &c.head, "update/recipes", "u")
+            .all()
+            .lines_with("team "),
+        1,
+        "and is pulled as the team clone from then on"
+    );
+}
+
+#[test]
 fn an_update_outside_a_clone_is_refused() {
     let s = Sandbox::new();
     fs::create_dir_all(s.path("loose")).unwrap();
@@ -150,6 +179,7 @@ fn an_update_outside_a_clone_is_refused() {
     let code = Update {
         clone: s.path("loose"),
         installed: None,
+        team: None,
         recipes: None,
         notice: None,
         caller: session("u"),
@@ -193,6 +223,7 @@ fn a_session_is_told_once_when_dibs_changed_under_it() {
     Update {
         clone: s.path("update/clone"),
         installed: Some(c.head),
+        team: None,
         recipes: None,
         notice: Some(notice(&s, "seen-v")),
         caller: session("v1"),

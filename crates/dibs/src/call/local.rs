@@ -1,6 +1,7 @@
 use crate::{
     call::{base::CallError, machine::MachineCall},
     inventory::{Inventory, InventoryError, Machine},
+    team::Team,
 };
 use dibs_format::{Exit, MachineName};
 use std::fmt;
@@ -97,15 +98,20 @@ impl MachineCall<'_> {
         Ok(i32::from(Exit::Refused.code()))
     }
 
-    /// `dibs --forget <machine>`: its entry and its devices, gone from the inventory.
+    /// `dibs --forget <machine>`: its entry and its devices, gone from whichever file holds it.
     pub fn forget(&self, name: &MachineName) -> Result<i32, CallError> {
-        let Some(path) = self.fleet.path.as_deref().filter(|_| self.fleet.exists()) else {
+        let held = self.fleet.entry(name.as_str()).map(|m| m.source.clone());
+        let Some(path) = held.or_else(|| self.fleet.path.clone().filter(|_| self.fleet.exists()))
+        else {
             eprintln!("no inventory at {}", self.fleet.shown());
             return Ok(i32::from(Exit::Refused.code()));
         };
-        match Inventory::forget(path, name) {
+        match Inventory::forget(&path, name) {
             Ok(()) => {
                 println!("forgot {name}");
+                if let Some(note) = Team::push_note(&path) {
+                    println!("{note}");
+                }
                 Ok(0)
             }
             Err(InventoryError::NoSuchMachine(_)) => {
@@ -132,6 +138,9 @@ impl MachineCall<'_> {
                     false => println!(
                         "{name} does not measure: a benchmark is refused there, and builds and tests still run."
                     ),
+                }
+                if let Some(note) = Team::push_note(&path) {
+                    println!("{note}");
                 }
                 Ok(0)
             }

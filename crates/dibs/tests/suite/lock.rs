@@ -730,7 +730,7 @@ fn a_flag_whose_value_is_missing_is_refused_not_read_for_ever() {
     // became a hang the caller could not interrupt, on --kill of all things.
     let s = Sandbox::new();
     for flag in [
-        "--kill", "--job", "--cancel", "--forget", "--prefer", "--repo",
+        "--kill", "--job", "--cancel", "--forget", "--join", "--prefer", "--repo",
     ] {
         assert_eq!(
             s.dibs([flag]).within(Duration::from_secs(5)).code(),

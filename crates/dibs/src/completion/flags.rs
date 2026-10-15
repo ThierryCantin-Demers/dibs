@@ -180,6 +180,11 @@ pub const CALL: &[Flag] = &[
         "drop a machine from your inventory",
     ),
     Flag::new(
+        &["--join"],
+        Value::Free,
+        "clone the repo your team shares recipes and machines through",
+    ),
+    Flag::new(
         &["--which"],
         Value::No,
         "the machine a call naming none goes to",

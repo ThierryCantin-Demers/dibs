@@ -59,6 +59,7 @@ enum Word {
     Which,
     Pick,
     Update,
+    Join,
     Forget,
     Measure,
     Sync,
@@ -82,6 +83,7 @@ struct Parser {
     fetch_job: String,
     fetch_into: Option<String>,
     kill: Option<String>,
+    join: Option<String>,
     forget: Option<String>,
     measure: Option<String>,
     measures: bool,
@@ -111,6 +113,7 @@ impl Default for Parser {
             fetch_job: String::new(),
             fetch_into: None,
             kill: None,
+            join: None,
             forget: None,
             measure: None,
             measures: true,
@@ -222,6 +225,11 @@ impl Parser {
                     at += 1;
                 }
                 "--all" => self.call.all = true,
+                "--join" => {
+                    self.word = Word::Join;
+                    self.join = Some(need_some("--join")?);
+                    at += 1;
+                }
                 "--forget" => {
                     self.word = Word::Forget;
                     self.forget = Some(need_some("--forget")?);
@@ -414,6 +422,7 @@ impl Parser {
             Word::Which => Some(Mode::Which),
             Word::Pick => Some(Mode::Pick),
             Word::Update => Some(Mode::Update),
+            Word::Join => Some(Mode::Join(self.join.clone().unwrap_or_default())),
             Word::Forget => Some(Mode::Forget(MachineName::new(
                 self.forget.clone().unwrap_or_default(),
             ))),
@@ -539,6 +548,7 @@ impl Parser {
             | Word::Which
             | Word::Pick
             | Word::Update
+            | Word::Join
             | Word::Forget
             | Word::Measure
             | Word::Sync => unreachable!("answered before a machine mode is read"),

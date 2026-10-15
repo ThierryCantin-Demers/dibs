@@ -1,6 +1,6 @@
 //! `dibs --update`, and the change notice: a session is told once when dibs changed under it.
 
-use crate::{caller::Caller, git::Git, paths::Paths};
+use crate::{caller::Caller, git::Git, paths::Paths, team::Team};
 use dibs_format::{Exit, Span};
 use std::{
     io::{self, Write},
@@ -47,11 +47,13 @@ fn git_ok(clone: &Path, args: &[&str]) -> bool {
 }
 
 /// `dibs --update`: the clone fast-forwarded and what arrived listed, a reinstall when anything
-/// arrived or the installed build is from another commit, then the recipes pulled.
+/// arrived or the installed build is from another commit, then the team clone and the recipes
+/// pulled.
 pub struct Update {
     pub clone: PathBuf,
     /// The commit install.sh stamped into the running build.
     pub installed: Option<String>,
+    pub team: Option<PathBuf>,
     pub recipes: Option<PathBuf>,
     pub notice: Option<ChangeNotice>,
     pub caller: Caller,
@@ -66,6 +68,7 @@ impl Update {
         Update {
             clone: Build::clone_dir().to_path_buf(),
             installed: Build::COMMIT.map(str::to_string),
+            team: paths.team(),
             recipes: paths.recipes(),
             notice: paths.seen().map(ChangeNotice::of_this_build),
             caller: Caller::from_env(),
@@ -133,40 +136,51 @@ impl Update {
                 return Err(Exit::Failed);
             }
         }
-        self.pull_recipes(out, err)?;
+        self.pull("team", self.team.as_deref(), out, err)?;
+        self.pull("recipes", self.recipes.as_deref(), out, err)?;
+        if let (Some(dir), Some(recipes)) = (&self.team, &self.recipes) {
+            Team { dir: dir.clone() }.settle(recipes);
+        }
         if let Some(notice) = &self.notice {
             notice.record(&self.caller, &after);
         }
         Ok(0)
     }
 
-    fn pull_recipes(&self, out: &mut impl Write, err: &mut impl Write) -> Result<(), Exit> {
-        let Some(recipes) = &self.recipes else {
+    /// One of the clones dibs reads its configuration from, fast-forwarded when it is one.
+    fn pull(
+        &self,
+        what: &str,
+        dir: Option<&Path>,
+        out: &mut impl Write,
+        err: &mut impl Write,
+    ) -> Result<(), Exit> {
+        let Some(dir) = dir else {
             return Ok(());
         };
-        if !git_ok(recipes, &["rev-parse", "--abbrev-ref", "@{u}"]) {
-            if recipes.is_dir() {
+        if !git_ok(dir, &["rev-parse", "--abbrev-ref", "@{u}"]) {
+            if dir.is_dir() {
                 let _ = writeln!(
                     out,
-                    "recipes in {} are not a clone with an upstream, so they were left alone",
-                    recipes.display()
+                    "{what}: {} is not a clone with an upstream, so it was left alone",
+                    dir.display()
                 );
             }
             return Ok(());
         }
-        let before = git(recipes, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
-        if !pulled(recipes) {
+        let before = git(dir, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+        if !pulled(dir) {
             let _ = writeln!(
                 err,
-                "dibs: could not fast-forward the recipes in {}",
-                recipes.display()
+                "dibs: could not fast-forward the {what} in {}",
+                dir.display()
             );
             return Err(Exit::Failed);
         }
-        let after = git(recipes, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+        let after = git(dir, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
         Pulled {
-            what: "recipes",
-            clone: recipes,
+            what,
+            clone: dir,
             before: &before,
             after: &after,
         }

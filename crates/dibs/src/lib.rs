@@ -20,4 +20,5 @@ pub mod records;
 pub mod render;
 pub mod reports;
 pub mod scratch;
+pub mod team;
 pub mod update;

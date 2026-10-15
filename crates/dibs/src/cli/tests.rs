@@ -315,6 +315,10 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
         ),
         (vec!["--update"], of(Mode::Update)),
         (
+            vec!["--join", "acme/dibs-config"],
+            of(Mode::Join("acme/dibs-config".into())),
+        ),
+        (
             vec!["--forget", "m"],
             of(Mode::Forget(MachineName::new("m"))),
         ),

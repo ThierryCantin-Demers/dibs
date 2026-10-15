@@ -135,7 +135,13 @@ impl Paths {
         self.overridden("DIBS_MACHINES", self.config("machines.toml"))
     }
 
-    /// Recipe files kept in local config, `<repo>.toml` each.
+    /// The clone of the repo a team shares its recipes and machines through, beside the
+    /// inventory, which reads its machines there as it does `machines.d`.
+    pub fn team(&self) -> Option<PathBuf> {
+        Some(self.inventory()?.with_file_name("team"))
+    }
+
+    /// This person's own recipe files, `<repo>.toml` each, over the team's.
     pub fn recipes(&self) -> Option<PathBuf> {
         self.overridden("DIBS_RECIPES", self.config("recipes"))
     }
@@ -234,6 +240,7 @@ mod tests {
         assert_eq!(p.remotes(), Some("/h/.cache/dibs/remotes".into()));
         assert_eq!(p.inventory(), Some("/h/.config/dibs/machines.toml".into()));
         assert_eq!(p.recipes(), Some("/h/.config/dibs/recipes".into()));
+        assert_eq!(p.team(), Some("/h/.config/dibs/team".into()));
         assert_eq!(p.fleet(), Some("/h/.config/dibs/fleet.toml".into()));
     }
 
@@ -263,6 +270,11 @@ mod tests {
         ]);
         assert_eq!(p.runs(), Some("/r.jsonl".into()));
         assert_eq!(p.inventory(), Some("/m.toml".into()));
+        assert_eq!(
+            p.team(),
+            Some("/team".into()),
+            "the team clone sits beside the inventory"
+        );
         assert_eq!(
             p.friction(),
             Some("/h/.local/state/dibs/friction.jsonl".into())
