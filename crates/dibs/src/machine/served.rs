@@ -80,6 +80,26 @@ impl Runner {
     }
 }
 
+/// The client this binary was built from, which a machine builds to drive a detached batch.
+pub struct Client;
+
+impl Client {
+    pub const HASH: &str = env!("DIBS_CLIENT_HASH");
+    /// The tree a machine builds it from, as a gzipped tar.
+    pub const SOURCE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/client-source.tar.gz"));
+    /// The word it answers with its hash, outside the grammar.
+    pub const SAYS_HASH: &str = "__client-hash";
+
+    /// The line the login shell there runs to start it with `words`, which exits `MISSING`
+    /// when it is not built there.
+    pub fn far_line(words: &str) -> String {
+        format!(
+            "sh -c 'c=$HOME/.cache/dibs/client/{hash}/dibs; [ -x \"$c\" ] || exit {MISSING}; exec \"$c\" {words}'",
+            hash = Client::HASH
+        )
+    }
+}
+
 /// Where a runner call's output goes.
 pub enum Delivery<'a> {
     /// This process's own streams.

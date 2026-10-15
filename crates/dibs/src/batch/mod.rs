@@ -7,6 +7,8 @@
 //! which is the lifetime a single job already has. The design is `docs/design/history/batch.md`.
 
 mod base;
+mod detach;
+mod detached;
 mod guard;
 mod parse;
 mod plan;
@@ -14,5 +16,7 @@ mod plan;
 mod tests;
 
 pub use base::{Options, run};
+pub use detach::{DetachError, detach, follow};
+pub use detached::Detached;
 pub use guard::StepGuard;
 pub use parse::{BadLine, BatchError};

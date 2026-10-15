@@ -146,6 +146,10 @@ pub struct RecipeCall {
     /// The measurement starts its label's series on this machine again, on another card.
     pub new_series: bool,
     pub verbose: bool,
+    /// batch only: driven on its machine, so it outlives this computer.
+    pub detach: bool,
+    /// batch only: the batch named is one detached from here, followed to its summary.
+    pub follow: bool,
 }
 
 impl RecipeCall {
@@ -192,6 +196,8 @@ impl RecipeCall {
             all: false,
             new_series: false,
             verbose: false,
+            detach: false,
+            follow: false,
         };
         let mut positional: Vec<String> = Vec::new();
         let mut it = words.iter();
@@ -255,6 +261,8 @@ impl RecipeCall {
                 "--new-series" => call.new_series = true,
                 "--dry-run" => call.dry_run = true,
                 "--verbose" | "-v" => call.verbose = true,
+                "--detach" if verb == RecipeVerb::Batch => call.detach = true,
+                "--follow" if verb == RecipeVerb::Batch => call.follow = true,
                 "-" => positional.push("-".into()),
                 flag if flag.starts_with("--") && !verb.takes_values() => {
                     let name = flag.split_once('=').map_or(flag, |(name, _)| name);

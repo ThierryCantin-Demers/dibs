@@ -1,7 +1,9 @@
 # One submission, one wake, one summary
 
 **Status: history.** It records the design of `dibs batch`. All of it is built, `--kill
-<batch-id>` included. The guide's Batches section describes it as it is.
+<batch-id>` included. The guide's Batches section describes it as it is. A batch driven on its
+machine came later, and reverses "a batch adds no state on any machine" for itself only:
+`../detach.md`.
 
 **Built** as the subcommand `dibs batch <file|->` rather than a `--batch` flag, to match the
 one-command form. The linkage below is built with one change: the `batch.<pid>` file carries the

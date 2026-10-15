@@ -459,6 +459,29 @@ A recipe is a batch of its own jobs, and prepares its worktree inside the first 
 it: the transfer for `@local`, or the first step at a ref when that step is shared. That is one
 round trip and one place in the queue less than a setup job of its own.
 
+## A batch that outlives this computer
+
+A batch's driver runs where you started it, so a laptop that sleeps or changes network stops it:
+its running step is stopped two minutes later and the rest never start. `dibs batch --detach
+<file>` drives the batch on the machine its steps go to instead, so the batch carries on whatever
+happens here. Every step must go to that one machine, by `--on` or `DIBS_ON`, and a step that
+acts on this computer is refused before anything is sent: `--sync`, `--hold`, `--fetch`, `dibs
+with` without `--there`, `--artifacts <dir>`, `--root`, and a repo named by a path.
+
+Before it starts, dibs sends the machine what the steps read here: each repo a step names, whole,
+its `.git` included and its working tree as the repo's ignore rules leave it, so `@local` and a
+ref the machine cannot fetch resolve there as they would here; your recipes; and your machines.
+The first detach to a machine sends whole repos, and later ones send only what changed. It also
+builds this version of dibs there, once per version, as a shared job, the way it builds its
+runner. A tree sent from your working copy builds in the same tree and target there as your own
+calls do.
+
+The call follows the batch and prints its summary as an ordinary batch does, with each step's
+output brought back beside it, and the run records and series filed with yours. If the call is
+cut off, it exits 69 and says so; the batch carries on, and `dibs batch --follow <id>` prints the
+summary once it has ended, or at once if it has. `dibs --kill <id>` stops it from here, and `dibs
+status` shows its steps as any batch's.
+
 ## Holding a lock for a command run elsewhere
 
 Some work on a machine does not run on it: a playbook that provisions it, or a client driving it

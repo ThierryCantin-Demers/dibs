@@ -182,7 +182,12 @@ impl Local {
             h.finalize().hex()
         );
         let mut k = Sha256::new();
-        k.update(dir.as_os_str().as_encoded_bytes());
+        k.update(
+            SentFrom::from_env()
+                .key_path(dir)
+                .as_os_str()
+                .as_encoded_bytes(),
+        );
         Ok(Local {
             key: format!("{:.10}", k.finalize().hex()),
             content,
@@ -219,6 +224,45 @@ impl Local {
             ])
             .collect();
         backend.sync(req, &args, on_prepared)
+    }
+}
+
+/// The repos a detached batch was sent, each by its name under `DIBS_ROOT` and the path it was
+/// sent from, a line `<name>\t<path>` each in the file `DIBS_SENT_FROM` names. A tree sent on
+/// from the machine is keyed by where it was sent from, so it builds in the tree that computer's
+/// own calls build in rather than in a new one for every batch.
+pub struct SentFrom(Vec<(PathBuf, PathBuf)>);
+
+impl SentFrom {
+    pub const VAR: &'static str = "DIBS_SENT_FROM";
+
+    pub fn from_env() -> SentFrom {
+        let Some(file) = std::env::var_os(SentFrom::VAR).filter(|f| !f.is_empty()) else {
+            return SentFrom(Vec::new());
+        };
+        let root = PathBuf::from(std::env::var_os("DIBS_ROOT").unwrap_or_default());
+        let text = std::fs::read_to_string(file).unwrap_or_default();
+        SentFrom(
+            text.lines()
+                .filter_map(|line| line.split_once('\t'))
+                .filter_map(|(name, from)| {
+                    let here = root.join(name).canonicalize().ok()?;
+                    Some((here, PathBuf::from(from)))
+                })
+                .collect(),
+        )
+    }
+
+    pub fn line(name: &str, from: &Path) -> String {
+        format!("{name}\t{}\n", from.display())
+    }
+
+    /// The path a tree's key is made from: where it was sent from, when it was.
+    pub fn key_path<'a>(&'a self, dir: &'a Path) -> &'a Path {
+        self.0
+            .iter()
+            .find(|(here, _)| here == dir)
+            .map_or(dir, |(_, from)| from.as_path())
     }
 }
 

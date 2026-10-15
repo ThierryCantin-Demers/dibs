@@ -37,6 +37,11 @@
 1|                                one before it; steps that wait for nothing in common overlap
 1|                                only on different machines. A failed step stops the batch
 1|                                unless it is marked cont.
+1|   dibs batch --detach <file|-> the same, driven on the one machine its steps go to, so it
+1|                                carries on when this computer sleeps or leaves. Each repo a
+1|                                step names is sent there whole, with your recipes and
+1|                                machines; a step that acts on this computer is refused
+1|   dibs batch --follow <id>     a detached batch's summary, once it has ended
 1| 
 1|   <verb>       bench, build or test
 1|   <repo>       a path to a checkout, or a name: the checkout you are in when it is that

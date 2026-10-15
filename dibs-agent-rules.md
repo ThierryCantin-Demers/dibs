@@ -72,7 +72,8 @@ spoiled without it.
   Codex, an `exec_command` that yields, collected later with `write_stdin`. If you genuinely
   cannot wait, pass `--wait <seconds>` and handle exit 75.
 - A job dies with the call that started it, and a call that has not been heard from for two
-  minutes, as when a laptop sleeps, counts as dead: the job is stopped and the lock released.
+  minutes, as when a laptop sleeps, counts as dead: the job is stopped and the lock released. A
+  batch's steps die with its driver the same way, unless it was detached.
 - **One background call per piece of work, not per dibs command.** Every completion wakes you, and
   you re-read your whole context to answer it, so a hundred jobs launched one at a time cost three
   hundred turns at full context. That pattern alone has used most of a day's token budget for
@@ -104,6 +105,11 @@ spoiled without it.
   and take turns on one, so work on two machines is one batch. A failed step stops the steps that
   wait on it, which by default is every line after it; mark `cont` on a step whose failure should
   not, such as one configuration of a sweep.
+- **A batch that must outlive this computer**, because the person is leaving with it or the work
+  runs for hours, is `dibs batch --detach <file>`: it is driven on the machine its steps go to, so
+  a sleep or a network change here stops nothing there. Every step must go to that one machine,
+  and nothing in it may act on this computer. Cut off, the call exits 69 and says so; then
+  `dibs batch --follow <id>`, in the background, wakes you once with the summary.
 - **Do not batch across a decision.** If a later step depends on what an earlier one *said*, you
   will not see that until the whole batch is done. Two batches with a look in between is still far
   cheaper than one call per job. When the criterion can be stated up front, put it in the step and

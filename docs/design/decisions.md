@@ -85,6 +85,12 @@ points, so what lands there is a tool's, and goes once unchanged for `keep_days`
 a person keeps what a job made, and removing that is the person's call. An entry is judged by
 its own time, so a results directory whose files still change would go on the clock alone.
 
+**A batch may be detached to its machine (2026-10-15).** `dibs batch --detach` drives a batch on
+the one machine its steps go to, through a client built there as the runner is, so it outlives
+a laptop that sleeps or leaves. That reverses "a batch adds no state on any machine" for such a
+batch only; its driver is still the owner, and its locks still die with it. `detach.md` is the
+design.
+
 ## Deferred. Do not re-derive
 
 **Round-robin or fair-share across agents.** Nothing is starved today, only delayed. The good

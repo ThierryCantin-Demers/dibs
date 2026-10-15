@@ -94,7 +94,13 @@ impl Help {
         },
         Topic {
             words: &["batch"],
-            entries: &["dibs batch", "--dry-run", "--verbose"],
+            entries: &[
+                "dibs batch <file",
+                "dibs batch --detach",
+                "dibs batch --follow",
+                "--dry-run",
+                "--verbose",
+            ],
         },
         Topic {
             words: &["run"],

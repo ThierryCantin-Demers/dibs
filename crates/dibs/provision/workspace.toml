@@ -1,0 +1,33 @@
+# The workspace a machine builds dibs in, to drive a detached batch there: the client, the runner
+# it links, the format, and what they need.
+[workspace]
+resolver = "3"
+members = ["crates/dibs", "crates/dibs-format", "crates/dibs-runner"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+
+[workspace.dependencies]
+dibs-format = { path = "crates/dibs-format" }
+dibs-runner = { path = "crates/dibs-runner" }
+flate2 = "1"
+libc = "0.2"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.10"
+toml = "0.8"
+toml_edit = "0.22"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[profile.release]
+opt-level = 2
+strip = true

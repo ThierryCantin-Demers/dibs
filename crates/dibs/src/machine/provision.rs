@@ -1,6 +1,6 @@
 use crate::machine::{
     lines::Stream,
-    served::{Delivery, LineBuffers, MISSING, Runner},
+    served::{Client, Delivery, LineBuffers, MISSING, Runner},
     session::{Liveness, Route, SSH_FAILED, Session},
     ssh::Ssh,
 };
@@ -147,6 +147,33 @@ exit(($st & 127) ? 128 + ($st & 127) : $st >> 8);
 PERL
 "#;
 
+/// What a build there is sent and makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Built {
+    Runner,
+    Client,
+}
+
+impl Built {
+    fn source(self) -> &'static [u8] {
+        match self {
+            Built::Runner => Runner::SOURCE,
+            Built::Client => Client::SOURCE,
+        }
+    }
+
+    fn building(self, machine: &str) -> String {
+        match self {
+            Built::Runner => format!(
+                "dibs: {machine} has no runner for this dibs yet. Building it there as a shared job, once per version.\n"
+            ),
+            Built::Client => format!(
+                "dibs: {machine} has no dibs of this version to drive a detached batch. Building it there as a shared job, once per version.\n"
+            ),
+        }
+    }
+}
+
 impl Provision<'_> {
     /// Built by the newest runner already there, as a shared job, unless it is there already.
     pub fn through_newest(
@@ -154,7 +181,19 @@ impl Provision<'_> {
         queueing: Queueing,
         delivery: &mut Delivery,
     ) -> io::Result<Installed> {
-        self.install(&Provision::newest_line(), queueing, delivery)
+        self.install(&Provision::newest_line(), queueing, delivery, Built::Runner)
+    }
+
+    /// The client of this version, which drives a detached batch there, built by the runner of
+    /// this version as a shared job unless it is there already. `NoneThere` when that runner is
+    /// not.
+    pub fn client(&self, delivery: &mut Delivery) -> io::Result<Installed> {
+        self.install(
+            &Provision::client_line(),
+            Queueing::Waits,
+            delivery,
+            Built::Client,
+        )
     }
 
     /// `dibs --check`: the runner there, building the first one if the machine has none. No
@@ -163,7 +202,12 @@ impl Provision<'_> {
         if self.session.route == Route::Here {
             return Ok(Installed::Done);
         }
-        match self.install(&Provision::newest_line(), Queueing::Waits, delivery)? {
+        match self.install(
+            &Provision::newest_line(),
+            Queueing::Waits,
+            delivery,
+            Built::Runner,
+        )? {
             Installed::NoneThere => self.first(delivery),
             installed => Ok(installed),
         }
@@ -176,7 +220,12 @@ impl Provision<'_> {
             "dibs: installing dibs's runner on {}, a first build, as a shared job.\n",
             self.session.name
         ));
-        self.install(&Provision::first_line(), Queueing::Waits, delivery)
+        self.install(
+            &Provision::first_line(),
+            Queueing::Waits,
+            delivery,
+            Built::Runner,
+        )
     }
 
     /// Says nothing ran because the build failed, and gives the exit for it.
@@ -247,6 +296,14 @@ impl Provision<'_> {
         )
     }
 
+    /// Exits 0 when the client is there, and otherwise has the runner of this version build it.
+    fn client_line() -> String {
+        let (client, runner, says) = (Client::HASH, Runner::HASH, Client::SAYS_HASH);
+        format!(
+            "sh -c 'c=$HOME/.cache/dibs/client/{client}/dibs; [ \"$(\"$c\" {says} 2>/dev/null)\" = {client} ] && exit 0; r=$HOME/.cache/dibs/runner/{runner}/dibs-runner; [ -x \"$r\" ] || exit {MISSING}; echo {BUILDING}; exec \"$r\" build-client {client}'"
+        )
+    }
+
     /// Takes the shared lock, then unpacks the tree from stdin and runs its own install script.
     fn first_line() -> String {
         format!("sh -c '{FIRST_BUILD}' sh {} {BUILD_MAX}", Runner::HASH)
@@ -258,6 +315,7 @@ impl Provision<'_> {
         line: &str,
         queueing: Queueing,
         delivery: &mut Delivery,
+        built: Built,
     ) -> io::Result<Installed> {
         let Route::Ssh { host, config } = &self.session.route else {
             return Ok(Installed::Done);
@@ -280,8 +338,9 @@ impl Provision<'_> {
         let mut child = ssh.spawn()?;
         drop(ssh);
         let mut stdin = child.stdin.take().expect("stdin was piped");
+        let source = built.source();
         thread::spawn(move || {
-            let _ = stdin.write_all(Runner::SOURCE);
+            let _ = stdin.write_all(source);
         });
         // The build's whole output goes to stderr: stdout is the command's, which has not run.
         let (tell, heard) = mpsc::channel();
@@ -321,11 +380,9 @@ impl Provision<'_> {
                     let _ = child.kill();
                     break;
                 }
-                said if said == BUILDING.as_bytes() && queueing == Queueing::Waits => delivery
-                    .say(&format!(
-                        "dibs: {} has no runner for this dibs yet. Building it there as a shared job, once per version.\n",
-                        self.session.name
-                    )),
+                said if said == BUILDING.as_bytes() && queueing == Queueing::Waits => {
+                    delivery.say(&built.building(&self.session.name))
+                }
                 said if said == BUILDING.as_bytes() || said == ALIVE.as_bytes() => {}
                 _ => delivery.give(Stream::Err, &line, &mut buffers),
             }
@@ -364,9 +421,14 @@ mod tests {
         assert!(FIRST_BUILD.contains(&format!("\"{ALIVE}\"")));
     }
 
-    #[test]
-    fn the_runner_source_resolves_against_its_own_lock_file() {
-        let dir = std::env::temp_dir().join(format!("dibs-runner-source-{}", std::process::id()));
+    /// Unpacks `source` and asks cargo to resolve it offline, with `locked` passed through;
+    /// gives the directory and cargo's answer.
+    fn resolved(
+        source: &[u8],
+        name: &str,
+        locked: bool,
+    ) -> (std::path::PathBuf, std::process::Output) {
+        let dir = std::env::temp_dir().join(format!("dibs-{name}-source-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut tar = std::process::Command::new("tar")
             .args(["xzf", "-", "-C"])
@@ -374,19 +436,40 @@ mod tests {
             .stdin(std::process::Stdio::piped())
             .spawn()
             .unwrap();
-        std::io::Write::write_all(&mut tar.stdin.take().unwrap(), Runner::SOURCE).unwrap();
+        std::io::Write::write_all(&mut tar.stdin.take().unwrap(), source).unwrap();
         assert!(tar.wait().unwrap().success());
+        let locked = locked.then_some("--locked");
         // The cargo running this test, since the one on PATH may queue behind it.
         let out = std::process::Command::new(env!("CARGO"))
-            .args(["metadata", "--locked", "--offline", "--format-version", "1"])
+            .args(["metadata", "--offline", "--format-version", "1"])
+            .args(locked)
             .current_dir(&dir)
             .output()
             .unwrap();
+        (dir, out)
+    }
+
+    #[test]
+    fn the_runner_source_resolves_against_its_own_lock_file() {
+        let (dir, out) = resolved(Runner::SOURCE, "runner", true);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             out.status.success(),
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+
+    #[test]
+    fn the_client_source_resolves_and_keeps_the_lock_its_hashes_are_made_from() {
+        let (dir, out) = resolved(Client::SOURCE, "client", false);
+        let kept = std::fs::read(dir.join("source.lock"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(kept.is_ok_and(|kept| !kept.is_empty()));
     }
 }

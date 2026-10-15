@@ -494,6 +494,8 @@ fn recipe(verb: RecipeVerb, repo: &str) -> RecipeCall {
         all: false,
         new_series: false,
         verbose: false,
+        detach: false,
+        follow: false,
     }
 }
 

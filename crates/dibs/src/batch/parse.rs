@@ -1,5 +1,6 @@
+use super::detach::DetachError;
 use crate::{
-    call::{Pending, Planned},
+    call::{CallError, Pending, Planned},
     cli::{CliError, Invocation, Mode, RecipeCall, RecipeVerb, RunLock},
     paths::FileError,
 };
@@ -34,6 +35,8 @@ pub enum BatchError {
     File(FileError),
     /// The steps' reports stopped arriving before every step ended.
     Lost(mpsc::RecvTimeoutError),
+    Detach(Box<DetachError>),
+    Call(Box<CallError>),
 }
 
 /// Why a batch line is not one dibs call the driver can run.
@@ -75,6 +78,8 @@ impl fmt::Display for BatchError {
             ),
             BatchError::File(e) => e.fmt(f),
             BatchError::Lost(e) => e.fmt(f),
+            BatchError::Detach(e) => e.fmt(f),
+            BatchError::Call(e) => e.fmt(f),
         }
     }
 }
@@ -106,6 +111,18 @@ impl fmt::Display for BadLine {
             BadLine::Renamed(name) => write!(f, "a second step is named '{name}'"),
             BadLine::Backslash => f.write_str("the last line ends in a backslash"),
         }
+    }
+}
+
+impl From<DetachError> for BatchError {
+    fn from(e: DetachError) -> BatchError {
+        BatchError::Detach(Box::new(e))
+    }
+}
+
+impl From<CallError> for BatchError {
+    fn from(e: CallError) -> BatchError {
+        BatchError::Call(Box::new(e))
     }
 }
 

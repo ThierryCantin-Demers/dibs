@@ -8,6 +8,7 @@ mod batch;
 mod cli;
 mod client;
 mod contention;
+mod detach;
 mod hold;
 mod hook;
 mod identity;

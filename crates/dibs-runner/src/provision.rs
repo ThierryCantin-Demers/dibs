@@ -6,7 +6,7 @@ use dibs_format::{
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read as _},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 /// How long a build of the runner may hold the shared lock.
@@ -57,10 +57,46 @@ impl Source<'_> {
     }
 }
 
+/// What a build installs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Built {
+    Runner,
+    /// The client, which drives a detached batch on the machine.
+    Client,
+}
+
+impl Built {
+    fn binary(self, runners: &Runners, hash: &str) -> PathBuf {
+        match self {
+            Built::Runner => runners.binary(hash),
+            Built::Client => crate::settings::home()
+                .join(".cache/dibs/client")
+                .join(hash)
+                .join("dibs"),
+        }
+    }
+
+    /// The word a built binary answers with its hash.
+    fn says_hash(self) -> &'static str {
+        match self {
+            Built::Runner => "hash",
+            Built::Client => "__client-hash",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Built::Runner => "dibs-runner",
+            Built::Client => "dibs",
+        }
+    }
+}
+
 /// `dibs-runner build <hash>`: the tree on stdin, built under the shared lock as an ordinary job
 /// and installed where a call for that hash looks. The one interface every runner keeps, so the
-/// newest runner on a machine can build any later one.
-pub fn build(hash: &str) -> i32 {
+/// newest runner on a machine can build any later one. `build-client` builds the client the same
+/// way, through the runner of the client's own version.
+pub fn build(hash: &str, built: Built) -> i32 {
     let signals = Signals::block();
     let sink = Sink::plain();
     if !Runners::names_a_version(hash) {
@@ -94,16 +130,18 @@ pub fn build(hash: &str) -> i32 {
         return Exit::NoRoom.status();
     }
     let command = format!(
-        "[ \"$({installed} hash 2>/dev/null)\" = {hash} ] && {{ echo 'dibs-runner {hash} is installed already.'; exit 0; }}\n\
+        "[ \"$({installed} {says} 2>/dev/null)\" = {hash} ] && {{ echo '{name} {hash} is installed already.'; exit 0; }}\n\
          cd {source} && tar -xmzf {archive} && CARGO_TARGET_DIR={target} sh install.sh {hash}",
-        installed = quoted(&runners.binary(hash)),
+        installed = quoted(&built.binary(&runners, hash)),
+        says = built.says_hash(),
+        name = built.name(),
         source = quoted(&source),
         archive = quoted(&archive),
         target = quoted(&runners.target()),
     );
     let request = Request {
         mode: Mode::Shared,
-        label: Label::new("dibs-runner"),
+        label: Label::new(built.name()),
         command,
         wait: None,
         max: BUILD_MAX,
@@ -114,7 +152,7 @@ pub fn build(hash: &str) -> i32 {
         tty: false,
         card: None,
         fingerprint: None,
-        agent: "dibs-runner build".into(),
+        agent: format!("{} build", built.name()),
         agent_id: String::new(),
         batch: None,
         watch: Watch {

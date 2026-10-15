@@ -41,6 +41,28 @@ impl RunLog {
         Ok(writeln!(f, "{}", run.to_line()).map_err(FileError::at(path))?)
     }
 
+    /// Records a batch driven on its machine wrote there, one JSON line each.
+    pub fn append_lines(&self, lines: &str) -> Result<(), RecordsError> {
+        let path = &self.path;
+        let lines: String = lines
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| format!("{line}\n"))
+            .collect();
+        if lines.is_empty() {
+            return Ok(());
+        }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(FileError::at(dir))?;
+        }
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(FileError::at(path))?;
+        Ok(f.write_all(lines.as_bytes()).map_err(FileError::at(path))?)
+    }
+
     pub fn runs(&self) -> Result<Runs, RecordsError> {
         let path = &self.path;
         let text = match std::fs::read_to_string(path) {

@@ -26,5 +26,6 @@ pub use local::Destination;
 pub use machine::{Asked, Bound, MachineCall};
 pub use origin::{BatchStep, Origin, Pending, Planned, RecipeJob};
 pub use output::Output;
+pub use series::Series;
 pub use sync::{Rsh, Sync};
 pub use watched::{Starter, Watched};

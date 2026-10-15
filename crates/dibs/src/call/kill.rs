@@ -54,25 +54,33 @@ impl Kill<'_> {
     /// Stopped where its driver runs, when that is here; otherwise on every machine.
     fn batch(&self, batch: &BatchId) -> Result<i32, CallError> {
         let at = self.machine.target()?;
-        if let Some(dir) = self.machine.paths.batches().map(|d| d.join(batch.as_str()))
-            && let Some(driver) = Driver::of(&dir)
-        {
+        let dir = self.machine.paths.batches().map(|d| d.join(batch.as_str()));
+        if let Some(driver) = dir.as_deref().and_then(Driver::of) {
             return driver.stop(self, batch);
         }
-        let machines: Vec<MachineName> = match &self.machine.call.on {
-            Some(on) => vec![on.clone()],
-            None if self.machine.fleet.exists() => self.machine.fleet.names(),
-            None => Vec::new(),
+        let detached = dir
+            .and_then(|d| fs::read_to_string(d.join(Driver::DETACHED)).ok())
+            .map(|m| MachineName::new(m.trim()));
+        let machines: Vec<MachineName> = match (&self.machine.call.on, &detached) {
+            (Some(on), _) => vec![on.clone()],
+            (None, Some(detached)) => vec![detached.clone()],
+            (None, None) if self.machine.fleet.exists() => self.machine.fleet.names(),
+            (None, None) => Vec::new(),
         };
         if machines.is_empty() {
             self.machine.somewhere(&at)?;
             return self.machine.send(self.asked(batch.as_str()), &at);
         }
         let named: Vec<&str> = machines.iter().map(MachineName::as_str).collect();
-        eprintln!(
-            "dibs: batch {batch} is not driven from this computer, so it is stopped on the machines: {}",
-            named.join(" ")
-        );
+        match &detached {
+            Some(machine) => {
+                eprintln!("dibs: batch {batch} is driven on {machine}, so it is stopped there")
+            }
+            None => eprintln!(
+                "dibs: batch {batch} is not driven from this computer, so it is stopped on the machines: {}",
+                named.join(" ")
+            ),
+        }
         let bound = Bound::polled(KILL_POLL_SECS, Kept::Everything);
         let answers = self.machine.each(&machines, |machine| {
             let asked = self.asked(batch.as_str());
@@ -109,7 +117,9 @@ pub struct DriverClaim {
 }
 
 impl<'a> Driver<'a> {
-    const RECORD: &'static str = "driver";
+    pub const RECORD: &'static str = "driver";
+    /// The machine a batch detached from here is driven on.
+    pub const DETACHED: &'static str = "detached";
 
     /// Records this process as the driver of the batch in `dir`.
     pub fn claim(dir: &Path) -> io::Result<DriverClaim> {

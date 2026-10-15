@@ -39,8 +39,9 @@ impl ReportsStamp {
 }
 
 impl Paths {
-    const VARS: [&'static str; 14] = [
+    const VARS: [&'static str; 15] = [
         "HOME",
+        "DIBS_CLIENT_DIR",
         "XDG_STATE_HOME",
         "XDG_CACHE_HOME",
         "XDG_CONFIG_HOME",
@@ -161,8 +162,19 @@ impl Paths {
         self.vars.get(var).cloned().or(default)
     }
 
-    /// `$<xdg>/dibs/<name>`, or `$HOME/<under_home>/dibs/<name>`.
+    /// `$DIBS_CLIENT_DIR/<kind>/<name>`, else `$<xdg>/dibs/<name>`, or else
+    /// `$HOME/<under_home>/dibs/<name>`. A client driving a detached batch on its machine keeps
+    /// everything of its own under one directory, apart from the runner's, which reads the XDG
+    /// variables too.
     fn under(&self, xdg: &str, under_home: &str, name: &str) -> Option<PathBuf> {
+        if let Some(dir) = self.vars.get("DIBS_CLIENT_DIR") {
+            let kind = match xdg {
+                "XDG_STATE_HOME" => "state",
+                "XDG_CACHE_HOME" => "cache",
+                _ => "config",
+            };
+            return Some(dir.join(kind).join(name));
+        }
         let base = match self.vars.get(xdg) {
             Some(base) => base.clone(),
             None => self.vars.get("HOME")?.join(under_home),
@@ -255,6 +267,20 @@ mod tests {
         assert_eq!(p.affinity(), Some("/s/dibs/affinity".into()));
         assert_eq!(p.sent(), Some("/c/dibs/sent".into()));
         assert_eq!(p.inventory(), Some("/g/dibs/machines.toml".into()));
+    }
+
+    #[test]
+    fn a_client_dir_holds_everything_but_what_a_variable_of_its_own_names() {
+        let p = paths(&[
+            ("HOME", "/h"),
+            ("XDG_STATE_HOME", "/s"),
+            ("DIBS_CLIENT_DIR", "/d"),
+            ("DIBS_RUNS", "/r.jsonl"),
+        ]);
+        assert_eq!(p.batches(), Some("/d/state/batch".into()));
+        assert_eq!(p.sent(), Some("/d/cache/sent".into()));
+        assert_eq!(p.inventory(), Some("/d/config/machines.toml".into()));
+        assert_eq!(p.runs(), Some("/r.jsonl".into()));
     }
 
     #[test]

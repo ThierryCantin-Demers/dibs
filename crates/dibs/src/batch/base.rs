@@ -110,14 +110,14 @@ impl<'a> StepStderr<'a> {
     }
 }
 
-fn state_dir() -> PathBuf {
+pub fn state_dir() -> PathBuf {
     Paths::from_env().batches().unwrap_or_default()
 }
 
 /// Where a step goes, resolved as the step's own call will resolve it. None when it names no
 /// machine and several could take it, which a shared step is placed from and a measurement is
 /// refused over.
-fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String> {
+pub fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String> {
     let call = Call {
         on: step
             .on
@@ -159,6 +159,10 @@ pub struct Options {
     pub on: Option<MachineName>,
     /// The session the batch belongs to, which alone may stop it without `--anyone`.
     pub owner: Option<String>,
+    /// The id the batch was given where it was sent from, for a batch driven on its machine.
+    pub id: Option<BatchId>,
+    /// Called once this process holds the batch as its driver.
+    pub driving: Option<fn()>,
 }
 
 pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
@@ -180,7 +184,11 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         .into_iter()
         .map(|m| m.unwrap_or_else(|| "?".into()))
         .collect();
-    let id = BatchId::starting().to_string();
+    let id = opts
+        .id
+        .clone()
+        .unwrap_or_else(BatchId::starting)
+        .to_string();
     let batch = Batch {
         steps: &steps,
         machines: &machines,
@@ -197,6 +205,9 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let _driving = Driver::claim(&dir).map_err(FileError::at(&dir))?;
     if let Some(owner) = &opts.owner {
         let _ = std::fs::write(dir.join("owner"), owner);
+    }
+    if let Some(driving) = opts.driving {
+        driving();
     }
     eprint!(
         "dibs: batch {id}, {} steps. You are told when it ends; there is nothing to watch.\n{plan}",

@@ -157,6 +157,45 @@ impl Series {
         });
     }
 
+    /// Files what a batch filed on its machine: each line it changed from the copy it was sent
+    /// replaces this file's line for the same label and machine.
+    pub fn merge(&self, sent: &str, returned: &str) {
+        if returned.lines().next() != Some(HEADER) {
+            return;
+        }
+        let filed: Vec<&str> = returned
+            .lines()
+            .skip(1)
+            .filter(|line| !sent.lines().skip(1).any(|was| was == *line))
+            .collect();
+        if filed.is_empty() {
+            return;
+        }
+        let _ = SharedFile { path: &self.path }.rewrite(|text| {
+            let text = match text.lines().next() == Some(HEADER) {
+                true => text,
+                false => "",
+            };
+            let mut written = format!("{HEADER}\n");
+            for line in text.lines().skip(1) {
+                let kept = Line::of(line);
+                if !filed
+                    .iter()
+                    .map(|f| Line::of(f))
+                    .any(|f| kept.is(f.field(0), f.field(1)))
+                {
+                    written.push_str(line);
+                    written.push('\n');
+                }
+            }
+            for line in &filed {
+                written.push_str(line);
+                written.push('\n');
+            }
+            Some(written)
+        });
+    }
+
     /// A machine as a person knows it: its inventory name, or the ssh string after its user.
     fn name(fleet: &Fleet, machine: &str) -> String {
         fleet

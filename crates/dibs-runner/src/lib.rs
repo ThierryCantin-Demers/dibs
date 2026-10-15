@@ -43,13 +43,14 @@ pub fn main(args: &[String], source: Source) -> i32 {
         },
         [verb] if verb == "hash" => source.name(),
         [verb] if verb == job::Tether::WORD => job::Tether::serve(),
-        [verb, hash] if verb == "build" => provision::build(hash),
+        [verb, hash] if verb == "build" => provision::build(hash, provision::Built::Runner),
+        [verb, hash] if verb == "build-client" => provision::build(hash, provision::Built::Client),
         [verb, days, dry] if verb == "gc" => {
             tree::Asked::parse(&format!("{days} {dry}")).report().run()
         }
         _ => {
             eprintln!(
-                "usage: dibs-runner serve <hash> | hash | build <hash> | gc <days|default> <0|1> | tether"
+                "usage: dibs-runner serve <hash> | hash | build <hash> | build-client <hash> | gc <days|default> <0|1> | tether"
             );
             2
         }

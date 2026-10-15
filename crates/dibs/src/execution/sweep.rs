@@ -54,6 +54,8 @@ impl<'a> SweepPoints<'a> {
                 verbose: args.verbose,
                 on: args.machine(),
                 owner: None,
+                id: None,
+                driving: None,
             },
         )?;
         Ok(ExitCode::from(code.clamp(0, 255) as u8))

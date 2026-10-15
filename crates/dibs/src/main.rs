@@ -10,13 +10,14 @@ use dibs::{
     fleet,
     hook::SshHook,
     inventory::Inventory,
-    machine::Runner,
+    machine::{Client, Runner},
     paths::FileError,
     recipe::{self, Checkouts, Manifest},
     records::{Complaints, FrictionLog, RunLog},
     reports::{self, ReportsRepo},
     update::{Build, ChangeNotice},
 };
+use dibs_format::BatchId;
 use std::{path::Path, process::ExitCode};
 
 const COMPLETIONS_USAGE: &str = "usage: dibs completions <fish|zsh> [--install]";
@@ -51,6 +52,15 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             return Ok(ExitCode::from(
                 Guard::serve(at, command).rem_euclid(256) as u8
             ));
+        }
+        [word, rest @ ..] if word == batch::Detached::WORD => {
+            return Ok(ExitCode::from(
+                batch::Detached::serve(rest).rem_euclid(256) as u8
+            ));
+        }
+        [word] if word == Client::SAYS_HASH => {
+            println!("{}", Client::HASH);
+            return Ok(ExitCode::SUCCESS);
         }
         [word, line] if word == batch::StepGuard::WORD => {
             return Ok(ExitCode::from(
@@ -127,20 +137,27 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
     };
     MachineCall::new(&on, caller)?;
 
+    if args.verb == RecipeVerb::Batch && args.follow {
+        let code = batch::follow(&BatchId::new(args.repo.as_str()))?;
+        return Ok(ExitCode::from(code.clamp(0, 255) as u8));
+    }
     if args.verb == RecipeVerb::Batch {
         let text = match args.repo.as_str() {
             "-" => std::io::read_to_string(std::io::stdin()).map_err(Refusal::BatchStdin)?,
             path => std::fs::read_to_string(path).map_err(FileError::at(Path::new(path)))?,
         };
-        let code = batch::run(
-            &text,
-            &batch::Options {
-                dry_run: args.dry_run,
-                verbose: args.verbose,
-                on: args.machine(),
-                owner: Some(caller.id.clone()),
-            },
-        )?;
+        let opts = batch::Options {
+            dry_run: args.dry_run,
+            verbose: args.verbose,
+            on: args.machine(),
+            owner: Some(caller.id.clone()),
+            id: None,
+            driving: None,
+        };
+        let code = match args.detach {
+            true => batch::detach(&text, &opts)?,
+            false => batch::run(&text, &opts)?,
+        };
         return Ok(ExitCode::from(code.clamp(0, 255) as u8));
     }
 

@@ -252,6 +252,16 @@ pub const RECIPE: &[Flag] = &[
         "start this label's series again",
     ),
     Flag::new(
+        &["--detach"],
+        Value::No,
+        "batch: driven on its machine, outliving this one",
+    ),
+    Flag::new(
+        &["--follow"],
+        Value::No,
+        "batch: a detached batch's summary, by its id",
+    ),
+    Flag::new(
         &["--dry-run"],
         Value::No,
         "say what it would do, and do nothing",
