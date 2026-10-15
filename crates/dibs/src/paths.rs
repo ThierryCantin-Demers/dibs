@@ -115,6 +115,11 @@ impl Paths {
         self.state(stamp.file())
     }
 
+    /// Held by this computer's listener for a reports repo, with its pid in it.
+    pub fn reports_listener(&self, repo: &str) -> Option<PathBuf> {
+        self.state(&format!("reports-listener.{}", repo.replace('/', ".")))
+    }
+
     /// Replies fetched in the background, one file per session, printed on its next call.
     pub fn reports_news(&self) -> Option<PathBuf> {
         self.state("reports-news")

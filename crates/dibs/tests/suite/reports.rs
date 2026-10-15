@@ -27,7 +27,7 @@ case "$1 $2" in
     "api -X") rm -f "$d/hook" ;;
     "webhook forward")
         while [ $# -gt 0 ]; do [ "$1" = --url ] && url=$2; shift; done
-        if [ -e "$d/hook" ]; then echo "Error: error creating webhook: HTTP 422: Hook already exists on this repository" >&2; exit 1; fi
+        if [ -e "$d/hook" ]; then printf 'Error: error creating webhook: HTTP 422: Hook already exists on this repository\nUsage:\n  forward --events=<types>\n' >&2; exit 1; fi
         touch "$d/hook"
         echo "Forwarding Webhook events from GitHub..." >&2
         if [ -e "$d/stop-once" ]; then rm "$d/stop-once"; echo "error: the websocket closed" >&2; exit 1; fi
@@ -317,6 +317,59 @@ fn a_forwarder_that_stops_is_started_again_rather_than_listened_past() {
         2,
         "each forward's hook goes with it, or GitHub refuses the next: {}",
         gh_log(&s)
+    );
+}
+
+#[test]
+fn a_second_listener_on_this_computer_names_the_first_and_starts_nothing() {
+    let mut s = Sandbox::new();
+    fake_gh(&s, "PRIVATE");
+    let first = s.spawn(s.dibs(["--friction", "--wait"]).env("DIBS_REPORTS", "o/r"));
+    until("the first listener to forward", || {
+        gh_log(&s).lines_with("api repos/o/r/hooks") == 1
+    });
+    let out = s
+        .dibs(["--friction", "--wait"])
+        .env("DIBS_REPORTS", "o/r")
+        .run();
+    assert_eq!(
+        (
+            out.code,
+            out.stderr.lines_with(&format!(
+                "a listener for o/r already runs on this computer, pid {}",
+                first.pid
+            ))
+        ),
+        (2, 1),
+        "{}",
+        out.all()
+    );
+    assert_eq!(
+        gh_log(&s).lines_with("webhook forward"),
+        1,
+        "and starts no forward of its own"
+    );
+}
+
+#[test]
+fn a_webhook_another_listener_holds_is_said_plainly() {
+    let s = Sandbox::new();
+    fake_gh(&s, "PRIVATE");
+    s.write("ghd/hook", "");
+    let out = s
+        .dibs(["--friction", "--wait"])
+        .env("DIBS_REPORTS", "o/r")
+        .run();
+    assert_eq!(
+        (
+            out.code,
+            out.stderr
+                .lines_with("GitHub already forwards o/r's webhooks to a listener"),
+            out.stderr.lines_with("Usage")
+        ),
+        (2, 1, 0),
+        "without gh's usage: {}",
+        out.all()
     );
 }
 

@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::{
     collections::BTreeSet,
     fmt,
+    fs::{File, OpenOptions, TryLockError},
     io::{self, BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     os::unix::process::CommandExt as _,
@@ -27,6 +28,8 @@ use std::{
 const LABEL: &str = "dibs-friction";
 const FORWARD_READY: Duration = Duration::from_secs(30);
 const STOPPED: &str = "DIBS-FORWARD-STOPPED";
+/// What gh says when the repo already has the webhook a forward makes.
+const HOOK_TAKEN: &str = "Hook already exists";
 /// A forwarder that lives less than this, this many times running, is not coming back.
 const SHORT_LIVED: Duration = Duration::from_secs(60);
 const SHORT_LIVES: u32 = 3;
@@ -113,6 +116,11 @@ pub enum ReportsError {
         repo: String,
         said: String,
     },
+    /// Another listener on this computer holds the repo, under this pid.
+    Listening {
+        repo: String,
+        pid: String,
+    },
     NotReady,
     KeepsStopping(String),
     NoPort(io::Error),
@@ -152,10 +160,22 @@ impl fmt::Display for ReportsError {
             }
             ReportsError::NoForward(e) => write!(f, "could not run gh webhook forward: {e}"),
             ReportsError::NoStderr => f.write_str("gh webhook forward has no stderr"),
+            ReportsError::Unlistening { repo, said } if said.contains(HOOK_TAKEN) => write!(
+                f,
+                "GitHub already forwards {repo}'s webhooks to a listener, and none on this computer holds it: \
+                 one on another computer, or one that died without removing its hook.\n  \
+                 gh api repos/{repo}/hooks lists it; the one named cli is it."
+            ),
             ReportsError::Unlistening { repo, said } => write!(
                 f,
                 "gh webhook forward stopped before it was listening. It needs the cli/gh-webhook extension, and \
-                 admin on {repo}; only one forward per repo can run at a time.\n{said}"
+                 admin on {repo}.\n  It said: {}",
+                Forward::stop_reason(said)
+            ),
+            ReportsError::Listening { repo, pid } => write!(
+                f,
+                "a listener for {repo} already runs on this computer, pid {pid}, and GitHub forwards a repo's \
+                 webhooks to one listener, so this one does not start."
             ),
             ReportsError::NotReady => write!(
                 f,
@@ -350,6 +370,7 @@ impl ReportsRepo {
     /// Returns once a report, or a comment from another account, lands. What landed while nothing
     /// listened is read first, since GitHub delivers a webhook once or not at all.
     pub fn wait(&self) -> Result<Vec<String>, ReportsError> {
+        let _listening = Listening::take(self)?;
         let mut woken = Keys::load(ReportsStamp::Woken)?;
         let own = ReportsRepo::own_login();
         let own = own.as_deref();
@@ -584,6 +605,45 @@ impl Arrival {
             }
         }
         None
+    }
+}
+
+/// This computer's one listener for a repo, held while it listens.
+struct Listening {
+    /// Locked for as long as it is open.
+    _held: File,
+}
+
+impl Listening {
+    fn take(repo: &ReportsRepo) -> Result<Listening, ReportsError> {
+        let path = Paths::from_env()
+            .reports_listener(&repo.name)
+            .ok_or(ReportsError::NoHome)?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(FileError::at(dir))?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(FileError::at(&path))?;
+        match file.try_lock() {
+            Ok(()) => {
+                file.set_len(0).map_err(FileError::at(&path))?;
+                write!(file, "{}", std::process::id()).map_err(FileError::at(&path))?;
+                Ok(Listening { _held: file })
+            }
+            Err(TryLockError::WouldBlock) => Err(ReportsError::Listening {
+                repo: repo.to_string(),
+                pid: std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
+            }),
+            Err(TryLockError::Error(e)) => Err(FileError::new(&path, e).into()),
+        }
     }
 }
 
