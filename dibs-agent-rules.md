@@ -168,10 +168,6 @@ spoiled without it.
 - `dibs --machines` lists the known machines. `dibs --check <host>` installs dibs's runner there,
   which needs cargo on the machine, and says whether it is usable and what is in it; run it before
   first use and read its warnings, not only its exit code, and `--write` records the machine.
-- Someone new to a team that keeps a repo for dibs runs `dibs --join <owner>/<repo>` once, which
-  brings the team's machines and recipes. What it says cannot be reached yet is for the person.
-- `--check --write`, `--measure` and `--forget` on a team machine change the team clone's file:
-  it reaches nobody until it is committed and pushed, which is the person's call.
 - A machine marked `measure = false` refuses `--bench`. That is not an obstacle to route around: its
   numbers would mean nothing. Send the benchmark to a machine that measures, or run it shared if it
   was never a measurement. Such a machine is still good for builds and tests through `--on`.
@@ -252,9 +248,8 @@ spoiled without it.
   whether the label's recipe changed, since two procedures under one name are two histories. A
   failed run is listed only with `--all`. A record names its jobs, so `dibs out <job>` finds the
   log behind a number.
-- Recipes live in the team clone, `~/.config/dibs/team/recipes/<repo>.toml`, under a person's
-  own `~/.config/dibs/recipes/<repo>.toml`, both over a `.dibs.toml` the repo may carry; dibs
-  ships none. `dibs list` marks the ones that came from the repo.
+- Recipes live in `~/.config/dibs/recipes/<repo>.toml`, over a `.dibs.toml` the repo may carry;
+  dibs ships none. `dibs list` marks the ones that came from the repo.
 - `dibs with <repo>[@<ref>] <service> -- <command>` where a repo declares its servers: the worktree
   is prepared, they are built under the shared lock and started on the machine, and the command
   runs on your side against them, on ports dibs picked. `dibs list <repo>` says which it defines.

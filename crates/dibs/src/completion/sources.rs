@@ -7,7 +7,7 @@ use crate::{
     execution::Repo,
     git::Git,
     inventory::{Inventory, Machine},
-    recipe::{Checkouts, Manifest, RecipeDirs, Verb},
+    recipe::{Checkouts, Manifest, Verb},
     records::RunLog,
 };
 use dibs_format::Moment;
@@ -113,7 +113,7 @@ impl Sources {
 
     /// Repos with recipes on this computer, then checkouts under the root that carry their own.
     fn repos(&self) -> Vec<Candidate> {
-        let mut repos: BTreeSet<String> = RecipeDirs::here().repos().into_iter().collect();
+        let mut repos: BTreeSet<String> = Manifest::local_repos().into_iter().collect();
         if let Some(root) = self.checkouts.as_ref().map(Checkouts::root)
             && let Ok(entries) = std::fs::read_dir(root)
         {

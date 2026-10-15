@@ -1,6 +1,6 @@
 use super::{
     error::RecipeError,
-    manifest::{Listed, Manifest, RecipeDirs, Source, Verb},
+    manifest::{Listed, Manifest, Source, Verb},
     repo::Checkouts,
 };
 use crate::{cli::RecipeCall, execution::Repo};
@@ -17,7 +17,7 @@ pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
             for Listed { name: n, source } in listing {
                 match source {
                     Source::Repo => println!("  {n}   (from the repo)"),
-                    Source::Team | Source::Local => println!("  {n}"),
+                    Source::Local => println!("  {n}"),
                 }
                 // What it accepts, so the valid invocations can be read off rather than
                 // reconstructed from the recipe file.
@@ -48,7 +48,7 @@ pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
         for Listed { name: n, source } in services {
             match source {
                 Source::Repo => println!("  {n}   (from the repo)"),
-                Source::Team | Source::Local => println!("  {n}"),
+                Source::Local => println!("  {n}"),
             }
         }
     }
@@ -58,8 +58,6 @@ pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
             manifest.tree_fresh().join(", ")
         );
     }
-    let dirs = RecipeDirs::here();
-    println!("\nteam recipes: {}", dirs.team.display());
-    println!("your recipes: {}", dirs.own.display());
+    println!("\nlocal recipes: {}", Manifest::local_dir().display());
     Ok(ExitCode::SUCCESS)
 }

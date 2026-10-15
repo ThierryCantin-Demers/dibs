@@ -5,7 +5,6 @@ use crate::{
     },
     inventory::Inventory,
     machine::{Delivery, Installed, Liveness, Provision, Session, Target, TargetEnv},
-    team::Team,
 };
 use dibs_format::{Exit, Label, MachineName, Mode};
 
@@ -83,9 +82,6 @@ impl MachineCall<'_> {
             return Ok(i32::from(Exit::Failed.code()));
         };
         println!("  recorded as [machine.{name}] in {}", file.display());
-        if let Some(note) = Team::push_note(&file) {
-            println!("{note}");
-        }
         Ok(status)
     }
 }

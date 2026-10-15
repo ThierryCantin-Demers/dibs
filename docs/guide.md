@@ -27,17 +27,7 @@ the binary: an edit in the clone changes nothing until the next install, and onl
 needs the clone to be where it was. Installed over a dibs from before, the bash script or a
 binary, it replaces it in one rename, so nothing running sees it half written.
 
-**On a team.** When your team keeps a repo for dibs, join it rather than recording each machine
-yourself:
-
-    dibs --join <owner>/<repo>                 # or any url git clones
-
-It clones the repo to `~/.config/dibs/team`, which brings the team's machines and recipes, then
-tries each machine and says why any cannot be reached yet: usually a key that machine's account
-does not have, or a host ssh has never seen. Those are for whoever runs the machine, or for one
-`ssh` by hand. `dibs --update` pulls the clone from then on.
-
-Otherwise, record your machine yourself. Either way, say where your checkouts live:
+Then record your machine and say where your checkouts live:
 
     dibs --check you@machine --write           # probes it, writes ~/.config/dibs/machines.toml
     export DIBS_ROOT=$HOME/prog                # where your checkouts live, for bare repo names
@@ -105,20 +95,17 @@ runner there, once, as a shared job, and says so before the call goes on.
 ## Where recipes come from
 
 dibs carries no recipes, so it knows nothing about any repo until you describe one. A repo's
-recipes come from three layers, each overriding the one before recipe by recipe: a `.dibs.toml`
-in the repo if it carries one, then `recipes/<repo>.toml` in the team clone, then your own
-`~/.config/dibs/recipes/<repo>.toml`. `dibs list <repo>` marks the ones from the repo and says
-where the other two live.
+recipes come from `~/.config/dibs/recipes/<repo>.toml`, and from a `.dibs.toml` in the repo if it
+carries one, the first overriding the second recipe by recipe. `dibs list <repo>` says which each
+came from.
 
-The team clone is a private repository your team can reach, since recipes name your repos and
-the inventory names your machines, laid out as
+The local directory can be a git clone. Keep it in a private repository your team can reach,
+since recipes name your repos, and everyone clones it into place:
 
-    recipes/<repo>.toml
-    machines.toml
+    git clone <your-recipes-repo> ~/.config/dibs/recipes
 
-`dibs --join` clones it to `~/.config/dibs/team`, and `dibs --update` pulls it along with
-`dibs` itself. An edit is an ordinary commit and push. A recipe still being tried out can sit
-uncommitted in the clone until it settles, or in your own directory, which nobody else reads.
+`dibs --update` pulls it along with `dibs` itself. An edit is an ordinary commit and push, and a
+recipe still being tried out can sit uncommitted in the clone until it settles.
 
 A recipe declares a procedure and names no revisions: the invocation supplies the code, and the
 run record captures what it resolved to. Pinned revisions would bind the procedure to a moment
@@ -589,12 +576,6 @@ shares one memory pool with the CPU. `--check --write` sets it when it finds a b
 machine is still useful for everything that is not a measurement, which is most of what runs.
 A machine someone is using for a while, a desktop during the day, is switched with
 `dibs --measure <machine> off` and back with `on`, in whichever file holds it.
-
-The team clone's `machines.toml` is read under your own: an entry of yours by the same name is
-the one used, such as one reaching a team machine by another address from home. `--check
---write`, `--measure` and `--forget` write to whichever file holds the machine, so a change to a
-team machine is a change to the team's file, which reaches nobody until it is pushed, and each
-says so.
 
 ## Machines that come and go
 

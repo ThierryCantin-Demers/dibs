@@ -9,10 +9,9 @@ use crate::{
     caller::Caller,
     cli::{Call, Mode as Words},
     placement::Placement,
-    team::Team,
     update::Update,
 };
-use dibs_format::{Exit, Label, Mode};
+use dibs_format::{Label, Mode};
 use std::fmt;
 
 const GC_LABEL: &str = "dibs-gc";
@@ -118,13 +117,6 @@ impl Dispatch<'_> {
                 Ok(0)
             }
             Words::Update => Ok(Update::of_this_build().run()),
-            Words::Join(repo) => Ok(match Team::here() {
-                Some(team) => team.join(repo),
-                None => {
-                    eprintln!("dibs: no HOME, so there is nowhere to clone the team's repo");
-                    i32::from(Exit::Setup.code())
-                }
-            }),
         }
     }
 }

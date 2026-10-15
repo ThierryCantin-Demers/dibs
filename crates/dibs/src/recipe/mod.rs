@@ -21,6 +21,6 @@ pub use listing::list;
 #[cfg(test)]
 pub use manifest::Source;
 pub use manifest::Verb;
-pub use manifest::{Manifest, RecipeDirs, Service};
+pub use manifest::{Manifest, Service};
 pub use refusals::Resolved;
 pub use repo::Checkouts;

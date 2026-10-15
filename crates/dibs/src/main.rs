@@ -12,10 +12,9 @@ use dibs::{
     inventory::Inventory,
     machine::Runner,
     paths::FileError,
-    recipe::{self, Checkouts, RecipeDirs},
+    recipe::{self, Checkouts, Manifest},
     records::{Complaints, FrictionLog, RunLog},
     reports::{self, ReportsRepo},
-    team::Team,
     update::{Build, ChangeNotice},
 };
 use std::{path::Path, process::ExitCode};
@@ -86,14 +85,12 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         Invocation::Friction(friction) => Ok(reports::friction_verb(friction)?),
         Invocation::Hook(Hook::Ssh) => Ok(ExitCode::from(SshHook::serve() as u8)),
         Invocation::Recipe(call) => {
-            Team::settle_here();
             let caller = Caller::from_env();
             ChangeNotice::tell_once(&caller);
             reports::Notice { caller: &caller }.tell();
             run(call, &caller)
         }
         Invocation::Call(call) => {
-            Team::settle_here();
             let caller = Caller::from_env();
             if call.mode != Mode::Update {
                 ChangeNotice::tell_once(&caller);
@@ -153,7 +150,7 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
             args.json,
             only,
             Checkouts::of(&args)?.root(),
-            RecipeDirs::here().repos(),
+            Manifest::local_repos(),
             &Inventory::pool()?,
         )?);
     }

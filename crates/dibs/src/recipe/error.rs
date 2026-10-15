@@ -19,7 +19,6 @@ pub enum RecipeError {
     NoRecipes {
         repo: String,
         in_repo: PathBuf,
-        team: PathBuf,
         local: PathBuf,
     },
     Repo(RepoError),
@@ -175,13 +174,11 @@ impl fmt::Display for RecipeError {
             RecipeError::NoRecipes {
                 repo,
                 in_repo,
-                team,
                 local,
             } => write!(
                 f,
-                "no recipes for {repo}: nothing in {}, {} or {}",
+                "no recipes for {repo}: nothing in {} or {}",
                 in_repo.display(),
-                team.display(),
                 local.display()
             ),
             RecipeError::Repo(e) => e.fmt(f),
