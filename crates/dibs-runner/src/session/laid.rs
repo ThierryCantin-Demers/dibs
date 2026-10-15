@@ -53,6 +53,7 @@ impl<'a> Layout<'a> {
         let prepare = match &tree.place {
             Place::At(laid) => {
                 environment.in_tree(PathBuf::from(&laid.worktree), Some(laid.target.clone()));
+                environment.copies(&laid.copies);
                 return Laid::Run(Some(Spot {
                     worktree: PathBuf::from(&laid.worktree),
                     target: PathBuf::from(&laid.target),
@@ -114,6 +115,7 @@ impl<'a> Layout<'a> {
             }
             Then::Step => {
                 environment.in_tree(worktree.clone(), Some(prepared.target.clone()));
+                environment.copies(&prepared.copies);
                 Laid::Run(Some(Spot {
                     worktree,
                     target: PathBuf::from(prepared.target),

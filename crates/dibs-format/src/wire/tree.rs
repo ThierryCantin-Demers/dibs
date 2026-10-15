@@ -1,5 +1,6 @@
 use crate::Pairs;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// The tree a job runs in: prepared at its head under its lock, or one prepared before.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +54,9 @@ pub enum Place {
 pub struct At {
     pub worktree: String,
     pub target: String,
+    /// Each variable a step gets, and the target's copy of a machine directory it names.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub copies: BTreeMap<String, String>,
 }
 
 /// What the machine needs to lay a tree out under its scratch.
@@ -64,6 +68,10 @@ pub struct Prepare {
     pub nest: Option<Nest>,
     /// Paths a new tree starts without when its sources are copied from a sibling's.
     pub fresh: Vec<String>,
+    /// Directories of the machine's, by the variable that names each, that the tree's target
+    /// keeps a copy of for what runs there: a tool's store that one binary rewrites for itself.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub copies: BTreeMap<String, String>,
     pub packages: Option<Packages>,
     /// Git dependencies this computer could send, which the machine is asked whether it lacks.
     pub gitdbs: Vec<GitDb>,
@@ -123,6 +131,9 @@ pub struct Prepared {
     /// How many of its lockfile's groups this tree's own target had, when a sibling's replaced it.
     pub reseeded: Option<u64>,
     pub gitdbs: Option<GitDbs>,
+    /// Where the target keeps its copy of each directory the prepare named, by variable.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub copies: BTreeMap<String, String>,
 }
 
 impl Prepared {
@@ -132,6 +143,7 @@ impl Prepared {
             place: Place::At(At {
                 worktree: self.worktree.clone(),
                 target: self.target.clone(),
+                copies: self.copies.clone(),
             }),
             then: Then::Step,
             step: None,

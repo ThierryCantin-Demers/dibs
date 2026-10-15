@@ -48,6 +48,10 @@ pub enum Named {
     GitDb,
     /// A path inside a tree.
     Fresh,
+    /// A variable a copy is exported under, which also names the copy.
+    Variable,
+    /// A machine directory a target keeps a copy of: absolute, or under the home directory.
+    Copied,
 }
 
 impl Named {
@@ -61,6 +65,17 @@ impl Named {
                     && parts
                         .iter()
                         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+            }
+            Named::Variable => {
+                value.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                    && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            }
+            Named::Copied => {
+                let rest = value.strip_prefix("~/").unwrap_or(value);
+                (value.starts_with("~/") || value.starts_with('/'))
+                    && !Path::new(rest)
+                        .components()
+                        .any(|c| matches!(c, Component::ParentDir))
             }
             _ => !value.is_empty() && !value.starts_with('.') && !value.contains('/'),
         };
@@ -81,6 +96,8 @@ impl Named {
             Named::Token => "lockfile's token",
             Named::GitDb => "git database's name",
             Named::Fresh => "path inside a tree",
+            Named::Variable => "variable's name",
+            Named::Copied => "directory a target copies",
         }
     }
 }

@@ -312,6 +312,41 @@ fn the_last_layer_to_describe_the_tree_decides_what_a_new_one_starts_without() {
 }
 
 #[test]
+fn a_tree_copy_names_a_variable_and_a_directory_on_the_machine() {
+    let tmp = std::env::temp_dir().join(format!("dibs-tree-copies-{}", std::process::id()));
+    write(
+        &tmp,
+        ".dibs.toml",
+        "[tree]\ncopies = { TOOL_STORE = \"~/.cache/tool\", OTHER = \"/var/tool\" }\n",
+    );
+    let m = Manifest::load_from(&tmp, "app", &tmp.join("cfg")).unwrap();
+    assert_eq!(
+        m.tree_copies().into_iter().collect::<Vec<_>>(),
+        [
+            ("OTHER".to_string(), "/var/tool".to_string()),
+            ("TOOL_STORE".to_string(), "~/.cache/tool".to_string())
+        ]
+    );
+    for bad in [
+        r#""1X" = "~/a""#,
+        r#""A-B" = "~/a""#,
+        r#"X = "relative""#,
+        r#"X = "~/../a""#,
+    ] {
+        write(
+            &tmp,
+            ".dibs.toml",
+            &format!("[tree]\ncopies = {{ {bad} }}\n"),
+        );
+        let e = Manifest::load_from(&tmp, "app", &tmp.join("cfg"))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("[tree] copies"), "{bad}: {e}");
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn a_tree_path_that_could_reach_outside_the_tree_is_refused() {
     let tmp = std::env::temp_dir().join(format!("dibs-tree-bad-{}", std::process::id()));
     for bad in [

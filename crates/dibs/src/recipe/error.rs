@@ -69,6 +69,11 @@ pub enum ManifestError {
     },
     /// A `[tree] fresh` path that is not inside the tree.
     Fresh(String),
+    /// A `[tree] copies` entry whose name is no variable, or whose directory is not absolute.
+    Copy {
+        variable: String,
+        dir: String,
+    },
 }
 
 /// What is wrong with a shell's words.
@@ -245,6 +250,11 @@ impl fmt::Display for ManifestError {
                 f,
                 "[tree] fresh lists paths inside the tree, and '{p}' is not one: relative, with no . or .. \
                  part, in letters, digits and ._-/"
+            ),
+            ManifestError::Copy { variable, dir } => write!(
+                f,
+                "[tree] copies names a variable and a directory on the machine, absolute or under ~/ \
+                 and with no .. part, and {variable} = '{dir}' is not one"
             ),
         }
     }

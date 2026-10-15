@@ -17,6 +17,8 @@ pub struct Environment {
     vars: BTreeMap<&'static str, String>,
     /// `DIBS_PORT_<NAME>`, one per `--port`.
     ports: BTreeMap<String, String>,
+    /// The tree's copies of machine directories, each under the variable that names it.
+    copies: BTreeMap<String, String>,
     /// Where the command starts, when not where the runner did.
     dir: Option<PathBuf>,
 }
@@ -52,6 +54,7 @@ impl Environment {
         Ok(Environment {
             vars,
             ports: BTreeMap::new(),
+            copies: BTreeMap::new(),
             dir: None,
         })
     }
@@ -89,6 +92,7 @@ impl Environment {
     pub fn apply(&self, command: &mut Command) {
         command.envs(&self.vars);
         command.envs(&self.ports);
+        command.envs(&self.copies);
         if let Some(dir) = &self.dir {
             command.current_dir(dir);
         }
@@ -100,6 +104,11 @@ impl Environment {
         if let Some(target) = target {
             self.set("CARGO_TARGET_DIR", target);
         }
+    }
+
+    /// The target's copies, each where its variable says.
+    pub fn copies(&mut self, copies: &BTreeMap<String, String>) {
+        self.copies.clone_from(copies);
     }
 }
 

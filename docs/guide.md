@@ -283,6 +283,21 @@ starts without:
 Each entry is a path inside the tree, and anything that could reach outside it is refused when the
 file loads. `dibs list` shows them.
 
+Some tools keep their store outside the tree, one per machine, and rewrite it for whichever
+binary ran last. Two trees taking turns on that machine, the arms of a comparison or main against
+a branch, then rewrite it for each other on every turn. `copies` gives each build cache a copy of
+its own:
+
+    [tree]
+    copies = { TOOL_STORE = "~/.cache/tool/store" }
+
+The first prepare of a build cache copies the machine's directory into it, or starts it empty
+when the machine has none, and everything that runs in the tree, a recipe's steps and a
+service's servers alike, finds the copy's path in the variable. From then on each arm rewrites
+only its own, for the binary it builds, and the copy goes when its build cache does. A build
+cache seeded from a sibling's starts from the sibling's copy instead. The directory is absolute
+or under `~/`, and `dibs bench --dry-run` and `dibs list` show each one.
+
 ## Build caching
 
 dibs sets no compiler wrapper and leaves incremental compilation to each profile, so dev builds

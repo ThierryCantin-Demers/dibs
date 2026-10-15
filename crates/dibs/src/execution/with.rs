@@ -178,6 +178,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         slot: 0,
         nest: nest.as_ref(),
         fresh: manifest.tree_fresh(),
+        copies: &manifest.tree_copies(),
     }
     .plan();
     let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
@@ -242,9 +243,14 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     plan.send_missing(&backend, &prepared);
 
     // A server and a command run there are started in the tree, with the repo's build cache.
+    let copies: String = prepared
+        .copies
+        .iter()
+        .map(|(k, v)| format!("export {k}={} && ", ShellWord(v)))
+        .collect();
     let in_tree_shell = |run: &str| {
         format!(
-            "cd {} && export CARGO_TARGET_DIR={} && {{ {run}; }}",
+            "cd {} && export CARGO_TARGET_DIR={} && {copies}{{ {run}; }}",
             ShellWord(&prepared.worktree),
             ShellWord(&prepared.target)
         )

@@ -24,6 +24,7 @@ pub struct Resolved {
     pub shell_reason: Option<String>,
     pub params: BTreeMap<String, String>,
     pub tree_fresh: Vec<String>,
+    pub tree_copies: BTreeMap<String, String>,
 }
 
 /// A shell's own words are refused before its tree is looked for, and all in one refusal, so
@@ -174,6 +175,7 @@ impl Resolved {
             shell_reason,
             params,
             tree_fresh: manifest.tree_fresh().to_vec(),
+            tree_copies: manifest.tree_copies(),
         })
     }
 }

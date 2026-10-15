@@ -70,6 +70,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         shell_reason,
         params,
         tree_fresh,
+        tree_copies,
     } = resolved;
     let (name, rec) = (name.as_str(), &rec);
     let fingerprint = rec.fingerprint();
@@ -160,6 +161,9 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         }
         for v in &rec.fresh {
             println!("fresh       {v}, a value of its own each run");
+        }
+        for (v, dir) in &tree_copies {
+            println!("copies      {v}, the build cache's own copy of {dir}");
         }
         if !rec.artifacts.is_empty() {
             println!("artifacts   {}", rec.artifacts.join(" "));
@@ -254,6 +258,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             slot,
             nest: nest.as_ref(),
             fresh: &tree_fresh,
+            copies: &tree_copies,
         }
         .plan();
         slot += usize::from(arm.fetch.is_some());
@@ -695,6 +700,7 @@ impl Pinned {
                 slot: 0,
                 nest: None,
                 fresh: fresh.tree_fresh(),
+                copies: &fresh.tree_copies(),
             }
             .plan();
             let reported = match &p.local {

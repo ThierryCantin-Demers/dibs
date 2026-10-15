@@ -1139,6 +1139,53 @@ fn fresh_gives_each_run_a_value_of_its_own() {
 }
 
 #[test]
+fn each_build_cache_keeps_its_own_copy_of_a_store_its_tool_rewrites() {
+    // A tool that keeps one store per machine and rewrites it for whichever binary ran last
+    // would have two trees taking turns rewrite it for each other on every turn.
+    let s = Sandbox::new();
+    let app = app(&s);
+    s.write("home/.cache/tool/store/saved", "the machine's\n");
+    recipes(
+        &s,
+        "[tree]\ncopies = { TOOL_STORE = \"~/.cache/tool/store\" }\n\n\
+         [bench.tool]\n  [[bench.tool.step]]\n  lock = \"exclusive\"\n  \
+         run = \"cat $TOOL_STORE/saved && echo rewritten > $TOOL_STORE/saved\"\n",
+    );
+    assert_eq!(
+        s.dibs(["list", &app])
+            .run()
+            .stdout
+            .lines_with("~/.cache/tool/store, as $TOOL_STORE"),
+        1
+    );
+    let local = format!("{app}@local");
+    let first = s.dibs(["bench", &local, "tool"]).run();
+    assert_eq!(
+        (first.code, first.stdout.lines_with("the machine's")),
+        (0, 1),
+        "{}",
+        first.all()
+    );
+    assert_eq!(
+        s.dibs(["bench", &local, "tool"])
+            .run()
+            .stdout
+            .lines_with("rewritten"),
+        1,
+        "the next run of the tree reads what the last one saved"
+    );
+    assert_eq!(
+        s.dibs(["bench", &format!("{app}@main"), "tool"])
+            .run()
+            .stdout
+            .lines_with("the machine's"),
+        1,
+        "another tree starts from the machine's, which nothing rewrote"
+    );
+    assert_eq!(s.read("home/.cache/tool/store/saved"), "the machine's\n");
+}
+
+#[test]
 fn a_worktree_is_a_line_of_work_on_its_repo_not_a_repo_of_its_own() {
     let mut s = Sandbox::new();
     let app = app(&s);

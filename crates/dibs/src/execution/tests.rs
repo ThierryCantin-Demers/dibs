@@ -435,5 +435,6 @@ fn resolved(steps: Vec<Step>) -> Resolved {
         shell_reason: None,
         params: BTreeMap::new(),
         tree_fresh: Vec::new(),
+        tree_copies: BTreeMap::new(),
     }
 }

@@ -73,6 +73,11 @@ pub struct Tree {
     /// keeps inside the tree, whose contents would be the sibling's results rather than its own.
     #[serde(default)]
     pub fresh: Vec<String>,
+    /// Machine directories each build cache keeps a copy of, by the variable that points what
+    /// runs there at it: a store a tool rewrites for whichever binary ran last, which two trees
+    /// taking turns would otherwise rewrite for each other on every turn.
+    #[serde(default)]
+    pub copies: BTreeMap<String, String>,
 }
 
 impl Tree {
@@ -84,6 +89,20 @@ impl Tree {
                     .all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
             if !inside {
                 return Err(ManifestError::Fresh(p.clone()));
+            }
+        }
+        for (variable, dir) in &self.copies {
+            let named = variable.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                && variable
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
+            let placed = (dir.starts_with("~/") || dir.starts_with('/'))
+                && !dir.split('/').any(|c| c == "..");
+            if !named || !placed {
+                return Err(ManifestError::Copy {
+                    variable: variable.clone(),
+                    dir: dir.clone(),
+                });
             }
         }
         Ok(())
@@ -240,6 +259,14 @@ impl Manifest {
     /// What a new tree of this repo starts without, from whichever layer last said.
     pub fn tree_fresh(&self) -> &[String] {
         self.tree.as_ref().map_or(&[], |t| &t.fresh)
+    }
+
+    /// The machine directories each build cache of this repo keeps a copy of, by variable.
+    pub fn tree_copies(&self) -> BTreeMap<String, String> {
+        self.tree
+            .as_ref()
+            .map(|t| t.copies.clone())
+            .unwrap_or_default()
     }
 
     fn absorb(&mut self, other: Manifest, src: Source) {

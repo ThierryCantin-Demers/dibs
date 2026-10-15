@@ -4,7 +4,7 @@ use crate::{
     tree::{
         builds::Builds,
         clocks::{Clocks, Contents as _, Dates as _, Removal, USED},
-        copy::{Copier, Reflinks},
+        copy::{Copier, Reflinks, Sharing},
         error::{Named, PrepareError},
         git::{Commands, Git, Replied as _},
         packages::{Cache, Lines},
@@ -15,6 +15,7 @@ use crate::{
 };
 use dibs_format::wire::{GitDb, GitDbs, Nest, Prepare, Prepared, Revision, Seeded, Source};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU32, Ordering},
@@ -47,6 +48,8 @@ pub struct TreeConfig<'a> {
 
 /// What names a sent tree, ahead of its key.
 pub const LOCAL: &str = "local-";
+/// Where a target keeps its copies of machine directories, one per variable.
+const COPIES: &str = "dibs-copies";
 /// A tree whose target was prepared this recently may be about to be entered by another call.
 const IN_USE: Duration = Duration::from_secs(15 * 60);
 /// A reseed is worth its copy only from a sibling sharing more of the lockfile than the tree's
@@ -80,6 +83,7 @@ struct Placed {
     sha: String,
     seeded: Option<Seeded>,
     reseeded: Option<u64>,
+    copies: BTreeMap<String, String>,
 }
 
 /// A local tree's target that had built clearly less of its lockfile than a sibling has, and
@@ -129,6 +133,7 @@ impl<'a> Trees<'a> {
             seeded: laid.seeded,
             reseeded: laid.reseeded,
             gitdbs,
+            copies: laid.copies,
         })
     }
 
@@ -148,6 +153,10 @@ impl<'a> Trees<'a> {
         }
         for fresh in &prepare.fresh {
             Named::Fresh.check(fresh)?;
+        }
+        for (variable, dir) in &prepare.copies {
+            Named::Variable.check(variable)?;
+            Named::Copied.check(dir)?;
         }
         for db in &prepare.gitdbs {
             Named::GitDb.check(&db.name)?;
@@ -221,6 +230,7 @@ impl<'a> Trees<'a> {
             let _ = fs::remove_file(target.join(".dibs-tree"));
         }
         self.cache(&target, prepare, packages)?;
+        let copies = self.copies(prepare, &target, stamp)?;
         drop(target_turn);
         self.sweep();
         if let Ok(pruned) = self.commands.git(&source, &["worktree", "prune"]) {
@@ -232,6 +242,7 @@ impl<'a> Trees<'a> {
             sha: short,
             seeded,
             reseeded: None,
+            copies,
         })
     }
 
@@ -391,6 +402,7 @@ impl<'a> Trees<'a> {
         self.made_used(&worktree)?;
         self.made_repo(&worktree);
         self.cache(&target, prepare, packages)?;
+        let copies = self.copies(prepare, &target, stamp)?;
         drop(target_turn);
         drop(turn);
         self.nest(prepare, stamp)?;
@@ -401,6 +413,7 @@ impl<'a> Trees<'a> {
             sha: String::new(),
             seeded,
             reseeded,
+            copies,
         })
     }
 
@@ -571,6 +584,49 @@ impl<'a> Trees<'a> {
         }
         cache.forget_unbuilt();
         Ok(())
+    }
+
+    /// The target's copy of each directory the prepare names, made the first time from the
+    /// machine's, or empty when the machine has none. Holding the target's turn.
+    fn copies(
+        &self,
+        prepare: &Prepare,
+        target: &Path,
+        stamp: &Stamp,
+    ) -> Result<BTreeMap<String, String>, PrepareError> {
+        let mut copies = BTreeMap::new();
+        for (variable, dir) in &prepare.copies {
+            let copy = target.join(COPIES).join(variable);
+            if !copy.exists() {
+                let from = match dir.strip_prefix("~/") {
+                    Some(rest) => self.config.home.join(rest),
+                    None => PathBuf::from(dir),
+                };
+                let part = target
+                    .join(COPIES)
+                    .join(format!(".{variable}.{}", stamp.as_str()));
+                self.made(&target.join(COPIES))?;
+                let copied = match from.is_dir() {
+                    true => {
+                        (self.say)(&format!(
+                            "dibs: copying {} for {variable}, once for this build cache\n",
+                            from.display()
+                        ));
+                        self.copier.tree(&from, &part, Sharing::Preferred)
+                    }
+                    false => fs::create_dir(&part),
+                };
+                if let Err(e) = copied.and_then(|()| fs::rename(&part, &copy)) {
+                    part.remove_all();
+                    return Err(PrepareError::io(
+                        &format!("could not copy {} for {variable}", from.display()),
+                        e,
+                    ));
+                }
+            }
+            copies.insert(variable.clone(), copy.display().to_string());
+        }
+        Ok(copies)
     }
 
     fn sweep(&self) {

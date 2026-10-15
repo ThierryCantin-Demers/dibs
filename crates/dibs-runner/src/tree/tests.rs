@@ -14,6 +14,7 @@ use dibs_format::{
 };
 use std::{
     cell::RefCell,
+    collections::BTreeMap,
     fs::{self, File},
     io::{BufRead as _, BufReader},
     os::unix::{fs::FileTypeExt as _, net::UnixListener},
@@ -236,6 +237,7 @@ fn fetched(reference: &str, slot: u32) -> Prepare {
         },
         nest: None,
         fresh: Vec::new(),
+        copies: BTreeMap::new(),
         packages: None,
         gitdbs: Vec::new(),
     }
@@ -535,6 +537,41 @@ fn a_seeded_tree_starts_without_exactly_what_its_repo_names() {
     let wt = PathBuf::from(&p.worktree);
     assert!(wt.join("kept.rs").exists() && wt.join("cachefile").exists());
     assert!(!wt.join("cache").exists());
+}
+
+#[test]
+fn a_target_keeps_its_own_copy_of_a_machine_directory_from_its_first_prepare() {
+    let m = Machine::new();
+    fs::create_dir_all(m.p("home/.cache/tool/store")).unwrap();
+    fs::write(m.p("home/.cache/tool/store/saved"), "the machine's").unwrap();
+    let copying = Prepare {
+        copies: BTreeMap::from([
+            ("TOOL_STORE".into(), "~/.cache/tool/store".into()),
+            ("NEW_STORE".into(), "~/.cache/tool/none".into()),
+        ]),
+        ..local("one", &[])
+    };
+    let p = m.prepared(&copying);
+    let copy = PathBuf::from(&p.copies["TOOL_STORE"]);
+    assert!(copy.starts_with(&p.target), "{copy:?} is the target's");
+    assert_eq!(
+        fs::read_to_string(copy.join("saved")).unwrap(),
+        "the machine's"
+    );
+    assert!(
+        PathBuf::from(&p.copies["NEW_STORE"]).is_dir(),
+        "a directory the machine lacks starts empty"
+    );
+
+    fs::write(copy.join("saved"), "this tree's").unwrap();
+    fs::write(m.p("home/.cache/tool/store/saved"), "rewritten").unwrap();
+    let again = m.prepared(&copying);
+    assert_eq!(again.copies, p.copies);
+    assert_eq!(
+        fs::read_to_string(copy.join("saved")).unwrap(),
+        "this tree's",
+        "a later prepare keeps what the tree wrote"
+    );
 }
 
 #[test]
@@ -1442,6 +1479,9 @@ fn a_value_from_the_wire_that_names_a_path_elsewhere_is_refused() {
         with(&|p| p.fresh = vec!["../../home".into()]),
         with(&|p| p.fresh = vec![".".into()]),
         with(&|p| p.fresh = vec!["/etc".into()]),
+        with(&|p| p.copies = BTreeMap::from([("../x".into(), "~/store".into())])),
+        with(&|p| p.copies = BTreeMap::from([("STORE".into(), "store".into())])),
+        with(&|p| p.copies = BTreeMap::from([("STORE".into(), "~/../other".into())])),
         with(&|p| {
             p.gitdbs = vec![GitDb {
                 name: "../db".into(),

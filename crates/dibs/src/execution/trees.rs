@@ -21,7 +21,7 @@ use crate::{
     recipe::Lock,
 };
 use dibs_format::wire;
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 /// What the machine needs to know to prepare one tree.
 pub struct TreeSpec<'a> {
@@ -34,6 +34,7 @@ pub struct TreeSpec<'a> {
     pub slot: usize,
     pub nest: Option<&'a Nest>,
     pub fresh: &'a [String],
+    pub copies: &'a BTreeMap<String, String>,
 }
 
 /// A tree as the machine is asked to lay it out, and the git databases it may need sent.
@@ -71,6 +72,7 @@ impl TreeSpec<'_> {
                 config: n.config.clone(),
             }),
             fresh: self.fresh.to_vec(),
+            copies: self.copies.clone(),
             packages: (!lines.is_empty()).then(|| wire::Packages {
                 token: self.token.to_string(),
                 lines,
