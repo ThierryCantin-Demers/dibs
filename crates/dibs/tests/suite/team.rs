@@ -72,6 +72,10 @@ fn a_recipes_clone_moves_to_where_the_teams_is_read_once_it_has_the_teams_layout
     let s = Sandbox::new();
     let origin = team_origin(&s, "app.toml");
     s.git(".", &["clone", "-q", &origin, "home/.config/dibs/recipes"]);
+    s.write(
+        "home/.config/dibs/machines.toml",
+        "[machine.rig]\nssh = \"dibs@rig.example\"\n",
+    );
     let out = s.dibs(["--on", "mac", "--which"]).run();
     assert_eq!(
         (out.code, out.stderr.lines_with("moved")),
@@ -87,9 +91,14 @@ fn a_recipes_clone_moves_to_where_the_teams_is_read_once_it_has_the_teams_layout
     s.git("home/.config/dibs/recipes", &["pull", "-q", "--ff-only"]);
     let out = s.dibs(["--on", "mac", "--which"]).run();
     assert_eq!(
-        (out.stdout.as_str(), out.stderr.lines_with("so it moved to")),
-        ("mac\n", 1),
-        "{}",
+        (
+            out.stdout.as_str(),
+            out.stderr.lines_with("so it moved to"),
+            out.stderr
+                .lines_with("`dibs --forget rig` follows the team's")
+        ),
+        ("mac\n", 1, 1),
+        "and says which of the person's own machines hide the team's: {}",
         out.all()
     );
     assert!(s.path("home/.config/dibs/team/recipes/app.toml").is_file());

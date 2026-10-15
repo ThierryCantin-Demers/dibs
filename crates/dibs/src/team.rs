@@ -136,23 +136,7 @@ impl Team {
         let named: Vec<String> = machines.iter().map(MachineName::to_string).collect();
         let _ = writeln!(text, "  machines: {}", list(&named));
         let _ = writeln!(text, "  recipes:  {}", list(&repos));
-        let own = Paths::from_env()
-            .inventory()
-            .map(|file| Team::names_in(&file))
-            .unwrap_or_default();
-        let shadowed: Vec<String> = machines
-            .iter()
-            .filter(|m| own.contains(m))
-            .map(MachineName::to_string)
-            .collect();
-        if !shadowed.is_empty() {
-            let _ = writeln!(
-                text,
-                "  Your own machines.toml also has {}, used in place of the team's: remove {} there to follow the team's.",
-                shadowed.join(", "),
-                if shadowed.len() == 1 { "it" } else { "them" }
-            );
-        }
+        text.push_str(&self.shadowed());
         let mine: BTreeSet<String> = RecipeDirs::repos_in(&dirs.own).into_iter().collect();
         let overridden: Vec<&String> = repos.iter().filter(|r| mine.contains(*r)).collect();
         if !overridden.is_empty() {
@@ -168,6 +152,27 @@ impl Team {
             );
         }
         text
+    }
+
+    /// The team's machines this person's own inventory also has, whose entries win.
+    fn shadowed(&self) -> String {
+        let own = Team::names_in(&self.dir.with_file_name("machines.toml"));
+        let shadowed: Vec<String> = self
+            .machines()
+            .iter()
+            .filter(|m| own.contains(m))
+            .map(MachineName::to_string)
+            .collect();
+        match shadowed.as_slice() {
+            [] => String::new(),
+            [one] => format!(
+                "  Your own machines.toml also has {one}, used in place of the team's: `dibs --forget {one}` follows the team's.\n"
+            ),
+            many => format!(
+                "  Your own machines.toml also has {}, used in place of the team's: `dibs --forget <machine>` on each follows the team's.\n",
+                many.join(", ")
+            ),
+        }
     }
 
     /// Each machine tried at once, and what stops the ones that do not answer.
@@ -238,10 +243,11 @@ impl Team {
             return;
         }
         match std::fs::rename(own, &self.dir) {
-            Ok(()) => eprintln!(
-                "dibs: {} holds the team's machines as well as its recipes now, so it moved to {}.",
+            Ok(()) => eprint!(
+                "dibs: {} holds the team's machines as well as its recipes now, so it moved to {}.\n{}",
                 own.display(),
-                self.dir.display()
+                self.dir.display(),
+                self.shadowed()
             ),
             Err(e) => eprintln!(
                 "dibs: {} is the team's clone, and could not move to {}: {e}",
