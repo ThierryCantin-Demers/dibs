@@ -4,8 +4,9 @@ use dibs_format::{Alias, BatchId, JobId, Label, MachineName};
 /// What one `dibs` command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Invocation {
-    /// `-h` or `--help`: the help on stdout, exit 0.
-    Help,
+    /// `-h` or `--help`: the help on stdout, exit 0, only the part of it about the subcommand
+    /// it follows when it follows one.
+    Help(Option<&'static str>),
     /// `--friction ...` or `friction ...`.
     Friction(Friction),
     /// A recipe verb and everything after it.

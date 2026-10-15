@@ -418,9 +418,17 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
                 ..Run::default()
             })),
         ),
-        (vec!["-h"], Invocation::Help),
-        (vec!["--help"], Invocation::Help),
-        (vec!["status", "-h"], Invocation::Help),
+        (vec!["-h"], Invocation::Help(None)),
+        (vec!["--help"], Invocation::Help(None)),
+        (vec!["status", "-h"], Invocation::Help(Some("status"))),
+        (vec!["run", "--help"], Invocation::Help(Some("run"))),
+        (vec!["fetch", "--help"], Invocation::Help(Some("fetch"))),
+        (
+            vec!["friction", "--help"],
+            Invocation::Help(Some("friction")),
+        ),
+        (vec!["--friction", "-h"], Invocation::Help(Some("friction"))),
+        (vec!["hook", "--help"], Invocation::Help(Some("hook"))),
         (
             vec!["--friction", "a line", "more"],
             Invocation::Friction(Friction::Note {
@@ -610,8 +618,12 @@ fn recipes() -> Vec<(Vec<&'static str>, Invocation)> {
                 ..recipe(RecipeVerb::Machines, "")
             }),
         ),
-        (vec!["build", "--help"], Invocation::Help),
-        (vec!["list", "-h"], Invocation::Help),
+        (vec!["build", "--help"], Invocation::Help(Some("build"))),
+        (vec!["list", "-h"], Invocation::Help(Some("list"))),
+        (
+            vec!["machines", "--help"],
+            Invocation::Help(Some("machines")),
+        ),
         (vec!["build", "--version"], Invocation::Version),
     ]
 }

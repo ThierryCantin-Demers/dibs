@@ -72,12 +72,16 @@ fn help() {
     );
     snapshot(
         "help-recipes",
-        &transcript_of(&s, &n, &[&["build", "--help"], &["build"]]),
+        &transcript_of(
+            &s,
+            &n,
+            &[&["build", "--help"], &["machines", "--help"], &["build"]],
+        ),
     );
-    assert_eq!(
+    assert_ne!(
         s.dibs(["list", "-h"]).run().stdout,
         s.dibs(["build", "--help"]).run().stdout,
-        "every verb gives one help"
+        "each verb gives the help that is its own"
     );
 }
 

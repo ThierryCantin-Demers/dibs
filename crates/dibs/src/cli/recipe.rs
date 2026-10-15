@@ -199,7 +199,7 @@ impl RecipeCall {
                 "--reason" => call.reason = Some(value("--reason needs a sentence")?),
                 "--device" => call.device = Some(value("--device needs an alias")?),
                 "--on" => call.on = Some(value("--on needs a machine")?),
-                "-h" | "--help" => return Ok(Invocation::Help),
+                "-h" | "--help" => return Ok(Invocation::Help(Some(verb.as_str()))),
                 "--version" => return Ok(Invocation::Version),
                 "--root" => call.root = Some(PathBuf::from(value("--root needs a path")?)),
                 "--sweep" => {

@@ -77,8 +77,8 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         }
     };
     match invocation {
-        Invocation::Help => {
-            print!("{}", Help::text());
+        Invocation::Help(subcommand) => {
+            print!("{}", Help::of(subcommand));
             Ok(ExitCode::SUCCESS)
         }
         Invocation::Version => Ok(version()),
@@ -203,6 +203,12 @@ fn friction_replies(into: &Path) -> Result<ExitCode, RunError> {
 /// `dibs completions <shell>` prints the script, and `--install` writes it where the shell
 /// looks. Nothing installs it otherwise: completion is for whoever asks for it.
 fn completions(words: &[String]) -> ExitCode {
+    if let [help] = words
+        && matches!(help.as_str(), "-h" | "--help")
+    {
+        print!("{}", Help::of(Some("completions")));
+        return ExitCode::SUCCESS;
+    }
     let (shell, install) = match words {
         [shell] => (Shell::named(shell), false),
         [shell, flag] if flag == "--install" => (Shell::named(shell), true),

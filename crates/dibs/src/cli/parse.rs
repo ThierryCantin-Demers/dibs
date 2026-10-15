@@ -290,7 +290,7 @@ impl Parser {
                 }
                 "--new-series" => self.call.new_series = true,
                 "--stream" => self.call.stream = true,
-                "-h" | "--help" => return Ok(Invocation::Help),
+                "-h" | "--help" => return Ok(Invocation::Help(self.help_topic())),
                 "--" => return self.rest(&words[at..]),
                 flag if flag.starts_with('-') => {
                     return Err(match REMOVED.iter().find(|(gone, _)| *gone == flag) {
@@ -324,6 +324,19 @@ impl Parser {
         self.rest(&[])
     }
 
+    /// The subcommand a `--help` among the flags asks about, by the word that names it.
+    fn help_topic(&self) -> Option<&'static str> {
+        match self.word {
+            Word::Status | Word::Watch => Some("status"),
+            Word::Out => Some("out"),
+            Word::Fetch => Some("fetch"),
+            Word::Gc => Some("gc"),
+            Word::Bench => Some("run"),
+            Word::Shared if self.subcommand || self.hold => Some("run"),
+            _ => None,
+        }
+    }
+
     fn out(&mut self, value: Option<&String>) -> usize {
         self.word = Word::Out;
         match value.filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit() || b == b'-'))
@@ -339,7 +352,10 @@ impl Parser {
     /// The job is the next word, whatever it is; the directory is the one after, unless a flag.
     fn fetch(&mut self, after: &[String]) -> usize {
         self.word = Word::Fetch;
-        let Some(job) = after.first() else {
+        let Some(job) = after
+            .first()
+            .filter(|job| !matches!(job.as_str(), "-h" | "--help"))
+        else {
             return 0;
         };
         self.fetch_job = job.clone();
@@ -713,6 +729,9 @@ impl Hook {
         }
         match words {
             [kind] if kind == "ssh" => Ok(Invocation::Hook(Hook::Ssh)),
+            [help] if matches!(help.as_str(), "-h" | "--help") => {
+                Ok(Invocation::Help(Some("hook")))
+            }
             _ => Err(CliError::new("dibs: hook takes one kind of hook: ssh")),
         }
     }
@@ -724,6 +743,7 @@ impl Friction {
         let first = words.first().filter(|w| !w.is_empty());
         let first = first.ok_or(CliError::needs_value("--friction"))?;
         let friction = match first.as_str() {
+            "-h" | "--help" => return Ok(Invocation::Help(Some("friction"))),
             "--wait" => match &words[1..] {
                 [] => Friction::Wait { max: None },
                 [flag, secs] if flag == "--max" => Friction::Wait {
