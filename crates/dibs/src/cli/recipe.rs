@@ -53,7 +53,6 @@ impl RecipeVerb {
         }
     }
 
-    /// Whether it runs without a repo named after it.
     /// Whether the verb runs a recipe's jobs, or answers from what is recorded here.
     pub fn runs_jobs(self) -> bool {
         matches!(
@@ -66,6 +65,21 @@ impl RecipeVerb {
         )
     }
 
+    /// Whether a `--<name> <value>` it has no flag for is a value for the recipe or the one-off,
+    /// which checks it, rather than a mistyped flag.
+    fn takes_values(self) -> bool {
+        matches!(
+            self,
+            RecipeVerb::Build
+                | RecipeVerb::Test
+                | RecipeVerb::Bench
+                | RecipeVerb::Shell
+                | RecipeVerb::Raw
+                | RecipeVerb::With
+        )
+    }
+
+    /// Whether it runs without a repo named after it.
     fn needs_no_repo(self) -> bool {
         matches!(
             self,
@@ -242,6 +256,12 @@ impl RecipeCall {
                 "--dry-run" => call.dry_run = true,
                 "--verbose" | "-v" => call.verbose = true,
                 "-" => positional.push("-".into()),
+                flag if flag.starts_with("--") && !verb.takes_values() => {
+                    let name = flag.split_once('=').map_or(flag, |(name, _)| name);
+                    return Err(refused(format!(
+                        "{verb} has no {name} option; dibs {verb} --help says what it takes"
+                    )));
+                }
                 flag if flag.starts_with("--") => {
                     let (name, value) = match flag.split_once('=') {
                         Some((name, value)) => (name, Some(value.to_string())),

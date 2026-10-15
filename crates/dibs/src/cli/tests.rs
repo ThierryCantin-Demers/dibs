@@ -716,6 +716,16 @@ fn refusals() -> Vec<(Vec<&'static str>, &'static str, bool)> {
             false,
         ),
         (
+            vec!["machines", "--list", "x"],
+            "dibs: machines has no --list option; dibs machines --help says what it takes",
+            false,
+        ),
+        (
+            vec!["runs", "--label=x"],
+            "dibs: runs has no --label option; dibs runs --help says what it takes",
+            false,
+        ),
+        (
             vec!["bench", "app", "--sweep", "n"],
             "dibs: --sweep takes <name>=<value,value,...>, not n",
             false,
