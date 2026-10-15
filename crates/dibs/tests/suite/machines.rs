@@ -1048,6 +1048,41 @@ fn an_unreachable_machine_with_its_own_ssh_config_names_it() {
 }
 
 #[test]
+fn a_bastion_asking_for_its_second_factor_again_is_not_about_keys() {
+    let mut s = Sandbox::new();
+    s.machines("");
+    s.write("gone.ssh", "# opened by a second factor\n");
+    s.write(
+        "machines.d/gone.toml",
+        &format!(
+            "[machine.gone]\nssh = \"gone\"\nhostname = \"gone\"\nssh_config = \"{}\"\n",
+            s.p("gone.ssh")
+        ),
+    );
+    s.write_exec(
+        "fails/ssh",
+        "#!/bin/bash\necho 'me@bastion: Permission denied (keyboard-interactive).' >&2\nexit 255\n",
+    );
+    let out = s
+        .dibs(["--on", "gone", "--status"])
+        .env("PATH", format!("{}:{}", s.p("fails"), s.var("PATH")))
+        .env("DIBS_LOCAL", "0")
+        .run();
+    assert_eq!(
+        (
+            out.code,
+            out.stderr
+                .lines_with("asked for keyboard-interactive, a prompt such as a second factor"),
+            out.stderr.lines_with("as that file says"),
+            out.stderr.lines_with("authorized_keys"),
+        ),
+        (69, 1, 1, 0),
+        "{}",
+        out.all()
+    );
+}
+
+#[test]
 fn a_batch_says_why_a_step_could_not_reach_its_machine() {
     let mut s = Sandbox::new();
     let app = crate::recipes::app(&s);

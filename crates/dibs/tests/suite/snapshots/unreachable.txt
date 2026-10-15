@@ -37,6 +37,14 @@
 2|   Load it once:  ssh-add /keys/id_ed25519
 2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
 
+== dibs --on box-a --status  (a login that wants a prompt answered)
+-> exit 69
+2| dibs@box-a: Permission denied (keyboard-interactive).
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   It answered and asked for keyboard-interactive, a prompt such as a second factor, which dibs cannot answer:
+2|   your key is not what is missing. The user has to open the login, such as with a shared connection.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
 == dibs --on box-a --status  (a refused connection)
 -> exit 69
 2| ssh: connect to host box-a port 22: Connection refused

@@ -79,6 +79,17 @@ impl Unreachable<'_> {
                 "  certainly up: this is about trust, not reachability.".into(),
                 format!("  Record the key by connecting once by hand:  ssh {host}"),
             ])
+        } else if let Some(methods) = Unreachable::prompted(&why) {
+            let opened = match self.target.ssh_config {
+                Some(_) => "The user opens the way in, as that file says.",
+                None => "The user has to open the login, such as with a shared connection.",
+            };
+            Some(vec![
+                format!(
+                    "  It answered and asked for {methods}, a prompt such as a second factor, which dibs cannot answer:"
+                ),
+                format!("  your key is not what is missing. {opened}"),
+            ])
         } else if said("Permission denied") {
             let mut lines = vec![
                 "  It answered and refused the login, so it is up and this is about keys.".into(),
@@ -139,6 +150,13 @@ impl Unreachable<'_> {
             "  Do not retry in a loop. Tell the user, and do the work that does not need the machine.\n",
         );
         text
+    }
+
+    /// The methods a refused login still offered, when none is a key: what a server lists once
+    /// it took the key and wants the rest typed, which only a person can.
+    fn prompted(why: &str) -> Option<&str> {
+        let methods = why.split_once("Permission denied (")?.1.split_once(')')?.0;
+        (!methods.split(',').any(|method| method == "publickey")).then_some(methods)
     }
 
     /// ssh offers a key's public half before it needs the private one, so a machine that takes a

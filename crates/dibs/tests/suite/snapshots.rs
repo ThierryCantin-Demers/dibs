@@ -1319,6 +1319,12 @@ fn unreachable() {
             "1",
         ),
         (
+            "a login that wants a prompt answered",
+            "dibs@box-a: Permission denied (keyboard-interactive).",
+            "",
+            "",
+        ),
+        (
             "a refused connection",
             "ssh: connect to host box-a port 22: Connection refused",
             "",
