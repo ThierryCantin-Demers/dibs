@@ -2,8 +2,9 @@ use crate::harness::*;
 use crate::snapshot::*;
 
 /// A gh that answers from files in `ghd/` and writes down every call, acting as the account in
-/// `ghd/login`. Its webhook forward posts `ghd/event.json` to dibs's listener once it has said it
-/// is forwarding, then holds until killed.
+/// `ghd/login`. Its webhook forward makes the repo's hook, refused while one is left as GitHub
+/// does, posts `ghd/event.json` to dibs's listener once it has said it is forwarding, then holds
+/// until killed, leaving its hook behind.
 fn fake_gh(s: &Sandbox, visibility: &str) {
     let d = s.p("ghd");
     s.write("ghd/visibility", &format!("{visibility}\n"));
@@ -22,8 +23,12 @@ case "$1 $2" in
     "issue list") cat "$d/issues.json" ;;
     "issue comment") echo "https://github.com/o/r/issues/$3#issuecomment-99" ;;
     "issue close") ;;
+    "api repos/o/r/hooks") [ -e "$d/hook" ] && echo 41 ;;
+    "api -X") rm -f "$d/hook" ;;
     "webhook forward")
         while [ $# -gt 0 ]; do [ "$1" = --url ] && url=$2; shift; done
+        if [ -e "$d/hook" ]; then echo "Error: error creating webhook: HTTP 422: Hook already exists on this repository" >&2; exit 1; fi
+        touch "$d/hook"
         echo "Forwarding Webhook events from GitHub..." >&2
         if [ -e "$d/stop-once" ]; then rm "$d/stop-once"; echo "error: the websocket closed" >&2; exit 1; fi
         curl -s -X POST -H "X-GitHub-Event: issue_comment" --data @"$d/event.json" "$url" >/dev/null
@@ -306,6 +311,12 @@ fn a_forwarder_that_stops_is_started_again_rather_than_listened_past() {
         1,
         "{}",
         out.all()
+    );
+    assert_eq!(
+        gh_log(&s).lines_with("api -X DELETE repos/o/r/hooks/41"),
+        2,
+        "each forward's hook goes with it, or GitHub refuses the next: {}",
+        gh_log(&s)
     );
 }
 

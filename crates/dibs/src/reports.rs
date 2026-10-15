@@ -613,8 +613,13 @@ impl Forwarded {
 }
 
 /// `gh webhook forward`, which relays the repo's webhooks over its own connection to GitHub, so
-/// nothing here has to be reachable from outside. The webhook it made goes when it does.
-struct Forward(Child);
+/// nothing here has to be reachable from outside. gh never deletes the webhook it made, and GitHub
+/// keeps one whose connection dropped, refusing the next forward, so this deletes it when dropped.
+struct Forward {
+    gh: Child,
+    /// The webhook's API path, once gh has made it.
+    hook: Option<String>,
+}
 
 impl Forward {
     fn start(repo: &ReportsRepo, port: u16) -> Result<Forward, ReportsError> {
@@ -650,18 +655,35 @@ impl Forward {
             }
             let _ = tx.send(Err(said));
         });
-        let mut forward = Forward(child);
+        let mut forward = Forward {
+            gh: child,
+            hook: None,
+        };
         match rx.recv_timeout(FORWARD_READY) {
-            Ok(Ok(())) => Ok(forward),
+            Ok(Ok(())) => {
+                forward.hook = Forward::hook(repo);
+                Ok(forward)
+            }
             Ok(Err(said)) => Err(ReportsError::Unlistening {
                 repo: repo.to_string(),
                 said: said.trim().to_string(),
             }),
-            Err(_) => {
-                let _ = forward.0.kill();
-                Err(ReportsError::NotReady)
-            }
+            Err(_) => Err(ReportsError::NotReady),
         }
+    }
+
+    /// One forward per repo can run, so the forwarder's webhook is the repo's only one gh made.
+    fn hook(repo: &ReportsRepo) -> Option<String> {
+        let hooks = format!("repos/{}/hooks", repo.name);
+        let id = gh(&[
+            "api",
+            &hooks,
+            "--jq",
+            r#".[] | select(.name == "cli") | .id"#,
+        ])
+        .ok()?;
+        let id = id.lines().next().filter(|id| !id.is_empty())?;
+        Some(format!("{hooks}/{id}"))
     }
 
     /// gh prints its usage after an error, so the last line it wrote is a flag's description.
@@ -676,8 +698,11 @@ impl Forward {
 
 impl Drop for Forward {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.gh.kill();
+        let _ = self.gh.wait();
+        if let Some(hook) = &self.hook {
+            let _ = gh(&["api", "-X", "DELETE", hook]);
+        }
     }
 }
 
