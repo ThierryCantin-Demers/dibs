@@ -133,12 +133,16 @@
 1|                                no default: a call that names none is placed when it is shared
 1|                                work, and refused otherwise, a benchmark most of all
 1|   dibs --machines             what the inventory knows
+1|   dibs --join <owner/repo|url>
+1|                                clone the repo your team shares recipes and machines through,
+1|                                then say which of its machines cannot be reached yet
 1|   dibs --forget <machine>     drop a machine from your own inventory
 1|   dibs --measure <machine> on|off
 1|                                whether a benchmark may run there, as its measure = in your
 1|                                inventory says; off still runs builds and tests
 1|   dibs --update               pull the clone dibs was installed from and reinstall, then
-1|                                pull the recipe directory too when it is a git clone
+1|                                pull the team clone, and the recipe directory when it is a
+1|                                git clone
 1|   dibs completions <fish|zsh> [--install]
 1|                                the shell's completions: machines, cards, repos, refs,
 1|                                recipes and their values. --install puts them where the shell

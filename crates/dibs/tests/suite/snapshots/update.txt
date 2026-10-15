@@ -37,4 +37,4 @@
 == dibs --update  (with recipes that are not a clone)
 -> exit 0
 1| dibs <sha>, already current
-1| recipes in <root>/update are not a clone with an upstream, so they were left alone
+1| recipes: <root>/update is not a clone with an upstream, so it was left alone

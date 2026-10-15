@@ -1,7 +1,7 @@
 use super::{
     base::{Isolation, Recipe, Step},
     labels::run_label,
-    manifest::{Manifest, Source, Verb},
+    manifest::{Manifest, RecipeDirs, Source, Verb},
 };
 use dibs_format::Lock;
 use std::{collections::BTreeMap, path::Path};
@@ -28,7 +28,7 @@ fn local_config_overrides_the_repo() {
         "cubek.toml",
         "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"from local\"\n",
     );
-    let m = Manifest::load_from(&repo, "cubek", &cfg).unwrap();
+    let m = Manifest::load_from(&repo, "cubek", &own(&cfg)).unwrap();
     let r = m.recipe(Verb::Build, "x").unwrap();
     assert_eq!(r.steps[0].run, "from local");
     assert_eq!(
@@ -36,6 +36,42 @@ fn local_config_overrides_the_repo() {
         Source::Local,
         "an override has to be visible as one"
     );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The person's own recipes, under a team clone that has none.
+fn own(dir: &Path) -> RecipeDirs {
+    RecipeDirs {
+        team: dir.with_file_name("team"),
+        own: dir.to_path_buf(),
+    }
+}
+
+#[test]
+fn the_teams_recipes_override_the_repos_and_the_persons_own_override_the_teams() {
+    let tmp = std::env::temp_dir().join(format!("dibs-recipe-team-{}", std::process::id()));
+    let repo = tmp.join("app");
+    let dirs = RecipeDirs {
+        team: tmp.join("team/recipes"),
+        own: tmp.join("own"),
+    };
+    let build_x =
+        |run: &str| format!("[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"{run}\"\n");
+    write(&repo, ".dibs.toml", &build_x("from repo"));
+    write(&dirs.team, "app.toml", &build_x("from team"));
+    write(&dirs.team, "lib.toml", "[build.y]\n");
+    let m = Manifest::load_from(&repo, "app", &dirs).unwrap();
+    let r = m.recipe(Verb::Build, "x").unwrap();
+    assert_eq!(
+        (r.steps[0].run.as_str(), r.source),
+        ("from team", Source::Team)
+    );
+
+    write(&dirs.own, "app.toml", &build_x("mine"));
+    let m = Manifest::load_from(&repo, "app", &dirs).unwrap();
+    let r = m.recipe(Verb::Build, "x").unwrap();
+    assert_eq!((r.steps[0].run.as_str(), r.source), ("mine", Source::Local));
+    assert_eq!(dirs.repos(), ["app", "lib"]);
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -51,7 +87,7 @@ fn a_service_carries_its_servers_ports_and_what_makes_them_ready() {
          [[service.gpus.serve]]\nname=\"cuda\"\nrun=\"server --listen :$DIBS_PORT_CUDA\"\nready=\"tcp:cuda\"\n\
          [[service.gpus.serve]]\nname=\"vulkan\"\nrun=\"server --vulkan\"\n",
     );
-    let m = Manifest::load_from(&repo, "app", &cfg).unwrap();
+    let m = Manifest::load_from(&repo, "app", &own(&cfg)).unwrap();
     let svc = m.service("gpus").unwrap();
     assert_eq!(svc.build.as_deref(), Some("cargo build -p server"));
     assert_eq!(svc.ports, ["cuda", "vulkan"]);
@@ -280,7 +316,7 @@ fn the_last_layer_to_describe_the_tree_decides_what_a_new_one_starts_without() {
     let (repo, cfg) = (tmp.join("app"), tmp.join("cfg"));
     write(&repo, ".dibs.toml", "[tree]\nfresh = [\"cache\"]\n");
     assert_eq!(
-        Manifest::load_from(&repo, "app", &cfg)
+        Manifest::load_from(&repo, "app", &own(&cfg))
             .unwrap()
             .tree_fresh(),
         ["cache"]
@@ -291,7 +327,7 @@ fn the_last_layer_to_describe_the_tree_decides_what_a_new_one_starts_without() {
         "[tree]\nfresh = [\"target/environment\"]\n",
     );
     assert_eq!(
-        Manifest::load_from(&repo, "app", &cfg)
+        Manifest::load_from(&repo, "app", &own(&cfg))
             .unwrap()
             .tree_fresh(),
         ["target/environment"]
@@ -302,7 +338,7 @@ fn the_last_layer_to_describe_the_tree_decides_what_a_new_one_starts_without() {
         "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"make\"\n",
     );
     assert_eq!(
-        Manifest::load_from(&repo, "app", &cfg)
+        Manifest::load_from(&repo, "app", &own(&cfg))
             .unwrap()
             .tree_fresh(),
         ["cache"],
@@ -318,7 +354,7 @@ fn a_tree_path_that_could_reach_outside_the_tree_is_refused() {
         "..", "a/../..", "/etc", ".", "", "a//b", "a/", "a b", "$HOME", "*",
     ] {
         write(&tmp, ".dibs.toml", &format!("[tree]\nfresh = [{bad:?}]\n"));
-        let e = Manifest::load_from(&tmp, "app", &tmp.join("cfg"))
+        let e = Manifest::load_from(&tmp, "app", &own(&tmp.join("cfg")))
             .unwrap_err()
             .to_string();
         assert!(e.contains("[tree] fresh"), "{bad:?}: {e}");
@@ -330,7 +366,7 @@ fn a_tree_path_that_could_reach_outside_the_tree_is_refused() {
 fn a_repo_with_no_recipes_anywhere_says_where_it_looked() {
     let tmp = std::env::temp_dir().join(format!("dibs-none-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
-    let e = Manifest::load_from(&tmp, "nothing", &tmp.join("empty"))
+    let e = Manifest::load_from(&tmp, "nothing", &own(&tmp.join("empty")))
         .unwrap_err()
         .to_string();
     assert!(

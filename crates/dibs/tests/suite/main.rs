@@ -27,6 +27,7 @@ mod snapshot;
 mod snapshots;
 mod status;
 mod sync;
+mod team;
 mod transport;
 mod trees;
 mod update;

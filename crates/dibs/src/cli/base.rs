@@ -98,6 +98,8 @@ pub enum Mode {
     Which,
     Pick,
     Update,
+    /// `--join <repo>`: the repo a team shares its recipes and machines through, cloned here.
+    Join(String),
     Forget(MachineName),
     /// `--measure <machine> on|off`: whether a benchmark may run there.
     Measure {

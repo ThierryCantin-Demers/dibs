@@ -18,8 +18,9 @@
 1| 
 1| a new tree starts without: cache
 1| 
-1| local recipes: <root>/home/.config/dibs/recipes
+1| team recipes: <root>/home/.config/dibs/team/recipes
+1| your recipes: <root>/home/.config/dibs/recipes
 
 == dibs list <a clone with no recipes>
 -> exit 2
-2| dibs: no recipes for app: nothing in <root>/home/prog/app/.dibs.toml or <root>/home/.config/dibs/recipes/app.toml
+2| dibs: no recipes for app: nothing in <root>/home/prog/app/.dibs.toml, <root>/home/.config/dibs/team/recipes/app.toml or <root>/home/.config/dibs/recipes/app.toml

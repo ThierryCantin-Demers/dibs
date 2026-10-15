@@ -16,7 +16,7 @@ use crate::paths::Paths;
 use dibs_format::RunVerb;
 use serde::Deserialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -132,29 +132,48 @@ pub enum Source {
     /// person's benchmark procedure, and the run record already carries the procedure itself.
     #[default]
     Repo,
-    /// `~/.config/dibs/recipes/<repo>.toml`, which can be a clone a team shares. A recipe in a
-    /// shared upstream repo costs a pull request per change and gives every other contributor
-    /// something they do not use.
+    /// `recipes/<repo>.toml` in the team clone. A recipe in a shared upstream repo costs a pull
+    /// request per change and gives every other contributor something they do not use.
+    Team,
+    /// `~/.config/dibs/recipes/<repo>.toml`, this person's own, over the team's.
     Local,
 }
 
-/// A recipe or a service by name, and the file it came from, as `dibs list` shows it.
-pub struct Listed<'a> {
-    pub name: &'a str,
-    pub source: Source,
+/// Where this computer keeps recipe files, `<repo>.toml` each.
+#[derive(Debug, Clone)]
+pub struct RecipeDirs {
+    /// `recipes/` in the team clone.
+    pub team: PathBuf,
+    /// This person's own, which overrides the team's.
+    pub own: PathBuf,
 }
 
-impl Manifest {
-    /// This computer's recipes, which override a repo's own.
-    pub fn local_dir() -> PathBuf {
-        Paths::from_env()
-            .recipes()
-            .unwrap_or_else(|| PathBuf::from("dibs/recipes"))
+impl RecipeDirs {
+    pub fn here() -> RecipeDirs {
+        let paths = Paths::from_env();
+        RecipeDirs {
+            team: paths
+                .team()
+                .unwrap_or_else(|| PathBuf::from("dibs/team"))
+                .join("recipes"),
+            own: paths
+                .recipes()
+                .unwrap_or_else(|| PathBuf::from("dibs/recipes")),
+        }
     }
 
-    /// Every repo with a recipes file on this computer.
-    pub fn local_repos() -> Vec<String> {
-        let Ok(entries) = std::fs::read_dir(Manifest::local_dir()) else {
+    /// Every repo with a recipes file in either.
+    pub fn repos(&self) -> Vec<String> {
+        let repos: BTreeSet<String> = [&self.team, &self.own]
+            .into_iter()
+            .flat_map(|dir| RecipeDirs::repos_in(dir))
+            .collect();
+        repos.into_iter().collect()
+    }
+
+    /// Every repo with a recipes file in `dir`, in name order.
+    pub fn repos_in(dir: &Path) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(dir) else {
             return Vec::new();
         };
         let mut repos: Vec<String> = entries
@@ -169,35 +188,45 @@ impl Manifest {
         repos.sort();
         repos
     }
+}
 
-    /// Two layers, the second overriding the first: whatever the repo declares for itself, then
-    /// local config, because that is the override. The format is the same in both, so a recipe
-    /// moves between them unchanged. dibs carries no recipes of its own: it knows no repo.
+/// A recipe or a service by name, and the file it came from, as `dibs list` shows it.
+pub struct Listed<'a> {
+    pub name: &'a str,
+    pub source: Source,
+}
+
+impl Manifest {
+    /// Three layers, each overriding the one before: whatever the repo declares for itself, then
+    /// the team's, then this person's own. The format is the same in all, so a recipe moves
+    /// between them unchanged. dibs carries no recipes of its own: it knows no repo.
     pub fn load(dir: &Path, repo: &str) -> Result<Manifest, RecipeError> {
-        Manifest::load_from(dir, repo, &Manifest::local_dir())
+        Manifest::load_from(dir, repo, &RecipeDirs::here())
     }
 
-    /// The layer that is normally `Manifest::local_dir()`, passed in: a variable set for one test is read
-    /// by every other test thread of the process.
-    pub fn load_from(dir: &Path, repo: &str, local_dir: &Path) -> Result<Manifest, RecipeError> {
-        Manifest::layers(dir, repo, local_dir)?.ok_or_else(|| RecipeError::NoRecipes {
+    /// The layers that are normally `RecipeDirs::here()`, passed in: a variable set for one test
+    /// is read by every other test thread of the process.
+    pub fn load_from(dir: &Path, repo: &str, dirs: &RecipeDirs) -> Result<Manifest, RecipeError> {
+        Manifest::layers(dir, repo, dirs)?.ok_or_else(|| RecipeError::NoRecipes {
             repo: repo.to_string(),
             in_repo: dir.join(".dibs.toml"),
-            local: local_dir.join(format!("{repo}.toml")),
+            team: dirs.team.join(format!("{repo}.toml")),
+            local: dirs.own.join(format!("{repo}.toml")),
         })
     }
 
     /// For work in a tree that runs no recipe, where a repo declaring nothing is not an error.
     pub fn load_any(dir: &Path, repo: &str) -> Result<Manifest, RecipeError> {
-        Ok(Manifest::layers(dir, repo, &Manifest::local_dir())?.unwrap_or_default())
+        Ok(Manifest::layers(dir, repo, &RecipeDirs::here())?.unwrap_or_default())
     }
 
-    /// None when neither layer has a file.
-    fn layers(dir: &Path, repo: &str, local_dir: &Path) -> Result<Option<Manifest>, RecipeError> {
+    /// None when no layer has a file.
+    fn layers(dir: &Path, repo: &str, dirs: &RecipeDirs) -> Result<Option<Manifest>, RecipeError> {
         let mut found: Option<Manifest> = None;
         for (path, src) in [
             (dir.join(".dibs.toml"), Source::Repo),
-            (local_dir.join(format!("{repo}.toml")), Source::Local),
+            (dirs.team.join(format!("{repo}.toml")), Source::Team),
+            (dirs.own.join(format!("{repo}.toml")), Source::Local),
         ] {
             if !path.exists() {
                 continue;

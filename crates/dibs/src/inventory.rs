@@ -1,6 +1,7 @@
 //! `machines.toml`: the machines this computer knows, how to reach each, and the cards in it.
 //! Every `machines.d/*.toml` beside it adds machines of its own, so a tool that leases machines
-//! keeps a file of them without touching the person's.
+//! keeps a file of them without touching the person's, and `team/machines.toml` adds the ones a
+//! team shares.
 //!
 //! Read through serde and edited through `toml_edit`, so writing one machine's entry leaves the
 //! rest of the file, comments included, as its owner wrote it.
@@ -187,11 +188,12 @@ impl Inventory {
         })
     }
 
-    /// None when there is no file there and no `machines.d` beside it.
+    /// None when there is no file there, and no `machines.d` or team clone beside it.
     pub fn load(path: &Path) -> Result<Option<Inventory>, InventoryError> {
         let main = Inventory::read(path)?;
         let added = Inventory::added(path)?;
-        if main.is_none() && added.is_empty() {
+        let team = Inventory::read(&path.with_file_name("team").join("machines.toml"))?;
+        if main.is_none() && added.is_empty() && team.is_none() {
             return Ok(None);
         }
         let mut inventory = main.unwrap_or_default();
@@ -208,6 +210,13 @@ impl Inventory {
             }
             inventory.machines.extend(more.machines);
         }
+        // A person's own entry for a team machine wins, as their own recipe does.
+        let shared: Vec<Machine> = team
+            .into_iter()
+            .flat_map(|t| t.machines)
+            .filter(|m| !inventory.names().any(|n| *n == m.name))
+            .collect();
+        inventory.machines.extend(shared);
         let now = Moment::epoch_now();
         let (live, ended) = inventory
             .machines
@@ -773,6 +782,32 @@ hostname = "new"
             Inventory::load(&path),
             Err(InventoryError::Twice { .. })
         ));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_team_clone_adds_its_machines_under_the_persons_own() {
+        let dir = std::env::temp_dir().join(format!("dibs-team-{}", std::process::id()));
+        let path = dir.join("machines.toml");
+        let shared = dir.join("team/machines.toml");
+        std::fs::create_dir_all(dir.join("team")).unwrap();
+        std::fs::write(
+            &shared,
+            "[machine.rig]\nssh = \"dibs@rig.local\"\n\n[machine.mac]\nssh = \"dibs@mac.local\"\n",
+        )
+        .unwrap();
+        let read = Inventory::load(&path).unwrap().unwrap();
+        assert_eq!(names(&read), ["rig", "mac"], "with no machines.toml at all");
+        assert_eq!(read.machine("rig").unwrap().source, shared);
+
+        std::fs::write(&path, "[machine.rig]\nssh = \"dibs@rig.example.net\"\n").unwrap();
+        let read = Inventory::load(&path).unwrap().unwrap();
+        assert_eq!(names(&read), ["rig", "mac"]);
+        assert_eq!(
+            read.machine("rig").unwrap().ssh.as_deref(),
+            Some("dibs@rig.example.net"),
+            "the person's own entry is the one used"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

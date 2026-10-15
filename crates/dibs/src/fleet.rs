@@ -11,7 +11,7 @@ use crate::{
     inventory::{Inventory, InventoryError},
     machine::Kept,
     paths::{FileError, Paths},
-    recipe::{Checkouts, Manifest, RepoError},
+    recipe::{Checkouts, RecipeDirs, RepoError},
 };
 use dibs_format::{
     Exit, Label, MachineName, Mode,
@@ -691,7 +691,7 @@ pub fn survey(only: Option<&str>) -> Result<Overview, FleetError> {
     overview(
         only,
         Checkouts::here()?.root(),
-        Manifest::local_repos(),
+        RecipeDirs::here().repos(),
         &Inventory::pool()?,
     )
 }

@@ -46,10 +46,14 @@ part of dibs it sends to the machines is built into the binary, so an edit in th
 nothing until the next install, and only `dibs --update` needs the clone. Installed over a dibs
 from before, it replaces it, the bash script included.
 
-Record each machine, and say where your checkouts live:
+When your team keeps a repo of machines and recipes for dibs, join it; otherwise record each
+machine yourself. Either way, say where your checkouts live:
 
+    dibs --join <owner>/<repo>          # clones it to ~/.config/dibs/team
     dibs --check you@machine --write    # probes it, writes ~/.config/dibs/machines.toml
     export DIBS_ROOT=$HOME/prog         # fish: set -Ux DIBS_ROOT $HOME/prog
+
+`--join` tries each of the team's machines and says why any cannot be reached yet.
 
 Read what `--check` prints, not only its exit code. With one machine recorded, every call goes
 there. With several there is no default: a call names its machine with `--on`, shared work that
@@ -60,13 +64,14 @@ see who holds each machine:
     dibs status                         # once
     dibstop                             # live, and a way to act on what is holding it
 
-`dibs --update` pulls the clone and your recipes, and reinstalls when something changed. The
+`dibs --update` pulls the clone, the team's repo and your recipes, and reinstalls when something
+changed. The
 first call the new version makes to each machine builds its half there, once.
 
 ## Recipes
 
-dibs ships no recipes. You describe a repo's builds and benchmarks in
-`~/.config/dibs/recipes/<repo>.toml`, which can be a git clone your team shares:
+dibs ships no recipes. You describe a repo's builds and benchmarks in `recipes/<repo>.toml` of
+the repo your team shares, or in your own `~/.config/dibs/recipes/<repo>.toml`:
 
 ```toml
 [bench.solve]
