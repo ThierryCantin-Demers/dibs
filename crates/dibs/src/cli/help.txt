@@ -181,7 +181,9 @@ Calls: one command under the lock, and what the machines are doing.
                                fitted. Nothing else records a problem that is not a
                                missing recipe. With DIBS_REPORTS=<owner>/<repo>, also
                                filed there as an issue, and its answers shown later.
-  dibs --friction --wait      returns when a report or a comment lands in DIBS_REPORTS
+  dibs --friction --wait [--max <seconds>]
+                               returns when a report or a comment lands in DIBS_REPORTS;
+                               --max ends it with nothing, exit 0, once that long has passed
   dibs --friction --reply <n> '<answer>' [--close]
                                answers report n there
   dibs --log [n]              the last n arrivals and outcomes, killings included

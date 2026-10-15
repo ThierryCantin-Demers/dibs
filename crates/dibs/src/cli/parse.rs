@@ -724,7 +724,19 @@ impl Friction {
         let first = words.first().filter(|w| !w.is_empty());
         let first = first.ok_or(CliError::needs_value("--friction"))?;
         let friction = match first.as_str() {
-            "--wait" => Friction::Wait,
+            "--wait" => match &words[1..] {
+                [] => Friction::Wait { max: None },
+                [flag, secs] if flag == "--max" => Friction::Wait {
+                    max: Some(secs.parse().ok().filter(|&s: &u64| s > 0).ok_or_else(|| {
+                        CliError::new(format!("dibs: --max takes whole seconds, not {secs}"))
+                    })?),
+                },
+                _ => {
+                    return Err(CliError::new(
+                        "dibs: --friction --wait takes only --max <seconds> after it",
+                    ));
+                }
+            },
             "--reply" => {
                 let issue = words.get(1).map(String::as_str).unwrap_or_default();
                 let issue = issue.trim_start_matches('#').parse().map_err(|_| {

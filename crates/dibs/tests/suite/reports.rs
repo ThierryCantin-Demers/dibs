@@ -352,6 +352,32 @@ fn a_second_listener_on_this_computer_names_the_first_and_starts_nothing() {
 }
 
 #[test]
+fn a_listener_given_a_max_ends_with_nothing_and_removes_its_webhook() {
+    let s = Sandbox::new();
+    fake_gh(&s, "PRIVATE");
+    let out = s
+        .dibs(["--friction", "--wait", "--max", "1"])
+        .env("DIBS_REPORTS", "o/r")
+        .run();
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.as_str(),
+            out.stderr.lines_with("nothing landed within 1s")
+        ),
+        (0, "", 1),
+        "{}",
+        out.all()
+    );
+    assert_eq!(
+        gh_log(&s).lines_with("api -X DELETE repos/o/r/hooks/41"),
+        1,
+        "{}",
+        gh_log(&s)
+    );
+}
+
+#[test]
 fn a_webhook_another_listener_holds_is_said_plainly() {
     let s = Sandbox::new();
     fake_gh(&s, "PRIVATE");

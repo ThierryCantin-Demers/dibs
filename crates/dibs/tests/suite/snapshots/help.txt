@@ -183,7 +183,9 @@
 1|                                fitted. Nothing else records a problem that is not a
 1|                                missing recipe. With DIBS_REPORTS=<owner>/<repo>, also
 1|                                filed there as an issue, and its answers shown later.
-1|   dibs --friction --wait      returns when a report or a comment lands in DIBS_REPORTS
+1|   dibs --friction --wait [--max <seconds>]
+1|                                returns when a report or a comment lands in DIBS_REPORTS;
+1|                                --max ends it with nothing, exit 0, once that long has passed
 1|   dibs --friction --reply <n> '<answer>' [--close]
 1|                                answers report n there
 1|   dibs --log [n]              the last n arrivals and outcomes, killings included

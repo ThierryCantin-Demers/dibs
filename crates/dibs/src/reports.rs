@@ -28,6 +28,7 @@ use std::{
 const LABEL: &str = "dibs-friction";
 const FORWARD_READY: Duration = Duration::from_secs(30);
 const STOPPED: &str = "DIBS-FORWARD-STOPPED";
+const ENDED: &str = "DIBS-WAIT-ENDED";
 /// What gh says when the repo already has the webhook a forward makes.
 const HOOK_TAKEN: &str = "Hook already exists";
 /// A forwarder that lives less than this, this many times running, is not coming back.
@@ -367,9 +368,10 @@ impl ReportsRepo {
         Ok(out)
     }
 
-    /// Returns once a report, or a comment from another account, lands. What landed while nothing
-    /// listened is read first, since GitHub delivers a webhook once or not at all.
-    pub fn wait(&self) -> Result<Vec<String>, ReportsError> {
+    /// Returns once a report, or a comment from another account, lands, or with nothing once
+    /// `max` has passed. What landed while nothing listened is read first, since GitHub
+    /// delivers a webhook once or not at all.
+    pub fn wait(&self, max: Option<Duration>) -> Result<Vec<String>, ReportsError> {
         let _listening = Listening::take(self)?;
         let mut woken = Keys::load(ReportsStamp::Woken)?;
         let own = ReportsRepo::own_login();
@@ -382,6 +384,14 @@ impl ReportsRepo {
         woken.save()?;
         let listener = TcpListener::bind("127.0.0.1:0").map_err(ReportsError::NoPort)?;
         let port = listener.local_addr().map_err(ReportsError::Io)?.port();
+        if let Some(max) = max {
+            std::thread::spawn(move || {
+                std::thread::sleep(max);
+                if let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) {
+                    let _ = writeln!(s, "{ENDED}");
+                }
+            });
+        }
         let mut short = 0;
         let mut said = String::new();
         while short < SHORT_LIVES {
@@ -396,6 +406,13 @@ impl ReportsRepo {
                 Forwarded::News(news) => {
                     woken.save()?;
                     return Ok(news);
+                }
+                Forwarded::Ended => {
+                    eprintln!(
+                        "dibs: nothing landed within {}s, so this listener ends; start it again to go on listening",
+                        max.unwrap_or_default().as_secs()
+                    );
+                    return Ok(Vec::new());
                 }
                 Forwarded::Stopped(said) => said,
             };
@@ -562,6 +579,8 @@ fn on_event(event: &str, body: &Value, woken: &mut Keys, own: Option<&str>) -> V
 enum Arrival {
     Delivery(String, Value),
     Stopped(String),
+    /// The wait's `max` passed.
+    Ended,
 }
 
 impl Arrival {
@@ -570,10 +589,14 @@ impl Arrival {
         let mut reader = BufReader::new(stream.try_clone().ok()?);
         let mut first = String::new();
         reader.read_line(&mut first).ok()?;
-        if first.trim_end() == STOPPED {
-            let mut said = String::new();
-            let _ = reader.read_to_string(&mut said);
-            return Some(Arrival::Stopped(said));
+        match first.trim_end() {
+            STOPPED => {
+                let mut said = String::new();
+                let _ = reader.read_to_string(&mut said);
+                return Some(Arrival::Stopped(said));
+            }
+            ENDED => return Some(Arrival::Ended),
+            _ => {}
         }
         let (mut event, mut length) = (String::new(), 0usize);
         for header in Arrival::headers(&mut reader)? {
@@ -647,14 +670,16 @@ impl Listening {
     }
 }
 
-/// What one forwarder brought before it stopped: news, or what it said as it stopped.
+/// What one forwarder brought before it stopped: news, what it said as it stopped, or the end of
+/// the wait.
 enum Forwarded {
     News(Vec<String>),
     Stopped(String),
+    Ended,
 }
 
 impl Forwarded {
-    /// Listens until a delivery is news or the forwarder says it stopped.
+    /// Listens until a delivery is news, the forwarder says it stopped, or the wait ends.
     fn listen(listener: &TcpListener, woken: &mut Keys, own: Option<&str>) -> Forwarded {
         listener
             .incoming()
@@ -662,6 +687,7 @@ impl Forwarded {
             .filter_map(Arrival::new)
             .find_map(|arrival| match arrival {
                 Arrival::Stopped(said) => Some(Forwarded::Stopped(said)),
+                Arrival::Ended => Some(Forwarded::Ended),
                 Arrival::Delivery(event, body) => {
                     let news = on_event(&event, &body, woken, own);
                     (!news.is_empty()).then_some(Forwarded::News(news))
@@ -771,8 +797,8 @@ impl Drop for Forward {
 pub fn friction_verb(friction: Friction) -> Result<ExitCode, ReportsError> {
     let reports_repo = || ReportsRepo::from_env().ok_or(ReportsError::NoRepo);
     match friction {
-        Friction::Wait => {
-            for news in reports_repo()?.wait()? {
+        Friction::Wait { max } => {
+            for news in reports_repo()?.wait(max.map(Duration::from_secs))? {
                 println!("{news}");
             }
         }

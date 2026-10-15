@@ -437,7 +437,11 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
         ),
         (
             vec!["--friction", "--wait"],
-            Invocation::Friction(Friction::Wait),
+            Invocation::Friction(Friction::Wait { max: None }),
+        ),
+        (
+            vec!["--friction", "--wait", "--max", "6600"],
+            Invocation::Friction(Friction::Wait { max: Some(6600) }),
         ),
         (
             vec!["--friction", "--reply", "#5", "fixed in abc", "--close"],

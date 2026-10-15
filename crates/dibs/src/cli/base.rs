@@ -29,10 +29,10 @@ pub enum Hook {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Friction {
     /// The first word after `--friction`; later words are dropped.
-    Note {
-        text: String,
-    },
-    Wait,
+    Note { text: String },
+    /// The listener; `max` ends it after that many seconds with nothing, for a caller whose
+    /// harness would kill it.
+    Wait { max: Option<u64> },
     Reply {
         issue: u64,
         answer: String,
