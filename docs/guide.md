@@ -234,7 +234,9 @@ list, `--pin <repo>@<ref>` and `dibs with`. The base of a range ending in `local
 whatever the remote holds. A ref is the commit as this checkout last fetched it, `origin/<ref>`
 where there is one, unless the local branch of that name has commits `origin/<ref>` lacks: then it
 is that branch as it stands here, and it is sent. The output names which. Whether a remote needs
-credentials is asked at most once a week and kept in `~/.cache/dibs/remotes`.
+credentials is asked at most once a week and kept in `~/.cache/dibs/remotes`. A machine fetches
+into its clone of the repo, so a ref named to one that has none, as a rented one has not, is sent
+too.
 
 ## Getting files back
 

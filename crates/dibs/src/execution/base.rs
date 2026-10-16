@@ -3,7 +3,7 @@ use super::{
     error::{Refusal, RunError, Unprepared},
     jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
     kept::KeptStores,
-    local::Repo,
+    local::{Clones, Repo},
     pins::{Nest, PinSpec, Pinned, PinnedRepo, PinnedTree},
     refs::{Arm, Side},
     schedule::Job,
@@ -45,8 +45,12 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
 
     let sides = Side::list(args.reference.as_deref())?;
     let resolved = Resolved::of(&args)?;
-    let mut arms = Arm::look_up(&sides, &resolved.dir, &resolved.repo_name)?;
-    let mut pins = Pinned::all(&args, &resolved.repo_name, &resolved.dir, &arms)?;
+    let clones = Clones::on(match Jobs::destination(args.machine()) {
+        Ok(Destination::Named(machine)) => Some(machine),
+        _ => None,
+    });
+    let mut arms = Arm::look_up(&sides, &resolved.dir, &resolved.repo_name, &clones)?;
+    let mut pins = Pinned::all(&args, &resolved.repo_name, &resolved.dir, &arms, &clones)?;
     let local: Vec<bool> = arms.iter().map(|a| a.fetch.is_none()).collect();
     let pin_specs = args
         .pins

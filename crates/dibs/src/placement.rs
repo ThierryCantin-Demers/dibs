@@ -3,6 +3,7 @@
 
 use crate::{
     call::{Asked, Bound, MachineCall},
+    caller::Caller,
     cli::Call,
     machine::{Card, Kept},
     render::Answered,
@@ -71,6 +72,26 @@ impl fmt::Display for LockState {
 }
 
 impl Reading {
+    /// A named machine's reading, or None when it gives none in the time a pick allows.
+    pub fn asked(name: &MachineName) -> Option<Reading> {
+        let call = Call {
+            on: Some(name.clone()),
+            json: true,
+            ..Call::default()
+        };
+        let caller = Caller::default();
+        let machine = MachineCall::new(&call, &caller).ok()?;
+        let status = Asked::plain(Mode::Status, machine.label());
+        let bound = Bound::polled(PICK_POLL_SECS, Kept::StdoutAlone);
+        Reading::answered(&machine.ask(name, &call, status, bound).output)
+    }
+
+    fn answered(output: &[u8]) -> Option<Reading> {
+        String::from_utf8_lossy(output)
+            .lines()
+            .find_map(|line| serde_json::from_str(line).ok())
+    }
+
     /// Held exclusively, so it cannot start shared work.
     fn benchmarking(&self) -> bool {
         self.state == LockState::Bench
@@ -288,11 +309,7 @@ impl Placement<'_> {
                 continue;
             }
             down.clear(&name);
-            let text = String::from_utf8_lossy(&answer.output);
-            let Some(reading) = text
-                .lines()
-                .find_map(|line| serde_json::from_str::<Reading>(line).ok())
-            else {
+            let Some(reading) = Reading::answered(&answer.output) else {
                 continue;
             };
             let entry = self.machine.fleet.entry(name.as_str());

@@ -9,11 +9,15 @@ use crate::{
     },
     git::{Git, GitError},
     paths::{FileError, Paths},
+    placement::Reading,
 };
-use dibs_format::{Hex, Moment, Span, wire};
+use dibs_format::{Hex, MachineName, Moment, Span, wire};
 use dibs_runner::shared::SharedFile;
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::{
+    cell::OnceCell,
+    path::{Path, PathBuf},
+};
 
 /// A checkout on this computer, asked which repo it is and what its refs name.
 #[derive(Clone, Copy)]
@@ -390,6 +394,34 @@ pub struct Fetched {
     pub seen: String,
     /// Why it must be sent rather than fetched by name.
     pub ahead: Option<&'static str>,
+}
+
+/// The repos the call's machine holds a clone of, which a ref is fetched into there. Asked the
+/// first time a ref would be fetched; a machine not named, or not answering, is taken to have one.
+pub struct Clones {
+    machine: Option<MachineName>,
+    repos: OnceCell<Option<Vec<String>>>,
+}
+
+impl Clones {
+    pub fn on(machine: Option<MachineName>) -> Clones {
+        Clones {
+            machine,
+            repos: OnceCell::new(),
+        }
+    }
+
+    /// Why the machine cannot fetch `repo`'s refs, or None when it can.
+    pub fn lacking(&self, repo: &str) -> Option<&'static str> {
+        let repos = self.repos.get_or_init(|| {
+            let reading = self.machine.as_ref().and_then(Reading::asked);
+            reading.and_then(|reading| reading.clones)
+        });
+        repos
+            .as_ref()
+            .is_some_and(|repos| !repos.iter().any(|r| r == repo))
+            .then_some("the machine has no clone of it")
+    }
 }
 
 impl Fetched {

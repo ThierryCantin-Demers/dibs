@@ -2,6 +2,30 @@
 -> exit 0
 call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
   the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: true
+    label: <root-name>
+    max: 1800
+    max_from: default
+    mode: status
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
     agent: session suite
     agent_id: local_suite
     batch: null
@@ -185,6 +209,30 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 -> exit 2
 call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
   the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: true
+    label: <root-name>
+    max: 1800
+    max_from: default
+    mode: status
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
     agent: session suite
     agent_id: local_suite
     batch: null
@@ -219,6 +267,30 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
 -> exit 0
 call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
   the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: true
+    label: <root-name>
+    max: 1800
+    max_from: default
+    mode: status
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
     agent: session suite
     agent_id: local_suite
     batch:
@@ -247,7 +319,31 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     watch.hold: false
     watch.lease: 120
     watch.off: false
-call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
+  the request the runner acts on:
+    agent: 
+    agent_id: 
+    batch: null
+    card: null
+    command: 
+    fingerprint: null
+    json: true
+    label: <root-name>
+    max: 1800
+    max_from: default
+    mode: status
+    new_series: false
+    ports: []
+    ready_within: 300
+    services: []
+    stream: false
+    tty: false
+    verbose: false
+    wait: null
+    watch.hold: false
+    watch.lease: 120
+    watch.off: false
+call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=4 dibs@box-a 'sh -c '\''r=$HOME/.cache/dibs/runner/<hash>/dibs-runner; [ -x "$r" ] || exit 125; [ "$("$r" hash 2>/dev/null)" = <hash> ] || exit 126; exec "$r" serve <hash>'\'''
   the request the runner acts on:
     agent: session suite
     agent_id: local_suite

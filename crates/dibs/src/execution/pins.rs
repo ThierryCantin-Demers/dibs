@@ -7,7 +7,7 @@
 
 use super::{
     error::PinError,
-    local::{Checkout, Fetched, Local, Repo},
+    local::{Checkout, Clones, Fetched, Local, Repo},
     refs::Arm,
 };
 use crate::{
@@ -257,6 +257,7 @@ impl Pinned {
         repo: &str,
         dir: &Path,
         arms: &[Arm],
+        clones: &Clones,
     ) -> Result<Vec<Pinned>, PinError> {
         let mut pins = Vec::new();
         for p in &args.pins {
@@ -298,7 +299,10 @@ impl Pinned {
                     })?;
                     let (crates, lock) =
                         (ref_crates(&pdir, &sha)?, Repo(&pdir).lockfile(Some(&sha)));
-                    match ahead.or_else(|| Repo(&pdir).unfetchable(&sha)) {
+                    let why = ahead
+                        .or_else(|| Repo(&pdir).unfetchable(&sha))
+                        .or_else(|| clones.lacking(&identity));
+                    match why {
                         Some(why) => {
                             let c = Checkout::of(&pdir, &identity, &sha, Some(why))?;
                             (

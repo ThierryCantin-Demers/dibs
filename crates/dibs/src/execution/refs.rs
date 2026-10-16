@@ -1,6 +1,6 @@
 use super::{
     error::ArmError,
-    local::{Fetched, Repo},
+    local::{Clones, Fetched, Repo},
 };
 use crate::{
     git::{Git, GitError},
@@ -116,7 +116,12 @@ impl Arm {
     }
 
     /// Each side looked up here. A commit the machine cannot fetch is checked out and sent instead.
-    pub fn look_up(sides: &[Side], dir: &Path, repo: &str) -> Result<Vec<Arm>, ArmError> {
+    pub fn look_up(
+        sides: &[Side],
+        dir: &Path,
+        repo: &str,
+        clones: &Clones,
+    ) -> Result<Vec<Arm>, ArmError> {
         let here = |r: &str| {
             if r == "local" {
                 "HEAD".to_string()
@@ -173,7 +178,9 @@ impl Arm {
             };
             let why = match s.sent() {
                 true => None,
-                false => ahead.or_else(|| Repo(dir).unfetchable(&sha)),
+                false => ahead
+                    .or_else(|| Repo(dir).unfetchable(&sha))
+                    .or_else(|| clones.lacking(repo)),
             };
             arms.push(match s.sent() || why.is_some() {
                 true => Arm {

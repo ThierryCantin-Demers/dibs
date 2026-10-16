@@ -1609,6 +1609,35 @@ fn a_ref_the_machine_cannot_fetch_is_sent_from_here() {
 }
 
 #[test]
+fn a_ref_named_to_a_machine_with_no_clone_of_its_repo_is_sent() {
+    let mut s = Sandbox::new();
+    let app = app(&s);
+    recipes(
+        &s,
+        "[test.t]\n  [[test.t.step]]\n  lock = \"shared\"\n  run = \"echo has $(cat a.txt)\"\n",
+    );
+    s.machines(&format!(
+        "[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n",
+        hostname()
+    ));
+    fs::remove_dir_all(s.path("home/prog/app")).unwrap();
+    let out = s
+        .dibs(["test", &format!("{app}@main"), "t", "--on", "here"])
+        .run();
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.lines_with("has x"),
+            out.all()
+                .lines_with("sent from this computer since the machine has no clone of it")
+        ),
+        (0, 1, 1),
+        "{}",
+        out.all()
+    );
+}
+
+#[test]
 fn a_recipes_artifacts_come_back_by_themselves() {
     // Each step keeps the files it wrote in its job directory and the run fetches them, so nothing
     // is left on the machine to be copied by hand.

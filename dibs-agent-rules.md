@@ -240,8 +240,9 @@ spoiled without it.
   would otherwise be killed at the default cap. A measured `cargo bench` or `cargo test` is built
   first under the shared lock by itself. Without a repo it runs in the tree you are in.
 - `@local` in place of a ref sends your working tree, uncommitted changes included, following the
-  repo's ignore rules. A ref the machine cannot fetch, because it was never pushed or the repo is
-  private (the machines hold no credentials), is checked out here and sent the same way, and so
+  repo's ignore rules. A ref the machine cannot fetch, because it was never pushed, the repo is
+  private (the machines hold no credentials) or the machine has no clone of it, is checked out
+  here and sent the same way, and so
   is a branch with commits its origin lacks, so `@main..feature` and `--pin lib@main` work without
   a push. Reach for these before carrying code
   over by hand: a bundle, a tarball or a hand-written sync of a tree is this feature done worse.
