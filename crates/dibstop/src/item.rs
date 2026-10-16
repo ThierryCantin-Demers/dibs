@@ -167,6 +167,21 @@ impl Verdict {
                 alarm: true,
             };
         }
+        if let Some(silent) = &h.silent {
+            let last = match silent.silent_line.as_str() {
+                "" => String::new(),
+                line => format!(" Its last line: {line}"),
+            };
+            return Verdict {
+                note: silent.to_string(),
+                long: format!(
+                    "Its output has not changed in {}, longer than its own history accounts for, \
+                     so it may be hung rather than slow.{last} Stop it with K.",
+                    Span(silent.silent_for)
+                ),
+                alarm: true,
+            };
+        }
         let Some(shown) = &h.estimate else {
             return Verdict {
                 note: "no history for this one yet".into(),

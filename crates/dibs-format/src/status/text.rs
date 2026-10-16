@@ -1,7 +1,8 @@
 use crate::{
     Alias, Mode, Span,
     status::base::{
-        BatchShown, Holder, IdleKind, LockState, Remaining, Scope, Service, Shown, Status, Waiter,
+        BatchShown, Holder, IdleKind, LockState, Remaining, Scope, Service, Shown, Silent, Status,
+        Waiter,
     },
 };
 use std::fmt::{self, Write as _};
@@ -181,22 +182,32 @@ impl Text<'_> {
             if let Some(batch) = &holder.batch {
                 batch_lines(out, p, batch, false);
             }
+            last_line(out, p, holder.silent.as_ref());
             return;
         }
         let overrun = holder.estimate.as_ref().and_then(Shown::overrun);
-        match (holder.preparing(), &holder.estimate, overrun) {
-            (Some(doing), _, _) => {
+        match (
+            holder.preparing(),
+            &holder.silent,
+            overrun,
+            &holder.estimate,
+        ) {
+            (Some(doing), ..) => {
                 let _ = writeln!(
                     out,
                     "{lead}   {}[preparing its tree, before the command: {doing}]{}",
                     p.dim, p.off
                 );
             }
-            (None, _, Some(overrun)) => {
+            (None, Some(silent), _, _) => {
+                let _ = writeln!(out, "{lead}   {}[STUCK? {silent}]{}", p.warn, p.off);
+                let _ = writeln!(out, "{stop}");
+            }
+            (None, None, Some(overrun), _) => {
                 let _ = writeln!(out, "{lead}   {}[STUCK? {overrun}]{}", p.warn, p.off);
                 let _ = writeln!(out, "{stop}");
             }
-            (None, Some(shown), None) => {
+            (None, None, None, Some(shown)) => {
                 let _ = writeln!(
                     out,
                     "{lead}   {}[{}]{}",
@@ -205,7 +216,7 @@ impl Text<'_> {
                     p.off
                 );
             }
-            (None, None, None) => {
+            (None, None, None, None) => {
                 let _ = writeln!(
                     out,
                     "{lead}   {}[no history for this one yet]{}",
@@ -226,6 +237,7 @@ impl Text<'_> {
                 p.dim, p.off, p.dim, self.status.scene.host, holder.pid, p.off
             );
         }
+        last_line(out, p, holder.silent.as_ref());
     }
 
     fn waiter(&self, out: &mut String, p: &Palette, waiter: &Waiter, total: usize) {
@@ -441,6 +453,19 @@ fn services(out: &mut String, p: &Palette, services: &[Service]) {
     }
 }
 
+fn last_line(out: &mut String, p: &Palette, silent: Option<&Silent>) {
+    if let Some(silent) = silent.filter(|s| !s.silent_line.is_empty()) {
+        let _ = writeln!(
+            out,
+            "    {}its last line, {} ago:{} {}",
+            p.warn,
+            Span(silent.silent_for),
+            p.off,
+            silent.silent_line
+        );
+    }
+}
+
 /// The batch's lines under a job; an idle holder's time left is not estimated.
 fn batch_lines(out: &mut String, p: &Palette, batch: &BatchShown, estimated: bool) {
     let within = batch
@@ -532,6 +557,7 @@ mod tests {
             output: None,
             cpu_rate: None,
             idle: None,
+            silent: None,
             batch: None,
             prepare: None,
             services: Vec::new(),
@@ -545,6 +571,20 @@ mod tests {
         assert!(
             text(&held).contains("pid 42  job 20261001120000-42   [preparing its tree, before the command: copying a-target's target to start this tree from]"),
             "a prepare is what it is doing, not a time against the command's history"
+        );
+        held.holders[0].prepare = None;
+        held.holders[0].silent = Some(Silent {
+            silent_for: 3000,
+            silent_line: "test all_reduce has been running for over 60 seconds".into(),
+        });
+        let said = text(&held);
+        assert!(
+            said.contains("job 20261001120000-42   [STUCK? no output in 50m00s]\n    stop it with: dibs --kill 42\n"),
+            "{said}"
+        );
+        assert!(
+            said.ends_with("    its last line, 50m00s ago: test all_reduce has been running for over 60 seconds\n"),
+            "{said}"
         );
     }
 

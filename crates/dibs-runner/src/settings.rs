@@ -45,7 +45,7 @@ enum Whose {
 }
 
 impl Key {
-    const ALL: [Key; 22] = [
+    const ALL: [Key; 23] = [
         Key::of_setter("bypass", Setter::Machine),
         Key::of_setter("quick", Setter::Machine),
         Key::of_setter("patience", Setter::Machine),
@@ -57,6 +57,7 @@ impl Key {
         Key::of_setter("ports", Setter::Account),
         Key::of_setter("idle_after", Setter::Account),
         Key::of_setter("wrote_within", Setter::Account),
+        Key::of_setter("silent_after", Setter::Account),
         Key::of_setter("keep_days", Setter::Account),
         Key::of_setter("target_keep_days", Setter::Account),
         Key::of_setter("seed_wait", Setter::Account),
@@ -274,6 +275,9 @@ pub struct Settings {
     /// A holder whose output file was written within so many seconds is working, whatever its
     /// CPU says: a compiler daemon such as sccache works outside the job's tree.
     pub wrote_within: i64,
+    /// Seconds a holder's output may go unchanged, past what its own history accounts for, before
+    /// its status asks whether it is stuck.
+    pub silent_after: i64,
     /// How long trees, caches, job directories and leftovers are kept unused.
     pub clocks: Clocks,
     /// Seconds a new tree waits for a sibling's build that will leave it more of its lockfile.
@@ -310,6 +314,7 @@ impl Settings {
         Settings {
             idle_after: signed("DIBS_IDLE_AFTER", 60),
             wrote_within: signed("DIBS_WROTE_WITHIN", 120),
+            silent_after: signed("DIBS_SILENT_AFTER", 600),
             clocks: Clocks {
                 keep_days: number("DIBS_KEEP_DAYS", Clocks::DEFAULT.keep_days),
                 target_keep_days: number("DIBS_TARGET_KEEP_DAYS", Clocks::DEFAULT.target_keep_days),

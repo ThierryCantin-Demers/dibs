@@ -607,6 +607,50 @@ fn a_job_that_writes_is_a_job_that_works() {
 }
 
 #[test]
+fn a_job_whose_output_stops_is_asked_whether_it_is_stuck() {
+    let mut s = Sandbox::new();
+    let g = s.gate("g");
+    let job = s.spawn(s.dibs([
+        "--label",
+        "hangs",
+        &format!(
+            "sh -c 'echo test all_reduce has been running for over 60 seconds; {}' > {}",
+            g.hold(),
+            s.p("hangs.log")
+        ),
+    ]));
+    until("the job's last line", || {
+        s.read("hangs.log").contains("running")
+    });
+    let look = |after: &str| {
+        s.dibs(["--status"])
+            .env("DIBS_SILENT_AFTER", after)
+            .run()
+            .stdout
+    };
+    let said = look("-1");
+    assert_eq!(said.lines_with("[STUCK? no output in"), 1, "{said}");
+    assert_eq!(
+        said.lines_with("ago: test all_reduce has been running for over 60 seconds"),
+        1,
+        "it says what the job said last: {said}"
+    );
+    assert_eq!(
+        look("3600").lines_with("STUCK?"),
+        0,
+        "output younger than the threshold is left alone"
+    );
+    s.history("shared\thangs\t3600\nshared\thangs\t3600\n");
+    assert_eq!(
+        look("-1").lines_with("STUCK?"),
+        0,
+        "and so is a quiet stretch the label's own runs account for"
+    );
+    g.open();
+    s.wait(job);
+}
+
+#[test]
 fn watch_redraws_on_its_interval_and_takes_no_lock() {
     let s = Sandbox::new();
     assert_eq!(

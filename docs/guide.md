@@ -766,7 +766,7 @@ target_keep_days = 5   # build caches
 ports = "20000-29999"  # what --port picks from
 ```
 
-Also `idle_after`, `wrote_within`, `peek_warn`, `digest_head`, `digest_tail`, `repeat_window`,
+Also `idle_after`, `wrote_within`, `silent_after`, `peek_warn`, `digest_head`, `digest_tail`, `repeat_window`,
 `seed_wait`, `sweep_budget` and `no_children`. The files come first, then the variable, which only a call on this
 computer can set, then the default.
 
@@ -838,10 +838,12 @@ A holder is called idle when the CPU under it has not moved between two looks, w
 job that hangs after an hour of work as well as one that never started. That takes two looks,
 and a `--watch` left running is what supplies them. `DIBS_IDLE_AFTER` sets how long a stretch of
 nothing has to be, in seconds, before it is worth mentioning. A holder running over twice its
-label's 90th percentile is marked `STUCK?`, in `dibs status` and dibstop alike. Neither is said of
-a job whose tree the machine is still laying out: that part is dibs's, not the command's, so its
-line says `preparing its tree` and what the machine said last, such as the copy a new tree starts
-from or the build it waits for.
+label's 90th percentile is marked `STUCK?`, in `dibs status` and dibstop alike, and so is one whose
+output has not changed in ten minutes (`DIBS_SILENT_AFTER`) unless its label's own runs take that
+long, with the last line it wrote: a hang that keeps spinning uses CPU, and only its output stops.
+None of these is said of a job whose tree the machine is still laying out: that part is dibs's,
+not the command's, so its line says `preparing its tree` and what the machine said last, such as
+the copy a new tree starts from or the build it waits for.
 
 Never poll dibs. Launch it in the background and do other work: queueing then costs nothing, and
 the notification arrives when the command is done.

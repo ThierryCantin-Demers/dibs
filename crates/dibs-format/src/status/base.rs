@@ -111,6 +111,8 @@ pub struct Holder {
     pub cpu_rate: Option<u64>,
     #[serde(flatten)]
     pub idle: Option<Idle>,
+    #[serde(flatten)]
+    pub silent: Option<Silent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<BatchShown>,
     /// What the machine last said while it lays out the job's tree, which comes before the
@@ -237,6 +239,22 @@ pub enum IdleKind {
     Never,
     /// None since the last look that saw it working.
     Stalled,
+}
+
+/// A holder whose output has not changed for longer than its own history accounts for, which a
+/// hang that keeps spinning looks like as much as one that sleeps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Silent {
+    pub silent_for: u64,
+    /// The last line it wrote, empty when it wrote none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub silent_line: String,
+}
+
+impl fmt::Display for Silent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "no output in {}", Span(self.silent_for))
+    }
 }
 
 /// A `--with` server run beside a holder.

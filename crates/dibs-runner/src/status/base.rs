@@ -16,11 +16,12 @@ use dibs_format::{
     JobId, JobMeta, LockRecord, Mode,
     status::{
         BatchShown, Holder, Leftover, Listing, LockState, Orphan, Remaining, Scene, Service, Shown,
-        Status, Text, Waiter,
+        Silent, Status, Text, Waiter,
     },
 };
 use std::{
-    fs,
+    fs::{self, File},
+    io::{Read as _, Seek as _, SeekFrom},
     num::NonZero,
     path::{Path, PathBuf},
     time::SystemTime,
@@ -172,11 +173,26 @@ impl Look<'_> {
         }
         .sample();
         let unseen = self.dir.works_unseen(pid);
-        let writing = output.as_deref().is_some_and(|file| {
-            age(Path::new(file)).is_some_and(|age| (age as i64) < self.settings.wrote_within)
-        });
+        let written = output.as_deref().and_then(|file| age(Path::new(file)));
+        let writing = written.is_some_and(|age| (age as i64) < self.settings.wrote_within);
         let idle = sample.idle.filter(|_| !writing && !unseen);
         let estimate = self.estimate(record, record.fingerprint.as_deref());
+        let shown = estimate.map(|e| shown(e, elapsed));
+        let prepare = self.dir.prepare_of(pid);
+        // A label whose own runs take this long may be quiet by nature, as a benchmark that
+        // prints once at the end is.
+        let usual = shown
+            .as_ref()
+            .is_some_and(|s| s.scope == Scope::This && s.remaining.is_some());
+        let silent = output
+            .as_deref()
+            .zip(written)
+            .filter(|&(_, age)| age as i64 > self.settings.silent_after)
+            .filter(|_| !usual && prepare.is_none())
+            .map(|(file, silent_for)| Silent {
+                silent_for,
+                silent_line: last_line(Path::new(file)),
+            });
         let left = estimate.and_then(|e| e.remaining(elapsed));
         match left {
             Some(left) => free.at = free.at.max(left),
@@ -193,12 +209,13 @@ impl Look<'_> {
             started: record.start,
             elapsed,
             cpu: ticks / Host::clock_ticks(),
-            estimate: estimate.map(|e| shown(e, elapsed)),
+            estimate: shown,
             output,
             cpu_rate: sample.rate,
             idle,
+            silent,
             batch: self.batch(pid, left, tail),
-            prepare: self.dir.prepare_of(pid),
+            prepare,
             services: self.services(pid),
         }
     }
@@ -319,6 +336,29 @@ fn age(file: &Path) -> Option<u64> {
             .duration_since(written)
             .map_or(0, |d| d.as_secs()),
     )
+}
+
+/// The last line in the file's last few kilobytes, a progress bar's last redraw included.
+fn last_line(file: &Path) -> String {
+    const TAIL: u64 = 4096;
+    const WIDTH: usize = 160;
+    let mut bytes = Vec::new();
+    if let Ok(mut file) = File::open(file) {
+        let len = file.metadata().map_or(0, |m| m.len());
+        let _ = file.seek(SeekFrom::Start(len.saturating_sub(TAIL)));
+        let _ = file.take(TAIL).read_to_end(&mut bytes);
+    }
+    String::from_utf8_lossy(&bytes)
+        .split(['\n', '\r'])
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .map(|line| {
+            line.chars()
+                .filter(|c| !c.is_control())
+                .take(WIDTH)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The one-minute load average, times 100.
