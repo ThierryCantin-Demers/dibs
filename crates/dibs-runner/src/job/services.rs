@@ -4,7 +4,7 @@ use crate::{
     platform::{Host, Platform as _},
     sink::Sink,
 };
-use dibs_format::wire;
+use dibs_format::{JobId, wire};
 use std::{
     fs,
     net::{TcpStream, ToSocketAddrs as _},
@@ -25,10 +25,14 @@ const LOG_TAIL: usize = 10;
 /// How much of a service's command its record keeps.
 const RECORD_COMMAND: usize = 160;
 const LOCAL: &str = "127.0.0.1";
+/// Each service's name, in the environment of everything it starts: what it starts outside its
+/// group and its tree, as a profiler's launcher does, is found by it.
+const WITH: &str = "DIBS_WITH";
 
 /// The `--with` servers of one call, run for the length of its job.
 pub struct Services {
     list: Vec<Service>,
+    job: JobId,
     /// `with.<pid>`, which status reads.
     record: PathBuf,
     started: Instant,
@@ -52,6 +56,7 @@ struct Service {
 /// Where the services' logs go and what they are given.
 pub struct Start<'a> {
     pub specs: &'a [wire::Service],
+    pub job: &'a JobId,
     pub environment: &'a Environment,
     /// The job's directory, or None when it has none, and their output goes nowhere.
     pub job_dir: Option<&'a Path>,
@@ -84,9 +89,11 @@ impl Services {
                     |dir| dir.join(format!("with-{}.log", spec.name)),
                 );
                 let status = Arc::new(OnceLock::new());
+                let mut environment = start.environment.clone();
+                environment.set(WITH, spec.name.clone());
                 let pid = Job::spawn(
                     &spec.command,
-                    start.environment,
+                    &environment,
                     Output::Log(&log),
                     start.sink,
                     None,
@@ -122,6 +129,7 @@ impl Services {
         let _ = fs::write(&start.record, record);
         Services {
             list,
+            job: start.job.clone(),
             record: start.record,
             started: Instant::now(),
             ended: Some(ended),
@@ -238,7 +246,32 @@ impl Services {
         if !alive.is_empty() {
             Host::reap(&alive);
         }
+        self.sweep();
         let _ = fs::remove_file(&self.record);
+    }
+
+    /// What the services started that outlived them outside their groups and trees.
+    fn sweep(&mut self) {
+        let left: Vec<(u32, String)> = Host::processes()
+            .iter()
+            .filter_map(|process| {
+                let name = Host::variable(process.pid, WITH)?;
+                let job = Host::variable(process.pid, "DIBS_JOB")?;
+                (job == self.job.as_str()).then_some((process.pid, name))
+            })
+            .collect();
+        if left.is_empty() {
+            return;
+        }
+        Host::reap(&left.iter().map(|(pid, _)| *pid).collect::<Vec<_>>());
+        for service in &mut self.list {
+            if left.iter().any(|(_, name)| *name == service.name) {
+                service.end = match service.end.is_empty() {
+                    true => "what it left running was stopped".into(),
+                    false => format!("{}, and what it left running was stopped", service.end),
+                };
+            }
+        }
     }
 
     /// The trailer's lines for them.

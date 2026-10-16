@@ -74,6 +74,41 @@ fn a_service_is_stopped_when_the_command_ends_whatever_its_exit() {
 }
 
 #[test]
+fn what_a_service_starts_outside_its_group_and_tree_is_stopped_with_it() {
+    let s = Sandbox::new();
+    let away = s.p("away.pid");
+    let held = s.gate("away-never");
+    let launch = format!(
+        "(setsid bash -c \"echo \\$\\$ > {away}; exec cat {}\" > /dev/null 2>&1 &); ",
+        held.path.display()
+    );
+    let out = s
+        .dibs([
+            "--label",
+            "with-away",
+            "--with",
+            &format!("srv={}", service(&s, "w5", &launch)),
+            "--ready",
+            &format!("test -s {away}"),
+            "true",
+        ])
+        .run();
+    let pid: u32 = s.read("away.pid").trim().parse().unwrap();
+    let outlived = alive(pid);
+    if outlived {
+        held.open();
+    }
+    assert!(!outlived, "{}", out.all());
+    assert_eq!(
+        out.all()
+            .lines_with("stopped when the command ended, and what it left running was stopped"),
+        1,
+        "{}",
+        out.all()
+    );
+}
+
+#[test]
 fn readiness_can_be_a_command() {
     let s = Sandbox::new();
     let up = s.p("w2.up");

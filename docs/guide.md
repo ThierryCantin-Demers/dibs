@@ -822,7 +822,9 @@ descendants, which is otherwise unreachable on a kernel built the ordinary way.
 
 When a job ends, whatever it started in its process group is stopped with it. What started a
 session of its own outlives it, holding no lock, and `dibs status` lists it under `LEFT RUNNING`
-with the job it came from; `dibs --kill <pid>` stops it and what it started.
+with the job it came from; `dibs --kill <pid>` stops it and what it started. A `--with` server is
+the exception: everything it starts carries `DIBS_WITH`, its name, so what it started in a session
+of its own, as a profiler's launcher does, is stopped with it.
 
 An unreachable machine fails in seconds with a diagnosis, including whether Tailscale needs a
 login, rather than hanging on a connection or a password prompt. Never retry that in a loop. A

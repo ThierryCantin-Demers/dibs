@@ -439,6 +439,7 @@ impl<'a> Run<'a> {
         } else if !request.services.is_empty() {
             let mut services = Services::start(Start {
                 specs: &request.services,
+                job: &arrived.job,
                 environment: &environment,
                 job_dir: begun.log.as_ref().map(|_| begun.dir.as_path()),
                 record: self.at.dir.file("with", pid),
