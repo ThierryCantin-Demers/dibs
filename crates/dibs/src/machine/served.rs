@@ -207,6 +207,7 @@ impl Served<'_> {
             },
             Installed::NoneThere => Ok(provision.none_there(delivery)),
             Installed::Queued { behind } => Ok(provision.queued(&behind, delivery)),
+            Installed::Building => Ok(provision.building(delivery)),
             Installed::Failed | Installed::NoLockTaker | Installed::Unlockable => {
                 Ok(provision.failed(delivery))
             }
@@ -283,6 +284,7 @@ impl Served<'_> {
                     },
                     Installed::NoneThere => provision.none_there(delivery),
                     Installed::Queued { behind } => provision.queued(&behind, delivery),
+                    Installed::Building => provision.building(delivery),
                     Installed::Unreached => SSH_FAILED,
                     Installed::Failed | Installed::NoLockTaker | Installed::Unlockable => {
                         provision.failed(delivery)

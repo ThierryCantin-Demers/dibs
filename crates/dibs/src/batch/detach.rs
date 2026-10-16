@@ -407,7 +407,7 @@ impl<'a> Detach<'a> {
             Ok(installed @ (Installed::NoLockTaker | Installed::Unlockable)) => {
                 Some(provision.unlocked(installed, &mut delivery))
             }
-            Ok(Installed::Failed | Installed::Queued { .. }) | Err(_) => {
+            Ok(Installed::Failed | Installed::Queued { .. } | Installed::Building) | Err(_) => {
                 eprintln!(
                     "dibs: the dibs that drives a detached batch could not be built on {}, so nothing was sent. Its build said why, above.",
                     self.name

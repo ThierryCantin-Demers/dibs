@@ -38,6 +38,8 @@ pub enum Installed {
     Queued {
         behind: String,
     },
+    /// The build would wait for another build of the runner there, which may wait for the lock.
+    Building,
 }
 
 /// Whether a build that must queue for the lock goes on waiting.
@@ -49,6 +51,8 @@ pub enum Queueing {
 
 /// How every runner begins the line saying a job waits for the lock.
 const QUEUED: &str = "dibs: queued and has not started";
+/// How every runner begins the line saying its build waits for another build there.
+const ANOTHER_BUILD: &str = "dibs-runner: another build of the runner is running here";
 
 /// What the first build's line exits with when it cannot take the lock.
 const UNLOCKABLE: i32 = 71;
@@ -278,6 +282,18 @@ impl Provision<'_> {
         i32::from(Exit::NoRunner.code())
     }
 
+    /// A call that takes no lock does not wait for another call's build either, which may be
+    /// queued behind what holds the machine for as long as that runs.
+    pub fn building(&self, delivery: &mut Delivery) -> i32 {
+        let name = &self.session.name;
+        delivery.say(&format!(
+            "dibs: {name} has no runner for this dibs yet, and another call is building it there, which may itself
+               wait for the lock. A call that takes no lock does not wait for it; ask again once that build is done.
+"
+        ));
+        i32::from(Exit::NoRunner.code())
+    }
+
     /// A question asked within a bound builds nothing: the build would queue behind whatever
     /// holds the machine, for as long as that takes.
     pub fn not_for_a_question(&self, delivery: &mut Delivery) -> i32 {
@@ -376,7 +392,16 @@ impl Provision<'_> {
         for line in heard {
             match line.trim_ascii_end() {
                 said if queueing == Queueing::GivesUp && said.starts_with(QUEUED.as_bytes()) => {
-                    queued = Some(String::from_utf8_lossy(said).into_owned());
+                    queued = Some(Installed::Queued {
+                        behind: String::from_utf8_lossy(said).into_owned(),
+                    });
+                    let _ = child.kill();
+                    break;
+                }
+                said if queueing == Queueing::GivesUp
+                    && said.starts_with(ANOTHER_BUILD.as_bytes()) =>
+                {
+                    queued = Some(Installed::Building);
                     let _ = child.kill();
                     break;
                 }
@@ -388,11 +413,11 @@ impl Provision<'_> {
             }
         }
         delivery.flush(&mut buffers);
-        if let Some(behind) = queued {
+        if let Some(queued) = queued {
             // The build there holds its pipes until it learns its caller went, which closing them
             // as this process exits tells it; waiting for them here would wait out the lock.
             child.wait()?;
-            return Ok(Installed::Queued { behind });
+            return Ok(queued);
         }
         for reader in readers {
             let _ = reader.join();

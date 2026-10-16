@@ -464,6 +464,45 @@ fn a_call_that_takes_no_lock_gives_its_runners_build_up_behind_a_benchmark() {
 }
 
 #[test]
+fn a_call_that_takes_no_lock_gives_up_on_a_build_another_call_queued() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, true);
+    let (up, hold) = (s.gate("up"), s.gate("hold"));
+    let bench = s.spawn(s.dibs([
+        "--bench",
+        "--label",
+        "measured",
+        &format!("{}; {}", up.signal(), hold.hold()),
+    ]));
+    up.reached();
+    s.held(1);
+    let waiting = s.spawn(s.remote(s.dibs(["--label", "after", "true"])));
+    s.until_records("the waiting call's build queued", || {
+        s.records("waiting")
+            .iter()
+            .any(|r| r.get(3).is_some_and(|label| label == "dibs-runner"))
+    });
+    let out = s.remote(s.dibs(["--status"])).run();
+    assert_eq!(
+        (
+            out.code,
+            out.stderr
+                .lines_with("another call is building it there, which may itself")
+        ),
+        (72, 1),
+        "a status answers at once rather than wait for that build: {}",
+        out.all()
+    );
+    hold.open();
+    assert_eq!(s.wait(bench), 0);
+    assert_eq!(
+        s.wait(waiting),
+        0,
+        "and the call that waits gets its runner"
+    );
+}
+
+#[test]
 fn what_the_first_build_leaves_running_holds_no_lock() {
     let mut s = Sandbox::new();
     without_this_runner(&mut s, false);
