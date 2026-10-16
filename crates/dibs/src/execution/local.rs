@@ -323,7 +323,7 @@ impl Checkout {
             })
             .expect("an unbounded range")?;
         let checkout = root.join(&slot);
-        if !checkout.join(".git").exists() {
+        if !Checkout::borrows_from(&checkout, dir) {
             let _ = std::fs::remove_dir_all(&checkout);
             let from = dir
                 .to_str()
@@ -340,6 +340,25 @@ impl Checkout {
             key: format!("{:.10}", k.finalize().hex()),
             lock: Some(lock),
             why,
+        })
+    }
+
+    /// Whether `checkout` borrows its objects from `dir`'s repo. One cloned from a repo that has
+    /// moved or gone since, as a detached batch's copy of a repo does when the batch ends, borrows
+    /// from nowhere, and is cloned again.
+    fn borrows_from(checkout: &Path, dir: &Path) -> bool {
+        let Ok(alternates) = std::fs::read_to_string(checkout.join(".git/objects/info/alternates"))
+        else {
+            return false;
+        };
+        let objects = Git(dir)
+            .run(&["rev-parse", "--git-common-dir"])
+            .ok()
+            .and_then(|common| dir.join(common.trim()).join("objects").canonicalize().ok());
+        objects.is_some_and(|objects| {
+            alternates
+                .lines()
+                .any(|line| Path::new(line.trim()).canonicalize().ok() == Some(objects.clone()))
         })
     }
 
@@ -667,6 +686,24 @@ mod tests {
         assert_eq!(
             c.key, b.key,
             "a commit's tree on the machine is the same whichever checkout sent it"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn a_checkout_whose_repo_has_moved_is_cloned_again() {
+        let scratch = tmp("moved");
+        let first = scratch.join("first");
+        repo(&first);
+        let sha = Repo(&first).commit("HEAD").unwrap();
+        let root = scratch.join("sent/repo");
+        Checkout::under(&root, &first, "repo", &sha, None).unwrap();
+        let second = scratch.join("second");
+        std::fs::rename(&first, &second).unwrap();
+        let again = Checkout::under(&root, &second, "repo", &sha, None).unwrap();
+        assert_eq!(
+            Git(&again.dir).run(&["rev-parse", "HEAD"]).unwrap().trim(),
+            sha
         );
         let _ = std::fs::remove_dir_all(&scratch);
     }
