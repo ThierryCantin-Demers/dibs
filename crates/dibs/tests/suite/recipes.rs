@@ -1180,12 +1180,12 @@ fn each_build_cache_keeps_its_own_copy_of_a_store_its_tool_rewrites() {
             .stdout
             .lines_with("rewritten"),
         1,
-        "another tree starts from the newest build cache's copy, as a seeded one would"
+        "another tree starts from what the last one saved"
     );
     assert_eq!(
         s.read("home/.cache/tool/store/saved"),
-        "the machine's\n",
-        "and nothing rewrote the machine's"
+        "rewritten\n",
+        "and the machine's own store keeps what a tree saved"
     );
 }
 

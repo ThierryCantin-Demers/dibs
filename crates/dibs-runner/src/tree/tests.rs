@@ -2,7 +2,7 @@ use crate::{
     clock::{Deadline, Moment},
     job::{Environment, JobEnd},
     tree::{
-        Clocks, Commands, Reflinks, Runners, Spot, Stepping, TreeConfig, Trees,
+        Clocks, Commands, KeptCopy, Reflinks, Runners, Spot, Stepping, TreeConfig, Trees,
         clocks::{Fate, Removal},
         copy::{Copier, Sharing},
         sweep::{Section, Sweep, Swept},
@@ -575,27 +575,74 @@ fn a_target_keeps_its_own_copy_of_a_machine_directory_from_its_first_prepare() {
 }
 
 #[test]
-fn a_target_not_seeded_takes_its_copy_from_the_newest_sibling_that_has_one() {
+fn a_new_copy_takes_each_file_from_whichever_of_the_machine_and_its_siblings_saved_it_last() {
     let mut m = Machine::new();
     m.reflinks = Reflinks::Never;
-    fs::create_dir_all(m.p("home/.cache/tool/store")).unwrap();
-    fs::write(m.p("home/.cache/tool/store/saved"), "the machine's").unwrap();
+    let store = m.p("home/.cache/tool/store");
+    fs::create_dir_all(&store).unwrap();
+    fs::write(store.join("saved"), "the machine's").unwrap();
+    fs::write(store.join("machine-only"), "the machine's").unwrap();
+    run(&store, "touch -d '3 hours ago' saved machine-only");
     let older = m.sibling("demo-local-older", &[]);
-    fs::create_dir_all(older.join("dibs-copies/TOOL_STORE")).unwrap();
-    fs::write(older.join("dibs-copies/TOOL_STORE/saved"), "the older's").unwrap();
+    let theirs = older.join("dibs-copies/TOOL_STORE");
+    fs::create_dir_all(&theirs).unwrap();
+    fs::write(theirs.join("saved"), "the older's").unwrap();
+    run(&theirs, "touch -d '2 hours ago' saved");
     let newer = m.sibling("demo-local-newer", &[]);
-    run(&newer, "touch .dibs-used");
-    fs::create_dir_all(newer.join("dibs-copies/TOOL_STORE")).unwrap();
-    fs::write(newer.join("dibs-copies/TOOL_STORE/saved"), "the newer's").unwrap();
+    let theirs = newer.join("dibs-copies/TOOL_STORE");
+    fs::create_dir_all(theirs.join("nested")).unwrap();
+    fs::write(theirs.join("saved"), "the newer's").unwrap();
+    fs::write(theirs.join("nested/sibling-only"), "the newer's").unwrap();
     let p = m.prepared(&Prepare {
         copies: BTreeMap::from([("TOOL_STORE".into(), "~/.cache/tool/store".into())]),
         ..local("new", &[])
     });
     assert_eq!(p.seeded, None);
+    let copy = PathBuf::from(&p.copies["TOOL_STORE"]);
+    let read = |name: &str| fs::read_to_string(copy.join(name)).unwrap();
     assert_eq!(
-        fs::read_to_string(PathBuf::from(&p.copies["TOOL_STORE"]).join("saved")).unwrap(),
-        "the newer's"
+        (
+            read("saved"),
+            read("machine-only"),
+            read("nested/sibling-only")
+        ),
+        (
+            "the newer's".to_string(),
+            "the machine's".to_string(),
+            "the newer's".to_string()
+        )
     );
+}
+
+#[test]
+fn what_a_job_saved_in_a_copy_goes_back_to_the_machine_with_the_newest_file_winning() {
+    let m = Machine::new();
+    let store = m.p("home/.cache/tool/store");
+    fs::create_dir_all(&store).unwrap();
+    fs::write(store.join("shared"), "the machine's").unwrap();
+    let p = m.prepared(&Prepare {
+        copies: BTreeMap::from([("TOOL_STORE".into(), "~/.cache/tool/store".into())]),
+        ..local("one", &[])
+    });
+    let copy = PathBuf::from(&p.copies["TOOL_STORE"]);
+    fs::write(copy.join("saved"), "the job's").unwrap();
+    fs::write(copy.join("shared"), "the job's, older").unwrap();
+    run(&copy, "touch -d '1 hour ago' shared");
+    KeptCopy::of(&copy)
+        .give_back(Copier::new(Reflinks::Copies))
+        .unwrap();
+    let read = |name: &str| fs::read_to_string(store.join(name)).unwrap();
+    assert_eq!(
+        (read("saved"), read("shared")),
+        ("the job's".to_string(), "the machine's".to_string())
+    );
+    let left: Vec<String> = fs::read_dir(&store)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".dibs-"))
+        .collect();
+    assert!(left.is_empty(), "nothing half-copied is left: {left:?}");
 }
 
 #[test]

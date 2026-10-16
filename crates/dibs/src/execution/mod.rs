@@ -4,6 +4,7 @@ mod base;
 mod build;
 mod error;
 mod jobs;
+mod kept;
 mod local;
 mod pins;
 mod refs;
@@ -16,6 +17,7 @@ mod with;
 
 pub use base::{raw, run_recipe};
 pub use error::{ArmError, CheckoutError, PinError, Refusal, RunError, Unprepared};
+pub use kept::KeptStores;
 pub use local::{Checkout, Fetched, Local, Repo, SentFrom};
 pub use schedule::Job;
 pub use with::with_service;

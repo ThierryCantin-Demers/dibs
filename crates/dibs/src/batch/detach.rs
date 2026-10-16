@@ -10,7 +10,7 @@ use crate::{
     call::{CallError, Driver, MachineCall, Origin, Output, Series, Sync},
     caller::Caller,
     cli::{Call, Invocation, Mode, RecipeCall, RecipeVerb},
-    execution::SentFrom,
+    execution::{KeptStores, Repo, SentFrom},
     git::{Git, GitError},
     itself::Itself,
     machine::{
@@ -18,11 +18,12 @@ use crate::{
         Stream, Target,
     },
     paths::{FileError, Paths},
-    recipe::{Checkouts, RepoError},
+    recipe::{Checkouts, Manifest, RepoError},
     records::RunLog,
 };
 use dibs_format::{BatchId, Exit, MachineName};
 use std::{
+    collections::BTreeMap,
     fmt, fs,
     io::Read as _,
     os::unix::process::CommandExt as _,
@@ -262,6 +263,9 @@ struct Staged {
 
 impl Staged {
     const DIR: &'static str = "send";
+    /// The directories the steps' trees copy, a `<variable>\t<dir>` line each, kept for a
+    /// follow from a later call.
+    const KEPT: &'static str = "kept";
 
     fn of(batch: &Path) -> Result<Staged, FileError> {
         let dir = batch.join(Staged::DIR);
@@ -466,6 +470,16 @@ impl<'a> Detach<'a> {
             .map(|r| SentFrom::line(&r.name, &r.dir))
             .collect();
         staged.write(Detached::SENT_FROM, sent_from.as_bytes())?;
+        let copies: BTreeMap<String, String> = repos
+            .iter()
+            .filter_map(|r| Manifest::load_any(&r.dir, &Repo(&r.dir).identity()).ok())
+            .flat_map(|manifest| manifest.tree_copies())
+            .collect();
+        let kept: String = copies
+            .iter()
+            .map(|(variable, dir)| format!("{variable}\t{dir}\n"))
+            .collect();
+        staged.write(Staged::KEPT, kept.as_bytes())?;
         let series = paths
             .series()
             .and_then(|path| fs::read(path).ok())
@@ -501,7 +515,21 @@ impl<'a> Detach<'a> {
                 return Ok(Some(code));
             }
         }
+        if let Some(kept) = self.kept() {
+            kept.send();
+        }
         Ok(None)
+    }
+
+    /// What the steps' tools save in their trees' copies, kept here for the machine's series.
+    fn kept(&self) -> Option<KeptStores> {
+        let listed = fs::read_to_string(self.dir.join(Staged::DIR).join(Staged::KEPT)).ok()?;
+        let copies: BTreeMap<String, String> = listed
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .map(|(variable, dir)| (variable.to_string(), dir.to_string()))
+            .collect();
+        KeptStores::of(Some(self.name.clone()), &copies)
     }
 
     /// A repo's files as its ignore rules leave them, then its git directory, each against the
@@ -665,7 +693,13 @@ impl<'a> Detach<'a> {
             return Ok(i32::from(Exit::Unreachable.code()));
         }
         match serde_json::from_str::<Followed>(json.trim()) {
-            Ok(followed) if status == 0 => Ok(self.collect(followed)),
+            Ok(followed) if status == 0 => {
+                let code = self.collect(followed);
+                if let Some(kept) = self.kept() {
+                    kept.fetch();
+                }
+                Ok(code)
+            }
             _ => {
                 eprintln!(
                     "dibs: batch {} could not be followed on {} (exit {status})",

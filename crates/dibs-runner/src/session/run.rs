@@ -19,7 +19,7 @@ use crate::{
     sink::Sink,
     status::Look,
     stop::{Stage, State, Stopper},
-    tree::{Mark, Stepping},
+    tree::{Copier, KeptCopy, Mark, Stepping},
 };
 use dibs_format::{
     By, Event, Exit, HistoryLine, JobId, Mode,
@@ -494,6 +494,14 @@ impl<'a> Run<'a> {
         };
         if let Some(services) = &mut hosted.services {
             services.stop();
+        }
+        let copier = Copier::new(self.at.settings.reflinks);
+        for copy in environment.copied() {
+            if let Err(e) = KeptCopy::of(Path::new(copy)).give_back(copier) {
+                self.at.sink.say(&format!(
+                    "dibs: what the job saved in {copy} could not all go back to the machine's directory: {e}\n"
+                ));
+            }
         }
         hosted.status = status;
         if let (Some(step), Some(stepping)) = (step, &stepping)

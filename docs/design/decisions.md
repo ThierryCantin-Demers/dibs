@@ -91,6 +91,14 @@ a laptop that sleeps or leaves. That reverses "a batch adds no state on any mach
 batch only; its driver is still the owner, and its locks still die with it. `detach.md` is the
 design.
 
+**A tree's copies are kept beyond it, and never refreshed within it (2026-10-16).** A tool's
+saved state, an autotune store being the case, took up to an hour to rebuild, and a copy that
+learned only for its own tree lost it with the tree and with a rented machine. Each file a job
+saved goes back to the machine's directory, newest winning, and a new copy starts from the
+newest of the machine's and the siblings' files; this computer keeps a copy per machine series
+and sends it ahead of each run. An existing copy is never refreshed from the machine's, since
+that is the turn-by-turn rewrite copies exist to stop.
+
 ## Deferred. Do not re-derive
 
 **Round-robin or fair-share across agents.** Nothing is starved today, only delayed. The good

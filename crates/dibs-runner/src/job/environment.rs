@@ -110,6 +110,11 @@ impl Environment {
     pub fn copies(&mut self, copies: &BTreeMap<String, String>) {
         self.copies.clone_from(copies);
     }
+
+    /// The target's copies the job was given.
+    pub fn copied(&self) -> impl Iterator<Item = &str> {
+        self.copies.values().map(String::as_str)
+    }
 }
 
 /// A job pinned to one card by its slot, which belongs to the slot rather than to the order the

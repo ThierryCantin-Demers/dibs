@@ -21,9 +21,9 @@ mod sweep;
 mod tests;
 mod turn;
 
-pub use base::{TreeConfig, Trees};
+pub use base::{KeptCopy, TreeConfig, Trees};
 pub use clocks::Clocks;
-pub use copy::{Mark, Reflinks};
+pub use copy::{Copier, Mark, Reflinks};
 pub use gc::{Asked, Bytes};
 pub use git::Commands;
 pub use runners::Runners;

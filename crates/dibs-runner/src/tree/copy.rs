@@ -75,6 +75,46 @@ impl Copier {
         laid.dirs.iter().try_for_each(Entry::dated)
     }
 
+    /// Each file of `from` that `into` lacks or has older, copied over it with its time kept,
+    /// and the directories it needs made: what a tool saved, merged file by file, newest winning.
+    pub fn newer(&self, from: &Path, into: &Path) -> io::Result<()> {
+        fs::create_dir_all(into)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            let (path, to) = (entry.path(), into.join(entry.file_name()));
+            let meta = entry.metadata()?;
+            if meta.is_dir() {
+                self.newer(&path, &to)?;
+                continue;
+            }
+            let ours = meta.modified()?;
+            let theirs = fs::metadata(&to).and_then(|m| m.modified()).ok();
+            if !meta.is_file() || theirs.is_some_and(|theirs| theirs >= ours) {
+                continue;
+            }
+            // Renamed into place, so a tool reading the directory never sees half a file.
+            let part = into.join(format!(
+                ".{}.dibs-{}",
+                entry.file_name().to_string_lossy(),
+                std::process::id()
+            ));
+            let placed = self
+                .file(&path, &part, Sharing::Preferred)
+                .and_then(|()| {
+                    fs::File::options()
+                        .write(true)
+                        .open(&part)?
+                        .set_modified(ours)
+                })
+                .and_then(|()| fs::rename(&part, &to));
+            if placed.is_err() {
+                let _ = fs::remove_file(&part);
+            }
+            placed?;
+        }
+        Ok(())
+    }
+
     fn made(&self, entry: &Entry, sharing: Sharing) -> io::Result<()> {
         match entry.meta.is_file() {
             true => self.file(&entry.from, &entry.to, sharing)?,

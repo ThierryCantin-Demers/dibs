@@ -169,3 +169,50 @@ fn a_detached_batch_is_stopped_from_here_on_its_machine() {
         "the driver there stops, and its follow here with it"
     );
 }
+
+/// A recipe whose step says what its tool found saved, then saves its own.
+const TUNES: &str = "[tree]\ncopies = { TOOL_STORE = \"~/.cache/tool/store\" }\n\n\
+                     [build.tool]\n  [[build.tool.step]]\n  lock = \"shared\"\n  \
+                     run = \"cat $TOOL_STORE/saved 2>/dev/null || echo nothing saved; echo tuned > $TOOL_STORE/saved\"\n";
+
+/// This computer's copy of box-a's store, as its series is kept.
+const KEPT_HERE: &str = "home/.local/state/dibs/kept/dibs_box-a/.cache/tool/store/saved";
+
+#[test]
+fn what_a_tool_saved_outlives_the_machine_it_was_saved_on() {
+    let s = detaching();
+    let app = app(&s);
+    recipes(&s, TUNES);
+    let local = format!("{app}@local");
+    let first = s.dibs(["build", &local, "tool", "--on", "box-a"]).run();
+    assert_eq!(
+        (first.code, first.stdout.lines_with("nothing saved")),
+        (0, 1),
+        "{}",
+        first.all()
+    );
+    assert_eq!(s.read(KEPT_HERE), "tuned\n", "kept here after the run");
+    // A new machine of the series, with nothing of the old one's.
+    std::fs::remove_dir_all(s.path("home/.cache/tool")).unwrap();
+    std::fs::remove_dir_all(s.path("hosts/box-a/scratch")).unwrap();
+    let again = s.dibs(["build", &local, "tool", "--on", "box-a"]).run();
+    assert_eq!(
+        (again.code, again.stdout.lines_with("tuned")),
+        (0, 1),
+        "the new tree starts from what was kept here: {}",
+        again.all()
+    );
+}
+
+#[test]
+fn a_detached_batch_brings_what_its_tools_saved_home() {
+    let s = detaching();
+    app(&s);
+    recipes(&s, TUNES);
+    let out = s
+        .dibs(["batch", "--detach", "-"])
+        .stdin("[tool] dibs build app@local tool --on box-a\n")
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(s.read(KEPT_HERE), "tuned\n");
+}

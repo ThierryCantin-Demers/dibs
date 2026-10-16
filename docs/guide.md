@@ -292,14 +292,19 @@ its own:
     copies = { TOOL_STORE = "~/.cache/tool/store" }
 
 The first prepare of a build cache gives it a copy of its own, and everything that runs in the
-tree, a recipe's steps and a service's servers alike, finds the copy's path in the variable. A
-build cache seeded from a sibling's has the sibling's copy already. Any other copies the newest
-of the repo's other build caches that has one, since the machine's own directory is one the
-repo's runs there never write to, and only without one copies the machine's, or starts empty
-when the machine has none. From then on each arm rewrites only its own, for the binary it
-builds, so a new tree migrates a sibling's saved state once rather than starting from nothing,
-and the copy goes when its build cache does. The directory is absolute or under `~/`, and
-`dibs bench --dry-run` and `dibs list` show each one.
+tree, a recipe's steps and a service's servers alike, finds the copy's path in the variable.
+From then on each arm rewrites only its own, for the binary it builds, and the copy goes when its
+build cache does. The directory is absolute or under `~/`, and `dibs bench --dry-run` and `dibs
+list` show each one.
+
+What a tool saves outlives the tree it saved it in. When a job in the tree ends, each file its
+copy has newer than the machine's directory goes back there. A new copy starts from the
+machine's directory and the repo's other build caches' copies, each file the newest of them, so
+a new tree of another ref migrates what was saved rather than starting from nothing. A
+directory under `~/` is kept on this computer as well, one copy per machine series under
+`~/.local/state/dibs/kept`: sent to the machine before a run, newer files only, and fetched back
+after it, so a rental after this one starts from what this one saved. A detached batch sends
+them before it starts and fetches them with its summary.
 
 ## Build caching
 

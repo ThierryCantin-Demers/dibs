@@ -2,6 +2,7 @@ use super::{
     build::BuildSignature,
     error::{Refusal, RunError, Unprepared},
     jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
+    kept::KeptStores,
     local::Repo,
     pins::{Nest, PinSpec, Pinned, PinnedRepo, PinnedTree},
     refs::{Arm, Side},
@@ -194,6 +195,10 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     }
     if refused_before_building(&backend, rec, &step_labels, &args) {
         return Ok(ExitCode::from(Exit::Refused.code()));
+    }
+    let kept = KeptStores::of(backend.machine.clone(), &tree_copies);
+    if let Some(kept) = &kept {
+        kept.send();
     }
 
     // Trees are prepared under the shared lock, so no fetch or checkout runs inside a hold.
@@ -488,6 +493,9 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         }
     }
     backend.fetch_artifacts(&steps, args.artifacts_to.as_deref(), compared);
+    if let Some(kept) = &kept {
+        kept.fetch();
+    }
 
     let revision = |p: &wire::Prepared| p.revision.clone();
     let pinned_revisions: Vec<Revision> = pinned.iter().map(revision).collect();

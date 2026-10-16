@@ -16,7 +16,7 @@ use crate::{
 use dibs_format::wire::{GitDb, GitDbs, Nest, Prepare, Prepared, Revision, Seeded, Source};
 use std::{
     collections::BTreeMap,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU32, Ordering},
     time::Duration,
@@ -50,6 +50,37 @@ pub struct TreeConfig<'a> {
 pub const LOCAL: &str = "local-";
 /// Where a target keeps its copies of machine directories, one per variable.
 const COPIES: &str = "dibs-copies";
+
+/// A target's copy of a machine directory, which goes back to it: what a job saved there is
+/// merged into the machine's directory once the job ends, so a tree of any ref, made later,
+/// starts from it.
+pub struct KeptCopy<'a> {
+    copy: &'a Path,
+}
+
+impl<'a> KeptCopy<'a> {
+    pub fn of(copy: &'a Path) -> KeptCopy<'a> {
+        KeptCopy { copy }
+    }
+
+    /// Beside the copy, where the tool reading the copy never looks.
+    fn origin(&self) -> PathBuf {
+        let name = self.copy.file_name().unwrap_or_default().to_string_lossy();
+        self.copy.with_file_name(format!("{name}.from"))
+    }
+
+    fn remember(&self, machine: &Path) -> io::Result<()> {
+        fs::write(self.origin(), format!("{}\n", machine.display()))
+    }
+
+    /// Each file the copy has newer than the machine's directory, given back to it.
+    pub fn give_back(&self, copier: Copier) -> io::Result<()> {
+        let Ok(machine) = fs::read_to_string(self.origin()) else {
+            return Ok(());
+        };
+        copier.newer(self.copy, Path::new(machine.trim_end()))
+    }
+}
 /// A tree whose target was prepared this recently may be about to be entered by another call.
 const IN_USE: Duration = Duration::from_secs(15 * 60);
 /// A reseed is worth its copy only from a sibling sharing more of the lockfile than the tree's
@@ -587,7 +618,8 @@ impl<'a> Trees<'a> {
     }
 
     /// The target's copy of each directory the prepare names, made the first time from the
-    /// machine's, or empty when the machine has none. Holding the target's turn.
+    /// machine's and what the repo's other build caches saved in theirs, each file the newest
+    /// of them. Holding the target's turn.
     fn copies(
         &self,
         prepare: &Prepare,
@@ -597,46 +629,48 @@ impl<'a> Trees<'a> {
         let mut copies = BTreeMap::new();
         for (variable, dir) in &prepare.copies {
             let copy = target.join(COPIES).join(variable);
+            let machine = match dir.strip_prefix("~/") {
+                Some(rest) => self.config.home.join(rest),
+                None => PathBuf::from(dir),
+            };
+            self.made(&target.join(COPIES))?;
             if !copy.exists() {
-                // A seeded target brought its sibling's copy, so one that was not starts from
-                // the newest sibling's too: the machine's own directory is one this repo's runs
-                // never write to.
-                let machine = match dir.strip_prefix("~/") {
-                    Some(rest) => self.config.home.join(rest),
-                    None => PathBuf::from(dir),
-                };
-                let from = Siblings {
+                let part = target
+                    .join(COPIES)
+                    .join(format!(".{variable}.{}", stamp.as_str()));
+                (self.say)(&format!(
+                    "dibs: copying {} for {variable}, with what this repo's other build caches saved, once for this build cache\n",
+                    machine.display()
+                ));
+                let siblings = Siblings {
                     scratch: self.config.scratch,
                     repo: &prepare.repo,
                     of: target,
                 }
-                .newest_first()
-                .into_iter()
-                .map(|sibling| sibling.join(COPIES).join(variable))
-                .find(|copy| copy.is_dir())
-                .unwrap_or(machine);
-                let part = target
-                    .join(COPIES)
-                    .join(format!(".{variable}.{}", stamp.as_str()));
-                self.made(&target.join(COPIES))?;
-                let copied = match from.is_dir() {
-                    true => {
-                        (self.say)(&format!(
-                            "dibs: copying {} for {variable}, once for this build cache\n",
-                            from.display()
-                        ));
-                        self.copier.tree(&from, &part, Sharing::Preferred)
-                    }
+                .newest_first();
+                let copied = match machine.is_dir() {
+                    true => self.copier.tree(&machine, &part, Sharing::Preferred),
                     false => fs::create_dir(&part),
-                };
-                if let Err(e) = copied.and_then(|()| fs::rename(&part, &copy)) {
+                }
+                .and_then(|()| {
+                    siblings
+                        .iter()
+                        .map(|sibling| sibling.join(COPIES).join(variable))
+                        .filter(|theirs| theirs.is_dir())
+                        .try_for_each(|theirs| self.copier.newer(&theirs, &part))
+                })
+                .and_then(|()| fs::rename(&part, &copy));
+                if let Err(e) = copied {
                     part.remove_all();
                     return Err(PrepareError::io(
-                        &format!("could not copy {} for {variable}", from.display()),
+                        &format!("could not copy {} for {variable}", machine.display()),
                         e,
                     ));
                 }
             }
+            KeptCopy::of(&copy)
+                .remember(&machine)
+                .map_err(|e| PrepareError::io("could not record where a copy came from", e))?;
             copies.insert(variable.clone(), copy.display().to_string());
         }
         Ok(copies)

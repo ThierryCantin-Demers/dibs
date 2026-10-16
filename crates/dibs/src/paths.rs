@@ -102,6 +102,12 @@ impl Paths {
         self.overridden("DIBS_KEPT", self.state("jobs"))
     }
 
+    /// What tools saved in trees' copies, one directory per machine series, laid out as under
+    /// the machine's home.
+    pub fn kept(&self) -> Option<PathBuf> {
+        self.state("kept")
+    }
+
     /// One directory per batch, with each step's output and the summary.
     pub fn batches(&self) -> Option<PathBuf> {
         self.state("batch")

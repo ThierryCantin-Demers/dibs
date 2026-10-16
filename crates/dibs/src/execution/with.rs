@@ -3,6 +3,7 @@ use super::{
     build::BuildSignature,
     error::{Refusal, RunError, Unprepared},
     jobs::{JobRequest, Jobs},
+    kept::KeptStores,
     local::Repo,
     pins::Pinned,
     refs::{Arm, Side},
@@ -141,6 +142,10 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     }
     if let Some(m) = backend.machine.as_ref().filter(|_| !args.pinned()) {
         Affinity::here().set(&repo_name, m.as_str());
+    }
+    let kept = KeptStores::of(backend.machine.clone(), &manifest.tree_copies());
+    if let Some(kept) = &kept {
+        kept.send();
     }
     let pin_label = format!("{label}:pin");
     let no_batch = RecipeJob::default();
@@ -319,6 +324,9 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             eprint!("{e}");
             e.exit()
         });
+    if let Some(kept) = &kept {
+        kept.fetch();
+    }
     Ok(ExitCode::from(code.rem_euclid(256) as u8))
 }
 
