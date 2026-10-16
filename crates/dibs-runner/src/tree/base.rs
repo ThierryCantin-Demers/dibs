@@ -8,7 +8,7 @@ use crate::{
         error::{Named, PrepareError},
         git::{Commands, Git, Replied as _},
         packages::{Cache, Lines},
-        seed::{Seed, Seedling},
+        seed::{Seed, Seedling, Siblings},
         sweep::{PREPARE_LOCK, Sweep},
         turn::Turn,
     },
@@ -598,10 +598,23 @@ impl<'a> Trees<'a> {
         for (variable, dir) in &prepare.copies {
             let copy = target.join(COPIES).join(variable);
             if !copy.exists() {
-                let from = match dir.strip_prefix("~/") {
+                // A seeded target brought its sibling's copy, so one that was not starts from
+                // the newest sibling's too: the machine's own directory is one this repo's runs
+                // never write to.
+                let machine = match dir.strip_prefix("~/") {
                     Some(rest) => self.config.home.join(rest),
                     None => PathBuf::from(dir),
                 };
+                let from = Siblings {
+                    scratch: self.config.scratch,
+                    repo: &prepare.repo,
+                    of: target,
+                }
+                .newest_first()
+                .into_iter()
+                .map(|sibling| sibling.join(COPIES).join(variable))
+                .find(|copy| copy.is_dir())
+                .unwrap_or(machine);
                 let part = target
                     .join(COPIES)
                     .join(format!(".{variable}.{}", stamp.as_str()));

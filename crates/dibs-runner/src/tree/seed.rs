@@ -8,7 +8,7 @@ use crate::tree::{
 };
 use dibs_format::wire::{Seeded, Shared};
 use std::{
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -52,6 +52,46 @@ enum Existing {
     Kept,
     /// To be replaced, so the copy is made anyway.
     Replaced,
+}
+
+/// A repo's other targets on this machine, each a build cache of its own.
+pub struct Siblings<'a> {
+    pub scratch: &'a Path,
+    pub repo: &'a str,
+    /// The target they are siblings of.
+    pub of: &'a Path,
+}
+
+impl Siblings<'_> {
+    /// Newest used first, as `ls -t` names them, leaving out copies being made or set aside.
+    pub fn newest_first(&self) -> Vec<PathBuf> {
+        let targets = self.scratch.join("target");
+        let local = format!("{}-local-", self.repo);
+        let arm = format!("{}-arm", self.repo);
+        let mut found: Vec<(SystemTime, PathBuf)> = fs::read_dir(&targets)
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| {
+                        let name = e.file_name().to_string_lossy().into_owned();
+                        name == self.repo || name.starts_with(&local) || name.starts_with(&arm)
+                    })
+                    .filter_map(|e| {
+                        let used = fs::metadata(e.path().join(".dibs-used")).ok()?;
+                        Some((used.modified().ok()?, e.path()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        found
+            .into_iter()
+            .map(|(_, dir)| dir)
+            .filter(|dir| {
+                let shown = dir.display().to_string();
+                dir != self.of && !shown.contains(".old.") && !shown.contains(".seed.")
+            })
+            .collect()
+    }
 }
 
 /// A sibling target, ranked by what it has built of this tree's lockfile, or will have once the
@@ -143,11 +183,23 @@ impl<'a> Seed<'a> {
                     name(&sibling.dir)
                 ));
             }
+            let shared = match held {
+                true => Ok(()),
+                false => self.copier.tree(&sibling.dir, &copy, Sharing::Required),
+            };
+            if shared
+                .as_ref()
+                .is_err_and(|e| e.kind() == io::ErrorKind::Unsupported)
+            {
+                (self.say)(
+                    "dibs: this disk cannot share a target's blocks, and a full copy per tree would fill it, so this tree builds from nothing\n",
+                );
+                drop(taken);
+                copy.remove_all();
+                return None;
+            }
             let copied = !held
-                && self
-                    .copier
-                    .tree(&sibling.dir, &copy, Sharing::Required)
-                    .is_ok()
+                && shared.is_ok()
                 && fs::write(
                     copy.join(".dibs-tree"),
                     format!("{}\n", self.tree.worktree.display()),
@@ -173,36 +225,18 @@ impl<'a> Seed<'a> {
         None
     }
 
-    /// The candidates `ls -t` names, newest first, ranked with `sort -s`: a stable sort keeps
-    /// the newest first among equals.
+    /// The candidates newest first, ranked with a stable sort, which keeps the newest first
+    /// among equals.
     fn siblings(&self) -> Vec<Sibling> {
-        let targets = self.tree.scratch.join("target");
-        let local = format!("{}-local-", self.tree.repo);
-        let arm = format!("{}-arm", self.tree.repo);
-        let mut found: Vec<(SystemTime, PathBuf)> = fs::read_dir(&targets)
-            .map(|d| {
-                d.flatten()
-                    .filter(|e| {
-                        let name = e.file_name().to_string_lossy().into_owned();
-                        name == self.tree.repo || name.starts_with(&local) || name.starts_with(&arm)
-                    })
-                    .filter_map(|e| {
-                        let used = fs::metadata(e.path().join(".dibs-used")).ok()?;
-                        Some((used.modified().ok()?, e.path()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        let mut ranked: Vec<Sibling> = found
-            .into_iter()
-            .map(|(_, dir)| dir)
-            .filter(|dir| {
-                let shown = dir.display().to_string();
-                dir != self.tree.target && !shown.contains(".old.") && !shown.contains(".seed.")
-            })
-            .map(|dir| self.ranked(dir))
-            .collect();
+        let mut ranked: Vec<Sibling> = Siblings {
+            scratch: self.tree.scratch,
+            repo: self.tree.repo,
+            of: self.tree.target,
+        }
+        .newest_first()
+        .into_iter()
+        .map(|dir| self.ranked(dir))
+        .collect();
         ranked.sort_by_key(|s| std::cmp::Reverse(s.rank));
         ranked
     }

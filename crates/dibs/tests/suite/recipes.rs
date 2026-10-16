@@ -1178,11 +1178,15 @@ fn each_build_cache_keeps_its_own_copy_of_a_store_its_tool_rewrites() {
         s.dibs(["bench", &format!("{app}@main"), "tool"])
             .run()
             .stdout
-            .lines_with("the machine's"),
+            .lines_with("rewritten"),
         1,
-        "another tree starts from the machine's, which nothing rewrote"
+        "another tree starts from the newest build cache's copy, as a seeded one would"
     );
-    assert_eq!(s.read("home/.cache/tool/store/saved"), "the machine's\n");
+    assert_eq!(
+        s.read("home/.cache/tool/store/saved"),
+        "the machine's\n",
+        "and nothing rewrote the machine's"
+    );
 }
 
 #[test]

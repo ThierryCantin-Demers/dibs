@@ -16,6 +16,7 @@ it holds the pinned commit: true
 2| dibs: preparing app from <root>/app (clean)
 2| dibs: syncing with dibs@box-a (box-a) once its lock is held; the files are read then, not now
 2| dibs: copying app's target to start this tree from
+2| dibs: this disk cannot share a target's blocks, and a full copy per tree would fill it, so this tree builds from nothing
 2| dibs: <root>/scratch/ws/app/local-<key>
 2| dibs: sending dep-0123456789abcdef at <commit>, which the machine does not have and may not be able to fetch
 2| dibs: syncing with dibs@box-a (box-a) once its lock is held; the files are read then, not now

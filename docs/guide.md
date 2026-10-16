@@ -291,12 +291,15 @@ its own:
     [tree]
     copies = { TOOL_STORE = "~/.cache/tool/store" }
 
-The first prepare of a build cache copies the machine's directory into it, or starts it empty
-when the machine has none, and everything that runs in the tree, a recipe's steps and a
-service's servers alike, finds the copy's path in the variable. From then on each arm rewrites
-only its own, for the binary it builds, and the copy goes when its build cache does. A build
-cache seeded from a sibling's starts from the sibling's copy instead. The directory is absolute
-or under `~/`, and `dibs bench --dry-run` and `dibs list` show each one.
+The first prepare of a build cache gives it a copy of its own, and everything that runs in the
+tree, a recipe's steps and a service's servers alike, finds the copy's path in the variable. A
+build cache seeded from a sibling's has the sibling's copy already. Any other copies the newest
+of the repo's other build caches that has one, since the machine's own directory is one the
+repo's runs there never write to, and only without one copies the machine's, or starts empty
+when the machine has none. From then on each arm rewrites only its own, for the binary it
+builds, so a new tree migrates a sibling's saved state once rather than starting from nothing,
+and the copy goes when its build cache does. The directory is absolute or under `~/`, and
+`dibs bench --dry-run` and `dibs list` show each one.
 
 ## Build caching
 
@@ -318,7 +321,8 @@ build's toolchain, profile, target, feature flags and RUSTFLAGS, so a debug buil
 for a release one. A pinned git dependency found in more than one cache directory here, because
 its URL was spelled two ways, is sent from each. Dependencies are then reused, and the workspace crates
 rebuild because the sync gives every file the current time. Only a filesystem with reflinks,
-such as XFS or btrfs, gets the copy, since a full copy per tree would fill the disk.
+such as XFS or btrfs, gets the copy, since a full copy per tree would fill the disk. On ext4, as
+a rented machine's disk usually is, a new tree says so and builds from nothing.
 
 Commits of a fetched repo share one target directory, and cargo trusts a source file older than
 its last compile, so a worktree checked out before another commit built there is handed that

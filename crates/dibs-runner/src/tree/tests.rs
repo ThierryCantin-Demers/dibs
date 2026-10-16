@@ -575,6 +575,30 @@ fn a_target_keeps_its_own_copy_of_a_machine_directory_from_its_first_prepare() {
 }
 
 #[test]
+fn a_target_not_seeded_takes_its_copy_from_the_newest_sibling_that_has_one() {
+    let mut m = Machine::new();
+    m.reflinks = Reflinks::Never;
+    fs::create_dir_all(m.p("home/.cache/tool/store")).unwrap();
+    fs::write(m.p("home/.cache/tool/store/saved"), "the machine's").unwrap();
+    let older = m.sibling("demo-local-older", &[]);
+    fs::create_dir_all(older.join("dibs-copies/TOOL_STORE")).unwrap();
+    fs::write(older.join("dibs-copies/TOOL_STORE/saved"), "the older's").unwrap();
+    let newer = m.sibling("demo-local-newer", &[]);
+    run(&newer, "touch .dibs-used");
+    fs::create_dir_all(newer.join("dibs-copies/TOOL_STORE")).unwrap();
+    fs::write(newer.join("dibs-copies/TOOL_STORE/saved"), "the newer's").unwrap();
+    let p = m.prepared(&Prepare {
+        copies: BTreeMap::from([("TOOL_STORE".into(), "~/.cache/tool/store".into())]),
+        ..local("new", &[])
+    });
+    assert_eq!(p.seeded, None);
+    assert_eq!(
+        fs::read_to_string(PathBuf::from(&p.copies["TOOL_STORE"]).join("saved")).unwrap(),
+        "the newer's"
+    );
+}
+
+#[test]
 fn a_target_a_build_holds_is_not_copied() {
     let m = Machine::new();
     let t = m.sibling("demo-local-old", &[]);
@@ -588,8 +612,15 @@ fn a_filesystem_without_reflinks_gets_no_seed_and_no_partial_copy() {
     let mut m = Machine::new();
     m.reflinks = Reflinks::Never;
     m.sibling("demo-local-old", &[]);
+    m.sibling("demo-local-older", &[]);
     m.sources("old", "theirs.rs");
-    let p = m.prepared(&local("new", &[]));
+    let (prepared, said) = m.prepare(&local("new", &[]));
+    assert_eq!(
+        said.matches("cannot share a target's blocks").count(),
+        1,
+        "it says why once, rather than trying every sibling: {said}"
+    );
+    let p = prepared.unwrap();
     assert_eq!(p.seeded, None);
     let left: Vec<String> = fs::read_dir(m.p("scratch/target"))
         .unwrap()

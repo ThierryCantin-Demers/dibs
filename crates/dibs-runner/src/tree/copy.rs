@@ -92,10 +92,10 @@ impl Copier {
         match (shared, sharing) {
             (true, _) => Ok(()),
             (false, Sharing::Preferred) => fs::copy(from, to).map(drop),
-            (false, Sharing::Required) => Err(io::Error::other(format!(
-                "{} cannot share its blocks here",
-                from.display()
-            ))),
+            (false, Sharing::Required) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("{} cannot share its blocks here", from.display()),
+            )),
         }
     }
 }
