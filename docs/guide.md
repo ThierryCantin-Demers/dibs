@@ -825,7 +825,10 @@ session of its own outlives it, holding no lock, and `dibs status` lists it unde
 with the job it came from; `dibs --kill <pid>` stops it and what it started.
 
 An unreachable machine fails in seconds with a diagnosis, including whether Tailscale needs a
-login, rather than hanging on a connection or a password prompt. Never retry that in a loop.
+login, rather than hanging on a connection or a password prompt. Never retry that in a loop. A
+connection that the machine answers and then breaks off before the login, as sshd does while too
+many are starting at once, never reached the runner, so dibs makes the call again after 5, 15 and
+40 seconds (`DIBS_RECONNECT`) before giving up, and then says the machine is up.
 
 Every completed run's duration is recorded per label, and `--status` uses the median of its newest
 runs to say how much longer the holder has and when each queued caller should start. It says nothing

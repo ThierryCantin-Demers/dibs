@@ -4,6 +4,15 @@ use std::{
 };
 
 const DEFAULT_CONNECT_TIMEOUT: &str = "10";
+/// What ssh says when the machine answered and the connection broke off before the login, as
+/// sshd does to new connections while too many are starting at once.
+const BROKE_OFF: [&str; 3] = [
+    "during banner exchange",
+    "kex_exchange_identification",
+    "ssh_exchange_identification",
+];
+/// Seconds before each new try of a connection that broke off.
+const DEFAULT_RECONNECT: [u64; 3] = [5, 15, 40];
 
 /// How dibs runs ssh.
 pub struct Ssh;
@@ -14,6 +23,20 @@ impl Ssh {
             .ok()
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| DEFAULT_CONNECT_TIMEOUT.into())
+    }
+
+    /// Whether ssh broke off before the login, which passes, rather than finding nothing there.
+    pub fn broke_off(said: &str) -> bool {
+        BROKE_OFF.iter().any(|needle| said.contains(needle))
+    }
+
+    /// The pauses before each new try of a connection that broke off, `DIBS_RECONNECT` in
+    /// seconds separated by commas.
+    pub fn reconnect_pauses() -> Vec<u64> {
+        std::env::var("DIBS_RECONNECT")
+            .ok()
+            .and_then(|v| v.split(',').map(|p| p.trim().parse().ok()).collect())
+            .unwrap_or_else(|| DEFAULT_RECONNECT.to_vec())
     }
 
     /// ssh, reading `config` alone when the machine names one: given `-F`, ssh reads neither the

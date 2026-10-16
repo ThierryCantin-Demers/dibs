@@ -12,7 +12,7 @@ use crate::{
     },
 };
 use dibs_format::{
-    Exit,
+    Exit, Span,
     wire::{Frame, Picked, Prepared, Record, Stepped, Unframer},
 };
 use std::{
@@ -182,7 +182,7 @@ impl Served<'_> {
     }
 
     fn answer(&self, delivery: &mut Delivery) -> io::Result<i32> {
-        if let Attempted::Exit(code) = self.attempt(delivery)? {
+        if let Attempted::Exit(code) = self.reconnecting(delivery, |d| self.attempt(d))? {
             return Ok(code);
         }
         let provision = Provision {
@@ -201,9 +201,9 @@ impl Served<'_> {
             installed => installed,
         };
         match installed {
-            Installed::Done => match self.attempt(delivery)? {
+            Installed::Done => match self.reconnecting(delivery, |d| self.attempt(d))? {
                 Attempted::Exit(code) => Ok(code),
-                Attempted::Missing => Ok(provision.failed(delivery)),
+                Attempted::Missing | Attempted::BrokeOff => Ok(provision.failed(delivery)),
             },
             Installed::NoneThere => Ok(provision.none_there(delivery)),
             Installed::Queued { behind } => Ok(provision.queued(&behind, delivery)),
@@ -215,10 +215,46 @@ impl Served<'_> {
         }
     }
 
+    /// An attempt made again after each pause while ssh breaks off before the login: the runner
+    /// never heard the call, so making it again does nothing twice. A question has a deadline
+    /// instead, and is not made again.
+    fn reconnecting(
+        &self,
+        delivery: &mut Delivery,
+        mut attempt: impl FnMut(&mut Delivery) -> io::Result<Attempted>,
+    ) -> io::Result<Attempted> {
+        let pauses = match self.deadline {
+            Some(_) => Vec::new(),
+            None => Ssh::reconnect_pauses(),
+        };
+        for pause in pauses {
+            let attempted = attempt(delivery)?;
+            if !matches!(attempted, Attempted::BrokeOff) {
+                return Ok(attempted);
+            }
+            delivery.say(&format!(
+                "dibs: ssh to {} broke off before the login; trying again in {}\n",
+                self.session.name,
+                Span(pause)
+            ));
+            if !Interrupt::pause(Duration::from_secs(pause)) {
+                return Ok(Attempted::Exit(i32::from(Exit::Interrupted.code())));
+            }
+        }
+        match attempt(delivery)? {
+            Attempted::BrokeOff => Ok(Attempted::Exit(SSH_FAILED)),
+            attempted => Ok(attempted),
+        }
+    }
+
     /// ssh's stderr is read here, so that why it failed need not be asked again; a runner on this
     /// computer has no such reason to give.
     fn over_ssh(&self) -> bool {
         matches!(self.session.route, Route::Ssh { .. })
+    }
+
+    fn broke_off(&self, status: i32) -> bool {
+        status == SSH_FAILED && self.over_ssh() && Ssh::broke_off(&self.session.said.text())
     }
 
     /// The process that reaches the runner, and how the runner is to watch for its caller. A hold
@@ -270,7 +306,7 @@ impl Served<'_> {
     /// there yet is built first without a byte of rsync's stream lost.
     pub fn transfer(&self, prepared: Option<&Path>) -> io::Result<i32> {
         let deferred = Interrupt::defer();
-        let carried = match self.carry(prepared)? {
+        let carried = match self.reconnecting(&mut Delivery::Inherit, |_| self.carry(prepared))? {
             Attempted::Missing => {
                 let provision = Provision {
                     session: self.session,
@@ -278,10 +314,12 @@ impl Served<'_> {
                 };
                 let delivery = &mut Delivery::Inherit;
                 match provision.through_newest(Queueing::Waits, delivery)? {
-                    Installed::Done => match self.carry(prepared)? {
-                        Attempted::Exit(code) => code,
-                        Attempted::Missing => provision.failed(delivery),
-                    },
+                    Installed::Done => {
+                        match self.reconnecting(delivery, |_| self.carry(prepared))? {
+                            Attempted::Exit(code) => code,
+                            Attempted::Missing | Attempted::BrokeOff => provision.failed(delivery),
+                        }
+                    }
                     Installed::NoneThere => provision.none_there(delivery),
                     Installed::Queued { behind } => provision.queued(&behind, delivery),
                     Installed::Building => provision.building(delivery),
@@ -292,6 +330,7 @@ impl Served<'_> {
                 }
             }
             Attempted::Exit(code) => code,
+            Attempted::BrokeOff => SSH_FAILED,
         };
         drop(deferred);
         Ok(carried)
@@ -368,6 +407,7 @@ impl Served<'_> {
             Interrupt::pass_on(status);
             return Ok(match (said, Exit::shell_status(status)) {
                 (None, code) if RUNNER_ABSENT.contains(&code) => Attempted::Missing,
+                (None, code) if self.broke_off(code) => Attempted::BrokeOff,
                 (_, code) => Attempted::Exit(code),
             });
         };
@@ -476,6 +516,7 @@ impl Served<'_> {
             None if !any && RUNNER_ABSENT.contains(&Exit::shell_status(status)) => {
                 Attempted::Missing
             }
+            None if !any && self.broke_off(Exit::shell_status(status)) => Attempted::BrokeOff,
             None => Attempted::Exit(Exit::shell_status(status)),
         })
     }
@@ -492,6 +533,8 @@ enum Attempted {
     Exit(i32),
     /// The machine has no runner for this source.
     Missing,
+    /// ssh broke off before the login, so the runner never heard the call.
+    BrokeOff,
 }
 
 /// Partial lines held back until their end arrives.

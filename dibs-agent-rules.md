@@ -286,7 +286,8 @@ spoiled without it.
   call it makes to each machine also builds dibs's runner there, once, as a shared job.
 - Exits 69, 70, 71 and 72 are for telling the person you work for, never for working around:
   - **69** unreachable: off, asleep, its network needs a login, or its lease ended. Do what does
-    not need the machine, and do not retry in a loop.
+    not need the machine, and do not retry in a loop. When it says the machine answered and is
+    up, dibs has already tried again for a minute: try once more in a few minutes.
   - **70** no room: the machine's scratch is full or over quota, so nothing can run there.
     `dibs --gc --dry-run` says what is filling it, which is what to tell them.
   - **71** the lock directory cannot be written, so **nothing ran**; a sandboxed shell is the usual

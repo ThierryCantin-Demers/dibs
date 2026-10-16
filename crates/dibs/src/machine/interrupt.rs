@@ -5,6 +5,8 @@ use std::{
         Mutex, PoisonError,
         atomic::{AtomicBool, AtomicI32, Ordering},
     },
+    thread,
+    time::{Duration, Instant},
 };
 
 /// Ctrl-C while a child runs belongs to the child: this process carries on, and dies of it only
@@ -49,6 +51,19 @@ impl Interrupt {
     /// Whether Ctrl-C arrived while a child had it, whatever the child did with it.
     pub fn heard() -> bool {
         HEARD.load(Ordering::Relaxed)
+    }
+
+    /// Waits `span`, or less when Ctrl-C arrives meanwhile; whether it waited all of it.
+    pub fn pause(span: Duration) -> bool {
+        let until = Instant::now() + span;
+        while !Interrupt::heard() {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return true;
+            }
+            thread::sleep(left.min(Duration::from_millis(200)));
+        }
+        false
     }
 
     /// Ends this process as Ctrl-C would have.

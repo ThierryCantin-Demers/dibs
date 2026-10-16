@@ -107,6 +107,14 @@ impl Unreachable<'_> {
                 ),
             }
             Some(lines)
+        } else if Ssh::broke_off(&why) {
+            Some(vec![
+                "  It answered and broke off before the login each time it was tried, so it is up:"
+                    .into(),
+                "  its sshd turns new connections away while too many are starting at once, or the"
+                    .into(),
+                "  way in is struggling.".into(),
+            ])
         } else if said("Connection refused") {
             Some(vec![
                 "  It answered and nothing is listening on the ssh port, so the machine is up"
@@ -146,9 +154,12 @@ impl Unreachable<'_> {
                 }
             }
         }
-        text.push_str(
-            "  Do not retry in a loop. Tell the user, and do the work that does not need the machine.\n",
-        );
+        text.push_str(match Ssh::broke_off(&why) {
+            true => "  Do the work that does not need it, and try once more in a few minutes.\n",
+            false => {
+                "  Do not retry in a loop. Tell the user, and do the work that does not need the machine.\n"
+            }
+        });
         text
     }
 

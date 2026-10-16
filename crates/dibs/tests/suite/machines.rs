@@ -7,6 +7,75 @@ fn away(call: Call) -> Call {
 }
 
 #[test]
+fn ssh_that_breaks_off_before_the_login_is_tried_again() {
+    let s = Sandbox::new();
+    s.write_exec(
+        "flaky/ssh",
+        &format!(
+            "#!/bin/bash\n\
+             n=$(cat {count} 2>/dev/null || echo 0)\n\
+             echo $((n + 1)) > {count}\n\
+             if [ \"$n\" -lt \"$(cat {fails})\" ]; then cat {says} >&2; exit 255; fi\n\
+             exec {fake}/ssh \"$@\"\n",
+            count = s.p("count"),
+            fails = s.p("fails"),
+            says = s.p("says"),
+            fake = s.p("fakessh"),
+        ),
+    );
+    let call = |fails: u32, says: &str| {
+        s.write("count", "0");
+        s.write("fails", &fails.to_string());
+        s.write("says", says);
+        let call = s.remote(s.dibs(["echo", "reached"]));
+        call.env(
+            "PATH",
+            format!("{}:{}:{}", s.p("flaky"), s.p("fakessh"), s.var("PATH")),
+        )
+        .env("DIBS_RECONNECT", "0,0,0")
+        .run()
+    };
+    let banner = "Connection timed out during banner exchange\n";
+    let out = call(2, banner);
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.lines_with("reached"),
+            out.stderr
+                .lines_with("broke off before the login; trying again"),
+            s.read("count").trim().to_string()
+        ),
+        (0, 1, 2, "3".to_string()),
+        "{}",
+        out.all()
+    );
+    let out = call(9, banner);
+    assert_eq!(
+        (
+            out.code,
+            out.stderr
+                .lines_with("broke off before the login; trying again"),
+            out.stderr.lines_with("so it is up"),
+            out.stderr.lines_with("Tell the user")
+        ),
+        (69, 3, 1, 0),
+        "it gives up after the last pause, and says the machine is up: {}",
+        out.all()
+    );
+    let out = call(9, "Connection refused\n");
+    assert_eq!(
+        (
+            out.code,
+            out.stderr.lines_with("trying again"),
+            s.read("count").trim().to_string()
+        ),
+        (69, 0, "1".to_string()),
+        "a machine that answers nothing is not tried again: {}",
+        out.all()
+    );
+}
+
+#[test]
 fn check_reports_what_nothing_works_without() {
     let s = Sandbox::new();
     let check = s.dibs(["--check"]).run().stdout;
