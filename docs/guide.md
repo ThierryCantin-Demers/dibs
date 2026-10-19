@@ -222,7 +222,10 @@ and a target directory of their own, since resolving the patch rewrites the lock
 build, dibs checks the lockfile: if cargo still takes a pinned crate from where it came before,
 most often because the pinned version does not meet the requirement, the step fails with exit 3
 rather than measuring the pushed code. The record carries the pinned tree's revision beside the
-repo's own, and `--dry-run` says what each pin replaces.
+repo's own, and `--dry-run` says what each pin replaces. A pin of a tag that a lockfile takes at
+another commit is refused before anything is sent: the tag moved upstream and this checkout's copy
+of it is stale, or the lockfile is, and the message names both commits and the fetch that updates
+the tag.
 
 ## Refs the machine cannot fetch
 

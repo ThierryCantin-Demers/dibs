@@ -78,6 +78,7 @@ pub enum PinError {
         pinned: String,
         repo: String,
     },
+    TagMoved(Box<TagMoved>),
     Repo(RepoError),
     Checkout(CheckoutError),
     Git(GitError),
@@ -105,6 +106,16 @@ impl From<GitError> for ArmError {
     fn from(e: GitError) -> ArmError {
         ArmError::Checkout(CheckoutError::Git(e))
     }
+}
+
+/// A lockfile takes the pinned tag at another commit than this checkout's tag names.
+#[derive(Debug)]
+pub struct TagMoved {
+    pub pinned: String,
+    pub tag: String,
+    pub here: String,
+    pub locked: String,
+    pub dir: PathBuf,
 }
 
 impl From<RepoError> for PinError {
@@ -196,11 +207,36 @@ impl fmt::Display for PinError {
                 "--pin {pinned}: {repo}'s Cargo.lock takes none of {pinned}'s crates from git or crates.io, so there is nothing\n  \
                  for the pin to replace. A repo already built from a path, as a local-development block does, needs no pin."
             ),
+            PinError::TagMoved(moved) => {
+                let TagMoved {
+                    pinned,
+                    tag,
+                    here,
+                    locked,
+                    dir,
+                } = moved.as_ref();
+                write!(
+                    f,
+                    "--pin {pinned}@{tag}: {tag} is {} in {}, but a Cargo.lock takes {pinned}'s {tag} at {}, so the tag has moved\n  \
+                 since one of them last looked, and nothing was sent. To build against the lockfile's, update the tag here:\n    \
+                 git -C {} fetch --force origin tag {tag}\n  \
+                 or pin that commit: --pin {pinned}@{}",
+                    short(here),
+                    dir.display(),
+                    short(locked),
+                    dir.display(),
+                    short(locked)
+                )
+            }
             PinError::Repo(e) => e.fmt(f),
             PinError::Checkout(e) => e.fmt(f),
             PinError::Git(e) => e.fmt(f),
         }
     }
+}
+
+fn short(commit: &str) -> &str {
+    commit.get(..12).unwrap_or(commit)
 }
 
 /// What stops a recipe run, said as its `Display` in full, and the exit it ends with.

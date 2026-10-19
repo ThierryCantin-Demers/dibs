@@ -6,7 +6,7 @@
 //! A pinned build still gets a tree of its own, since resolving the patch rewrites the lockfile.
 
 use super::{
-    error::PinError,
+    error::{PinError, TagMoved},
     local::{Checkout, Clones, Fetched, Local, Repo},
     refs::Arm,
 };
@@ -245,6 +245,8 @@ pub struct Pinned {
     pub note: Option<String>,
     pub crates: BTreeMap<String, String>,
     pub lock: Option<String>,
+    /// What a named ref is here, which a lockfile that names it too must agree with.
+    pub commit: Option<String>,
     /// The sources a `[patch]` has to redirect, and the crates taken from each.
     pub sources: BTreeMap<String, std::collections::BTreeSet<String>>,
 }
@@ -279,13 +281,14 @@ impl Pinned {
                     repo: identity,
                 });
             }
-            let (local, checkout, note, crates, lock) = match reference {
+            let (local, checkout, note, crates, lock, commit) = match reference {
                 "local" => (
                     Some(Local::of(&pdir)?),
                     None,
                     None,
                     local_crates(&pdir)?,
                     Repo(&pdir).lockfile(None),
+                    None,
                 ),
                 _ => {
                     let Fetched {
@@ -311,9 +314,10 @@ impl Pinned {
                                 Some(format!("as {seen} stands here")),
                                 crates,
                                 lock,
+                                Some(sha),
                             )
                         }
-                        None => (None, None, None, crates, lock),
+                        None => (None, None, None, crates, lock, Some(sha)),
                     }
                 }
             };
@@ -326,6 +330,7 @@ impl Pinned {
                 note,
                 crates,
                 lock,
+                commit,
                 sources: BTreeMap::new(),
             });
         }
@@ -340,6 +345,7 @@ impl Pinned {
             .collect();
         for p in &mut pins {
             for lock in &locks {
+                p.agrees_with(lock)?;
                 for (source, names) in sources(lock, &p.crates)? {
                     p.sources.entry(source).or_default().extend(names);
                 }
@@ -357,6 +363,37 @@ impl Pinned {
             }
         }
         Ok(pins)
+    }
+
+    /// A tag names one commit everywhere, so a lockfile that takes this pin's tag at another commit
+    /// means this checkout's tag or the lockfile is stale, and a build would mix the two. A branch
+    /// is left alone: pinning one past where a lockfile took it is what a pin is for.
+    fn agrees_with(&self, lock: &str) -> Result<(), PinError> {
+        let Some(here) = &self.commit else {
+            return Ok(());
+        };
+        let tag = format!("tag={}", self.reference);
+        let locked = Package::all(lock).into_iter().find_map(|package| {
+            let (query, locked) = package
+                .source
+                .filter(|_| self.crates.contains_key(&package.name))?
+                .strip_prefix("git+")?
+                .split_once('?')?
+                .1
+                .split_once('#')
+                .map(|(query, locked)| (query.to_string(), locked.to_string()))?;
+            query.split('&').any(|q| q == tag).then_some(locked)
+        });
+        match locked {
+            Some(locked) if locked != *here => Err(PinError::TagMoved(Box::new(TagMoved {
+                pinned: self.repo.clone(),
+                tag: self.reference.clone(),
+                here: here.clone(),
+                locked,
+                dir: self.dir.clone(),
+            }))),
+            _ => Ok(()),
+        }
     }
 }
 

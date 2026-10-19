@@ -1769,6 +1769,66 @@ fn pushed_lib(s: &Sandbox) {
 }
 
 #[test]
+fn a_pinned_tag_a_lockfile_has_at_another_commit_is_refused_before_anything_is_sent() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    pushed_lib(&s);
+    s.git("lib", &["tag", "v1"]);
+    let here = s.git("lib", &["rev-parse", "HEAD"]);
+    s.write(
+        "lib/src/lib.rs",
+        "pub fn say() -> &'static str { \"moved\" }\n",
+    );
+    s.git("lib", &["commit", "-qam", "moved"]);
+    let moved = s.git("lib", &["rev-parse", "HEAD"]);
+    s.git("lib", &["push", "-q", "origin", "main", "v1"]);
+    s.git(".", &["clone", "-q", "lib.git", "home/prog/lib"]);
+    let locked = |commit: &str| {
+        s.write(
+            "app/Cargo.lock",
+            &format!(
+                "version = 4\n\n[[package]]\nname = \"lib\"\nversion = \"0.1.0\"\nsource = \"git+file://{}?tag=v1#{commit}\"\n",
+                s.p("lib.git")
+            ),
+        );
+    };
+    recipes(
+        &s,
+        "[build.b]\n  [[build.b.step]]\n  lock = \"shared\"\n  run = \"true\"\n",
+    );
+    let pin = format!("{}@v1", s.p("lib"));
+    let build = || {
+        s.dibs(["build", &format!("{app}@local"), "b", "--pin", &pin])
+            .run()
+    };
+    locked(&moved);
+    let out = build();
+    assert_eq!(
+        (
+            out.code,
+            out.all().lines_with(&format!(
+                "v1 is {} in {}, but a Cargo.lock takes lib's v1 at {}",
+                &here[..12],
+                s.p("lib"),
+                &moved[..12]
+            )),
+            arrivals(&s)
+        ),
+        (2, 1, 0),
+        "{}",
+        out.all()
+    );
+    locked(&here);
+    let out = build();
+    assert_eq!(
+        (out.code, out.all().lines_with("the tag has moved")),
+        (0, 0),
+        "a lockfile that agrees is built: {}",
+        out.all()
+    );
+}
+
+#[test]
 fn a_services_build_takes_a_pin() {
     let mut s = Sandbox::new();
     s.real_cargo();
