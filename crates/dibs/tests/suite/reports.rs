@@ -24,7 +24,7 @@ case "$1 $2" in
     "issue comment") echo "https://github.com/o/r/issues/$3#issuecomment-99" ;;
     "issue close") ;;
     "api repos/o/r/hooks") [ -e "$d/hook" ] && echo 41 ;;
-    "api -X") rm -f "$d/hook" ;;
+    "api -X") if [ -e "$d/delete-fails" ]; then echo 'gh: Bad Gateway (HTTP 502)' >&2; exit 1; fi; rm -f "$d/hook" ;;
     "webhook forward")
         while [ $# -gt 0 ]; do [ "$1" = --url ] && url=$2; shift; done
         if [ -e "$d/hook" ]; then printf 'Error: error creating webhook: HTTP 422: Hook already exists on this repository\nUsage:\n  forward --events=<types>\n' >&2; exit 1; fi
@@ -377,24 +377,68 @@ fn a_listener_given_a_max_ends_with_nothing_and_removes_its_webhook() {
     );
 }
 
+/// A listener started in the background, stopped by SIGTERM once it forwards; what it said.
+fn stopped_by_sigterm(s: &mut Sandbox) -> (i32, String) {
+    let lookups = gh_log(s).lines_with("api repos/o/r/hooks");
+    let listener = s.spawn(
+        s.dibs(["--friction", "--wait"])
+            .env("DIBS_REPORTS", "o/r")
+            .streams_to(&s.path("listener.out"), &s.path("listener.err")),
+    );
+    until("the listener to forward", || {
+        gh_log(s).lines_with("api repos/o/r/hooks") > lookups
+    });
+    unsafe { libc::kill(listener.pid as i32, libc::SIGTERM) };
+    (s.wait(listener), s.read("listener.err"))
+}
+
 #[test]
 fn a_listener_stopped_by_a_signal_removes_its_webhook() {
     let mut s = Sandbox::new();
     fake_gh(&s, "PRIVATE");
-    let listener = s.spawn(s.dibs(["--friction", "--wait"]).env("DIBS_REPORTS", "o/r"));
-    until("the listener to forward", || {
-        gh_log(&s).lines_with("api repos/o/r/hooks") == 1
-    });
-    unsafe { libc::kill(listener.pid as i32, libc::SIGTERM) };
+    let (code, said) = stopped_by_sigterm(&mut s);
     assert_eq!(
         (
-            s.wait(listener),
-            gh_log(&s).lines_with("api -X DELETE repos/o/r/hooks/41"),
+            code,
+            said.lines_with("SIGTERM stopped this listener, and its webhook on o/r is removed"),
             s.exists("ghd/hook")
         ),
         (128 + libc::SIGTERM, 1, false),
-        "it dies of the signal, its webhook gone: {}",
-        gh_log(&s)
+        "it dies of the signal, its webhook gone: {said}"
+    );
+}
+
+#[test]
+fn a_webhook_a_listener_could_not_remove_is_said_and_removed_by_the_next() {
+    let mut s = Sandbox::new();
+    fake_gh(&s, "PRIVATE");
+    s.write("ghd/delete-fails", "");
+    let (code, said) = stopped_by_sigterm(&mut s);
+    assert_eq!(
+        (
+            code,
+            said.lines_with("its webhook repos/o/r/hooks/41 could not be removed: gh: Bad Gateway"),
+            said.lines_with("is removed"),
+            s.exists("ghd/hook")
+        ),
+        (128 + libc::SIGTERM, 1, 0, true),
+        "{said}"
+    );
+    std::fs::remove_file(s.path("ghd/delete-fails")).unwrap();
+    let out = s
+        .dibs(["--friction", "--wait", "--max", "1"])
+        .env("DIBS_REPORTS", "o/r")
+        .run();
+    assert_eq!(
+        (
+            out.code,
+            out.stderr
+                .lines_with("removed repos/o/r/hooks/41, the webhook a listener here left"),
+            out.stderr.lines_with("already forwards")
+        ),
+        (0, 1, 0),
+        "the next listener removes it and starts: {}",
+        out.all()
     );
 }
 

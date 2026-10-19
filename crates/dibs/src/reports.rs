@@ -16,7 +16,7 @@ use std::{
     collections::BTreeSet,
     fmt,
     fs::{File, OpenOptions, TryLockError},
-    io::{self, BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, Read, Seek as _, Write},
     net::{TcpListener, TcpStream},
     os::unix::process::CommandExt as _,
     path::{Path, PathBuf},
@@ -377,7 +377,12 @@ impl ReportsRepo {
     /// delivers a webhook once or not at all.
     pub fn wait(&self, max: Option<Duration>) -> Result<Vec<String>, ReportsError> {
         let endings = Endings::held();
-        let listening = Listening::take(self)?;
+        let mut listening = Listening::take(self)?;
+        if let Some(hook) = listening.left.take()
+            && Forward::remove(&hook).is_ok()
+        {
+            eprintln!("dibs: removed {hook}, the webhook a listener here left as it died");
+        }
         let mut woken = Keys::load(ReportsStamp::Woken)?;
         let own = ReportsRepo::own_login();
         let own = own.as_deref();
@@ -402,7 +407,8 @@ impl ReportsRepo {
         let mut said = String::new();
         while short < SHORT_LIVES {
             let started = Instant::now();
-            let forward = Forward::start(self, port)?;
+            let mut forward = Forward::start(self, port)?;
+            listening.record(forward.hook.as_deref());
             let news = self.catch_up(&mut woken, own)?;
             if !news.is_empty() {
                 woken.save()?;
@@ -421,17 +427,23 @@ impl ReportsRepo {
                     return Ok(Vec::new());
                 }
                 Forwarded::Signalled(ending) => {
-                    drop(forward);
+                    let removal = forward.stop();
+                    if let Removal::Removed = removal {
+                        listening.record(None);
+                    }
                     drop(listening);
                     eprintln!(
-                        "dibs: {} stopped this listener, and its webhook on {self} is removed",
-                        ending.name()
+                        "dibs: {} stopped this listener, and {}",
+                        ending.name(),
+                        removal.told(self)
                     );
                     ending.raise();
                 }
                 Forwarded::Stopped(said) => said,
             };
-            drop(forward);
+            if let Removal::Removed = forward.stop() {
+                listening.record(None);
+            }
             short = match started.elapsed() < SHORT_LIVED {
                 true => short + 1,
                 false => 0,
@@ -652,10 +664,14 @@ impl Arrival {
     }
 }
 
-/// This computer's one listener for a repo, held while it listens.
+/// This computer's one listener for a repo, held while it listens. Its file holds the listener's
+/// pid, then the webhook its forward made until that is removed, so the next listener here
+/// removes one a listener killed outright left on the repo.
 struct Listening {
     /// Locked for as long as it is open.
-    _held: File,
+    held: File,
+    /// The webhook the last listener here recorded and never removed.
+    left: Option<String>,
 }
 
 impl Listening {
@@ -675,19 +691,36 @@ impl Listening {
             .map_err(FileError::at(&path))?;
         match file.try_lock() {
             Ok(()) => {
-                file.set_len(0).map_err(FileError::at(&path))?;
-                write!(file, "{}", std::process::id()).map_err(FileError::at(&path))?;
-                Ok(Listening { _held: file })
+                let mut was = String::new();
+                let _ = file.read_to_string(&mut was);
+                let left = was.lines().nth(1).map(str::trim).filter(|h| !h.is_empty());
+                let mut listening = Listening {
+                    left: left.map(str::to_string),
+                    held: file,
+                };
+                listening.record(None);
+                Ok(listening)
             }
             Err(TryLockError::WouldBlock) => Err(ReportsError::Listening {
                 repo: repo.to_string(),
                 pid: std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .lines()
+                    .next()
                     .unwrap_or_default()
                     .trim()
                     .to_string(),
             }),
             Err(TryLockError::Error(e)) => Err(FileError::new(&path, e).into()),
         }
+    }
+
+    /// This listener's pid, and the webhook it has on the repo, if any.
+    fn record(&mut self, hook: Option<&str>) {
+        let text = format!("{}\n{}\n", std::process::id(), hook.unwrap_or_default());
+        let _ = self.held.set_len(0);
+        let _ = self.held.rewind();
+        let _ = self.held.write_all(text.as_bytes());
     }
 }
 
@@ -868,12 +901,65 @@ impl Forward {
     }
 }
 
-impl Drop for Forward {
-    fn drop(&mut self) {
+impl Forward {
+    /// Stops gh and deletes its webhook, once: a second call finds nothing left to remove.
+    fn stop(&mut self) -> Removal {
         let _ = self.gh.kill();
         let _ = self.gh.wait();
-        if let Some(hook) = &self.hook {
-            let _ = gh(&["api", "-X", "DELETE", hook]);
+        match self.hook.take() {
+            None => Removal::NoneFound,
+            Some(hook) => match Forward::remove(&hook) {
+                Ok(()) => Removal::Removed,
+                Err(said) => Removal::Failed { hook, said },
+            },
+        }
+    }
+
+    /// In a process group of its own, so a kill aimed at the listener's group as its session
+    /// ends does not cut the delete short.
+    fn remove(hook: &str) -> Result<(), String> {
+        let out = Command::new("gh")
+            .args(["api", "-X", "DELETE", hook])
+            .stdin(Stdio::null())
+            .process_group(0)
+            .output()
+            .map_err(|e| e.to_string())?;
+        match out.status.success() {
+            true => Ok(()),
+            false => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        }
+    }
+}
+
+impl Drop for Forward {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// What became of a forward's webhook as it stopped.
+enum Removal {
+    Removed,
+    /// The forward found none of its own on the repo when it started.
+    NoneFound,
+    Failed {
+        hook: String,
+        said: String,
+    },
+}
+
+impl Removal {
+    fn told(&self, repo: &ReportsRepo) -> String {
+        match self {
+            Removal::Removed => format!("its webhook on {repo} is removed"),
+            Removal::NoneFound => format!(
+                "it found no webhook of its own on {repo} to remove; gh api repos/{repo}/hooks \
+                 lists any left, as the one named cli"
+            ),
+            Removal::Failed { hook, said } => format!(
+                "its webhook {hook} could not be removed: {said}\n  The next listener here \
+                 removes it, or gh api -X DELETE {hook} does now."
+            ),
         }
     }
 }
