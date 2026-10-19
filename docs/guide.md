@@ -437,7 +437,9 @@ admin on the repo), with no public endpoint. `dibs --friction --reply <n> '<answ
 answers one, and a wait never wakes on its own answer. A harness that kills a background command
 after a while takes `--max <seconds>` below that: the wait then ends with nothing, exit 0, and is
 started again rather than killed, and a second listener for the same repo on one computer says
-which pid already listens instead of starting.
+which pid already listens instead of starting. SIGTERM, SIGHUP or Ctrl-C stops one after it has
+removed its webhook, which GitHub would otherwise keep and refuse the next listener over; only a
+SIGKILL leaves it, for `gh api repos/<repo>/hooks` to find.
 
 `dibs gaps` prints those beside the other thing that means the tool did not fit: the reasons
 recorded by `dibs raw --reason` and `dibs shell --reason`, which is what a run that needed no

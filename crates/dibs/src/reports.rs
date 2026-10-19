@@ -29,6 +29,8 @@ const LABEL: &str = "dibs-friction";
 const FORWARD_READY: Duration = Duration::from_secs(30);
 const STOPPED: &str = "DIBS-FORWARD-STOPPED";
 const ENDED: &str = "DIBS-WAIT-ENDED";
+/// Followed by the signal's number on the next line.
+const SIGNALLED: &str = "DIBS-WAIT-SIGNALLED";
 /// What gh says when the repo already has the webhook a forward makes.
 const HOOK_TAKEN: &str = "Hook already exists";
 /// A forwarder that lives less than this, this many times running, is not coming back.
@@ -176,7 +178,9 @@ impl fmt::Display for ReportsError {
             ReportsError::Listening { repo, pid } => write!(
                 f,
                 "a listener for {repo} already runs on this computer, pid {pid}, and GitHub forwards a repo's \
-                 webhooks to one listener, so this one does not start."
+                 webhooks to one listener, so this one does not start.\n  \
+                 If nothing reads it, as when the session that started it has ended, kill {pid} stops it, \
+                 and it removes its webhook as it goes."
             ),
             ReportsError::NotReady => write!(
                 f,
@@ -372,7 +376,8 @@ impl ReportsRepo {
     /// `max` has passed. What landed while nothing listened is read first, since GitHub
     /// delivers a webhook once or not at all.
     pub fn wait(&self, max: Option<Duration>) -> Result<Vec<String>, ReportsError> {
-        let _listening = Listening::take(self)?;
+        let endings = Endings::held();
+        let listening = Listening::take(self)?;
         let mut woken = Keys::load(ReportsStamp::Woken)?;
         let own = ReportsRepo::own_login();
         let own = own.as_deref();
@@ -384,6 +389,7 @@ impl ReportsRepo {
         woken.save()?;
         let listener = TcpListener::bind("127.0.0.1:0").map_err(ReportsError::NoPort)?;
         let port = listener.local_addr().map_err(ReportsError::Io)?.port();
+        endings.told_to(port);
         if let Some(max) = max {
             std::thread::spawn(move || {
                 std::thread::sleep(max);
@@ -413,6 +419,15 @@ impl ReportsRepo {
                         max.unwrap_or_default().as_secs()
                     );
                     return Ok(Vec::new());
+                }
+                Forwarded::Signalled(ending) => {
+                    drop(forward);
+                    drop(listening);
+                    eprintln!(
+                        "dibs: {} stopped this listener, and its webhook on {self} is removed",
+                        ending.name()
+                    );
+                    ending.raise();
                 }
                 Forwarded::Stopped(said) => said,
             };
@@ -581,6 +596,7 @@ enum Arrival {
     Stopped(String),
     /// The wait's `max` passed.
     Ended,
+    Signalled(Ending),
 }
 
 impl Arrival {
@@ -596,6 +612,11 @@ impl Arrival {
                 return Some(Arrival::Stopped(said));
             }
             ENDED => return Some(Arrival::Ended),
+            SIGNALLED => {
+                let mut signal = String::new();
+                reader.read_line(&mut signal).ok()?;
+                return Some(Arrival::Signalled(Ending(signal.trim().parse().ok()?)));
+            }
             _ => {}
         }
         let (mut event, mut length) = (String::new(), 0usize);
@@ -676,6 +697,7 @@ enum Forwarded {
     News(Vec<String>),
     Stopped(String),
     Ended,
+    Signalled(Ending),
 }
 
 impl Forwarded {
@@ -688,6 +710,7 @@ impl Forwarded {
             .find_map(|arrival| match arrival {
                 Arrival::Stopped(said) => Some(Forwarded::Stopped(said)),
                 Arrival::Ended => Some(Forwarded::Ended),
+                Arrival::Signalled(ending) => Some(Forwarded::Signalled(ending)),
                 Arrival::Delivery(event, body) => {
                     let news = on_event(&event, &body, woken, own);
                     (!news.is_empty()).then_some(Forwarded::News(news))
@@ -695,6 +718,69 @@ impl Forwarded {
             })
             // `incoming` never ends; were it to, the forwarder would be started again.
             .unwrap_or_else(|| Forwarded::Stopped(String::new()))
+    }
+}
+
+/// What ends a listener's session, held back from every thread so that one takes it and ends the
+/// wait as its `max` does: a process killed by it would leave the forward's webhook on the repo,
+/// refusing the next listener.
+struct Endings(libc::sigset_t);
+
+/// One of the endings, taken.
+#[derive(Debug, Clone, Copy)]
+struct Ending(libc::c_int);
+
+impl Endings {
+    const SIGNALS: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGHUP, libc::SIGINT];
+
+    /// Held back from this thread and every thread it starts from now on.
+    fn held() -> Endings {
+        // SAFETY: the set is initialised by sigemptyset before anything reads it.
+        unsafe {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            for signal in Endings::SIGNALS {
+                libc::sigaddset(&mut set, signal);
+            }
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+            Endings(set)
+        }
+    }
+
+    /// The first to arrive is told to the wait listening on `port`.
+    fn told_to(self, port: u16) {
+        std::thread::spawn(move || {
+            let mut signal = 0;
+            // SAFETY: the set is initialised, and sigwait writes the signal it took.
+            let took = unsafe { libc::sigwait(&self.0, &mut signal) } == 0;
+            if took && let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) {
+                let _ = writeln!(s, "{SIGNALLED}\n{signal}");
+            }
+        });
+    }
+}
+
+impl Ending {
+    fn name(self) -> &'static str {
+        match self.0 {
+            libc::SIGTERM => "SIGTERM",
+            libc::SIGHUP => "SIGHUP",
+            _ => "SIGINT",
+        }
+    }
+
+    /// Dies of it, as it would have killed the process, so whoever sent it reads that status.
+    fn raise(self) -> ! {
+        // SAFETY: restores the default action for the signal, unblocks it and raises it here.
+        unsafe {
+            libc::signal(self.0, libc::SIG_DFL);
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::sigaddset(&mut set, self.0);
+            libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+            libc::raise(self.0);
+        }
+        std::process::exit(128 + self.0)
     }
 }
 

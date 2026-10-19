@@ -378,6 +378,27 @@ fn a_listener_given_a_max_ends_with_nothing_and_removes_its_webhook() {
 }
 
 #[test]
+fn a_listener_stopped_by_a_signal_removes_its_webhook() {
+    let mut s = Sandbox::new();
+    fake_gh(&s, "PRIVATE");
+    let listener = s.spawn(s.dibs(["--friction", "--wait"]).env("DIBS_REPORTS", "o/r"));
+    until("the listener to forward", || {
+        gh_log(&s).lines_with("api repos/o/r/hooks") == 1
+    });
+    unsafe { libc::kill(listener.pid as i32, libc::SIGTERM) };
+    assert_eq!(
+        (
+            s.wait(listener),
+            gh_log(&s).lines_with("api -X DELETE repos/o/r/hooks/41"),
+            s.exists("ghd/hook")
+        ),
+        (128 + libc::SIGTERM, 1, false),
+        "it dies of the signal, its webhook gone: {}",
+        gh_log(&s)
+    );
+}
+
+#[test]
 fn a_webhook_another_listener_holds_is_said_plainly() {
     let s = Sandbox::new();
     fake_gh(&s, "PRIVATE");
