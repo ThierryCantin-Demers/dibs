@@ -319,21 +319,23 @@ impl Driving<'_> {
                 self.dir.join(format!("{}.out", step.name)),
                 self.dir.join(format!("{}.err", step.name)),
             );
+            // Another machine's steps end while this one runs, and this machine never hears of it.
             let pending: Vec<Pending> = (0..self.batch.steps.len())
-                .filter(|&j| j != i && self.states[j] == State::Waiting)
-                .flat_map(|j| {
-                    let here = self.batch.machines[j] == self.batch.machines[i];
-                    match &self.recipes[j] {
-                        Some(jobs) => jobs
-                            .iter()
-                            .map(|p| Pending {
-                                name: format!("{}: {}", self.batch.steps[j].name, p.name),
-                                here,
-                                ..p.clone()
-                            })
-                            .collect(),
-                        None => vec![self.batch.steps[j].pending(here, &self.cwd)],
-                    }
+                .filter(|&j| {
+                    j != i
+                        && self.states[j] == State::Waiting
+                        && self.batch.machines[j] == self.batch.machines[i]
+                })
+                .flat_map(|j| match &self.recipes[j] {
+                    Some(jobs) => jobs
+                        .iter()
+                        .map(|p| Pending {
+                            name: format!("{}: {}", self.batch.steps[j].name, p.name),
+                            here: true,
+                            ..p.clone()
+                        })
+                        .collect(),
+                    None => vec![self.batch.steps[j].pending(true, &self.cwd)],
                 })
                 .collect();
             let batch = BatchStep::new(

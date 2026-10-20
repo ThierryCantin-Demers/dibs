@@ -480,13 +480,6 @@ fn batch_lines(out: &mut String, p: &Palette, batch: &BatchShown, estimated: boo
     if batch.here > 0 {
         let _ = writeln!(out, "    {}then here:{} {}", p.dim, p.off, batch.next);
     }
-    if batch.elsewhere > 0 {
-        let _ = writeln!(
-            out,
-            "    {}then on other machines:{} {}",
-            p.dim, p.off, batch.far
-        );
-    }
     let said = match batch.left.as_ref().filter(|_| estimated) {
         None => "unknown, this step's own time cannot be estimated".to_string(),
         Some(left) if left.left_partial => format!(

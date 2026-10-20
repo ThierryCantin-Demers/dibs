@@ -11,7 +11,6 @@
 1|     from an agent on gpu:card
 1|     batch <batch>, step 1 of 4: build
 1|     then here: next ~5m00s, fresh (no history)
-1|     then on other machines: far
 1|     batch time left here: over {11m30s}, since some of what is ahead has no history
 1|   queued 1 of 2: shared  behind-1  waiting <dur>  pid <pid>   [~{1m10s} until it starts]
 1|     the first waiter

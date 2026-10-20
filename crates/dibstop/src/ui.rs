@@ -445,23 +445,11 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
             first.extend([Span::styled("   left here ", DIM), Span::raw(l)]);
         }
         lines.push(Line::from(first));
-        let mut then = Vec::new();
         if !b.next.is_empty() {
-            then.extend([Span::styled("then here ", DIM), Span::raw(b.next.clone())]);
-        }
-        if !b.far.is_empty() {
-            then.push(Span::styled(
-                if then.is_empty() {
-                    "elsewhere "
-                } else {
-                    "   elsewhere "
-                },
-                DIM,
-            ));
-            then.push(Span::raw(b.far.clone()));
-        }
-        if !then.is_empty() {
-            lines.push(Line::from(then));
+            lines.push(Line::from(vec![
+                Span::styled("then here ", DIM),
+                Span::raw(b.next.clone()),
+            ]));
         }
     }
     lines.push(match it.alarm {

@@ -274,12 +274,10 @@ pub struct BatchShown {
     pub n: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub within: Option<Within>,
-    /// Steps still to come here, then elsewhere.
+    /// Steps still to come here.
     pub here: usize,
-    pub elsewhere: usize,
-    /// Those steps by name, each with its estimate here.
+    /// Those steps by name, each with its estimate.
     pub next: String,
-    pub far: String,
     #[serde(flatten)]
     pub left: Option<Left>,
 }

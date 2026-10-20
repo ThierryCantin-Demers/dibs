@@ -36,12 +36,7 @@ impl Plan<'_> {
         let mut partial = false;
         let mut here = 0;
         let mut next = Vec::new();
-        let mut far = Vec::new();
-        for step in &self.plan.pending {
-            if !step.here {
-                far.push(step.name.clone());
-                continue;
-            }
+        for step in self.plan.pending.iter().filter(|step| step.here) {
             here += 1;
             let mode = match step.kind {
                 PendingKind::Job(Mode::Peek) => {
@@ -102,7 +97,6 @@ impl Plan<'_> {
             };
             next.push(format!("{}{said}", step.name));
         }
-        let elsewhere = far.len();
         BatchShown {
             id: self.plan.batch,
             step: self.plan.step,
@@ -110,9 +104,7 @@ impl Plan<'_> {
             n: self.plan.total,
             within: self.plan.within,
             here,
-            elsewhere,
             next: named(next),
-            far: named(far),
             left: left.map(|left| Left {
                 left,
                 left_partial: partial,

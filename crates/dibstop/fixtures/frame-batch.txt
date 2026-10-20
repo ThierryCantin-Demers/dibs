@@ -23,7 +23,7 @@ box-a BUSY, benchmark in progress (1 queued)   box-b in use, shared   updated 0s
 │running 3m20s   cpu 2m30s across all cores, 1.2x right now   left ~1m40s                                              │
 │writing /scratch/build.log   press o                                                                                  │
 │batch 20261006-1   step 1 of 3: lib: build   job 1 of 2 in this step   left here ~10m20s                              │
-│then here bench ~4m00s   elsewhere box-a                                                                              │
+│then here bench ~4m00s                                                                                                │
 │This job usually takes 5m00s, measured over 4 runs.                                                                   │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

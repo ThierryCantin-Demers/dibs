@@ -44,9 +44,7 @@
         "k": 1,
         "n": 4,
         "here": 2,
-        "elsewhere": 1,
         "next": "next ~5m00s, fresh (no history)",
-        "far": "far",
         "left": {690},
         "left_partial": true
       }

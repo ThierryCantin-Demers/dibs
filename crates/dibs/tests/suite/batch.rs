@@ -412,9 +412,9 @@ fn status_carries_the_batchs_plan_to_the_machine() {
         "what is still to come on this machine, with its estimate"
     );
     assert_eq!(
-        status.lines_matching("^    then on other machines: far$"),
-        1,
-        "and what goes elsewhere"
+        status.lines_with("far"),
+        0,
+        "and nothing of what goes elsewhere, which ends unseen from here"
     );
     // The step ahead has been running for a moment, which the time left counts down by.
     assert_eq!(
@@ -425,7 +425,7 @@ fn status_carries_the_batchs_plan_to_the_machine() {
     let json = s.dibs(["status", "--json"]).run().stdout;
     assert_eq!(
         json.lines_matching(
-            r#""batch":\{"id":"[0-9-]+","step":"hold","k":1,"n":4,"here":2,"elsewhere":1,"next":"next ~5m00s, fresh \(no history\)","far":"far","left":(41[5-9]|420),"left_partial":true\}"#
+            r#""batch":\{"id":"[0-9-]+","step":"hold","k":1,"n":4,"here":2,"next":"next ~5m00s, fresh \(no history\)","left":(41[5-9]|420),"left_partial":true\}"#
         ),
         1,
         "the same in json"

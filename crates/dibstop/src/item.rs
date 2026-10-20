@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn a_job_in_a_batch_says_which_step_and_how_long_the_batch_has_left() {
-        let batch = r#","batch":{"id":"20260917-1","step":"build","k":2,"n":5,"here":2,"elsewhere":1,"next":"bench ~4m00s","far":"home","left":620,"left_partial":true}"#;
+        let batch = r#","batch":{"id":"20260917-1","step":"build","k":2,"n":5,"here":2,"next":"bench ~4m00s","left":620,"left_partial":true}"#;
         let s = status(
             &holder(
                 "b",
