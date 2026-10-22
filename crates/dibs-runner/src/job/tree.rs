@@ -23,6 +23,16 @@ impl Tree {
             .sum()
     }
 
+    /// What the whole tree has read and written; None where nothing in it can be read.
+    pub fn moved(&self) -> Option<u64> {
+        let read: Vec<u64> = self
+            .pids
+            .iter()
+            .filter_map(|&pid| Host::moved(pid))
+            .collect();
+        (!read.is_empty()).then(|| read.iter().sum())
+    }
+
     /// The regular files the tree writes to on stdout or stderr, other than the channel its root
     /// was started on and the job log dibs itself gave it.
     pub fn written(&self) -> Vec<PathBuf> {

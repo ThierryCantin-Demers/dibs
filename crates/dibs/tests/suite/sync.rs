@@ -189,6 +189,46 @@ fn the_transports_files_are_private_and_named_where_nobody_can_plant_one() {
 }
 
 #[test]
+fn a_transfer_that_moves_nothing_for_the_lease_lets_the_lock_go() {
+    // A connection that drops without closing reaches neither side's rsync, which waits for good.
+    let mut s = Sandbox::new();
+    let rsync = s
+        .command("sh", ["-c", "command -v rsync"])
+        .run()
+        .stdout
+        .trim()
+        .to_string();
+    let quiet = s.gate("quiet");
+    s.write_exec(
+        "quietrsync/rsync",
+        &format!(
+            "#!/bin/bash\n\
+             case \" $* \" in *' --server '*|' --version ') exec {rsync} \"$@\" ;; esac\n\
+             eval \"$2 fake-remote rsync --server -r . y\" <>{quiet} >/dev/null\n",
+            quiet = quiet.path.display()
+        ),
+    );
+    let sync = s.spawn(
+        s.remote(s.dibs(["--sync", "./x", ":~/y"]))
+            .env(
+                "PATH",
+                format!("{}:{}:{}", s.p("quietrsync"), s.p("fakessh"), s.var("PATH")),
+            )
+            .env("DIBS_LEASE", "2"),
+    );
+    s.wait(sync);
+    assert_eq!(
+        (
+            s.log().lines_with("transfer moved nothing for 2s"),
+            s.holders()
+        ),
+        (1, 0),
+        "{}",
+        s.log()
+    );
+}
+
+#[test]
 fn a_sync_told_to_stop_stops_rsync_before_it_goes() {
     for (signal, code) in [(libc::SIGTERM, 143), (libc::SIGHUP, 129)] {
         let mut s = Sandbox::new();

@@ -1,5 +1,5 @@
 use crate::{
-    job::HoldFifo,
+    job::{HoldFifo, Tree},
     platform::{Host, Platform as _},
     stop::Stopper,
 };
@@ -59,6 +59,8 @@ enum Heard {
 enum Gone {
     Ended,
     Silent(u64),
+    /// A transfer that moved nothing for this many seconds.
+    Still(u64),
 }
 
 impl Channel {
@@ -120,6 +122,29 @@ impl Channel {
         });
     }
 
+    /// A transfer's stream is rsync's own, with no room for a beat, so one that moves nothing
+    /// for the lease has lost its caller, as a dropped connection the machine never hears of.
+    pub fn watch_transfer(pid: u32, lease: u64, stopper: Arc<Stopper>) {
+        if lease == 0 {
+            return;
+        }
+        thread::spawn(move || {
+            let within = Duration::from_secs(lease);
+            let look = (within / 4).clamp(Duration::from_secs(1), Duration::from_secs(5));
+            let (mut moved, mut since) = (Tree::of(pid).moved(), Instant::now());
+            while moved.is_some() && Host::running(pid) {
+                thread::sleep(look);
+                let now = Tree::of(pid).moved();
+                if now != moved {
+                    (moved, since) = (now, Instant::now());
+                } else if since.elapsed() >= within {
+                    stopper.caller_gone(&Gone::Still(lease).to_string());
+                    return;
+                }
+            }
+        });
+    }
+
     /// Watches the stream on a thread of its own: its end, or silence past the lease, is the
     /// caller gone. A caller alive says something at least once a lease, and one that sleeps
     /// closes nothing. A hold ends with a release, which is its caller's command ending, not the
@@ -174,6 +199,7 @@ impl fmt::Display for Gone {
         match self {
             Gone::Ended => f.write_str("caller gone"),
             Gone::Silent(lease) => write!(f, "caller silent for {lease}s"),
+            Gone::Still(lease) => write!(f, "transfer moved nothing for {lease}s"),
         }
     }
 }

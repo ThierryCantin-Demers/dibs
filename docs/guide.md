@@ -821,6 +821,9 @@ written on the machine to make a call, so a full scratch stops jobs, with exit 7
 A job dies with the caller that started it: kill the caller, however you kill it, and the work
 stops and the lock frees. A caller that stops answering, as a laptop does when it sleeps or a
 shell does after Ctrl-Z, counts as gone after `DIBS_LEASE` seconds (120, and 0 turns it off).
+A transfer carries rsync's own stream, which has no room for a heartbeat, so one that moves no
+bytes for that long counts as gone the same way: a dropped connection otherwise reaches neither
+side's rsync, and the machine's would hold the lock for good. That reading needs Linux.
 `DIBS_NO_LIVE` and `DIBS_NO_WATCHDOG` each switch off half of that machinery, which is how it
 gets debugged when it misbehaves. `DIBS_NO_CHILDREN` forces the fallback way of finding a holder's
 descendants, which is otherwise unreachable on a kernel built the ordinary way.

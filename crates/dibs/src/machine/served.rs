@@ -340,10 +340,14 @@ impl Served<'_> {
     /// tree it lays out first, which is written to `prepared`.
     fn carry(&self, prepared: Option<&Path>) -> io::Result<Attempted> {
         let Launch { mut command, .. } = self.launch();
+        // The stream is rsync's, so the lease is how long the transfer may move nothing.
         let watch = Watch {
             off: true,
             hold: false,
-            lease: 0,
+            lease: match self.live.no_live || self.live.no_watchdog {
+                true => 0,
+                false => self.live.lease,
+            },
         };
         if self.over_ssh() {
             command.stderr(Stdio::piped());

@@ -300,6 +300,18 @@ impl Platform for Linux {
         )
     }
 
+    fn moved(pid: u32) -> Option<u64> {
+        let io = fs::read_to_string(format!("/proc/{pid}/io")).ok()?;
+        io.lines()
+            .filter_map(|line| {
+                let (name, value) = line.split_once(": ")?;
+                ["rchar", "wchar"]
+                    .contains(&name)
+                    .then(|| value.trim().parse::<u64>().ok())?
+            })
+            .reduce(|a, b| a + b)
+    }
+
     fn cpu_ticks(pid: u32) -> Option<u64> {
         let stat = Stat::of(pid)?;
         (14..=17).map(|field| stat.number(field)).sum()

@@ -319,6 +319,11 @@ impl Platform for MacOs {
         )
     }
 
+    /// rusage counts only what reached a disk, which says nothing of a pipe.
+    fn moved(_pid: u32) -> Option<u64> {
+        None
+    }
+
     /// Reaped children's time is in the process's own rusage, in Mach time units.
     fn cpu_ticks(pid: u32) -> Option<u64> {
         // SAFETY: rusage_info_v2 is plain data, which proc_pid_rusage fills.

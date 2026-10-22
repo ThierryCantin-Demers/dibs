@@ -116,6 +116,10 @@ pub trait Platform {
     /// What it and the children it has reaped have run on a CPU, in clock ticks.
     fn cpu_ticks(pid: u32) -> Option<u64>;
 
+    /// The bytes it has read and written through any descriptor, pipes and sockets included;
+    /// None where the system will not say.
+    fn moved(pid: u32) -> Option<u64>;
+
     /// Clock ticks per second, the unit `cpu_ticks` counts in.
     fn clock_ticks() -> u64;
 

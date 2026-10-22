@@ -704,7 +704,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     verbose: false
     wait: null
     watch.hold: false
-    watch.lease: 0
+    watch.lease: 120
     watch.off: true
 
 == dibs --on box-a --label sent --sync --checksum ':~/y/' ./x/
@@ -732,7 +732,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     verbose: false
     wait: null
     watch.hold: false
-    watch.lease: 0
+    watch.lease: 120
     watch.off: true
 
 == dibs --on box-a --label several printf '%s|' "it's" 'a b' '$HOME'

@@ -477,6 +477,13 @@ impl<'a> Run<'a> {
                     Ok(work) => {
                         state.stage = Stage::Running(work.pid);
                         drop(state);
+                        if self.at.call.mode() == Mode::Rsh {
+                            Channel::watch_transfer(
+                                work.pid,
+                                request.watch.lease,
+                                Arc::clone(self.at.stopper),
+                            );
+                        }
                         let cap = deadline.left().map(|after| Cap {
                             after,
                             grace: JOB_GRACE,
