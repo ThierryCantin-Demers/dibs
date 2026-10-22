@@ -144,7 +144,7 @@
 
 == dibs --label slow-service --with 'srv=read -r _ <> <root>/f-never' --ready false --ready-within 1 true
 -> exit 77
-2| dibs: service srv was not ready within 1s, so the command did not run.
+2| dibs: service srv was not ready within 1s, so the command did not run. --ready-within <seconds> gives it longer.
 2| job <job>  shared  slow-service  queued <s>  ran <s>  exit 77  by=dibs
 2|   log <host>:<root>/scratch/jobs/<job>/log  (0 lines)  dibs --on <host> --out <job>
 2|   with srv: was not ready within 1s, and stopped  log <host>:<root>/scratch/jobs/<job>/with-srv.log

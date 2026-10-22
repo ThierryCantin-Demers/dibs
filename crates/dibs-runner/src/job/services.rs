@@ -171,7 +171,7 @@ impl Services {
                     self.failed(
                         at,
                         &format!("was not ready within {within}s"),
-                        "the command did not run",
+                        "the command did not run. --ready-within <seconds> gives it longer",
                         check.sink,
                     );
                     return false;
