@@ -544,7 +544,7 @@ fn what_this_computer_keeps() {
         .rule(r"\b[0-9a-f]{40}\b", "<commit>")
         .rule(r"local-[0-9a-f]{10}\b", "local-<key>")
         .rule(r"local:[0-9a-f]{7,}(\+dirty)?-", "local:<head>$1-")
-        .rule(r#""dibs":"[0-9a-f]{7,12}""#, r#""dibs":"<commit>""#)
+        .rule(r#""dibs":"[0-9a-f]{0,12}""#, r#""dibs":"<commit>""#)
         .rule(r#""seconds": [0-9]+"#, r#""seconds": <s>"#)
         .rule(r"ran [0-9]+s  exit", "ran <s>  exit");
     let mut t = Transcript::default();

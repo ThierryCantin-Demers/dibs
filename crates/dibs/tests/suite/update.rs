@@ -210,6 +210,10 @@ fn a_session_is_told_once_when_dibs_changed_under_it() {
 /// for an old one.
 #[test]
 fn a_call_and_a_recipe_verb_tell_their_session() {
+    if option_env!("DIBS_COMMIT").is_none() {
+        skip("this dibs was built outside a git checkout, so it has no commit to compare");
+        return;
+    }
     let s = Sandbox::new();
     let stamped = |s: &Sandbox| {
         for stamp in fs::read_dir(s.path("seen")).unwrap().flatten() {

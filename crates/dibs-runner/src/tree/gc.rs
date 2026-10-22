@@ -10,6 +10,7 @@ use crate::{
     settings::{Settings, home},
     tree::{
         clocks::{Clocks, Contents as _, Dates as _, Fate, Removal},
+        copy::Reflinks,
         runners::Runners,
         spread::Spread as _,
         sweep::{Section, Sweep, Swept, Verdict},
@@ -37,6 +38,7 @@ pub struct SweepReport {
     home: PathBuf,
     host: String,
     clocks: Clocks,
+    reflinks: Reflinks,
     /// Only say what would go.
     dry: bool,
 }
@@ -146,6 +148,7 @@ impl Asked {
                 },
                 None => settings.clocks,
             },
+            reflinks: settings.reflinks,
             dry: self.dry,
         }
     }
@@ -176,7 +179,9 @@ impl SweepReport {
         };
         for kind in Swept::ALL {
             let entries = sweep.entries(kind);
-            let mapped = kind == Swept::Caches && Host::shares_blocks(&scratch.join("target"));
+            let mapped = kind == Swept::Caches
+                && self.reflinks != Reflinks::Never
+                && Host::shares_blocks(&scratch.join("target"));
             let Measured { sizes, sharing } = tally.measure(&entries, mapped);
             if let Some(sharing) = &sharing {
                 tally.total = tally.total - sizes.sum() + sharing.together();

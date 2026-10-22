@@ -1077,7 +1077,13 @@ fn gc() {
             "  <free> free of <size> on <mount>",
         )
         .rule(r"(build caches on) \S+,", "$1 <mount>,");
-    let gc = |args: &[&str]| s.dibs(args).env("DIBS_SCRATCH", &g).run();
+    // Never: whether this disk shares blocks would otherwise decide whether a column is shown.
+    let gc = |args: &[&str]| {
+        s.dibs(args)
+            .env("DIBS_SCRATCH", &g)
+            .env("DIBS_REFLINK", "never")
+            .run()
+    };
     let mut t = Transcript::default();
     for args in [
         &["--gc", "--dry-run"][..],
@@ -1158,6 +1164,7 @@ fn keep_boundaries() {
     let out = s
         .dibs(["--gc", "--dry-run"])
         .env("DIBS_SCRATCH", s.p("gc"))
+        .env("DIBS_REFLINK", "never")
         .run();
     let mut t = Transcript::default();
     t.section(
