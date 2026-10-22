@@ -202,11 +202,6 @@ pub const CALL: &[Flag] = &[
     Flag::new(&["--all"], Value::No, "every machine at once"),
     Flag::new(&["--update"], Value::No, "pull dibs and reinstall it"),
     Flag::new(&["--friction"], Value::Free, "report what got in the way"),
-    Flag::new(
-        &["--reply"],
-        Value::Free,
-        "with --friction: answer a report",
-    ),
     Flag::new(&["--json"], Value::No, "machine-readable output"),
     Flag::new(&["--verbose", "-v"], Value::No, "say more"),
     Flag::new(&["--help", "-h"], Value::No, "the help"),

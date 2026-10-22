@@ -7,8 +7,9 @@ pub enum Invocation {
     /// `-h` or `--help`: the help on stdout, exit 0, only the part of it about the subcommand
     /// it follows when it follows one.
     Help(Option<&'static str>),
-    /// `--friction ...` or `friction ...`.
-    Friction(Friction),
+    /// `--friction '<line>'` or `friction '<line>'`: the first word after it; later words are
+    /// dropped.
+    Friction(String),
     /// A recipe verb and everything after it.
     Recipe(RecipeCall),
     /// `--version` after a recipe verb.
@@ -24,21 +25,6 @@ pub enum Invocation {
 pub enum Hook {
     /// ssh, scp, sftp and rsync aimed at a machine in the inventory.
     Ssh,
-}
-
-/// `dibs --friction`: a note, the listener, or an answer to a report.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Friction {
-    /// The first word after `--friction`; later words are dropped.
-    Note { text: String },
-    /// The listener; `max` ends it after that many seconds with nothing, for a caller whose
-    /// harness would kill it.
-    Wait { max: Option<u64> },
-    Reply {
-        issue: u64,
-        answer: String,
-        close: bool,
-    },
 }
 
 /// A call and the flags that shape it. A flag the mode does not read is accepted and ignored.

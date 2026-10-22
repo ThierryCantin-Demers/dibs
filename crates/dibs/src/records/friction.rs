@@ -18,8 +18,7 @@ pub struct FrictionLog {
 
 impl FrictionLog {
     /// Beside the run records, and moved by a variable of its own: it answers for the same work,
-    /// and where it should live is the user's to decide. Sharing it is theirs to choose too, with
-    /// DIBS_REPORTS, and never a default.
+    /// and where it should live is the user's to decide.
     pub fn here() -> Result<FrictionLog, RecordsError> {
         let path = Paths::from_env()
             .friction()

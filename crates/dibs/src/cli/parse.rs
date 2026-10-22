@@ -1,5 +1,5 @@
 use crate::cli::{
-    Call, CliError, Friction, Hook, Invocation, KillTarget, Mode, OutTarget, PortName, RecipeCall,
+    Call, CliError, Hook, Invocation, KillTarget, Mode, OutTarget, PortName, RecipeCall,
     RecipeVerb, Run, RunLock, Service, ServiceName, shell::Command,
 };
 use dibs_format::{Alias, BatchId, JobId, Label, MachineName};
@@ -204,7 +204,7 @@ impl Parser {
                 "--json" => self.call.json = true,
                 "--release" => self.word = Word::Release,
                 "--gc" => self.word = Word::Gc,
-                "--friction" => return Friction::parse(&words[at..]),
+                "--friction" => return friction(&words[at..]),
                 "--dry-run" => self.dry_run = true,
                 "--days" => {
                     self.days = Some(need_some("--days")?);
@@ -308,7 +308,7 @@ impl Parser {
                         "run" if matches!(self.word, Word::Shared | Word::Bench) => {}
                         "status" if shared => self.word = Word::Status,
                         "gc" if shared => self.word = Word::Gc,
-                        "friction" if shared => return Friction::parse(&words[at..]),
+                        "friction" if shared => return friction(&words[at..]),
                         "hook" if shared => return Hook::parse(&words[..at - 1], &words[at..]),
                         "out" if shared => at += self.out(words.get(at)),
                         "fetch" if shared => at += self.fetch(&words[at..]),
@@ -737,54 +737,16 @@ impl Hook {
     }
 }
 
-impl Friction {
-    /// What follows `--friction`: a note is the first word alone.
-    fn parse(words: &[String]) -> Result<Invocation, CliError> {
-        let first = words.first().filter(|w| !w.is_empty());
-        let first = first.ok_or(CliError::needs_value("--friction"))?;
-        let friction = match first.as_str() {
-            "-h" | "--help" => return Ok(Invocation::Help(Some("friction"))),
-            "--wait" => match &words[1..] {
-                [] => Friction::Wait { max: None },
-                [flag, secs] if flag == "--max" => Friction::Wait {
-                    max: Some(secs.parse().ok().filter(|&s: &u64| s > 0).ok_or_else(|| {
-                        CliError::new(format!("dibs: --max takes whole seconds, not {secs}"))
-                    })?),
-                },
-                _ => {
-                    return Err(CliError::new(
-                        "dibs: --friction --wait takes only --max <seconds> after it",
-                    ));
-                }
-            },
-            "--reply" => {
-                let issue = words.get(1).map(String::as_str).unwrap_or_default();
-                let issue = issue.trim_start_matches('#').parse().map_err(|_| {
-                    CliError::new(format!("dibs: --reply needs an issue number, not {issue}"))
-                })?;
-                let close = match &words.get(3..).unwrap_or_default() {
-                    [] => false,
-                    [close] if close == "--close" => true,
-                    _ => {
-                        return Err(CliError::new(
-                            "dibs: --reply <issue> '<answer>' takes only --close after it",
-                        ));
-                    }
-                };
-                let answer = words.get(2).cloned().unwrap_or_default();
-                if answer.trim().is_empty() {
-                    return Err(CliError::new("dibs: --reply needs the answer to post"));
-                }
-                Friction::Reply {
-                    issue,
-                    answer,
-                    close,
-                }
-            }
-            text => Friction::Note {
-                text: text.to_string(),
-            },
-        };
-        Ok(Invocation::Friction(friction))
+/// What follows `--friction`: a note is the first word alone.
+fn friction(words: &[String]) -> Result<Invocation, CliError> {
+    let first = words.first().filter(|w| !w.is_empty());
+    let first = first.ok_or(CliError::needs_value("--friction"))?;
+    match first.as_str() {
+        "-h" | "--help" => Ok(Invocation::Help(Some("friction"))),
+        gone if ["--wait", "--reply"].contains(&gone) => Err(CliError::new(format!(
+            "dibs: --friction {gone} is gone. A note stays on this computer for dibs gaps; a \
+             report your team should answer goes wherever it tracks them."
+        ))),
+        text => Ok(Invocation::Friction(text.to_string())),
     }
 }

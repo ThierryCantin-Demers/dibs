@@ -275,11 +275,10 @@ spoiled without it.
   `dibs gaps`, with who reported it and what dibs was at, and the ones that recur are the ones
   that get fixed. Nothing else records a problem that is not a missing recipe: a complaint made
   only in your reply reaches one person once.
-- Where your person has set `DIBS_REPORTS`, `--friction` also files the report as an issue in
-  that private repo, and dibs does that, not you: it is not you running `gh issue create`. An
-  answer comes back on the stderr of a later dibs call, `dibs: your report #N was answered`:
-  read it and act on it, since it is usually a fix to pick up with `dibs --update` or the form
-  that works meanwhile.
+- **Report it where your team tracks dibs reports too**, if it has such a place: the same line,
+  plus the command, its exit and trailer, the job id if there was one, and what you expected, so
+  whoever maintains dibs can reproduce it and answer you there. At Tracel that is the `dibs`
+  project's `bug-reports` feature in Parley.
 
 ### When dibs says no
 

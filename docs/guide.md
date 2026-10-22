@@ -426,23 +426,9 @@ bug, anything an agent had to work around. It is one line, in whoever hit it's o
 `~/.local/state/dibs/friction.jsonl` or `$DIBS_FRICTION` with the session that reported it and the
 commit dibs was at.
 
-A team can send those reports to whoever maintains dibs. With `DIBS_REPORTS=<owner>/<repo>` set,
-naming a private repo that person can read, each report is also filed there as an issue labelled
-`dibs-friction`, through `gh`, and a public repo is refused because a report carries paths and
-commands. It is per person: without the variable, nothing leaves the machine. An answer posted on
-the issue is printed on the stderr of a later dibs call from the session that filed it, which
-checks at most every `$DIBS_REPORTS_EVERY` minutes (5).
-
-The maintainer's side: `dibs --friction --wait` returns when a report or a comment lands, having
-read first whatever landed while nothing was listening, so a session can run it in the background
-and be woken by it. It listens through `gh webhook forward` (`gh extension install cli/gh-webhook`,
-admin on the repo), with no public endpoint. `dibs --friction --reply <n> '<answer>' [--close]`
-answers one, and a wait never wakes on its own answer. A harness that kills a background command
-after a while takes `--max <seconds>` below that: the wait then ends with nothing, exit 0, and is
-started again rather than killed, and a second listener for the same repo on one computer says
-which pid already listens instead of starting. SIGTERM, SIGHUP or Ctrl-C stops one after it has
-removed its webhook, which GitHub would otherwise keep and refuse the next listener over; only a
-SIGKILL leaves it, for `gh api repos/<repo>/hooks` to find.
+Nothing leaves the machine. A team that wants its reports answered keeps them where it tracks
+its work, and the agent posts the same line there itself, with the command, its exit and trailer,
+and the job id, so whoever maintains dibs can ask it about the run.
 
 `dibs gaps` prints those beside the other thing that means the tool did not fit: the reasons
 recorded by `dibs raw --reason` and `dibs shell --reason`, which is what a run that needed no

@@ -10,9 +10,6 @@ pub struct FrictionNote {
     /// The dibs that was running, by commit.
     #[serde(default, rename = "dibs")]
     pub version: String,
-    /// Where it was filed, when `DIBS_REPORTS` names a repo to file it in.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub issue: Option<u64>,
     #[serde(default, rename = "t")]
     pub when: u64,
     #[serde(default)]
@@ -38,7 +35,6 @@ impl FrictionNote {
             text: text.chars().take(Self::TEXT_CHARS).collect(),
             by: by.chars().take(Self::BY_CHARS).collect(),
             version: version.chars().take(Self::VERSION_CHARS).collect(),
-            issue: None,
         })
     }
 
@@ -62,12 +58,8 @@ mod tests {
 
     #[test]
     fn the_lines_friction_jsonl_holds_read_and_write_back_byte_for_byte() {
-        for line in [
-            r#"{"by":"session suite","dibs":"abc1234","t":1759300000,"text":"a line about what got in the way"}"#,
-            r#"{"by":"session suite","dibs":"abc1234","issue":12,"t":1759300000,"text":"filed \"there\""}"#,
-        ] {
-            assert_eq!(line.parse::<FrictionNote>().unwrap().to_line(), line);
-        }
+        let line = r#"{"by":"session suite","dibs":"abc1234","t":1759300000,"text":"a line about \"what\" got in the way"}"#;
+        assert_eq!(line.parse::<FrictionNote>().unwrap().to_line(), line);
     }
 
     #[test]
@@ -86,9 +78,6 @@ mod tests {
     #[test]
     fn a_line_missing_fields_reads_with_them_empty() {
         let note: FrictionNote = r#"{"text":"only this"}"#.parse().unwrap();
-        assert_eq!(
-            (note.text.as_str(), note.when, note.issue),
-            ("only this", 0, None)
-        );
+        assert_eq!((note.text.as_str(), note.when), ("only this", 0));
     }
 }

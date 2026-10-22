@@ -13,11 +13,10 @@ use dibs::{
     machine::{Client, Runner},
     paths::FileError,
     recipe::{self, Checkouts, Manifest},
-    records::{Complaints, FrictionLog, RunLog},
-    reports::{self, ReportsRepo},
+    records::{Complaints, FrictionLog, RecordsError, RunLog},
     update::{Build, ChangeNotice},
 };
-use dibs_format::BatchId;
+use dibs_format::{BatchId, FrictionNote, Moment};
 use std::{path::Path, process::ExitCode};
 
 const COMPLETIONS_USAGE: &str = "usage: dibs completions <fish|zsh> [--install]";
@@ -37,13 +36,9 @@ fn main() -> ExitCode {
 }
 
 fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
-    // Words outside the grammar: the background fetch of report replies, the build stamp, and
-    // the processes dibs starts as rsync's transport and as the guard of a held command or a
-    // batch step.
+    // Words outside the grammar: the build stamp, and the processes dibs starts as rsync's
+    // transport and as the guard of a held command or a batch step.
     match words {
-        [verb, flag, into] if verb == "friction" && flag == "--replies" => {
-            return friction_replies(Path::new(into));
-        }
         [flag] if flag == "--version" => return Ok(version()),
         [word, rest @ ..] if word == Rsh::WORD => {
             return Ok(ExitCode::from(Rsh::serve(rest).rem_euclid(256) as u8));
@@ -92,19 +87,17 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             Ok(ExitCode::SUCCESS)
         }
         Invocation::Version => Ok(version()),
-        Invocation::Friction(friction) => Ok(reports::friction_verb(friction)?),
+        Invocation::Friction(text) => friction(&text),
         Invocation::Hook(Hook::Ssh) => Ok(ExitCode::from(SshHook::serve() as u8)),
         Invocation::Recipe(call) => {
             let caller = Caller::from_env();
             ChangeNotice::tell_once(&caller);
-            reports::Notice { caller: &caller }.tell();
             run(call, &caller)
         }
         Invocation::Call(call) => {
             let caller = Caller::from_env();
             if call.mode != Mode::Update {
                 ChangeNotice::tell_once(&caller);
-                reports::Notice { caller: &caller }.tell();
             }
             let code = Dispatch {
                 call: &call,
@@ -206,14 +199,19 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
     execution::run_recipe(args)
 }
 
-/// Answers to the reports `DIBS_FRICTION_BY` filed, kept for its next call.
-fn friction_replies(into: &Path) -> Result<ExitCode, RunError> {
-    let Some(repo) = ReportsRepo::from_env() else {
-        return Ok(ExitCode::SUCCESS);
-    };
-    let by = std::env::var("DIBS_FRICTION_BY").unwrap_or_default();
-    let notes = FrictionLog::here()?.notes();
-    repo.fetch_replies(&notes, &by, into)?;
+/// `dibs --friction '<line>'`, kept on this computer for `dibs gaps`.
+fn friction(text: &str) -> Result<ExitCode, RunError> {
+    let caller = Caller::from_env();
+    ChangeNotice::tell_once(&caller);
+    let note = FrictionNote::new(
+        text,
+        &caller.name,
+        Build::COMMIT.unwrap_or_default(),
+        Moment::epoch_now(),
+    )
+    .ok_or(RecordsError::EmptyNote)?;
+    FrictionLog::here()?.append(&note)?;
+    println!("Recorded. dibs gaps prints it, with everything else that got in the way.");
     Ok(ExitCode::SUCCESS)
 }
 

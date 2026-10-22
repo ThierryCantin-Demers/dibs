@@ -1,6 +1,6 @@
 use crate::cli::{
-    Call, CliError, Command, Friction, Help, Invocation, KillTarget, Mode, OutTarget, PortName,
-    RecipeCall, RecipeVerb, Run, RunLock, Service, ServiceName, Sweep,
+    Call, CliError, Command, Help, Invocation, KillTarget, Mode, OutTarget, PortName, RecipeCall,
+    RecipeVerb, Run, RunLock, Service, ServiceName, Sweep,
 };
 use dibs_format::{Alias, BatchId, JobId, Label, MachineName};
 use std::collections::BTreeMap;
@@ -438,34 +438,13 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
         (vec!["hook", "--help"], Invocation::Help(Some("hook"))),
         (
             vec!["--friction", "a line", "more"],
-            Invocation::Friction(Friction::Note {
-                text: "a line".into(),
-            }),
+            Invocation::Friction("a line".into()),
         ),
         (
             vec!["--bench", "--friction", "x"],
-            Invocation::Friction(Friction::Note { text: "x".into() }),
+            Invocation::Friction("x".into()),
         ),
-        (
-            vec!["friction", "   "],
-            Invocation::Friction(Friction::Note { text: "   ".into() }),
-        ),
-        (
-            vec!["--friction", "--wait"],
-            Invocation::Friction(Friction::Wait { max: None }),
-        ),
-        (
-            vec!["--friction", "--wait", "--max", "6600"],
-            Invocation::Friction(Friction::Wait { max: Some(6600) }),
-        ),
-        (
-            vec!["--friction", "--reply", "#5", "fixed in abc", "--close"],
-            Invocation::Friction(Friction::Reply {
-                issue: 5,
-                answer: "fixed in abc".into(),
-                close: true,
-            }),
-        ),
+        (vec!["friction", "   "], Invocation::Friction("   ".into())),
     ]
 }
 
@@ -672,18 +651,8 @@ fn refusals() -> Vec<(Vec<&'static str>, &'static str, bool)> {
             false,
         ),
         (
-            vec!["--friction", "--reply", "x", "a"],
-            "dibs: --reply needs an issue number, not x",
-            false,
-        ),
-        (
-            vec!["--friction", "--reply", "5", "a", "b"],
-            "dibs: --reply <issue> '<answer>' takes only --close after it",
-            false,
-        ),
-        (
-            vec!["--friction", "--reply", "5", " "],
-            "dibs: --reply needs the answer to post",
+            vec!["--friction", "--wait"],
+            "dibs: --friction --wait is gone. A note stays on this computer for dibs gaps; a report your team should answer goes wherever it tracks them.",
             false,
         ),
         (

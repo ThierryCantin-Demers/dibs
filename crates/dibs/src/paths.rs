@@ -17,27 +17,6 @@ pub struct Paths {
     vars: BTreeMap<&'static str, PathBuf>,
 }
 
-/// The stamps that keep a report from being fetched or shown twice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReportsStamp {
-    /// When replies were last asked for.
-    Asked,
-    /// Replies already printed to this session.
-    Shown,
-    /// Reports the listener already woke for.
-    Woken,
-}
-
-impl ReportsStamp {
-    fn file(self) -> &'static str {
-        match self {
-            ReportsStamp::Asked => "reports-asked",
-            ReportsStamp::Shown => "reports-shown",
-            ReportsStamp::Woken => "reports-woken",
-        }
-    }
-}
-
 impl Paths {
     const VARS: [&'static str; 15] = [
         "HOME",
@@ -116,20 +95,6 @@ impl Paths {
     /// Machines that did not answer, kept out of placement for a while.
     pub fn route_down(&self) -> Option<PathBuf> {
         self.overridden("DIBS_ROUTE_DOWN", self.state("route-down"))
-    }
-
-    pub fn reports(&self, stamp: ReportsStamp) -> Option<PathBuf> {
-        self.state(stamp.file())
-    }
-
-    /// Held by this computer's listener for a reports repo, with its pid in it.
-    pub fn reports_listener(&self, repo: &str) -> Option<PathBuf> {
-        self.state(&format!("reports-listener.{}", repo.replace('/', ".")))
-    }
-
-    /// Replies fetched in the background, one file per session, printed on its next call.
-    pub fn reports_news(&self) -> Option<PathBuf> {
-        self.state("reports-news")
     }
 
     /// Commits checked out here to be sent, one tree per repo identity.
@@ -252,7 +217,6 @@ mod tests {
         assert_eq!(p.kept_jobs(), state("jobs"));
         assert_eq!(p.batches(), state("batch"));
         assert_eq!(p.route_down(), state("route-down"));
-        assert_eq!(p.reports(ReportsStamp::Woken), state("reports-woken"));
         assert_eq!(p.sent(), Some("/h/.cache/dibs/sent".into()));
         assert_eq!(p.remotes(), Some("/h/.cache/dibs/remotes".into()));
         assert_eq!(p.inventory(), Some("/h/.config/dibs/machines.toml".into()));

@@ -7,7 +7,6 @@ use crate::{
     paths::FileError,
     recipe::{NotTaken, RecipeError, RepoError},
     records::RecordsError,
-    reports::ReportsError,
 };
 use dibs_format::Exit;
 use std::{fmt, io, path::PathBuf};
@@ -256,7 +255,6 @@ pub enum RunError {
     Arm(ArmError),
     Pin(PinError),
     Git(GitError),
-    Reports(ReportsError),
     Fleet(FleetError),
     Inventory(InventoryError),
     File(FileError),
@@ -333,7 +331,6 @@ impl RunError {
             | RunError::Arm(_)
             | RunError::Pin(_)
             | RunError::Git(_)
-            | RunError::Reports(_)
             | RunError::Fleet(_)
             | RunError::Inventory(_)
             | RunError::File(_)
@@ -361,7 +358,6 @@ impl fmt::Display for RunError {
             RunError::Arm(e) => writeln!(f, "dibs: {e}"),
             RunError::Pin(e) => writeln!(f, "dibs: {e}"),
             RunError::Git(e) => writeln!(f, "dibs: {e}"),
-            RunError::Reports(e) => writeln!(f, "dibs: {e}"),
             RunError::Fleet(e) => writeln!(f, "dibs: {e}"),
             RunError::Inventory(e) => writeln!(f, "dibs: {e}"),
             RunError::File(e) => writeln!(f, "dibs: {e}"),
@@ -530,12 +526,6 @@ impl From<PinError> for RunError {
 impl From<GitError> for RunError {
     fn from(e: GitError) -> RunError {
         RunError::Git(e)
-    }
-}
-
-impl From<ReportsError> for RunError {
-    fn from(e: ReportsError) -> RunError {
-        RunError::Reports(e)
     }
 }
 

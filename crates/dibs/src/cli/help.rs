@@ -146,11 +146,7 @@ impl Help {
         },
         Topic {
             words: &["friction"],
-            entries: &[
-                "dibs --friction '<line>'",
-                "dibs --friction --wait",
-                "dibs --friction --reply",
-            ],
+            entries: &["dibs --friction '<line>'"],
         },
         Topic {
             words: &["completions"],

@@ -18,6 +18,5 @@ pub mod placement;
 pub mod recipe;
 pub mod records;
 pub mod render;
-pub mod reports;
 pub mod scratch;
 pub mod update;
