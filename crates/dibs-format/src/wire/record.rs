@@ -41,9 +41,10 @@ pub struct Trailer {
     pub by: By,
     /// What cargo compiled, when the log shows cargo finishing.
     pub built: Option<Built>,
-    /// cargo's test runs, together, ran no test: an exit 0 a green row would otherwise hide.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub no_tests: bool,
+    /// The tests cargo's test runs ran together, when it ran any test binary: 0 is an exit 0 a
+    /// green row would otherwise hide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tests: Option<u64>,
 }
 
 /// How many crates a job's cargo compiled.
@@ -66,15 +67,11 @@ impl fmt::Display for Trailer {
             Some(Built::Nothing) => f.write_str("  built=nothing")?,
             None => {}
         }
-        if self.no_tests {
-            f.write_str("  tests=0")?;
+        if let Some(tests) = self.tests {
+            write!(f, "  tests={tests}")?;
         }
         Ok(())
     }
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 #[cfg(test)]
@@ -92,7 +89,7 @@ mod tests {
             exit: 0,
             by: By::Command,
             built: None,
-            no_tests: false,
+            tests: None,
         };
         assert_eq!(
             trailer.to_string(),
@@ -102,7 +99,9 @@ mod tests {
         assert!(trailer.to_string().ends_with("by=command  built=nothing"));
         trailer.built = Some(Built::Crates(12));
         assert!(trailer.to_string().ends_with("by=command  built=12"));
-        trailer.no_tests = true;
+        trailer.tests = Some(0);
         assert!(trailer.to_string().ends_with("built=12  tests=0"));
+        trailer.tests = Some(25);
+        assert!(trailer.to_string().ends_with("built=12  tests=25"));
     }
 }

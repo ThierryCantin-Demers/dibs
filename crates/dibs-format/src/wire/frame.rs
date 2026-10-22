@@ -207,7 +207,7 @@ mod tests {
                 exit: 0,
                 by: By::Command,
                 built: None,
-                no_tests: false,
+                tests: None,
             })),
             Frame::Exit(124),
         ]

@@ -126,15 +126,17 @@ spoiled without it.
 - **Read the summary or the trailer, not the output.** A batch's summary has one row per step:
   machine, the locks its jobs took (`shared+bench` for a build then a measurement), time, exit,
   and each job with `by=dibs` when dibs produced the exit and the `built=` its trailer reported. A single call ends with the trailer on stderr,
-  `job <id>  <mode>  <label>  queued Ns  ran Ns  exit N  by=command|dibs  built=N|nothing`, then
-  the log path. A pipe on your side cannot cut it off, and it carries the real exit.
+  `job <id>  <mode>  <label>  queued Ns  ran Ns  exit N  by=command|dibs  built=N|nothing  tests=N`,
+  then the log path. A pipe on your side cannot cut it off, and it carries the real exit.
 - **Read `built=` before the numbers.** `built=nothing` means cargo compiled no crate, so a
   measurement after it measured the previous binary. A shared target directory, a copy that kept
   mtimes, or a stale worktree all do that. A recipe guards this itself: its build rebuilds a tree
   that did not make the target's last build, and its measurement exits 78 if another tree has
   built there since.
-- **`tests=0` means cargo's test runs ran no test**, so the green exit proves nothing: a `--lib`
-  run of a crate whose tests all live under `tests/`, or a filter that matched none.
+- **`tests=` is how many tests cargo's test runs ran, together.** Compare it with what you meant
+  to run: `tests=0` means none ran, so the green exit proves nothing, as with a `--lib` run of a
+  crate whose tests all live under `tests/`, and a count far below yours is a filter that
+  matched less than you thought.
 - A job's stdout is a digest: its first and last 20 lines and a count of the rest. Do not pipe dibs
   through `tail`, `head` or `grep`, which replaces the exit status with the filter's, and do not
   redirect inside the command to keep a log. The whole output stays on the machine for two weeks:

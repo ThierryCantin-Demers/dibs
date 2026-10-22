@@ -190,9 +190,13 @@ fn a_test_run_that_ran_no_test_says_so() {
         .dibs(["--label", "t1", &format!("{}; {}", result(0), result(3))])
         .run();
     assert_eq!(
-        ran.stderr.lines_with("tests=0"),
-        0,
-        "and nothing is said once any of its binaries ran one"
+        (
+            ran.stderr.lines_with("tests=0"),
+            ran.stderr.lines_with("tests=3")
+        ),
+        (0, 1),
+        "and once any of its binaries ran one, it counts them all: {}",
+        ran.stderr
     );
 }
 

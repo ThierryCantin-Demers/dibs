@@ -87,7 +87,7 @@ impl<'a> Ended<'a> {
             exit: tally.status,
             by: tally.by,
             built,
-            no_tests: tally.read.tests == Some(0),
+            tests: tally.read.tests,
         }));
         let mut after = String::new();
         if !call.request.watch.hold {
