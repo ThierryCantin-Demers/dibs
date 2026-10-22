@@ -10,6 +10,7 @@ use crate::{
     git::{Git, GitError},
     paths::{FileError, Paths},
     placement::Reading,
+    scratch::ScratchFile,
 };
 use dibs_format::{Hex, MachineName, Moment, Span, wire};
 use dibs_runner::shared::SharedFile;
@@ -139,8 +140,11 @@ const SYNC_ARGS: &[&str] = &[
     "--delete",
     "--exclude=.git",
     "--exclude=/.dibs-used",
-    "--filter=:- .gitignore",
 ];
+/// rsync's reading of the ignore files, which has no `!` to take a path back. Read on the
+/// machine's side alone, it keeps what a tool wrote into the tree there from `--delete`.
+const GITIGNORE_FILTER: &str = "--filter=:- .gitignore";
+const MACHINE_GITIGNORE: &str = "--filter=:-r .gitignore";
 
 /// What a local tree is, for a run that was never pushed.
 ///
@@ -219,15 +223,74 @@ impl Local {
         req: &JobRequest,
         on_prepared: &mut dyn FnMut(&wire::Prepared),
     ) -> Reported {
+        let ignored = Ignored::of(from);
+        let filter = match &ignored {
+            Some(ignored) => vec![
+                MACHINE_GITIGNORE.to_string(),
+                format!("--exclude-from={}", ignored.0.display()),
+            ],
+            None => vec![GITIGNORE_FILTER.to_string()],
+        };
         let args: Vec<String> = SYNC_ARGS
             .iter()
             .map(|a| a.to_string())
+            .chain(filter)
             .chain([
                 format!("{}/", from.display()),
                 format!(":local-{}/", self.key),
             ])
             .collect();
         backend.sync(req, &args, on_prepared)
+    }
+}
+
+/// What git says a tree ignores, as rsync's excludes, one anchored path a line, in a scratch file
+/// that goes with this. `--from0` would also change how rsync reads `.gitignore`, so a path with
+/// a newline in it is left to that.
+struct Ignored(PathBuf);
+
+impl Ignored {
+    fn of(dir: &Path) -> Option<Ignored> {
+        let listed = Git(dir)
+            .run(&[
+                "ls-files",
+                "-z",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "--directory",
+            ])
+            .ok()?;
+        let patterns: Vec<String> = listed
+            .split('\0')
+            .filter(|path| !path.is_empty() && !path.contains(['\n', '\r']))
+            .map(Ignored::pattern)
+            .collect();
+        let scratch = Paths::from_env().scratch()?;
+        ScratchFile::create(&scratch, ".sent-ignored", patterns.join("\n").as_bytes())
+            .ok()
+            .map(Ignored)
+    }
+
+    /// rsync reads a backslash as an escape only in a pattern that has a wildcard.
+    fn pattern(path: &str) -> String {
+        let anchored = format!("/{path}");
+        match path.contains(['*', '?', '[']) {
+            true => anchored
+                .chars()
+                .flat_map(|c| match c {
+                    '\\' | '*' | '?' | '[' => vec!['\\', c],
+                    c => vec![c],
+                })
+                .collect(),
+            false => anchored,
+        }
+    }
+}
+
+impl Drop for Ignored {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 

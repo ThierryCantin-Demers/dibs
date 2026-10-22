@@ -130,6 +130,36 @@ fn a_shell_measurement_of_cargo_bench_builds_it_first_under_the_shared_lock() {
 }
 
 #[test]
+fn a_local_tree_carries_what_a_later_ignore_rule_takes_back() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    s.write("app/.gitignore", "target\n.agent/*\n!.agent/skills\n");
+    s.write("app/skills/a.md", "x\n");
+    s.write("app/.agent/settings.json", "{}\n");
+    std::os::unix::fs::symlink("../skills", s.path("app/.agent/skills")).unwrap();
+    let out = s
+        .dibs([
+            "shell",
+            &format!("{app}@local"),
+            "--reason",
+            "test",
+            "--",
+            "readlink .agent/skills; ls .agent",
+        ])
+        .run();
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.lines_with("../skills"),
+            out.stdout.lines_with("settings.json")
+        ),
+        (0, 1, 0),
+        "{}",
+        out.all()
+    );
+}
+
+#[test]
 fn a_local_recipe_runs_in_the_tree_it_sent() {
     let s = Sandbox::new();
     let app = app(&s);
