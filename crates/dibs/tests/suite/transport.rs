@@ -69,6 +69,20 @@ fn the_jobs_exit_comes_back() {
 }
 
 #[test]
+fn a_command_that_exits_255_is_not_taken_for_ssh_failing() {
+    let s = Sandbox::new();
+    let out = s
+        .remote(s.dibs(["--label", "transport-255", "exit 255"]))
+        .run();
+    assert_eq!(
+        (out.code, out.stderr.lines_with("cannot reach")),
+        (255, 0),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
 fn a_dead_callers_job_is_noticed_through_the_stream() {
     // The caller's death reaches the far side as the end of the stream the request came on.
     let mut s = Sandbox::new();

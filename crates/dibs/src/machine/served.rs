@@ -394,6 +394,7 @@ impl Served<'_> {
             last
         });
         if let Some(Frame::Exit(code)) = said {
+            self.session.said.exited();
             drop(stdin);
             let status = child.wait()?;
             if let Some(relayed) = &relayed {
@@ -499,7 +500,10 @@ impl Served<'_> {
                 }
                 Heard::Prepared(prepared) => delivery.prepared(&prepared),
                 Heard::Stepped(stepped) => delivery.stepped(&stepped),
-                Heard::Exit(code) => exit = Some(code),
+                Heard::Exit(code) => {
+                    self.session.said.exited();
+                    exit = Some(code);
+                }
                 Heard::Broken(why) => {
                     delivery.say(&format!("dibs: the runner's answer broke off: {why}\n"))
                 }

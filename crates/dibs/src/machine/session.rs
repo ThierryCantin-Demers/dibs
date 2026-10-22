@@ -54,32 +54,48 @@ pub struct Session {
     pub leased: bool,
 }
 
-/// What a call's last attempt heard on stderr outside the runner's frames: ssh's reason, when
-/// ssh is what failed, kept so that reason is not asked of the machine a second time.
+/// What a call's last attempt heard outside the runner's frames: ssh's reason, when ssh is what
+/// failed, kept so that reason is not asked of the machine a second time; and whether the runner
+/// gave the exit itself, which makes a 255 the command's rather than ssh's.
 #[derive(Debug, Clone, Default)]
-pub struct Said(Arc<Mutex<Vec<u8>>>);
+pub struct Said(Arc<Mutex<Heard>>);
+
+#[derive(Debug, Default)]
+struct Heard {
+    stderr: Vec<u8>,
+    exited: bool,
+}
 
 impl Said {
     /// Only the end is kept: a reason is ssh's last words.
     const KEPT: usize = 4096;
 
     pub fn clear(&self) {
-        self.kept().clear();
+        *self.heard() = Heard::default();
     }
 
     pub fn add(&self, bytes: &[u8]) {
-        let mut kept = self.kept();
+        let kept = &mut self.heard().stderr;
         kept.extend_from_slice(bytes);
         let over = kept.len().saturating_sub(Said::KEPT);
         kept.drain(..over);
     }
 
-    fn kept(&self) -> MutexGuard<'_, Vec<u8>> {
+    /// The runner's own exit arrived.
+    pub fn exited(&self) {
+        self.heard().exited = true;
+    }
+
+    pub fn runner_exited(&self) -> bool {
+        self.heard().exited
+    }
+
+    fn heard(&self) -> MutexGuard<'_, Heard> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn text(&self) -> String {
-        String::from_utf8_lossy(&self.0.lock().unwrap_or_else(PoisonError::into_inner)).into_owned()
+        String::from_utf8_lossy(&self.heard().stderr).into_owned()
     }
 }
 
@@ -235,14 +251,18 @@ impl Session {
     /// The exit for a machine half's, and what to say about it.
     pub fn diagnose(&self, status: i32, target: &Target) -> Diagnosis {
         match (&self.route, status) {
-            (Route::Ssh { .. }, SSH_FAILED) if !Interrupt::heard() => Diagnosis {
-                exit: i32::from(Exit::Unreachable.code()),
-                said: Unreachable {
-                    target,
-                    said: self.said.text(),
+            (Route::Ssh { .. }, SSH_FAILED)
+                if !Interrupt::heard() && !self.said.runner_exited() =>
+            {
+                Diagnosis {
+                    exit: i32::from(Exit::Unreachable.code()),
+                    said: Unreachable {
+                        target,
+                        said: self.said.text(),
+                    }
+                    .diagnosis(),
                 }
-                .diagnosis(),
-            },
+            }
             (_, exit) => Diagnosis {
                 exit,
                 said: String::new(),
