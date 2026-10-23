@@ -12,7 +12,7 @@
 use super::{
     build::BuildSignature,
     jobs::{JobRequest, Jobs},
-    local::{Fetched, Repo},
+    local::{Fetched, Repo, private},
     pins::Nest,
 };
 use crate::{
@@ -53,7 +53,10 @@ impl TreeSpec<'_> {
         });
         let lock = Repo(self.dir).lockfile(fetched.as_deref());
         let lock = lock.as_deref().unwrap_or("");
-        let gitdbs = CargoHome::here().dbs(&GitPin::all(lock));
+        let pins = GitPin::all(lock);
+        let cargo = CargoHome::here();
+        cargo.fetch_private(&pins, private);
+        let gitdbs = cargo.dbs(&pins);
         let lines = self.signature.packages(lock);
         let prepare = wire::Prepare {
             repo: self.repo_name.to_string(),

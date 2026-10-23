@@ -536,7 +536,7 @@ impl Fetched {
 /// A remote that refuses an anonymous read. Remembered for a week, since asking costs a round
 /// trip to the host; a remote that cannot be asked counts as public, which is what it was taken
 /// for before anything asked.
-fn private(url: &str) -> bool {
+pub fn private(url: &str) -> bool {
     const WEEK: u64 = 7 * Span::DAY.0;
     let Some(url) = anonymous_url(url) else {
         return false;

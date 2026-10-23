@@ -345,7 +345,9 @@ tree that compiles nothing is not refused, since that binary is its own.
 
 A git dependency pinned in `Cargo.lock` that the machine lacks is sent from this machine's cargo
 before the build, when this cargo has that commit. A machine holds no credentials, so a private
-repo would otherwise fail the build after it had queued. Files are only added, never replaced.
+repo would otherwise fail the build after it had queued. When this cargo lacks the commit of a
+private repo it has fetched before, dibs fetches it here first, with this computer's credentials.
+Files are only added, never replaced.
 
 Every prepare, local or fetched, sweeps the machine's whole scratch, across every repo, and
 `dibs --gc` runs the same sweep with the same clocks:
