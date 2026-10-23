@@ -118,6 +118,10 @@ fn hwmon_readings(dir: &Path) -> Vec<String> {
         .ok()
         .and_then(|d| Some(d.file_name()?.to_string_lossy().into_owned()))
         .unwrap_or_default();
+    // Reading a suspended card wakes it, which takes seconds under the lock and changes the machine.
+    if first_line(dir.join("device/power/runtime_status")).as_deref() == Some("suspended") {
+        return vec![format!("{chip}@{device}/suspended=1")];
+    }
     let mut pairs = Vec::new();
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -588,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hwmon_chip_reads_as_degrees_keyed_by_its_device_with_its_alarms() {
+    fn a_hwmon_chip_reads_as_degrees_keyed_by_its_device_and_a_suspended_one_is_not_woken() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../target/hwmon-{}", std::process::id()));
         let chip = root.join("hwmon0");
@@ -608,7 +612,11 @@ mod tests {
         }
         let mut pairs = hwmon_readings(&chip);
         pairs.sort();
+        fs::create_dir_all(device.join("power")).unwrap();
+        fs::write(device.join("power/runtime_status"), "suspended\n").unwrap();
+        let asleep = hwmon_readings(&chip);
         fs::remove_dir_all(&root).unwrap();
+        assert_eq!(asleep, ["nvme@nvme0/suspended=1"]);
         assert_eq!(
             pairs,
             [
