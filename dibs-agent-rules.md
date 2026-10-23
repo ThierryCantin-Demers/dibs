@@ -159,9 +159,10 @@ spoiled without it.
   label used once files its time where nothing looks, and one label over several different
   benchmarks averages them into a number that predicts none of them.
 - Each job names the agent that started it, so a person can ask that agent what it is doing.
-  Claude Code is identified from its session. Any other runtime, Codex included, must
-  `export DIBS_AGENT='<the work>'` once per session as its own statement, naming the work rather
-  than the tool: `DIBS_AGENT='reduce kernel sweep'`.
+  Claude Code is identified from its session, and an agent in a herdr pane by herdr's name for
+  it. Any other runtime, Codex outside herdr included, must `export DIBS_AGENT='<the work>'` once
+  per session as its own statement, naming the work rather than the tool:
+  `DIBS_AGENT='reduce kernel sweep'`. `DIBS_AGENT` wins over herdr's name when both are set.
 - `dibs --kill <pid>` stops a wedged job, refusing someone else's without `--anyone`, and
   `dibs --log [n]` shows what ran, what it cost and what was killed. Both ignore the lock, so a
   stuck machine can still be freed.
