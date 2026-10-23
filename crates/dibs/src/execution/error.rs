@@ -394,7 +394,9 @@ impl fmt::Display for Refusal {
                 }
                 f.write_str(".")
             }
-            Refusal::WithRefs => f.write_str("with runs against one tree, so it takes one ref"),
+            Refusal::WithRefs => f.write_str(
+                "with runs against one tree, so it takes one ref: to compare two, run one with per ref, as steps of a batch",
+            ),
             Refusal::WithReadyWithin(value) => {
                 write!(f, "--ready-within takes seconds, not '{value}'")
             }

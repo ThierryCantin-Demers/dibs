@@ -203,7 +203,7 @@ exit  call
 
 == dibs with <root>/app@main..local servers -- true
 -> exit 2
-2| dibs: with runs against one tree, so it takes one ref
+2| dibs: with runs against one tree, so it takes one ref: to compare two, run one with per ref, as steps of a batch
 
 == DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs bench <root>/app@local stolen
 -> exit 2

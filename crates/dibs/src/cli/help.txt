@@ -21,7 +21,8 @@ Recipes: a repo's builds, tests and benchmarks, prepared and recorded.
                                are built under the shared lock, then run with the machine
                                held alone. --there runs the command on the machine instead,
                                in the tree beside them, reaching them at
-                               127.0.0.1:$DIBS_PORT_<NAME>
+                               127.0.0.1:$DIBS_PORT_<NAME>. It takes one ref, and no
+                               --reps or --sweep: compare refs with one with per ref
   dibs gaps                    what did not fit a recipe, what got in the way, and which of
                                it recurs
   dibs machines [<machine>] [--json]
@@ -44,8 +45,8 @@ Recipes: a repo's builds, tests and benchmarks, prepared and recorded.
   <verb>       bench, build or test
   <repo>       a path to a checkout, or a name: the checkout you are in when it is that
                repo, a worktree of it included, else the one under --root
-  <ref>        a branch, tag or commit the machine fetches, or local. Two or more are one
-               comparison with one record: A..B measures B against where it left A, their
+  <ref>        a branch, tag or commit the machine fetches, or local. For a recipe, two or
+               more are one comparison with one record: A..B measures B against where it left A, their
                merge base, so what landed on A since is not credited to B; a,b,c measures
                each in turn. Every arm is built in a tree and target directory of its own,
                then each rep measures them all, the order reversed every other rep (A B B A),

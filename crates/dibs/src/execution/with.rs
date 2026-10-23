@@ -59,11 +59,22 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         return Err(Refusal::StartsNothing(name.to_string()).into());
     }
     let command = args.command.as_deref().ok_or(Refusal::WithCommand)?;
+    let recipe_only = [
+        (args.reps > 1, "reps"),
+        (!args.sweep.is_empty(), "sweep"),
+        (args.artifacts_to.is_some(), "artifacts"),
+    ];
     let not_taken: Vec<String> = args
         .params
         .keys()
         .filter(|name| *name != READY_WITHIN)
         .cloned()
+        .chain(
+            recipe_only
+                .into_iter()
+                .filter(|(given, _)| *given)
+                .map(|(_, name)| name.to_string()),
+        )
         .collect();
     if !not_taken.is_empty() {
         return Err(Refusal::WithNotTaken(not_taken).into());

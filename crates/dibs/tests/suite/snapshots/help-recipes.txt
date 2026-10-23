@@ -7,8 +7,8 @@
 1|   <verb>       bench, build or test
 1|   <repo>       a path to a checkout, or a name: the checkout you are in when it is that
 1|                repo, a worktree of it included, else the one under --root
-1|   <ref>        a branch, tag or commit the machine fetches, or local. Two or more are one
-1|                comparison with one record: A..B measures B against where it left A, their
+1|   <ref>        a branch, tag or commit the machine fetches, or local. For a recipe, two or
+1|                more are one comparison with one record: A..B measures B against where it left A, their
 1|                merge base, so what landed on A since is not credited to B; a,b,c measures
 1|                each in turn. Every arm is built in a tree and target directory of its own,
 1|                then each rep measures them all, the order reversed every other rep (A B B A),

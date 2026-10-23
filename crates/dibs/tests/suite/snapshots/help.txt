@@ -23,7 +23,8 @@
 1|                                are built under the shared lock, then run with the machine
 1|                                held alone. --there runs the command on the machine instead,
 1|                                in the tree beside them, reaching them at
-1|                                127.0.0.1:$DIBS_PORT_<NAME>
+1|                                127.0.0.1:$DIBS_PORT_<NAME>. It takes one ref, and no
+1|                                --reps or --sweep: compare refs with one with per ref
 1|   dibs gaps                    what did not fit a recipe, what got in the way, and which of
 1|                                it recurs
 1|   dibs machines [<machine>] [--json]
@@ -46,8 +47,8 @@
 1|   <verb>       bench, build or test
 1|   <repo>       a path to a checkout, or a name: the checkout you are in when it is that
 1|                repo, a worktree of it included, else the one under --root
-1|   <ref>        a branch, tag or commit the machine fetches, or local. Two or more are one
-1|                comparison with one record: A..B measures B against where it left A, their
+1|   <ref>        a branch, tag or commit the machine fetches, or local. For a recipe, two or
+1|                more are one comparison with one record: A..B measures B against where it left A, their
 1|                merge base, so what landed on A since is not credited to B; a,b,c measures
 1|                each in turn. Every arm is built in a tree and target directory of its own,
 1|                then each rep measures them all, the order reversed every other rep (A B B A),

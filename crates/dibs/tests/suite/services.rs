@@ -517,4 +517,14 @@ fn a_declared_service_waits_as_long_as_it_says_or_as_with_is_told() {
         "and anything else it would drop is refused: {}",
         refused.all()
     );
+    let refused = with(&["--reps", "2"]);
+    assert_eq!(
+        (
+            refused.code,
+            refused.stderr.lines_with("with takes no --reps")
+        ),
+        (2, 1),
+        "reps included: {}",
+        refused.all()
+    );
 }
