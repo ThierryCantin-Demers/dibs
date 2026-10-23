@@ -107,6 +107,9 @@ pub trait Platform {
     /// `key=value` pairs for the record a measurement keeps.
     fn machine_state() -> String;
 
+    /// Every temperature sensor and card clock, as `key=value` pairs; empty where none is read.
+    fn temperatures() -> String;
+
     /// Keeps the machine from sleeping until the process exits.
     fn stay_awake(pid: u32);
 

@@ -19,6 +19,7 @@ use crate::{
     sink::Sink,
     status::Look,
     stop::{Stage, State, Stopper},
+    thermals::Thermals,
     tree::{Copier, KeptCopy, Mark, Stepping},
 };
 use dibs_format::{
@@ -473,7 +474,15 @@ impl<'a> Run<'a> {
                 let command = arrived.held.as_ref().map(HoldFifo::command);
                 let command = command.as_deref().unwrap_or(&self.at.call.work);
                 let mark = running.as_ref().and_then(|r| r.mark.as_ref());
-                match Job::spawn(command, &environment, output, self.at.sink, mark) {
+                let thermals = (self.at.call.mode() == Mode::Bench).then(|| Thermals {
+                    path: self.at.machine.history.with_file_name("temperatures"),
+                    call: self.at.call,
+                    job: &arrived.job,
+                });
+                if let Some(thermals) = &thermals {
+                    thermals.record("start");
+                }
+                let status = match Job::spawn(command, &environment, output, self.at.sink, mark) {
                     Ok(work) => {
                         state.stage = Stage::Running(work.pid);
                         drop(state);
@@ -497,7 +506,11 @@ impl<'a> Run<'a> {
                             .say(&format!("dibs: bash could not start: {e}\n"));
                         NOT_STARTED
                     }
+                };
+                if let Some(thermals) = &thermals {
+                    thermals.record("end");
                 }
+                status
             }
         };
         if let Some(services) = &mut hosted.services {

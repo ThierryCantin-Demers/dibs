@@ -24,6 +24,7 @@ pub mod shared;
 mod sink;
 mod status;
 mod stop;
+mod thermals;
 mod tree;
 mod views;
 

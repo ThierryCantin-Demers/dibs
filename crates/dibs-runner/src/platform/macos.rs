@@ -255,6 +255,10 @@ impl Platform for MacOs {
         Slot::Unreadable
     }
 
+    fn temperatures() -> String {
+        String::new()
+    }
+
     /// Without a fan, a Mac's number depends on its power source and on whether it throttles.
     fn machine_state() -> String {
         let power = output_of("pmset", &["-g", "ps"])

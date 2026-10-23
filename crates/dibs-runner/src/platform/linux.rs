@@ -1,6 +1,7 @@
 use crate::{
     platform::base::{Extent, Platform, Process, Slot},
     settings::Settings,
+    stop::Signals,
 };
 use dibs_format::{Moment, Span};
 use std::{
@@ -8,6 +9,7 @@ use std::{
     fs,
     os::{fd::AsRawFd as _, unix::ffi::OsStrExt as _, unix::fs::MetadataExt as _},
     path::{Path, PathBuf},
+    process::Command,
     sync::OnceLock,
 };
 
@@ -104,6 +106,67 @@ fn pids() -> impl Iterator<Item = u32> {
 fn first_line(path: impl AsRef<Path>) -> Option<String> {
     let text = fs::read_to_string(path).ok()?;
     Some(text.lines().next().unwrap_or_default().trim().to_string())
+}
+
+/// One hwmon chip's temperatures in degrees and its alarms, keyed `<chip>@<device>/<label>`, since
+/// two cards of one kind share a chip name.
+fn hwmon_readings(dir: &Path) -> Vec<String> {
+    let Some(chip) = first_line(dir.join("name")) else {
+        return Vec::new();
+    };
+    let device = fs::read_link(dir.join("device"))
+        .ok()
+        .and_then(|d| Some(d.file_name()?.to_string_lossy().into_owned()))
+        .unwrap_or_default();
+    let mut pairs = Vec::new();
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(sensor) = name
+            .strip_suffix("_input")
+            .filter(|s| s.starts_with("temp"))
+        else {
+            continue;
+        };
+        let Some(milli) = first_line(entry.path()).and_then(|v| v.parse::<i64>().ok()) else {
+            continue;
+        };
+        let label = first_line(dir.join(format!("{sensor}_label")))
+            .unwrap_or_else(|| sensor.to_string())
+            .replace(' ', "_");
+        let key = format!("{chip}@{device}/{label}");
+        pairs.push(format!("{key}={}", milli / 1000));
+        if let Some(alarm) = first_line(dir.join(format!("{sensor}_alarm"))) {
+            pairs.push(format!("{key}.alarm={alarm}"));
+        }
+    }
+    pairs
+}
+
+/// Each NVIDIA card's temperature, SM clock and active throttle reasons, keyed by bus id.
+fn nvidia_readings() -> Vec<String> {
+    let mut query = Command::new("nvidia-smi");
+    query.args([
+        "--query-gpu=pci.bus_id,temperature.gpu,clocks.sm,clocks_throttle_reasons.active",
+        "--format=csv,noheader,nounits",
+    ]);
+    Signals::unblocked(&mut query);
+    let Ok(out) = query.output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+            let [bus, temperature, sm, reasons] = fields[..] else {
+                return None;
+            };
+            let bus = bus.to_ascii_lowercase();
+            let bus = bus.split_once(':').map_or(bus.as_str(), |(_, b)| b);
+            Some(format!(
+                "nvidia@{bus}/temp={temperature} nvidia@{bus}/sm={sm} nvidia@{bus}/reasons={reasons}"
+            ))
+        })
+        .collect()
 }
 
 /// `uname -r`.
@@ -276,6 +339,18 @@ impl Platform for Linux {
             governors.join("+"),
             kernel_release()
         )
+    }
+
+    fn temperatures() -> String {
+        let mut pairs: Vec<String> = fs::read_dir("/sys/class/hwmon")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .flat_map(|hwmon| hwmon_readings(&hwmon.path()))
+            .collect();
+        pairs.sort();
+        pairs.extend(nvidia_readings());
+        pairs.join(" ")
     }
 
     fn stay_awake(_pid: u32) {}
@@ -510,6 +585,38 @@ mod tests {
         assert_eq!(first_version("v2 and 3.10").as_deref(), Some("3.10"));
         assert_eq!(first_version("1.2.3.4").as_deref(), Some("1.2.3"));
         assert_eq!(first_version("none here"), None);
+    }
+
+    #[test]
+    fn a_hwmon_chip_reads_as_degrees_keyed_by_its_device_with_its_alarms() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../target/hwmon-{}", std::process::id()));
+        let chip = root.join("hwmon0");
+        let device = root.join("nvme0");
+        fs::create_dir_all(&chip).unwrap();
+        fs::create_dir_all(&device).unwrap();
+        std::os::unix::fs::symlink(&device, chip.join("device")).unwrap();
+        for (file, value) in [
+            ("name", "nvme"),
+            ("temp1_input", "30850"),
+            ("temp1_label", "Composite"),
+            ("temp1_alarm", "0"),
+            ("temp2_input", "46000"),
+            ("temp1_max", "84850"),
+        ] {
+            fs::write(chip.join(file), format!("{value}\n")).unwrap();
+        }
+        let mut pairs = hwmon_readings(&chip);
+        pairs.sort();
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(
+            pairs,
+            [
+                "nvme@nvme0/Composite.alarm=0",
+                "nvme@nvme0/Composite=30",
+                "nvme@nvme0/temp2=46",
+            ]
+        );
     }
 
     #[test]
