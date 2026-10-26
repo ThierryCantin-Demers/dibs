@@ -692,6 +692,9 @@ impl Pinned {
                 self.repo
             );
         }
+        for r in &self.relocked {
+            println!("            {}", r.warning(&self.repo));
+        }
     }
 
     /// The pinned trees laid out on the machine, each under the job `request` describes.
@@ -702,6 +705,9 @@ impl Pinned {
     ) -> Result<LaidPins, RunError> {
         let mut pinned = Vec::with_capacity(pins.len());
         for (k, p) in pins.iter_mut().enumerate() {
+            for r in &p.relocked {
+                eprintln!("dibs: {}", r.warning(&p.repo));
+            }
             let setup = request(k);
             let fresh = Manifest::load_any(&p.dir, &p.repo)?;
             let lock = p.checkout.as_mut().and_then(|c| c.lock.take());

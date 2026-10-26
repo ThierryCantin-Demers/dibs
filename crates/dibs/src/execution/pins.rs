@@ -7,7 +7,7 @@
 
 use super::{
     error::{PinError, TagMoved},
-    local::{Checkout, Clones, Fetched, Local, Repo},
+    local::{Checkout, Clones, Fetched, Local, Repo, private},
     refs::Arm,
 };
 use crate::{
@@ -294,6 +294,55 @@ pub struct Pinned {
     pub sources: BTreeMap<String, std::collections::BTreeSet<String>>,
     /// Whether the tree's own `[patch]` reads it from `../<repo>`.
     pub beside: bool,
+    pub relocked: Vec<Relocked>,
+}
+
+/// A crate a lockfile takes from a private git source at another version than the pin's.
+/// Cargo then resolves that source again, which a machine without credentials cannot.
+pub struct Relocked {
+    pub name: String,
+    pub locked: String,
+    pub pinned: String,
+    pub url: String,
+}
+
+/// A crate's version from the manifest in `dir`, or from the nearest workspace above it when the
+/// manifest inherits it. `read` gives a file's text by its path from the tree's root.
+fn version(read: &dyn Fn(&str) -> Option<String>, dir: &str) -> Option<String> {
+    let manifest = |d: &str| {
+        let path = match d {
+            "" => "Cargo.toml".to_string(),
+            d => format!("{d}/Cargo.toml"),
+        };
+        read(&path).and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+    };
+    let own = manifest(dir)?.get("package")?.get("version")?.clone();
+    if let Some(v) = own.as_str() {
+        return Some(v.to_string());
+    }
+    let mut at = dir;
+    loop {
+        let found = manifest(at).and_then(|m| {
+            m.get("workspace")?
+                .get("package")?
+                .get("version")?
+                .as_str()
+                .map(str::to_string)
+        });
+        if found.is_some() || at.is_empty() {
+            return found;
+        }
+        at = at.rsplit_once('/').map_or("", |(parent, _)| parent);
+    }
+}
+
+impl Relocked {
+    pub fn warning(&self, repo: &str) -> String {
+        format!(
+            "{} is {} in the pinned {repo} but {} in the lockfile, so cargo resolves {} again, which the machine cannot fetch: pin a {repo} at {}, or update the lockfile here first",
+            self.name, self.pinned, self.locked, self.url, self.locked
+        )
+    }
 }
 
 impl Pinned {
@@ -378,6 +427,7 @@ impl Pinned {
                 commit,
                 sources: BTreeMap::new(),
                 beside: false,
+                relocked: Vec::new(),
             });
         }
         let locks: Vec<String> = arms
@@ -414,8 +464,49 @@ impl Pinned {
                     repo: repo.to_string(),
                 });
             }
+            p.relocked = p.relocked(&locks);
         }
         Ok(pins)
+    }
+
+    fn relocked(&self, locks: &[String]) -> Vec<Relocked> {
+        let read = |path: &str| match &self.commit {
+            Some(sha) => Git(&self.dir).run(&["show", &format!("{sha}:{path}")]).ok(),
+            None => std::fs::read_to_string(self.dir.join(path)).ok(),
+        };
+        let mut out: Vec<Relocked> = Vec::new();
+        for package in locks.iter().flat_map(|lock| Package::all(lock)) {
+            let (Some(locked), Some(source)) = (package.version, package.source) else {
+                continue;
+            };
+            let Some(git) = source.strip_prefix("git+") else {
+                continue;
+            };
+            let url = git.split(['?', '#']).next().unwrap_or(git);
+            let patched = self
+                .sources
+                .get(url)
+                .is_some_and(|names| names.contains(&package.name));
+            if !patched || out.iter().any(|r| r.name == package.name) {
+                continue;
+            }
+            let Some(pinned) = self
+                .crates
+                .get(&package.name)
+                .and_then(|dir| version(&read, dir))
+            else {
+                continue;
+            };
+            if pinned != locked && private(url) {
+                out.push(Relocked {
+                    name: package.name,
+                    locked,
+                    pinned,
+                    url: url.to_string(),
+                });
+            }
+        }
+        out
     }
 
     /// A tag names one commit everywhere, so a lockfile that takes this pin's tag at another commit
@@ -593,5 +684,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             beside(&[config.to_string(), manifest.to_string()]),
             BTreeSet::from(["kit".to_string(), "wgpu".to_string()])
         );
+    }
+
+    #[test]
+    fn a_version_the_manifest_inherits_is_read_from_the_nearest_workspace() {
+        let files = BTreeMap::from([
+            (
+                "editor/Cargo.toml",
+                "[workspace.package]\nversion = \"0.12.5\"\n",
+            ),
+            (
+                "editor/app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion.workspace = true\n",
+            ),
+            (
+                "kit/Cargo.toml",
+                "[package]\nname = \"kit\"\nversion = \"0.3.0\"\n",
+            ),
+        ]);
+        let read = |p: &str| files.get(p).map(|t| t.to_string());
+        assert_eq!(version(&read, "editor/app").as_deref(), Some("0.12.5"));
+        assert_eq!(version(&read, "kit").as_deref(), Some("0.3.0"));
+        assert_eq!(version(&read, "missing"), None);
     }
 }
