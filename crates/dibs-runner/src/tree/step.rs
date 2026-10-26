@@ -14,6 +14,7 @@ use std::{
     os::{fd::AsRawFd as _, unix::process::CommandExt as _},
     path::{Path, PathBuf},
     process::Command,
+    time::SystemTime,
 };
 
 /// Where a target records the tree whose build it last held.
@@ -205,9 +206,7 @@ impl<'a> Stepping<'a> {
     /// taken: a tree is reused from run to run, and a file an earlier run left would look current.
     pub fn keep(&self, patterns: &[String]) -> Option<u32> {
         let job_dir = self.job_dir?;
-        let started = fs::metadata(job_dir.join(STARTED))
-            .and_then(|m| m.modified())
-            .ok()?;
+        let started = self.started()?;
         let mut kept = 0;
         for pattern in patterns {
             let (base, shown) = match pattern.strip_prefix(UNDER_TARGET) {
@@ -244,8 +243,16 @@ impl<'a> Stepping<'a> {
 
     /// Whether a crate a pin replaces still comes from where it came before, said when it does:
     /// most often the pinned tree's version does not meet the requirement the dependency states.
-    pub fn unpinned(&self, names: &[String]) -> bool {
-        let text = fs::read_to_string(self.worktree.join("Cargo.lock")).unwrap_or_default();
+    /// A failed step whose lockfile cargo did not write never resolved, so its lockfile is still
+    /// the one sent and says nothing about the pin.
+    pub fn unpinned(&self, names: &[String], status: i32) -> bool {
+        let lock = self.worktree.join("Cargo.lock");
+        let written = fs::metadata(&lock).and_then(|m| m.modified()).ok();
+        let resolved = status == 0 || self.started().zip(written).is_some_and(|(s, w)| w > s);
+        if !resolved {
+            return false;
+        }
+        let text = fs::read_to_string(lock).unwrap_or_default();
         let left: Vec<String> = Package::all(&text)
             .into_iter()
             .filter(|p| names.contains(&p.name))
@@ -260,6 +267,12 @@ impl<'a> Stepping<'a> {
             left.concat()
         ));
         true
+    }
+
+    fn started(&self) -> Option<SystemTime> {
+        fs::metadata(self.job_dir?.join(STARTED))
+            .and_then(|m| m.modified())
+            .ok()
     }
 }
 

@@ -191,7 +191,7 @@ impl<'a> Layout<'a> {
             stepping.record(token);
         }
         let artifacts = stepping.keep(&step.artifacts);
-        let unpinned = !step.pinned.is_empty() && stepping.unpinned(&step.pinned);
+        let unpinned = !step.pinned.is_empty() && stepping.unpinned(&step.pinned, *status);
         if unpinned {
             *status = Exit::Setup.status();
         }

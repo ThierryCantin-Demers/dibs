@@ -2096,6 +2096,21 @@ fn a_pin_builds_against_another_trees_unpushed_changes() {
     );
     s.git("lib", &["checkout", "-q", "--", "."]);
     s.write(
+        "consumer/.cargo/config.toml",
+        &format!(
+            "[patch.\"file://{}\"]\nabsent = {{ path = \"../absent\" }}\n",
+            s.p("lib.git")
+        ),
+    );
+    let out = build(&["--pin", &lib]);
+    assert_eq!(
+        (out.code, out.all().lines_with("the pin did not take")),
+        (101, 0),
+        "a build cargo could not resolve keeps cargo's exit, and blames no pin: {}",
+        out.all()
+    );
+    fs::remove_dir_all(s.path("consumer/.cargo")).unwrap();
+    s.write(
         "lib/src/lib.rs",
         "pub fn say() -> &'static str { \"pushed later\" }\n",
     );

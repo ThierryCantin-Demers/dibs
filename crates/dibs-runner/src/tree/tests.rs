@@ -1228,8 +1228,8 @@ fn a_build_that_still_takes_a_pinned_crate_from_git_is_said() {
         "[[package]]\nname = \"cubecl\"\nversion = \"0.1.0\"\nsource = \"git+https://example.invalid/cubecl?rev=a#a\"\n\n[[package]]\nname = \"cubek\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    assert!(!s.with(None, |step| step.unpinned(&lines(&["cubek"]))));
-    assert!(s.with(None, |step| step.unpinned(&lines(&["cubecl"]))));
+    assert!(!s.with(None, |step| step.unpinned(&lines(&["cubek"]), 0)));
+    assert!(s.with(None, |step| step.unpinned(&lines(&["cubecl"]), 0)));
     assert!(
         s.said
             .borrow()
