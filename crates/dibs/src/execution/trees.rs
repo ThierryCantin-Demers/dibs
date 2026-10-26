@@ -63,6 +63,7 @@ impl TreeSpec<'_> {
                 None => wire::Source::Fetched {
                     reference: self.reference.to_string(),
                     slot: self.slot as u32,
+                    here: Fetched::of(self.dir, self.reference).map(|f| f.commit),
                 },
             },
             nest: self.nest.map(|n| wire::Nest {

@@ -80,8 +80,14 @@ pub struct Prepare {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
-    /// A ref the machine fetches; `slot` is which of a comparison's fetched arms it is.
-    Fetched { reference: String, slot: u32 },
+    /// A ref the machine fetches; `slot` is which of a comparison's fetched arms it is, and
+    /// `here` the commit it was where the call was made, taken when origin no longer has it.
+    Fetched {
+        reference: String,
+        slot: u32,
+        #[serde(default)]
+        here: Option<String>,
+    },
     /// A tree this computer sends; `content` names what it holds.
     Local { key: String, content: String },
 }

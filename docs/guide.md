@@ -243,7 +243,9 @@ where there is one, unless the local branch of that name has commits `origin/<re
 is that branch as it stands here, and it is sent. The output names which. Whether a remote needs
 credentials is asked at most once a week and kept in `~/.cache/dibs/remotes`. A machine fetches
 into its clone of the repo, so a ref named to one that has none, as a rented one has not, is sent
-too.
+too. A branch is fetched by name when each call's tree is prepared, so the steps of a batch follow
+it as it moves; name a commit to hold them all to one. A branch `origin` no longer has, as after a
+merged pull request, is the commit it was here when the call was made, and the output says so.
 
 ## Getting files back
 

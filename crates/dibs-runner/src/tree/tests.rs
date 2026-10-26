@@ -234,6 +234,7 @@ fn fetched(reference: &str, slot: u32) -> Prepare {
         source: Source::Fetched {
             reference: reference.into(),
             slot,
+            here: None,
         },
         nest: None,
         fresh: Vec::new(),
@@ -276,6 +277,25 @@ fn two_refs_do_not_resolve_to_the_same_commit() {
     let b = m.prepared(&fetched("main", 0)).revision.sha;
     assert_ne!(a, b);
     assert_eq!(b, m.sha("origin/main")[..12]);
+}
+
+#[test]
+fn a_branch_gone_from_origin_builds_the_commit_it_was_where_the_call_was_made() {
+    let m = Machine::new().with_clone();
+    let sha = m.sha("local-only");
+    let (prepared, said) = m.prepare(&Prepare {
+        source: Source::Fetched {
+            reference: "merged-and-deleted".into(),
+            slot: 0,
+            here: Some(sha.clone()),
+        },
+        ..fetched("", 0)
+    });
+    assert_eq!(prepared.map(|p| p.revision.sha), Ok(sha[..12].to_string()));
+    assert!(
+        said.contains("origin has no merged-and-deleted now, so this builds"),
+        "{said}"
+    );
 }
 
 #[test]

@@ -143,9 +143,18 @@ impl<'a> Trees<'a> {
             .filter(|lines| !lines.is_empty());
         let stamp = Stamp::next();
         let laid = match &prepare.source {
-            Source::Fetched { reference, slot } => {
-                self.fetched(prepare, reference, *slot, packages.as_ref(), &stamp)
-            }
+            Source::Fetched {
+                reference,
+                slot,
+                here,
+            } => self.fetched(
+                prepare,
+                reference,
+                here.as_deref(),
+                *slot,
+                packages.as_ref(),
+                &stamp,
+            ),
             Source::Local { key, .. } => self.local(prepare, key, packages.as_ref(), &stamp),
         };
         let laid = self.within_cap(laid)?;
@@ -221,6 +230,7 @@ impl<'a> Trees<'a> {
         &self,
         prepare: &Prepare,
         reference: &str,
+        here: Option<&str>,
         slot: u32,
         packages: Option<&Lines>,
         stamp: &Stamp,
@@ -230,7 +240,7 @@ impl<'a> Trees<'a> {
         if !source.join(".git").is_dir() {
             return Err(PrepareError::NoClone(source));
         }
-        let sha = self.resolve(&source, repo, reference, stamp)?;
+        let sha = self.resolve(&source, repo, reference, here, stamp)?;
         let short: String = sha.chars().take(12).collect();
         let worktree = self.nested(prepare).join(&short);
         let mut suffix = prepare
@@ -286,6 +296,7 @@ impl<'a> Trees<'a> {
         source: &Path,
         repo: &str,
         reference: &str,
+        here: Option<&str>,
         stamp: &Stamp,
     ) -> Result<String, PrepareError> {
         let no_ref = |said: String| PrepareError::NoRef {
@@ -323,6 +334,25 @@ impl<'a> Trees<'a> {
         };
         if let Some(sha) = sha {
             return Ok(sha);
+        }
+        // A branch deleted once its pull request merged is gone from origin while the calls made
+        // before then are still running; the commit it was then is usually still here.
+        if let Some(here) =
+            here.filter(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_hexdigit()))
+        {
+            let commit = format!("{here}^{{commit}}");
+            let mut sha = git(&["rev-parse", "--verify", "-q", &commit]).answer();
+            if sha.is_none() {
+                let _ = git(&["fetch", "-q", "origin", here]);
+                sha = git(&["rev-parse", "--verify", "-q", &commit]).answer();
+            }
+            if let Some(sha) = sha {
+                (self.say)(&format!(
+                    "dibs: origin has no {reference} now, so this builds {:.12}, where it stood when the call was made\n",
+                    sha
+                ));
+                return Ok(sha);
+            }
         }
         match self.overran() {
             true => Err(PrepareError::Overran),

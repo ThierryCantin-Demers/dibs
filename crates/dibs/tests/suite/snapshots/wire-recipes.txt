@@ -42,7 +42,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: []
     stream: true
-    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"here":"<commit>","reference":"main","slot":0}}}}
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
@@ -253,7 +253,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: []
     stream: true
-    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"here":"<commit>","reference":"main","slot":0}}}}
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
@@ -310,7 +310,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: []
     stream: true
-    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"here":"<commit>","reference":"main","slot":0}}}}
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
@@ -363,7 +363,7 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: []
     stream: true
-    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"reference":"main","slot":0}}}}
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"fetched":{"here":"<commit>","reference":"main","slot":0}}}}
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
