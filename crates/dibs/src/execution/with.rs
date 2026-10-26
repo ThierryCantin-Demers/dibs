@@ -185,7 +185,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         .as_deref()
         .and_then(BuildSignature::of)
         .unwrap_or_default();
-    let plan = TreeSpec {
+    let spec = TreeSpec {
         dir: &from,
         repo_name: &repo_name,
         reference,
@@ -196,8 +196,9 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         nest: nest.as_ref(),
         fresh: manifest.tree_fresh(),
         copies: &manifest.tree_copies(),
-    }
-    .plan();
+    };
+    spec.announce_unpinned_siblings();
+    let plan = spec.plan();
     let setup_label = format!("{label}:{}", if local.is_some() { "send" } else { "setup" });
     let setup = JobRequest {
         label: &setup_label,

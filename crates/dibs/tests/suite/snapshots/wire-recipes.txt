@@ -867,7 +867,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: []
     stream: true
-    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":{"config":"[patch.crates-io]\nserde = { path = \"<root>/scratch/ws/lib/local-<key>\" }\n","name":"pin-<hash>"},"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":{"config":"[patch.crates-io]\nserde = { path = \"lib\" }\n","name":"pin-<hash>","siblings":{"lib":"<root>/scratch/ws/lib/local-<key>"}},"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
     verbose: false

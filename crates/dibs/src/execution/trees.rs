@@ -13,7 +13,7 @@ use super::{
     build::BuildSignature,
     jobs::{JobRequest, Jobs},
     local::{Fetched, Repo, private},
-    pins::Nest,
+    pins::{Nest, beside},
 };
 use crate::{
     call::RecipeJob,
@@ -45,12 +45,7 @@ pub struct TreePlan {
 
 impl TreeSpec<'_> {
     pub fn plan(&self) -> TreePlan {
-        // A fetched ref's lockfile is the commit the machine will build, not a local branch of
-        // that name, which may be behind origin's or missing.
-        let fetched = self.local.is_none().then(|| {
-            Fetched::of(self.dir, self.reference)
-                .map_or_else(|| self.reference.to_string(), |f| f.commit)
-        });
+        let fetched = self.fetched();
         let lock = Repo(self.dir).lockfile(fetched.as_deref());
         let lock = lock.as_deref().unwrap_or("");
         let pins = GitPin::all(lock);
@@ -73,6 +68,7 @@ impl TreeSpec<'_> {
             nest: self.nest.map(|n| wire::Nest {
                 name: n.name.clone(),
                 config: n.config.clone(),
+                siblings: n.siblings.clone(),
             }),
             fresh: self.fresh.to_vec(),
             copies: self.copies.clone(),
@@ -89,6 +85,38 @@ impl TreeSpec<'_> {
                 .collect(),
         };
         TreePlan { prepare, gitdbs }
+    }
+
+    /// Says which directory beside the tree its own `[patch]` reads and no pin puts there. On the
+    /// machine only a pinned tree sits beside it, so cargo would stop on that patch.
+    pub fn announce_unpinned_siblings(&self) {
+        let fetched = self.fetched();
+        let repo = Repo(self.dir);
+        let texts: Vec<String> = [
+            repo.cargo_config(fetched.as_deref()),
+            repo.manifest(fetched.as_deref()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        for name in beside(&texts) {
+            if self.nest.is_some_and(|n| n.siblings.contains_key(&name)) {
+                continue;
+            }
+            eprintln!(
+                "dibs: {}'s own [patch] reads ../{name}, which is beside the tree on the machine only when {name} is pinned: --pin <a {name} checkout>@<ref>",
+                self.repo_name
+            );
+        }
+    }
+
+    /// The commit a fetched ref's tree will be, not a local branch of that name, which may be
+    /// behind origin's or missing; None for a tree sent from here.
+    fn fetched(&self) -> Option<String> {
+        self.local.is_none().then(|| {
+            Fetched::of(self.dir, self.reference)
+                .map_or_else(|| self.reference.to_string(), |f| f.commit)
+        })
     }
 }
 

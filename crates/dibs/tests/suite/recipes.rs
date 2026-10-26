@@ -2052,13 +2052,17 @@ fn a_pin_builds_against_another_trees_unpushed_changes() {
         .path();
     assert_eq!(
         (
-            config.lines_with(&format!("lib = {{ path = \"{scratch}/ws/lib/local-")),
+            config.lines_with("lib = { path = \"lib\" }"),
+            fs::read_link(nest.join("lib"))
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(&format!("{scratch}/ws/lib/local-")),
             fs::read_to_string(sent.join("Cargo.toml"))
                 .unwrap()
                 .lines_with("patch")
         ),
-        (1, 0),
-        "through a patch above the tree, which stays what was sent"
+        (1, true, 0),
+        "through a patch above the tree, to the pinned tree linked in beside it, so the tree stays what was sent"
     );
     assert_eq!(
         last_run(&s, "consumer/build/say")
@@ -2107,6 +2111,39 @@ fn a_pin_builds_against_another_trees_unpushed_changes() {
         (out.code, out.all().lines_with("the pin did not take")),
         (101, 0),
         "a build cargo could not resolve keeps cargo's exit, and blames no pin: {}",
+        out.all()
+    );
+    s.write(
+        "consumer/.cargo/config.toml",
+        &format!(
+            "[patch.\"file://{}\"]\nlib = {{ path = \"../lib\" }}\n",
+            s.p("lib.git")
+        ),
+    );
+    s.write(
+        "lib/src/lib.rs",
+        "pub fn say() -> &'static str { \"beside\" }\n",
+    );
+    let out = build(&[]);
+    assert_eq!(
+        (
+            out.code,
+            out.all()
+                .lines_with("own [patch] reads ../lib, which is beside the tree on the machine only when lib is pinned")
+        ),
+        (101, 1),
+        "a tree whose own patch reads ../lib is told to pin it: {}",
+        out.all()
+    );
+    let out = build(&["--pin", &lib]);
+    assert_eq!(
+        (
+            out.code,
+            out.all().lines_matching("^beside$"),
+            out.all().lines_with("own [patch] reads")
+        ),
+        (0, 1, 0),
+        "and with the pin, its own patch finds the pinned tree there: {}",
         out.all()
     );
     fs::remove_dir_all(s.path("consumer/.cargo")).unwrap();

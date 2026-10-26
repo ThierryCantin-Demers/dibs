@@ -121,6 +121,11 @@ impl Repo<'_> {
         self.root_file("Cargo.toml", reference)
     }
 
+    /// The cargo config at the root of the tree here, or of a ref in its history.
+    pub fn cargo_config(self, reference: Option<&str>) -> Option<String> {
+        self.root_file(".cargo/config.toml", reference)
+    }
+
     fn root_file(self, name: &str, reference: Option<&str>) -> Option<String> {
         match reference {
             None => std::fs::read_to_string(self.0.join(name)).ok(),

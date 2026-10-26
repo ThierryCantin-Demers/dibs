@@ -234,7 +234,9 @@ spoiled without it.
   `dibs out <job>`.
 - **Build against an unpushed dependency with `--pin`**: `dibs test app@local cuda --pin
   lib@local` builds app against your lib tree, through a `[patch]` dibs writes and then checks
-  cargo used. Never sync two trees by hand or `sed` a `Cargo.toml` on the machine.
+  cargo used. The pinned tree also sits beside yours under its repo's name, so a repo whose own
+  `[patch]` reads `../<repo>` takes it too. Never sync two trees by hand or `sed` a `Cargo.toml`
+  on the machine.
 - A recipe's `artifacts` come back by themselves: each step keeps the files it wrote, the run
   fetches them, and `--artifacts <dir>` puts them in a directory at their paths. Do not add a step
   that copies results into `$DIBS_SCRATCH/out` for a `--sync` afterwards. `dibs --fetch <job>

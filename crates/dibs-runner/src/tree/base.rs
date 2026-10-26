@@ -178,6 +178,9 @@ impl<'a> Trees<'a> {
         }
         if let Some(nest) = &prepare.nest {
             Named::Nest.check(&nest.name)?;
+            for repo in nest.siblings.keys() {
+                Named::Repo.check(repo)?;
+            }
         }
         if let Some(packages) = &prepare.packages {
             Named::Token.check(&packages.token)?;
@@ -571,10 +574,15 @@ impl<'a> Trees<'a> {
     }
 
     /// The nest's config, beside the tree's own where cargo reads it after it, so the tree stays
-    /// what was sent or checked out. Marked used with its tree, since a sweep judges the
-    /// directory it sits in by that.
+    /// what was sent or checked out, and each pinned tree linked in beside the tree. Marked used
+    /// with its tree, since a sweep judges the directory it sits in by that.
     fn nest(&self, prepare: &Prepare, stamp: &Stamp) -> Result<(), PrepareError> {
-        let Some(Nest { name, config }) = &prepare.nest else {
+        let Some(Nest {
+            name,
+            config,
+            siblings,
+        }) = &prepare.nest
+        else {
             return Ok(());
         };
         let nest = self
@@ -590,7 +598,12 @@ impl<'a> Trees<'a> {
             .and_then(|()| fs::create_dir_all(&cargo))
             .and_then(|()| fs::write(&written, config))
             .and_then(|()| fs::rename(&written, cargo.join("config.toml")))
-            .map_err(|e| PrepareError::io("could not write the pins' cargo config", e))
+            .map_err(|e| PrepareError::io("could not write the pins' cargo config", e))?;
+        for (repo, tree) in siblings {
+            linked(&nest.join(repo), Path::new(tree), stamp)
+                .map_err(|e| PrepareError::io("could not put a pinned tree beside the tree", e))?;
+        }
+        Ok(())
     }
 
     /// The target, marked used, with this prepare's lockfile staged beside it until a build of it
@@ -750,4 +763,24 @@ fn worked_in(dirs: &[&Path]) -> bool {
     Host::processes()
         .iter()
         .any(|p| Host::cwd(p.pid).is_some_and(|cwd| dirs.iter().any(|dir| cwd.starts_with(dir))))
+}
+
+/// `link` made to point at `tree`, replacing a link to another tree but never anything else.
+fn linked(link: &Path, tree: &Path, stamp: &Stamp) -> io::Result<()> {
+    if fs::read_link(link).is_ok_and(|to| to == tree) {
+        return Ok(());
+    }
+    let made = link.with_extension(format!("link.{}", stamp.as_str()));
+    std::os::unix::fs::symlink(tree, &made)?;
+    let replaced = match fs::symlink_metadata(link) {
+        Ok(meta) if !meta.is_symlink() => Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} is there and is no link", link.display()),
+        )),
+        _ => fs::rename(&made, link),
+    };
+    if replaced.is_err() {
+        let _ = fs::remove_file(&made);
+    }
+    replaced
 }

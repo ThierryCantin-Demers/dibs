@@ -143,9 +143,37 @@ fn patched_from(
     out
 }
 
-/// A pinned tree as the machine holds it: where it was prepared, the crates in it by directory,
-/// and which of them the lockfile takes from each source.
+/// The directories beside a tree that its own `[patch]` tables read, by name: a patch from
+/// `../kit/vendor/egui` reads `kit`. A config's paths start from the directory holding its
+/// `.cargo` and a manifest's from its own, which for the root config and manifest is the tree.
+pub fn beside(texts: &[String]) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for text in texts {
+        let Ok(v) = toml::from_str::<toml::Value>(text) else {
+            continue;
+        };
+        let tables = v.get("patch").and_then(toml::Value::as_table);
+        for entries in tables.into_iter().flat_map(|t| t.values()) {
+            for entry in entries.as_table().into_iter().flat_map(|t| t.values()) {
+                let name = entry
+                    .get("path")
+                    .and_then(toml::Value::as_str)
+                    .and_then(|p| p.strip_prefix("../"))
+                    .and_then(|p| p.split('/').next())
+                    .filter(|n| !n.is_empty() && *n != "..");
+                if let Some(n) = name {
+                    out.insert(n.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A pinned tree as the machine holds it: its repo, where it was prepared, the crates in it by
+/// directory, and which of them the lockfile takes from each source.
 pub struct PinnedTree {
+    pub repo: String,
     pub worktree: String,
     pub crates: BTreeMap<String, String>,
     pub sources: BTreeMap<String, BTreeSet<String>>,
@@ -153,38 +181,53 @@ pub struct PinnedTree {
 
 /// Where a pinned tree lives, and the `[patch]` that points its build at the pinned trees. The
 /// config sits in the directory above the tree, where cargo reads it after the tree's own, so the
-/// tree stays exactly what was sent or checked out. The name is a hash of the config, so every
-/// tree built against one set of pins shares it and no two sets write the same file.
+/// tree stays exactly what was sent or checked out. Each pinned tree sits beside the tree too,
+/// under its repo's name, where a tree's own `[patch]` to `../<repo>` finds it, and the config
+/// reaches the pinned crates the same way, so cargo sees one path for each. The name is a hash of
+/// both, so every tree built against one set of pins shares it and no two sets write one file.
 pub struct Nest {
     pub name: String,
     pub config: String,
+    /// Each pinned tree on the machine, by its repo's name.
+    pub siblings: BTreeMap<String, String>,
 }
 
 impl Nest {
     pub fn new(pins: &[PinnedTree]) -> Nest {
         let config = Nest::config(pins);
+        let siblings: BTreeMap<String, String> = pins
+            .iter()
+            .map(|p| (p.repo.clone(), p.worktree.clone()))
+            .collect();
+        let mut hashed = config.clone();
+        for (repo, tree) in &siblings {
+            hashed += &format!("{repo} -> {tree}\n");
+        }
         Nest {
-            name: format!("pin-{:.10}", Sha256::digest(config.as_bytes()).hex()),
+            name: format!("pin-{:.10}", Sha256::digest(hashed.as_bytes()).hex()),
             config,
+            siblings,
         }
     }
 
-    /// The config that points each patched crate at its directory in a tree on the machine.
+    /// The config that points each patched crate at its directory in a pinned tree, through the
+    /// tree's place in the nest: cargo reads a config's paths from the directory holding `.cargo`.
     fn config(pins: &[PinnedTree]) -> String {
         let mut tables: BTreeMap<&str, Vec<String>> = BTreeMap::new();
         for PinnedTree {
-            worktree: tree,
+            repo,
             crates,
             sources,
+            ..
         } in pins
         {
             for (key, names) in sources {
                 for n in names {
                     let dir = crates.get(n).map(String::as_str).unwrap_or_default();
                     let path = if dir.is_empty() {
-                        tree.clone()
+                        repo.clone()
                     } else {
-                        format!("{tree}/{dir}")
+                        format!("{repo}/{dir}")
                     };
                     tables
                         .entry(key)
@@ -469,6 +512,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             "cubecl-cpp is not in the graph, so a patch for it would only warn"
         );
         let text = Nest::new(&[PinnedTree {
+            repo: "cubecl".into(),
             worktree: "/m/ws/cubecl/local-k".into(),
             crates: cubecl(),
             sources: s,
@@ -476,7 +520,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         .config;
         assert_eq!(
             text,
-            "[patch.\"https://github.com/tracel-ai/cubecl\"]\ncubecl = { path = \"/m/ws/cubecl/local-k/crates/cubecl\" }\ncubecl-core = { path = \"/m/ws/cubecl/local-k/crates/cubecl-core\" }\n"
+            "[patch.\"https://github.com/tracel-ai/cubecl\"]\ncubecl = { path = \"cubecl/crates/cubecl\" }\ncubecl-core = { path = \"cubecl/crates/cubecl-core\" }\n"
         );
         assert!(toml::from_str::<toml::Value>(&text).is_ok());
     }
@@ -498,6 +542,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             s.entry(table).or_default().extend(names);
         }
         let text = Nest::new(&[PinnedTree {
+            repo: "kit".into(),
             worktree: "/m/ws/kit/local-k".into(),
             crates: kit,
             sources: s,
@@ -505,7 +550,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         .config;
         assert_eq!(
             text,
-            "[patch.crates-io]\neframe = { path = \"/m/ws/kit/local-k/vendor/eframe\" }\n[patch.\"https://github.com/acme/kit\"]\neframe = { path = \"/m/ws/kit/local-k/vendor/eframe\" }\nkit = { path = \"/m/ws/kit/local-k/crates/kit\" }\n",
+            "[patch.crates-io]\neframe = { path = \"kit/vendor/eframe\" }\n[patch.\"https://github.com/acme/kit\"]\neframe = { path = \"kit/vendor/eframe\" }\nkit = { path = \"kit/crates/kit\" }\n",
             "not egui, from another repo, nor a renamed entry"
         );
     }
@@ -520,12 +565,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         let s = sources(LOCK, &serde).unwrap();
         assert!(
             Nest::new(&[PinnedTree {
+                repo: "serde".into(),
                 worktree: "/t".into(),
                 crates: serde,
                 sources: s
             }])
             .config
-            .starts_with("[patch.crates-io]\nserde = { path = \"/t\" }")
+            .starts_with("[patch.crates-io]\nserde = { path = \"serde\" }")
+        );
+    }
+
+    #[test]
+    fn a_tree_reads_beside_itself_what_its_patches_name_after_the_parent() {
+        let config = "[patch.\"https://github.com/acme/kit\"]\nkit = { path = \"../kit/crates/kit\" }\n[patch.crates-io]\negui = { path = \"../kit/vendor/egui\" }\nserde = { path = \"vendor/serde\" }\nglow = { path = \"../../glow\" }\n";
+        let manifest = "[patch.crates-io]\nwgpu = { path = \"../wgpu/wgpu\" }\nnaga = { git = \"https://github.com/gfx-rs/wgpu\" }\n";
+        assert_eq!(
+            beside(&[config.to_string(), manifest.to_string()]),
+            BTreeSet::from(["kit".to_string(), "wgpu".to_string()])
         );
     }
 }

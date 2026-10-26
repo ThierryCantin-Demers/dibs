@@ -86,11 +86,14 @@ pub enum Source {
     Local { key: String, content: String },
 }
 
-/// The directory a pinned tree is nested in, and the cargo config that points it at the pins.
+/// The directory a pinned tree is nested in, the cargo config that points it at the pins, and
+/// the pinned trees to put beside it, by repo name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Nest {
     pub name: String,
     pub config: String,
+    #[serde(default)]
+    pub siblings: BTreeMap<String, String>,
 }
 
 /// A lockfile as the short sorted hashes a seed and a target's record compare, and the prepare

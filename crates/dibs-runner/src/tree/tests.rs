@@ -381,9 +381,11 @@ fn a_later_arm_builds_into_a_target_of_its_own_seeded_without_a_claim() {
 #[test]
 fn a_pinned_tree_is_nested_under_its_config_and_has_a_target_of_its_own() {
     let m = Machine::new().with_clone();
+    let lib = m.p("scratch/ws/lib/local-k").display().to_string();
     let nest = Nest {
         name: "pin-0123456789".into(),
-        config: "[patch.crates-io]\nserde = { path = \"/x\" }\n".into(),
+        config: "[patch.crates-io]\nserde = { path = \"lib\" }\n".into(),
+        siblings: BTreeMap::from([("lib".into(), lib.clone())]),
     };
     for prepare in [fetched("main", 0), local("k", &[])] {
         let p = m.prepared(&Prepare {
@@ -402,6 +404,11 @@ fn a_pinned_tree_is_nested_under_its_config_and_has_a_target_of_its_own() {
         fs::read_to_string(nested.join(".cargo/config.toml")).unwrap(),
         nest.config
     );
+    assert_eq!(
+        fs::read_link(nested.join("lib")).unwrap(),
+        Path::new(&lib),
+        "the pinned tree is linked in beside the tree"
+    );
     assert!(nested.join(".dibs-used").exists());
 }
 
@@ -413,6 +420,7 @@ fn a_pinned_local_prepare_makes_its_nest_only_under_the_repos_turn_and_locks_out
         nest: Some(Nest {
             name: "pin-0123456789".into(),
             config: String::new(),
+            siblings: BTreeMap::new(),
         }),
         ..local("k", &[])
     };
@@ -1551,6 +1559,14 @@ fn a_value_from_the_wire_that_names_a_path_elsewhere_is_refused() {
             p.nest = Some(Nest {
                 name: "a/b".into(),
                 config: String::new(),
+                siblings: BTreeMap::new(),
+            })
+        }),
+        with(&|p| {
+            p.nest = Some(Nest {
+                name: "pin-0123456789".into(),
+                config: String::new(),
+                siblings: BTreeMap::from([("../x".into(), "/t".into())]),
             })
         }),
         with(&|p| p.packages.as_mut().unwrap().token = "../t".into()),

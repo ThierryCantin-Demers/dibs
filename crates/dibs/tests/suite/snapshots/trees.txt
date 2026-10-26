@@ -632,8 +632,9 @@ ws/
       .cargo/
         config.toml:
           | [patch.crates-io]
-          | serde = { path = "<root>/scratch/ws/lib/local-<lib>" }
+          | serde = { path = "lib" }
       .dibs-used  (empty)
+      lib -> <root>/scratch/ws/lib/local-<lib>
       local-<app>/
         .dibs-used  (empty)
         .dibs.toml

@@ -217,9 +217,13 @@ for every crate of it the lockfile takes from git or crates.io. It is repeatable
 pinned repo takes from another is covered too.
 
 The patch goes in `.cargo/config.toml` in the directory above the tree, where cargo reads it
-after the tree's own, so the tree stays exactly what was sent. A pinned build still gets a tree
-and a target directory of their own, since resolving the patch rewrites the lockfile. After each
-build, dibs checks the lockfile: if cargo still takes a pinned crate from where it came before,
+after the tree's own, so the tree stays exactly what was sent. Each pinned tree is also linked in
+beside the tree, under its repo's name, and the patch reaches it there: a repo whose own `[patch]`
+reads `../lib` builds against the pinned lib, as it would beside a checkout of it here. dibs says
+so when a tree's own patch reads such a directory and no pin puts one there. A pinned build still
+gets a tree and a target directory of their own, since resolving the patch rewrites the lockfile.
+After a build that resolved, dibs checks the lockfile: if cargo still takes a pinned crate from
+where it came before,
 most often because the pinned version does not meet the requirement, the step fails with exit 3
 rather than measuring the pushed code. The record carries the pinned tree's revision beside the
 repo's own, and `--dry-run` says what each pin replaces. A pin of a tag that a lockfile takes at

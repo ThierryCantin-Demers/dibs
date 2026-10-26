@@ -257,7 +257,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         };
         eprintln!("{lead}{}", arm.preparing(&repo_name, local.as_ref(), &dir));
         let reference = arm.fetch.as_deref().unwrap_or("local");
-        let plan = TreeSpec {
+        let spec = TreeSpec {
             dir: arm.dir(&dir),
             repo_name: &repo_name,
             reference,
@@ -268,8 +268,9 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             nest: nest.as_ref(),
             fresh: &tree_fresh,
             copies: &tree_copies,
-        }
-        .plan();
+        };
+        spec.announce_unpinned_siblings();
+        let plan = spec.plan();
         slot += usize::from(arm.fetch.is_some());
         trees.push(ArmTree {
             token,
@@ -791,6 +792,7 @@ impl Pinned {
                     .iter()
                     .zip(&pinned)
                     .map(|(p, t)| PinnedTree {
+                        repo: p.repo.clone(),
                         worktree: t.worktree.clone(),
                         crates: p.crates.clone(),
                         sources: p.sources.clone(),
