@@ -203,8 +203,9 @@ impl fmt::Display for PinError {
             ),
             PinError::NothingToReplace { pinned, repo } => write!(
                 f,
-                "--pin {pinned}: {repo}'s Cargo.lock takes none of {pinned}'s crates from git or crates.io, so there is nothing\n  \
-                 for the pin to replace. A repo already built from a path, as a local-development block does, needs no pin."
+                "--pin {pinned}: {repo}'s Cargo.lock takes none of {pinned}'s crates from git or crates.io, and its own [patch]\n  \
+                 reads no ../{pinned}, so there is nothing for the pin to replace. A repo already built from a path, as a\n  \
+                 local-development block does, needs no pin."
             ),
             PinError::TagMoved(moved) => {
                 let TagMoved {

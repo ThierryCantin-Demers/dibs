@@ -686,6 +686,12 @@ impl Pinned {
                 names.iter().cloned().collect::<Vec<_>>().join(" ")
             );
         }
+        if self.beside {
+            println!(
+                "            beside the tree, where its own [patch] reads ../{}",
+                self.repo
+            );
+        }
     }
 
     /// The pinned trees laid out on the machine, each under the job `request` describes.

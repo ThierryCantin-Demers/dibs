@@ -2146,6 +2146,23 @@ fn a_pin_builds_against_another_trees_unpushed_changes() {
         "and with the pin, its own patch finds the pinned tree there: {}",
         out.all()
     );
+    let lock = fs::read_to_string(s.path("consumer/Cargo.lock")).unwrap();
+    s.write(
+        "consumer/Cargo.lock",
+        &lock
+            .lines()
+            .filter(|l| !l.starts_with("source = \"git+file://"))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>(),
+    );
+    let out = build(&["--pin", &lib]);
+    assert_eq!(
+        (out.code, out.all().lines_matching("^beside$")),
+        (0, 1),
+        "so is a pin whose crates its lockfile takes from that path alone: {}",
+        out.all()
+    );
+    s.git("consumer", &["checkout", "-q", "--", "Cargo.lock"]);
     fs::remove_dir_all(s.path("consumer/.cargo")).unwrap();
     s.write(
         "lib/src/lib.rs",

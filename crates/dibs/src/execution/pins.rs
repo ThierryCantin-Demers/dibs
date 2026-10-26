@@ -292,6 +292,8 @@ pub struct Pinned {
     pub commit: Option<String>,
     /// The sources a `[patch]` has to redirect, and the crates taken from each.
     pub sources: BTreeMap<String, std::collections::BTreeSet<String>>,
+    /// Whether the tree's own `[patch]` reads it from `../<repo>`.
+    pub beside: bool,
 }
 
 impl Pinned {
@@ -375,6 +377,7 @@ impl Pinned {
                 lock,
                 commit,
                 sources: BTreeMap::new(),
+                beside: false,
             });
         }
         let locks: Vec<String> = arms
@@ -386,6 +389,12 @@ impl Pinned {
             .iter()
             .filter_map(|a| Repo(a.dir(dir)).manifest(a.fetch.as_deref()))
             .collect();
+        let configs: Vec<String> = arms
+            .iter()
+            .filter_map(|a| Repo(a.dir(dir)).cargo_config(a.fetch.as_deref()))
+            .chain(manifests.iter().cloned())
+            .collect();
+        let read_beside = beside(&configs);
         for p in &mut pins {
             for lock in &locks {
                 p.agrees_with(lock)?;
@@ -398,7 +407,8 @@ impl Pinned {
                     p.sources.entry(table).or_default().extend(names);
                 }
             }
-            if p.sources.is_empty() {
+            p.beside = read_beside.contains(&p.repo);
+            if p.sources.is_empty() && !p.beside {
                 return Err(PinError::NothingToReplace {
                     pinned: p.repo.clone(),
                     repo: repo.to_string(),
