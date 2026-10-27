@@ -57,6 +57,8 @@ pub enum BadLine {
     Nested,
     Renamed(String),
     Backslash,
+    /// `overlap` on a step that measures.
+    Overlap,
 }
 
 impl fmt::Display for BatchError {
@@ -90,8 +92,11 @@ impl fmt::Display for BadLine {
             BadLine::Unclosed => f.write_str("an attribute list is not closed with ]"),
             BadLine::Attribute(attr) => write!(
                 f,
-                "unknown attribute '{attr}': a step takes a name, after=a,b and cont"
+                "unknown attribute '{attr}': a step takes a name, after=a,b, cont and overlap"
             ),
+            BadLine::Overlap => {
+                f.write_str("overlap is for shared work: a measurement runs with nothing beside it")
+            }
             BadLine::SingleQuote => f.write_str("a single quote is not closed"),
             BadLine::DoubleQuote => f.write_str("a double quote is not closed"),
             BadLine::Operator(c) => write!(
@@ -167,6 +172,8 @@ pub struct Step {
     pub line: String,
     pub after: Vec<String>,
     pub cont: bool,
+    /// Runs beside the batch's other shared steps on its machine, rather than taking turns.
+    pub overlap: bool,
     pub on: Option<String>,
     pub lock: StepKind,
     pub label: Option<String>,
@@ -208,9 +215,12 @@ pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
         let mut name = None;
         let mut after = None;
         let mut cont = false;
+        let mut overlap = false;
         for attr in attrs.split_whitespace() {
             if attr == "cont" {
                 cont = true;
+            } else if attr == "overlap" {
+                overlap = true;
             } else if let Some(v) = attr.strip_prefix("after=") {
                 after = Some(
                     v.split(',')
@@ -229,6 +239,9 @@ pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
             return Err(at(BadLine::NotDibs(command.to_string())));
         }
         let s = describe(&words).map_err(at)?;
+        if overlap && s.measures() {
+            return Err(at(BadLine::Overlap));
+        }
         let name = name.unwrap_or_else(|| (steps.len() + 1).to_string());
         if steps.iter().any(|p| p.name == name) {
             return Err(at(BadLine::Renamed(name)));
@@ -246,6 +259,7 @@ pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
             line: command.to_string(),
             after,
             cont,
+            overlap,
             ..s
         });
     }
@@ -391,6 +405,7 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
         line: String::new(),
         after: Vec::new(),
         cont: false,
+        overlap: false,
         on: None,
         lock: StepKind::Shared,
         label: None,
@@ -452,6 +467,15 @@ impl Step {
                     .label
                     .as_deref()
                     .is_some_and(|l| l.starts_with("bench ")))
+            || self.recipe.as_ref().is_some_and(|r| r.bench)
+    }
+
+    /// Whether the two may run at once on one machine: neither measures, and one of them says it
+    /// may, or each holds a card of its own.
+    pub fn overlaps(&self, other: &Step) -> bool {
+        let card = |s: &Step| s.device.clone().filter(|d| d != "cpu");
+        let apart = matches!((card(self), card(other)), (Some(a), Some(b)) if a != b);
+        !self.measures() && !other.measures() && (self.overlap || other.overlap || apart)
     }
 
     /// The history key dibs will file a step under, which is what its estimate is looked up by.

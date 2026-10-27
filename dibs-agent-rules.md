@@ -102,7 +102,10 @@ spoiled without it.
 
 - A step waits for the line before it. `[name after=a,b]` waits for those steps instead, and a bare
   `after=` waits for nothing. Steps that wait for nothing in common overlap on different machines
-  and take turns on one, so work on two machines is one batch. A failed step stops the steps that
+  and take turns on one, so work on two machines is one batch. On one machine, shared steps
+  pinned to different cards with `--device` overlap too, and so does a shared step marked
+  `overlap`, which you mark only when it is light enough to sit beside the batch's other shared
+  work there. A measurement always takes its turn. A failed step stops the steps that
   wait on it, which by default is every line after it; mark `cont` on a step whose failure should
   not, such as one configuration of a sweep.
 - **A batch that must outlive this computer**, because the person is leaving with it or the work

@@ -232,7 +232,7 @@ exit  call
 
 == dibs batch - <<< '[a bogus=1] dibs true'
 -> exit 2
-2| dibs: line 1: unknown attribute 'bogus=1': a step takes a name, after=a,b and cont
+2| dibs: line 1: unknown attribute 'bogus=1': a step takes a name, after=a,b, cont and overlap
 
 == dibs batch - <<< '[a dibs true'
 -> exit 2

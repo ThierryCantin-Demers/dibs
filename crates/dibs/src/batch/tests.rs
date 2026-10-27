@@ -141,6 +141,7 @@ fn st(n: &str, after: &[&str]) -> Step {
         line: String::new(),
         after: after.iter().map(|s| s.to_string()).collect(),
         cont: false,
+        overlap: false,
         on: None,
         lock: StepKind::Shared,
         label: None,
@@ -205,6 +206,35 @@ fn a_failed_step_still_releases_what_waits_on_it_when_the_batch_goes_on() {
         State::Waiting,
     ];
     assert_eq!(names(&batch.ready(&states, false), &steps), ["b"]);
+}
+
+#[test]
+fn shared_steps_overlap_on_one_machine_when_marked_or_on_cards_of_their_own() {
+    let steps = parse(
+        "[split] dibs --on mg --device gpu:a 'x'\n\
+         [base after=] dibs --on mg --device gpu:b 'y'\n\
+         [build after=] dibs --on mg 'cargo build'\n\
+         [light overlap after=] dibs --on mg 'z'\n\
+         [bench after=] dibs --bench --on mg --device gpu:c 'b'\n",
+    )
+    .unwrap();
+    let machines = vec!["mg".to_string(); steps.len()];
+    let batch = Batch {
+        steps: &steps,
+        machines: &machines,
+    };
+    let states = vec![State::Waiting; steps.len()];
+    assert_eq!(
+        names(&batch.ready(&states, false), &steps),
+        ["split", "base", "light"],
+        "an unpinned build and a measurement still take turns"
+    );
+    assert!(
+        parse("[m overlap] dibs --bench --on mg 'x'\n")
+            .unwrap_err()
+            .to_string()
+            .contains("overlap is for shared work")
+    );
 }
 
 fn call(name: &str, mode: Mode) -> Pending {

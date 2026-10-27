@@ -2,10 +2,7 @@ use super::{
     base::{State, StepStderr},
     parse::Step,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-};
+use std::{collections::HashMap, path::Path};
 
 /// A batch's steps, each with the machine it goes to.
 #[derive(Clone, Copy)]
@@ -28,12 +25,13 @@ impl Batch<'_> {
                 st.after.join(",")
             };
             s.push_str(&format!(
-                "  {:w$}  {:m$}  {:6}  after {}{}\n",
+                "  {:w$}  {:m$}  {:6}  after {}{}{}\n",
                 st.name,
                 machines[i],
                 st.lock,
                 after,
-                if st.cont { ", cont" } else { "" }
+                if st.cont { ", cont" } else { "" },
+                if st.overlap { ", overlap" } else { "" }
             ));
         }
         s
@@ -76,22 +74,25 @@ impl Batch<'_> {
             .enumerate()
             .map(|(i, s)| (s.name.as_str(), i))
             .collect();
-        let mut busy: HashSet<&str> = states
+        let mut running: Vec<usize> = states
             .iter()
             .enumerate()
             .filter(|(_, s)| **s == State::Running)
-            .map(|(i, _)| machines[i].as_str())
+            .map(|(i, _)| i)
             .collect();
         let mut out = Vec::new();
         for (i, s) in steps.iter().enumerate() {
-            if states[i] != State::Waiting || busy.contains(machines[i].as_str()) {
+            let blocked = running
+                .iter()
+                .any(|&j| machines[j] == machines[i] && !s.overlaps(&steps[j]));
+            if states[i] != State::Waiting || blocked {
                 continue;
             }
             if s.after
                 .iter()
                 .all(|a| matches!(states[index[a.as_str()]], State::Done { .. }))
             {
-                busy.insert(machines[i].as_str());
+                running.push(i);
                 out.push(i);
             }
         }

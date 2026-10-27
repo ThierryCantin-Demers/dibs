@@ -34,10 +34,12 @@
 1|                                in the pool is probed under its shared lock
 1|   dibs batch <file|->          a list of dibs command lines as one submission, with one
 1|                                summary at the end. One line per step, optionally prefixed
-1|                                [name after=a,b cont]. A step without after= waits for the
-1|                                one before it; steps that wait for nothing in common overlap
-1|                                only on different machines. A failed step stops the batch
-1|                                unless it is marked cont.
+1|                                [name after=a,b cont overlap]. A step without after= waits
+1|                                for the one before it; steps that wait for nothing in common
+1|                                overlap on different machines, and on one machine only when
+1|                                neither measures and one is marked overlap or each names a
+1|                                card of its own. A failed step stops the batch unless it is
+1|                                marked cont.
 1|   dibs batch --detach <file|-> the same, driven on the one machine its steps go to, so it
 1|                                carries on when this computer sleeps or leaves. Each repo a
 1|                                step names is sent there whole, with your recipes and
