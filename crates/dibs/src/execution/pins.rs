@@ -90,11 +90,7 @@ fn sources(
         if !names.contains_key(&n) {
             return Ok(());
         }
-        let key = if let Some(git) = s.strip_prefix("git+") {
-            git.split(['?', '#']).next().unwrap_or(git).to_string()
-        } else if s.contains("crates.io-index") || s.starts_with("sparse+https://index.crates.io") {
-            "crates-io".to_string()
-        } else {
+        let Some(key) = patch_key(&s) else {
             return Err(PinError::Unpatchable { name: n, source: s });
         };
         out.entry(key).or_default().insert(n);
@@ -104,6 +100,19 @@ fn sources(
         take(Some(package.name), package.source)?;
     }
     Ok(out)
+}
+
+/// The key a `[patch]` table names a lockfile source by, if a patch can redirect it.
+fn patch_key(source: &str) -> Option<String> {
+    if let Some(git) = source.strip_prefix("git+") {
+        Some(git.split(['?', '#']).next().unwrap_or(git).to_string())
+    } else if source.contains("crates.io-index")
+        || source.starts_with("sparse+https://index.crates.io")
+    {
+        Some("crates-io".to_string())
+    } else {
+        None
+    }
 }
 
 /// The crates a manifest's own `[patch]` tables take from one of `sources`, by table. Cargo
@@ -297,13 +306,15 @@ pub struct Pinned {
     pub relocked: Vec<Relocked>,
 }
 
-/// A crate a lockfile takes from a private git source at another version than the pin's.
-/// Cargo then resolves that source again, which a machine without credentials cannot.
+/// A crate a lockfile takes at another version than the pin's. Cargo keeps the locked version
+/// and leaves the patch unused, and for a git source resolves it again, which a machine without
+/// credentials cannot for a private repo.
 pub struct Relocked {
     pub name: String,
     pub locked: String,
     pub pinned: String,
-    pub url: String,
+    /// The git source, when the machine cannot fetch it.
+    pub private: Option<String>,
 }
 
 /// A crate's version from the manifest in `dir`, or from the nearest workspace above it when the
@@ -338,10 +349,20 @@ fn version(read: &dyn Fn(&str) -> Option<String>, dir: &str) -> Option<String> {
 
 impl Relocked {
     pub fn warning(&self, repo: &str) -> String {
-        format!(
-            "{} is {} in the pinned {repo} but {} in the lockfile, so cargo resolves {} again, which the machine cannot fetch: pin a {repo} at {}, or update the lockfile here first",
-            self.name, self.pinned, self.locked, self.url, self.locked
-        )
+        let Relocked {
+            name,
+            locked,
+            pinned,
+            private,
+        } = self;
+        match private {
+            Some(url) => format!(
+                "{name} is {pinned} in the pinned {repo} but {locked} in the lockfile, so cargo resolves {url} again, which the machine cannot fetch: pin a {repo} at {locked}, or `cargo update -p {name}` in the tree here first"
+            ),
+            None => format!(
+                "{name} is {pinned} in the pinned {repo} but {locked} in the lockfile, and cargo keeps a locked version over a patch: `cargo update -p {name}` in the tree here first"
+            ),
+        }
     }
 }
 
@@ -479,13 +500,12 @@ impl Pinned {
             let (Some(locked), Some(source)) = (package.version, package.source) else {
                 continue;
             };
-            let Some(git) = source.strip_prefix("git+") else {
+            let Some(key) = patch_key(&source) else {
                 continue;
             };
-            let url = git.split(['?', '#']).next().unwrap_or(git);
             let patched = self
                 .sources
-                .get(url)
+                .get(&key)
                 .is_some_and(|names| names.contains(&package.name));
             if !patched || out.iter().any(|r| r.name == package.name) {
                 continue;
@@ -497,12 +517,13 @@ impl Pinned {
             else {
                 continue;
             };
-            if pinned != locked && private(url) {
+            if pinned != locked {
+                let git = source.starts_with("git+");
                 out.push(Relocked {
                     name: package.name,
                     locked,
                     pinned,
-                    url: url.to_string(),
+                    private: (git && private(&key)).then_some(key),
                 });
             }
         }

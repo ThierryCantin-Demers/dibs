@@ -1261,7 +1261,7 @@ fn a_build_that_still_takes_a_pinned_crate_from_git_is_said() {
     assert!(
         s.said
             .borrow()
-            .contains("  cubecl from git+https://example.invalid/cubecl?rev=a#a\n")
+            .contains("  cubecl 0.1.0 from git+https://example.invalid/cubecl?rev=a#a\n")
     );
 }
 

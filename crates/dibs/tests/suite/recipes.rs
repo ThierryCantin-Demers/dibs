@@ -2088,10 +2088,18 @@ fn a_pin_builds_against_another_trees_unpushed_changes() {
         (
             out.code,
             out.all().lines_with("the pin did not take"),
-            out.all().lines_matching("^  lib from git\\+file://")
+            out.all().lines_matching("^  lib \\S+ from git\\+file://")
         ),
         (3, 1, 1),
-        "a pin whose version the requirement refuses fails rather than building the pushed code"
+        "a pin whose version the requirement refuses fails rather than building the pushed code: {}",
+        out.all()
+    );
+    assert_eq!(
+        out.stderr
+            .lines_with("lib is 0.2.0 in the pinned lib but 0.1.0 in the lockfile"),
+        1,
+        "and says so before sending: {}",
+        out.all()
     );
     assert_eq!(
         build(&["--pin", &consumer]).code,

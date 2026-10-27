@@ -242,7 +242,8 @@ impl<'a> Stepping<'a> {
     }
 
     /// Whether a crate a pin replaces still comes from where it came before, said when it does:
-    /// most often the pinned tree's version does not meet the requirement the dependency states.
+    /// cargo keeps a locked version over a patch at another one, and ignores a patch whose version
+    /// the dependency's requirement does not accept.
     /// A failed step whose lockfile cargo did not write never resolved, so its lockfile is still
     /// the one sent and says nothing about the pin.
     pub fn unpinned(&self, names: &[String], status: i32) -> bool {
@@ -256,14 +257,18 @@ impl<'a> Stepping<'a> {
         let left: Vec<String> = Package::all(&text)
             .into_iter()
             .filter(|p| names.contains(&p.name))
-            .filter_map(|p| Some(format!("  {} from {}\n", p.name, p.source?)))
+            .filter_map(|p| {
+                let version = p.version.map(|v| format!(" {v}")).unwrap_or_default();
+                Some(format!("  {}{version} from {}\n", p.name, p.source?))
+            })
             .collect();
         if left.is_empty() {
             return false;
         }
         (self.say)(&format!(
             "dibs: the pin did not take. cargo still builds these from where they came before:\n{}  \
-             Most often the pinned tree's version does not meet the requirement the dependency states.\n",
+             When the pinned tree's version differs, cargo keeps the locked one: `cargo update -p <crate>` in\n  \
+             the tree first. Otherwise the pinned version does not meet the requirement the dependency states.\n",
             left.concat()
         ));
         true
