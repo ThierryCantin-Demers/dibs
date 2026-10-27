@@ -15,7 +15,8 @@ pub enum Side {
     Local,
     /// Fetched on the machine by this name.
     Ref(String),
-    /// The tip of a range: resolved here, so the merge base and the arm come from one history.
+    /// Resolved here and fetched by commit: the tip of a range, so the merge base and the arm come
+    /// from one history, or the checkout's HEAD when no ref is named.
     Pinned(String),
     /// Where the second left the first.
     Base(String, String),
@@ -32,7 +33,7 @@ impl Side {
             }
         };
         let Some(r) = reference else {
-            return Ok(vec![Side::Ref("HEAD".into())]);
+            return Ok(vec![Side::Pinned("HEAD".into())]);
         };
         if r.contains("...") {
             return Err(ArmError::Symmetric(r.to_string()));

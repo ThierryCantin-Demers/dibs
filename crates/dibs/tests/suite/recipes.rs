@@ -160,6 +160,35 @@ fn a_local_tree_carries_what_a_later_ignore_rule_takes_back() {
 }
 
 #[test]
+fn a_checkout_named_without_a_ref_builds_its_own_head_not_origins() {
+    let s = Sandbox::new();
+    app(&s);
+    s.git("app", &["remote", "set-head", "origin", "main"]);
+    s.git(
+        "app",
+        &["worktree", "add", "-q", "-b", "topk", &s.p("app-topk")],
+    );
+    s.write("app-topk/a.txt", "topk\n");
+    s.git("app-topk", &["commit", "-qam", "topk"]);
+    let out = s
+        .dibs([
+            "shell",
+            &s.p("app-topk"),
+            "--reason",
+            "test",
+            "--",
+            "cat a.txt",
+        ])
+        .run();
+    assert_eq!(
+        (out.code, out.stdout.lines_matching("^topk$")),
+        (0, 1),
+        "{}",
+        out.all()
+    );
+}
+
+#[test]
 fn a_local_recipe_runs_in_the_tree_it_sent() {
     let s = Sandbox::new();
     let app = app(&s);
