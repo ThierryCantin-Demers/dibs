@@ -52,6 +52,10 @@ impl Help {
             entries: &["dibs runs"],
         },
         Topic {
+            words: &["measurement"],
+            entries: &["dibs measurement"],
+        },
+        Topic {
             words: &["shell"],
             entries: &[
                 "dibs shell",

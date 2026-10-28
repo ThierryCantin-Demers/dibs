@@ -13,7 +13,7 @@ use dibs::{
     machine::{Client, Runner},
     paths::FileError,
     recipe::{self, Checkouts, Manifest},
-    records::{Complaints, FrictionLog, RecordsError, RunLog},
+    records::{Complaints, FrictionLog, RecordsError, RunLog, measurement_of, with_values},
     update::{Build, ChangeNotice},
 };
 use dibs_format::{BatchId, FrictionNote, Moment};
@@ -185,6 +185,30 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
         };
         let runs = RunLog::here()?.runs()?;
         print!("{}", runs.report(label, 30, args.all));
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    // A run as one measurement in JSON, read from what this machine recorded.
+    if args.verb == RecipeVerb::Measurement {
+        let measured = measurement_of(&RunLog::here()?.records()?, &args.repo)
+            .map_err(Refusal::Unmeasurable)?;
+        let measured = match &args.values {
+            Some(path) => {
+                let text = std::fs::read_to_string(path).map_err(FileError::at(path))?;
+                with_values(measured, &text).map_err(Refusal::Unmeasurable)?
+            }
+            None => {
+                eprintln!(
+                    "dibs: no --values, so every arm has none: fill each arm's values, read from \
+                     the run's output, before it is recorded"
+                );
+                measured
+            }
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&measured).expect("a measurement serializes")
+        );
         return Ok(ExitCode::SUCCESS);
     }
 

@@ -475,6 +475,7 @@ fn recipe(verb: RecipeVerb, repo: &str) -> RecipeCall {
         verbose: false,
         detach: false,
         follow: false,
+        values: None,
     }
 }
 
@@ -585,6 +586,13 @@ fn recipes() -> Vec<(Vec<&'static str>, Invocation)> {
             r(RecipeCall {
                 all: true,
                 ..recipe(RecipeVerb::Runs, "app/bench/x@gpu:0")
+            }),
+        ),
+        (
+            vec!["measurement", "20261027-111", "--values", "values.json"],
+            r(RecipeCall {
+                values: Some("values.json".into()),
+                ..recipe(RecipeVerb::Measurement, "20261027-111")
             }),
         ),
         (vec!["gaps"], r(recipe(RecipeVerb::Gaps, ""))),

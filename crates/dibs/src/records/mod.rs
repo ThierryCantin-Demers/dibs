@@ -4,9 +4,11 @@
 mod affinity;
 mod error;
 mod friction;
+mod measurement;
 mod runs;
 
 pub use affinity::Affinity;
 pub use error::{Ledger, RecordsError};
 pub use friction::{Complaints, FrictionLog};
+pub use measurement::{Measurement, Unmeasurable, measurement_of, with_values};
 pub use runs::{RunLog, Runs};

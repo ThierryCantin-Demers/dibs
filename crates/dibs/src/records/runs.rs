@@ -64,18 +64,23 @@ impl RunLog {
     }
 
     pub fn runs(&self) -> Result<Runs, RecordsError> {
+        let records = self.records()?.into_iter().map(Record::of).collect();
+        Ok(Runs { records })
+    }
+
+    /// Every line that reads as a record, oldest first; a corrupted tail is skipped.
+    pub fn records(&self) -> Result<Vec<RunRecord>, RecordsError> {
         let path = &self.path;
         let text = match std::fs::read_to_string(path) {
             Ok(t) => t,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Runs::default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(FileError::new(path, e).into()),
         };
-        let records = text
+        Ok(text
             .lines()
             .filter(|l| !l.trim().is_empty())
-            .filter_map(parse_line)
-            .collect();
-        Ok(Runs { records })
+            .filter_map(|line| line.parse::<RunRecord>().ok())
+            .collect())
     }
 }
 
@@ -132,6 +137,7 @@ struct Record {
 
 /// A line that does not parse is a corrupted tail, since only this program writes the file,
 /// so it is skipped rather than fatal.
+#[cfg(test)]
 fn parse_line(line: &str) -> Option<Record> {
     line.parse::<RunRecord>().ok().map(Record::of)
 }

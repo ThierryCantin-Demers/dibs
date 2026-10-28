@@ -36,6 +36,7 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
     Subcommand::new("bench", "a repo's benchmark recipe"),
     Subcommand::new("list", "what a repo defines"),
     Subcommand::new("runs", "what was measured"),
+    Subcommand::new("measurement", "a run as one measurement, in JSON"),
     Subcommand::new("gaps", "what fit no recipe, and what got in the way"),
     Subcommand::new("shell", "a command in a prepared worktree"),
     Subcommand::new("raw", "a command with nothing prepared"),

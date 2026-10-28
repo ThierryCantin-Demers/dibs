@@ -10,6 +10,12 @@ Recipes: a repo's builds, tests and benchmarks, prepared and recorded.
   dibs list <repo>             what that repo defines
   dibs runs [label] [--all]    what has run here, and what is comparable. A failed run is
                                listed only with --all
+  dibs measurement <job|batch> [--values <file>]
+                               that run, or every run of that batch, as one measurement in
+                               JSON: its procedure, conditions and arms, each with the
+                               revisions it ran at. dibs keeps no result numbers, so
+                               --values gives each arm's, as
+                               {"<arm>": [{"quantity", "point", "rep", "value"}]}
   dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>
                                a command in a prepared worktree
   dibs raw --reason <why> -- <cmd>

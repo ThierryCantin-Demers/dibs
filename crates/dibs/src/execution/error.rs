@@ -6,7 +6,7 @@ use crate::{
     inventory::InventoryError,
     paths::FileError,
     recipe::{NotTaken, RecipeError, RepoError},
-    records::RecordsError,
+    records::{RecordsError, Unmeasurable},
 };
 use dibs_format::Exit;
 use std::{fmt, io, path::PathBuf};
@@ -292,6 +292,7 @@ pub enum Refusal {
     /// `--there` on a verb other than `with`.
     There,
     BatchStdin(io::Error),
+    Unmeasurable(Unmeasurable),
 }
 
 /// A tree a run could not lay out on the machine.
@@ -436,6 +437,7 @@ impl fmt::Display for Refusal {
                 "--there belongs to with: it runs the command on the machine beside the repo's servers",
             ),
             Refusal::BatchStdin(e) => write!(f, "reading the batch from stdin: {e}"),
+            Refusal::Unmeasurable(why) => write!(f, "{why}"),
         }
     }
 }

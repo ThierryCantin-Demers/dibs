@@ -10,6 +10,7 @@ pub enum RecipeVerb {
     Bench,
     List,
     Runs,
+    Measurement,
     Gaps,
     Shell,
     Raw,
@@ -19,12 +20,13 @@ pub enum RecipeVerb {
 }
 
 impl RecipeVerb {
-    pub const ALL: [RecipeVerb; 11] = [
+    pub const ALL: [RecipeVerb; 12] = [
         RecipeVerb::Build,
         RecipeVerb::Test,
         RecipeVerb::Bench,
         RecipeVerb::List,
         RecipeVerb::Runs,
+        RecipeVerb::Measurement,
         RecipeVerb::Gaps,
         RecipeVerb::Shell,
         RecipeVerb::Raw,
@@ -44,6 +46,7 @@ impl RecipeVerb {
             RecipeVerb::Bench => "bench",
             RecipeVerb::List => "list",
             RecipeVerb::Runs => "runs",
+            RecipeVerb::Measurement => "measurement",
             RecipeVerb::Gaps => "gaps",
             RecipeVerb::Shell => "shell",
             RecipeVerb::Raw => "raw",
@@ -83,14 +86,21 @@ impl RecipeVerb {
     fn needs_no_repo(self) -> bool {
         matches!(
             self,
-            RecipeVerb::Runs | RecipeVerb::Gaps | RecipeVerb::Raw | RecipeVerb::Machines
+            RecipeVerb::Runs
+                | RecipeVerb::Measurement
+                | RecipeVerb::Gaps
+                | RecipeVerb::Raw
+                | RecipeVerb::Machines
         )
     }
 
     /// Whether what follows it is a `<repo>@<ref>`, rather than a label or a file whose `@`
     /// belongs to it.
     fn takes_a_ref(self) -> bool {
-        !matches!(self, RecipeVerb::Runs | RecipeVerb::Batch)
+        !matches!(
+            self,
+            RecipeVerb::Runs | RecipeVerb::Measurement | RecipeVerb::Batch
+        )
     }
 }
 
@@ -150,6 +160,8 @@ pub struct RecipeCall {
     pub detach: bool,
     /// batch only: the batch named is one detached from here, followed to its summary.
     pub follow: bool,
+    /// measurement only: the file holding each arm's values, read from the run's output.
+    pub values: Option<PathBuf>,
 }
 
 impl RecipeCall {
@@ -198,6 +210,7 @@ impl RecipeCall {
             verbose: false,
             detach: false,
             follow: false,
+            values: None,
         };
         let mut positional: Vec<String> = Vec::new();
         let mut it = words.iter();
@@ -263,6 +276,9 @@ impl RecipeCall {
                 "--verbose" | "-v" => call.verbose = true,
                 "--detach" if verb == RecipeVerb::Batch => call.detach = true,
                 "--follow" if verb == RecipeVerb::Batch => call.follow = true,
+                "--values" if verb == RecipeVerb::Measurement => {
+                    call.values = Some(PathBuf::from(value("--values needs a file")?));
+                }
                 "-" => positional.push("-".into()),
                 flag if flag.starts_with("--") && !verb.takes_values() => {
                     let name = flag.split_once('=').map_or(flag, |(name, _)| name);
