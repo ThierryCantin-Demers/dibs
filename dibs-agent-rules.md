@@ -283,8 +283,7 @@ spoiled without it.
   only in your reply reaches one person once.
 - **Report it where your team tracks dibs reports too**, if it has such a place: the same line,
   plus the command, its exit and trailer, the job id if there was one, and what you expected, so
-  whoever maintains dibs can reproduce it and answer you there. At Tracel that is the `dibs`
-  project's `bug-reports` feature in Parley.
+  whoever maintains dibs can reproduce it and answer you there.
 
 ### When dibs says no
 
