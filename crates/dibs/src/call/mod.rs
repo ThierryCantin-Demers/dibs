@@ -17,7 +17,7 @@ mod status;
 mod sync;
 mod watched;
 
-pub use base::{CallError, LockedCall};
+pub use base::{CallError, LockedCall, Ran};
 pub use dispatch::Dispatch;
 pub use feed::{Fed, StatusFeed};
 pub use hold::Guard;

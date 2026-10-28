@@ -8,7 +8,7 @@ use crate::machine::{
     unreachable::Unreachable,
     values::CallValues,
 };
-use dibs_format::Exit;
+use dibs_format::{Exit, wire::Trailer};
 use std::{
     io,
     net::Ipv4Addr,
@@ -55,8 +55,9 @@ pub struct Session {
 }
 
 /// What a call's last attempt heard outside the runner's frames: ssh's reason, when ssh is what
-/// failed, kept so that reason is not asked of the machine a second time; and whether the runner
-/// gave the exit itself, which makes a 255 the command's rather than ssh's.
+/// failed, kept so that reason is not asked of the machine a second time; whether the runner
+/// gave the exit itself, which makes a 255 the command's rather than ssh's; and the last job's
+/// trailer.
 #[derive(Debug, Clone, Default)]
 pub struct Said(Arc<Mutex<Heard>>);
 
@@ -64,6 +65,7 @@ pub struct Said(Arc<Mutex<Heard>>);
 struct Heard {
     stderr: Vec<u8>,
     exited: bool,
+    trailer: Option<Trailer>,
 }
 
 impl Said {
@@ -88,6 +90,14 @@ impl Said {
 
     pub fn runner_exited(&self) -> bool {
         self.heard().exited
+    }
+
+    pub fn ended(&self, trailer: &Trailer) {
+        self.heard().trailer = Some(trailer.clone());
+    }
+
+    pub fn trailer(&self) -> Option<Trailer> {
+        self.heard().trailer.clone()
     }
 
     fn heard(&self) -> MutexGuard<'_, Heard> {

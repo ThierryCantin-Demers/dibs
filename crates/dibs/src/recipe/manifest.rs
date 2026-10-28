@@ -13,8 +13,9 @@ use super::{
     error::{ManifestError, RecipeError},
 };
 use crate::paths::Paths;
-use dibs_format::RunVerb;
+use dibs_format::{Lock, ProcedureStep, RunVerb};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -50,6 +51,39 @@ pub struct Service {
     /// Seconds its servers have to become ready, for ones slower to start than the default.
     #[serde(default)]
     pub ready_within: Option<u32>,
+}
+
+impl Service {
+    /// What a run of it with `command` did, as the repo wrote it: the servers run under the
+    /// command's lock, since they are started inside it.
+    pub fn procedure(&self, command: &str, lock: Lock) -> Vec<ProcedureStep> {
+        let build = self.build.iter().map(|run| ProcedureStep {
+            lock: Lock::Shared,
+            run: run.clone(),
+        });
+        let serves = self.serves.iter().map(|serve| ProcedureStep {
+            lock,
+            run: serve.run.clone(),
+        });
+        let command = ProcedureStep {
+            lock,
+            run: command.to_string(),
+        };
+        build.chain(serves).chain([command]).collect()
+    }
+
+    /// Of its procedure and where the command ran, which changes what a timed command measures.
+    pub fn fingerprint(procedure: &[ProcedureStep], there: bool) -> String {
+        let mut h = Sha256::new();
+        for step in procedure {
+            h.update(format!("{:?}", step.lock).as_bytes());
+            h.update(step.run.as_bytes());
+        }
+        if there {
+            h.update(b"there");
+        }
+        format!("{:x}", h.finalize())[..16].to_string()
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]

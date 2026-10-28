@@ -2,7 +2,7 @@
 //! trailer and for the tree the machine lays out ahead of its command.
 
 use crate::{
-    call::{CallError, Destination, LockedCall, MachineCall, Origin, Output, RecipeJob, Sync},
+    call::{CallError, Destination, LockedCall, MachineCall, Origin, Output, Ran, RecipeJob, Sync},
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run, RunLock},
     execution::{Refusal, RunError},
@@ -13,7 +13,7 @@ use crate::{
 };
 use dibs_format::{
     Alias, JobId, Label, MachineName, StepRecord,
-    wire::{Prepared, Stepped, Tree},
+    wire::{Built, Prepared, Stepped, Tree},
 };
 use std::{io::Write as _, path::PathBuf, time::Instant};
 
@@ -62,6 +62,24 @@ impl JobRequest<'_> {
 }
 
 impl JobOutcome {
+    /// A call's outcome, read from the trailer the machine sent rather than from its stderr.
+    pub fn ran(ran: &Ran, started: Instant) -> JobOutcome {
+        let trailer = ran.trailer.as_ref();
+        JobOutcome {
+            status: ran.exit,
+            seconds: trailer.map_or_else(|| started.elapsed().as_secs(), |t| t.ran),
+            trailer: trailer.map(|t| Trailer {
+                job: t.job.to_string(),
+                built: t.built.map(|built| match built {
+                    Built::Crates(n) => n.to_string(),
+                    Built::Nothing => "nothing".into(),
+                }),
+                log: None,
+                ran: Some(t.ran),
+            }),
+        }
+    }
+
     /// The record of the step this was the outcome of.
     pub fn step_record(&self, lock: Lock) -> StepRecord {
         let trailer = self.trailer.as_ref();

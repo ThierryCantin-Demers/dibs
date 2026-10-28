@@ -2,7 +2,7 @@ use super::{
     base::LaidPins,
     build::BuildSignature,
     error::{Refusal, RunError, Unprepared},
-    jobs::{JobRequest, Jobs},
+    jobs::{BACKEND, JobOutcome, JobRequest, Jobs},
     kept::KeptStores,
     local::{Clones, Repo},
     pins::Pinned,
@@ -10,17 +10,23 @@ use super::{
     trees::{Announce, TreeSpec, new_token, preparing_title},
 };
 use crate::{
-    call::{Destination, LockedCall, Origin, RecipeJob},
+    call::{BatchStep, Destination, LockedCall, Origin, Ran, RecipeJob},
     caller::Caller,
     cli::{
         Call, CliError, Command as ShellCommand, Mode, PortName, RecipeCall, Run, RunLock, Service,
         ShellWord,
     },
     recipe::{self, Checkouts, Lock, Manifest, run_label},
-    records::Affinity,
+    records::{Affinity, RunLog},
 };
-use dibs_format::{Alias, Exit, Label, MachineName, wire};
-use std::{collections::BTreeSet, process::ExitCode};
+use dibs_format::{
+    Alias, BatchId, Exit, Label, MachineName, Moment, Outcome, Pairs, RunRecord, RunVerb, wire,
+};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    process::ExitCode,
+    time::Instant,
+};
 
 /// The one value `with` takes for itself: how long its servers have to become ready.
 const READY_WITHIN: &str = "ready-within";
@@ -161,7 +167,10 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     }
     let pin_label = format!("{label}:pin");
     let no_batch = RecipeJob::default();
-    let LaidPins { nest, .. } = Pinned::lay_out(&mut pins, &backend, &|_| JobRequest {
+    let LaidPins {
+        trees: pinned,
+        nest,
+    } = Pinned::lay_out(&mut pins, &backend, &|_| JobRequest {
         label: &pin_label,
         lock: Lock::Shared,
         device: None,
@@ -179,6 +188,41 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         arm.preparing(&repo_name, local.as_ref(), &dir)
     );
     let reference = arm.fetch.as_deref().unwrap_or("local");
+    let lock = match args.bench {
+        true => Lock::Exclusive,
+        false => Lock::Shared,
+    };
+    let procedure = svc.procedure(command, lock);
+    let mut record = RunRecord {
+        when: Moment::epoch_now(),
+        verb: RunVerb::With,
+        label: label.clone(),
+        repo: repo_name.clone(),
+        variant: Repo(&dir).variant(&repo_name),
+        recipe: name.to_string(),
+        fingerprint: recipe::Service::fingerprint(&procedure, args.there),
+        isolation: "machine".into(),
+        backend: BACKEND.into(),
+        machine: backend.machine.clone(),
+        series: backend.series(),
+        device: args.device.as_deref().map(Alias::from),
+        needs: None,
+        reason: None,
+        seeded: None,
+        batch: BatchStep::from_env().map(|s| BatchId::from(s.batch)),
+        refs: None,
+        arms: Vec::new(),
+        reps: 1,
+        anyway: args.anyway,
+        new_series: false,
+        fresh: Pairs::default(),
+        state: Pairs::default(),
+        params: BTreeMap::new(),
+        procedure,
+        revisions: Pairs::default(),
+        outcome: None,
+        steps: Vec::new(),
+    };
     let from = arm.dir(&dir).to_path_buf();
     let signature = svc
         .build
@@ -259,6 +303,12 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         });
     };
     plan.send_missing(&backend, &prepared);
+    record.revisions = std::iter::once(&prepared)
+        .chain(&pinned)
+        .map(|p| p.revision.clone())
+        .collect::<Vec<_>>()
+        .into();
+    record.seeded = prepared.seeded.as_ref().map(|s| s.from.clone());
 
     // A server and a command run there are started in the tree, with the repo's build cache.
     let copies: String = prepared
@@ -296,7 +346,9 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             }),
         };
         let out = backend.run(&req, build);
+        record.steps.push(out.step_record(Lock::Shared));
         if out.status != 0 {
+            keep(record)?;
             return Ok(ExitCode::from(out.status.clamp(1, 255) as u8));
         }
     }
@@ -330,17 +382,28 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         }),
         ..RecipeJob::default()
     };
-    let code = LockedCall::run_of(&run)
+    let started = Instant::now();
+    let ran = LockedCall::run_of(&run)
         .made_by(Origin::Recipe(&job))
-        .run(&call, &Caller::from_env())
+        .run_trailed(&call, &Caller::from_env())
         .unwrap_or_else(|e| {
             eprint!("{e}");
-            e.exit()
+            Ran {
+                exit: e.exit(),
+                trailer: None,
+            }
         });
     if let Some(kept) = &kept {
         kept.fetch();
     }
-    Ok(ExitCode::from(code.rem_euclid(256) as u8))
+    // The machine refused to time a server another tree built over; a refusal is not a run.
+    if !(guarded && ran.exit == i32::from(Exit::TargetRebuilt.code())) {
+        record
+            .steps
+            .push(JobOutcome::ran(&ran, started).step_record(lock));
+        keep(record)?;
+    }
+    Ok(ExitCode::from(ran.exit.rem_euclid(256) as u8))
 }
 
 /// The call `with` ends in: its servers, its ports and the command, held here unless `--there`.
@@ -380,4 +443,12 @@ fn served(
     };
     run.refuse_unknown_ports()?;
     Ok(run)
+}
+
+/// Kept beside the recipe runs, dated when it ended as theirs are.
+fn keep(mut record: RunRecord) -> Result<(), RunError> {
+    record.when = Moment::epoch_now();
+    record.outcome = Some(Outcome::of_steps(&record.steps));
+    RunLog::here()?.append(&record)?;
+    Ok(())
 }

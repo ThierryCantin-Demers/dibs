@@ -18,6 +18,8 @@ pub enum RunVerb {
     Shell,
     /// A command with nothing prepared for it.
     Raw,
+    /// A command run against a repo's servers.
+    With,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

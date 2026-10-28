@@ -16,7 +16,7 @@ use crate::{
     paths::Paths,
     placement::{Placement, Unplaced},
 };
-use dibs_format::{Exit, Label, Mode};
+use dibs_format::{Exit, Label, Mode, wire::Trailer};
 use dibs_runner::short_hostname;
 use std::{
     fmt,
@@ -35,6 +35,12 @@ pub struct LockedCall<'a> {
     ports: &'a [PortName],
     ready_within: u32,
     origin: Origin<'a>,
+}
+
+/// How a call ended, and the trailer of the last job it ran, when it ran one.
+pub struct Ran {
+    pub exit: i32,
+    pub trailer: Option<Trailer>,
 }
 
 #[derive(Debug)]
@@ -115,6 +121,15 @@ impl<'a> LockedCall<'a> {
         caller: &Caller,
         output: &mut Output,
     ) -> Result<i32, CallError> {
+        self.ran(call, caller, output).map(|ran| ran.exit)
+    }
+
+    /// Runs the call on this process's own streams, keeping its last job's trailer.
+    pub fn run_trailed(&self, call: &Call, caller: &Caller) -> Result<Ran, CallError> {
+        self.ran(call, caller, &mut Output::Inherit)
+    }
+
+    fn ran(&self, call: &Call, caller: &Caller, output: &mut Output) -> Result<Ran, CallError> {
         let env = Environment::read();
         let paths = Paths::from_env();
         let fleet = Fleet::load(paths.inventory())?;
@@ -161,7 +176,10 @@ impl<'a> LockedCall<'a> {
             output.say(&note);
         }
         if call.preflight {
-            return Ok(0);
+            return Ok(Ran {
+                exit: 0,
+                trailer: None,
+            });
         }
 
         let session = Session::new(&target, &here);
@@ -207,7 +225,10 @@ impl<'a> LockedCall<'a> {
         }
         let diagnosis = session.diagnose(status, &target);
         output.say(&diagnosis.said);
-        Ok(diagnosis.exit)
+        Ok(Ran {
+            exit: diagnosis.exit,
+            trailer: session.said.trailer(),
+        })
     }
 
     fn recipe(&self) -> bool {

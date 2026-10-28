@@ -601,6 +601,26 @@ fn a_timed_client_holds_the_machine_alone_against_the_server_it_built() {
         2,
         "after building under the shared lock"
     );
+    let record = last_run(&s, "app/with/servers");
+    assert_eq!(
+        (
+            record.lines_with(r#""verb":"with""#),
+            record.lines_matching(r#""revisions":\{"app":"local:"#),
+            record.lines_matching(
+                r#""steps":\[\{"lock":"shared","status":0,[^}]*"job":"[^"]+"[^}]*\},\{"lock":"exclusive","status":0,[^}]*"job":"[^"]+""#
+            ),
+        ),
+        (1, 1, 1),
+        "and it is recorded as a recipe run is, with the tree it ran and both its jobs: {record}"
+    );
+    let job = capture(&record, r#""lock":"exclusive",[^}]*"job":"([^"]+)""#).unwrap();
+    let measured = s.dibs(["measurement", &job]).run();
+    assert_eq!(
+        (measured.code, measured.stdout.lines_with(&job)),
+        (0, 1),
+        "so its job reads as a measurement: {}",
+        measured.all()
+    );
     let out = s
         .dibs([
             "with",
@@ -635,6 +655,11 @@ fn a_timed_client_holds_the_machine_alone_against_the_server_it_built() {
         out.all(),
         s.log().lines().rev().take(8).collect::<Vec<_>>().join("\n"),
         s.processes()
+    );
+    assert_eq!(
+        runs(&s).lines_with(r#""label":"app/with/overbuilt""#),
+        1,
+        "and the refusal left no record, only the run that followed it"
     );
 }
 

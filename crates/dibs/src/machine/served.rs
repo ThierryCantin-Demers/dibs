@@ -13,7 +13,7 @@ use crate::{
 };
 use dibs_format::{
     Exit, Span,
-    wire::{Frame, Picked, Prepared, Record, Stepped, Unframer},
+    wire::{Frame, Picked, Prepared, Record, Stepped, Trailer, Unframer},
 };
 use std::{
     fs::File,
@@ -131,6 +131,7 @@ pub enum Heard {
     Holding(Vec<Picked>),
     Prepared(Box<Prepared>),
     Stepped(Stepped),
+    Trailer(Trailer),
     Exit(i32),
     Broken(String),
 }
@@ -500,6 +501,11 @@ impl Served<'_> {
                 }
                 Heard::Prepared(prepared) => delivery.prepared(&prepared),
                 Heard::Stepped(stepped) => delivery.stepped(&stepped),
+                Heard::Trailer(trailer) => {
+                    self.session.said.ended(&trailer);
+                    let line = format!("{trailer}\n");
+                    delivery.give(Stream::Err, line.as_bytes(), &mut buffers);
+                }
                 Heard::Exit(code) => {
                     self.session.said.exited();
                     exit = Some(code);
@@ -675,9 +681,7 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
             let heard = match frame {
                 Frame::Out(bytes) => Heard::Out(bytes),
                 Frame::Err(bytes) => Heard::Err(bytes),
-                Frame::Record(Record::Trailer(trailer)) => {
-                    Heard::Err(format!("{trailer}\n").into_bytes())
-                }
+                Frame::Record(Record::Trailer(trailer)) => Heard::Trailer(trailer),
                 Frame::Record(Record::Holding(ports)) => Heard::Holding(ports),
                 Frame::Record(Record::Prepared(prepared)) => Heard::Prepared(prepared),
                 Frame::Record(Record::Stepped(stepped)) => Heard::Stepped(stepped),
