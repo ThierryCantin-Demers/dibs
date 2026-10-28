@@ -217,7 +217,7 @@ fn object_of(pairs: &Pairs) -> Map<String, Json> {
 }
 
 /// Runs compared by hand, one per side and rep, are told apart by what they ran at: one arm per
-/// set of revisions, named by the revision of the repo itself.
+/// set of revisions, named by every one of them, since two arms may differ only in a pin.
 fn arms_by_revision(runs: &[&RunRecord]) -> Vec<Arm> {
     let mut arms: Vec<Arm> = Vec::new();
     for run in runs {
@@ -225,22 +225,28 @@ fn arms_by_revision(runs: &[&RunRecord]) -> Vec<Arm> {
         if arms.iter().any(|a| a.revisions == revisions) {
             continue;
         }
-        let own = run
+        let name = run
             .revisions
             .iter()
-            .find(|pair| pair.name == run.repo)
-            .or_else(|| run.revisions.iter().next())
-            .map_or_else(
-                || "run".to_string(),
-                |pair| pair.value.chars().take(12).collect(),
-            );
+            .map(|pair| format!("{}@{}", pair.name, short(&pair.value)))
+            .collect::<Vec<_>>()
+            .join(" ");
         arms.push(Arm {
-            name: own,
+            name: if name.is_empty() { "run".into() } else { name },
             revisions,
             values: Vec::new(),
         });
     }
     arms
+}
+
+/// A commit's first twelve hex digits; a tree sent from here is kept whole, since its name ends
+/// in the digest that tells two edits of one commit apart.
+fn short(revision: &str) -> String {
+    match revision.chars().all(|c| c.is_ascii_hexdigit()) {
+        true => revision.chars().take(12).collect(),
+        false => revision.to_string(),
+    }
 }
 
 /// The values read from the run's output, as a JSON object of each arm's values, set on the arms
@@ -327,10 +333,42 @@ mod tests {
                 .iter()
                 .map(|a| a.name.as_str())
                 .collect::<Vec<_>>(),
-            ["a1b2c3d4e5f6", "ffffff000000"]
+            ["app@a1b2c3d4e5f6", "app@ffffff000000"]
         );
         assert_eq!(measured.source, "dibs batch 20261027-2, jobs 1, 2, 3, 4");
         assert_eq!(measured.measured_at, "2026-10-27T16:00:00Z");
+    }
+
+    #[test]
+    fn runs_differing_only_in_a_pin_or_in_edits_to_one_commit_are_arms_of_two_names() {
+        let pinned = |job: &str, lib: &str| {
+            single(job, "a1b2c3d4e5f6a7", 1793116800).replace(
+                r#""revisions":{"app":"a1b2c3d4e5f6a7"}"#,
+                &format!(r#""revisions":{{"app":"a1b2c3d4e5f6a7","lib":"{lib}"}}"#),
+            )
+        };
+        let records = [
+            run(&pinned("1", "1111111111111111")),
+            run(&pinned("2", "2222222222222222")),
+            run(&single("3", "local:a1b2c3d+dirty-0123456789ab", 1793116800)),
+            run(&single("4", "local:a1b2c3d+dirty-ba9876543210", 1793116800)),
+        ];
+
+        let measured = measurement_of(&records, "20261027-2").unwrap();
+
+        assert_eq!(
+            measured
+                .arms
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "app@a1b2c3d4e5f6 lib@111111111111",
+                "app@a1b2c3d4e5f6 lib@222222222222",
+                "app@local:a1b2c3d+dirty-0123456789ab",
+                "app@local:a1b2c3d+dirty-ba9876543210",
+            ]
+        );
     }
 
     #[test]
@@ -409,7 +447,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&measured).unwrap(),
-            r#"{"measured_at":"2026-10-27T16:00:00Z","procedure":"cargo bench --bench serve","conditions":{"label":"app/bench/serve","machine":"bench-box"},"source":"dibs jobs 1","arms":[{"name":"a1","revisions":{"app":"a1"},"values":[]}]}"#
+            r#"{"measured_at":"2026-10-27T16:00:00Z","procedure":"cargo bench --bench serve","conditions":{"label":"app/bench/serve","machine":"bench-box"},"source":"dibs jobs 1","arms":[{"name":"app@a1","revisions":{"app":"a1"},"values":[]}]}"#
         );
     }
 }
