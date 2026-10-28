@@ -263,6 +263,11 @@ pub const RECIPE: &[Flag] = &[
         "say what it would do, and do nothing",
     ),
     Flag::new(&["--all"], Value::No, "runs: failed runs too"),
+    Flag::new(
+        &["--values"],
+        Value::Path,
+        "measurement: each arm's values, as JSON",
+    ),
     Flag::new(&["--json"], Value::No, "machine-readable output"),
     Flag::new(&["--verbose", "-v"], Value::No, "say more"),
     Flag::new(&["--version"], Value::No, "the dibs this is"),
