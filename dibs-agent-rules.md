@@ -252,7 +252,8 @@ spoiled without it.
   private (the machines hold no credentials) or the machine has no clone of it, is checked out
   here and sent the same way, and so
   is a branch with commits its origin lacks, so `@main..feature` and `--pin lib@main` work without
-  a push. Reach for these before carrying code
+  a push. What the ignore rules leave out stays here, unless the repo's `[tree] carries` names it:
+  that is how a bundle built here, which the machine has no toolchain to build, goes with the tree. Reach for these before carrying code
   over by hand: a bundle, a tarball or a hand-written sync of a tree is this feature done worse.
 - An `@local` tree is reused from run to run, and so is any autotune store a tool keeps inside
   it: after run, edit, run, the second run reads the first one's winners. A recipe whose `fresh`

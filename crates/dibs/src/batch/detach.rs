@@ -10,7 +10,7 @@ use crate::{
     call::{CallError, Driver, MachineCall, Origin, Output, Series, Sync},
     caller::Caller,
     cli::{Call, Invocation, Mode, RecipeCall, RecipeVerb},
-    execution::{KeptStores, Repo, SentFrom},
+    execution::{Carried, KeptStores, Repo, SentFrom},
     git::{Git, GitError},
     itself::Itself,
     machine::{
@@ -532,13 +532,21 @@ impl<'a> Detach<'a> {
         KeptStores::of(Some(self.name.clone()), &copies)
     }
 
-    /// A repo's files as its ignore rules leave them, then its git directory, each against the
-    /// copy the last batch left there. A worktree keeps its own HEAD and index apart from the
-    /// repo's, so those go last, over the repo's.
+    /// A repo's files as its ignore rules leave them, with what its tree carries past them, then
+    /// its git directory, each against the copy the last batch left there. A worktree keeps its
+    /// own HEAD and index apart from the repo's, so those go last, over the repo's.
     fn send_repo(&self, repo: &SentRepo, staged: &Staged) -> Result<Option<i32>, BatchError> {
         let listed = repo.git(&["ls-files", "-co", "--exclude-standard", "-z"])?;
+        let carried =
+            Carried::of(&repo.dir)
+                .files(&repo.dir)
+                .map_err(|error| DetachError::Git {
+                    repo: repo.name.clone(),
+                    error,
+                })?;
         let files: Vec<&str> = listed
             .split('\0')
+            .chain(carried.iter().map(String::as_str))
             .filter(|f| !f.is_empty() && repo.dir.join(f).is_file())
             .collect();
         let list = format!("{}.files", repo.name);

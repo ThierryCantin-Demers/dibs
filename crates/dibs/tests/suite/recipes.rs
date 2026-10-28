@@ -160,6 +160,59 @@ fn a_local_tree_carries_what_a_later_ignore_rule_takes_back() {
 }
 
 #[test]
+fn a_local_tree_carries_the_ignored_paths_its_tree_names() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    s.write(
+        "app/.gitignore",
+        "target\nweb/dist/\nweb/node_modules/\nbuild/\n",
+    );
+    recipes(&s, "[tree]\ncarries = [\"web/dist\", \"build/out\"]\n");
+    s.write("app/web/src.ts", "x\n");
+    s.write("app/web/dist/index.html", "bundle\n");
+    s.write("app/web/node_modules/dep.js", "x\n");
+    s.write("app/build/out/asset", "x\n");
+    s.write("app/build/junk", "x\n");
+    let shell = |command: &str| {
+        s.dibs([
+            "shell",
+            &format!("{app}@local"),
+            "--reason",
+            "test",
+            "--",
+            command,
+        ])
+        .run()
+    };
+    let out = shell("find web build -type f | sort");
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.lines_matching("^web/dist/index.html$"),
+            out.stdout.lines_matching("^build/out/asset$"),
+            out.stdout.lines_with("node_modules"),
+            out.stdout.lines_with("junk"),
+            out.stdout.lines_matching("^web/src.ts$"),
+        ),
+        (0, 1, 1, 0, 0, 1),
+        "what the tree carries goes, ignored or under an ignored directory, and nothing else ignored does: {}",
+        out.all()
+    );
+    fs::remove_dir_all(s.path("app/web/dist")).unwrap();
+    let out = shell("test ! -e web/dist");
+    assert_eq!(
+        (
+            out.code,
+            out.stderr
+                .lines_with("web/dist, which the repo's [tree] carries, is not in")
+        ),
+        (0, 1),
+        "one no longer here goes from the machine too, and says so: {}",
+        out.all()
+    );
+}
+
+#[test]
 fn a_checkout_named_without_a_ref_builds_its_own_head_not_origins() {
     let s = Sandbox::new();
     app(&s);

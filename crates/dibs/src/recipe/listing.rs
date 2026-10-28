@@ -58,6 +58,12 @@ pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
             manifest.tree_fresh().join(", ")
         );
     }
+    if !manifest.tree_carries().is_empty() {
+        println!(
+            "\na tree sent from here carries, ignored or not: {}",
+            manifest.tree_carries().join(", ")
+        );
+    }
     let copies = manifest.tree_copies();
     if !copies.is_empty() {
         println!("\neach build cache keeps its own copy of:");

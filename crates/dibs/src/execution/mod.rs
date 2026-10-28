@@ -18,6 +18,6 @@ mod with;
 pub use base::{raw, run_recipe};
 pub use error::{ArmError, CheckoutError, PinError, Refusal, RunError, Unprepared};
 pub use kept::KeptStores;
-pub use local::{Checkout, Fetched, Local, Repo, SentFrom};
+pub use local::{Carried, Checkout, Fetched, Local, Repo, SentFrom};
 pub use schedule::Job;
 pub use with::with_service;

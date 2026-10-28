@@ -112,18 +112,25 @@ pub struct Tree {
     /// taking turns would otherwise rewrite for each other on every turn.
     #[serde(default)]
     pub copies: BTreeMap<String, String>,
+    /// Paths the ignore rules leave out that a tree sent from here takes anyway: what its build
+    /// needs and the machine cannot make, such as a web bundle built with a toolchain it lacks.
+    #[serde(default)]
+    pub carries: Vec<String>,
 }
 
 impl Tree {
     /// Each is removed with `rm -rf` inside the new tree, so it has to name something in it.
     fn check(&self) -> Result<(), ManifestError> {
-        for p in &self.fresh {
-            let inside = p.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
+        let inside = |p: &str| {
+            p.split('/').all(|s| !s.is_empty() && s != "." && s != "..")
                 && p.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
-            if !inside {
-                return Err(ManifestError::Fresh(p.clone()));
-            }
+                    .all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c))
+        };
+        if let Some(p) = self.fresh.iter().find(|p| !inside(p)) {
+            return Err(ManifestError::Fresh(p.clone()));
+        }
+        if let Some(p) = self.carries.iter().find(|p| !inside(p)) {
+            return Err(ManifestError::Carries(p.clone()));
         }
         for (variable, dir) in &self.copies {
             let named = variable.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
@@ -293,6 +300,11 @@ impl Manifest {
     /// What a new tree of this repo starts without, from whichever layer last said.
     pub fn tree_fresh(&self) -> &[String] {
         self.tree.as_ref().map_or(&[], |t| &t.fresh)
+    }
+
+    /// What a tree sent from here takes past the ignore rules.
+    pub fn tree_carries(&self) -> &[String] {
+        self.tree.as_ref().map_or(&[], |t| &t.carries)
     }
 
     /// The machine directories each build cache of this repo keeps a copy of, by variable.

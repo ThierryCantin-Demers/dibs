@@ -10,6 +10,7 @@ use crate::{
     git::{Git, GitError},
     paths::{FileError, Paths},
     placement::Reading,
+    recipe::Manifest,
     scratch::ScratchFile,
 };
 use dibs_format::{Hex, MachineName, Moment, Span, wire};
@@ -165,6 +166,7 @@ pub struct Local {
     pub key: String,
     pub content: String,
     pub dirty: bool,
+    pub carried: Carried,
 }
 
 impl Local {
@@ -176,9 +178,12 @@ impl Local {
         // Tracked and untracked-but-not-ignored, which is the same set the sync carries, so the
         // hash describes what was actually built rather than what was committed.
         let list = Git(dir).run(&["ls-files", "-co", "--exclude-standard", "-z"])?;
+        let carried = Carried::of(dir);
+        let carried_files = carried.files(dir)?;
         let mut h = Sha256::new();
         let mut dirty = false;
-        for rel in list.split('\0').filter(|s| !s.is_empty()) {
+        let listed = list.split('\0').filter(|s| !s.is_empty());
+        for rel in listed.chain(carried_files.iter().map(String::as_str)) {
             h.update(rel.as_bytes());
             h.update([0]);
             if let Ok(b) = std::fs::read(dir.join(rel)) {
@@ -205,6 +210,7 @@ impl Local {
             key: format!("{:.10}", k.finalize().hex()),
             content,
             dirty,
+            carried,
         })
     }
 
@@ -228,17 +234,28 @@ impl Local {
         req: &JobRequest,
         on_prepared: &mut dyn FnMut(&wire::Prepared),
     ) -> Reported {
+        if let Some(missing) = self.carried.missing(from) {
+            eprintln!(
+                "dibs: {missing}, which the repo's [tree] carries, is not in {}: the tree goes without it",
+                from.display()
+            );
+        }
         let ignored = Ignored::of(from);
+        // The first rule a path matches decides, so what is carried goes ahead of the ignores.
+        let carried = self
+            .carried
+            .rules(ignored.as_ref().map_or(&[], |i| &i.patterns));
         let filter = match &ignored {
             Some(ignored) => vec![
                 MACHINE_GITIGNORE.to_string(),
-                format!("--exclude-from={}", ignored.0.display()),
+                format!("--exclude-from={}", ignored.path.display()),
             ],
             None => vec![GITIGNORE_FILTER.to_string()],
         };
         let args: Vec<String> = SYNC_ARGS
             .iter()
             .map(|a| a.to_string())
+            .chain(carried)
             .chain(filter)
             .chain([
                 format!("{}/", from.display()),
@@ -252,7 +269,10 @@ impl Local {
 /// What git says a tree ignores, as rsync's excludes, one anchored path a line, in a scratch file
 /// that goes with this. `--from0` would also change how rsync reads `.gitignore`, so a path with
 /// a newline in it is left to that.
-struct Ignored(PathBuf);
+struct Ignored {
+    path: PathBuf,
+    patterns: Vec<String>,
+}
 
 impl Ignored {
     fn of(dir: &Path) -> Option<Ignored> {
@@ -272,9 +292,9 @@ impl Ignored {
             .map(Ignored::pattern)
             .collect();
         let scratch = Paths::from_env().scratch()?;
-        ScratchFile::create(&scratch, ".sent-ignored", patterns.join("\n").as_bytes())
-            .ok()
-            .map(Ignored)
+        let path =
+            ScratchFile::create(&scratch, ".sent-ignored", patterns.join("\n").as_bytes()).ok()?;
+        Some(Ignored { path, patterns })
     }
 
     /// rsync reads a backslash as an escape only in a pattern that has a wildcard.
@@ -295,7 +315,65 @@ impl Ignored {
 
 impl Drop for Ignored {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// The paths a repo's `[tree] carries` sends past its ignore rules.
+#[derive(Debug, Clone, Default)]
+pub struct Carried(Vec<String>);
+
+impl Carried {
+    /// As the recipes for the repo at `dir` say; a file that does not load carries nothing, and
+    /// is refused where the recipes are read.
+    pub fn of(dir: &Path) -> Carried {
+        let manifest = Manifest::load_any(dir, &Repo(dir).identity()).unwrap_or_default();
+        Carried(manifest.tree_carries().to_vec())
+    }
+
+    /// Every file under them, ignored or not.
+    pub fn files(&self, dir: &Path) -> Result<Vec<String>, GitError> {
+        if self.0.is_empty() {
+            return Ok(Vec::new());
+        }
+        let args: Vec<&str> = ["ls-files", "-z", "-co", "--"]
+            .into_iter()
+            .chain(self.0.iter().map(String::as_str))
+            .collect();
+        let listed = Git(dir).run(&args)?;
+        Ok(listed
+            .split('\0')
+            .filter(|f| !f.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    pub fn missing(&self, dir: &Path) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|p| !dir.join(p).exists())
+            .map(String::as_str)
+    }
+
+    /// rsync's rules taking each in, with the directories above it. One whose directory git
+    /// ignores whole, as one of `ignored`, takes only it from that directory.
+    fn rules(&self, ignored: &[String]) -> Vec<String> {
+        let mut rules = Vec::new();
+        let mut narrowed = Vec::new();
+        for path in &self.0 {
+            let parts: Vec<&str> = path.split('/').collect();
+            for depth in 1..parts.len() {
+                let above = format!("/{}/", parts[..depth].join("/"));
+                if ignored.contains(&above) && !narrowed.contains(&above) {
+                    narrowed.push(above.clone());
+                }
+                rules.push(format!("--include={above}"));
+            }
+            rules.push(format!("--include=/{path}"));
+            rules.push(format!("--include=/{path}/***"));
+        }
+        rules.extend(narrowed.iter().map(|above| format!("--exclude={above}*")));
+        rules
     }
 }
 

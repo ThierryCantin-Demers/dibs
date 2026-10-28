@@ -294,6 +294,18 @@ starts without:
 Each entry is a path inside the tree, and anything that could reach outside it is refused when the
 file loads. `dibs list` shows them.
 
+A tree sent from here follows the repo's ignore rules, which leave out what a build may need and
+the machine cannot make, such as a web bundle built with a toolchain the machine lacks. `carries`
+names paths that go all the same, built here first:
+
+    [tree]
+    carries = ["web/dist"]
+
+Everything under each goes, even when git ignores a directory above it, and nothing else that
+directory holds. One missing here is said when the tree is sent, and goes from the machine's tree
+too. A ref the machine fetches has no copy of it, so this is for `@local` and for refs sent from
+a checkout here that has one.
+
 Some tools keep their store outside the tree, one per machine, and rewrite it for whichever
 binary ran last. Two trees taking turns on that machine, the arms of a comparison or main against
 a branch, then rewrite it for each other on every turn. `copies` gives each build cache a copy of

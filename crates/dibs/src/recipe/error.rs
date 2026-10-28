@@ -67,8 +67,9 @@ pub enum ManifestError {
         recipe: String,
         needs: String,
     },
-    /// A `[tree] fresh` path that is not inside the tree.
+    /// A `[tree] fresh` or `carries` path that is not inside the tree.
     Fresh(String),
+    Carries(String),
     /// A `[tree] copies` entry whose name is no variable, or whose directory is not absolute.
     Copy {
         variable: String,
@@ -249,6 +250,11 @@ impl fmt::Display for ManifestError {
             ManifestError::Fresh(p) => write!(
                 f,
                 "[tree] fresh lists paths inside the tree, and '{p}' is not one: relative, with no . or .. \
+                 part, in letters, digits and ._-/"
+            ),
+            ManifestError::Carries(p) => write!(
+                f,
+                "[tree] carries lists paths inside the tree, and '{p}' is not one: relative, with no . or .. \
                  part, in letters, digits and ._-/"
             ),
             ManifestError::Copy { variable, dir } => write!(
