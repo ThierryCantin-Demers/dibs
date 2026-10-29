@@ -8,7 +8,7 @@ use crate::{
     caller::Caller,
     cli::{BashQuoted, Call, Command as Words},
     itself::Itself,
-    machine::{CallValues, Interrupt, Lines, Liveness, Relayed, Route, Session, Target},
+    machine::{CallValues, Interrupt, Lines, Liveness, Relayed, Route, Session, Stream, Target},
     paths::Paths,
     scratch::ScratchFile,
 };
@@ -24,6 +24,12 @@ use std::{
 };
 
 const SYNC_LABEL: &str = "sync";
+
+/// rsync follows its message with the errno, whatever language the machine's strerror speaks.
+fn no_room(line: &[u8]) -> bool {
+    let line = line.trim_ascii_end();
+    line.starts_with(b"rsync") && (line.ends_with(b" (28)") || line.ends_with(b" (122)"))
+}
 
 /// `dibs --sync`: rsync between here and a machine, under the machine's shared lock.
 pub struct Sync<'a> {
@@ -69,7 +75,7 @@ impl Sync<'_> {
         }
         match Session::new(&target, &self.machine.here).route {
             Route::Here => self.here(&target, &args, output),
-            Route::Ssh { .. } => self.over_rsync(&rsync, &target, &args, output),
+            Route::Ssh { .. } => self.over_rsync(&rsync, &target, &args, into_machine, output),
         }
     }
 
@@ -104,6 +110,7 @@ impl Sync<'_> {
         found: &Rsync,
         target: &Target,
         args: &[String],
+        into_machine: bool,
         output: &mut Output,
     ) -> Result<i32, CallError> {
         let transport = Transport::create(self)?;
@@ -152,11 +159,16 @@ impl Sync<'_> {
             }
         };
         relayed.to(child.id());
+        let mut full = false;
         match output {
-            Output::Lines(on_line) => Lines::of(&mut child).relay(*on_line),
-            Output::Listening(listener) => {
-                Lines::of(&mut child).relay(&mut |stream, line| listener.line(stream, line))
-            }
+            Output::Lines(on_line) => Lines::of(&mut child).relay(&mut |stream, line| {
+                full |= stream == Stream::Err && no_room(line);
+                on_line(stream, line)
+            }),
+            Output::Listening(listener) => Lines::of(&mut child).relay(&mut |stream, line| {
+                full |= stream == Stream::Err && no_room(line);
+                listener.line(stream, line)
+            }),
             Output::Inherit => {}
         }
         let status = child.wait();
@@ -168,6 +180,18 @@ impl Sync<'_> {
         let exit = match (status, transport.exit()) {
             (0, _) => 0,
             (_, Some(code @ (64..=78))) => code,
+            _ if full && into_machine => {
+                let machine = target
+                    .machine
+                    .as_ref()
+                    .map_or(&*target.host, |m| m.as_str());
+                output.say(&format!(
+                    "dibs: the disk on {machine} is full or over quota, so the copy stopped.\n  \
+                     dibs --on {machine} --gc --dry-run says what fills it. Tell the person you work for,\n  \
+                     and do not delete anything on a shared machine to make room.\n"
+                ));
+                i32::from(Exit::NoRoom.code())
+            }
             (status, _) => status,
         };
         drop(transport);
@@ -609,6 +633,22 @@ mod tests {
             Some("2.6.9".into())
         );
         assert_eq!(read("usage: something else"), None);
+    }
+
+    #[test]
+    fn a_disk_full_or_over_quota_is_known_by_the_errno_rsync_names() {
+        assert!(no_room(
+            b"rsync: [receiver] write failed on \"/x/target/a.rlib\": No space left on device (28)\n"
+        ));
+        assert!(no_room(
+            b"rsync: [receiver] mkstemp \"/x/.a.Xy\" failed: Disk quota exceeded (122)\n"
+        ));
+        assert!(!no_room(
+            b"rsync error: error in file IO (code 11) at receiver.c(381) [receiver=3.2.7]\n"
+        ));
+        assert!(!no_room(
+            b"rsync: [receiver] mkstemp \"/x\" failed: Permission denied (13)\n"
+        ));
     }
 
     #[test]

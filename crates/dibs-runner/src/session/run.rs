@@ -343,8 +343,10 @@ impl<'a> Run<'a> {
             false => fs::create_dir_all(&dir)
                 .and_then(|()| Run::write_command(&dir.join("cmd"), &self.at.call.work)),
         };
+        // A sweep is what makes the room, so it runs without a log rather than not at all.
         if let Err(e) = &kept
             && no_room(e)
+            && mode != Mode::Gc
         {
             self.at.sink.say(&format!(
                 "dibs: {} on {host} is full or over quota, so nothing ran there.\n  \
