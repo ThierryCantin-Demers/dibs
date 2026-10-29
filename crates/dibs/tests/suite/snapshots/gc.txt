@@ -16,9 +16,10 @@
 1|   not dibs's, never removed by this
 1|     byhand                                       <size>  written today
 1|   <size> of <size> is past its clock and would go. Run it without --dry-run.
+1|   took <times>
 1|   <free> free of <size> on <mount>
 2| job <job>  gc  dibs-gc  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/gc/jobs/<job>/log  (17 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/gc/jobs/<job>/log  (18 lines)  dibs --on <host> --out <job>
 
 == dibs --gc --days 2 --dry-run
 -> exit 0
@@ -38,9 +39,10 @@
 1|   not dibs's, never removed by this
 1|     byhand                                       <size>  written today
 1|   <size> of <size> is past its clock and would go. Run it without --dry-run.
+1|   took <times>
 1|   <free> free of <size> on <mount>
 2| job <job>  gc  dibs-gc  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/gc/jobs/<job>/log  (17 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/gc/jobs/<job>/log  (18 lines)  dibs --on <host> --out <job>
 
 == dibs --gc
 -> exit 0
@@ -60,9 +62,10 @@
 1|   not dibs's, never removed by this
 1|     byhand                                       <size>  written today
 1|   reclaimed <size> of <size>
+1|   took <times>
 1|   <free> free of <size> on <mount>
 2| job <job>  gc  dibs-gc  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/gc/jobs/<job>/log  (17 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/gc/jobs/<job>/log  (18 lines)  dibs --on <host> --out <job>
 
 == dibs --gc  (with nothing under scratch)
 -> exit 0
@@ -71,6 +74,7 @@
 1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 14 days unused
 1|     <hash>                              <size>
 1|   reclaimed <size> of <size>
+1|   took <times>
 1|   <free> free of <size> on <mount>
 2| job <job>  gc  dibs-gc  queued <s>  ran <s>  exit 0  by=command
-2|   log <host>:<root>/no-scratch/jobs/<job>/log  (6 lines)  dibs --on <host> --out <job>
+2|   log <host>:<root>/no-scratch/jobs/<job>/log  (7 lines)  dibs --on <host> --out <job>

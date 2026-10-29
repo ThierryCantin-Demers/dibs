@@ -55,6 +55,18 @@ impl Swept {
         Swept::Leftovers,
         Swept::Runners,
     ];
+
+    /// The section as the sweep's timing names it.
+    pub fn named(self) -> &'static str {
+        match self {
+            Swept::Trees => "worktrees",
+            Swept::Caches => "build caches",
+            Swept::Jobs => "job logs",
+            Swept::Leftovers => "leftovers",
+            Swept::Results => "results",
+            Swept::Runners => "runners",
+        }
+    }
 }
 
 /// One entry as its clock judged it, and whether the sweep removed it.

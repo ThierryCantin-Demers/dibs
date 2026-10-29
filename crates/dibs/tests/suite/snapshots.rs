@@ -1076,7 +1076,8 @@ fn gc() {
             r"(?m)^  \S+ free of \S+ on \S+$",
             "  <free> free of <size> on <mount>",
         )
-        .rule(r"(build caches on) \S+,", "$1 <mount>,");
+        .rule(r"(build caches on) \S+,", "$1 <mount>,")
+        .rule(r"(?m)^  took .*$", "  took <times>");
     // Never: whether this disk shares blocks would otherwise decide whether a column is shown.
     let gc = |args: &[&str]| {
         s.dibs(args)
@@ -1160,7 +1161,8 @@ fn keep_boundaries() {
             r"(?m)^  \S+ free of \S+ on \S+$",
             "  <free> free of <size> on <mount>",
         )
-        .rule(r"(build caches on) \S+,", "$1 <mount>,");
+        .rule(r"(build caches on) \S+,", "$1 <mount>,")
+        .rule(r"(?m)^  took .*$", "  took <times>");
     let out = s
         .dibs(["--gc", "--dry-run"])
         .env("DIBS_SCRATCH", s.p("gc"))

@@ -3,7 +3,7 @@
 //! with one, and the log carries what it reclaimed.
 
 use crate::{
-    clock::Moment,
+    clock::{Moment, Span},
     itself::Itself,
     machine::Site,
     platform::{Host, Platform as _},
@@ -23,6 +23,7 @@ use std::{
     io::{self, Write as _},
     os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 /// Rows listed under a heading before the rest are counted; what is past its clock always is.
@@ -177,7 +178,10 @@ impl SweepReport {
             true => sweep.dry(),
             false => sweep,
         };
+        let began = Instant::now();
+        let mut took = Vec::new();
         for kind in Swept::ALL {
+            let section_began = Instant::now();
             let entries = sweep.entries(kind);
             let mapped = kind == Swept::Caches
                 && self.reflinks != Reflinks::Never
@@ -211,9 +215,12 @@ impl SweepReport {
                 }
                 Swept::Runners => self.runners(&section, &sizes, &mut tally),
             };
+            took.push((kind, section_began.elapsed()));
             SweepReport::say(&listed);
         }
+        let others_began = Instant::now();
         self.others(now, &mut tally);
+        let others = others_began.elapsed();
         match self.dry {
             true => SweepReport::say(&format!(
                 "  {} of {} is past its clock and would go. Run it without --dry-run.\n",
@@ -226,6 +233,15 @@ impl SweepReport {
                 Kib(tally.total)
             )),
         }
+        SweepReport::say(&format!(
+            "  took {}: {}, not dibs's {}\n",
+            Span(began.elapsed().as_secs()),
+            took.iter()
+                .map(|(kind, spent)| format!("{} {}", kind.named(), Span(spent.as_secs())))
+                .collect::<Vec<_>>()
+                .join(", "),
+            Span(others.as_secs())
+        ));
         let mut mounts = Vec::new();
         for dir in [scratch.clone(), scratch.join("target")] {
             if let Some(free) = Free::of(&dir).filter(|f| !mounts.contains(&f.mount)) {
@@ -691,7 +707,6 @@ impl SweepReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clock::Span;
 
     #[test]
     fn sizes_read_as_the_sweep_has_always_printed_them() {
