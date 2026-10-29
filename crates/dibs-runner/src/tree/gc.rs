@@ -23,11 +23,19 @@ use std::{
     io::{self, Write as _},
     os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _},
     path::{Path, PathBuf},
-    time::Instant,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc::{self, RecvTimeoutError},
+    },
+    thread,
+    time::{Duration, Instant},
 };
 
 /// Rows listed under a heading before the rest are counted; what is past its clock always is.
 const LISTED: usize = 20;
+/// How often a section still going says how far it is.
+const PROGRESS_EVERY: Duration = Duration::from_secs(10);
+const BAR_WIDTH: usize = 20;
 /// Directories under scratch that dibs makes; anything else is somebody's and never removed.
 const DIBS_OWN: [&str; 7] = ["ws", "target", "jobs", "tmp", "out", "runner", "run"];
 
@@ -184,15 +192,26 @@ impl SweepReport {
             let mapped = kind == Swept::Caches
                 && self.reflinks != Reflinks::Never
                 && Host::shares_blocks(&scratch.join("target"));
-            let Measured { sizes, sharing } =
-                tally.measure(&entries, |cache| mapped && sweep.may_go(cache, now));
+            let Measured { sizes, sharing } = tally.measure(kind.named(), &entries, |cache| {
+                mapped && sweep.may_go(cache, now)
+            });
             let Some(mut section) = sweep.judged(kind, now) else {
                 SweepReport::say(
                     "  runners: a build of one is running, so none is collected now\n",
                 );
                 continue;
             };
-            sweep.collect(&mut section, now);
+            let removing = Instant::now();
+            ticking(
+                || {
+                    SweepReport::say(&format!(
+                        "    {}: removing what is past its clock, {} so far\n",
+                        kind.named(),
+                        Span(removing.elapsed().as_secs())
+                    ))
+                },
+                || sweep.collect(&mut section, now),
+            );
             let listed = match kind {
                 Swept::Trees => self.trees(&section, &sizes, now, &mut tally),
                 Swept::Caches => self.caches(&section, &sizes, sharing.as_ref(), now, &mut tally),
@@ -432,7 +451,7 @@ impl SweepReport {
         if others.is_empty() {
             return;
         }
-        let sizes = tally.measure(&others, |_| false).sizes;
+        let sizes = tally.measure("not dibs's", &others, |_| false).sizes;
         let mut rows = Rows::default();
         for other in &others {
             let kib = sizes.of(other);
@@ -538,12 +557,30 @@ impl Free {
 impl Totals {
     /// What `du -sk` gives each path, a file linked twice counted once, added to the total; and,
     /// for each path `mapped` names, what it holds alone.
-    fn measure(&self, paths: &[PathBuf], mapped: impl Fn(&Path) -> bool) -> Measured {
+    fn measure(&self, what: &str, paths: &[PathBuf], mapped: impl Fn(&Path) -> bool) -> Measured {
         let mut linked = HashSet::new();
         let mut sizes = HashMap::new();
         let mut own = HashMap::new();
         let asked: Vec<(&PathBuf, bool)> = paths.iter().map(|p| (p, mapped(p))).collect();
-        let walked = asked.spread(|&(path, mapped)| Walked::of(path, mapped));
+        let done = AtomicUsize::new(0);
+        let began = Instant::now();
+        let walked = ticking(
+            || {
+                SweepReport::say(&Progress::line(
+                    what,
+                    done.load(Ordering::Relaxed),
+                    asked.len(),
+                    began.elapsed(),
+                ))
+            },
+            || {
+                asked.spread(|&(path, mapped)| {
+                    let walked = Walked::of(path, mapped);
+                    done.fetch_add(1, Ordering::Relaxed);
+                    walked
+                })
+            },
+        );
         for (&(path, mapped), walked) in asked.iter().zip(walked) {
             let mut blocks = walked.blocks;
             for (file, held) in walked.linked {
@@ -609,6 +646,43 @@ impl Walked {
                 self.alone += extent.length / 1024;
             }
         }
+    }
+}
+
+/// `work`, with `tick` called every `PROGRESS_EVERY` until it returns.
+fn ticking<R>(tick: impl Fn() + Send, work: impl FnOnce() -> R) -> R {
+    let (finished, ticks) = mpsc::channel::<()>();
+    thread::scope(|scope| {
+        scope.spawn(move || {
+            while let Err(RecvTimeoutError::Timeout) = ticks.recv_timeout(PROGRESS_EVERY) {
+                tick();
+            }
+        });
+        let result = work();
+        drop(finished);
+        result
+    })
+}
+
+/// How far a section's walk is, for whoever reads the job's output as it comes.
+struct Progress;
+
+impl Progress {
+    /// Its time left is the time so far spread over what is done, so it says none until one is.
+    fn line(what: &str, done: usize, total: usize, spent: Duration) -> String {
+        let filled = (done * BAR_WIDTH).checked_div(total).unwrap_or(BAR_WIDTH);
+        let bar = format!("{}{}", "#".repeat(filled), ".".repeat(BAR_WIDTH - filled));
+        let left = match done {
+            0 => "no estimate until one is done".to_string(),
+            _ => format!(
+                "about {} left",
+                Span((spent.as_secs_f64() * (total - done) as f64 / done as f64) as u64)
+            ),
+        };
+        format!(
+            "    {what}: [{bar}] {done} of {total} measured in {}, {left}\n",
+            Span(spent.as_secs())
+        )
     }
 }
 
@@ -686,6 +760,18 @@ mod tests {
         assert_eq!(Bytes(10 * 1024 * 1024 * 1024 + 1).to_string(), "11G");
         assert_eq!(Bytes(9 * 1024 * 1024 * 1024 + 1).to_string(), "9.1G");
         assert_eq!(SweepReport::ago(Span::DAY.0 * 3, 0), "3 days ago");
+    }
+
+    #[test]
+    fn progress_says_how_far_and_how_long_is_left_once_it_can_tell() {
+        assert_eq!(
+            Progress::line("build caches", 0, 4, Duration::from_secs(10)),
+            "    build caches: [....................] 0 of 4 measured in 10s, no estimate until one is done\n"
+        );
+        assert_eq!(
+            Progress::line("build caches", 1, 4, Duration::from_secs(60)),
+            "    build caches: [#####...............] 1 of 4 measured in 1m00s, about 3m00s left\n"
+        );
     }
 
     #[test]
