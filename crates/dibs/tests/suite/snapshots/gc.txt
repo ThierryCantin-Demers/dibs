@@ -15,9 +15,9 @@
 1|     .src.0000000000000000.42                      <size>   would remove
 1|   not dibs's, never removed by this
 1|     byhand                                       <size>  written today
-1|   <size> of <size> is past its clock and would go. Run it without --dry-run.
+1|   <size> is past its clock and would go. Run it without --dry-run.
 1|   took <times>
-1|   <free> free of <size> on <mount>
+1|   <used> in use and <free> free of <size> on <mount>
 2| job <job>  gc  dibs-gc  queued <s>  ran <s>  exit 0  by=command
 2|   log <host>:<root>/gc/jobs/<job>/log  (18 lines)  dibs --on <host> --out <job>
 
@@ -38,9 +38,9 @@
 1|     .src.0000000000000000.42                      <size>   would remove
 1|   not dibs's, never removed by this
 1|     byhand                                       <size>  written today
-1|   <size> of <size> is past its clock and would go. Run it without --dry-run.
+1|   <size> is past its clock and would go. Run it without --dry-run.
 1|   took <times>
-1|   <free> free of <size> on <mount>
+1|   <used> in use and <free> free of <size> on <mount>
 2| job <job>  gc  dibs-gc  queued <s>  ran <s>  exit 0  by=command
 2|   log <host>:<root>/gc/jobs/<job>/log  (18 lines)  dibs --on <host> --out <job>
 
@@ -61,9 +61,9 @@
 1|     .src.0000000000000000.42                      <size>   removed
 1|   not dibs's, never removed by this
 1|     byhand                                       <size>  written today
-1|   reclaimed <size> of <size>
+1|   reclaimed <size>
 1|   took <times>
-1|   <free> free of <size> on <mount>
+1|   <used> in use and <free> free of <size> on <mount>
 2| job <job>  gc  dibs-gc  queued <s>  ran <s>  exit 0  by=command
 2|   log <host>:<root>/gc/jobs/<job>/log  (18 lines)  dibs --on <host> --out <job>
 
@@ -73,8 +73,8 @@
 1|   job logs and artifacts, removed after 14 days: 1 entry, <size>, oldest 0 days, none past its clock
 1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 14 days unused
 1|     <hash>                              <size>
-1|   reclaimed <size> of <size>
+1|   reclaimed <size>
 1|   took <times>
-1|   <free> free of <size> on <mount>
+1|   <used> in use and <free> free of <size> on <mount>
 2| job <job>  gc  dibs-gc  queued <s>  ran <s>  exit 0  by=command
 2|   log <host>:<root>/no-scratch/jobs/<job>/log  (7 lines)  dibs --on <host> --out <job>

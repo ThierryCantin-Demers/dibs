@@ -1310,6 +1310,31 @@ impl Machine {
     }
 }
 
+#[test]
+fn what_may_go_is_read_without_dating_a_cache_and_names_what_the_sweep_judges_past() {
+    let m = Machine::new();
+    let (scratch, home) = (m.p("scratch"), m.p("home"));
+    let old = m.abandoned("target/demo-old");
+    let fresh = m.p("scratch/target/demo-fresh");
+    fs::create_dir_all(&fresh).unwrap();
+    fs::write(fresh.join(".dibs-used"), "").unwrap();
+    let undated = m.p("scratch/target/demo-undated");
+    fs::create_dir_all(&undated).unwrap();
+    let sweep = m.sweeping(&scratch, &home);
+    let now = Moment::epoch_now();
+    assert_eq!(
+        [&old, &fresh, &undated].map(|c| sweep.may_go(c, now)),
+        [true, false, false]
+    );
+    assert!(
+        !undated.join(".dibs-used").exists(),
+        "an undated cache stays undated"
+    );
+    let section = sweep.judged(Swept::Caches, now).unwrap();
+    assert_eq!(fate_of(&section, &old), Fate::Past);
+    assert_ne!(fate_of(&section, &fresh), Fate::Past);
+}
+
 fn fate_of(section: &Section, path: &Path) -> Fate {
     let verdict = section.verdicts.iter().find(|v| v.path == path).unwrap();
     verdict.fate

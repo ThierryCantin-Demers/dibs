@@ -357,6 +357,17 @@ impl<'a> Sweep<'a> {
 
     /// A prepare's copy or set-aside tree: its own while the prepare runs, and past once it has
     /// gone without cleaning up.
+    /// A cache the sweep may judge past its clock, read without its lock and without dating an
+    /// undated one: a superset of what goes, since a build may hold one by then.
+    pub fn may_go(&self, cache: &Path, now: u64) -> bool {
+        match Sweep::temporary(cache) {
+            Some(fate) => fate == Fate::Past,
+            None => cache
+                .join(USED)
+                .unchanged_for(now, self.clocks.target_keep_days),
+        }
+    }
+
     fn temporary(path: &Path) -> Option<Fate> {
         let name = path.file_name()?.to_str()?;
         let stamp = TEMPORARY

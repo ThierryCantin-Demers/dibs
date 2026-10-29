@@ -1073,8 +1073,8 @@ fn gc() {
         .clocked()
         .rule(r"\b[0-9]+(\.[0-9])?[KMG]\b", "<size>")
         .rule(
-            r"(?m)^  \S+ free of \S+ on \S+$",
-            "  <free> free of <size> on <mount>",
+            r"(?m)^  \S+ in use and \S+ free of \S+ on \S+$",
+            "  <used> in use and <free> free of <size> on <mount>",
         )
         .rule(r"(build caches on) \S+,", "$1 <mount>,")
         .rule(r"(?m)^  took .*$", "  took <times>");
@@ -1158,8 +1158,8 @@ fn keep_boundaries() {
         .clocked()
         .rule(r"\b[0-9]+(\.[0-9])?[KMG]\b", "<size>")
         .rule(
-            r"(?m)^  \S+ free of \S+ on \S+$",
-            "  <free> free of <size> on <mount>",
+            r"(?m)^  \S+ in use and \S+ free of \S+ on \S+$",
+            "  <used> in use and <free> free of <size> on <mount>",
         )
         .rule(r"(build caches on) \S+,", "$1 <mount>,")
         .rule(r"(?m)^  took .*$", "  took <times>");

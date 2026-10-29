@@ -44,10 +44,9 @@ pub struct SweepReport {
     dry: bool,
 }
 
-/// KiB measured, reclaimed and past their clocks.
+/// KiB reclaimed and past their clocks.
 #[derive(Default)]
 struct Totals {
-    total: u64,
     freed: u64,
     would: u64,
 }
@@ -64,10 +63,9 @@ struct Row {
     line: String,
 }
 
-/// What removing each build cache alone would free, and what they share, where blocks are shared.
+/// What removing each mapped build cache alone would free, where blocks are shared.
 struct Sharing {
     own: HashMap<PathBuf, u64>,
-    shared: u64,
 }
 
 struct Measured {
@@ -85,8 +83,6 @@ struct Walked {
     linked: HashMap<(u64, u64), u64>,
     /// KiB in extents no other file shares.
     alone: u64,
-    /// KiB in shared extents, by where each starts on the disk, so two caches' copies count once.
-    shared: HashMap<u64, u64>,
 }
 
 /// What `--gc` was asked, as the request carries it in the command's place: `<days|default>
@@ -183,13 +179,13 @@ impl SweepReport {
         for kind in Swept::ALL {
             let section_began = Instant::now();
             let entries = sweep.entries(kind);
+            // Mapping a file's extents makes btrfs walk every other reference to each of them,
+            // which over caches seeded from each other takes minutes, so only what may go is.
             let mapped = kind == Swept::Caches
                 && self.reflinks != Reflinks::Never
                 && Host::shares_blocks(&scratch.join("target"));
-            let Measured { sizes, sharing } = tally.measure(&entries, mapped);
-            if let Some(sharing) = &sharing {
-                tally.total = tally.total - sizes.sum() + sharing.together();
-            }
+            let Measured { sizes, sharing } =
+                tally.measure(&entries, |cache| mapped && sweep.may_go(cache, now));
             let Some(mut section) = sweep.judged(kind, now) else {
                 SweepReport::say(
                     "  runners: a build of one is running, so none is collected now\n",
@@ -223,15 +219,10 @@ impl SweepReport {
         let others = others_began.elapsed();
         match self.dry {
             true => SweepReport::say(&format!(
-                "  {} of {} is past its clock and would go. Run it without --dry-run.\n",
-                Kib(tally.would),
-                Kib(tally.total)
+                "  {} is past its clock and would go. Run it without --dry-run.\n",
+                Kib(tally.would)
             )),
-            false => SweepReport::say(&format!(
-                "  reclaimed {} of {}\n",
-                Kib(tally.freed),
-                Kib(tally.total)
-            )),
+            false => SweepReport::say(&format!("  reclaimed {}\n", Kib(tally.freed))),
         }
         SweepReport::say(&format!(
             "  took {}: {}, not dibs's {}\n",
@@ -246,7 +237,8 @@ impl SweepReport {
         for dir in [scratch.clone(), scratch.join("target")] {
             if let Some(free) = Free::of(&dir).filter(|f| !mounts.contains(&f.mount)) {
                 SweepReport::say(&format!(
-                    "  {} free of {} on {}\n",
+                    "  {} in use and {} free of {} on {}\n",
+                    Bytes(free.used),
                     Bytes(free.available),
                     Bytes(free.size),
                     free.mount.display()
@@ -338,14 +330,10 @@ impl SweepReport {
             "  build caches on {mount}, removed after {} days unused",
             self.clocks.target_keep_days
         ));
-        if let Some(sharing) = sharing
-            && !sharing.own.is_empty()
-        {
-            listed.push_str(&format!(
-                "    together {} on the disk: own is what removing that cache alone frees, and {} is shared among them\n",
-                Kib(sharing.together()),
-                Kib(sharing.shared)
-            ));
+        if sharing.is_some_and(|s| !s.own.is_empty()) {
+            listed.push_str(
+                "    a cache's size counts blocks it shares with others; own is what removing it alone frees\n",
+            );
         }
         listed
     }
@@ -444,7 +432,7 @@ impl SweepReport {
         if others.is_empty() {
             return;
         }
-        let sizes = tally.measure(&others, false).sizes;
+        let sizes = tally.measure(&others, |_| false).sizes;
         let mut rows = Rows::default();
         for other in &others {
             let kib = sizes.of(other);
@@ -504,16 +492,10 @@ impl Rows {
     }
 }
 
-impl Sharing {
-    /// What they hold on the disk together, shared blocks once.
-    fn together(&self) -> u64 {
-        self.shared + self.own.values().sum::<u64>()
-    }
-}
-
 /// Free space where a directory lives.
 struct Free {
     available: u64,
+    used: u64,
     size: u64,
     mount: PathBuf,
 }
@@ -529,6 +511,7 @@ impl Free {
         let unit = found.f_frsize as u64;
         Some(Free {
             available: found.f_bavail as u64 * unit,
+            used: (found.f_blocks - found.f_bfree) as u64 * unit,
             size: found.f_blocks as u64 * unit,
             mount: Free::mount_of(dir)?,
         })
@@ -554,16 +537,14 @@ impl Free {
 
 impl Totals {
     /// What `du -sk` gives each path, a file linked twice counted once, added to the total; and,
-    /// when `mapped`, what each holds alone.
-    fn measure(&mut self, paths: &[PathBuf], mapped: bool) -> Measured {
+    /// for each path `mapped` names, what it holds alone.
+    fn measure(&self, paths: &[PathBuf], mapped: impl Fn(&Path) -> bool) -> Measured {
         let mut linked = HashSet::new();
         let mut sizes = HashMap::new();
         let mut own = HashMap::new();
-        let mut shared = HashMap::new();
-        for (path, walked) in paths
-            .iter()
-            .zip(paths.spread(|path| Walked::of(path, mapped)))
-        {
+        let asked: Vec<(&PathBuf, bool)> = paths.iter().map(|p| (p, mapped(p))).collect();
+        let walked = asked.spread(|&(path, mapped)| Walked::of(path, mapped));
+        for (&(path, mapped), walked) in asked.iter().zip(walked) {
             let mut blocks = walked.blocks;
             for (file, held) in walked.linked {
                 if !linked.insert(file) {
@@ -571,16 +552,13 @@ impl Totals {
                 }
             }
             sizes.insert(path.clone(), blocks.div_ceil(2));
-            own.insert(path.clone(), walked.alone);
-            shared.extend(walked.shared);
+            if mapped {
+                own.insert(path.clone(), walked.alone);
+            }
         }
-        self.total += sizes.values().sum::<u64>();
         Measured {
             sizes: Sizes(sizes),
-            sharing: mapped.then(|| Sharing {
-                own,
-                shared: shared.values().sum(),
-            }),
+            sharing: (!own.is_empty()).then_some(Sharing { own }),
         }
     }
 }
@@ -627,12 +605,8 @@ impl Walked {
             return;
         }
         for extent in Host::extents(path).unwrap_or_default() {
-            match extent.shared {
-                true => {
-                    self.shared
-                        .insert(extent.physical / 1024, extent.length / 1024);
-                }
-                false => self.alone += extent.length / 1024,
+            if !extent.shared {
+                self.alone += extent.length / 1024;
             }
         }
     }
@@ -644,10 +618,6 @@ struct Sizes(HashMap<PathBuf, u64>);
 impl Sizes {
     fn of(&self, path: &Path) -> u64 {
         self.0.get(path).copied().unwrap_or_default()
-    }
-
-    fn sum(&self) -> u64 {
-        self.0.values().sum()
     }
 }
 
