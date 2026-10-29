@@ -24,7 +24,7 @@ use std::{
     os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, RecvTimeoutError},
     },
     thread,
@@ -201,17 +201,29 @@ impl SweepReport {
                 );
                 continue;
             };
+            let past = section.verdicts.iter().filter(|v| v.fate == Fate::Past);
+            let (count, kib) = past.fold((0, 0), |(n, k), v| (n + 1, k + sizes.of(&v.path)));
+            let (gone, gone_kib) = (AtomicUsize::new(0), AtomicU64::new(0));
             let removing = Instant::now();
-            ticking(
-                || {
-                    SweepReport::say(&format!(
-                        "    {}: removing what is past its clock, {} so far\n",
-                        kind.named(),
-                        Span(removing.elapsed().as_secs())
-                    ))
-                },
-                || sweep.collect(&mut section, now),
-            );
+            match self.dry {
+                true => sweep.collect(&mut section, now),
+                false => ticking(
+                    || {
+                        SweepReport::say(&Progress::removing(
+                            kind.named(),
+                            (gone.load(Ordering::Relaxed), count),
+                            (gone_kib.load(Ordering::Relaxed), kib),
+                            removing.elapsed(),
+                        ))
+                    },
+                    || {
+                        sweep.collect_saying(&mut section, now, &|path| {
+                            gone.fetch_add(1, Ordering::Relaxed);
+                            gone_kib.fetch_add(sizes.of(path), Ordering::Relaxed);
+                        })
+                    },
+                ),
+            }
             let listed = match kind {
                 Swept::Trees => self.trees(&section, &sizes, now, &mut tally),
                 Swept::Caches => self.caches(&section, &sizes, sharing.as_ref(), now, &mut tally),
@@ -668,21 +680,50 @@ fn ticking<R>(tick: impl Fn() + Send, work: impl FnOnce() -> R) -> R {
 struct Progress;
 
 impl Progress {
-    /// Its time left is the time so far spread over what is done, so it says none until one is.
     fn line(what: &str, done: usize, total: usize, spent: Duration) -> String {
-        let filled = (done * BAR_WIDTH).checked_div(total).unwrap_or(BAR_WIDTH);
-        let bar = format!("{}{}", "#".repeat(filled), ".".repeat(BAR_WIDTH - filled));
-        let left = match done {
+        format!(
+            "    {what}: {} {done} of {total} measured in {}, {}\n",
+            Progress::bar(done as u64, total as u64),
+            Span(spent.as_secs()),
+            Progress::left(done as u64, total as u64, spent)
+        )
+    }
+
+    /// Paced by size rather than by count: one cache can hold a hundred times another.
+    fn removing(
+        what: &str,
+        (done, total): (usize, usize),
+        (kib, of): (u64, u64),
+        spent: Duration,
+    ) -> String {
+        format!(
+            "    {what}: {} removed {done} of {total}, {} of {}, in {}, {}\n",
+            Progress::bar(kib, of),
+            Kib(kib),
+            Kib(of),
+            Span(spent.as_secs()),
+            Progress::left(kib, of, spent)
+        )
+    }
+
+    fn bar(done: u64, total: u64) -> String {
+        let filled = (done.min(total) * BAR_WIDTH as u64)
+            .checked_div(total)
+            .unwrap_or(BAR_WIDTH as u64) as usize;
+        format!("[{}{}]", "#".repeat(filled), ".".repeat(BAR_WIDTH - filled))
+    }
+
+    /// The time so far spread over what is done, so none until something is.
+    fn left(done: u64, total: u64, spent: Duration) -> String {
+        match done {
             0 => "no estimate until one is done".to_string(),
             _ => format!(
                 "about {} left",
-                Span((spent.as_secs_f64() * (total - done) as f64 / done as f64) as u64)
+                Span(
+                    (spent.as_secs_f64() * total.saturating_sub(done) as f64 / done as f64) as u64
+                )
             ),
-        };
-        format!(
-            "    {what}: [{bar}] {done} of {total} measured in {}, {left}\n",
-            Span(spent.as_secs())
-        )
+        }
     }
 }
 
@@ -771,6 +812,15 @@ mod tests {
         assert_eq!(
             Progress::line("build caches", 1, 4, Duration::from_secs(60)),
             "    build caches: [#####...............] 1 of 4 measured in 1m00s, about 3m00s left\n"
+        );
+        assert_eq!(
+            Progress::removing(
+                "build caches",
+                (1, 3),
+                (1_048_576, 4_194_304),
+                Duration::from_secs(30)
+            ),
+            "    build caches: [#####...............] removed 1 of 3, 1.0G of 4.0G, in 30s, about 1m30s left\n"
         );
     }
 
