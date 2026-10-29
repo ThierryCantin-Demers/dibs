@@ -64,6 +64,10 @@ impl App {
             }
             return false;
         }
+        if self.overlay.is_some() && code == KeyCode::Char('m') {
+            self.toggle_mouse();
+            return false;
+        }
         if let Some(o) = self.overlay.as_mut() {
             match code {
                 KeyCode::Esc | KeyCode::Char('q') => self.overlay = None,

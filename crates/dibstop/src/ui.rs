@@ -35,10 +35,9 @@ const OVERLAY_SIZE: Share = Share {
     width: 86,
     height: 84,
 };
-const CONFIRM_SIZE: Share = Share {
-    width: 56,
-    height: 22,
-};
+/// Percent of the screen across; it is as tall as what it says.
+const CONFIRM_WIDTH: u16 = 56;
+const CONFIRM_MIN_WIDTH: u16 = 40;
 
 /// Percent of the screen an overlay takes, across and down.
 #[derive(Clone, Copy)]
@@ -506,37 +505,63 @@ fn overlay(f: &mut Frame, o: &Overlay) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!(" {} ", o.title))
-                .title_bottom(" j/k scroll   esc close "),
+                .title_bottom(" j/k scroll   m mouse   esc close "),
         ),
         area,
     );
 }
 
 fn confirm(f: &mut Frame, kill: &PendingKill) {
-    let area = centred(f.area(), CONFIRM_SIZE);
+    let on = match kill.machine.is_empty() {
+        true => String::new(),
+        false => format!(" on {}", kill.machine),
+    };
+    let question = format!("  Stop {} (pid {}){on}?", kill.label, kill.pid);
+    let warning = "  It is someone's work: y sends it SIGTERM.";
+    let area = confirm_area(f.area(), &[&question, warning]);
     f.render_widget(Clear, area);
     f.render_widget(
         Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(
-                format!("  Stop {} (pid {})?", kill.label, kill.pid),
+                question,
                 Style::new().add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
-            Line::from(Span::styled(
-                "  It is someone's work. y to send SIGTERM, anything else cancels.",
-                DIM,
-            )),
+            Line::from(warning),
         ])
         .wrap(Wrap { trim: false })
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::new().fg(Color::Red))
-                .title(" confirm "),
+                .title(" confirm ")
+                .title_bottom(" y stop it   any other key cancels "),
         ),
         area,
     );
+}
+
+/// Tall enough for its paragraphs, each after a blank line, with one to spare for a word that
+/// wraps early.
+fn confirm_area(screen: Rect, paragraphs: &[&str]) -> Rect {
+    let width = (screen.width * CONFIRM_WIDTH / 100)
+        .max(CONFIRM_MIN_WIDTH)
+        .min(screen.width);
+    let inner = usize::from(width.saturating_sub(2)).max(1);
+    let rows: usize = paragraphs
+        .iter()
+        .map(|p| 1 + p.chars().count().div_ceil(inner))
+        .sum();
+    let height = u16::try_from(rows + 3)
+        .unwrap_or(u16::MAX)
+        .min(screen.height);
+    Rect {
+        x: screen.x + (screen.width - width) / 2,
+        y: screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    }
 }
 
 /// The same two colours the header uses for the machine's state, so a row reads the same
@@ -585,6 +610,17 @@ fn centred(area: Rect, share: Share) -> Rect {
 mod tests {
     use super::*;
     use dibs_format::status::Status;
+
+    #[test]
+    fn a_confirm_is_tall_enough_for_what_it_asks_on_a_small_screen() {
+        let screen = Rect::new(0, 0, 80, 24);
+        let question = "  Stop gemv-rows-with-a-long-label (pid 1234567) on m1?";
+        let area = confirm_area(screen, &[question, "  It is someone's work."]);
+        assert_eq!((area.width, area.height), (CONFIRM_MIN_WIDTH + 4, 8));
+        assert!(area.bottom() <= screen.bottom() && area.right() <= screen.right());
+        let tiny = confirm_area(Rect::new(0, 0, 30, 4), &[question]);
+        assert_eq!((tiny.width, tiny.height), (30, 4));
+    }
 
     #[test]
     fn a_long_label_agent_and_note_widen_as_far_as_the_screen_allows() {

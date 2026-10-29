@@ -70,7 +70,8 @@ impl Action {
             machine: kill.machine,
             doing: format!("stopping {}", kill.label),
             title: format!("kill {} ({})", kill.pid, kill.label),
-            args: vec!["--kill".into(), kill.pid.to_string()],
+            // The person's y is the say-so that --anyone asks for.
+            args: vec!["--kill".into(), kill.pid.to_string(), "--anyone".into()],
         }
     }
 
