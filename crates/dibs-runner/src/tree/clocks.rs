@@ -171,9 +171,9 @@ impl<'a> Removal<'a> {
         self.until.is_some_and(|until| Instant::now() >= until)
     }
 
-    /// A cache renamed to `aside` first, so nothing seeds from it or builds in it while it goes,
-    /// then removed as far as the budget allows; what is left is a temporary a later sweep ends.
-    pub fn cache(&self, cache: &Path, aside: &Path) -> bool {
+    /// A cache renamed to `aside` before it goes, so nothing seeds from it or builds in it; what
+    /// a budget leaves of it is a temporary a later sweep ends.
+    pub fn set_aside(&self, cache: &Path, aside: &Path) -> bool {
         if cache != aside
             && let Err(e) = fs::rename(cache, aside)
         {
@@ -183,11 +183,19 @@ impl<'a> Removal<'a> {
             ));
             return false;
         }
-        let gone = aside.removed_by(self.until);
+        true
+    }
+
+    /// Whether `aside` went, said when it is left for a later sweep.
+    pub fn removed(&self, aside: &Path, gone: bool) -> bool {
         if !gone && !self.spent() {
             self.unremoved(aside);
         }
         gone
+    }
+
+    pub fn until(&self) -> Option<Instant> {
+        self.until
     }
 
     pub fn tree(&self, tree: &Path) -> bool {

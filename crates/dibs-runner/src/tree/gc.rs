@@ -763,6 +763,11 @@ impl fmt::Display for Kib {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let kib = self.0;
         f.pad(&match kib {
+            1_073_741_824.. => format!(
+                "{}.{}T",
+                kib / 1_073_741_824,
+                kib % 1_073_741_824 * 10 / 1_073_741_824
+            ),
             1_048_576.. => format!("{}.{}G", kib / 1_048_576, kib % 1_048_576 * 10 / 1_048_576),
             1024.. => format!("{}M", kib / 1024),
             _ => format!("{kib}K"),
@@ -818,6 +823,7 @@ mod tests {
         assert_eq!(Kib(512).to_string(), "512K");
         assert_eq!(Kib(2048).to_string(), "2M");
         assert_eq!(Kib(1_572_864).to_string(), "1.5G");
+        assert_eq!(Kib(5_722_669_000).to_string(), "5.3T");
         assert_eq!(Bytes(10 * 1024 * 1024 * 1024 + 1).to_string(), "11G");
         assert_eq!(Bytes(9 * 1024 * 1024 * 1024 + 1).to_string(), "9.1G");
         assert_eq!(SweepReport::ago(Span::DAY.0 * 3, 0), "3 days ago");

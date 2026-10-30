@@ -221,8 +221,24 @@ fn a_sweep_removes_only_what_dibs_made_and_nobody_used() {
 
 #[test]
 fn gc_all_removes_what_nothing_holds_whatever_its_clock() {
-    let s = Sandbox::new();
+    let mut s = Sandbox::new();
     let g = scratch_to_sweep(&s);
+    fs::create_dir_all(s.path("gc/ws/demo/running")).unwrap();
+    s.write("gc/ws/demo/running/.dibs-used", "");
+    let (up, done) = (s.gate("up"), s.gate("done"));
+    let step = s.spawn(s.command(
+        "sh",
+        [
+            "-c",
+            &format!(
+                "cd {} && {} && {}",
+                s.p("gc/ws/demo/running"),
+                up.signal(),
+                done.hold()
+            ),
+        ],
+    ));
+    up.reached();
     let out = s
         .dibs(["--gc", "--all"])
         .env("DIBS_SCRATCH", &g)
@@ -248,6 +264,12 @@ fn gc_all_removes_what_nothing_holds_whatever_its_clock() {
         s.exists("gc/byhand"),
         "and still never what dibs did not make"
     );
+    assert!(
+        s.exists("gc/ws/demo/running"),
+        "nor a tree a step is running in: {out}"
+    );
+    done.open();
+    s.wait(step);
 }
 
 // Only Linux says which blocks a clone shares (protocol.md, Platforms).

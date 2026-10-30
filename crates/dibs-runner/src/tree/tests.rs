@@ -3,7 +3,7 @@ use crate::{
     job::{Environment, JobEnd},
     tree::{
         Clocks, Commands, KeptCopy, Reflinks, Runners, Spot, Stepping, TreeConfig, Trees,
-        clocks::{Fate, Removal},
+        clocks::{Contents as _, Fate, Removal},
         copy::{Copier, Sharing},
         sweep::{Section, Sweep, Swept},
     },
@@ -1447,7 +1447,9 @@ fn a_cache_is_set_aside_before_it_goes_and_what_the_budget_leaves_a_later_sweep_
     // Above Linux's PID_MAX_LIMIT and macOS's PID_MAX, so no process can have it.
     let aside = m.p("scratch/target/demo-local-k.old.4194304-swept");
     let spent = || Removal::new(None, &|_| {}).within(Duration::ZERO);
-    assert!(!spent().cache(&cache, &aside));
+    let removal = spent();
+    assert!(removal.set_aside(&cache, &aside));
+    assert!(!aside.removed_by(removal.until()));
     assert!(
         !cache.exists() && aside.join("built").exists(),
         "renamed at once, so nothing seeds from it, then nothing removed past the budget"
