@@ -23,6 +23,8 @@ struct GcSweep {
     days: Option<u32>,
     all: bool,
     dry_run: bool,
+    /// Its output lands on a terminal, where progress is redrawn in place.
+    live: bool,
 }
 
 impl fmt::Display for GcSweep {
@@ -32,7 +34,11 @@ impl fmt::Display for GcSweep {
             (false, Some(days)) => write!(f, "{days}")?,
             (false, None) => write!(f, "default")?,
         }
-        write!(f, " {}", u8::from(self.dry_run))
+        write!(f, " {}", u8::from(self.dry_run))?;
+        if self.live {
+            write!(f, " tty")?;
+        }
+        Ok(())
     }
 }
 
@@ -77,6 +83,8 @@ impl Dispatch<'_> {
                     days: *days,
                     all: *all,
                     dry_run: *dry_run,
+                    // SAFETY: isatty only reads the descriptor's state.
+                    live: unsafe { libc::isatty(1) } == 1,
                 }
                 .to_string(),
                 streamed: true,

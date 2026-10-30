@@ -33,8 +33,10 @@ use std::{
 
 /// Rows listed under a heading before the rest are counted; what is past its clock always is.
 const LISTED: usize = 20;
-/// How often a section still going says how far it is.
+/// How often a section still going says how far it is: a line of its own each time for a log
+/// or an agent, and redrawn in place on a person's terminal.
 const PROGRESS_EVERY: Duration = Duration::from_secs(10);
+const LIVE_EVERY: Duration = Duration::from_millis(250);
 const BAR_WIDTH: usize = 20;
 /// Directories under scratch that dibs makes; anything else is somebody's and never removed.
 const DIBS_OWN: [&str; 7] = ["ws", "target", "jobs", "tmp", "out", "runner", "run"];
@@ -50,6 +52,7 @@ pub struct SweepReport {
     reflinks: Reflinks,
     /// Only say what would go.
     dry: bool,
+    live: bool,
 }
 
 /// KiB reclaimed and past their clocks.
@@ -57,6 +60,8 @@ pub struct SweepReport {
 struct Totals {
     freed: u64,
     would: u64,
+    /// Progress redrawn in place, for a terminal.
+    live: bool,
 }
 
 /// Lines under a heading, biggest first: the question behind the command is where the disk went.
@@ -101,6 +106,8 @@ pub struct Asked {
     /// Everything nothing holds, past every clock.
     pub all: bool,
     pub dry: bool,
+    /// The caller reads it on a terminal.
+    pub live: bool,
 }
 
 impl Asked {
@@ -111,6 +118,7 @@ impl Asked {
             days: clock.and_then(|d| d.parse().ok()),
             all: clock == Some("all"),
             dry: words.next() == Some("1"),
+            live: words.next() == Some("tty"),
         }
     }
 
@@ -139,6 +147,9 @@ impl Asked {
             (false, None) => "default".to_string(),
         });
         words.push(u8::from(self.dry).to_string());
+        if self.live {
+            words.push("tty".to_string());
+        }
         words
             .iter()
             .map(|w| format!("'{}'", w.replace('\'', r"'\''")))
@@ -168,6 +179,7 @@ impl Asked {
             },
             reflinks: settings.reflinks,
             dry: self.dry,
+            live: self.live,
         }
     }
 }
@@ -183,7 +195,10 @@ impl SweepReport {
             return 0;
         }
         let now = Moment::epoch_now();
-        let mut tally = Totals::default();
+        let mut tally = Totals {
+            live: self.live,
+            ..Totals::default()
+        };
         SweepReport::say(&format!(
             "dibs --gc on {}, under {}\n",
             self.host,
@@ -221,13 +236,14 @@ impl SweepReport {
             match self.dry {
                 true => sweep.collect(&mut section, now),
                 false => ticking(
+                    self.live,
                     || {
-                        SweepReport::say(&Progress::removing(
+                        Progress::removing(
                             kind.named(),
                             (gone.load(Ordering::Relaxed), count),
                             (gone_kib.load(Ordering::Relaxed), kib),
                             removing.elapsed(),
-                        ))
+                        )
                     },
                     || {
                         sweep.collect_saying(&mut section, now, &|path| {
@@ -597,13 +613,14 @@ impl Totals {
         let done = AtomicUsize::new(0);
         let began = Instant::now();
         let walked = ticking(
+            self.live,
             || {
-                SweepReport::say(&Progress::line(
+                Progress::line(
                     what,
                     done.load(Ordering::Relaxed),
                     asked.len(),
                     began.elapsed(),
-                ))
+                )
             },
             || {
                 asked.spread(|&(path, mapped)| {
@@ -681,13 +698,24 @@ impl Walked {
     }
 }
 
-/// `work`, with `tick` called every `PROGRESS_EVERY` until it returns.
-fn ticking<R>(tick: impl Fn() + Send, work: impl FnOnce() -> R) -> R {
+/// `work`, with the line `tick` makes said until it returns: redrawn over itself when `live`,
+/// and cleared once the work is done, since the section's own lines say the rest.
+fn ticking<R>(live: bool, tick: impl Fn() -> String + Send, work: impl FnOnce() -> R) -> R {
     let (finished, ticks) = mpsc::channel::<()>();
     thread::scope(|scope| {
         scope.spawn(move || {
-            while let Err(RecvTimeoutError::Timeout) = ticks.recv_timeout(PROGRESS_EVERY) {
-                tick();
+            let every = if live { LIVE_EVERY } else { PROGRESS_EVERY };
+            let mut drawn = false;
+            while let Err(RecvTimeoutError::Timeout) = ticks.recv_timeout(every) {
+                let line = tick();
+                match live {
+                    true => SweepReport::say(&format!("\r\x1b[K{}", line.trim_end())),
+                    false => SweepReport::say(&line),
+                }
+                drawn = true;
+            }
+            if live && drawn {
+                SweepReport::say("\r\x1b[K");
             }
         });
         let result = work();

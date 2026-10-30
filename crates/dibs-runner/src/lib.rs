@@ -49,9 +49,14 @@ pub fn main(args: &[String], source: Source) -> i32 {
         [verb, days, dry] if verb == "gc" => {
             tree::Asked::parse(&format!("{days} {dry}")).report().run()
         }
+        [verb, days, dry, live] if verb == "gc" => {
+            tree::Asked::parse(&format!("{days} {dry} {live}"))
+                .report()
+                .run()
+        }
         _ => {
             eprintln!(
-                "usage: dibs-runner serve <hash> | hash | build <hash> | build-client <hash> | gc <days|default|all> <0|1> | tether"
+                "usage: dibs-runner serve <hash> | hash | build <hash> | build-client <hash> | gc <days|default|all> <0|1> [tty] | tether"
             );
             2
         }
