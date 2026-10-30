@@ -134,6 +134,18 @@ impl<'a> Trees<'a> {
         }
     }
 
+    /// The lock a sent tree is laid out and copied into under, for a tree sent from the caller.
+    pub fn sent_turn(scratch: &Path, prepare: &Prepare) -> Option<PathBuf> {
+        let Source::Local { key, .. } = &prepare.source else {
+            return None;
+        };
+        Some(Turn::of_sent(
+            &scratch.join("ws").join(&prepare.repo),
+            &format!("{LOCAL}{key}"),
+            prepare.nest.as_ref().map(|n| n.name.as_str()),
+        ))
+    }
+
     pub fn prepare(&self, prepare: &Prepare) -> Result<Prepared, PrepareError> {
         Trees::placed(prepare)?;
         let packages = prepare
@@ -428,6 +440,8 @@ impl<'a> Trees<'a> {
     ) -> Result<Placed, PrepareError> {
         let repo = &prepare.repo;
         let worktree = self.nested(prepare).join(format!("{LOCAL}{key}"));
+        let lock = Trees::sent_turn(self.config.scratch, prepare)
+            .expect("a local prepare names the tree it sends");
         let nest = prepare
             .nest
             .as_ref()
@@ -442,11 +456,6 @@ impl<'a> Trees<'a> {
         self.made(worktree.parent().unwrap_or(self.config.scratch))?;
         self.revive(prepare, &worktree);
         drop(trees);
-        let lock = Turn::of_sent(
-            &self.config.scratch.join("ws").join(repo),
-            &format!("{LOCAL}{key}"),
-            prepare.nest.as_ref().map(|n| n.name.as_str()),
-        );
         let turn = self.turn(&worktree, &lock)?;
         let target_turn = self.target_turn(&target)?;
         let (mut seeded, mut reseeded) = (None, None);

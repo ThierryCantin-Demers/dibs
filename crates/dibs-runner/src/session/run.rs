@@ -397,6 +397,8 @@ impl<'a> Run<'a> {
         };
         let layout = Layout::new(self.at, output);
         let mut spot = None;
+        // Held to the end of the job: a transfer's lock on the tree it copies into.
+        let mut _copying = None;
         if let Some(tree) = &request.tree
             && hosted.ports.complete()
         {
@@ -406,6 +408,7 @@ impl<'a> Run<'a> {
             state = self.at.stopper.state();
             match laid {
                 Laid::Run(laid) => spot = laid,
+                Laid::Transfer(turn) => _copying = turn,
                 Laid::Done { status, by } => {
                     drop(state);
                     begun.touch_log();

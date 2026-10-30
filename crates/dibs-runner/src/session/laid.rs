@@ -5,7 +5,7 @@ use crate::{
     session::run::Serving,
     settings::{home, var},
     stop::Stage,
-    tree::{BuildMark, Commands, Spot, Stepping, TreeConfig, Trees},
+    tree::{BuildMark, Commands, Spot, Stepping, TreeConfig, Trees, Turn},
 };
 use dibs_format::{
     By, Exit, Mode, Pair, Pairs,
@@ -20,6 +20,9 @@ use std::{
 pub enum Laid {
     /// The command runs, in the tree when there is one, where a recipe step is a step.
     Run(Option<Spot>),
+    /// The transfer runs, holding the sent tree's lock until it ends, so two calls sending one
+    /// tree take turns rather than rename each other's files away.
+    Transfer(Option<Turn>),
     /// Nothing more runs: the prepare was the job, failed, or waits for a git dependency.
     Done { status: i32, by: By },
 }
@@ -128,10 +131,51 @@ impl<'a> Layout<'a> {
                     worktree.parent().unwrap_or(Path::new("/")).to_path_buf(),
                     None,
                 );
+                let lock = Trees::sent_turn(&self.at.machine.scratch, prepare);
+                let turn =
+                    match lock.map(|lock| self.copying_turn(&lock, &worktree, deadline, &say)) {
+                        Some(Err(laid)) => return laid,
+                        Some(Ok(turn)) => Some(turn),
+                        None => None,
+                    };
                 if self.at.call.mode() == Mode::Rsh {
                     self.at.sink.transferring();
                 }
-                Laid::Run(None)
+                Laid::Transfer(turn)
+            }
+        }
+    }
+
+    /// The sent tree's lock, waited for while another call copies into it.
+    fn copying_turn(
+        &self,
+        lock: &Path,
+        worktree: &Path,
+        deadline: Deadline,
+        say: &dyn Fn(&str),
+    ) -> Result<Turn, Laid> {
+        if let Ok(Some(turn)) = Turn::by(lock, Deadline::after(Some(Duration::ZERO))) {
+            return Ok(turn);
+        }
+        say(&format!(
+            "dibs: waiting for another call copying into {}\n",
+            worktree.display()
+        ));
+        match Turn::by(lock, deadline) {
+            Ok(Some(turn)) => Ok(turn),
+            Ok(None) => Err(Laid::Done {
+                status: Exit::Overran.status(),
+                by: By::Dibs,
+            }),
+            Err(e) => {
+                say(&format!(
+                    "dibs: could not lock {}: {e}\n",
+                    worktree.display()
+                ));
+                Err(Laid::Done {
+                    status: Exit::Setup.status(),
+                    by: By::Dibs,
+                })
             }
         }
     }
