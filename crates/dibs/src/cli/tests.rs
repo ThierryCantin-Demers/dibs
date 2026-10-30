@@ -237,6 +237,7 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
             vec!["--gc"],
             of(Mode::Gc {
                 days: None,
+                all: false,
                 dry_run: false,
             }),
         ),
@@ -244,7 +245,19 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
             vec!["gc", "--days", "3", "--dry-run"],
             of(Mode::Gc {
                 days: Some(3),
+                all: false,
                 dry_run: true,
+            }),
+        ),
+        (
+            vec!["--gc", "--all", "--dry-run"],
+            Invocation::Call(Call {
+                all: true,
+                ..call(Mode::Gc {
+                    days: None,
+                    all: true,
+                    dry_run: true,
+                })
             }),
         ),
         (vec!["--out"], of(Mode::Out(None))),
@@ -374,6 +387,7 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
             vec!["--label", "", "--gc"],
             of(Mode::Gc {
                 days: None,
+                all: false,
                 dry_run: false,
             }),
         ),
@@ -634,6 +648,11 @@ fn refusals() -> Vec<(Vec<&'static str>, &'static str, bool)> {
         (
             vec!["--days", "", "--gc"],
             "dibs: --days needs a value.",
+            false,
+        ),
+        (
+            vec!["--gc", "--all", "--days", "2"],
+            "dibs: --gc takes --days or --all, not both: --all goes past every clock.",
             false,
         ),
         (

@@ -318,6 +318,7 @@ impl Settings {
             clocks: Clocks {
                 keep_days: number("DIBS_KEEP_DAYS", Clocks::DEFAULT.keep_days),
                 target_keep_days: number("DIBS_TARGET_KEEP_DAYS", Clocks::DEFAULT.target_keep_days),
+                all: false,
             },
             seed_wait: number("DIBS_SEED_WAIT", 900),
             sweep_budget: number("DIBS_SWEEP_BUDGET", 5),

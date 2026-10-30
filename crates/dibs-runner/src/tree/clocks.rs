@@ -39,6 +39,8 @@ pub enum Fate {
 pub struct Clocks {
     pub keep_days: u64,
     pub target_keep_days: u64,
+    /// `dibs --gc --all`: every clock already run out.
+    pub all: bool,
 }
 
 impl Clocks {
@@ -46,7 +48,20 @@ impl Clocks {
     pub const DEFAULT: Clocks = Clocks {
         keep_days: 14,
         target_keep_days: 5,
+        all: false,
     };
+
+    /// Every clock run out, so what goes is whatever nothing holds.
+    pub const ALL: Clocks = Clocks {
+        keep_days: 0,
+        target_keep_days: 0,
+        all: true,
+    };
+
+    /// Whether what was last used at `when` is past a clock of `keep` days.
+    pub fn past(&self, now: u64, when: u64, keep: u64) -> bool {
+        self.all || Clocks::days(now, when) > keep
+    }
 
     /// Whole days from `when` to `now`.
     pub fn days(now: u64, when: u64) -> u64 {
@@ -60,8 +75,8 @@ pub trait Dates {
     fn used(&self, now: u64) -> u64;
     /// When a job's directory or a leftover was last written.
     fn written(&self, now: u64) -> u64;
-    /// `find -mtime +days`: unchanged for more than `days` whole days.
-    fn unchanged_for(&self, now: u64, days: u64) -> bool;
+    /// `find -mtime +keep`, unchanged for more than `keep` whole days, or every clock run out.
+    fn past(&self, now: u64, clocks: &Clocks, keep: u64) -> bool;
     /// `touch`: made if missing, and dated now.
     fn touch(&self) -> io::Result<()>;
     /// `touch -c`: an existing file dated now.
@@ -81,8 +96,8 @@ impl Dates for Path {
         fs::symlink_metadata(self).map_or(now, |m| m.mtime().max(0) as u64)
     }
 
-    fn unchanged_for(&self, now: u64, days: u64) -> bool {
-        fs::metadata(self).is_ok_and(|m| Clocks::days(now, m.mtime().max(0) as u64) > days)
+    fn past(&self, now: u64, clocks: &Clocks, keep: u64) -> bool {
+        fs::metadata(self).is_ok_and(|m| clocks.past(now, m.mtime().max(0) as u64, keep))
     }
 
     fn touch(&self) -> io::Result<()> {

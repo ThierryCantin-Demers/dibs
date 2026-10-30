@@ -395,7 +395,8 @@ then removes what is past the clock above, and says how much that was and what i
 `--dry-run` removes nothing and marks what would go. An entry past its clock that a prepare or a
 build is using says `held by a prepare` or `held by a build`, and is left for the next sweep.
 `--days <n>` treats anything unused for n days as past its clock, everything listed alike, which
-is the knob when a machine is full now. Anything under scratch that dibs did not put there is
+is the knob when a machine is full now. `--all` goes past every clock: everything dibs made that
+no prepare or build holds goes, used today or not. Anything under scratch that dibs did not put there is
 listed under "not dibs's" with its size and never touched: a directory somebody wrote by hand
 may be the only copy of what they are working on.
 

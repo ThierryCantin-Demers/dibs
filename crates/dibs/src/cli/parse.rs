@@ -538,8 +538,14 @@ impl Parser {
                             .ok_or(CliError::new("--days takes a number of days"))?,
                     ),
                 };
+                if days.is_some() && self.call.all {
+                    return Err(CliError::new(
+                        "dibs: --gc takes --days or --all, not both: --all goes past every clock.",
+                    ));
+                }
                 Mode::Gc {
                     days,
+                    all: self.call.all,
                     dry_run: self.dry_run,
                 }
             }

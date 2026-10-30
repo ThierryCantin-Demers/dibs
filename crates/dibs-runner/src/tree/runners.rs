@@ -126,7 +126,7 @@ impl Runners {
                 .is_some_and(|own| version.path.file_name().is_some_and(|n| n == own));
             let past = !own
                 && Some(version.installed) != newest
-                && Clocks::days(now, version.used) > clocks.keep_days;
+                && clocks.past(now, version.used, clocks.keep_days);
             entries.push(Verdict::of(
                 version.path.clone(),
                 Runners::fate(past),
@@ -148,7 +148,7 @@ impl Runners {
             let built = Runners::mtime(&target.join("release"))
                 .or_else(|| Runners::mtime(&target))
                 .unwrap_or(now);
-            let past = Clocks::days(now, built) > clocks.target_keep_days;
+            let past = clocks.past(now, built, clocks.target_keep_days);
             entries.push(Verdict::of(target, Runners::fate(past), built));
         }
         entries.sort_by(|a, b| a.path.cmp(&b.path));

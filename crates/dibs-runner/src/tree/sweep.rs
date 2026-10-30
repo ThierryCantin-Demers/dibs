@@ -325,7 +325,7 @@ impl<'a> Sweep<'a> {
             let _ = used.touch();
             return Fate::Dated;
         }
-        match used.unchanged_for(now, self.clocks.keep_days) {
+        match used.past(now, &self.clocks, self.clocks.keep_days) {
             true => Fate::Past,
             false => Fate::Kept,
         }
@@ -348,7 +348,7 @@ impl<'a> Sweep<'a> {
             let _ = fs::write(&used, DATED);
             return Fate::Dated;
         }
-        match used.unchanged_for(now, self.clocks.target_keep_days) {
+        match used.past(now, &self.clocks, self.clocks.target_keep_days) {
             true => Fate::Past,
             false => Fate::Kept,
         }
@@ -357,14 +357,12 @@ impl<'a> Sweep<'a> {
     /// A job's directory, or a leftover file, by its own time.
     fn bulk(&self, path: &Path, now: u64) -> Fate {
         let written = fs::symlink_metadata(path).map(|_| path.written(now));
-        match written.is_ok_and(|at| Clocks::days(now, at) > self.clocks.keep_days) {
+        match written.is_ok_and(|at| self.clocks.past(now, at, self.clocks.keep_days)) {
             true => Fate::Past,
             false => Fate::Kept,
         }
     }
 
-    /// A prepare's copy or set-aside tree: its own while the prepare runs, and past once it has
-    /// gone without cleaning up.
     /// A cache the sweep may judge past its clock, read without its lock and without dating an
     /// undated one: a superset of what goes, since a build may hold one by then.
     pub fn may_go(&self, cache: &Path, now: u64) -> bool {
@@ -372,10 +370,12 @@ impl<'a> Sweep<'a> {
             Some(fate) => fate == Fate::Past,
             None => cache
                 .join(USED)
-                .unchanged_for(now, self.clocks.target_keep_days),
+                .past(now, &self.clocks, self.clocks.target_keep_days),
         }
     }
 
+    /// A prepare's copy or set-aside tree: its own while the prepare runs, and past once it has
+    /// gone without cleaning up.
     fn temporary(path: &Path) -> Option<Fate> {
         let name = path.file_name()?.to_str()?;
         let stamp = TEMPORARY

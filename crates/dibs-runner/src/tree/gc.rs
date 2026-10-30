@@ -93,19 +93,23 @@ struct Walked {
     alone: u64,
 }
 
-/// What `--gc` was asked, as the request carries it in the command's place: `<days|default>
+/// What `--gc` was asked, as the request carries it in the command's place: `<days|default|all>
 /// <0|1>`.
 pub struct Asked {
     /// None leaves the machine's own clocks.
     pub days: Option<u64>,
+    /// Everything nothing holds, past every clock.
+    pub all: bool,
     pub dry: bool,
 }
 
 impl Asked {
     pub fn parse(words: &str) -> Asked {
         let mut words = words.split_whitespace();
+        let clock = words.next();
         Asked {
-            days: words.next().and_then(|d| d.parse().ok()),
+            days: clock.and_then(|d| d.parse().ok()),
+            all: clock == Some("all"),
             dry: words.next() == Some("1"),
         }
     }
@@ -115,6 +119,9 @@ impl Asked {
         let mut named = "dibs --gc".to_string();
         if let Some(days) = self.days {
             named.push_str(&format!(" --days {days}"));
+        }
+        if self.all {
+            named.push_str(" --all");
         }
         if self.dry {
             named.push_str(" --dry-run");
@@ -126,7 +133,11 @@ impl Asked {
     pub fn command(&self) -> String {
         let mut words = Itself::words();
         words.push("gc".to_string());
-        words.push(self.days.map_or("default".to_string(), |d| d.to_string()));
+        words.push(match (self.all, self.days) {
+            (true, _) => "all".to_string(),
+            (false, Some(days)) => days.to_string(),
+            (false, None) => "default".to_string(),
+        });
         words.push(u8::from(self.dry).to_string());
         words
             .iter()
@@ -146,12 +157,14 @@ impl Asked {
                 .map_or_else(|| home.join(".cache/dibs"), |m| m.scratch.clone()),
             home,
             host: crate::machine::short_hostname(None),
-            clocks: match self.days {
-                Some(days) => Clocks {
+            clocks: match (self.all, self.days) {
+                (true, _) => Clocks::ALL,
+                (false, Some(days)) => Clocks {
                     keep_days: days,
                     target_keep_days: days,
+                    all: false,
                 },
-                None => settings.clocks,
+                (false, None) => settings.clocks,
             },
             reflinks: settings.reflinks,
             dry: self.dry,
@@ -319,8 +332,8 @@ impl SweepReport {
             });
         }
         rows.out(&format!(
-            "  worktrees, removed after {} days unused",
-            self.clocks.keep_days
+            "  worktrees, {}",
+            self.removed_after(self.clocks.keep_days, " unused")
         ))
     }
 
@@ -358,8 +371,8 @@ impl SweepReport {
             .map(|m| m.display().to_string())
             .unwrap_or_default();
         let mut listed = rows.out(&format!(
-            "  build caches on {mount}, removed after {} days unused",
-            self.clocks.target_keep_days
+            "  build caches on {mount}, {}",
+            self.removed_after(self.clocks.target_keep_days, " unused")
         ));
         if sharing.is_some_and(|s| !s.own.is_empty()) {
             listed.push_str(
@@ -411,8 +424,8 @@ impl SweepReport {
             ),
         };
         format!(
-            "  {what}, removed after {} days: {count} {}, {}, oldest {oldest} days{ending}\n",
-            self.clocks.keep_days,
+            "  {what}, {}: {count} {}, {}, oldest {oldest} days{ending}\n",
+            self.removed_after(self.clocks.keep_days, ""),
             match count {
                 1 => "entry",
                 _ => "entries",
@@ -442,9 +455,9 @@ impl SweepReport {
             });
         }
         rows.out(&format!(
-            "  runners in {}, replaced ones removed after {} days unused",
+            "  runners in {}, replaced ones {}",
             dir.display(),
-            self.clocks.keep_days
+            self.removed_after(self.clocks.keep_days, " unused")
         ))
     }
 
@@ -479,6 +492,13 @@ impl SweepReport {
             });
         }
         SweepReport::say(&rows.out("  not dibs's, never removed by this"));
+    }
+
+    fn removed_after(&self, days: u64, unused: &str) -> String {
+        match self.clocks.all {
+            true => "all removed that nothing holds".to_string(),
+            false => format!("removed after {days} days{unused}"),
+        }
     }
 
     /// A path as it is under scratch.

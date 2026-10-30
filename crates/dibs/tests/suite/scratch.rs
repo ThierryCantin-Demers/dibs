@@ -219,6 +219,37 @@ fn a_sweep_removes_only_what_dibs_made_and_nobody_used() {
     );
 }
 
+#[test]
+fn gc_all_removes_what_nothing_holds_whatever_its_clock() {
+    let s = Sandbox::new();
+    let g = scratch_to_sweep(&s);
+    let out = s
+        .dibs(["--gc", "--all"])
+        .env("DIBS_SCRATCH", &g)
+        .run()
+        .all();
+    assert_eq!(
+        out.lines_with("worktrees, all removed that nothing holds"),
+        1,
+        "{out}"
+    );
+    for gone in [
+        "ws/demo/fresh",
+        "ws/demo/stale",
+        "target/demo",
+        "target/demo-arm1",
+    ] {
+        assert!(
+            !s.exists(&format!("gc/{gone}")),
+            "{gone} goes, used today or not: {out}"
+        );
+    }
+    assert!(
+        s.exists("gc/byhand"),
+        "and still never what dibs did not make"
+    );
+}
+
 // Only Linux says which blocks a clone shares (protocol.md, Platforms).
 #[cfg(target_os = "linux")]
 #[test]

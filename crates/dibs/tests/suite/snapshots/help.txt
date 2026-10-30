@@ -189,8 +189,9 @@
 1|                                worktrees and job logs nobody has used for 14 days, build
 1|                                caches for 5. It takes the shared lock, since deleting
 1|                                gigabytes is as much IO as writing them. --dry-run removes
-1|                                nothing, --days <n> lowers every clock to n days, and what
-1|                                dibs did not put under scratch is listed but never touched.
+1|                                nothing, --days <n> lowers every clock to n days, --all
+1|                                removes whatever no build or prepare holds, and what dibs
+1|                                did not put under scratch is listed but never touched.
 1|   dibs --friction '<line>'    what got in the way: a flag that is missing, a message that
 1|                                misled, a bug. One line, kept where the next session reads
 1|                                it, and printed by dibs gaps beside the recipes nothing

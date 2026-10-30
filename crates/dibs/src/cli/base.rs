@@ -63,6 +63,8 @@ pub enum Mode {
     Release,
     Gc {
         days: Option<u32>,
+        /// Everything nothing holds, whatever its clock.
+        all: bool,
         dry_run: bool,
     },
     Out(Option<OutTarget>),

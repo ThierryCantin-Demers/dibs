@@ -51,7 +51,7 @@ pub fn main(args: &[String], source: Source) -> i32 {
         }
         _ => {
             eprintln!(
-                "usage: dibs-runner serve <hash> | hash | build <hash> | build-client <hash> | gc <days|default> <0|1> | tether"
+                "usage: dibs-runner serve <hash> | hash | build <hash> | build-client <hash> | gc <days|default|all> <0|1> | tether"
             );
             2
         }

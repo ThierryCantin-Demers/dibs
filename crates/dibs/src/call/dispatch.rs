@@ -21,14 +21,16 @@ const GC_LABEL: &str = "dibs-gc";
 struct GcSweep {
     /// None leaves the machine's own clocks.
     days: Option<u32>,
+    all: bool,
     dry_run: bool,
 }
 
 impl fmt::Display for GcSweep {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.days {
-            Some(days) => write!(f, "{days}")?,
-            None => write!(f, "default")?,
+        match (self.all, self.days) {
+            (true, _) => write!(f, "all")?,
+            (false, Some(days)) => write!(f, "{days}")?,
+            (false, None) => write!(f, "default")?,
         }
         write!(f, " {}", u8::from(self.dry_run))
     }
@@ -64,7 +66,7 @@ impl Dispatch<'_> {
             Words::Release => {
                 machine()?.answer(Asked::plain(Mode::Release, Request::label(self.call)))
             }
-            Words::Gc { days, dry_run } => machine()?.answer(Asked {
+            Words::Gc { days, all, dry_run } => machine()?.answer(Asked {
                 mode: Mode::Gc,
                 label: self
                     .call
@@ -73,6 +75,7 @@ impl Dispatch<'_> {
                     .unwrap_or_else(|| Label::new(GC_LABEL)),
                 command: GcSweep {
                     days: *days,
+                    all: *all,
                     dry_run: *dry_run,
                 }
                 .to_string(),
