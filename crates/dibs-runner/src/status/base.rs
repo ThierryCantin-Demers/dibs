@@ -69,8 +69,9 @@ impl Look<'_> {
             leftovers: self.leftovers(),
             ..Scene::default()
         };
+        let bench = records.iter().any(|r| r.mode == Mode::Bench);
         let state = match records.first().map(|r| r.mode) {
-            Some(Mode::Bench) => LockState::Bench,
+            Some(_) if bench => LockState::Bench,
             Some(_) => LockState::Shared,
             None if Lock::untaken(self.dir) => LockState::Idle,
             None => {
@@ -216,6 +217,7 @@ impl Look<'_> {
             silent,
             batch: self.batch(pid, left, tail),
             prepare,
+            ahead: self.dir.ahead_of(pid),
             services: self.services(pid),
         }
     }

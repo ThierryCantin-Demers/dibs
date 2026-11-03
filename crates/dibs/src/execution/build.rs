@@ -137,9 +137,75 @@ impl BuildSignature {
     }
 }
 
+/// Whether the command only compiles: each part a cargo command that builds without running
+/// what it built, or an `export` or `cd` before one. Freezing such a job strands nothing.
+pub fn compiles_only(run: &str) -> bool {
+    let chained = run.replace("&&", "");
+    if chained.contains(['|', '&', '`', '>', '<']) || run.contains("$(") {
+        return false;
+    }
+    let mut compiles = false;
+    for part in run.replace("&&", "\n").split([';', '\n']).map(str::trim) {
+        let mut words = part.split_whitespace().peekable();
+        match words.peek().copied() {
+            None => continue,
+            Some("export" | "cd") => continue,
+            _ => {}
+        }
+        while words
+            .peek()
+            .is_some_and(|w| *w == "env" || (!w.starts_with('-') && w.contains('=')))
+        {
+            words.next();
+        }
+        if words.next().map(|p| p.rsplit('/').next() == Some("cargo")) != Some(true) {
+            return false;
+        }
+        let mut sub = words.next().unwrap_or_default();
+        if sub.starts_with('+') {
+            sub = words.next().unwrap_or_default();
+        }
+        let built = match sub {
+            "build" | "b" | "check" | "c" | "clippy" => true,
+            "test" | "t" | "bench" => words.take_while(|w| *w != "--").any(|w| w == "--no-run"),
+            _ => false,
+        };
+        if !built {
+            return false;
+        }
+        compiles = true;
+    }
+    compiles
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_cargo_that_runs_nothing_it_built_compiles_only() {
+        for run in [
+            "cargo build --release -p a",
+            "export K=v; cargo test --no-run -p a --features cuda",
+            "cd sub && RUSTFLAGS=-g cargo +nightly bench --no-run --bench gemm",
+            "env A=1 cargo clippy --workspace",
+        ] {
+            assert!(compiles_only(run), "{run}");
+        }
+        for run in [
+            "cargo test -p a",
+            "cargo test -p a -- --no-run",
+            "cargo run --release",
+            "cargo build && ./target/release/a",
+            "cargo build | tee log",
+            "cargo build > log",
+            "cargo build &",
+            "cd sub",
+            "",
+        ] {
+            assert!(!compiles_only(run), "{run}");
+        }
+    }
 
     fn build_signature(run: &str) -> Option<String> {
         BuildSignature::of(run).map(|s| s.0)

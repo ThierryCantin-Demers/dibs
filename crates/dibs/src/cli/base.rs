@@ -111,6 +111,9 @@ pub struct Run {
     pub ports: Vec<PortName>,
     /// `--ready-within`: how long a service has to become ready.
     pub ready_within: u32,
+    /// `--preemptible`: it only compiles, so it may start ahead of a queued benchmark and be
+    /// frozen while one runs.
+    pub preempt: bool,
     pub command: Command,
 }
 
@@ -158,6 +161,7 @@ impl Default for Run {
             services: Vec::new(),
             ports: Vec::new(),
             ready_within: 300,
+            preempt: false,
             command: Command::default(),
         }
     }

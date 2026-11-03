@@ -129,6 +129,9 @@ Calls: one command under the lock, and what the machines are doing.
                                starts again rather than mixing the new numbers in with the
                                old ones. Each machine keeps its own series, so another
                                machine needs no flag.
+  --preemptible                a shared job that only compiles: it starts at once, ahead of a
+                               queued benchmark, and is frozen while a benchmark queued before
+                               it runs. A recipe's build step is marked so already.
   dibs --sync [opts] a b      rsync between here and the machine, under the shared lock.
                                Prefix the machine's side with a colon: --sync ./tree :~/x
   dibs --status               who holds it, how much longer, and the queue with ETAs

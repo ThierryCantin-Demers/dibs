@@ -131,6 +131,9 @@
 1|                                starts again rather than mixing the new numbers in with the
 1|                                old ones. Each machine keeps its own series, so another
 1|                                machine needs no flag.
+1|   --preemptible                a shared job that only compiles: it starts at once, ahead of a
+1|                                queued benchmark, and is frozen while a benchmark queued before
+1|                                it runs. A recipe's build step is marked so already.
 1|   dibs --sync [opts] a b      rsync between here and the machine, under the shared lock.
 1|                                Prefix the machine's side with a colon: --sync ./tree :~/x
 1|   dibs --status               who holds it, how much longer, and the queue with ETAs

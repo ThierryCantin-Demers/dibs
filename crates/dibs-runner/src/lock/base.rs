@@ -10,11 +10,14 @@ use std::{
 /// How often a wait with a deadline tries the lock again.
 const RETRY: Duration = Duration::from_millis(25);
 
-/// The two lock files, open. Everyone passes through the gate, and an exclusive waiter keeps
+/// The lock files, open. Everyone passes through the gate, and an exclusive waiter keeps
 /// holding it while it waits for `rw`, so a trickle of shared jobs cannot starve a benchmark.
+/// A preemptible job holds `ahead` instead of either, and a benchmark takes it exclusive once it
+/// has `rw`, which it can only do once each such job has finished or been frozen.
 pub struct Lock {
     gate: File,
     rw: File,
+    ahead: File,
 }
 
 /// How a job holds `rw`.
@@ -30,6 +33,7 @@ impl Lock {
         Ok(Lock {
             gate: Lock::file(&dir.gate())?,
             rw: Lock::file(&dir.rw())?,
+            ahead: Lock::file(&dir.ahead())?,
         })
     }
 
@@ -41,12 +45,14 @@ impl Lock {
             .open(path)
     }
 
-    /// Whether nothing holds `rw` this moment, asked without passing the gate.
+    /// Whether nothing holds `rw` or `ahead` this moment, asked without passing the gate.
     pub fn untaken(dir: &LockDir) -> bool {
-        Lock::file(&dir.rw()).is_ok_and(|rw| {
-            let free = rw.try_lock().is_ok();
-            let _ = rw.unlock();
-            free
+        [dir.rw(), dir.ahead()].iter().all(|path| {
+            Lock::file(path).is_ok_and(|file| {
+                let free = file.try_lock().is_ok();
+                let _ = file.unlock();
+                free
+            })
         })
     }
 
@@ -77,6 +83,30 @@ impl Lock {
         Lock::wait(&self.rw, hold, deadline)
     }
 
+    /// Takes `ahead`, giving up at the deadline where there is one: false then.
+    pub fn take_ahead(&self, hold: Hold, deadline: Option<Instant>) -> io::Result<bool> {
+        Lock::wait(&self.ahead, hold, deadline)
+    }
+
+    /// Whether `ahead` could be taken shared this moment; it is let go again at once.
+    pub fn free_ahead(&self) -> bool {
+        let free = self.ahead.try_lock_shared().is_ok();
+        if free {
+            let _ = self.ahead.unlock();
+        }
+        free
+    }
+
+    pub fn let_ahead_go(&self) {
+        let _ = self.ahead.unlock();
+    }
+
+    /// `ahead` as a second handle on the same lock, for the thread that freezes the job: what
+    /// it lets go of, this lets go of too.
+    pub fn ahead_handle(&self) -> io::Result<File> {
+        self.ahead.try_clone()
+    }
+
     /// Blocks in the kernel with no deadline. With one, it tries again until then, since a
     /// blocked flock can only be cut short by a signal arriving at the right moment.
     fn wait(file: &File, hold: Hold, deadline: Option<Instant>) -> io::Result<bool> {
@@ -95,7 +125,7 @@ impl Lock {
         taken
     }
 
-    fn try_hold(file: &File, hold: Hold) -> io::Result<bool> {
+    pub fn try_hold(file: &File, hold: Hold) -> io::Result<bool> {
         let tried = match hold {
             Hold::Shared => file.try_lock_shared(),
             Hold::Exclusive => file.try_lock(),

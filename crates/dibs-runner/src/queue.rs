@@ -117,10 +117,14 @@ impl Queue<'_> {
                 );
             }
         }
-        let first = holders.first().map(|h| match h.mode {
-            Mode::Bench => format!("the benchmark {}", h.label),
-            _ => h.label.to_string(),
-        });
+        let first = holders
+            .iter()
+            .find(|h| h.mode == Mode::Bench)
+            .or(holders.first())
+            .map(|h| match h.mode {
+                Mode::Bench => format!("the benchmark {}", h.label),
+                _ => h.label.to_string(),
+            });
         let mut line = format!(
             "dibs: queued and has not started, behind {}",
             first.as_deref().unwrap_or("a job starting up")
@@ -138,10 +142,12 @@ impl Queue<'_> {
     }
 
     /// A quick shared job may go around a queued benchmark, while that has waited less than the
-    /// machine's patience and only when its own history says it will be gone within `quick`. It
-    /// decides who waits, nothing else: a benchmark holding the lock refuses every shared caller.
-    pub fn may_bypass(&self, settings: &Settings) -> bool {
-        if self.call.mode() != Mode::Shared || !settings.bypass {
+    /// machine's patience and only when its own history says it will be gone within `quick`. A
+    /// transfer goes around one whenever shared jobs hold the lock, since the benchmark waits for
+    /// those anyway and a copy is seconds. It decides who waits, nothing else: a benchmark
+    /// holding the lock refuses every shared caller.
+    pub fn may_bypass(&self, settings: &Settings, block: bool) -> bool {
+        if !matches!(self.call.mode(), Mode::Shared | Mode::Rsh) || !settings.bypass {
             return false;
         }
         let now = Moment::epoch_now();
@@ -152,6 +158,9 @@ impl Queue<'_> {
             .filter(|w| w.mode == Mode::Bench && Host::exists(w.pid))
             .map(|w| w.start)
             .collect();
+        if self.call.mode() == Mode::Rsh {
+            return block && !benchmarks.is_empty();
+        }
         if benchmarks.is_empty()
             || benchmarks
                 .iter()

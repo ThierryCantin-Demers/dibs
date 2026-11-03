@@ -37,6 +37,7 @@ impl<'a> Peek<'a> {
         let cap = (request.max > 0).then(|| Cap {
             after: Duration::from_secs(request.max),
             grace: PEEK_GRACE,
+            frozen: None,
         });
         let mut state = at.stopper.state();
         let job = match Job::spawn(&request.command, environment, Output::Caller, at.sink, None) {

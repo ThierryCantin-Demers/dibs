@@ -79,5 +79,6 @@ next	shared	rec-next	1
 <a fifo>
 
 == what the lock directory holds once every job has gone
+ahead
 gate
 rw

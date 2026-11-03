@@ -41,6 +41,24 @@ its mode's. Worst-case delay is their sum. This is safe to tune because the gate
 fairness: once a benchmark holds the lock, flock refuses everyone regardless, so a bug here can
 delay a benchmark but never contaminate one.
 
+**A job that only compiles runs ahead of a queued benchmark, frozen while it measures
+(2026-11-03).** A benchmark waits for every shared job admitted before it, so one long build
+held the machine as surely as an exclusive lock: on one machine two benchmarks waited 389s behind
+one shared job while 1s transfers and minute-long builds queued for 15 minutes. History cannot
+say which jobs fit before the block ends, since a warm build cache makes a build's time
+unpredictable, so jobs are preempted instead of admitted by estimate. A preemptible job holds
+`ahead` rather than `rw` and never passes the gate. A benchmark, once it has `rw`, writes
+`pause.<pid>` with its arrival in nanoseconds and takes `ahead` exclusive: a job that arrived
+after it is frozen with SIGSTOP to its group and lets `ahead` go, and one that arrived before it
+runs on and is waited for, so a job finishes no later than it would have queued. Freezing, not
+killing and requeueing, is what makes it safe for any compile, idempotent or not. A job is not
+frozen while it holds cargo's package cache exclusively, which the benchmark's own cargo would
+otherwise wait on for ever, and the benchmark flushes the scratch filesystem before it starts,
+so a frozen build's writes are not written during the measurement. Only compiles are
+preemptible: a frozen process holding a card's context, a server or a socket strands whatever
+is on the other end. A transfer goes around a queued benchmark whenever a shared block runs and
+is never frozen, since a copy is seconds and the benchmark waits for that block anyway.
+
 **`--out` reads a job's output by asking the kernel, not by capturing it.** A job's stdout is
 the ssh channel and nothing keeps a copy, but jobs redirect into files, and the process walk
 that already exists for CPU accounting resolves fd 1 and 2 across the tree to find them. It has

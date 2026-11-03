@@ -1,8 +1,8 @@
 use crate::{
     Alias, Mode, Span,
     status::base::{
-        BatchShown, Holder, IdleKind, LockState, Remaining, Scope, Service, Shown, Silent, Status,
-        Waiter,
+        Ahead, BatchShown, Holder, IdleKind, LockState, Remaining, Scope, Service, Shown, Silent,
+        Status, Waiter,
     },
 };
 use std::fmt::{self, Write as _};
@@ -138,8 +138,12 @@ impl Text<'_> {
             .as_ref()
             .map(|job| format!("  {}job {job}{}", p.dim, p.off))
             .unwrap_or_default();
+        let ahead = match holder.ahead {
+            Some(_) => format!("  {}ahead of the queue{}", p.dim, p.off),
+            None => String::new(),
+        };
         let lead = format!(
-            "  {}{}{}  {}{}{}  {}{}{}  {}pid {}{}{job}",
+            "  {}{}{}  {}{}{}  {}{}{}  {}pid {}{}{job}{ahead}",
             p.mode(row.mode),
             row.mode,
             p.off,
@@ -157,6 +161,19 @@ impl Text<'_> {
             "    {}stop it with: dibs --kill {}{}",
             p.warn, holder.pid, p.off
         );
+        if let Some(Ahead::Paused(bench)) = &holder.ahead {
+            let _ = writeln!(
+                out,
+                "{lead}   {}[frozen while the benchmark {bench} runs, which was queued first]{}",
+                p.dim, p.off
+            );
+            row.command(out);
+            row.from(out);
+            if let Some(batch) = &holder.batch {
+                batch_lines(out, p, batch, false);
+            }
+            return;
+        }
         if let Some(idle) = holder
             .idle
             .as_ref()
@@ -369,7 +386,7 @@ impl fmt::Display for Text<'_> {
             n => format!("{} ({n} queued){}", p.dim, p.off),
         };
         match status.holders.first().map(|h| h.mode) {
-            Some(Mode::Bench) => {
+            Some(_) if status.state == LockState::Bench => {
                 let _ = writeln!(
                     out,
                     "{}dibs: BUSY, benchmark in progress{}{queued}",
@@ -553,6 +570,7 @@ mod tests {
             silent: None,
             batch: None,
             prepare: None,
+            ahead: None,
             services: Vec::new(),
         });
         let said = text(&held);

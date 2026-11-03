@@ -142,6 +142,10 @@ pub trait Platform {
     /// The kind of filesystem a directory is on, as `df -T` names it.
     fn filesystem(dir: &Path) -> Option<String>;
 
+    /// Writes out what is waiting to be written on this directory's filesystem, so it is not
+    /// written during what comes next.
+    fn flush(dir: &Path);
+
     fn cpu_model() -> Option<String>;
 
     /// A battery means a laptop, which throttles, shares memory between CPU and GPU, and moves.
@@ -230,9 +234,15 @@ pub trait Platform {
         }
     }
 
+    /// A process frozen ahead of a benchmark acts on TERM only once it is let go.
     fn signal(pid: u32, signal: libc::c_int) {
         // SAFETY: kill only sends a signal.
-        unsafe { libc::kill(pid as libc::pid_t, signal) };
+        unsafe {
+            libc::kill(pid as libc::pid_t, signal);
+            if signal == libc::SIGTERM {
+                libc::kill(pid as libc::pid_t, libc::SIGCONT);
+            }
+        }
     }
 }
 

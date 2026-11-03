@@ -34,6 +34,7 @@ pub struct LockedCall<'a> {
     services: &'a [Service],
     ports: &'a [PortName],
     ready_within: u32,
+    preempt: bool,
     origin: Origin<'a>,
 }
 
@@ -77,6 +78,7 @@ impl<'a> LockedCall<'a> {
             services: &run.services,
             ports: &run.ports,
             ready_within: run.ready_within,
+            preempt: run.preempt,
             origin: Origin::Words,
         }
     }
@@ -101,6 +103,7 @@ impl<'a> LockedCall<'a> {
             services: &[],
             ports: &[],
             ready_within: Run::default().ready_within,
+            preempt: false,
             origin: Origin::Words,
         }
     }
@@ -275,6 +278,7 @@ impl<'a> LockedCall<'a> {
         .values(label, card, self.command.shell_string());
         CallValues {
             ready_within: self.ready_within,
+            preempt: self.preempt,
             ports: self.ports.to_vec(),
             services: self.services.to_vec(),
             batch: match self.origin {
@@ -346,6 +350,7 @@ impl Request<'_> {
             ports: Vec::new(),
             services: Vec::new(),
             new_series: self.call.new_series,
+            preempt: false,
             tree: None,
         }
     }

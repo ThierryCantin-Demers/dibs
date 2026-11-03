@@ -18,6 +18,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false

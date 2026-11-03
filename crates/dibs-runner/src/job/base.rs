@@ -1,4 +1,5 @@
 use crate::{
+    ahead::Frozen,
     job::{environment::Environment, tether::Tether},
     sink::Sink,
     stop::Signals,
@@ -11,9 +12,9 @@ use std::{
     os::unix::process::CommandExt as _,
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
-    sync::mpsc,
+    sync::{Arc, mpsc},
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// The status a job that overran its cap ends with, as `timeout` gives it.
@@ -55,10 +56,20 @@ impl Output<'_> {
 }
 
 /// How long a job may run, and how long it is given to stop once told to.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Cap {
     pub after: Duration,
     pub grace: Duration,
+    /// Time frozen ahead of a benchmark, which is not the job's to count.
+    pub frozen: Option<Arc<Frozen>>,
+}
+
+impl Cap {
+    fn left(&self, started: Instant) -> Duration {
+        let frozen = self.frozen.as_ref().map_or(Duration::ZERO, |f| f.total());
+        self.after
+            .saturating_sub(started.elapsed().saturating_sub(frozen))
+    }
 }
 
 /// How a job ended: its status as a shell gives it, and whether its cap stopped it. A command
@@ -172,11 +183,12 @@ impl Job {
 
     /// Waits for the job, stopping its group when it overruns the cap, and says how it ended.
     pub fn wait(self, cap: Option<Cap>) -> JobEnd {
+        let started = Instant::now();
         let status = match cap {
             None => self.exited.recv().ok(),
-            Some(cap) => match self.exited.recv_timeout(cap.after) {
-                Ok(status) => Some(status),
-                Err(_) => {
+            Some(cap) => match self.until_capped(&cap, started) {
+                Some(status) => Some(status),
+                None => {
                     self.signal_group(libc::SIGTERM);
                     let status = match self.exited.recv_timeout(cap.grace) {
                         Ok(_) => Exit::Overran.status(),
@@ -204,6 +216,22 @@ impl Job {
         }
     }
 
+    /// The job's status, or None once its cap has passed. A cap that passes while the job is
+    /// frozen is looked at again, since frozen time is not counted.
+    fn until_capped(&self, cap: &Cap, started: Instant) -> Option<io::Result<ExitStatus>> {
+        loop {
+            let left = cap.left(started);
+            if left.is_zero() {
+                return None;
+            }
+            match self.exited.recv_timeout(left) {
+                Ok(status) => return Some(status),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+            }
+        }
+    }
+
     /// Waits for the job on a thread of its own, which hands its status on; the pid comes back.
     pub fn on_end(self, then: impl FnOnce(i32) + Send + 'static) -> u32 {
         let pid = self.pid;
@@ -211,9 +239,16 @@ impl Job {
         pid
     }
 
+    /// A group frozen ahead of a benchmark acts on TERM only once it is let go.
     fn signal_group(&self, signal: libc::c_int) {
+        let group = -(self.pid as libc::pid_t);
         // SAFETY: kill only sends a signal, here to the job's own group.
-        unsafe { libc::kill(-(self.pid as libc::pid_t), signal) };
+        unsafe {
+            libc::kill(group, signal);
+            if signal == libc::SIGTERM {
+                libc::kill(group, libc::SIGCONT);
+            }
+        }
     }
 
     /// Whatever the job left running in its group goes before its output is taken as finished,

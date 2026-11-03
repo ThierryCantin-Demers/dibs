@@ -187,6 +187,7 @@ mod tests {
             services: Vec::new(),
             ready_within: 300,
             new_series: false,
+            preempt: false,
             tree: None,
         }
     }

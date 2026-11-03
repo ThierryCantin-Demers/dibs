@@ -3,6 +3,7 @@
 
 mod harness;
 
+mod ahead;
 mod baselines;
 mod batch;
 mod cli;

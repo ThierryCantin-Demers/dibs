@@ -333,6 +333,7 @@ impl Readiness<'_> {
                     .wait(Some(Cap {
                         after: left,
                         grace: READY_GRACE,
+                        frozen: None,
                     }))
                     .status
                     == 0

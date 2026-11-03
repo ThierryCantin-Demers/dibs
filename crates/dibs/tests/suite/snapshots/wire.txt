@@ -15,6 +15,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -42,6 +43,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: bench
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -73,6 +75,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: bench
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -100,6 +103,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -127,6 +131,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: ["api"]
+    preempt: false
     ready_within: 9
     services: [{"command":"./serve --port $DIBS_PORT_API","name":"srv","ready":"tcp:api"},{"command":"true","name":"side","ready":null}]
     stream: false
@@ -154,6 +159,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -181,6 +187,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: peek
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -208,6 +215,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: status
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -235,6 +243,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: status
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -262,6 +271,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: status
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -289,6 +299,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: watch
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -316,6 +327,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: watch
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -343,6 +355,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: log
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -370,6 +383,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: kill
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -397,6 +411,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: kill-force
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -424,6 +439,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: out
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -451,6 +467,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: out
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -478,6 +495,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: out
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -505,6 +523,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: fetch
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -532,6 +551,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: fetch
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -559,6 +579,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: release
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -586,6 +607,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: gc
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -613,6 +635,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: gc
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -641,6 +664,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: check
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -669,6 +693,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: check
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -697,6 +722,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -725,6 +751,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -757,6 +784,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -784,6 +812,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: status
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -814,6 +843,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -840,6 +870,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: bench
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -867,6 +898,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: kill
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -891,6 +923,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: kill
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -918,6 +951,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: check
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -942,6 +976,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: check
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -969,6 +1004,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -996,6 +1032,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -1023,6 +1060,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -1050,6 +1088,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -1077,6 +1116,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -1104,6 +1144,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=3 -o ServerAliv
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -1131,6 +1172,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: status
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -1160,6 +1202,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: check
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false

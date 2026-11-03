@@ -15,6 +15,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: status
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -39,6 +40,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -73,6 +75,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -102,6 +105,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: true
     ready_within: 300
     services: []
     stream: true
@@ -131,6 +135,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: bench
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -164,6 +169,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -192,6 +198,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -222,6 +229,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: status
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -250,6 +258,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -280,6 +289,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: status
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -307,6 +317,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -334,6 +345,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: status
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -360,6 +372,7 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -397,6 +410,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -429,6 +443,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: true
     ready_within: 300
     services: []
     stream: true
@@ -461,6 +476,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -491,6 +507,7 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: true
     ready_within: 300
     services: []
     stream: true
@@ -521,6 +538,7 @@ call 5: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: bench
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -550,6 +568,7 @@ call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: bench
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -583,6 +602,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -611,6 +631,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: bench
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -638,6 +659,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: fetch
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: false
@@ -665,6 +687,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -691,6 +714,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -718,6 +742,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: ["api"]
+    preempt: false
     ready_within: 300
     services: [{"command":"cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { read -r _ < \"$WIRE_NEVER\"; }","name":"api","ready":null}]
     stream: false
@@ -748,6 +773,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -774,6 +800,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -801,6 +828,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: ["api"]
+    preempt: false
     ready_within: 300
     services: [{"command":"cd <root>/scratch/ws/app/local-<key> && export CARGO_TARGET_DIR=<root>/scratch/target/app-local-<key> && { read -r _ < \"$WIRE_NEVER\"; }","name":"api","ready":null}]
     stream: false
@@ -835,6 +863,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -864,6 +893,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -892,6 +922,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -925,6 +956,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -951,6 +983,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: rsh
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true
@@ -977,6 +1010,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     mode: shared
     new_series: false
     ports: []
+    preempt: false
     ready_within: 300
     services: []
     stream: true

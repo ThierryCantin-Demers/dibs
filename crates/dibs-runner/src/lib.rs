@@ -3,6 +3,7 @@
 //! and builds the next version through `dibs-runner build <hash>`; `docs/design/protocol.md` says
 //! how.
 
+mod ahead;
 mod call;
 mod channel;
 mod clock;

@@ -5,7 +5,7 @@ use crate::{
     call::{CallError, Destination, LockedCall, MachineCall, Origin, Output, Ran, RecipeJob, Sync},
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run, RunLock},
-    execution::{Refusal, RunError},
+    execution::{Refusal, RunError, build::compiles_only},
     inventory::Inventory,
     machine::{Interrupt, Listener, Stream},
     placement::{Placement, Unplaced},
@@ -392,9 +392,11 @@ impl Jobs {
             Lock::Exclusive => RunLock::Bench,
             Lock::Shared => RunLock::Shared,
         };
+        let step = req.tree.as_ref().is_some_and(|t| t.step.is_some());
         Call {
             mode: Mode::Run(Run {
                 lock,
+                preempt: step && req.lock == Lock::Shared && compiles_only(command),
                 command: ShellCommand(vec![command.to_string()]),
                 ..Run::default()
             }),

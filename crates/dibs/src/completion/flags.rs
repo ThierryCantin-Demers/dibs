@@ -85,6 +85,11 @@ pub const CALL: &[Flag] = &[
         "start this label's series again",
     ),
     Flag::new(
+        &["--preemptible"],
+        Value::No,
+        "only compiles: may run ahead of a queued benchmark",
+    ),
+    Flag::new(
         &["--hold"],
         Value::No,
         "run it here while the machine's lock is held",

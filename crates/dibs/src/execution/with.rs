@@ -440,6 +440,7 @@ fn served(
             false => command.to_string(),
         }]),
         ready_within,
+        preempt: false,
     };
     run.refuse_unknown_ports()?;
     Ok(run)

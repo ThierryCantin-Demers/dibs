@@ -397,6 +397,12 @@ impl Platform for MacOs {
         Some(model.trim().to_string()).filter(|m| !m.is_empty())
     }
 
+    /// macOS has no syncfs, so every filesystem is written out.
+    fn flush(_dir: &Path) {
+        // SAFETY: sync takes no arguments.
+        unsafe { libc::sync() };
+    }
+
     fn on_battery() -> bool {
         output_of("pmset", &["-g", "batt"]).contains("InternalBattery")
     }

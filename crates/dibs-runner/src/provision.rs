@@ -164,6 +164,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
         services: Vec::new(),
         ready_within: 0,
         new_series: false,
+        preempt: false,
         tree: None,
     };
     let code = Visit::new(request, sink)

@@ -206,6 +206,13 @@ Two things in a recipe are refused when it loads, because both produce a number 
   tolerates neighbours. The message shows the two-step form: build with `--no-run` under the
   shared lock, measure under the exclusive one.
 
+A shared step that only compiles, such as `cargo build` or `cargo test --no-run`, is preemptible:
+it starts at once, beside whatever runs, even with a benchmark queued, and that benchmark freezes
+it while it measures if it was queued first. The step then picks up where it stopped, so it
+finishes no later than it would have waiting its turn. `--preemptible` marks a hand-written job
+the same way. Nothing that runs what it built is frozen, since a card, a server or a peer on the
+other end of a socket would be left stranded mid-call.
+
 ## Building against another repo's tree
 
     dibs test app@local cuda --pin lib@local
@@ -767,7 +774,7 @@ benchmarks.
 ```toml
 patience = 60          # seconds a queued benchmark lets quick jobs go around it
 quick = 10             # what a job's own history must say it takes, at most, to go around
-bypass = true          # whether quick jobs go around at all
+bypass = true          # whether quick jobs, and transfers during a shared block, go around
 machine_series = false # see below
 ```
 

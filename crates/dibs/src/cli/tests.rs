@@ -424,6 +424,7 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
                 ],
                 ports: vec![PortName("api".into())],
                 ready_within: 60,
+                preempt: false,
                 command: Command(words(&["./client"])),
             })),
         ),

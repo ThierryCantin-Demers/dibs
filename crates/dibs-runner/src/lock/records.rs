@@ -1,5 +1,5 @@
 use crate::platform::{Host, Platform as _};
-use dibs_format::{LockRecord, Span};
+use dibs_format::{JobId, LockRecord, Span, status::Ahead};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -73,6 +73,10 @@ impl LockDir {
         self.path.join("rw")
     }
 
+    pub fn ahead(&self) -> PathBuf {
+        self.path.join("ahead")
+    }
+
     pub fn file(&self, kind: &str, pid: u32) -> PathBuf {
         self.path.join(format!("{kind}.{pid}"))
     }
@@ -97,6 +101,40 @@ impl LockDir {
         ["hold", "prep"]
             .iter()
             .any(|kind| self.file(kind, pid).exists())
+    }
+
+    /// `ahead.<pid>`: the job started ahead of a benchmark queued before it, and whether one
+    /// has frozen it.
+    pub fn mark_ahead(&self, pid: u32, ahead: &Ahead) {
+        let said = match ahead {
+            Ahead::Running => String::new(),
+            Ahead::Paused(bench) => bench.to_string(),
+        };
+        let _ = fs::write(self.file("ahead", pid), said);
+    }
+
+    pub fn ahead_of(&self, pid: u32) -> Option<Ahead> {
+        let said = fs::read_to_string(self.file("ahead", pid)).ok()?;
+        Some(match JobId::checked(said.trim()) {
+            Some(bench) => Ahead::Paused(bench),
+            None => Ahead::Running,
+        })
+    }
+
+    /// `pause.<pid>`: a benchmark that has `rw` asks the jobs that started ahead of it to freeze.
+    pub fn ask_to_pause(&self, pid: u32, arrived: u128, job: &JobId) {
+        let _ = fs::write(self.file("pause", pid), format!("{arrived} {job}\n"));
+    }
+
+    /// The benchmark asking to pause that arrived no later than `arrived`; one that arrived after
+    /// waits for the job instead, as it would have had the job waited its turn.
+    pub fn pausing_before(&self, arrived: u128) -> Option<JobId> {
+        self.named("pause").into_iter().find_map(|file| {
+            let said = fs::read_to_string(&file).ok()?;
+            let (at, job) = said.trim().split_once(' ')?;
+            let alive = RecordFile(&file).alive();
+            (alive && at.parse::<u128>().ok()? <= arrived).then(|| JobId::checked(job))?
+        })
     }
 
     pub fn write(&self, kind: Kind, record: &LockRecord) {
@@ -142,7 +180,7 @@ impl LockDir {
     /// Everything this process wrote, gone, as its end leaves the directory.
     pub fn clear(&self, pid: u32) {
         for kind in [
-            "waiting", "holder", "work", "cpu", "batch", "hold", "prep", "with",
+            "waiting", "holder", "work", "cpu", "batch", "hold", "prep", "with", "ahead", "pause",
         ] {
             let _ = fs::remove_file(self.file(kind, pid));
         }
@@ -196,7 +234,7 @@ impl LockDir {
                 let _ = fs::remove_file(&file);
             }
         }
-        for prefix in ["cpu", "batch", "hold", "prep", "with"] {
+        for prefix in ["cpu", "batch", "hold", "prep", "with", "ahead", "pause"] {
             for file in self.named(prefix) {
                 if !RecordFile(&file).pid().is_some_and(Host::exists) {
                     let _ = fs::remove_file(&file);

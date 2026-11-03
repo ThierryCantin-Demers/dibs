@@ -1,4 +1,5 @@
 use crate::{
+    ahead::{Frozen, Preemption, Watch},
     call::{Journal, Received},
     channel::{Caller, Channel},
     clock::{Deadline, Moment, Span},
@@ -24,19 +25,22 @@ use crate::{
 };
 use dibs_format::{
     By, Event, Exit, HistoryLine, JobId, Mode,
+    status::Ahead,
     wire::{MaxFrom, Record},
 };
 use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::{Arc, MutexGuard},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 /// How long a job is given to stop once its cap has passed.
 const JOB_GRACE: Duration = Duration::from_secs(30);
 /// A job that waited this long is told when it got the lock.
 const SAY_ACQUIRED_AFTER: u64 = 5;
+/// How often a preemptible job looks again while a benchmark queued before it asks to pause.
+const AHEAD_POLL: Duration = Duration::from_millis(100);
 /// The log is cut back to its last lines once it outgrows the bound.
 const LOG_BOUND: usize = 20000;
 const LOG_KEPT: usize = 10000;
@@ -68,6 +72,9 @@ impl Serving<'_> {
 /// A call in the queue: its job's id, and the fifo a hold waits on.
 struct Arrived {
     start: u64,
+    /// When it arrived, in nanoseconds: the order a benchmark and a preemptible job are compared
+    /// by, which a second cannot tell apart.
+    order: u128,
     job: JobId,
     held: Option<HoldFifo>,
 }
@@ -85,6 +92,8 @@ struct Acquired {
     lock: Lock,
     at: u64,
     waited: u64,
+    /// Taken ahead of a benchmark queued before it.
+    ahead: bool,
 }
 
 /// Where a job that holds the lock keeps what it leaves: its directory, and its log unless it is
@@ -165,7 +174,12 @@ impl<'a> Run<'a> {
             Caller::Channel(_) => {}
             Caller::Stdout => Channel::hangup(Arc::clone(self.at.stopper)),
         }
-        let acquired = match self.acquire(&history, &arrived) {
+        let preempts = self.preempts();
+        let acquired = match preempts {
+            true => self.acquire_ahead(&history, &arrived),
+            false => self.acquire(&history, &arrived),
+        };
+        let acquired = match acquired {
             Ok(acquired) => acquired,
             Err(code) => return code,
         };
@@ -174,7 +188,24 @@ impl<'a> Run<'a> {
             Ok(begun) => begun,
             Err(code) => return code,
         };
-        let hosted = self.host(state, &arrived, &begun, environment, max);
+        let frozen = Arc::new(Frozen::default());
+        let preemption = preempts
+            .then(|| acquired.lock.ahead_handle().ok())
+            .flatten()
+            .map(|ahead| {
+                Preemption::start(Watch {
+                    dir: self.at.dir.clone(),
+                    pid: self.at.call.pid,
+                    arrived: arrived.order,
+                    ahead,
+                    stopper: Arc::clone(self.at.stopper),
+                    frozen: Arc::clone(&frozen),
+                })
+            });
+        let hosted = self.host(state, &arrived, &begun, environment, max, frozen);
+        if let Some(preemption) = preemption {
+            preemption.end();
+        }
         self.finish(Finish {
             arrived: &arrived,
             acquired,
@@ -190,6 +221,9 @@ impl<'a> Run<'a> {
         let request = &self.at.call.request;
         let pid = self.at.call.pid;
         let start = Moment::epoch_now();
+        let order = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
         let job = job_id(start, pid);
         let held = match request.watch.hold {
             true => match HoldFifo::make(self.at.dir, pid) {
@@ -216,11 +250,108 @@ impl<'a> Run<'a> {
         self.at.journal().write(&line);
         state.stage = Stage::Queued;
         state.job = Some(job.clone());
-        Ok(Arrived { start, job, held })
+        Ok(Arrived {
+            start,
+            order,
+            job,
+            held,
+        })
+    }
+
+    /// A job that only compiles may be frozen, which nothing that holds a card, serves, or is
+    /// held from elsewhere can be.
+    fn preempts(&self) -> bool {
+        let request = &self.at.call.request;
+        request.preempt
+            && self.at.call.mode() == Mode::Shared
+            && !request.watch.hold
+            && request.services.is_empty()
+            && request.ports.is_empty()
+    }
+
+    /// Takes `ahead` rather than passing the gate: such a job starts at once unless a benchmark
+    /// queued before it runs or is asking it to freeze, and none queued after it ever does.
+    fn acquire_ahead(&self, history: &History, arrived: &Arrived) -> Result<Acquired, i32> {
+        let request = &self.at.call.request;
+        let pid = self.at.call.pid;
+        let lock = match Lock::open(self.at.dir) {
+            Ok(lock) => lock,
+            Err(e) => {
+                self.at.sink.say(&format!(
+                    "dibs: the lock in {} could not be opened: {e}. Nothing was run.\n",
+                    self.at.dir.path.display()
+                ));
+                self.at.dir.clear(pid);
+                return Err(Exit::NoLock.status());
+            }
+        };
+        let queue = Queue {
+            dir: self.at.dir,
+            history,
+            call: self.at.call,
+        };
+        let deadline = request
+            .wait
+            .map(|wait| Instant::now() + Duration::from_secs(wait));
+        let mut told = false;
+        let taken = loop {
+            if self.at.dir.pausing_before(arrived.order).is_none() {
+                if !told && !lock.free_ahead() {
+                    self.at.sink.say(&queue.line());
+                    told = true;
+                }
+                match lock.take_ahead(Hold::Shared, deadline) {
+                    Ok(true) if self.at.dir.pausing_before(arrived.order).is_none() => {
+                        break Ok(true);
+                    }
+                    Ok(true) => lock.let_ahead_go(),
+                    Ok(false) => break Ok(false),
+                    Err(e) => break Err(e),
+                }
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                break Ok(false);
+            }
+            std::thread::sleep(AHEAD_POLL);
+        };
+        match taken {
+            Ok(true) => {}
+            Ok(false) => {
+                let wait = request.wait.unwrap_or_default();
+                self.at
+                    .sink
+                    .say(&format!("dibs: still busy after {wait}s, gave up.\n"));
+                let mut state = self.at.stopper.state();
+                self.abandon(&arrived.job, &mut state);
+                return Err(Exit::Busy.status());
+            }
+            Err(e) => {
+                self.at.sink.say(&format!(
+                    "dibs: the lock in {} could not be taken: {e}. Nothing was run.\n",
+                    self.at.dir.path.display()
+                ));
+                self.at.dir.clear(pid);
+                return Err(Exit::NoLock.status());
+            }
+        }
+        let ahead = self
+            .at
+            .dir
+            .records(Kind::Waiting)
+            .iter()
+            .any(|w| w.mode == Mode::Bench && w.start <= arrived.start && Host::exists(w.pid));
+        let now = Moment::epoch_now();
+        Ok(Acquired {
+            lock,
+            at: now,
+            waited: now.saturating_sub(arrived.start),
+            ahead,
+        })
     }
 
     /// Waits its turn: through the gate unless it may go around, then for the lock, within
-    /// `--wait` when there is one.
+    /// `--wait` when there is one. A benchmark then has the jobs started ahead of it frozen, and
+    /// what they wrote written out, before it runs.
     fn acquire(&self, history: &History, arrived: &Arrived) -> Result<Acquired, i32> {
         let request = &self.at.call.request;
         let pid = self.at.call.pid;
@@ -255,7 +386,8 @@ impl<'a> Run<'a> {
         let deadline = request
             .wait
             .map(|wait| Instant::now() + Duration::from_secs(wait));
-        let passed = match queue.may_bypass(self.at.settings) {
+        let block = lock.free(Hold::Shared) && !lock.free(Hold::Exclusive);
+        let passed = match queue.may_bypass(self.at.settings, block) {
             true => {
                 let mut line = self.at.call.log_line(Event::Bypassed);
                 line.job = Some(arrived.job.clone());
@@ -297,6 +429,23 @@ impl<'a> Run<'a> {
             }
         };
         lock.leave_gate();
+        let gave_up = match (gave_up, hold) {
+            (None, Hold::Exclusive) => match self.pause_ahead(&lock, arrived, deadline) {
+                Ok(true) => None,
+                Ok(false) => Some(format!(
+                    "dibs: still busy after {wait}s, gave up: a job queued before it still runs.\n"
+                )),
+                Err(e) => {
+                    self.at.sink.say(&format!(
+                        "dibs: the lock in {} could not be taken: {e}. Nothing was run.\n",
+                        self.at.dir.path.display()
+                    ));
+                    self.at.dir.clear(pid);
+                    return Err(Exit::NoLock.status());
+                }
+            },
+            (gave_up, _) => gave_up,
+        };
         if let Some(said) = gave_up {
             self.at.sink.say(&said);
             self.at.sink.say(&shown());
@@ -309,7 +458,26 @@ impl<'a> Run<'a> {
             lock,
             at: now,
             waited: now.saturating_sub(arrived.start),
+            ahead: false,
         })
+    }
+
+    /// Asks the jobs started ahead to freeze, and takes `ahead` once each queued after this
+    /// benchmark has and each queued before it has ended. False when the deadline passes first.
+    fn pause_ahead(
+        &self,
+        lock: &Lock,
+        arrived: &Arrived,
+        deadline: Option<Instant>,
+    ) -> io::Result<bool> {
+        let pid = self.at.call.pid;
+        self.at.dir.ask_to_pause(pid, arrived.order, &arrived.job);
+        let taken = lock.take_ahead(Hold::Exclusive, deadline);
+        let _ = fs::remove_file(self.at.dir.file("pause", pid));
+        if matches!(taken, Ok(true)) {
+            Host::flush(&self.at.machine.scratch);
+        }
+        taken
     }
 
     /// Holds the lock: the holder record, the machine kept awake, and the job's directory with
@@ -326,6 +494,9 @@ impl<'a> Run<'a> {
         self.at
             .dir
             .hold(&self.at.call.lock_record(acquired.at, job));
+        if acquired.ahead {
+            self.at.dir.mark_ahead(self.at.call.pid, &Ahead::Running);
+        }
         if acquired.waited >= SAY_ACQUIRED_AFTER {
             self.at.sink.say(&format!(
                 "dibs: acquired the {mode} lock after {}\n",
@@ -373,6 +544,7 @@ impl<'a> Run<'a> {
         begun: &Begun,
         mut environment: Environment,
         max: u64,
+        frozen: Arc<Frozen>,
     ) -> Hosted {
         let request = &self.at.call.request;
         let pid = self.at.call.pid;
@@ -501,6 +673,7 @@ impl<'a> Run<'a> {
                         let cap = deadline.left().map(|after| Cap {
                             after,
                             grace: JOB_GRACE,
+                            frozen: Some(Arc::clone(&frozen)),
                         });
                         self.work(work, cap, arrived.held.is_some(), &mut hosted)
                     }

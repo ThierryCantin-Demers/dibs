@@ -119,6 +119,7 @@ impl Help {
                 "--device <alias>",
                 "--stream",
                 "--new-series",
+                "--preemptible",
                 "--on <machine>",
                 "--wait <seconds>",
                 "--max <seconds>",

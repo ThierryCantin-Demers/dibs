@@ -37,6 +37,9 @@ pub struct Request {
     pub ready_within: u64,
     /// The measurement starts its label's series on this machine again, on its card.
     pub new_series: bool,
+    /// Only compiles, so it may start ahead of a queued benchmark and be frozen while one runs.
+    #[serde(default)]
+    pub preempt: bool,
     /// The tree the job runs in, prepared at its head when it is not yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<Tree>,

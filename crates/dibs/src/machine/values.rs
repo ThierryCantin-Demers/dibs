@@ -39,6 +39,8 @@ pub struct CallValues {
     pub services: Vec<Service>,
     /// `--new-series`.
     pub new_series: bool,
+    /// `--preemptible`, or a recipe's step that only compiles.
+    pub preempt: bool,
     /// The tree a recipe's job runs in.
     pub tree: Option<wire::Tree>,
 }
@@ -109,6 +111,7 @@ impl CallValues {
                 lease: watch.lease,
             },
             new_series: self.new_series,
+            preempt: self.preempt,
             ports: self.ports.iter().map(|p| p.0.clone()).collect(),
             services: self
                 .services

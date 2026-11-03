@@ -12,7 +12,8 @@ page is who owns what, and why the line is where it is.
   line codecs of the lock directory's records, the ids (`JobId`, `Label`, `BatchId`,
   `MachineName`), `Exit`, and time as `Moment` and `Span`. It decides nothing.
 - **`dibs-runner`**: the machine half, a binary and a library.
-  - `lock/`: the gate and `rw` flocks, and the waiting and holder records.
+  - `lock/`: the gate, `rw` and `ahead` flocks, and the waiting and holder records.
+  - `ahead.rs`: freezing a preemptible job while a benchmark queued before it runs.
   - `queue.rs` and `history.rs`: arrival order, durations and the estimates built from them.
   - `job/`: the job's process group, its output, its cap, its services and ports, and the tether
     that stops its group when the runner ends.

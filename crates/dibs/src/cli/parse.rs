@@ -70,6 +70,7 @@ struct Parser {
     word: Word,
     subcommand: bool,
     hold: bool,
+    preempt: bool,
     services: Vec<Service>,
     ports: Vec<PortName>,
     ready_within: u32,
@@ -99,6 +100,7 @@ impl Default for Parser {
             word: Word::Shared,
             subcommand: false,
             hold: false,
+            preempt: false,
             services: Vec::new(),
             ports: Vec::new(),
             ready_within: Run::default().ready_within,
@@ -179,6 +181,7 @@ impl Parser {
                 }
                 "--peek" => self.word = Word::Peek,
                 "--hold" => self.hold = true,
+                "--preemptible" => self.preempt = true,
                 "--with" => {
                     self.services.push(Service::of(value, &self.services)?);
                     at += 1;
@@ -470,6 +473,7 @@ impl Parser {
                         services: self.services.clone(),
                         ports: self.ports.clone(),
                         ready_within: self.ready_within,
+                        preempt: self.preempt,
                         command,
                     }),
                 }
@@ -567,9 +571,20 @@ impl Parser {
         })
     }
 
-    /// `--hold`, `--with` and `--port` belong to a call that takes a lock.
+    /// `--hold`, `--with` and `--port` belong to a call that takes a lock, and `--preemptible`
+    /// to a shared job with nothing a freeze would strand.
     fn refuse_hold_and_services(&self) -> Result<(), CliError> {
         let locks = matches!(self.word, Word::Shared | Word::Bench);
+        let freezable = self.word == Word::Shared
+            && !self.hold
+            && self.services.is_empty()
+            && self.ports.is_empty();
+        if self.preempt && !freezable {
+            return Err(CliError::new(
+                "dibs: --preemptible is for a shared job that only compiles, which a benchmark freezes while it runs.\n  \
+                 A benchmark, a peek, --hold, --with and --port cannot be frozen.",
+            ));
+        }
         if self.hold && !locks {
             return Err(CliError::new(
                 "dibs: --hold takes a lock for a command run on this computer. It goes alone or with --bench.",

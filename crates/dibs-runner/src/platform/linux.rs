@@ -473,6 +473,13 @@ impl Platform for Linux {
             })
     }
 
+    fn flush(dir: &Path) {
+        if let Ok(dir) = fs::File::open(dir) {
+            // SAFETY: syncfs reads the descriptor, which is open for as long as `dir` lives.
+            unsafe { libc::syncfs(dir.as_raw_fd()) };
+        }
+    }
+
     fn on_battery() -> bool {
         fs::read_dir("/sys/class/power_supply")
             .into_iter()
