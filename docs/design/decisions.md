@@ -46,11 +46,13 @@ delay a benchmark but never contaminate one.
 held the machine as surely as an exclusive lock: on one machine two benchmarks waited 389s behind
 one shared job while 1s transfers and minute-long builds queued for 15 minutes. History cannot
 say which jobs fit before the block ends, since a warm build cache makes a build's time
-unpredictable, so jobs are preempted instead of admitted by estimate. A preemptible job holds
-`ahead` rather than `rw` and never passes the gate. A benchmark, once it has `rw`, writes
-`pause.<pid>` with its arrival in nanoseconds and takes `ahead` exclusive: a job that arrived
-after it is frozen with SIGSTOP to its group and lets `ahead` go, and one that arrived before it
-runs on and is waited for, so a job finishes no later than it would have queued. Freezing, not
+unpredictable, so jobs are preempted instead of admitted by estimate. A preemptible job never
+passes the gate and holds `ahead` as well as `rw` shared, so a benchmark from a runner that
+predates `ahead` waits for it like any shared job. A benchmark tries `rw` until only preemptible
+jobs that arrived after it hold it, then writes `pause.<pid>` with its arrival in nanoseconds:
+those jobs are frozen with SIGSTOP to their group and let both locks go, and the benchmark takes
+`rw` and then `ahead` exclusive. One that arrived before it runs on and is waited for, so a job
+finishes no later than it would have queued. Freezing, not
 killing and requeueing, is what makes it safe for any compile, idempotent or not. A job is not
 frozen while it holds cargo's package cache exclusively, which the benchmark's own cargo would
 otherwise wait on for ever, and the benchmark flushes the scratch filesystem before it starts,

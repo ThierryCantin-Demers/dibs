@@ -139,7 +139,7 @@ impl Text<'_> {
             .map(|job| format!("  {}job {job}{}", p.dim, p.off))
             .unwrap_or_default();
         let ahead = match holder.ahead {
-            Some(_) => format!("  {}ahead of the queue{}", p.dim, p.off),
+            Some(_) => format!("  {}preemptible{}", p.dim, p.off),
             None => String::new(),
         };
         let lead = format!(

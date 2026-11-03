@@ -48,8 +48,7 @@ impl Item {
             holding: true,
             slot: match h.ahead {
                 Some(Ahead::Paused(_)) => "FROZEN".into(),
-                Some(Ahead::Running) => "AHEAD".into(),
-                None => "HOLDING".into(),
+                _ => "HOLDING".into(),
             },
             mode: h.mode,
             pid: h.pid,
@@ -141,9 +140,9 @@ impl Verdict {
             return Verdict {
                 note: format!("frozen for benchmark {bench}"),
                 long: format!(
-                    "It only compiles and started ahead of the benchmark {bench}, which was queued \
-                     before it, so it is frozen while that benchmark runs and picks up where it \
-                     stopped afterwards. It is waiting its turn, not stuck."
+                    "It only compiles, and the benchmark {bench} was queued before it, so it is \
+                     frozen while that benchmark runs and picks up where it stopped afterwards. It \
+                     is waiting its turn, not stuck."
                 ),
                 alarm: false,
             };
@@ -358,8 +357,8 @@ mod tests {
             (v[0].note.as_str(), v[0].alarm),
             ("frozen for benchmark 20261103120000-9", false)
         );
-        let ahead = status(&holder("b", r#","ahead":"running""#), "");
-        assert_eq!(Item::all("m", &ahead)[0].slot, "AHEAD");
+        let running = status(&holder("b", r#","ahead":"running""#), "");
+        assert_eq!(Item::all("m", &running)[0].slot, "HOLDING");
     }
 
     #[test]

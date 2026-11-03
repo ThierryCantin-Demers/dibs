@@ -103,22 +103,38 @@ impl LockDir {
             .any(|kind| self.file(kind, pid).exists())
     }
 
-    /// `ahead.<pid>`: the job started ahead of a benchmark queued before it, and whether one
-    /// has frozen it.
-    pub fn mark_ahead(&self, pid: u32, ahead: &Ahead) {
+    /// `ahead.<pid>`: a preemptible job, when it arrived in nanoseconds, and the benchmark that
+    /// has frozen it, if one has.
+    pub fn mark_ahead(&self, pid: u32, arrived: u128, ahead: &Ahead) {
         let said = match ahead {
-            Ahead::Running => String::new(),
-            Ahead::Paused(bench) => bench.to_string(),
+            Ahead::Running => format!("{arrived}\n"),
+            Ahead::Paused(bench) => format!("{arrived} {bench}\n"),
         };
         let _ = fs::write(self.file("ahead", pid), said);
     }
 
     pub fn ahead_of(&self, pid: u32) -> Option<Ahead> {
         let said = fs::read_to_string(self.file("ahead", pid)).ok()?;
-        Some(match JobId::checked(said.trim()) {
-            Some(bench) => Ahead::Paused(bench),
-            None => Ahead::Running,
-        })
+        Some(
+            match said.split_whitespace().nth(1).and_then(JobId::checked) {
+                Some(bench) => Ahead::Paused(bench),
+                None => Ahead::Running,
+            },
+        )
+    }
+
+    /// Whether every live holder is a preemptible job that arrived after `arrived`, which a
+    /// benchmark that arrived then has frozen rather than waits for.
+    pub fn only_later_preemptible(&self, arrived: u128) -> bool {
+        self.records(Kind::Holder)
+            .iter()
+            .filter(|h| Host::exists(h.pid))
+            .all(|h| {
+                fs::read_to_string(self.file("ahead", h.pid))
+                    .ok()
+                    .and_then(|said| said.split_whitespace().next()?.parse::<u128>().ok())
+                    .is_some_and(|at| at > arrived)
+            })
     }
 
     /// `pause.<pid>`: a benchmark that has `rw` asks the jobs that started ahead of it to freeze.

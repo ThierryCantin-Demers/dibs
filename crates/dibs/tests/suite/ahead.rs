@@ -2,7 +2,8 @@ use crate::harness::*;
 use std::{fs, thread, time::Duration};
 
 fn frozen(s: &Sandbox, pid: u32) -> bool {
-    fs::read_to_string(s.lockdir().join(format!("ahead.{pid}"))).is_ok_and(|said| !said.is_empty())
+    fs::read_to_string(s.lockdir().join(format!("ahead.{pid}")))
+        .is_ok_and(|said| said.split_whitespace().count() == 2)
 }
 
 #[test]
@@ -24,7 +25,7 @@ fn a_preemptible_job_runs_ahead_of_a_queued_benchmark_and_is_frozen_while_it_run
     ]));
     s.held(2);
     assert_eq!(
-        s.status().lines_with("ahead of the queue"),
+        s.status().lines_with("preemptible"),
         1,
         "it starts beside the block, ahead of the benchmark"
     );
@@ -65,7 +66,12 @@ fn a_preemptible_job_queued_before_a_benchmark_is_waited_for_not_frozen() {
     s.queued(1);
     block.open();
     s.wait(a);
-    s.until_records("the benchmark to ask for a pause", || s.count("pause") == 1);
+    s.gate_taken();
+    assert_eq!(
+        s.count("pause"),
+        0,
+        "it asks nothing of a job queued before it"
+    );
     assert!(
         !s.read("measured").contains("ran"),
         "the benchmark waits for a job queued before it"
@@ -89,4 +95,40 @@ fn only_a_shared_job_with_nothing_to_strand_is_preemptible() {
         assert_ne!(out.code, 0, "{args:?}");
         assert_eq!(out.stderr.lines_with("--preemptible is for"), 1, "{args:?}");
     }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_preemptible_job_never_runs_beside_a_benchmark_from_before_preemption() {
+    // Such a benchmark's runner takes `rw` exclusive and knows nothing of `ahead`.
+    let mut s = Sandbox::new();
+    let rw = s.lockdir().join("rw");
+    let old = s.gate("old");
+    let bench = s.spawn(s.sh(&format!("flock -x {} -c '{}'", rw.display(), old.hold())));
+    s.until_records("the old benchmark to take rw", || {
+        fs::File::open(&rw).is_ok_and(|f| {
+            let free = f.try_lock_shared().is_ok();
+            let _ = f.unlock();
+            !free
+        })
+    });
+    assert_eq!(
+        s.dibs(["--preemptible", "--wait", "1", "--label", "compile", "true"])
+            .code(),
+        75,
+        "it does not start beside one running"
+    );
+    old.open();
+    s.wait(bench);
+
+    let compile = s.gate("compile");
+    let p = s.spawn(s.dibs(["--preemptible", "--label", "compile", &compile.hold()]));
+    s.held(1);
+    assert_ne!(
+        s.sh(&format!("flock -x -w 1 {} true", rw.display())).code(),
+        0,
+        "and one that arrives waits for it"
+    );
+    compile.open();
+    s.wait(p);
 }

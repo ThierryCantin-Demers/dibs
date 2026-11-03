@@ -57,6 +57,7 @@ pub struct Watch {
     /// In nanoseconds, as the benchmarks asking say theirs.
     pub arrived: u128,
     pub ahead: File,
+    pub rw: File,
     pub stopper: Arc<Stopper>,
     pub frozen: Arc<Frozen>,
 }
@@ -112,7 +113,9 @@ impl Watch {
         }
         drop(state);
         self.frozen.freeze();
-        self.dir.mark_ahead(self.pid, &Ahead::Paused(bench.clone()));
+        self.dir
+            .mark_ahead(self.pid, self.arrived, &Ahead::Paused(bench.clone()));
+        let _ = self.rw.unlock();
         let _ = self.ahead.unlock();
         while !self.resumed() {
             if stop.load(Ordering::Relaxed) {
@@ -122,11 +125,11 @@ impl Watch {
         }
         signal_group(job, libc::SIGCONT);
         self.frozen.thaw();
-        self.dir.mark_ahead(self.pid, &Ahead::Running);
+        self.dir.mark_ahead(self.pid, self.arrived, &Ahead::Running);
     }
 
-    /// `ahead` taken again, once no benchmark queued before the job asks and the one that ran has
-    /// let it go.
+    /// `ahead` and `rw` taken again, once no benchmark queued before the job asks and the one
+    /// that ran has let them go.
     fn resumed(&self) -> bool {
         if self.dir.pausing_before(self.arrived).is_some() {
             return false;
@@ -134,7 +137,12 @@ impl Watch {
         if !matches!(Lock::try_hold(&self.ahead, Hold::Shared), Ok(true)) {
             return false;
         }
+        if !matches!(Lock::try_hold(&self.rw, Hold::Shared), Ok(true)) {
+            let _ = self.ahead.unlock();
+            return false;
+        }
         if self.dir.pausing_before(self.arrived).is_some() {
+            let _ = self.rw.unlock();
             let _ = self.ahead.unlock();
             return false;
         }

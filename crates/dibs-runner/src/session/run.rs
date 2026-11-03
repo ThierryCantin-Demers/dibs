@@ -41,6 +41,9 @@ const JOB_GRACE: Duration = Duration::from_secs(30);
 const SAY_ACQUIRED_AFTER: u64 = 5;
 /// How often a preemptible job looks again while a benchmark queued before it asks to pause.
 const AHEAD_POLL: Duration = Duration::from_millis(100);
+/// How often a benchmark tries `rw` again while it waits for the jobs that hold it, which is
+/// how it learns that only preemptible ones it may freeze are left.
+const BENCH_POLL: Duration = Duration::from_millis(50);
 /// The log is cut back to its last lines once it outgrows the bound.
 const LOG_BOUND: usize = 20000;
 const LOG_KEPT: usize = 10000;
@@ -92,7 +95,7 @@ struct Acquired {
     lock: Lock,
     at: u64,
     waited: u64,
-    /// Taken ahead of a benchmark queued before it.
+    /// Preemptible: it holds `ahead` as well, and a benchmark queued before it freezes it.
     ahead: bool,
 }
 
@@ -190,14 +193,15 @@ impl<'a> Run<'a> {
         };
         let frozen = Arc::new(Frozen::default());
         let preemption = preempts
-            .then(|| acquired.lock.ahead_handle().ok())
+            .then(|| acquired.lock.handles().ok())
             .flatten()
-            .map(|ahead| {
+            .map(|(ahead, rw)| {
                 Preemption::start(Watch {
                     dir: self.at.dir.clone(),
                     pid: self.at.call.pid,
                     arrived: arrived.order,
                     ahead,
+                    rw,
                     stopper: Arc::clone(self.at.stopper),
                     frozen: Arc::clone(&frozen),
                 })
@@ -269,8 +273,9 @@ impl<'a> Run<'a> {
             && request.ports.is_empty()
     }
 
-    /// Takes `ahead` rather than passing the gate: such a job starts at once unless a benchmark
-    /// queued before it runs or is asking it to freeze, and none queued after it ever does.
+    /// Takes `ahead` and then `rw` shared without passing the gate: such a job starts at once
+    /// unless a benchmark runs or one queued before it asks it to freeze. Holding `rw` keeps a
+    /// benchmark from a runner that knows nothing of `ahead` from starting beside it.
     fn acquire_ahead(&self, history: &History, arrived: &Arrived) -> Result<Acquired, i32> {
         let request = &self.at.call.request;
         let pid = self.at.call.pid;
@@ -302,7 +307,11 @@ impl<'a> Run<'a> {
                 }
                 match lock.take_ahead(Hold::Shared, deadline) {
                     Ok(true) if self.at.dir.pausing_before(arrived.order).is_none() => {
-                        break Ok(true);
+                        match lock.take(Hold::Shared, Some(Instant::now())) {
+                            Ok(true) => break Ok(true),
+                            Ok(false) => lock.let_ahead_go(),
+                            Err(e) => break Err(e),
+                        }
                     }
                     Ok(true) => lock.let_ahead_go(),
                     Ok(false) => break Ok(false),
@@ -334,18 +343,12 @@ impl<'a> Run<'a> {
                 return Err(Exit::NoLock.status());
             }
         }
-        let ahead = self
-            .at
-            .dir
-            .records(Kind::Waiting)
-            .iter()
-            .any(|w| w.mode == Mode::Bench && w.start <= arrived.start && Host::exists(w.pid));
         let now = Moment::epoch_now();
         Ok(Acquired {
             lock,
             at: now,
             waited: now.saturating_sub(arrived.start),
-            ahead,
+            ahead: true,
         })
     }
 
@@ -404,7 +407,11 @@ impl<'a> Run<'a> {
                         self.at.sink.say(&shown());
                     }
                 }
-                lock.take(hold, deadline).map(|taken| match taken {
+                let taken = match hold {
+                    Hold::Exclusive => self.take_for_bench(&lock, arrived, deadline),
+                    Hold::Shared => lock.take(hold, deadline),
+                };
+                taken.map(|taken| match taken {
                     true => Waited::Held,
                     false => Waited::GaveUpAtLock,
                 })
@@ -462,8 +469,34 @@ impl<'a> Run<'a> {
         })
     }
 
-    /// Asks the jobs started ahead to freeze, and takes `ahead` once each queued after this
-    /// benchmark has and each queued before it has ended. False when the deadline passes first.
+    /// `rw`, exclusive. Once only preemptible jobs queued after this benchmark hold it, they are
+    /// asked to freeze and let it go; one queued before it is waited for like any shared job.
+    fn take_for_bench(
+        &self,
+        lock: &Lock,
+        arrived: &Arrived,
+        deadline: Option<Instant>,
+    ) -> io::Result<bool> {
+        let pid = self.at.call.pid;
+        let mut asked = false;
+        loop {
+            if lock.take(Hold::Exclusive, Some(Instant::now()))? {
+                return Ok(true);
+            }
+            if !asked && self.at.dir.only_later_preemptible(arrived.order) {
+                self.at.dir.ask_to_pause(pid, arrived.order, &arrived.job);
+                asked = true;
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                let _ = fs::remove_file(self.at.dir.file("pause", pid));
+                return Ok(false);
+            }
+            std::thread::sleep(BENCH_POLL);
+        }
+    }
+
+    /// Takes `ahead` once each preemptible job queued after this benchmark has frozen, then
+    /// writes out what they wrote. False when the deadline passes first.
     fn pause_ahead(
         &self,
         lock: &Lock,
@@ -495,7 +528,9 @@ impl<'a> Run<'a> {
             .dir
             .hold(&self.at.call.lock_record(acquired.at, job));
         if acquired.ahead {
-            self.at.dir.mark_ahead(self.at.call.pid, &Ahead::Running);
+            self.at
+                .dir
+                .mark_ahead(self.at.call.pid, arrived.order, &Ahead::Running);
         }
         if acquired.waited >= SAY_ACQUIRED_AFTER {
             self.at.sink.say(&format!(

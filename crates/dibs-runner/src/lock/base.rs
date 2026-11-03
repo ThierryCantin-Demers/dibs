@@ -12,8 +12,8 @@ const RETRY: Duration = Duration::from_millis(25);
 
 /// The lock files, open. Everyone passes through the gate, and an exclusive waiter keeps
 /// holding it while it waits for `rw`, so a trickle of shared jobs cannot starve a benchmark.
-/// A preemptible job holds `ahead` instead of either, and a benchmark takes it exclusive once it
-/// has `rw`, which it can only do once each such job has finished or been frozen.
+/// A preemptible job passes no gate and holds `ahead` beside `rw`; a benchmark takes `ahead`
+/// exclusive once it has `rw`, which each such job queued after it lets go of while frozen.
 pub struct Lock {
     gate: File,
     rw: File,
@@ -101,10 +101,10 @@ impl Lock {
         let _ = self.ahead.unlock();
     }
 
-    /// `ahead` as a second handle on the same lock, for the thread that freezes the job: what
-    /// it lets go of, this lets go of too.
-    pub fn ahead_handle(&self) -> io::Result<File> {
-        self.ahead.try_clone()
+    /// `ahead` and `rw` as second handles on the same locks, for the thread that freezes the
+    /// job: what it lets go of, this lets go of too.
+    pub fn handles(&self) -> io::Result<(File, File)> {
+        Ok((self.ahead.try_clone()?, self.rw.try_clone()?))
     }
 
     /// Blocks in the kernel with no deadline. With one, it tries again until then, since a

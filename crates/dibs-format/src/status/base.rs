@@ -119,14 +119,14 @@ pub struct Holder {
     /// command and none of whose time is the command's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepare: Option<String>,
-    /// Started ahead of a benchmark queued before it, which freezes it while it runs.
+    /// Preemptible: a benchmark queued before it freezes it while it runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ahead: Option<Ahead>,
     #[serde(skip)]
     pub services: Vec<Service>,
 }
 
-/// Where a job that started ahead of a queued benchmark is.
+/// Where a preemptible job is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Ahead {
