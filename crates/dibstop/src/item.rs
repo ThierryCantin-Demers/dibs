@@ -2,7 +2,7 @@
 
 use dibs_format::{
     Alias, Label, Mode, Span,
-    status::{BatchShown, Holder, IdleKind, Scope, Shown, Status, Waiter},
+    status::{Ahead, BatchShown, Holder, IdleKind, Scope, Shown, Status, Waiter},
 };
 
 #[derive(Clone)]
@@ -46,7 +46,11 @@ impl Item {
             machine: machine.to_string(),
             device: h.device.clone(),
             holding: true,
-            slot: "HOLDING".into(),
+            slot: match h.ahead {
+                Some(Ahead::Paused(_)) => "FROZEN".into(),
+                Some(Ahead::Running) => "AHEAD".into(),
+                None => "HOLDING".into(),
+            },
             mode: h.mode,
             pid: h.pid,
             label: h.label.clone(),
@@ -133,6 +137,17 @@ struct Verdict {
 
 impl Verdict {
     fn of_holder(h: &Holder) -> Verdict {
+        if let Some(Ahead::Paused(bench)) = &h.ahead {
+            return Verdict {
+                note: format!("frozen for benchmark {bench}"),
+                long: format!(
+                    "It only compiles and started ahead of the benchmark {bench}, which was queued \
+                     before it, so it is frozen while that benchmark runs and picks up where it \
+                     stopped afterwards. It is waiting its turn, not stuck."
+                ),
+                alarm: false,
+            };
+        }
         if let Some(doing) = h.preparing() {
             return Verdict {
                 note: format!("preparing: {doing}"),
@@ -325,6 +340,26 @@ mod tests {
             ("preparing: laying out its tree", false),
             "a prepare is not timed against the command's history"
         );
+    }
+
+    #[test]
+    fn a_frozen_job_is_waiting_its_turn_not_idle() {
+        let idle = r#","idle_for":600,"idle_kind":"never""#;
+        let frozen = status(
+            &holder(
+                "b",
+                &format!(r#"{idle},"ahead":{{"paused":"20261103120000-9"}}"#),
+            ),
+            "",
+        );
+        let v = Item::all("m", &frozen);
+        assert_eq!(v[0].slot, "FROZEN");
+        assert_eq!(
+            (v[0].note.as_str(), v[0].alarm),
+            ("frozen for benchmark 20261103120000-9", false)
+        );
+        let ahead = status(&holder("b", r#","ahead":"running""#), "");
+        assert_eq!(Item::all("m", &ahead)[0].slot, "AHEAD");
     }
 
     #[test]
