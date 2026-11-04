@@ -202,7 +202,8 @@ spoiled without it.
 - `--device <alias>` runs a job, or a recipe, on that card only, and shared work naming no
   machine is placed only on a machine that has it. **A benchmark on a multi-GPU
   machine that names no card is not reproducible**, because which card the runtime picks is
-  recorded nowhere.
+  recorded nowhere. A job over several cards names them all, `--device a,b`, in the order
+  CUDA numbers them; only CUDA can be pinned to more than one.
 - Each machine keeps its own series of a label, since numbers from two machines never compare.
   The first run of a label on a machine says on stderr where its other series are: read it, since
   a forgotten `--on` is exactly that line. Keep the plain label for new work; `-kd` and `-mg`

@@ -145,7 +145,9 @@ impl Visit {
             }
             _ => {}
         }
-        let environment = match Environment::of(&machine, self.call.request.card.as_ref()) {
+        let request = &self.call.request;
+        let cards: Vec<_> = request.card.iter().chain(&request.also).cloned().collect();
+        let environment = match Environment::of(&machine, &cards) {
             Ok(environment) => environment,
             Err(Unpinned(said)) => {
                 self.sink.say(&said);

@@ -31,7 +31,7 @@ pub struct Unpinned(pub String);
 impl Environment {
     /// Nothing here has a person behind it, so a pager or a credential prompt is a hang; and
     /// scratch, not `/tmp`, which is a small tmpfs shared by everyone.
-    pub fn of(machine: &Site, card: Option<&Card>) -> Result<Environment, Unpinned> {
+    pub fn of(machine: &Site, cards: &[Card]) -> Result<Environment, Unpinned> {
         let mut vars = BTreeMap::from([
             ("GIT_PAGER", "cat".to_string()),
             ("PAGER", "cat".into()),
@@ -41,15 +41,18 @@ impl Environment {
             ("TMPDIR", machine.tmp().display().to_string()),
             ("PATH", Environment::path()),
         ]);
-        if let Some(card) = card
-            && let Some(pci) = &card.pci
-        {
-            Pinned {
-                card,
-                pci,
-                host: &machine.host,
-            }
-            .export(&mut vars)?;
+        let pinned: Vec<Pinned> = cards
+            .iter()
+            .filter_map(|card| {
+                Some(Pinned {
+                    card,
+                    pci: card.pci.as_deref()?,
+                    host: &machine.host,
+                })
+            })
+            .collect();
+        if !pinned.is_empty() {
+            Pinned::export_all(&pinned, &mut vars)?;
         }
         Ok(Environment {
             vars,
@@ -117,7 +120,7 @@ impl Environment {
     }
 }
 
-/// A job pinned to one card by its slot, which belongs to the slot rather than to the order the
+/// A job pinned to a card by its slot, which belongs to the slot rather than to the order the
 /// driver enumerated in this boot.
 struct Pinned<'a> {
     card: &'a Card,
@@ -126,11 +129,49 @@ struct Pinned<'a> {
 }
 
 impl Pinned<'_> {
-    fn export(&self, vars: &mut BTreeMap<&'static str, String>) -> Result<(), Unpinned> {
-        let Pinned { card, pci, host } = self;
-        vars.insert("DIBS_DEVICE", card.alias.to_string());
-        vars.insert("DIBS_DEVICE_PCI", pci.to_string());
+    /// Every card the job is pinned to, in the order named: CUDA numbers them in that order.
+    fn export_all(
+        pinned: &[Pinned],
+        vars: &mut BTreeMap<&'static str, String>,
+    ) -> Result<(), Unpinned> {
+        let joined = |f: fn(&Pinned) -> String| pinned.iter().map(f).collect::<Vec<_>>().join(",");
+        vars.insert("DIBS_DEVICE", joined(|p| p.card.alias.to_string()));
+        vars.insert("DIBS_DEVICE_PCI", joined(|p| p.pci.to_string()));
         vars.insert("CUDA_DEVICE_ORDER", "PCI_BUS_ID".into());
+        if pinned.len() > 1
+            && let Some(p) = pinned.iter().find(|p| p.runs("vulkan") && !p.runs("cuda"))
+        {
+            return Err(Unpinned(format!(
+                "dibs: {} runs Vulkan and not CUDA, and only CUDA can be pinned to several cards at once.\n  \
+                 Vulkan selects one card, so the rest would run on whichever it picks.\n",
+                p.card.alias
+            )));
+        }
+        let mut uuids = Vec::new();
+        for p in pinned {
+            p.still_there()?;
+            if p.runs("cuda") {
+                uuids.push(p.cuda()?);
+            }
+        }
+        if !uuids.is_empty() {
+            vars.insert("CUDA_VISIBLE_DEVICES", uuids.join(","));
+        }
+        if let [one] = pinned
+            && one.runs("vulkan")
+        {
+            one.vulkan(vars);
+        }
+        Ok(())
+    }
+
+    fn runs(&self, runtime: &str) -> bool {
+        self.card.runtimes.iter().any(|r| r == runtime)
+    }
+
+    /// The card the inventory recorded in its slot is the one there now.
+    fn still_there(&self) -> Result<(), Unpinned> {
+        let Pinned { card, pci, host } = self;
         let chip = card.chip.as_deref().map(str::to_ascii_lowercase);
         let holds = match Host::slot(pci) {
             Slot::Unreadable => None,
@@ -152,29 +193,31 @@ impl Pinned<'_> {
                 },
             )));
         }
-        let runs = |runtime: &str| card.runtimes.iter().any(|r| r == runtime);
-        if runs("cuda") {
-            let uuid = Pinned::cuda_uuid(pci).ok_or_else(|| {
-                Unpinned(format!(
-                    "dibs: asked for {} ({pci}) and nothing here answers to it.\n  \
-                     Not running it unpinned: that would measure whichever card is first\n  \
-                     and report it under the name of the one you asked for.\n  \
-                     Check the machine still has that card:  dibs --check {host} --write\n",
-                    card.alias
-                ))
-            })?;
-            vars.insert("CUDA_VISIBLE_DEVICES", uuid);
-        }
-        if runs("vulkan") {
-            vars.insert("DRI_PRIME", format!("pci-{}", pci.replace([':', '.'], "_")));
-            if let Some(chip) = &card.chip
-                && card.twins == 1
-            {
-                vars.insert("MESA_VK_DEVICE_SELECT", chip.clone());
-                vars.insert("MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE", "1".into());
-            }
-        }
         Ok(())
+    }
+
+    fn cuda(&self) -> Result<String, Unpinned> {
+        let Pinned { card, pci, host } = self;
+        Pinned::cuda_uuid(pci).ok_or_else(|| {
+            Unpinned(format!(
+                "dibs: asked for {} ({pci}) and nothing here answers to it.\n  \
+                 Not running it unpinned: that would measure whichever card is first\n  \
+                 and report it under the name of the one you asked for.\n  \
+                 Check the machine still has that card:  dibs --check {host} --write\n",
+                card.alias
+            ))
+        })
+    }
+
+    fn vulkan(&self, vars: &mut BTreeMap<&'static str, String>) {
+        let Pinned { card, pci, .. } = self;
+        vars.insert("DRI_PRIME", format!("pci-{}", pci.replace([':', '.'], "_")));
+        if let Some(chip) = &card.chip
+            && card.twins == 1
+        {
+            vars.insert("MESA_VK_DEVICE_SELECT", chip.clone());
+            vars.insert("MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE", "1".into());
+        }
     }
 
     /// CUDA takes an index or a UUID, never a bus id, and ignores one without a word.

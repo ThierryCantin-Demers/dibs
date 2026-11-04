@@ -122,6 +122,8 @@
 1|                                comparable. `dibs --machines -v` lists the aliases. `cpu`
 1|                                names the processor, which pins nothing and has nothing to
 1|                                choose between, but records what a CPU run ran on.
+1|                                `a,b` pins a job to several CUDA cards, numbered in that
+1|                                order.
 1|   --stream                     the job's whole output, as it happens. Without it a job's
 1|                                stdout is a digest: its first and last lines, a count of
 1|                                what was left out, and where the whole log is. Nothing

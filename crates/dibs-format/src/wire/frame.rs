@@ -174,6 +174,7 @@ mod tests {
             stream: false,
             tty: false,
             card: None,
+            also: Vec::new(),
             fingerprint: None,
             agent: "session".into(),
             agent_id: "id".into(),

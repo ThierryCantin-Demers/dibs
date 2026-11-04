@@ -679,7 +679,9 @@ is neither the caller's to decide nor recorded anywhere.
 
 `dibs --machines -v` lists each machine's cards, and `--device <alias>` runs a job on one of
 them. It works with `dibs run` and with recipes, and `dibs bench ... --dry-run` prints which card it
-would use before anything runs.
+would use before anything runs. `--device a,b` pins a job to several cards, which CUDA numbers in
+the order given, and files its series under the pair as written. Vulkan selects a single card, so a
+job over several is refused when one of them does not run CUDA.
 
 What that turns into differs per runtime, and none of it is guessable. First, whatever the runtime,
 the slot is read back at launch: one that is empty, or holds another model than the inventory

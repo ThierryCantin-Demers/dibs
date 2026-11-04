@@ -20,6 +20,9 @@ pub struct Request {
     /// The caller's stdout is a terminal.
     pub tty: bool,
     pub card: Option<Card>,
+    /// The cards after `card` a job over several is pinned to, in the order named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<Card>,
     pub fingerprint: Option<String>,
     /// The caller's session title.
     pub agent: String,
@@ -61,6 +64,20 @@ pub struct Service {
 pub enum MaxFrom {
     Given,
     Default,
+}
+
+impl Request {
+    /// The cards a call is pinned to as `--device` named them, which its series is filed under.
+    pub fn device(&self) -> Option<Alias> {
+        let first = self.card.as_ref()?;
+        Some(Alias::new(
+            std::iter::once(first)
+                .chain(&self.also)
+                .map(|c| c.alias.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+        ))
+    }
 }
 
 /// The card a call is pinned to.

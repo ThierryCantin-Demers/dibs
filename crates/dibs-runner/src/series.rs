@@ -61,9 +61,8 @@ impl Binding<'_> {
     fn card(&self) -> String {
         self.call
             .request
-            .card
-            .as_ref()
-            .map_or("none".to_string(), |c| c.alias.to_string())
+            .device()
+            .map_or("none".to_string(), |d| d.to_string())
     }
 
     fn label(&self) -> &str {

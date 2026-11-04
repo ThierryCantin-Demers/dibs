@@ -151,6 +151,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
         stream: false,
         tty: false,
         card: None,
+        also: Vec::new(),
         fingerprint: None,
         agent: format!("{} build", built.name()),
         agent_id: String::new(),

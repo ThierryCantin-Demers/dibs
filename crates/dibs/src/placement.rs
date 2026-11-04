@@ -248,7 +248,7 @@ impl Placement<'_> {
                     .machine
                     .fleet
                     .entry(name.as_str())
-                    .is_some_and(|entry| Card::on(alias, entry).is_ok());
+                    .is_some_and(|entry| Card::all_on(alias, entry).is_ok());
                 if !carries && call.verbose {
                     eprintln!("  {:<18} has no {alias}", name.as_str());
                 }

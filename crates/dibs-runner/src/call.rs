@@ -84,7 +84,7 @@ impl Received {
             label: self.label().clone(),
             agent: self.agent.clone(),
             agent_id: Some(self.agent_id.clone()).filter(|id| !id.is_empty()),
-            device: self.request.card.as_ref().map(|c| c.alias.clone()),
+            device: self.request.device(),
             command: self.one_line.clone(),
             fingerprint: self.request.fingerprint.clone(),
             job: Some(job.clone()),
@@ -95,9 +95,8 @@ impl Received {
     pub fn log_line(&self, event: Event) -> LogLine {
         let device = self
             .request
-            .card
-            .as_ref()
-            .map(|c| format!(" on {}", c.alias))
+            .device()
+            .map(|d| format!(" on {d}"))
             .unwrap_or_default();
         LogLine {
             when: Moment::now().iso(),

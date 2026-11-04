@@ -98,6 +98,7 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         stream: false,
         tty: false,
         card: None,
+        also: Vec::new(),
         fingerprint: None,
         agent: "session suite".into(),
         agent_id: "local_suite".into(),

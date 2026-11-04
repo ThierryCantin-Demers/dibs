@@ -19,6 +19,8 @@ pub struct Card {
     pub chip: String,
     /// How many cards there share its chip id.
     pub twins: usize,
+    /// The cards after this one a call over several is pinned to, in the order named.
+    pub also: Vec<Card>,
 }
 
 #[derive(Debug)]
@@ -54,7 +56,21 @@ impl Card {
         let entry = target.entry(fleet).ok_or_else(|| CardError::NoEntry {
             host: target.host.clone(),
         })?;
-        Card::on(alias, entry)
+        Card::all_on(alias, entry)
+    }
+
+    /// `a,b`: each card named, the first carrying the rest, under the alias as written, which is
+    /// what the series is filed under.
+    pub fn all_on(alias: &Alias, entry: &Machine) -> Result<Card, CardError> {
+        let mut cards = alias
+            .as_str()
+            .split(',')
+            .map(|one| Card::on(&Alias::new(one), entry))
+            .collect::<Result<Vec<Card>, CardError>>()?;
+        let mut first = cards.remove(0);
+        first.alias = alias.to_string();
+        first.also = cards;
+        Ok(first)
     }
 
     /// The card `alias` names on the machine `entry` describes.
@@ -85,6 +101,7 @@ impl Card {
             twins: entry.chip_count(&chip),
             pci,
             chip,
+            also: Vec::new(),
         })
     }
 
@@ -106,6 +123,7 @@ impl Card {
     /// Refuses a command whose cargo features build for GPU runtimes the card has none of: the
     /// program falls back to another runtime without a word, measured as the one asked for.
     pub fn runs(&self, command: &str) -> Result<(), CardError> {
+        self.also.iter().try_for_each(|card| card.runs(command))?;
         let asked = runtimes_built_for(command);
         let has: Vec<&str> = self.runtimes.split(',').filter(|r| !r.is_empty()).collect();
         if asked.is_empty() || has.is_empty() || asked.iter().any(|r| has.contains(r)) {

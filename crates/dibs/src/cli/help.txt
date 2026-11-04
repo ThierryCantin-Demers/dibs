@@ -120,6 +120,8 @@ Calls: one command under the lock, and what the machines are doing.
                                comparable. `dibs --machines -v` lists the aliases. `cpu`
                                names the processor, which pins nothing and has nothing to
                                choose between, but records what a CPU run ran on.
+                               `a,b` pins a job to several CUDA cards, numbered in that
+                               order.
   --stream                     the job's whole output, as it happens. Without it a job's
                                stdout is a digest: its first and last lines, a count of
                                what was left out, and where the whole log is. Nothing

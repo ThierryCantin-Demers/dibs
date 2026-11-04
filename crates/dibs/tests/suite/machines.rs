@@ -357,6 +357,63 @@ fn any_pci_device() -> Option<(String, String)> {
 }
 
 #[test]
+fn a_job_over_two_cards_is_pinned_to_both_and_only_where_cuda_can_take_both() {
+    let Some((pci, chip)) = any_pci_device() else {
+        skip("this computer has no PCI device to stand in for a card");
+        return;
+    };
+    let mut s = Sandbox::new();
+    let card = |alias: &str, runtimes: &str| {
+        format!(
+            "\n  [[machine.here.device]]\n  kind     = \"gpu\"\n  alias    = \"{alias}\"\n  name     = \"a card\"\n  pci      = \"{pci}\"\n  chip     = \"{chip}\"\n  runtimes = [{runtimes}]\n"
+        )
+    };
+    s.machines(&format!(
+        "[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n{}{}{}",
+        hostname(),
+        card("gpu:a", ""),
+        card("gpu:b", ""),
+        card("gpu:v", "\"vulkan\"")
+    ));
+    let run = |alias: &str| {
+        s.dibs([
+            "--on",
+            "here",
+            "--device",
+            alias,
+            "echo ran on $DIBS_DEVICE",
+        ])
+        .run()
+    };
+    let out = run("gpu:a,gpu:b");
+    assert_eq!(
+        (out.code, out.stdout.lines_matching("^ran on gpu:a,gpu:b$")),
+        (0, 1),
+        "both cards are named to the job, in the order given: {}",
+        out.all()
+    );
+    let out = run("gpu:a,gpu:v");
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.lines_with("ran on"),
+            out.stderr
+                .lines_with("only CUDA can be pinned to several cards"),
+        ),
+        (2, 0, 1),
+        "a card Vulkan would pick for itself is refused: {}",
+        out.all()
+    );
+    assert_eq!(
+        run("gpu:a,gpu:nope")
+            .stderr
+            .lines_with("no device called 'gpu:nope'"),
+        1,
+        "and each card named must be there"
+    );
+}
+
+#[test]
 fn a_card_no_longer_in_its_slot_is_refused_rather_than_run_on_another() {
     // Vulkan's selectors ignore an address that answers to nothing and hand the job the first card.
     let Some((pci, chip)) = any_pci_device() else {

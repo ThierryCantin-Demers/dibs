@@ -23,9 +23,8 @@ impl Thermals<'_> {
         let card = self
             .call
             .request
-            .card
-            .as_ref()
-            .map_or("none".to_string(), |c| c.alias.to_string());
+            .device()
+            .map_or("none".to_string(), |d| d.to_string());
         let line = format!(
             "{}\t{phase}\t{}\t{}\t{card}\t{}",
             Moment::epoch_now(),

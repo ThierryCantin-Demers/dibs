@@ -56,6 +56,22 @@ pub struct Watch {
 }
 
 impl CallValues {
+    fn wire_card(card: &Card, alias: &str) -> wire::Card {
+        let some = |s: &str| (!s.is_empty()).then(|| s.to_string());
+        wire::Card {
+            alias: Alias::new(alias),
+            pci: some(&card.pci),
+            runtimes: card
+                .runtimes
+                .split(',')
+                .filter(|r| !r.is_empty())
+                .map(str::to_string)
+                .collect(),
+            chip: some(&card.chip),
+            twins: card.twins,
+        }
+    }
+
     /// Answered beside whatever holds the machine, so as never to wait behind it.
     pub fn takes_no_lock(&self) -> bool {
         matches!(
@@ -89,18 +105,15 @@ impl CallValues {
             json: self.json,
             stream: self.stream,
             tty: self.tty,
-            card: some(&card.alias).map(|alias| wire::Card {
-                alias: Alias::new(alias),
-                pci: some(&card.pci),
-                runtimes: card
-                    .runtimes
-                    .split(',')
-                    .filter(|r| !r.is_empty())
-                    .map(str::to_string)
-                    .collect(),
-                chip: some(&card.chip),
-                twins: card.twins,
+            // Each card goes as its own alias; the runner names the pin by all of them.
+            card: some(&card.alias).map(|alias| {
+                CallValues::wire_card(card, alias.split(',').next().unwrap_or_default())
             }),
+            also: card
+                .also
+                .iter()
+                .map(|c| CallValues::wire_card(c, &c.alias))
+                .collect(),
             fingerprint: self.fingerprint.clone().filter(|f| !f.is_empty()),
             agent: self.caller.name.clone(),
             agent_id: self.caller.id.clone(),

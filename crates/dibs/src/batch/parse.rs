@@ -473,8 +473,13 @@ impl Step {
     /// Whether the two may run at once on one machine: neither measures, and one of them says it
     /// may, or each holds a card of its own.
     pub fn overlaps(&self, other: &Step) -> bool {
-        let card = |s: &Step| s.device.clone().filter(|d| d != "cpu");
-        let apart = matches!((card(self), card(other)), (Some(a), Some(b)) if a != b);
+        let cards = |s: &Step| {
+            s.device
+                .as_deref()
+                .filter(|d| *d != "cpu")
+                .map(|d| d.split(',').map(str::to_string).collect::<Vec<_>>())
+        };
+        let apart = matches!((cards(self), cards(other)), (Some(a), Some(b)) if a.iter().all(|c| !b.contains(c)));
         !self.measures() && !other.measures() && (self.overlap || other.overlap || apart)
     }
 
