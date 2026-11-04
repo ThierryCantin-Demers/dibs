@@ -69,6 +69,16 @@ impl Checkouts {
         })
     }
 
+    /// Whether `dir`, found by the repo's name alone, is the clone under the root standing in for
+    /// a call made outside any tree of it, as every step of a batch started elsewhere is.
+    pub fn outside(repo: &str, dir: &Path) -> bool {
+        let named = !repo.contains('/') && !repo.starts_with('.');
+        named
+            && std::env::current_dir()
+                .and_then(|here| here.canonicalize())
+                .is_ok_and(|here| !here.starts_with(dir))
+    }
+
     fn canonical(p: PathBuf) -> Result<PathBuf, RepoError> {
         Ok(p.canonicalize().map_err(FileError::at(&p))?)
     }

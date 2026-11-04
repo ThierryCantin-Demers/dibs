@@ -13,7 +13,7 @@ use super::{
 use crate::{
     call::{BatchStep, Destination, RecipeJob},
     cli::{Call, RecipeCall, ShellWord},
-    recipe::{self, Lock, Manifest, NotTaken, Resolved},
+    recipe::{self, Checkouts, Lock, Manifest, NotTaken, Resolved},
     records::{Affinity, RunLog},
 };
 use dibs_format::{
@@ -256,6 +256,12 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             "dibs: preparing ".to_string()
         };
         eprintln!("{lead}{}", arm.preparing(&repo_name, local.as_ref(), &dir));
+        if local.is_some() && Checkouts::outside(&args.repo, &dir) {
+            eprintln!(
+                "  that is the clone under your root, since this call was not made from inside a tree of\n  \
+                 {repo_name}. To send a worktree, run from inside it or name its path: <path>@local"
+            );
+        }
         let reference = arm.fetch.as_deref().unwrap_or("local");
         let spec = TreeSpec {
             dir: arm.dir(&dir),

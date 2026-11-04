@@ -1382,6 +1382,20 @@ fn a_worktree_is_a_line_of_work_on_its_repo_not_a_repo_of_its_own() {
         r#""variant":"app-topk""#,
         "a bare name inside a worktree of that repo is the worktree, not the clone under the root"
     );
+    let outside = s
+        .dibs(["build", "app@local", "p"])
+        .dir(&s.path("loose-cwd"))
+        .env("DIBS_ROOT", s.root.display().to_string());
+    fs::create_dir_all(s.path("loose-cwd")).unwrap();
+    let said = outside.run().stderr;
+    assert_eq!(
+        (
+            variant(&s),
+            said.lines_with("that is the clone under your root")
+        ),
+        (String::new(), 1),
+        "outside any tree of it, a bare name is the clone under the root, and says so: {said}"
+    );
     s.dibs(["build", &format!("{app}@local"), "p"])
         .dir(&s.path("app-topk"))
         .env("DIBS_ROOT", s.root.display().to_string())
