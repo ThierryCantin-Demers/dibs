@@ -481,6 +481,7 @@ fn recipe(verb: RecipeVerb, repo: &str) -> RecipeCall {
         artifacts_to: None,
         pins: Vec::new(),
         bench: false,
+        preempt: false,
         max: None,
         anyway: false,
         there: false,
@@ -587,6 +588,23 @@ fn recipes() -> Vec<(Vec<&'static str>, Invocation)> {
             }),
         ),
         (
+            vec![
+                "shell",
+                "app",
+                "--reason",
+                "why",
+                "--preemptible",
+                "--",
+                "make",
+            ],
+            r(RecipeCall {
+                reason: Some("why".into()),
+                preempt: true,
+                command: Some("make".into()),
+                ..recipe(RecipeVerb::Shell, "app")
+            }),
+        ),
+        (
             vec!["raw", "--reason", "why", "--", "ls"],
             r(RecipeCall {
                 reason: Some("why".into()),
@@ -649,6 +667,11 @@ fn refusals() -> Vec<(Vec<&'static str>, &'static str, bool)> {
         (
             vec!["--days", "", "--gc"],
             "dibs: --days needs a value.",
+            false,
+        ),
+        (
+            vec!["shell", "app", "--preemptible", "-b", "--", "x"],
+            "dibs: --preemptible is for a shell that only compiles, which a benchmark freezes; --bench is the benchmark",
             false,
         ),
         (

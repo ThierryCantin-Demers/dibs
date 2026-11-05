@@ -86,6 +86,9 @@
 1|                in the tree, under <arm>/r<rep>/ when there are several. They are fetched and
 1|                kept beside each job's log either way
 1|   --bench      shell only: the exclusive lock, for a one-off that is a measurement
+1|   --preemptible  shell only: the command only compiles, so it starts ahead of a queued
+1|                benchmark and is frozen while one queued before it runs. A shell's cargo
+1|                build, check, clippy or --no-run is marked so already
 1|   --anyway     measure even when another tree built into the target after this one did,
 1|                which is otherwise refused with exit 78
 1|   --dry-run    print what would run, take no lock, record nothing

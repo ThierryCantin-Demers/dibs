@@ -84,6 +84,9 @@ Recipes: a repo's builds, tests and benchmarks, prepared and recorded.
                in the tree, under <arm>/r<rep>/ when there are several. They are fetched and
                kept beside each job's log either way
   --bench      shell only: the exclusive lock, for a one-off that is a measurement
+  --preemptible  shell only: the command only compiles, so it starts ahead of a queued
+               benchmark and is frozen while one queued before it runs. A shell's cargo
+               build, check, clippy or --no-run is marked so already
   --anyway     measure even when another tree built into the target after this one did,
                which is otherwise refused with exit 78
   --dry-run    print what would run, take no lock, record nothing

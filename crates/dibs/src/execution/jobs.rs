@@ -32,6 +32,8 @@ pub struct JobRequest<'a> {
     pub max: Option<u64>,
     /// A measurement that starts its label's series on this machine again, on another card.
     pub new_series: bool,
+    /// Declared to only compile, for a command `compiles_only` cannot read.
+    pub preempt: bool,
     /// The tree it runs in, laid out at its head when it is not yet.
     pub tree: Option<Tree>,
 }
@@ -396,7 +398,9 @@ impl Jobs {
         Call {
             mode: Mode::Run(Run {
                 lock,
-                preempt: step && req.lock == Lock::Shared && compiles_only(command),
+                preempt: step
+                    && req.lock == Lock::Shared
+                    && (req.preempt || compiles_only(command)),
                 command: ShellCommand(vec![command.to_string()]),
                 ..Run::default()
             }),
@@ -462,6 +466,7 @@ mod tests {
                 job: &job,
                 max: None,
                 new_series,
+                preempt: false,
                 tree: None,
             };
             jobs.call(&req, "cmd").new_series

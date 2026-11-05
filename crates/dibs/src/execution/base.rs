@@ -227,6 +227,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         job: &pin_jobs[k],
         max: None,
         new_series: false,
+        preempt: false,
         tree: None,
     })?;
 
@@ -327,6 +328,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             job: &env,
             max: None,
             new_series: false,
+            preempt: false,
             tree: None,
         };
         let (arm, step, rep, fold) = match job {
@@ -397,6 +399,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             job: &env,
             max: args.max,
             new_series: args.new_series,
+            preempt: args.preempt,
             tree: None,
         };
         // One cache per repo, exported rather than left to each recipe to remember. The output
@@ -651,6 +654,7 @@ fn refused_before_building(
             job: &RecipeJob::default(),
             max: None,
             new_series: args.new_series,
+            preempt: false,
             tree: None,
         };
         if !backend.preflight(&req) {
@@ -923,6 +927,7 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
             job: &RecipeJob::default(),
             max: args.max,
             new_series: args.new_series,
+            preempt: false,
             tree: None,
         },
         command,

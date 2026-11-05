@@ -209,8 +209,8 @@ Two things in a recipe are refused when it loads, because both produce a number 
 A shared step that only compiles, such as `cargo build` or `cargo test --no-run`, is preemptible:
 it starts at once, beside whatever runs, even with a benchmark queued, and that benchmark freezes
 it while it measures if it was queued first. The step then picks up where it stopped, so it
-finishes no later than it would have waiting its turn. `--preemptible` marks a hand-written job
-the same way. Nothing that runs what it built is frozen, since a card, a server or a peer on the
+finishes no later than it would have waiting its turn. `--preemptible` marks a hand-written job,
+on a run or a shell, the same way. Nothing that runs what it built is frozen, since a card, a server or a peer on the
 other end of a socket would be left stranded mid-call.
 
 ## Building against another repo's tree

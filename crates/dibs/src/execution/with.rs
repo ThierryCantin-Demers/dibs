@@ -106,6 +106,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             job: &RecipeJob::default(),
             max: None,
             new_series: false,
+            preempt: false,
             tree: None,
         };
         if !backend.preflight(&req) {
@@ -177,6 +178,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         job: &no_batch,
         max: None,
         new_series: false,
+        preempt: false,
         tree: None,
     })?;
     let patched: BTreeSet<String> = pins
@@ -251,6 +253,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         job: &RecipeJob::default(),
         max: None,
         new_series: false,
+        preempt: false,
         tree: None,
     };
     let reported = match &local {
@@ -333,6 +336,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             job: &RecipeJob::default(),
             max: None,
             new_series: false,
+            preempt: false,
             tree: Some(wire::Tree {
                 step: Some(wire::Step {
                     claim: BuildSignature::of(build).is_some(),

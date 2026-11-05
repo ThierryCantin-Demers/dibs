@@ -51,7 +51,7 @@ spoiled without it.
   queued is that, not a bug.
 - A job that only compiles starts at once, ahead of a queued benchmark, and is frozen while a
   benchmark queued before it runs. A recipe's `cargo build` or `--no-run` step is marked so
-  by itself; mark a hand-written one with `--preemptible`, and never one that runs what it built.
+  by itself; mark a hand-written one, a run or a shell, with `--preemptible`, and never one that runs what it built.
   A job `dibs status` shows as frozen is waiting its turn, not stuck.
 - **Never `sleep`**, here or inside a command sent to a machine: under the exclusive lock it stalls
   everyone for its whole duration. To wait until something is ready, block on a fifo: `mkfifo f`,

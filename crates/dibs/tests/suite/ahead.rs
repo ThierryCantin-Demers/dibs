@@ -52,6 +52,28 @@ fn a_preemptible_job_runs_ahead_of_a_queued_benchmark_and_is_frozen_while_it_run
 }
 
 #[test]
+fn a_shell_marked_preemptible_runs_as_a_preemptible_job() {
+    let mut s = Sandbox::new();
+    let app = crate::recipes::app(&s);
+    let compile = s.gate("compile");
+    let p = s.spawn(s.dibs([
+        "shell",
+        &format!("{app}@local"),
+        "--reason",
+        "test",
+        "--preemptible",
+        "--",
+        &compile.hold(),
+    ]));
+    s.until_records("the shell to run as preemptible", || {
+        s.status().lines_with("preemptible") == 1
+    });
+    compile.open();
+    assert_eq!(s.wait(p), 0);
+    s.gone();
+}
+
+#[test]
 fn a_preemptible_job_queued_before_a_benchmark_is_waited_for_not_frozen() {
     let mut s = Sandbox::new();
     let (block, compile) = (s.gate("block"), s.gate("compile"));

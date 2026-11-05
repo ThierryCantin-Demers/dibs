@@ -225,6 +225,7 @@ fn sync_gitdb(backend: &Jobs, from: &Path, to: &str) -> bool {
         job: &RecipeJob::default(),
         max: None,
         new_series: false,
+        preempt: false,
         tree: None,
     };
     backend.sync(&req, &args, &mut |_| {}).outcome.status == 0

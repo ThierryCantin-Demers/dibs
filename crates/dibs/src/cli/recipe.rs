@@ -145,6 +145,8 @@ pub struct RecipeCall {
     pub pins: Vec<String>,
     /// shell only: the exclusive lock, for a one-off that is a measurement.
     pub bench: bool,
+    /// shell only: the command only compiles, so a benchmark queued before it may freeze it.
+    pub preempt: bool,
     pub max: Option<u64>,
     /// Measure even when another tree built into the target after this one did.
     pub anyway: bool,
@@ -201,6 +203,7 @@ impl RecipeCall {
             artifacts_to: None,
             pins: Vec::new(),
             bench: false,
+            preempt: false,
             max: None,
             anyway: false,
             there: false,
@@ -258,6 +261,7 @@ impl RecipeCall {
                 "--artifacts" => call.artifacts_to = Some(value("--artifacts needs a directory")?),
                 "--pin" => call.pins.push(value("--pin needs <repo>@<ref>")?),
                 "--bench" | "-b" => call.bench = true,
+                "--preemptible" if verb == RecipeVerb::Shell => call.preempt = true,
                 "--max" => {
                     call.max = match it.next() {
                         Some(n) if expansion.pending(n) => None,
@@ -316,6 +320,11 @@ impl RecipeCall {
         };
         if target.is_empty() && !verb.needs_no_repo() {
             return Err(refused("needs a repo".into()));
+        }
+        if call.preempt && call.bench {
+            return Err(refused(
+                "--preemptible is for a shell that only compiles, which a benchmark freezes; --bench is the benchmark".into(),
+            ));
         }
         if verb == RecipeVerb::With && call.command.is_none() {
             return Err(refused("with runs a command here against the repo's servers: dibs with <repo>[@<ref>] <service> -- <command>".into()));
