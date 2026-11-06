@@ -314,7 +314,11 @@ impl Served<'_> {
                     live: self.live,
                 };
                 let delivery = &mut Delivery::Inherit;
-                match provision.through_newest(Queueing::Waits, delivery)? {
+                let installed = match provision.through_newest(Queueing::Waits, delivery)? {
+                    Installed::NoneThere if self.session.leased => provision.first(delivery)?,
+                    installed => installed,
+                };
+                match installed {
                     Installed::Done => {
                         match self.reconnecting(delivery, |_| self.carry(prepared))? {
                             Attempted::Exit(code) => code,

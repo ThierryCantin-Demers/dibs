@@ -396,6 +396,28 @@ fn a_leased_machine_installs_its_first_runner_on_the_first_call() {
 }
 
 #[test]
+fn a_leased_machine_installs_its_first_runner_on_a_first_send() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, false);
+    let until = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    s.machines(&format!(
+        "[machine.leased]\nssh = \"fake-remote\"\nhostname = \"fake-remote\"\nexpires = {until}\n"
+    ));
+    s.write("x/a.txt", "sent\n");
+    let to = format!(":{}/", s.p("y"));
+    let out = s
+        .remote(s.dibs(["--on", "leased", "--sync", "-r", "./x/", &to]))
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(out.stderr.lines_with("a first build"), 1, "{}", out.stderr);
+    assert_eq!(s.read("y/a.txt"), "sent\n");
+}
+
+#[test]
 fn the_first_build_queues_behind_a_benchmark() {
     let mut s = Sandbox::new();
     without_this_runner(&mut s, false);
