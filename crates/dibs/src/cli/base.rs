@@ -1,5 +1,5 @@
 use crate::cli::{CliError, recipe::RecipeCall, shell::Command};
-use dibs_format::{Alias, BatchId, JobId, Label, MachineName};
+use dibs_format::{Alias, BatchId, JobId, Label, MachineName, wire::Close};
 
 /// What one `dibs` command line asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +34,8 @@ pub struct Call {
     pub on: Option<MachineName>,
     pub label: Option<Label>,
     pub wait: Option<u64>,
+    /// `--when-open`: waits for a machine its owners closed rather than being refused.
+    pub when_open: bool,
     pub max: Option<u64>,
     pub device: Option<Alias>,
     pub verbose: bool,
@@ -61,6 +63,11 @@ pub enum Mode {
         lines: u32,
     },
     Release,
+    /// `--close`: the machine taken back by its owners until `--open`.
+    Close(Close),
+    Open {
+        anyone: bool,
+    },
     Gc {
         days: Option<u32>,
         /// Everything nothing holds, whatever its clock.

@@ -72,6 +72,19 @@ impl Dispatch<'_> {
             Words::Release => {
                 machine()?.answer(Asked::plain(Mode::Release, Request::label(self.call)))
             }
+            Words::Close(close) => machine()?.answer(Asked {
+                mode: Mode::Close,
+                label: Label::new("close"),
+                command: close.text(),
+                streamed: true,
+            }),
+            Words::Open { anyone } => machine()?.answer(Asked::plain(
+                Mode::Open,
+                Label::new(match anyone {
+                    true => "open.any",
+                    false => "open",
+                }),
+            )),
             Words::Gc { days, all, dry_run } => machine()?.answer(Asked {
                 mode: Mode::Gc,
                 label: self

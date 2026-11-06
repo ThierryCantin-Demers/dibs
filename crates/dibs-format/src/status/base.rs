@@ -20,6 +20,8 @@ pub struct Status {
     pub holders: Vec<Holder>,
     /// In arrival order.
     pub queue: Vec<Waiter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed: Option<Closure>,
     #[serde(skip)]
     pub scene: Scene,
 }
@@ -29,6 +31,17 @@ impl Status {
     pub fn line(&self) -> String {
         format!("{}\n", serde_json::to_string(self).unwrap_or_default())
     }
+}
+
+/// A machine its owners have taken back, as `closed` in the lock directory says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Closure {
+    /// The account that closed it.
+    pub by: String,
+    /// In seconds since the epoch.
+    pub since: u64,
+    #[serde(flatten)]
+    pub close: crate::wire::Close,
 }
 
 /// Who holds the lock.

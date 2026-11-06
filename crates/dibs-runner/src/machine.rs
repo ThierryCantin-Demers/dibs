@@ -217,3 +217,33 @@ pub fn short_hostname(given: Option<String>) -> String {
     });
     full.split('.').next().unwrap_or_default().to_string()
 }
+
+/// The account's name, or its number where it has none.
+pub fn account_name(uid: u32) -> String {
+    let mut buffer = vec![0 as libc::c_char; 4096];
+    // SAFETY: passwd is plain data; getpwuid_r fills it and the buffer, both owned here.
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    let read = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut entry,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut found,
+        )
+    };
+    if read != 0 || found.is_null() {
+        return uid.to_string();
+    }
+    // SAFETY: getpwuid_r left pw_name pointing at a NUL-terminated name in the buffer.
+    unsafe { std::ffi::CStr::from_ptr(entry.pw_name) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// This process's account.
+pub fn own_account() -> String {
+    // SAFETY: getuid cannot fail.
+    account_name(unsafe { libc::getuid() })
+}

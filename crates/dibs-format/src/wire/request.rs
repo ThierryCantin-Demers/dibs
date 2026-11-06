@@ -43,9 +43,60 @@ pub struct Request {
     /// Only compiles, so it may start ahead of a queued benchmark and be frozen while one runs.
     #[serde(default)]
     pub preempt: bool,
+    /// Waits for a machine closed by its owners to open, rather than being refused.
+    #[serde(default)]
+    pub when_open: bool,
     /// The tree the job runs in, prepared at its head when it is not yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<Tree>,
+}
+
+/// A machine taken back by its owners.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Close {
+    /// Stops the jobs running rather than letting them finish.
+    pub now: bool,
+    /// Accounts whose work carries on.
+    pub except: Vec<String>,
+    pub reason: Option<String>,
+}
+
+impl Close {
+    /// One `key=value` a line, as a `--close` call sends it and the lock directory's `closed`
+    /// holds it.
+    pub fn text(&self) -> String {
+        let mut text = format!("now={}\n", u8::from(self.now));
+        if !self.except.is_empty() {
+            text.push_str(&format!("except={}\n", self.except.join(",")));
+        }
+        if let Some(reason) = &self.reason {
+            text.push_str(&format!("reason={}\n", reason.replace('\n', " ")));
+        }
+        text
+    }
+
+    /// What `text` wrote; anything else is passed over, so an empty text closes to everyone.
+    pub fn of_text(text: &str) -> Close {
+        let mut close = Close::default();
+        for line in text.lines() {
+            match line.split_once('=') {
+                Some(("now", value)) => close.now = value.trim() == "1",
+                Some(("except", value)) => {
+                    close.except = value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|a| !a.is_empty())
+                        .map(String::from)
+                        .collect();
+                }
+                Some(("reason", value)) => {
+                    close.reason = Some(value.trim().to_string()).filter(|r| !r.is_empty());
+                }
+                _ => {}
+            }
+        }
+        close
+    }
 }
 
 /// A server run on the machine for one call.

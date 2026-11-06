@@ -84,6 +84,8 @@ impl CallValues {
                 | Mode::Kill
                 | Mode::KillForce
                 | Mode::Release
+                | Mode::Close
+                | Mode::Open
         )
     }
 
@@ -125,6 +127,9 @@ impl CallValues {
             },
             new_series: self.new_series,
             preempt: self.preempt,
+            // From the environment, which `--when-open` sets, so a batch's steps and a sync's
+            // transfer carry it too.
+            when_open: std::env::var("DIBS_WHEN_OPEN").is_ok_and(|v| v == "1"),
             ports: self.ports.iter().map(|p| p.0.clone()).collect(),
             services: self
                 .services

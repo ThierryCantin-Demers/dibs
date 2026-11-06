@@ -193,6 +193,12 @@
 1|                                reclaim the lock when an orphan holds it: a process that
 1|                                outlived its caller holds it with no record to show for it,
 1|                                and nothing on the machine can run until it goes
+1|   dibs --close                for a machine's owners: nothing new starts there until
+1|                                --open, and running jobs finish first (--now stops them).
+1|                                --except <accounts> lets those accounts carry on, and
+1|                                --reason <why> is shown to whoever is refused. Takes no lock.
+1|   dibs --open                 open a machine again. Refuses one another account closed
+1|                                until you add --anyone.
 1|   dibs --gc                   what is filling the machine's scratch, and reclaim it:
 1|                                worktrees and job logs nobody has used for 14 days, build
 1|                                caches for 5. It takes the shared lock, since deleting
@@ -220,6 +226,7 @@
 1|                      a step added to a script later cannot forget. An inventory of one
 1|                      machine, or DIBS_HOST without one, needs neither.
 1|   --wait <seconds>   give up rather than queue past this
+1|   --when-open        queue on a machine its owners closed, until it opens, rather than exit 79
 1|   --max <seconds>    kill the command if it holds the lock longer than this (default 7200
 1|                      for --bench and 1800 otherwise, or twice the label's 90th percentile
 1|                      where its history runs longer, said when it starts)

@@ -1,5 +1,6 @@
 use crate::{
     clock::Moment,
+    closed::Shutter,
     history::{Estimate, History, Key, Scope},
     job::Tree,
     lock::{Kind, Lock, LockDir},
@@ -100,6 +101,7 @@ impl Look<'_> {
             clones: clones(&home().join("prog")),
             holders,
             queue,
+            closed: (Shutter { dir: self.dir }).read(),
             scene,
         }
     }

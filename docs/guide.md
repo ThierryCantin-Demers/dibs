@@ -426,6 +426,21 @@ the process holding it, having read the lock twice a moment apart first: a clien
 for an instant to test it, and killing a passer-by would be worse than the wedge. It prints what
 it stopped, and `dibs --log` keeps it.
 
+## A machine its owners take back
+
+A machine lent to the team by people who also use it themselves can be closed to dibs while
+they do: `dibs --close --reason '<why>'` on it, or with `--on` from anywhere. Nothing new starts
+there until `dibs --open`. The jobs running are let finish, and the call returns once they have
+(`--now` stops them instead, and they exit 79). `--except <accounts>` lets those accounts go on
+working. A call that arrives while it is closed, or was queued when it closed, exits 79 with the
+reason, and `dibs status` says who closed it. `--when-open` on a call, or `DIBS_WHEN_OPEN=1`
+for every call, queues it until the machine opens instead: work left to run overnight. Shared
+work naming no machine is not placed on a closed one.
+
+The closure is the file `closed` in the lock directory, so an owner without dibs can close the
+machine with `touch` and open it with `rm`. `--open` refuses a closure another account made
+until `--anyone` says the owner agreed.
+
 ## What was measured
 
 Every recipe run appends a line to `~/.local/state/dibs/runs.jsonl`, or `$DIBS_RUNS`: the label, the

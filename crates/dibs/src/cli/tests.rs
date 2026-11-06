@@ -483,6 +483,7 @@ fn recipe(verb: RecipeVerb, repo: &str) -> RecipeCall {
         bench: false,
         preempt: false,
         max: None,
+        when_open: false,
         anyway: false,
         there: false,
         json: false,

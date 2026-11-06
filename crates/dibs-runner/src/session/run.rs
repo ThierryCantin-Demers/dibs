@@ -3,6 +3,7 @@ use crate::{
     call::{Journal, Received},
     channel::{Caller, Channel},
     clock::{Deadline, Moment, Span},
+    closed::{self, Shutter},
     history::{History, Key, Scope},
     job::{
         Cap, Environment, Guard, HoldFifo, Job, LogRead, Output, Ports, Readiness, Services, Start,
@@ -178,13 +179,28 @@ impl<'a> Run<'a> {
             Caller::Stdout => Channel::hangup(Arc::clone(self.at.stopper)),
         }
         let preempts = self.preempts();
-        let acquired = match preempts {
-            true => self.acquire_ahead(&history, &arrived),
-            false => self.acquire(&history, &arrived),
-        };
-        let acquired = match acquired {
-            Ok(acquired) => acquired,
-            Err(code) => return code,
+        let acquired = loop {
+            if let Err(code) = self.until_open(&arrived) {
+                return code;
+            }
+            let acquired = match preempts {
+                true => self.acquire_ahead(&history, &arrived),
+                false => self.acquire(&history, &arrived),
+            };
+            let acquired = match acquired {
+                Ok(acquired) => acquired,
+                Err(code) => return code,
+            };
+            // Recorded as holding before it looks, so that a closing which saw no holder of its
+            // has this call see the closure.
+            let record = self.at.call.lock_record(acquired.at, &arrived.job);
+            self.at.dir.hold(&record);
+            if (Shutter { dir: self.at.dir }).shut().is_none() {
+                break acquired;
+            }
+            drop(acquired);
+            self.at.dir.write(Kind::Waiting, &record);
+            let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
         };
         let mut state = self.at.stopper.state();
         let begun = match self.begin(&arrived, &acquired, &mut environment, &mut state) {
@@ -206,7 +222,9 @@ impl<'a> Run<'a> {
                     frozen: Arc::clone(&frozen),
                 })
             });
+        let shut = closed::Watch::start(self.at.dir.clone(), Arc::clone(self.at.stopper));
         let hosted = self.host(state, &arrived, &begun, environment, max, frozen);
+        shut.end();
         if let Some(preemption) = preemption {
             preemption.end();
         }
@@ -260,6 +278,31 @@ impl<'a> Run<'a> {
             job,
             held,
         })
+    }
+
+    /// Waits while its machine is closed to it, when the call said to; refuses it otherwise.
+    fn until_open(&self, arrived: &Arrived) -> Result<(), i32> {
+        let mut told = false;
+        while let Some(closure) = (Shutter { dir: self.at.dir }).shut() {
+            if !self.at.call.request.when_open {
+                self.at.sink.say(&format!(
+                    "{}  It closed while this call was queued, which leaves the queue.\n",
+                    closed::said(&closure)
+                ));
+                let mut state = self.at.stopper.state();
+                self.abandon(&arrived.job, &mut state);
+                return Err(Exit::Closed.status());
+            }
+            if !told {
+                self.at.sink.say(&format!(
+                    "{}  Queued for when it opens (--when-open).\n",
+                    closed::said(&closure)
+                ));
+                told = true;
+            }
+            std::thread::sleep(closed::POLL);
+        }
+        Ok(())
     }
 
     /// A job that only compiles may be frozen, which nothing that holds a card, serves, or is
@@ -791,8 +834,11 @@ impl<'a> Run<'a> {
             .call
             .batch_id()
             .is_some_and(|b| self.at.dir.cancelled(b));
+        let closed = self.at.stopper.state().closed;
         let status = if cancelled {
             Exit::Cancelled.status()
+        } else if closed {
+            Exit::Closed.status()
         } else {
             end.hosted.status
         };
@@ -810,9 +856,15 @@ impl<'a> Run<'a> {
         }
         let ended = end.begun.log.as_ref().map(|log| {
             let by = match Exit::of_code(status) {
-                _ if !cancelled && let Some(by) = end.hosted.laid => by,
+                _ if !cancelled
+                    && !closed
+                    && let Some(by) = end.hosted.laid =>
+                {
+                    by
+                }
                 Some(Exit::Overran) if end.hosted.overran => By::Dibs,
                 Some(Exit::Cancelled) if cancelled => By::Dibs,
+                Some(Exit::Closed) if closed => By::Dibs,
                 Some(Exit::ServiceFailed) if end.hosted.failed => By::Dibs,
                 _ => By::Command,
             };

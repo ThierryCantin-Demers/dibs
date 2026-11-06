@@ -113,6 +113,7 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         ready_within: 0,
         new_series: false,
         preempt: false,
+        when_open: false,
         tree: None,
     }
 }

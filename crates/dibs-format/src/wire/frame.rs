@@ -189,6 +189,7 @@ mod tests {
             ready_within: 300,
             new_series: false,
             preempt: false,
+            when_open: false,
             tree: None,
         }
     }

@@ -8,6 +8,7 @@ mod baselines;
 mod batch;
 mod cli;
 mod client;
+mod closed;
 mod contention;
 mod detach;
 mod hold;

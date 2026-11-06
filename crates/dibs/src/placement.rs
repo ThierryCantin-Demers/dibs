@@ -36,6 +36,9 @@ pub struct Reading {
     pub caches: Option<Vec<String>>,
     /// None from a machine too old to say, which is ranked rather than read as having none.
     pub clones: Option<Vec<String>>,
+    /// Taken back by its owners, so nothing placed there would start.
+    #[serde(default)]
+    pub closed: Option<serde::de::IgnoredAny>,
 }
 
 /// Who holds a machine's lock, as its status says.
@@ -312,6 +315,16 @@ impl Placement<'_> {
             let Some(reading) = Reading::answered(&answer.output) else {
                 continue;
             };
+            if reading.closed.is_some()
+                && std::env::var("DIBS_WHEN_OPEN")
+                    .ok()
+                    .is_none_or(|v| v != "1")
+            {
+                if call.verbose {
+                    eprintln!("  {:<18} closed by its owners", name.as_str());
+                }
+                continue;
+            }
             let entry = self.machine.fleet.entry(name.as_str());
             candidates.push(Candidate {
                 workstation: entry.is_some_and(|m| m.workstation),
@@ -444,6 +457,7 @@ mod tests {
                 load: Some(load),
                 caches: Some(Vec::new()),
                 clones: Some(vec!["app".into()]),
+                closed: None,
             }),
             workstation: false,
             measures: true,

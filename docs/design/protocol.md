@@ -198,6 +198,9 @@ account and both halves find the same ones.
   - `with.<pid>`: the servers a call started.
   - `port.<n>`: a port picked for `--port`, reserved for the call whose pid it holds.
   - `cancelled.<id>`: a cancelled batch, whose later steps it refuses for a day.
+  - `closed`: the machine closed by its owners, its owner the account that closed it: `now=1`
+    when the running jobs are stopped, `except=<accounts>`, `reason=<text>`. Empty, it closes
+    the machine to everyone.
 - **History and log**: `/var/lib/dibs/history` and `log` when that directory can be written, so
   every account's durations and arrivals are one record, else under `~/.local/state/dibs`. Each
   has a `<file>.lock` beside it.

@@ -385,6 +385,26 @@ impl fmt::Display for Text<'_> {
             0 => String::new(),
             n => format!("{} ({n} queued){}", p.dim, p.off),
         };
+        if let Some(closed) = &status.closed {
+            let _ = writeln!(
+                out,
+                "{}dibs: CLOSED by {}{}, {} ago: nothing new starts until it is opened.",
+                p.busy,
+                closed.by,
+                p.off,
+                Span(status.t.saturating_sub(closed.since))
+            );
+            if let Some(reason) = &closed.close.reason {
+                let _ = writeln!(out, "  {reason}");
+            }
+            if !closed.close.except.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "  {} may still run work here.",
+                    closed.close.except.join(", ")
+                );
+            }
+        }
         match status.holders.first().map(|h| h.mode) {
             Some(_) if status.state == LockState::Bench => {
                 let _ = writeln!(
@@ -523,6 +543,7 @@ mod tests {
             clones: Vec::new(),
             holders: Vec::new(),
             queue: Vec::new(),
+            closed: None,
             scene,
         }
     }

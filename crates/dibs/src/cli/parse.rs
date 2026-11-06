@@ -2,7 +2,7 @@ use crate::cli::{
     Call, CliError, Hook, Invocation, KillTarget, Mode, OutTarget, PortName, RecipeCall,
     RecipeVerb, Run, RunLock, Service, ServiceName, shell::Command,
 };
-use dibs_format::{Alias, BatchId, JobId, Label, MachineName};
+use dibs_format::{Alias, BatchId, JobId, Label, MachineName, wire::Close};
 use std::str::FromStr;
 
 impl Invocation {
@@ -62,6 +62,8 @@ enum Word {
     Forget,
     Measure,
     Sync,
+    Close,
+    Open,
 }
 
 /// Every flag as it was read, the way the call's words leave them.
@@ -88,6 +90,9 @@ struct Parser {
     measures: bool,
     force: bool,
     anyone: bool,
+    now: bool,
+    except: Vec<String>,
+    reason: Option<String>,
     wait: Option<String>,
     max: Option<String>,
     call: Call,
@@ -118,6 +123,9 @@ impl Default for Parser {
             measures: true,
             force: false,
             anyone: false,
+            now: false,
+            except: Vec::new(),
+            reason: None,
             wait: None,
             max: None,
             call: Call::default(),
@@ -273,6 +281,25 @@ impl Parser {
                 }
                 "--force" => self.force = true,
                 "--anyone" => self.anyone = true,
+                "--close" => self.word = Word::Close,
+                "--open" => self.word = Word::Open,
+                "--now" => self.now = true,
+                "--except" => {
+                    let accounts = need_some("--except")?;
+                    self.except.extend(
+                        accounts
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|a| !a.is_empty())
+                            .map(String::from),
+                    );
+                    at += 1;
+                }
+                "--reason" => {
+                    self.reason = Some(need_some("--reason")?);
+                    at += 1;
+                }
+                "--when-open" => self.call.when_open = true,
                 "--wait" => {
                     self.wait = Some(need("--wait")?);
                     at += 1;
@@ -561,6 +588,20 @@ impl Parser {
                 force: self.force,
                 anyone: self.anyone,
             },
+            Word::Close => {
+                takes_nothing("--close takes no command")?;
+                Mode::Close(Close {
+                    now: self.now,
+                    except: self.except.clone(),
+                    reason: self.reason.clone(),
+                })
+            }
+            Word::Open => {
+                takes_nothing("--open takes no command")?;
+                Mode::Open {
+                    anyone: self.anyone,
+                }
+            }
             Word::Machines
             | Word::Which
             | Word::Pick

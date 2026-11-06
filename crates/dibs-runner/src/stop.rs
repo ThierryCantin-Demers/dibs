@@ -4,7 +4,7 @@ use crate::{
     platform::{Host, Platform as _},
     sink::Sink,
 };
-use dibs_format::{Event, JobId};
+use dibs_format::{Event, Exit, JobId};
 use std::{
     fs,
     os::unix::process::CommandExt as _,
@@ -42,6 +42,8 @@ pub struct State {
     pub job: Option<JobId>,
     /// Its `--with` servers, which go with it.
     pub services: Vec<u32>,
+    /// Stopped because its machine was closed with `--now`, which its exit says.
+    pub closed: bool,
 }
 
 /// Stops a call from another thread, leaving the machine as the call's own end would.
@@ -63,6 +65,7 @@ impl Stopper {
                 logged_end: false,
                 job: None,
                 services: Vec::new(),
+                closed: false,
             }),
             call,
             dir,
@@ -90,6 +93,16 @@ impl Stopper {
     /// A caller gone while queued takes its call out of the queue; one gone while its job runs
     /// takes the job's tree, and the call finishes as for any other end.
     pub fn caller_gone(&self, why: &str) {
+        self.stop_for(Event::CallerGone, why, 128 + libc::SIGTERM);
+    }
+
+    /// Its machine closed with `--now`: stopped as for a caller gone, ending with exit 79.
+    pub fn closed(&self, why: &str) {
+        self.state().closed = true;
+        self.stop_for(Event::Killed, why, Exit::Closed.status());
+    }
+
+    fn stop_for(&self, event: Event, why: &str, code: i32) {
         let mut state = self.state();
         if !matches!(
             state.stage,
@@ -101,14 +114,14 @@ impl Stopper {
         ) {
             return;
         }
-        let mut line = self.call.log_line(Event::CallerGone);
+        let mut line = self.call.log_line(event);
         line.command = format!("{why}: {}", self.call.one_line);
         line.job = state.job.clone();
         Journal { path: &self.log }.write(&line);
         match state.stage {
             Stage::Running(work) | Stage::Peeking(work) => Host::reap(&[work]),
             Stage::Starting => Host::reap(&state.services),
-            _ => self.abort(&mut state, 128 + libc::SIGTERM),
+            _ => self.abort(&mut state, code),
         }
     }
 

@@ -7,6 +7,7 @@ mod ahead;
 mod call;
 mod channel;
 mod clock;
+mod closed;
 mod history;
 mod itself;
 mod job;

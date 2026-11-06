@@ -149,6 +149,28 @@ pub const CALL: &[Flag] = &[
     Flag::new(&["--force"], Value::No, "with --kill: without waiting"),
     Flag::new(&["--release"], Value::No, "reclaim a lock an orphan holds"),
     Flag::new(
+        &["--close"],
+        Value::No,
+        "keep new work off the machine until --open",
+    ),
+    Flag::new(&["--open"], Value::No, "open a machine closed with --close"),
+    Flag::new(&["--now"], Value::No, "with --close: stop the running jobs"),
+    Flag::new(
+        &["--except"],
+        Value::Free,
+        "with --close: accounts that carry on",
+    ),
+    Flag::new(
+        &["--reason"],
+        Value::Free,
+        "with --close: why, shown to whoever is refused",
+    ),
+    Flag::new(
+        &["--when-open"],
+        Value::No,
+        "queue on a closed machine until it opens",
+    ),
+    Flag::new(
         &["--log"],
         Value::No,
         "what ran, what it cost, what was killed",
@@ -243,6 +265,11 @@ pub const RECIPE: &[Flag] = &[
     Flag::new(&["--bench", "-b"], Value::No, "shell: the exclusive lock"),
     Flag::new(&["--preemptible"], Value::No, "shell: it only compiles"),
     Flag::new(&["--anyway"], Value::No, "measure whatever binary is there"),
+    Flag::new(
+        &["--when-open"],
+        Value::No,
+        "queue on a closed machine until it opens",
+    ),
     Flag::new(
         &["--there"],
         Value::No,

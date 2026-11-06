@@ -28,6 +28,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     watch.hold: false
     watch.lease: 120
     watch.off: false
+    when_open: false
 
 == dibs --machines  (with a shared registry under your own)
 -> exit 0

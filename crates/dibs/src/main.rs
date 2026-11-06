@@ -90,11 +90,17 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         Invocation::Friction(text) => friction(&text),
         Invocation::Hook(Hook::Ssh) => Ok(ExitCode::from(SshHook::serve() as u8)),
         Invocation::Recipe(call) => {
+            if call.when_open {
+                wait_for_open();
+            }
             let caller = Caller::from_env();
             ChangeNotice::tell_once(&caller);
             run(call, &caller)
         }
         Invocation::Call(call) => {
+            if call.when_open {
+                wait_for_open();
+            }
             let caller = Caller::from_env();
             if call.mode != Mode::Update {
                 ChangeNotice::tell_once(&caller);
@@ -271,4 +277,10 @@ fn completions(words: &[String]) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// `--when-open`, carried in the environment to every request this call and its children send.
+fn wait_for_open() {
+    // SAFETY: set while only the main thread runs, before anything reads the environment.
+    unsafe { std::env::set_var("DIBS_WHEN_OPEN", "1") };
 }

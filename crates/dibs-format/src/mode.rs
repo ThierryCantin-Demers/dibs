@@ -39,10 +39,13 @@ pub enum Mode {
     KillForce,
     Release,
     Gc,
+    /// Taken back by its owners: nothing starts until it is opened.
+    Close,
+    Open,
 }
 
 impl Mode {
-    const ALL: [Mode; 14] = [
+    const ALL: [Mode; 16] = [
         Mode::Shared,
         Mode::Bench,
         Mode::Peek,
@@ -57,6 +60,8 @@ impl Mode {
         Mode::KillForce,
         Mode::Release,
         Mode::Gc,
+        Mode::Close,
+        Mode::Open,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -75,6 +80,8 @@ impl Mode {
             Mode::KillForce => "kill-force",
             Mode::Release => "release",
             Mode::Gc => "gc",
+            Mode::Close => "close",
+            Mode::Open => "open",
         }
     }
 }

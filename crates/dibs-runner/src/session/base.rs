@@ -1,6 +1,7 @@
 use crate::{
     call::{Journal, OneLine as _, Received},
     channel::{Caller, Channel},
+    closed::{self, Owners, Shutter},
     history::History,
     job::{Environment, Unpinned},
     kept::KeptJobs,
@@ -20,7 +21,7 @@ use crate::{
 };
 use dibs_format::{
     Event, Exit, Mode,
-    wire::{Record, Request},
+    wire::{Close, Record, Request},
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -134,6 +135,20 @@ impl Visit {
             Mode::Log => return views.log(),
             Mode::Kill | Mode::KillForce => return kill().serve(),
             Mode::Release => return kill().release(),
+            Mode::Close => {
+                let owners = Owners {
+                    dir: &dir,
+                    sink: &self.sink,
+                };
+                return owners.close(&Close::of_text(&self.call.request.command));
+            }
+            Mode::Open => {
+                let owners = Owners {
+                    dir: &dir,
+                    sink: &self.sink,
+                };
+                return owners.open(self.call.label().as_str() == "open.any");
+            }
             Mode::Check => {
                 return Probe {
                     machine: &machine,
@@ -167,6 +182,25 @@ impl Visit {
             );
             Journal { path: &machine.log }.write(&line);
             return Exit::Cancelled.status();
+        }
+        if matches!(
+            self.call.mode(),
+            Mode::Shared | Mode::Bench | Mode::Rsh | Mode::Gc
+        ) && !self.call.request.when_open
+            && let Some(closure) = (Shutter { dir: &dir }).shut()
+        {
+            self.sink.say(&format!(
+                "{}  Not queued: pass --when-open to wait for it, as for work left to run overnight.\n",
+                closed::said(&closure)
+            ));
+            let mut line = self.call.log_line(Event::Refused);
+            line.command = format!(
+                "refused, closed by {}: {}",
+                closure.by,
+                self.call.request.command.one_line(REFUSED_LINE)
+            );
+            Journal { path: &machine.log }.write(&line);
+            return Exit::Closed.status();
         }
         let at = Serving {
             machine: &machine,

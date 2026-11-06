@@ -191,6 +191,12 @@ Calls: one command under the lock, and what the machines are doing.
                                reclaim the lock when an orphan holds it: a process that
                                outlived its caller holds it with no record to show for it,
                                and nothing on the machine can run until it goes
+  dibs --close                for a machine's owners: nothing new starts there until
+                               --open, and running jobs finish first (--now stops them).
+                               --except <accounts> lets those accounts carry on, and
+                               --reason <why> is shown to whoever is refused. Takes no lock.
+  dibs --open                 open a machine again. Refuses one another account closed
+                               until you add --anyone.
   dibs --gc                   what is filling the machine's scratch, and reclaim it:
                                worktrees and job logs nobody has used for 14 days, build
                                caches for 5. It takes the shared lock, since deleting
@@ -218,6 +224,7 @@ DIBS_BYPASS=0 turns it off. A benchmark can be delayed by their sum and no more.
                      a step added to a script later cannot forget. An inventory of one
                      machine, or DIBS_HOST without one, needs neither.
   --wait <seconds>   give up rather than queue past this
+  --when-open        queue on a machine its owners closed, until it opens, rather than exit 79
   --max <seconds>    kill the command if it holds the lock longer than this (default 7200
                      for --bench and 1800 otherwise, or twice the label's 90th percentile
                      where its history runs longer, said when it starts)

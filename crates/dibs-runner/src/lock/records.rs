@@ -298,7 +298,7 @@ impl RecordFile<'_> {
     }
 
     /// Whether the process that wrote it is still there.
-    fn alive(self) -> bool {
+    pub fn alive(self) -> bool {
         self.pid().is_some_and(|pid| self.written_by(pid))
     }
 }

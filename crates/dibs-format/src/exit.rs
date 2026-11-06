@@ -27,6 +27,8 @@ pub enum Exit {
     ServiceFailed,
     /// A recipe's measurement was refused: another tree built into its target since.
     TargetRebuilt,
+    /// The machine is closed by its owners, so the call was refused or its job stopped.
+    Closed,
     /// The command overran `--max` and was killed while holding the lock.
     Overran,
     /// Stopped by SIGHUP.
@@ -38,7 +40,7 @@ pub enum Exit {
 }
 
 impl Exit {
-    pub const ALL: [Exit; 16] = [
+    pub const ALL: [Exit; 17] = [
         Exit::Success,
         Exit::Failed,
         Exit::Refused,
@@ -51,6 +53,7 @@ impl Exit {
         Exit::Cancelled,
         Exit::ServiceFailed,
         Exit::TargetRebuilt,
+        Exit::Closed,
         Exit::Overran,
         Exit::HungUp,
         Exit::Interrupted,
@@ -71,6 +74,7 @@ impl Exit {
             Exit::Cancelled => 76,
             Exit::ServiceFailed => 77,
             Exit::TargetRebuilt => 78,
+            Exit::Closed => 79,
             Exit::Overran => 124,
             Exit::HungUp => 129,
             Exit::Interrupted => 130,
@@ -112,6 +116,7 @@ impl Exit {
             Exit::TargetRebuilt => {
                 "a recipe's measurement refused: another tree built into its target since"
             }
+            Exit::Closed => "the machine is closed by its owners",
             Exit::Overran => "overran --max",
             Exit::HungUp => "hung up",
             Exit::Interrupted => "interrupted",

@@ -148,6 +148,8 @@ pub struct RecipeCall {
     /// shell only: the command only compiles, so a benchmark queued before it may freeze it.
     pub preempt: bool,
     pub max: Option<u64>,
+    /// Waits for a machine its owners closed rather than being refused.
+    pub when_open: bool,
     /// Measure even when another tree built into the target after this one did.
     pub anyway: bool,
     /// with only: the command runs on the machine, in the tree, rather than here.
@@ -205,6 +207,7 @@ impl RecipeCall {
             bench: false,
             preempt: false,
             max: None,
+            when_open: false,
             anyway: false,
             there: false,
             json: false,
@@ -272,6 +275,7 @@ impl RecipeCall {
                     };
                 }
                 "--anyway" => call.anyway = true,
+                "--when-open" => call.when_open = true,
                 "--there" => call.there = true,
                 "--json" => call.json = true,
                 "--all" => call.all = true,
