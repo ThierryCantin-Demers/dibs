@@ -1,6 +1,7 @@
 use crate::harness::*;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[test]
@@ -406,12 +407,8 @@ fn every_user_on_a_machine_takes_the_same_lock() {
     // was told the machine was idle, and both benchmarked at once.
     let mut s = Sandbox::new();
     s.unset("DIBS_LOCK_DIR");
-    let shared = s.p("shared-lock");
-    let check = s
-        .dibs(["--check"])
-        .env("DIBS_SHARED_LOCK_DIR", &shared)
-        .run()
-        .stdout;
+    let state = s.var("DIBS_SHARED_STATE_DIR");
+    let check = s.dibs(["--check"]).run().stdout;
     assert_eq!(
         check.lines_with("keyed to this uid"),
         1,
@@ -424,45 +421,73 @@ fn every_user_on_a_machine_takes_the_same_lock() {
         1,
         "and names both remedies, not only the group"
     );
-    // Elsewhere the check offers the one account alone: the recipe is Linux's groupadd and tmpfs.
     if cfg!(target_os = "linux") {
         assert_eq!(
-            check.lines_with(&format!("install -d -m 2775 -g dibs {shared}")),
+            check.lines_with(&format!("install -d -m 2775 -g dibs {state}")),
             1,
             "and tells you exactly how to fix it, naming the configured path:\n{check}"
         );
     }
-    fs::create_dir_all(&shared).unwrap();
-    let check = s
-        .dibs(["--check"])
-        .env("DIBS_SHARED_LOCK_DIR", &shared)
-        .run()
-        .stdout;
+    fs::create_dir_all(&state).unwrap();
+    let check = s.dibs(["--check"]).run().stdout;
     assert_eq!(
-        check.lines_with(&format!("lock directory is shared: {shared}")),
+        check.lines_with(&format!("lock directory is shared: {state}/lock")),
         1,
-        "with one present it is used"
+        "with the shared state there, the lock is made in it:\n{check}"
     );
-    s.dibs(["--label", "shared-dir", "echo ran"])
-        .env("DIBS_SHARED_LOCK_DIR", &shared)
-        .run();
-    assert!(
-        s.exists("shared-lock/rw"),
-        "and a job actually takes its lock there"
+    s.dibs(["--label", "shared-dir", "echo ran"]).run();
+    let lock = PathBuf::from(&state).join("lock");
+    assert!(lock.join("rw").exists(), "and a job takes its lock there");
+    assert_eq!(
+        fs::metadata(&lock).unwrap().permissions().mode() & 0o2070,
+        0o2070,
+        "made open to the group whatever this account's umask, and passing the group on"
     );
     // A record has to be removable by whoever prunes it, or one user's dead job wedges the queue
     // for everyone else.
-    let mut records: Vec<_> = fs::read_dir(&shared)
-        .unwrap()
-        .flatten()
-        .map(|e| e.path())
-        .collect();
-    records.sort();
-    let mode = fs::metadata(&records[0]).unwrap().permissions().mode();
+    let mode = fs::metadata(lock.join("rw")).unwrap().permissions().mode();
     assert_ne!(
         mode & 0o020,
         0,
         "records are group-writable so another user can prune them"
+    );
+}
+
+#[test]
+fn the_tmpfs_lock_a_machine_already_has_is_kept() {
+    let mut s = Sandbox::new();
+    s.unset("DIBS_LOCK_DIR");
+    let (tmpfs, state) = (
+        s.var("DIBS_SHARED_LOCK_DIR"),
+        s.var("DIBS_SHARED_STATE_DIR"),
+    );
+    fs::create_dir_all(&tmpfs).unwrap();
+    fs::create_dir_all(&state).unwrap();
+    s.dibs(["--label", "tmpfs-dir", "echo ran"]).run();
+    assert!(
+        PathBuf::from(&tmpfs).join("rw").exists(),
+        "runners from before the shared state meet there"
+    );
+    assert!(!PathBuf::from(&state).join("lock").exists());
+}
+
+#[test]
+fn a_shared_lock_this_account_cannot_join_is_refused_rather_than_run_around() {
+    let mut s = Sandbox::new();
+    s.unset("DIBS_LOCK_DIR");
+    let state = s.var("DIBS_SHARED_STATE_DIR");
+    fs::create_dir_all(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o555)).unwrap();
+    let out = s.dibs(["--label", "outsider", "echo ran-anyway"]).run();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(out.code, 71, "it exits 71: {}", out.all());
+    assert_eq!(out.all().lines_with("ran-anyway"), 0);
+    assert_eq!(
+        out.all()
+            .lines_with("the lock every account on this machine shares"),
+        1,
+        "and says why: {}",
+        out.all()
     );
 }
 

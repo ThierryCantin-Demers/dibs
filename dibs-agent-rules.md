@@ -303,7 +303,7 @@ spoiled without it.
   - **70** no room: the machine's scratch is full or over quota, so nothing can run there.
     `dibs --gc --dry-run` says what is filling it, which is what to tell them.
   - **71** the lock directory cannot be written, so **nothing ran**; a sandboxed shell is the usual
-    cause. Never point `DIBS_LOCK_DIR` somewhere writable: a lock nobody else uses excludes nobody.
+    cause, or on a machine shared by several accounts, yours is not in its `dibs` group. Never point `DIBS_LOCK_DIR` somewhere writable: a lock nobody else uses excludes nobody.
   - **72** dibs could not install its runner on the machine, so **nothing ran**: it has none yet,
     which `dibs --check <machine>` installs, or the build failed and its output says why. A
     leased machine, one with an `expires`, installs its first runner on its first call. A

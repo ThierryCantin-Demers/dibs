@@ -2,7 +2,7 @@ use crate::settings::{home, var};
 use std::{
     ffi::CString,
     fs,
-    os::unix::ffi::OsStrExt as _,
+    os::unix::{ffi::OsStrExt as _, fs::PermissionsExt as _},
     path::{Path, PathBuf},
 };
 
@@ -16,8 +16,6 @@ pub struct Site {
     /// Its name up to the first dot, as messages give it.
     pub host: String,
     pub scope: Scope,
-    /// The lock directory every account meets in, where one can be made.
-    pub shared_lock_dir: PathBuf,
     /// Where history and log are shared among accounts.
     pub shared_state: PathBuf,
 }
@@ -33,20 +31,27 @@ pub enum Scope {
     PerUser,
 }
 
-/// The lock directory cannot be written, so no lock can be taken.
+/// No lock can be taken, so nothing runs.
 #[derive(Debug)]
-pub struct Unwritable(pub PathBuf);
+pub enum NoLock {
+    /// The lock directory cannot be written.
+    Unwritable(PathBuf),
+    /// The machine has a lock every account shares, and this one cannot join it.
+    Unjoinable(PathBuf),
+}
 
 impl Site {
     /// Finds and checks the machine's directories, as every call does before anything else.
-    pub fn set_up() -> Result<Site, Unwritable> {
+    pub fn set_up() -> Result<Site, NoLock> {
+        let shared_state =
+            PathBuf::from(var("DIBS_SHARED_STATE_DIR").unwrap_or_else(|| "/var/lib/dibs".into()));
         let LockPlace {
             dir: lock_dir,
             scope,
-        } = LockPlace::find();
+        } = LockPlace::find(&shared_state)?;
         let probe = lock_dir.join(format!(".writable.{}", std::process::id()));
         if fs::write(&probe, "").is_err() {
-            return Err(Unwritable(lock_dir));
+            return Err(NoLock::Unwritable(lock_dir));
         }
         let _ = fs::remove_file(&probe);
         if scope == Scope::Shared {
@@ -57,8 +62,6 @@ impl Site {
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".local/state"))
             .join("dibs");
-        let shared_state =
-            PathBuf::from(var("DIBS_SHARED_STATE_DIR").unwrap_or_else(|| "/var/lib/dibs".into()));
         let (history, log) = match (var("DIBS_HISTORY"), var("DIBS_LOG")) {
             (None, None) if shared_state.writable_dir() => {
                 (shared_state.join("history"), shared_state.join("log"))
@@ -84,7 +87,6 @@ impl Site {
             scratch,
             host: short_hostname(None),
             scope,
-            shared_lock_dir: LockPlace::shared(),
             shared_state,
         })
     }
@@ -106,51 +108,86 @@ struct LockPlace {
 }
 
 impl LockPlace {
-    /// The first of `DIBS_LOCK_DIR`, the shared directory when it can be written, the runtime
-    /// directory, then `/tmp`.
-    fn shared() -> PathBuf {
+    /// The tmpfs directory machines set up before the one in the shared state, still used where
+    /// it is there so that runners of either age meet in it.
+    fn tmpfs() -> PathBuf {
         PathBuf::from(var("DIBS_SHARED_LOCK_DIR").unwrap_or_else(|| "/dev/shm/dibs-lock".into()))
     }
 
-    fn find() -> LockPlace {
-        let shared = LockPlace::shared();
+    /// `DIBS_LOCK_DIR`, else a shared directory, else this account's own. A shared directory
+    /// that is there and cannot be joined is refused: falling back would tell this account the
+    /// machine is idle while another's benchmark runs.
+    fn find(shared_state: &Path) -> Result<LockPlace, NoLock> {
+        if let Some(dir) = var("DIBS_LOCK_DIR") {
+            let dir = PathBuf::from(dir);
+            let _ = fs::create_dir_all(&dir);
+            return Ok(LockPlace {
+                dir,
+                scope: Scope::Explicit,
+            });
+        }
+        let tmpfs = LockPlace::tmpfs();
+        if tmpfs.is_dir() {
+            return LockPlace::joined(tmpfs);
+        }
+        if shared_state.is_dir() {
+            let dir = shared_state.join("lock");
+            if !dir.is_dir() && fs::create_dir(&dir).is_ok() {
+                // Made under this account's umask, so opened up to the group the parent gives it.
+                let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o2775));
+            }
+            return LockPlace::joined(dir);
+        }
         // SAFETY: getuid cannot fail.
         let uid = unsafe { libc::getuid() };
-        let (dir, scope) = match var("DIBS_LOCK_DIR") {
-            Some(dir) => (PathBuf::from(dir), Scope::Explicit),
-            None if shared.writable_dir() => (shared, Scope::Shared),
-            None => (
-                PathBuf::from(var("XDG_RUNTIME_DIR").unwrap_or_else(|| format!("/run/user/{uid}")))
-                    .join("dibs-lock"),
-                Scope::PerUser,
-            ),
-        };
-        match fs::create_dir_all(&dir) {
-            Ok(()) => LockPlace { dir, scope },
+        let dir =
+            PathBuf::from(var("XDG_RUNTIME_DIR").unwrap_or_else(|| format!("/run/user/{uid}")))
+                .join("dibs-lock");
+        let dir = match fs::create_dir_all(&dir) {
+            Ok(()) => dir,
             Err(_) => {
                 let dir = PathBuf::from(format!("/tmp/dibs-lock-{uid}"));
                 let _ = fs::create_dir_all(&dir);
-                LockPlace {
-                    dir,
-                    scope: Scope::PerUser,
-                }
+                dir
             }
+        };
+        Ok(LockPlace {
+            dir,
+            scope: Scope::PerUser,
+        })
+    }
+
+    fn joined(dir: PathBuf) -> Result<LockPlace, NoLock> {
+        match dir.writable_dir() {
+            true => Ok(LockPlace {
+                dir,
+                scope: Scope::Shared,
+            }),
+            false => Err(NoLock::Unjoinable(dir)),
         }
     }
 }
 
-impl Unwritable {
+impl NoLock {
     pub fn said(&self) -> String {
-        format!(
-            "dibs: {} cannot be written, so no lock can be taken. Nothing was run.\n  \
-             A sandboxed shell is the usual cause: it sees the lock directory and cannot\n  \
-             write in it. Unlocked work beside a measurement is the one outcome this exists\n  \
-             to prevent, and another directory would not exclude the sessions using this one.\n",
-            self.0.display()
-        )
+        match self {
+            NoLock::Unwritable(dir) => format!(
+                "dibs: {} cannot be written, so no lock can be taken. Nothing was run.\n  \
+                 A sandboxed shell is the usual cause: it sees the lock directory and cannot\n  \
+                 write in it. Unlocked work beside a measurement is the one outcome this exists\n  \
+                 to prevent, and another directory would not exclude the sessions using this one.\n",
+                dir.display()
+            ),
+            NoLock::Unjoinable(dir) => format!(
+                "dibs: {} is the lock every account on this machine shares, and this one cannot\n  \
+                 write in it. Nothing was run. A lock of its own would tell it the machine is idle\n  \
+                 while another account measures. Ask whoever runs the machine to add this account\n  \
+                 to the directory's group, then log in again.\n",
+                dir.display()
+            ),
+        }
     }
 }
-
 /// A directory this account may write in.
 pub trait WritableDir {
     fn writable_dir(&self) -> bool;

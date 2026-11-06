@@ -8,9 +8,12 @@ lists every flag.
 
 **What you need first.** An account on the machine you can already `ssh` into with a key, and
 cargo there. dibs needs no root anywhere, and nobody installs anything on the machine by hand:
-dibs builds its own half there, as Which machines says below. One account shared by everyone is the intended shape rather than a compromise,
-because it is what lets one build cache serve the whole team, and because a lock keyed to a uid
-tells two people the machine is idle at the same time.
+dibs builds its own half there, as Which machines says below. One account shared by everyone is
+the simplest shape, because it lets one build cache serve the whole team. A machine where each
+person logs in as themselves needs one step from root, which `dibs --check` prints: a `dibs`
+group holding every account, and `/var/lib/dibs` owned by it with mode 2775. Every account then
+takes its lock, history and log there, across reboots, and an account outside the group is
+refused rather than given a lock of its own, which would tell it the machine is idle.
 
 Your own computer needs cargo to build dibs, and ssh, rsync 3 and git; bash runs the steps of a
 batch. Neither GNU tools nor a recent bash is needed on your side, macOS included. macOS's own

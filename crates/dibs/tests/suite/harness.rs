@@ -188,6 +188,8 @@ impl Sandbox {
             ("GIT_CONFIG_NOSYSTEM", "1".into()),
             ("DIBS_LOCAL", "1".into()),
             ("DIBS_LOCK_DIR", at("lockdir")),
+            ("DIBS_SHARED_LOCK_DIR", at("no-tmpfs-lock")),
+            ("DIBS_SHARED_STATE_DIR", at("no-shared-state")),
             ("DIBS_HISTORY", at("history")),
             ("DIBS_LOG", at("log")),
             ("DIBS_SERIES", at("series")),

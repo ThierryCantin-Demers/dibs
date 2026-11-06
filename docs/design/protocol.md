@@ -184,8 +184,11 @@ Every prepare and `dibs --gc` walk the scratch the same way and judge it by the 
 Each of these paths comes from the environment alone, never from a settings file, so every
 account and both halves find the same ones.
 
-- **The lock directory**: `DIBS_LOCK_DIR`, else `/dev/shm/dibs-lock` when it can be written, else
-  the runtime directory, else `/tmp`.
+- **The lock directory**: `DIBS_LOCK_DIR`, else `/dev/shm/dibs-lock` where a machine already has
+  it, else `/var/lib/dibs/lock` when `/var/lib/dibs` is there, else the runtime directory, else
+  `/tmp`. A shared one this account cannot write is refused with exit 71, never fallen back from.
+  It may outlive a reboot, so a record counts as alive only while its pid names a process started
+  before the record was written.
   - `gate` and `rw`: the lock itself.
   - `waiting.<pid>` and `holder.<pid>`: a call queued, and a call holding the lock, one line
     each.

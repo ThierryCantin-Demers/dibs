@@ -128,7 +128,7 @@ impl LockDir {
     pub fn only_later_preemptible(&self, arrived: u128) -> bool {
         self.records(Kind::Holder)
             .iter()
-            .filter(|h| Host::exists(h.pid))
+            .filter(|h| RecordFile(&self.file("holder", h.pid)).alive())
             .all(|h| {
                 fs::read_to_string(self.file("ahead", h.pid))
                     .ok()
@@ -240,7 +240,7 @@ impl LockDir {
             let alive = fs::read_to_string(&file)
                 .ok()
                 .and_then(|pid| pid.trim().parse().ok())
-                .is_some_and(Host::exists);
+                .is_some_and(|pid| RecordFile(&file).written_by(pid));
             if !alive {
                 let _ = fs::remove_file(&file);
             }
@@ -250,9 +250,11 @@ impl LockDir {
                 let _ = fs::remove_file(&file);
             }
         }
+        // By start time, not by pid alone: a lock directory on disk outlives a reboot, after which
+        // its pids name other processes.
         for prefix in ["cpu", "batch", "hold", "prep", "with", "ahead", "pause"] {
             for file in self.named(prefix) {
-                if !RecordFile(&file).pid().is_some_and(Host::exists) {
+                if !RecordFile(&file).alive() {
                     let _ = fs::remove_file(&file);
                 }
             }

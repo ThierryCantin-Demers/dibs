@@ -93,8 +93,8 @@ impl Visit {
         }
         let machine = match Site::set_up() {
             Ok(machine) => machine,
-            Err(unwritable) => {
-                self.sink.say(&unwritable.said());
+            Err(none) => {
+                self.sink.say(&none.said());
                 return Exit::NoLock.status();
             }
         };

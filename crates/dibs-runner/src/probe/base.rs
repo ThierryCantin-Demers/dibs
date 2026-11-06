@@ -184,17 +184,15 @@ impl Probe<'_> {
                 );
                 report.note("a wrong answer with nothing to notice it by if they do not.");
                 report.note("");
-                let shared = machine.shared_lock_dir.display();
+                let shared = machine.shared_state.display();
                 match cfg!(target_os = "linux") {
                     true => {
                         report.note("Either give everyone this one account, which also lets one build cache");
                         report.note("serve all of them, or make the lock directory shared. As root, idle:");
                         report.note("  groupadd -f dibs && gpasswd -a <each-user> dibs");
                         report.note(&format!("  install -d -m 2775 -g dibs {shared}"));
-                        report.note(&format!(
-                            "  printf 'd {shared} 2775 root dibs -\\n' > /etc/tmpfiles.d/dibs.conf"
-                        ));
-                        report.note("The last line recreates it on boot, since that tmpfs is emptied then.");
+                        report.note("It holds the lock, the history and the log, and outlives a reboot. An");
+                        report.note("account outside the group is then refused rather than locked on its own.");
                     }
                     false => report.note(
                         "Give everyone this one account, which also lets one build cache serve all of them.",
