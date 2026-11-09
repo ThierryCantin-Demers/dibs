@@ -72,6 +72,13 @@ impl Runner {
         )
     }
 
+    /// The line that starts the newest runner there as its own source, whichever that is.
+    fn newest_far_line() -> String {
+        format!(
+            "sh -c 'r=$(ls -t \"$HOME/.cache/dibs/runner\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || exit {MISSING}; h=$(\"$r\" hash 2>/dev/null) || exit {UNEXECUTABLE}; exec \"$r\" serve \"$h\"'"
+        )
+    }
+
     /// This binary, which links the runner.
     fn here() -> Command {
         let mut command = Itself::command();
@@ -183,7 +190,9 @@ impl Served<'_> {
     }
 
     fn answer(&self, delivery: &mut Delivery) -> io::Result<i32> {
-        if let Attempted::Exit(code) = self.reconnecting(delivery, |d| self.attempt(d))? {
+        if let Attempted::Exit(code) =
+            self.reconnecting(delivery, |d| self.attempt(Reached::OfThisDibs, d))?
+        {
             return Ok(code);
         }
         let provision = Provision {
@@ -191,6 +200,11 @@ impl Served<'_> {
             live: self.live,
         };
         if self.deadline.as_ref().is_some_and(Deadline::timed) {
+            if self.values.an_older_runner_answers()
+                && let Attempted::Exit(code) = self.attempt(Reached::Newest, delivery)?
+            {
+                return Ok(code);
+            }
             return Ok(provision.not_for_a_question(delivery));
         }
         let queueing = match self.values.takes_no_lock() {
@@ -202,18 +216,43 @@ impl Served<'_> {
             installed => installed,
         };
         match installed {
-            Installed::Done => match self.reconnecting(delivery, |d| self.attempt(d))? {
-                Attempted::Exit(code) => Ok(code),
-                Attempted::Missing | Attempted::BrokeOff => Ok(provision.failed(delivery)),
-            },
+            Installed::Done => {
+                match self.reconnecting(delivery, |d| self.attempt(Reached::OfThisDibs, d))? {
+                    Attempted::Exit(code) => Ok(code),
+                    Attempted::Missing | Attempted::BrokeOff => Ok(provision.failed(delivery)),
+                }
+            }
             Installed::NoneThere => Ok(provision.none_there(delivery)),
-            Installed::Queued { behind } => Ok(provision.queued(&behind, delivery)),
-            Installed::Building => Ok(provision.building(delivery)),
+            Installed::Queued { behind } => {
+                self.through_an_older_runner(&provision, delivery, |d| provision.queued(&behind, d))
+            }
+            Installed::Building => {
+                self.through_an_older_runner(&provision, delivery, |d| provision.building(d))
+            }
             Installed::Failed | Installed::NoLockTaker | Installed::Unlockable => {
                 Ok(provision.failed(delivery))
             }
             Installed::Unreached => Ok(SSH_FAILED),
         }
+    }
+
+    /// A call whose runner cannot be built yet, made of the runner already there when it can
+    /// serve one, so that what holds the machine can still be looked at and stopped.
+    fn through_an_older_runner(
+        &self,
+        provision: &Provision,
+        delivery: &mut Delivery,
+        refused: impl FnOnce(&mut Delivery) -> i32,
+    ) -> io::Result<i32> {
+        if self.values.an_older_runner_answers() {
+            provision.older_answers(delivery);
+            if let Attempted::Exit(code) =
+                self.reconnecting(delivery, |d| self.attempt(Reached::Newest, d))?
+            {
+                return Ok(code);
+            }
+        }
+        Ok(refused(delivery))
     }
 
     /// An attempt made again after each pause while ssh breaks off before the login: the runner
@@ -260,7 +299,7 @@ impl Served<'_> {
 
     /// The process that reaches the runner, and how the runner is to watch for its caller. A hold
     /// is always watched, since its release comes down the channel.
-    fn launch(&self) -> Launch {
+    fn launch(&self, reached: Reached) -> Launch {
         let hold = self.holding.is_some();
         let (mut command, watch) = match &self.session.route {
             Route::Here => (
@@ -274,7 +313,11 @@ impl Served<'_> {
             Route::Ssh { host, dial } => {
                 let off = (self.live.no_live || self.live.no_watchdog) && !hold;
                 let mut ssh = Ssh::to(dial);
-                ssh.args(Ssh::options()).arg(host).arg(Runner::far_line());
+                let line = match reached {
+                    Reached::OfThisDibs => Runner::far_line(),
+                    Reached::Newest => Runner::newest_far_line(),
+                };
+                ssh.args(Ssh::options()).arg(host).arg(line);
                 let die_with_me = true;
                 // SAFETY: the closure makes async-signal-safe calls only.
                 unsafe {
@@ -344,7 +387,7 @@ impl Served<'_> {
     /// Frames until the runner says the transfer is under way: what it says on the way, and the
     /// tree it lays out first, which is written to `prepared`.
     fn carry(&self, prepared: Option<&Path>) -> io::Result<Attempted> {
-        let Launch { mut command, .. } = self.launch();
+        let Launch { mut command, .. } = self.launch(Reached::OfThisDibs);
         // The stream is rsync's, so the lease is how long the transfer may move nothing.
         let watch = Watch {
             off: true,
@@ -446,8 +489,8 @@ impl Served<'_> {
         Ok(Attempted::Exit(Exit::shell_status(status)))
     }
 
-    fn attempt(&self, delivery: &mut Delivery) -> io::Result<Attempted> {
-        let Launch { mut command, watch } = self.launch();
+    fn attempt(&self, reached: Reached, delivery: &mut Delivery) -> io::Result<Attempted> {
+        let Launch { mut command, watch } = self.launch(reached);
         command.stdin(Stdio::piped()).stdout(Stdio::piped());
         if matches!(delivery, Delivery::Lines(_)) || self.over_ssh() {
             command.stderr(Stdio::piped());
@@ -544,6 +587,13 @@ impl Served<'_> {
 struct Launch {
     command: Command,
     watch: Watch,
+}
+
+/// Which runner on the machine a call is made of.
+#[derive(Clone, Copy)]
+enum Reached {
+    OfThisDibs,
+    Newest,
 }
 
 /// How an attempt ended.

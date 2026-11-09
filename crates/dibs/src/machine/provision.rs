@@ -294,6 +294,13 @@ impl Provision<'_> {
         i32::from(Exit::NoRunner.code())
     }
 
+    pub fn older_answers(&self, delivery: &mut Delivery) {
+        delivery.say(&format!(
+            "dibs: {} has no runner for this dibs yet, and building it waits for the lock, so the runner already there answers this.\n",
+            self.session.name
+        ));
+    }
+
     /// A question asked within a bound builds nothing: the build would queue behind whatever
     /// holds the machine, for as long as that takes.
     pub fn not_for_a_question(&self, delivery: &mut Delivery) -> i32 {

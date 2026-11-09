@@ -94,6 +94,7 @@ process:
   command of a `--hold`. Only the `dibs` command makes those calls, one at a time.
 
 `dibs machines` and placement never provision, since each asks within a bound and a build would
-queue: a machine without the runner for this dibs shows "has no runner for this dibs yet, so it
-was not asked", and the first call that runs there builds it. A watch has no bound, so it builds
+queue: a machine without the runner for this dibs is asked through the runner it has, one with
+none shows "has no runner for this dibs yet, so it was not asked", and the first call that runs
+there builds it. A watch has no bound, so it builds
 the runner first, as a call would, and a viewer says so meanwhile.

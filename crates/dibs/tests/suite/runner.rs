@@ -256,7 +256,7 @@ fn a_machine_with_no_runner_refuses_the_call_and_says_how_to_install_one() {
 #[test]
 fn a_question_within_a_bound_builds_no_runner() {
     let mut s = Sandbox::new();
-    without_this_runner(&mut s, true);
+    without_this_runner(&mut s, false);
     s.machines("[machine.box-a]\nssh = \"dibs@box-a\"\nhostname = \"box-a\"\n");
     let out = s.remote(s.dibs(["status", "--all"])).run();
     assert_eq!(
@@ -268,6 +268,17 @@ fn a_question_within_a_bound_builds_no_runner() {
     );
     assert!(!installed(&s), "nothing was built");
     assert_eq!(s.log().lines_with("dibs-runner"), 0, "nor queued");
+}
+
+#[test]
+fn a_question_within_a_bound_is_answered_by_an_older_runner() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, true);
+    s.machines("[machine.box-a]\nssh = \"dibs@box-a\"\nhostname = \"box-a\"\n");
+    let out = s.remote(s.dibs(["status", "--all"])).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(out.all().lines_with("it was not asked"), 0, "{}", out.all());
+    assert!(!installed(&s), "nothing was built");
 }
 
 /// The source of a runner left under this build's hash by a cargo that copied a stale binary.
@@ -461,25 +472,38 @@ fn a_call_that_takes_no_lock_gives_its_runners_build_up_behind_a_benchmark() {
     ]));
     up.reached();
     s.held(1);
-    for asked in [&["--status"][..], &["--kill", "1"]] {
-        let out = s.remote(s.dibs(asked)).run();
+    let status = s.remote(s.dibs(["--status"])).run();
+    assert_eq!(status.code, 0, "{}", status.all());
+    assert_eq!(status.stdout.lines_with("measured"), 1, "{}", status.all());
+    let peek = s.remote(s.dibs(["--peek", "echo looked"])).run();
+    assert_eq!(peek.stdout.lines_with("looked"), 1, "{}", peek.all());
+    let kill = s.remote(s.dibs(["--kill", "1"])).run();
+    assert_ne!(kill.code, 72, "{}", kill.all());
+    for out in [&status, &peek, &kill] {
         assert_eq!(
-            (
-                out.code,
-                out.stderr.lines_with(
-                    "building it waits for the lock: queued and has not started, behind the benchmark measured"
-                )
-            ),
-            (72, 1),
-            "{asked:?} answers at once rather than queue behind what it may mean to stop: {}",
+            out.stderr.lines_with("the runner already there answers"),
+            1,
+            "{}",
             out.all()
         );
-        s.until_records("the build it gave up left the queue", || {
-            s.records("waiting")
-                .iter()
-                .all(|r| r.get(3).is_none_or(|label| label != "dibs-runner"))
-        });
     }
+    let close = s.remote(s.dibs(["--close"])).run();
+    assert_eq!(
+        (
+            close.code,
+            close.stderr.lines_with(
+                "building it waits for the lock: queued and has not started, behind the benchmark measured"
+            )
+        ),
+        (72, 1),
+        "{}",
+        close.all()
+    );
+    s.until_records("the build it gave up left the queue", || {
+        s.records("waiting")
+            .iter()
+            .all(|r| r.get(3).is_none_or(|label| label != "dibs-runner"))
+    });
     assert!(!installed(&s), "nothing is built beside the benchmark");
     hold.open();
     assert_eq!(s.wait(bench), 0);
@@ -504,16 +528,19 @@ fn a_call_that_takes_no_lock_gives_up_on_a_build_another_call_queued() {
             .iter()
             .any(|r| r.get(3).is_some_and(|label| label == "dibs-runner"))
     });
-    let out = s.remote(s.dibs(["--status"])).run();
+    let status = s.remote(s.dibs(["--status"])).run();
+    assert_eq!(status.code, 0, "{}", status.all());
+    let close = s.remote(s.dibs(["--close"])).run();
     assert_eq!(
         (
-            out.code,
-            out.stderr
+            close.code,
+            close
+                .stderr
                 .lines_with("another call is building it there, which may itself")
         ),
         (72, 1),
-        "a status answers at once rather than wait for that build: {}",
-        out.all()
+        "{}",
+        close.all()
     );
     hold.open();
     assert_eq!(s.wait(bench), 0);

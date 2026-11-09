@@ -89,6 +89,12 @@ impl CallValues {
         )
     }
 
+    /// Closing and opening a machine are left out: a runner from before they existed cannot read
+    /// the call, and neither has anything to look at or stop behind a held lock.
+    pub fn an_older_runner_answers(&self) -> bool {
+        self.takes_no_lock() && !matches!(self.mode, Mode::Close | Mode::Open)
+    }
+
     /// The values as the runner is asked for them.
     pub fn request(&self, watch: Watch) -> Request {
         let some = |text: &str| Some(text.to_string()).filter(|t| !t.is_empty());

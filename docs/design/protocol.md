@@ -240,12 +240,14 @@ read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
   on a machine builds the next version, and may be older than the tree it is sent, so the build's
   steps live in the tree, in its `install.sh`, and not in the runner.
 - That build takes the shared lock. A call that takes no lock gives it up as soon as the runner
-  says it is queued, rather than wait behind the job it may be asking about or stopping; so until
-  a call that may wait has built it, such a call cannot reach a machine across a version change.
+  says it is queued, rather than wait behind the job it may be asking about or stopping, and is
+  served instead by the newest runner there, started under its own hash. Closing and opening a
+  machine are not: until a call that may wait has built the runner, those exit 72.
 
 ### What must stay compatible
 
-- **Frames and the request:** nothing. They change freely.
+- **Frames and the request:** a call that takes no lock can reach an older runner, so a field or
+  variant such a call uses is not renamed or removed. A new field is ignored by an older runner.
 - **The bootstrap line and `build <hash>`**, above: every version keeps them.
 - **The files on the machine:** every version reads them, and so does the bash half until the
   last client has switched. A name keeps its meaning, a record's line only gains fields at its
@@ -276,8 +278,8 @@ read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
   the target every version shares. A build that finds a runner naming its hash already installed
   when its turn comes stops there.
 - **A question asked within a bound** (every machine's status, placement, a batch's kill on every
-  machine) builds nothing, since a build queues behind whatever holds the machine: it says the
-  machine has no runner for this dibs yet, and exits 72.
+  machine) builds nothing, since a build queues behind whatever holds the machine: the newest runner
+  there answers it, and with none it says the machine has no runner yet, and exits 72.
 - **A machine with no runner at all** refuses the call with exit 72, naming `dibs --check`.
 - **`dibs --check <machine>`** installs the first runner: it streams the tree into a shell line that
   runs the same `install.sh`. No runner exists yet to take the lock, so perl takes it: its `flock`
