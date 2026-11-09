@@ -24,7 +24,7 @@ impl Unreachable<'_> {
         let why = match self.said.trim().is_empty() {
             false => self.said.trim_end().to_string(),
             true => bounded(
-                Ssh::to(self.target.ssh_config.as_deref()).args([
+                Ssh::to(&self.target.dial).args([
                     "-o",
                     "BatchMode=yes",
                     "-o",
@@ -38,7 +38,7 @@ impl Unreachable<'_> {
             ),
         };
         let mut text = format!("dibs: cannot reach '{host}' over ssh.\n");
-        if let Some(config) = &self.target.ssh_config {
+        if let Some(config) = &self.target.dial.config {
             let _ = writeln!(
                 text,
                 "  It is reached through {}, alone; whatever opens the way in, such as a bastion's second factor, is said there.",
@@ -67,7 +67,7 @@ impl Unreachable<'_> {
                 "  Its host key is not the one recorded. The machine answered, so it is up;".into(),
                 "  ssh will not talk to it until you say which key is right.".into(),
                 "  If it was reinstalled or its key regenerated, that is expected:".into(),
-                format!("    ssh-keygen -R {bare}"),
+                format!("    ssh-keygen -R {}", self.target.dial.known_as(bare)),
                 "  then connect once by hand. If it was not, find out why the key changed".into(),
                 "  before trusting it.".into(),
             ])
@@ -77,10 +77,13 @@ impl Unreachable<'_> {
                     .into(),
                 "  which cannot answer the question ssh is asking. The machine is almost".into(),
                 "  certainly up: this is about trust, not reachability.".into(),
-                format!("  Record the key by connecting once by hand:  ssh {host}"),
+                format!(
+                    "  Record the key by connecting once by hand:  {}",
+                    self.target.dial.typed(host)
+                ),
             ])
         } else if let Some(methods) = Unreachable::prompted(&why) {
-            let opened = match self.target.ssh_config {
+            let opened = match self.target.dial.config {
                 Some(_) => "The user opens the way in, as that file says.",
                 None => "The user has to open the login, such as with a shared connection.",
             };
@@ -174,7 +177,7 @@ impl Unreachable<'_> {
     /// key says so even when the key is locked.
     fn accepted_key(&self, timeout: &str, secs: u64) -> Option<String> {
         let verbose = bounded(
-            Ssh::to(self.target.ssh_config.as_deref()).args([
+            Ssh::to(&self.target.dial).args([
                 "-v",
                 "-o",
                 "BatchMode=yes",

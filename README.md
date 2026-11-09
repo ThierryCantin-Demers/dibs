@@ -49,6 +49,7 @@ from before, it replaces it, the bash script included.
 Record each machine, and say where your checkouts live:
 
     dibs --check you@machine --write    # probes it, writes ~/.config/dibs/machines.toml
+                                        # you@machine:406 for ssh on another port
     export DIBS_ROOT=$HOME/prog         # fish: set -Ux DIBS_ROOT $HOME/prog
 
 Read what `--check` prints, not only its exit code. With one machine recorded, every call goes

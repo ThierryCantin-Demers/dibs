@@ -271,9 +271,9 @@ impl Served<'_> {
                     lease: 0,
                 },
             ),
-            Route::Ssh { host, config } => {
+            Route::Ssh { host, dial } => {
                 let off = (self.live.no_live || self.live.no_watchdog) && !hold;
-                let mut ssh = Ssh::to(config.as_deref());
+                let mut ssh = Ssh::to(dial);
                 ssh.args(Ssh::options()).arg(host).arg(Runner::far_line());
                 let die_with_me = true;
                 // SAFETY: the closure makes async-signal-safe calls only.

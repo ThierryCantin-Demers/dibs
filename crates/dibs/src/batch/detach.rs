@@ -624,8 +624,8 @@ impl<'a> Detach<'a> {
                 command.args(words);
                 command
             }
-            Route::Ssh { host, config } => {
-                let mut ssh = Ssh::to(config.as_deref());
+            Route::Ssh { host, dial } => {
+                let mut ssh = Ssh::to(dial);
                 ssh.args(Ssh::options())
                     .arg(host)
                     .arg(Client::far_line(&words.join(" ")));

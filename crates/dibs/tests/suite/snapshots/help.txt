@@ -150,7 +150,8 @@
 1|   dibs --check [host]          install dibs's runner there, with its cargo, then say whether
 1|                                the machine is usable and what is in it. Run it first on a
 1|                                machine you have never used. --write records what it found
-1|                                as that machine's inventory entry.
+1|                                as that machine's inventory entry. user@host:port dials that
+1|                                port from then on.
 1|   dibs --on <machine>         send this call to a named machine from the inventory. There is
 1|                                no default: a call that names none is placed when it is shared
 1|                                work, and refused otherwise, a benchmark most of all

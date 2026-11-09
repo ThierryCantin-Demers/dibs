@@ -148,7 +148,8 @@ Calls: one command under the lock, and what the machines are doing.
   dibs --check [host]          install dibs's runner there, with its cargo, then say whether
                                the machine is usable and what is in it. Run it first on a
                                machine you have never used. --write records what it found
-                               as that machine's inventory entry.
+                               as that machine's inventory entry. user@host:port dials that
+                               port from then on.
   dibs --on <machine>         send this call to a named machine from the inventory. There is
                                no default: a call that names none is placed when it is shared
                                work, and refused otherwise, a benchmark most of all

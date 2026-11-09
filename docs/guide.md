@@ -35,7 +35,9 @@ Then record your machine and say where your checkouts live:
     dibs --check you@machine --write           # probes it, writes ~/.config/dibs/machines.toml
     export DIBS_ROOT=$HOME/prog                # where your checkouts live, for bare repo names
 
-The entry is named by the machine's own short hostname rather than by the string you dialled,
+A machine whose ssh listens on another port is `dibs --check you@machine:406 --write`, which
+records `port = 406` beside its address, so nobody needs an entry in `~/.ssh/config` for it. The
+entry is named by the machine's own short hostname rather than by the string you dialled,
 so `--on` takes a name and not an ssh address. Run it once per machine, and read what it says
 rather than only its exit code: it reports what the machine can do, and warns about the things
 that are wrong in ways nothing else would tell you. With one machine recorded, every call goes

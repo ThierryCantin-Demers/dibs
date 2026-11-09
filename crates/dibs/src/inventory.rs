@@ -40,6 +40,8 @@ pub struct Machine {
     /// The ssh configuration to dial it with, in place of the user's own, for a machine reached
     /// through a bastion that only its own file describes; `~/` is the home directory.
     pub ssh_config: Option<String>,
+    /// The port ssh dials, when it is not one the user's ssh configuration already says.
+    pub port: Option<u16>,
     /// When it stops being a machine, in seconds since the epoch: a leased one ends with it.
     pub expires: Option<u64>,
     /// The name its runs are recorded under, shared by machines of one kind so a new one

@@ -333,10 +333,10 @@ impl Provision<'_> {
         delivery: &mut Delivery,
         built: Built,
     ) -> io::Result<Installed> {
-        let Route::Ssh { host, config } = &self.session.route else {
+        let Route::Ssh { host, dial } = &self.session.route else {
             return Ok(Installed::Done);
         };
-        let mut ssh = Ssh::to(config.as_deref());
+        let mut ssh = Ssh::to(dial);
         ssh.args(Ssh::options()).arg(host).arg(line);
         let die_with_me = true;
         // SAFETY: the closure makes async-signal-safe calls only.

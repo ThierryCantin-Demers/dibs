@@ -1,6 +1,6 @@
 use crate::{
     inventory::{Inventory, InventoryError, Machine},
-    machine::ssh::Ssh,
+    machine::ssh::{Dial, Ssh},
 };
 use dibs_format::{Exit, MachineName, Moment, Span};
 use std::{fmt, path::PathBuf};
@@ -50,8 +50,7 @@ pub struct Target {
     pub named: Named,
     /// `DIBS_HOST`, when an inventory of several machines means it no longer chooses one.
     pub unheeded: Option<String>,
-    /// The ssh configuration the machine is dialled with, in place of the user's own.
-    pub ssh_config: Option<PathBuf>,
+    pub dial: Dial,
     /// The entry's `series`: what it measures under in place of its own name.
     pub series: Option<String>,
     /// A tool keeps its entry until a lease ends, so nobody runs `--check` on it first.
@@ -143,7 +142,8 @@ impl TargetEnv {
 
 impl Target {
     /// A host taken as typed, which no entry names: how `--check` reaches a new machine.
-    pub fn literal(host: &str) -> Target {
+    pub fn literal(address: &str) -> Target {
+        let (host, port) = Ssh::and_port(address);
         Target {
             machine: None,
             host: host.to_string(),
@@ -151,7 +151,7 @@ impl Target {
             measurable: true,
             named: Named::On,
             unheeded: None,
-            ssh_config: None,
+            dial: Dial { config: None, port },
             series: None,
             leased: false,
         }
@@ -172,7 +172,7 @@ impl Target {
             measurable: true,
             named: Named::Unnamed,
             unheeded: None,
-            ssh_config: None,
+            dial: Dial::default(),
             series: None,
             leased: false,
         };
@@ -222,8 +222,10 @@ impl Target {
         self.hostname = machine.target().unwrap_or_default().to_string();
         self.measurable = machine.measure;
         self.named = named;
-        self.ssh_config =
-            machine.ssh_config(std::env::var_os("HOME").map(PathBuf::from).as_deref());
+        self.dial = Dial {
+            config: machine.ssh_config(std::env::var_os("HOME").map(PathBuf::from).as_deref()),
+            port: machine.port,
+        };
         self.series = machine.series.clone();
         self.leased = machine.expires.is_some();
         Ok(())

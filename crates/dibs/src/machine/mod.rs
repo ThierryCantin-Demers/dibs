@@ -23,7 +23,7 @@ pub use served::{Client, Delivery, MISSING, RUNNER_WORD, Runner};
 pub use session::{
     Answer, Diagnosis, Here, Kept, Liveness, Message, Reach, Route, SSH_FAILED, Session,
 };
-pub use ssh::Ssh;
+pub use ssh::{Dial, Ssh};
 pub use target::{Fleet, Named, Target, TargetEnv, TargetError};
 pub use unreachable::Unreachable;
 pub use values::{CallValues, MaxFrom, Watch};

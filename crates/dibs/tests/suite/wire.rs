@@ -547,3 +547,57 @@ fn what_a_recipe_sends() {
     );
     snapshot("wire-recipes", w.text());
 }
+
+#[test]
+fn a_machine_on_another_port_is_recorded_and_dialled_there() {
+    let dialled = |s: &Sandbox| {
+        let wire = s.path("wire");
+        let mut ssh: Vec<String> = fs::read_dir(&wire)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".argv"))
+            .map(|e| fs::read_to_string(e.path()).unwrap().replace('\0', " "))
+            .filter(|argv| argv.starts_with("ssh "))
+            .collect();
+        ssh.sort();
+        for slot in fs::read_dir(&wire).unwrap().flatten() {
+            let path = slot.path();
+            let _ = fs::remove_dir(&path).or_else(|_| fs::remove_file(&path));
+        }
+        ssh
+    };
+    let mut s = wired();
+    let out = s
+        .dibs(["--check", "dibs@box-c:406", "--write"])
+        .env("WIRE_RUN", "1")
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let recorded = s.read("machines.toml");
+    assert_eq!(recorded.lines_with("port     = 406"), 1, "{recorded}");
+    assert_eq!(recorded.lines_with("\"dibs@box-c\""), 1, "{recorded}");
+    let first = dialled(&s);
+    assert!(!first.is_empty());
+    assert!(first.iter().all(|a| a.contains("-p 406")), "{first:?}");
+
+    s.machines(
+        "[machine.box-p]\nssh      = \"dibs@box-p\"\nhostname = \"box-p\"\nport     = 406\n",
+    );
+    s.dibs(["--on", "box-p", "--label", "ported", "true"]).run();
+    s.dibs(["--on", "box-p", "--sync", "-a", "./x", ":~/y"])
+        .run();
+    let later = dialled(&s);
+    assert!(later.len() >= 2, "{later:?}");
+    assert!(later.iter().all(|a| a.contains("-p 406")), "{later:?}");
+
+    let out = s
+        .dibs(["--on", "box-p", "--status"])
+        .env("WIRE_EXIT", "255")
+        .env("WIRE_SAYS", "Host key verification failed.")
+        .run();
+    assert_eq!(
+        out.all().lines_with("ssh -p 406 dibs@box-p"),
+        1,
+        "{}",
+        out.all()
+    );
+}

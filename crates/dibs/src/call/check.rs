@@ -73,6 +73,11 @@ impl MachineCall<'_> {
             .entry
             .replace("@NAME@", name.as_str())
             .replace("@SSH@", &target.host);
+        let entry = match target.dial.port {
+            // The first `]` ending a line closes the entry's header.
+            Some(port) => entry.replacen("]\n", &format!("]\nport     = {port}\n"), 1),
+            None => entry,
+        };
         let file = self
             .fleet
             .entry(name.as_str())
