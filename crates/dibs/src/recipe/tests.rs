@@ -109,6 +109,11 @@ fn a_relative_target_is_refused_but_a_rustup_subcommand_is_not() {
             .is_ok()
     );
     assert!(step("rustup +nightly target add wasm32-unknown-unknown").is_ok());
+    assert!(
+        step("(rustup target list --installed | grep -q wasm32 && cargo check --target wasm32-unknown-unknown || echo none)")
+            .is_ok()
+    );
+    assert!(step("echo $(rustup target list --installed)").is_ok());
     assert!(step("du -sh target").unwrap_err().contains("names target,"));
     assert!(
         step("ls ./target/release")

@@ -239,9 +239,11 @@ impl Recipe {
             let triple = |d: &str| d.matches('-').count() >= 2;
             let words: Vec<&str> = st.run.split_whitespace().collect();
             // `rustup target` and `rustup +nightly target` name a subcommand, not a directory.
-            let rustup = |i: usize| match i.checked_sub(1).map(|p| words[p]) {
+            let command =
+                |p: usize| words[p].trim_start_matches(['(', '{', '`', '$', ';', '&', '|', '!']);
+            let rustup = |i: usize| match i.checked_sub(1).map(command) {
                 Some("rustup") => true,
-                Some(t) if t.starts_with('+') => i >= 2 && words[i - 2] == "rustup",
+                Some(t) if t.starts_with('+') => i >= 2 && command(i - 2) == "rustup",
                 _ => false,
             };
             if let Some(t) = words.iter().enumerate().find_map(|(i, w)| {
