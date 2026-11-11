@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    action::Action,
+    action::{Action, Start as _},
     feed::{Feed, Msg},
     item::Item,
 };

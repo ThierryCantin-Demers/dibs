@@ -14,6 +14,21 @@ pub struct Moment {
     offset: i64,
 }
 
+#[cfg(unix)]
+fn local_offset(epoch: u64) -> i64 {
+    let time = epoch as libc::time_t;
+    // SAFETY: tm is plain data, and localtime_r fills it from a valid time.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&time, &mut tm) };
+    tm.tm_gmtoff as i64
+}
+
+/// A web page has no zone to ask, so its moments are in UTC.
+#[cfg(not(unix))]
+fn local_offset(_epoch: u64) -> i64 {
+    0
+}
+
 impl Moment {
     /// Now, in this computer's zone.
     pub fn now() -> Moment {
@@ -30,11 +45,7 @@ impl Moment {
 
     /// `epoch` in this computer's zone, with the offset it had then.
     pub fn at(epoch: u64) -> Moment {
-        let time = epoch as libc::time_t;
-        // SAFETY: tm is plain data, and localtime_r fills it from a valid time.
-        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-        unsafe { libc::localtime_r(&time, &mut tm) };
-        Moment::in_zone(epoch, tm.tm_gmtoff as i64)
+        Moment::in_zone(epoch, local_offset(epoch))
     }
 
     /// `epoch` on a clock `offset` seconds east of UTC, by the days-to-civil conversion.

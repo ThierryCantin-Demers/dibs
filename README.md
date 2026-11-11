@@ -123,6 +123,7 @@ A hook that stops an agent sleeping under the lock is still yours to write.
 | `crates/dibs-runner/` | what runs on the machine: the lock, the job and the status. Each machine builds the version a client needs, the first time it needs it. |
 | `bin/dibs` | where the bash dibs was: for a dibs still linked here, it says how to install the binary, and runs nothing. |
 | `crates/dibstop/` | `dibstop`, a live view of who holds the machines. |
+| `crates/dibstop-view/` | what dibstop shows, whatever draws it: its jobs, its actions, and, behind the `egui` feature, a view a window or a web page embeds. It builds for the web. |
 | `crates/dibs-machines/` | `dibs-machines`, a desktop window on what each machine has against what it should. |
 | `docs/guide.md` | the detailed guide. |
 | `docs/design/` | the design records: architecture, protocol, decisions, and history. |

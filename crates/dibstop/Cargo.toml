@@ -13,6 +13,7 @@ path = "src/main.rs"
 crossterm.workspace = true
 dibs.workspace = true
 dibs-format.workspace = true
+dibstop-view.workspace = true
 ratatui.workspace = true
 
 [dev-dependencies]

@@ -10,9 +10,10 @@ mod feed;
 #[cfg(test)]
 mod frames;
 mod input;
-mod item;
 mod text;
 mod ui;
+
+use dibstop_view::item;
 
 use dibs::machine::Runner;
 use std::{

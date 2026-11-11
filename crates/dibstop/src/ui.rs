@@ -12,6 +12,7 @@ use crate::{
     text::{agent_hue, cores, fit, plain},
 };
 use dibs_format::{Mode, Span as DibsSpan, status::LockState};
+use dibstop_view::text::{Tone, state_words};
 
 const DIM: Style = Style::new().fg(Color::DarkGray);
 const SELECTED_BG: Color = Color::Indexed(236);
@@ -583,15 +584,16 @@ impl Column {
 
 impl Worded {
     fn of(state: LockState) -> Worded {
-        let bold = |c: Color| Style::new().fg(c).add_modifier(Modifier::BOLD);
-        let (text, style) = match state {
-            LockState::Bench => ("BUSY, benchmark in progress", bold(Color::Red)),
-            LockState::Shared => ("in use, shared", bold(Color::Yellow)),
-            LockState::Idle => ("idle", bold(Color::Green)),
-            LockState::Busy => ("in use", bold(Color::Yellow)),
-            LockState::Orphan => ("LOCKED BY AN ORPHAN", bold(Color::Red)),
+        let (text, tone) = state_words(state);
+        let colour = match tone {
+            Tone::Free => Color::Green,
+            Tone::InUse => Color::Yellow,
+            Tone::Alarm => Color::Red,
         };
-        Worded { text, style }
+        Worded {
+            text,
+            style: Style::new().fg(colour).add_modifier(Modifier::BOLD),
+        }
     }
 }
 
