@@ -22,7 +22,7 @@ pub const HELP: &str = "\
   g / G        first and last
   p or Enter   the selected job's process tree, through --peek
   o            what the selected job is writing, if it redirected to a file
-  n            nvidia-smi on the machine
+  n            the machine's GPUs, through nvidia-smi or rocm-smi
   L            recent arrivals and outcomes
   K            stop the selected job, with a confirmation
   r            run --status once and show what it prints
