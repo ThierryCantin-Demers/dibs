@@ -344,9 +344,14 @@ impl View {
 
     fn overlays(&mut self, ui: &Ui) -> Option<Action> {
         let mut asked = None;
+        // A modal is an area of its own, which does not take the view's disabled state.
+        let enabled = ui.is_enabled();
         if let Some(kill) = &self.confirm {
             let mut answer = None;
             egui::Modal::new(egui::Id::new("dibstop-confirm")).show(ui.ctx(), |ui| {
+                if !enabled {
+                    ui.disable();
+                }
                 ui.heading("Stop this job?");
                 ui.label(format!(
                     "Kill {} ({}) on {}, whoever started it. It runs dibs --kill {} --anyone.",
@@ -369,6 +374,9 @@ impl View {
         if let Some((title, body)) = &self.shown {
             let mut close = false;
             egui::Modal::new(egui::Id::new("dibstop-shown")).show(ui.ctx(), |ui| {
+                if !enabled {
+                    ui.disable();
+                }
                 ui.set_max_width(ui.ctx().content_rect().width() * 0.8);
                 ui.heading(title);
                 egui::ScrollArea::both()
