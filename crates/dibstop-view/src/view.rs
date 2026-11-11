@@ -96,7 +96,7 @@ impl View {
         machines: &[Machine],
     ) -> Option<Action> {
         // A row or a button the person clicked keeps the focus; only typing takes the keys.
-        if ui.ctx().text_edit_focused() {
+        if !ui.is_enabled() || ui.ctx().text_edit_focused() {
             return None;
         }
         let (pressed, shift) = ui.input(|input| {
@@ -118,6 +118,10 @@ impl View {
             (pressed, input.modifiers.shift)
         });
         let key = pressed?;
+        // Enter presses the focused button, as in any egui window.
+        if key == Key::Enter && ui.ctx().egui_wants_keyboard_input() {
+            return None;
+        }
         if key == Key::Escape {
             self.confirm = None;
             self.shown = None;
