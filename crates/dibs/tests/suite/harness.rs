@@ -102,6 +102,7 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         fingerprint: None,
         agent: "session suite".into(),
         agent_id: "local_suite".into(),
+        subagent: None,
         batch: None,
         watch: Watch {
             off: true,

@@ -178,6 +178,7 @@ mod tests {
             fingerprint: None,
             agent: "session".into(),
             agent_id: "id".into(),
+            subagent: None,
             batch: None,
             watch: Watch {
                 off: false,

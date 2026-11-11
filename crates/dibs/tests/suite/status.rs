@@ -535,15 +535,17 @@ fn the_json_has_a_pinned_shape() {
     let (j, j2) = (s.gate("j"), s.gate("j2"));
     let holder = s.spawn(
         s.dibs(["--bench", "--label", "j-holder", &j.hold()])
-            .session("jsonner"),
+            .session("jsonner")
+            .env("CLAUDE_SUBAGENT_ID", "sub-1"),
     );
     s.held(1);
     let d = s.status_json();
     assert_eq!(d["state"], "bench", "the state is named");
     assert_eq!(d["holders"][0]["label"], "j-holder", "the holder is there");
     assert_eq!(
-        d["holders"][0]["agent"], "session jsonner",
-        "with its agent"
+        (&d["holders"][0]["agent"], &d["holders"][0]["subagent"]),
+        (&"session jsonner".into(), &"sub-1".into()),
+        "with its agent, and the subagent that started it"
     );
     assert!(
         !s.dibs(["--status", "--json"]).run().stdout.contains('\x1b'),
@@ -564,6 +566,11 @@ fn the_json_has_a_pinned_shape() {
     assert!(
         d["queue"][0]["cmd"].as_str().unwrap().contains('\\'),
         "and its command round-trips"
+    );
+    assert_eq!(
+        d["queue"][0].get("subagent"),
+        None,
+        "a call no subagent made has no subagent"
     );
     j.open();
     s.wait(holder);

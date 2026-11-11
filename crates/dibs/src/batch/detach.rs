@@ -441,6 +441,7 @@ impl<'a> Detach<'a> {
                 ("CLAUDE_CODE_SESSION_ID", caller.id.clone()),
             ]
             .into_iter()
+            .chain(caller.subagent.clone().map(|id| ("CLAUDE_SUBAGENT_ID", id)))
             .map(|(k, v)| (k.to_string(), v))
             .collect(),
             cwd,

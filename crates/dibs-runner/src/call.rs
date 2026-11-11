@@ -13,6 +13,7 @@ pub struct Received {
     /// The caller's title on one line, `?` when it gave none.
     pub agent: String,
     pub agent_id: String,
+    pub subagent: Option<String>,
     /// The first line of the batch plan: the batch's id, then the step.
     pub batch_tag: Option<String>,
     /// The command on one line and cut short, as the records and the log carry it.
@@ -52,6 +53,11 @@ impl Received {
                 false => agent,
             },
             agent_id,
+            subagent: request
+                .subagent
+                .as_ref()
+                .map(|s| s.one_line(NAME))
+                .filter(|s| !s.is_empty()),
             batch_tag,
             one_line: command,
             work,

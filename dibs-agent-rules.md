@@ -170,6 +170,8 @@ spoiled without it.
   it. Any other runtime, Codex outside herdr included, must `export DIBS_AGENT='<the work>'` once
   per session as its own statement, naming the work rather than the tool:
   `DIBS_AGENT='reduce kernel sweep'`. `DIBS_AGENT` wins over herdr's name when both are set.
+  A call made with `CLAUDE_SUBAGENT_ID` set also records that subagent, which
+  `dibs status --json` gives as `subagent` on the job.
 - `dibs --kill <pid>` stops a wedged job, refusing someone else's without `--anyone`, and
   `dibs --log [n]` shows what ran, what it cost and what was killed. Both ignore the lock, so a
   stuck machine can still be freed.

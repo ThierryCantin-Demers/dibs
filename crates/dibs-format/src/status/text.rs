@@ -579,6 +579,7 @@ mod tests {
             job: Some(crate::JobId::new("20261001120000-42")),
             label: Label::new("build"),
             agent: "an agent".into(),
+            subagent: None,
             device: None,
             cmd: "cargo build".into(),
             started: 0,

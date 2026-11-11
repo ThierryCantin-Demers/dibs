@@ -28,6 +28,9 @@ pub struct Request {
     pub agent: String,
     /// The caller's session id, which ownership is decided by.
     pub agent_id: String,
+    /// The Claude subagent within that session that made the call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent: Option<String>,
     /// The batch step this call is, as `batch.<pid>` holds it: the id and step, `k` of `n`, then
     /// the steps still to come.
     pub batch: Option<String>,

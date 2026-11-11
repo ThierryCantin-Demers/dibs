@@ -207,6 +207,7 @@ impl Look<'_> {
             job: record.job.clone(),
             label: record.label.clone(),
             agent: record.agent.clone(),
+            subagent: self.subagent(pid),
             device: record.device.clone(),
             cmd: record.command.clone(),
             started: record.start,
@@ -245,6 +246,7 @@ impl Look<'_> {
             pid: record.pid,
             label: record.label.clone(),
             agent: record.agent.clone(),
+            subagent: self.subagent(record.pid),
             device: record.device.clone(),
             cmd: record.command.clone(),
             arrived: record.start,
@@ -252,6 +254,11 @@ impl Look<'_> {
             eta: starts,
             batch: self.batch(record.pid, left, tail),
         }
+    }
+
+    fn subagent(&self, pid: u32) -> Option<String> {
+        let said = fs::read_to_string(self.dir.file("subagent", pid)).ok()?;
+        Some(said.trim().to_string()).filter(|s| !s.is_empty())
     }
 
     fn batch(&self, pid: u32, left: Option<u64>, tail: &Tail) -> Option<BatchShown> {

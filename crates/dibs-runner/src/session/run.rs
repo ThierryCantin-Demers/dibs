@@ -267,6 +267,11 @@ impl<'a> Run<'a> {
         if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
             let _ = fs::write(self.at.dir.file("batch", pid), format!("{batch}\n"));
         }
+        // Beside the lock record rather than in it: a runner reading a record with a field it
+        // does not know drops the record, and with it a holder its benchmark must not run beside.
+        if let Some(subagent) = &self.at.call.subagent {
+            let _ = fs::write(self.at.dir.file("subagent", pid), format!("{subagent}\n"));
+        }
         let mut line = self.at.call.log_line(Event::Arrived);
         line.job = Some(job.clone());
         self.at.journal().write(&line);

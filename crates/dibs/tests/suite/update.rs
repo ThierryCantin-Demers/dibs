@@ -50,6 +50,7 @@ fn session(id: &str) -> Caller {
     Caller {
         id: id.into(),
         name: format!("session {id}"),
+        subagent: None,
     }
 }
 
