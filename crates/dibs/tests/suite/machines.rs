@@ -357,23 +357,47 @@ fn any_pci_device() -> Option<(String, String)> {
 }
 
 #[test]
-fn a_job_over_two_cards_is_pinned_to_both_and_only_where_cuda_can_take_both() {
+fn a_job_over_two_cards_is_pinned_to_both_and_only_where_cuda_or_rocm_can_take_both() {
     let Some((pci, chip)) = any_pci_device() else {
         skip("this computer has no PCI device to stand in for a card");
         return;
     };
     let mut s = Sandbox::new();
+    let mut slot = pci
+        .rsplit([':', '.'])
+        .map(|f| u32::from_str_radix(f, 16).unwrap());
+    let (function, device, bus) = (
+        slot.next().unwrap(),
+        slot.next().unwrap(),
+        slot.next().unwrap(),
+    );
+    let agent = |n: u32, kind: &str, bdf: u32| {
+        format!(
+            "*******\nAgent {n}\n*******\n  Name:                    gfx\n  Uuid:                    GPU-XX\n  Device Type:             {kind}\n  BDFID:                   {bdf}\n"
+        )
+    };
+    s.write_exec(
+        "bin/rocminfo",
+        &format!(
+            "#!/bin/sh\ncat <<'EOF'\nHSA Agents\n==========\n{}{}{}EOF\n",
+            agent(1, "CPU", 0),
+            agent(2, "GPU", 65535),
+            agent(3, "GPU", (bus << 8) | (device << 3) | function)
+        ),
+    );
     let card = |alias: &str, runtimes: &str| {
         format!(
             "\n  [[machine.here.device]]\n  kind     = \"gpu\"\n  alias    = \"{alias}\"\n  name     = \"a card\"\n  pci      = \"{pci}\"\n  chip     = \"{chip}\"\n  runtimes = [{runtimes}]\n"
         )
     };
     s.machines(&format!(
-        "[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n{}{}{}",
+        "[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n{}{}{}{}{}",
         hostname(),
         card("gpu:a", ""),
         card("gpu:b", ""),
-        card("gpu:v", "\"vulkan\"")
+        card("gpu:v", "\"vulkan\""),
+        card("gpu:r", "\"rocm\", \"vulkan\""),
+        card("gpu:r2", "\"rocm\", \"vulkan\""),
     ));
     let run = |alias: &str| {
         s.dibs([
@@ -381,13 +405,16 @@ fn a_job_over_two_cards_is_pinned_to_both_and_only_where_cuda_can_take_both() {
             "here",
             "--device",
             alias,
-            "echo ran on $DIBS_DEVICE",
+            "echo ran on $DIBS_DEVICE rocr=$ROCR_VISIBLE_DEVICES",
         ])
         .run()
     };
     let out = run("gpu:a,gpu:b");
     assert_eq!(
-        (out.code, out.stdout.lines_matching("^ran on gpu:a,gpu:b$")),
+        (
+            out.code,
+            out.stdout.lines_matching("^ran on gpu:a,gpu:b rocr=$")
+        ),
         (0, 1),
         "both cards are named to the job, in the order given: {}",
         out.all()
@@ -398,10 +425,20 @@ fn a_job_over_two_cards_is_pinned_to_both_and_only_where_cuda_can_take_both() {
             out.code,
             out.stdout.lines_with("ran on"),
             out.stderr
-                .lines_with("only CUDA can be pinned to several cards"),
+                .lines_with("the only runtimes that can be pinned to several cards"),
         ),
         (2, 0, 1),
         "a card Vulkan would pick for itself is refused: {}",
+        out.all()
+    );
+    let out = run("gpu:r,gpu:r2");
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.lines_matching("^ran on gpu:r,gpu:r2 rocr=1,1$")
+        ),
+        (0, 1),
+        "ROCm cards are pinned by the index ROCr enumerates their slot at: {}",
         out.all()
     );
     assert_eq!(

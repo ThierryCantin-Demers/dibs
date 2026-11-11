@@ -701,7 +701,7 @@ is neither the caller's to decide nor recorded anywhere.
 them. It works with `dibs run` and with recipes, and `dibs bench ... --dry-run` prints which card it
 would use before anything runs. `--device a,b` pins a job to several cards, which CUDA numbers in
 the order given, and files its series under the pair as written. Vulkan selects a single card, so a
-job over several is refused when one of them does not run CUDA.
+job over several is refused when one of them runs neither CUDA nor ROCm.
 
 What that turns into differs per runtime, and none of it is guessable. First, whatever the runtime,
 the slot is read back at launch: one that is empty, or holds another model than the inventory
@@ -713,6 +713,11 @@ would otherwise ignore the address and run the job on the first card under the n
 fail, it ignores the value and leaves every card visible, so a job looks pinned and is not. The
 inventory's bus id is resolved to a UUID on the machine at launch. A machine that cannot answer
 for the card refuses the job instead of running it unpinned.
+
+A ROCm card is pinned by `ROCR_VISIBLE_DEVICES`, set to the index ROCr enumerates its slot at,
+which is the order `rocminfo` lists its GPU agents in. Not a UUID, since a consumer card has none,
+and not `HIP_VISIBLE_DEVICES` as well: HIP numbers only what ROCr left visible, so the same
+indices there would name other cards.
 
 Vulkan needs two variables that fight each other. `DRI_PRIME` takes a PCI address and is the
 only thing that tells two cards of one model apart, but it is Mesa's and does nothing for the

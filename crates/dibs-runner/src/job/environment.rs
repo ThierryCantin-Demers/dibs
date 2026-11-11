@@ -139,23 +139,33 @@ impl Pinned<'_> {
         vars.insert("DIBS_DEVICE_PCI", joined(|p| p.pci.to_string()));
         vars.insert("CUDA_DEVICE_ORDER", "PCI_BUS_ID".into());
         if pinned.len() > 1
-            && let Some(p) = pinned.iter().find(|p| p.runs("vulkan") && !p.runs("cuda"))
+            && let Some(p) = pinned
+                .iter()
+                .find(|p| p.runs("vulkan") && !p.runs("cuda") && !p.runs("rocm"))
         {
             return Err(Unpinned(format!(
-                "dibs: {} runs Vulkan and not CUDA, and only CUDA can be pinned to several cards at once.\n  \
+                "dibs: {} runs Vulkan and neither CUDA nor ROCm, the only runtimes that can be pinned to several cards at once.\n  \
                  Vulkan selects one card, so the rest would run on whichever it picks.\n",
                 p.card.alias
             )));
         }
-        let mut uuids = Vec::new();
+        let (mut uuids, mut agents) = (Vec::new(), Vec::new());
         for p in pinned {
             p.still_there()?;
             if p.runs("cuda") {
                 uuids.push(p.cuda()?);
             }
+            if p.runs("rocm") {
+                agents.push(p.rocm()?.to_string());
+            }
         }
         if !uuids.is_empty() {
             vars.insert("CUDA_VISIBLE_DEVICES", uuids.join(","));
+        }
+        // Not HIP_VISIBLE_DEVICES as well: HIP numbers what ROCr left visible, so the same
+        // indices there would name other cards, or none.
+        if !agents.is_empty() {
+            vars.insert("ROCR_VISIBLE_DEVICES", agents.join(","));
         }
         if let [one] = pinned
             && one.runs("vulkan")
@@ -197,16 +207,22 @@ impl Pinned<'_> {
     }
 
     fn cuda(&self) -> Result<String, Unpinned> {
+        Pinned::cuda_uuid(self.pci).ok_or_else(|| self.unanswered())
+    }
+
+    fn rocm(&self) -> Result<usize, Unpinned> {
+        Pinned::rocm_index(self.pci).ok_or_else(|| self.unanswered())
+    }
+
+    fn unanswered(&self) -> Unpinned {
         let Pinned { card, pci, host } = self;
-        Pinned::cuda_uuid(pci).ok_or_else(|| {
-            Unpinned(format!(
-                "dibs: asked for {} ({pci}) and nothing here answers to it.\n  \
-                 Not running it unpinned: that would measure whichever card is first\n  \
-                 and report it under the name of the one you asked for.\n  \
-                 Check the machine still has that card:  dibs --check {host} --write\n",
-                card.alias
-            ))
-        })
+        Unpinned(format!(
+            "dibs: asked for {} ({pci}) and nothing here answers to it.\n  \
+             Not running it unpinned: that would measure whichever card is first\n  \
+             and report it under the name of the one you asked for.\n  \
+             Check the machine still has that card:  dibs --check {host} --write\n",
+            card.alias
+        ))
     }
 
     fn vulkan(&self, vars: &mut BTreeMap<&'static str, String>) {
@@ -239,5 +255,31 @@ impl Pinned<'_> {
                     .ends_with(&want)
                     .then(|| uuid.trim().to_string())
             })
+    }
+
+    /// ROCr takes the index it enumerates a card at, the order rocminfo lists its GPU agents in.
+    /// Not a UUID: a consumer card has none, and rocminfo shows it as `GPU-XX`.
+    fn rocm_index(pci: &str) -> Option<usize> {
+        let mut parts = pci.rsplit([':', '.']);
+        let mut next = || u32::from_str_radix(parts.next()?, 16).ok();
+        let (function, device, bus) = (next()?, next()?, next()?);
+        let bdf = ((bus << 8) | (device << 3) | function).to_string();
+        let mut query = Command::new("rocminfo");
+        query
+            .env_remove("ROCR_VISIBLE_DEVICES")
+            .env_remove("HIP_VISIBLE_DEVICES");
+        Signals::unblocked(&mut query);
+        let out = query.output().ok()?;
+        let field = |agent: &str, name: &str| -> Option<String> {
+            agent.lines().find_map(|line| {
+                let value = line.trim().strip_prefix(name)?.strip_prefix(':')?;
+                Some(value.trim().to_string())
+            })
+        };
+        String::from_utf8_lossy(&out.stdout)
+            .split("\nAgent ")
+            .skip(1)
+            .filter(|agent| field(agent, "Device Type").as_deref() == Some("GPU"))
+            .position(|agent| field(agent, "BDFID").as_deref() == Some(bdf.as_str()))
     }
 }
