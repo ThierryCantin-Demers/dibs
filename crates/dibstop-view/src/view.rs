@@ -47,7 +47,7 @@ impl View {
             rows.iter()
                 .position(|it| it.machine == *machine && it.pid == *pid)
         });
-        let mut asked = self.keys(ui, &rows, at);
+        let mut asked = self.keys(ui, &rows, at, machines);
         let multi = machines.len() > 1;
         header(ui, machines, self.busy.as_deref());
         ui.separator();
@@ -88,8 +88,15 @@ impl View {
         self.shown = Some((title, body));
     }
 
-    fn keys(&mut self, ui: &Ui, rows: &[Item], at: Option<usize>) -> Option<Action> {
-        if ui.ctx().egui_wants_keyboard_input() {
+    fn keys(
+        &mut self,
+        ui: &Ui,
+        rows: &[Item],
+        at: Option<usize>,
+        machines: &[Machine],
+    ) -> Option<Action> {
+        // A row or a button the person clicked keeps the focus; only typing takes the keys.
+        if ui.ctx().text_edit_focused() {
             return None;
         }
         let (pressed, shift) = ui.input(|input| {
@@ -125,7 +132,7 @@ impl View {
         let it = at.and_then(|at| rows.get(at));
         let machine = || {
             it.map(|it| it.machine.clone())
-                .or_else(|| rows.first().map(|it| it.machine.clone()))
+                .or_else(|| machines.first().map(|machine| machine.name.clone()))
         };
         match key {
             Key::K if shift => {
