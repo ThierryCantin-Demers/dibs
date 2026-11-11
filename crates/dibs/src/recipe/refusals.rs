@@ -60,15 +60,21 @@ fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> 
 }
 
 impl Resolved {
-    pub fn of(args: &RecipeCall) -> Result<Resolved, RecipeError> {
+    /// What a shell call refuses in its own words, which a batch refuses before it starts.
+    pub fn shell_words(args: &RecipeCall) -> Result<(), RecipeError> {
         let found = Checkouts::of(args).and_then(|checkouts| checkouts.find(&args.repo));
+        let repo = found
+            .as_deref()
+            .map(|dir| Repo(dir).identity())
+            .unwrap_or_else(|_| args.repo.clone());
+        refuse_shell_words(args, &repo)
+    }
+
+    pub fn of(args: &RecipeCall) -> Result<Resolved, RecipeError> {
         if args.verb == RecipeVerb::Shell {
-            let repo = found
-                .as_deref()
-                .map(|dir| Repo(dir).identity())
-                .unwrap_or_else(|_| args.repo.clone());
-            refuse_shell_words(args, &repo)?;
+            Resolved::shell_words(args)?;
         }
+        let found = Checkouts::of(args).and_then(|checkouts| checkouts.find(&args.repo));
         let dir = found?;
         let repo_name = Repo(&dir).identity();
         let manifest = if args.verb == RecipeVerb::Shell {

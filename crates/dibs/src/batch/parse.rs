@@ -3,6 +3,7 @@ use crate::{
     call::{CallError, Pending, Planned},
     cli::{CliError, Invocation, Mode, RecipeCall, RecipeVerb, RunLock},
     paths::FileError,
+    recipe::{RecipeError, Resolved},
 };
 use dibs_format::{Label, Mode as JobMode};
 use std::{
@@ -59,6 +60,8 @@ pub enum BadLine {
     Backslash,
     /// `overlap` on a step that measures.
     Overlap,
+    /// A call its own verb refuses in its words alone.
+    Refused(RecipeError),
 }
 
 impl fmt::Display for BatchError {
@@ -97,6 +100,7 @@ impl fmt::Display for BadLine {
             BadLine::Overlap => {
                 f.write_str("overlap is for shared work: a measurement runs with nothing beside it")
             }
+            BadLine::Refused(e) => e.fmt(f),
             BadLine::SingleQuote => f.write_str("a single quote is not closed"),
             BadLine::DoubleQuote => f.write_str("a double quote is not closed"),
             BadLine::Operator(c) => write!(
@@ -430,6 +434,9 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
         Invocation::Recipe(call) => {
             if call.verb == RecipeVerb::Batch {
                 return Err(BadLine::Nested);
+            }
+            if call.verb == RecipeVerb::Shell {
+                Resolved::shell_words(&call).map_err(BadLine::Refused)?;
             }
             step.on = call.on.clone();
             step.device = call.device.clone();
