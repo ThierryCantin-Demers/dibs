@@ -1,0 +1,20 @@
+[package]
+name = "dibstop-view"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "What dibstop shows, whatever draws it: its jobs, its actions, and an egui view of them"
+
+[features]
+# The view a window or a web page draws; a terminal frontend leaves it out.
+egui = ["dep:egui"]
+
+[dependencies]
+dibs-format.workspace = true
+egui = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

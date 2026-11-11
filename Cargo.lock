@@ -565,7 +565,17 @@ dependencies = [
  "crossterm",
  "dibs",
  "dibs-format",
+ "dibstop-view",
  "ratatui",
+ "serde_json",
+]
+
+[[package]]
+name = "dibstop-view"
+version = "0.1.0"
+dependencies = [
+ "dibs-format",
+ "egui",
  "serde_json",
 ]
 

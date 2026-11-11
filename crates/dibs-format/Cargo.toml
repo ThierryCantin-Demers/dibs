@@ -6,9 +6,12 @@ rust-version.workspace = true
 description = "What dibs writes and reads: ids, exits, records and the lines machines keep"
 
 [dependencies]
-libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+# Only for the local zone: a web page reads these formats too, and has none.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [lints]
 workspace = true

@@ -60,7 +60,7 @@ impl App {
     pub fn on_key(&mut self, code: KeyCode, tx: &Sender<Msg>) -> bool {
         if let Some(kill) = self.confirm.take() {
             if matches!(code, KeyCode::Char('y' | 'Y')) {
-                self.start_action(Action::kill(kill), tx);
+                self.start_action(Action::kill(kill.machine, kill.pid, &kill.label), tx);
             }
             return false;
         }
