@@ -3,6 +3,8 @@
 //! view a window or a web page draws. The caller feeds it each machine's status and runs the
 //! actions it asks for, so the view holds no process or connection of its own.
 
+pub use dibs_format;
+
 pub mod action;
 pub mod item;
 pub mod text;

@@ -576,6 +576,7 @@ version = "0.1.0"
 dependencies = [
  "dibs-format",
  "egui",
+ "serde",
  "serde_json",
 ]
 

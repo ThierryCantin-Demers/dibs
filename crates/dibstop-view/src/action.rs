@@ -1,6 +1,7 @@
 //! The one-off `dibs` calls a person starts from a view, whose output it shows over itself.
 
 use dibs_format::Label;
+use serde::{Deserialize, Serialize};
 
 use crate::item::Item;
 
@@ -8,8 +9,23 @@ const TREE: &str = r#"ps -eo pid=,ppid=,stat=,etime=,time=,args= | awk -v r=PIDH
 
 const LOG_LINES: usize = 40;
 
+/// Which call an action is, enough to make the same one again in another process, as the
+/// one that runs a web page's actions does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Call {
+    Log,
+    Gpu,
+    Status,
+    Output { pid: u32 },
+    Tree { pid: u32 },
+    Kill { pid: u32 },
+}
+
 pub struct Action {
     pub machine: String,
+    pub call: Call,
+    /// The label of the job a call on one is about.
+    pub label: String,
     /// What the header says while it runs.
     pub doing: String,
     pub title: String,
@@ -17,62 +33,80 @@ pub struct Action {
 }
 
 impl Action {
-    pub fn log(machine: String) -> Action {
+    pub fn new(machine: String, call: Call, label: &str) -> Action {
+        let (doing, title, args): (String, String, Vec<String>) = match call {
+            Call::Log => (
+                "reading the log".into(),
+                "recent arrivals and outcomes".into(),
+                vec!["--log".into(), LOG_LINES.to_string()],
+            ),
+            Call::Gpu => (
+                "asking the GPU".into(),
+                "nvidia-smi".into(),
+                vec!["--peek".into(), "nvidia-smi".into()],
+            ),
+            Call::Status => (
+                "refreshing".into(),
+                "status".into(),
+                vec!["--status".into()],
+            ),
+            Call::Output { pid } => (
+                format!("reading what {pid} is writing"),
+                format!("output of {pid} ({label})"),
+                vec!["--out".into(), pid.to_string()],
+            ),
+            Call::Tree { pid } => (
+                format!("looking at {pid}"),
+                format!("process tree under {pid} ({label})"),
+                vec!["--peek".into(), TREE.replace("PIDHERE", &pid.to_string())],
+            ),
+            Call::Kill { pid } => (
+                format!("stopping {label}"),
+                format!("kill {pid} ({label})"),
+                // The person's y is the say-so that --anyone asks for.
+                vec!["--kill".into(), pid.to_string(), "--anyone".into()],
+            ),
+        };
         Action {
             machine,
-            doing: "reading the log".into(),
-            title: "recent arrivals and outcomes".into(),
-            args: vec!["--log".into(), LOG_LINES.to_string()],
+            call,
+            label: label.to_string(),
+            doing,
+            title,
+            args,
         }
+    }
+
+    pub fn log(machine: String) -> Action {
+        Action::new(machine, Call::Log, "")
     }
 
     pub fn gpu(machine: String) -> Action {
-        Action {
-            machine,
-            doing: "asking the GPU".into(),
-            title: "nvidia-smi".into(),
-            args: vec!["--peek".into(), "nvidia-smi".into()],
-        }
+        Action::new(machine, Call::Gpu, "")
     }
 
     pub fn status(machine: String) -> Action {
-        Action {
-            machine,
-            doing: "refreshing".into(),
-            title: "status".into(),
-            args: vec!["--status".into()],
-        }
+        Action::new(machine, Call::Status, "")
     }
 
     pub fn output(job: &Item) -> Action {
-        Action {
-            machine: job.machine.clone(),
-            doing: format!("reading what {} is writing", job.pid),
-            title: format!("output of {} ({})", job.pid, job.label),
-            args: vec!["--out".into(), job.pid.to_string()],
-        }
+        Action::new(
+            job.machine.clone(),
+            Call::Output { pid: job.pid },
+            job.label.as_str(),
+        )
     }
 
     pub fn process_tree(job: &Item) -> Action {
-        Action {
-            machine: job.machine.clone(),
-            doing: format!("looking at {}", job.pid),
-            title: format!("process tree under {} ({})", job.pid, job.label),
-            args: vec![
-                "--peek".into(),
-                TREE.replace("PIDHERE", &job.pid.to_string()),
-            ],
-        }
+        Action::new(
+            job.machine.clone(),
+            Call::Tree { pid: job.pid },
+            job.label.as_str(),
+        )
     }
 
     pub fn kill(machine: String, pid: u32, label: &Label) -> Action {
-        Action {
-            machine,
-            doing: format!("stopping {label}"),
-            title: format!("kill {pid} ({label})"),
-            // The person's y is the say-so that --anyone asks for.
-            args: vec!["--kill".into(), pid.to_string(), "--anyone".into()],
-        }
+        Action::new(machine, Call::Kill { pid }, label.as_str())
     }
 
     /// Runs it, and says what it printed, both streams, fit to show.
