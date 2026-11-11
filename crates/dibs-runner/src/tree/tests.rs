@@ -239,6 +239,8 @@ fn fetched(reference: &str, slot: u32) -> Prepare {
         nest: None,
         fresh: Vec::new(),
         copies: BTreeMap::new(),
+        stamps: BTreeMap::new(),
+        version: None,
         packages: None,
         gitdbs: Vec::new(),
     }
@@ -671,6 +673,116 @@ fn what_a_job_saved_in_a_copy_goes_back_to_the_machine_with_the_newest_file_winn
         .filter(|n| n.contains(".dibs-"))
         .collect();
     assert!(left.is_empty(), "nothing half-copied is left: {left:?}");
+}
+
+/// A tool store copy whose `tool-version` names the version that wrote it, for a tree of
+/// `version`.
+fn versioned(key: &str, version: &str) -> Prepare {
+    Prepare {
+        copies: BTreeMap::from([("TOOL_STORE".into(), "~/.cache/tool/store".into())]),
+        stamps: BTreeMap::from([("TOOL_STORE".into(), "tool-version".into())]),
+        version: Some(version.into()),
+        ..local(key, &[])
+    }
+}
+
+fn written(dir: &Path, version: Option<&str>, file: &str) {
+    fs::create_dir_all(dir).unwrap();
+    if let Some(version) = version {
+        fs::write(dir.join("tool-version"), format!("{version}\n")).unwrap();
+    }
+    fs::write(dir.join(file), "").unwrap();
+}
+
+#[test]
+fn a_versioned_copy_takes_only_what_the_trees_version_wrote() {
+    let m = Machine::new();
+    written(&m.p("home/.cache/tool/store"), Some("1"), "machine.v1");
+    written(
+        &m.sibling("demo-local-two", &[])
+            .join("dibs-copies/TOOL_STORE"),
+        Some("2"),
+        "sibling.v2",
+    );
+    written(
+        &m.sibling("demo-local-unnamed", &[])
+            .join("dibs-copies/TOOL_STORE"),
+        None,
+        "sibling.unnamed",
+    );
+    let p = m.prepared(&versioned("new", "2"));
+    let copy = PathBuf::from(&p.copies["TOOL_STORE"]);
+    let has = |file: &str| copy.join(file).exists();
+    assert_eq!(
+        (has("sibling.v2"), has("machine.v1"), has("sibling.unnamed")),
+        (true, false, false)
+    );
+    assert_eq!(
+        fs::read_to_string(copy.join("tool-version")).unwrap(),
+        "2\n"
+    );
+}
+
+#[test]
+fn a_copy_another_version_wrote_is_made_again() {
+    let m = Machine::new();
+    written(&m.p("home/.cache/tool/store"), Some("2"), "machine.v2");
+    let p = m.prepared(&versioned("one", "1"));
+    let copy = PathBuf::from(&p.copies["TOOL_STORE"]);
+    written(&copy, Some("1"), "tree.v1");
+    let (again, said) = m.prepare(&versioned("one", "1"));
+    assert!(copy.join("tree.v1").exists(), "the same version keeps it");
+    assert_eq!(again.unwrap().copies, p.copies);
+    assert!(!said.contains("made again"), "{said}");
+
+    let (bumped, said) = m.prepare(&versioned("one", "2"));
+    assert_eq!(bumped.unwrap().copies, p.copies);
+    assert!(said.contains("made again"), "{said}");
+    assert_eq!(
+        (
+            copy.join("tree.v1").exists(),
+            copy.join("machine.v2").exists()
+        ),
+        (false, true)
+    );
+}
+
+#[test]
+fn a_copy_goes_back_only_where_the_machine_holds_its_version_or_nothing() {
+    let m = Machine::new();
+    let store = m.p("home/.cache/tool/store");
+    written(&store, Some("1"), "machine.v1");
+    let copy = PathBuf::from(&m.prepared(&versioned("one", "2")).copies["TOOL_STORE"]);
+    written(&copy, Some("2"), "tree.v2");
+    let give_back = || {
+        KeptCopy::of(&copy)
+            .give_back(Copier::new(Reflinks::Copies))
+            .unwrap();
+    };
+    give_back();
+    assert_eq!(
+        (
+            store.join("tree.v2").exists(),
+            fs::read_to_string(store.join("tool-version")).unwrap()
+        ),
+        (false, "1\n".to_string()),
+        "another version's directory is left as it is"
+    );
+    for entry in fs::read_dir(&store).unwrap().flatten() {
+        fs::remove_file(entry.path()).unwrap();
+    }
+    give_back();
+    assert_eq!(
+        fs::read_to_string(store.join("tool-version")).unwrap(),
+        "2\n",
+        "an empty one takes the copy's version"
+    );
+    written(&copy, Some("2"), "tree.v2.later");
+    give_back();
+    assert!(
+        store.join("tree.v2.later").exists(),
+        "and from then on its files"
+    );
 }
 
 #[test]

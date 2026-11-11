@@ -45,7 +45,7 @@ pub struct Stepped {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Place {
-    Prepare(Prepare),
+    Prepare(Box<Prepare>),
     At(At),
 }
 
@@ -72,6 +72,13 @@ pub struct Prepare {
     /// keeps a copy of for what runs there: a tool's store that one binary rewrites for itself.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub copies: BTreeMap<String, String>,
+    /// The file at the top of a copied directory, by its variable, naming the version that
+    /// wrote it: such a directory holds one version's files, which only that version reads.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stamps: BTreeMap<String, String>,
+    /// The version the tree's root Cargo.toml gives, which is what a stamp is compared with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     pub packages: Option<Packages>,
     /// Git dependencies this computer could send, which the machine is asked whether it lacks.
     pub gitdbs: Vec<GitDb>,

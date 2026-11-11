@@ -67,8 +67,14 @@ pub fn list(args: &RecipeCall) -> Result<ExitCode, RecipeError> {
     let copies = manifest.tree_copies();
     if !copies.is_empty() {
         println!("\neach build cache keeps its own copy of:");
+        let stamps = manifest.tree_stamps();
         for (variable, dir) in &copies {
-            println!("  {dir}, as ${variable}");
+            match stamps.get(variable) {
+                Some(file) => println!(
+                    "  {dir}, as ${variable}, holding only what the tree's version wrote, by its {file}"
+                ),
+                None => println!("  {dir}, as ${variable}"),
+            }
         }
     }
     println!("\nlocal recipes: {}", Manifest::local_dir().display());

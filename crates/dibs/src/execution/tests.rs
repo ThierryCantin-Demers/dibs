@@ -436,5 +436,26 @@ fn resolved(steps: Vec<Step>) -> Resolved {
         params: BTreeMap::new(),
         tree_fresh: Vec::new(),
         tree_copies: BTreeMap::new(),
+        tree_stamps: BTreeMap::new(),
     }
+}
+
+#[test]
+fn a_version_is_the_packages_or_else_its_workspaces() {
+    let workspace = "[workspace]\nmembers = [\"a\"]\n[workspace.package]\nversion = \"0.0.2\"\n";
+    assert_eq!(
+        super::trees::cargo_version(workspace).as_deref(),
+        Some("0.0.2")
+    );
+    let inherited = format!("[package]\nname = \"a\"\nversion.workspace = true\n{workspace}");
+    assert_eq!(
+        super::trees::cargo_version(&inherited).as_deref(),
+        Some("0.0.2")
+    );
+    let own = "[package]\nname = \"a\"\nversion = \"1.2.3\"\n";
+    assert_eq!(super::trees::cargo_version(own).as_deref(), Some("1.2.3"));
+    assert_eq!(
+        super::trees::cargo_version("[workspace]\nmembers = []\n"),
+        None
+    );
 }

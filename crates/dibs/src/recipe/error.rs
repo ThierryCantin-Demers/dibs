@@ -75,6 +75,11 @@ pub enum ManifestError {
         variable: String,
         dir: String,
     },
+    /// A `[tree] stamps` entry for no copy, or whose file is not a name at the copy's top.
+    Stamp {
+        variable: String,
+        file: String,
+    },
 }
 
 /// What is wrong with a shell's words.
@@ -261,6 +266,11 @@ impl fmt::Display for ManifestError {
                 f,
                 "[tree] copies names a variable and a directory on the machine, absolute or under ~/ \
                  and with no .. part, and {variable} = '{dir}' is not one"
+            ),
+            ManifestError::Stamp { variable, file } => write!(
+                f,
+                "[tree] stamps names a variable [tree] copies has and a file at the top of its directory, \
+                 and {variable} = '{file}' is not one"
             ),
         }
     }

@@ -341,6 +341,20 @@ directory under `~/` is kept on this computer as well, one copy per machine seri
 after it, so a rental after this one starts from what this one saved. A detached batch sends
 them before it starts and fetches them with its summary.
 
+A tool that reads only what its own version wrote, and names that version in a file at the top
+of its directory, cannot be handed a merge of two versions' files. `stamps` names that file:
+
+    [tree]
+    copies = { TOOL_STORE = "~/.cache/tool/store" }
+    stamps = { TOOL_STORE = "tool-version" }
+
+The version a tree builds is the one its root `Cargo.toml` gives, its package's or its
+workspace's. A new copy then starts only from the directories that version wrote, or from
+nothing; a copy another version wrote, such as one a seeded target brought from its sibling, is
+made again; and a copy goes back only to a machine directory that is empty or that version's, so
+the machine's is never left holding two versions. A tree whose `Cargo.toml` names no version
+starts its copy empty.
+
 ## Build caching
 
 dibs sets no compiler wrapper and leaves incremental compilation to each profile, so dev builds

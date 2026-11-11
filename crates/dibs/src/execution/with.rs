@@ -242,6 +242,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         nest: nest.as_ref(),
         fresh: manifest.tree_fresh(),
         copies: &manifest.tree_copies(),
+        stamps: &manifest.tree_stamps(),
     };
     spec.announce_unpinned_siblings();
     let plan = spec.plan();

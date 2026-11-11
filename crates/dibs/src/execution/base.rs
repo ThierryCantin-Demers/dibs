@@ -76,6 +76,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         params,
         tree_fresh,
         tree_copies,
+        tree_stamps,
     } = resolved;
     let (name, rec) = (name.as_str(), &rec);
     let fingerprint = rec.fingerprint();
@@ -275,6 +276,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             nest: nest.as_ref(),
             fresh: &tree_fresh,
             copies: &tree_copies,
+            stamps: &tree_stamps,
         };
         spec.announce_unpinned_siblings();
         let plan = spec.plan();
@@ -736,6 +738,7 @@ impl Pinned {
                 nest: None,
                 fresh: fresh.tree_fresh(),
                 copies: &fresh.tree_copies(),
+                stamps: &fresh.tree_stamps(),
             }
             .plan();
             let reported = match &p.local {

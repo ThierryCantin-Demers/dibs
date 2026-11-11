@@ -119,6 +119,14 @@ newest of the machine's and the siblings' files; this computer keeps a copy per 
 and sends it ahead of each run. An existing copy is never refreshed from the machine's, since
 that is the turn-by-turn rewrite copies exist to stop.
 
+**A versioned copy holds one version (2026-11-11).** A tool that stamps its store with the
+version that wrote it refuses any other, so a merge across a version bump gave a new tree a copy its
+build would not open. `stamps` names the file, and the tree's version comes from its root
+`Cargo.toml`, read on the caller's side because a sent tree is synced after its prepare. Only that
+version's directories are merged, a copy another version wrote is made again, and nothing goes
+back into the machine's directory unless it is empty or the same version. Starting every new
+tree's copy empty was the alternative, and costs an autotune per tree.
+
 ## Deferred. Do not re-derive
 
 **Round-robin or fair-share across agents.** Nothing is starved today, only delayed. The good

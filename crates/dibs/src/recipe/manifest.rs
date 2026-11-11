@@ -112,6 +112,10 @@ pub struct Tree {
     /// taking turns would otherwise rewrite for each other on every turn.
     #[serde(default)]
     pub copies: BTreeMap<String, String>,
+    /// The file at the top of a copied directory naming the version of the tool that wrote it,
+    /// by the copy's variable, for a tool that reads only what its own version wrote.
+    #[serde(default)]
+    pub stamps: BTreeMap<String, String>,
     /// Paths the ignore rules leave out that a tree sent from here takes anyway: what its build
     /// needs and the machine cannot make, such as a web bundle built with a toolchain it lacks.
     #[serde(default)]
@@ -145,6 +149,16 @@ impl Tree {
                     dir: dir.clone(),
                 });
             }
+        }
+        if let Some((variable, file)) = self.stamps.iter().find(|(variable, file)| {
+            !self.copies.contains_key(*variable)
+                || ["", ".", ".."].contains(&file.as_str())
+                || file.contains('/')
+        }) {
+            return Err(ManifestError::Stamp {
+                variable: variable.clone(),
+                file: file.clone(),
+            });
         }
         Ok(())
     }
@@ -312,6 +326,14 @@ impl Manifest {
         self.tree
             .as_ref()
             .map(|t| t.copies.clone())
+            .unwrap_or_default()
+    }
+
+    /// The version file each copied directory holds, by variable.
+    pub fn tree_stamps(&self) -> BTreeMap<String, String> {
+        self.tree
+            .as_ref()
+            .map(|t| t.stamps.clone())
             .unwrap_or_default()
     }
 

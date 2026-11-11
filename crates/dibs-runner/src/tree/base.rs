@@ -69,16 +69,65 @@ impl<'a> KeptCopy<'a> {
         self.copy.with_file_name(format!("{name}.from"))
     }
 
-    fn remember(&self, machine: &Path) -> io::Result<()> {
-        fs::write(self.origin(), format!("{}\n", machine.display()))
+    fn remember(&self, machine: &Path, stamp: Option<&str>) -> io::Result<()> {
+        let mut origin = format!("{}\n", machine.display());
+        if let Some(file) = stamp {
+            origin += &format!("{file}\n");
+        }
+        fs::write(self.origin(), origin)
     }
 
-    /// Each file the copy has newer than the machine's directory, given back to it.
+    /// Each file the copy has newer than the machine's directory, given back to it. Not into a
+    /// directory another version wrote, which would then hold two versions' files and be read
+    /// by neither.
     pub fn give_back(&self, copier: Copier) -> io::Result<()> {
-        let Ok(machine) = fs::read_to_string(self.origin()) else {
+        let Ok(origin) = fs::read_to_string(self.origin()) else {
             return Ok(());
         };
-        copier.newer(self.copy, Path::new(machine.trim_end()))
+        let mut lines = origin.lines();
+        let machine = Path::new(lines.next().unwrap_or_default());
+        if let Some(file) = lines.next() {
+            let copy = Written::read(self.copy, file);
+            let fits = match Written::read(machine, file) {
+                Written::Nothing => matches!(copy, Written::By(_)),
+                theirs => theirs == copy && theirs != Written::Unnamed,
+            };
+            if !fits {
+                return Ok(());
+            }
+        }
+        copier.newer(self.copy, machine)
+    }
+}
+
+/// What a tool's directory holds, by the file at its top naming the version that wrote it.
+#[derive(Debug, PartialEq, Eq)]
+enum Written {
+    /// Nothing at all, which any version may fill.
+    Nothing,
+    By(String),
+    /// Files and no version: written before the tool named its version.
+    Unnamed,
+}
+
+impl Written {
+    fn read(dir: &Path, file: &str) -> Written {
+        match fs::read_to_string(dir.join(file)) {
+            Ok(version) => Written::By(version.trim().to_string()),
+            Err(_) if fs::read_dir(dir).map_or(true, |mut d| d.next().is_none()) => {
+                Written::Nothing
+            }
+            Err(_) => Written::Unnamed,
+        }
+    }
+
+    /// Whether a build of `version` reads it; one whose version is unknown reads only nothing.
+    fn read_by(&self, version: Option<&str>) -> bool {
+        match self {
+            Written::Nothing => true,
+            Written::By(by) => Some(by.as_str()) == version,
+            Written::Unnamed => false,
+        }
     }
 }
 /// A tree whose target was prepared this recently may be about to be entered by another call.
@@ -671,7 +720,9 @@ impl<'a> Trees<'a> {
 
     /// The target's copy of each directory the prepare names, made the first time from the
     /// machine's and what the repo's other build caches saved in theirs, each file the newest
-    /// of them. Holding the target's turn.
+    /// of them. Holding the target's turn. A directory whose version file the prepare names
+    /// holds one version: only what the tree's own version wrote goes into it, and a copy
+    /// another version wrote is made again.
     fn copies(
         &self,
         prepare: &Prepare,
@@ -679,28 +730,55 @@ impl<'a> Trees<'a> {
         stamp: &Stamp,
     ) -> Result<BTreeMap<String, String>, PrepareError> {
         let mut copies = BTreeMap::new();
+        let version = prepare.version.as_deref();
         for (variable, dir) in &prepare.copies {
             let copy = target.join(COPIES).join(variable);
             let machine = match dir.strip_prefix("~/") {
                 Some(rest) => self.config.home.join(rest),
                 None => PathBuf::from(dir),
             };
+            let file = prepare.stamps.get(variable).map(String::as_str);
+            let readable =
+                |dir: &Path| file.is_none_or(|file| Written::read(dir, file).read_by(version));
             self.made(&target.join(COPIES))?;
+            if let Some(version) = version
+                && copy.exists()
+                && !readable(&copy)
+            {
+                (self.say)(&format!(
+                    "dibs: this build cache's copy for {variable} holds what another version wrote, and this tree builds {version}, so it is made again\n"
+                ));
+                if !copy.remove_all() {
+                    return Err(PrepareError::io(
+                        "could not remove the copy another version wrote",
+                        io::Error::other(copy.display().to_string()),
+                    ));
+                }
+            }
             if !copy.exists() {
                 let part = target
                     .join(COPIES)
                     .join(format!(".{variable}.{}", stamp.as_str()));
-                (self.say)(&format!(
-                    "dibs: copying {} for {variable}, with what this repo's other build caches saved, once for this build cache\n",
-                    machine.display()
-                ));
+                (self.say)(&match (file, version) {
+                    (None, _) => format!(
+                        "dibs: copying {} for {variable}, with what this repo's other build caches saved, once for this build cache\n",
+                        machine.display()
+                    ),
+                    (Some(_), Some(version)) => format!(
+                        "dibs: copying what {version} wrote in {} for {variable}, with what this repo's other build caches saved, once for this build cache\n",
+                        machine.display()
+                    ),
+                    (Some(file), None) => format!(
+                        "dibs: this tree's Cargo.toml names no version, which {variable}'s {file} would be compared with, so its copy starts empty\n"
+                    ),
+                });
                 let siblings = Siblings {
                     scratch: self.config.scratch,
                     repo: &prepare.repo,
                     of: target,
                 }
                 .newest_first();
-                let copied = match machine.is_dir() {
+                let copied = match machine.is_dir() && readable(&machine) {
                     true => self.copier.tree(&machine, &part, Sharing::Preferred),
                     false => fs::create_dir(&part),
                 }
@@ -708,7 +786,7 @@ impl<'a> Trees<'a> {
                     siblings
                         .iter()
                         .map(|sibling| sibling.join(COPIES).join(variable))
-                        .filter(|theirs| theirs.is_dir())
+                        .filter(|theirs| theirs.is_dir() && readable(theirs))
                         .try_for_each(|theirs| self.copier.newer(&theirs, &part))
                 })
                 .and_then(|()| fs::rename(&part, &copy));
@@ -721,7 +799,7 @@ impl<'a> Trees<'a> {
                 }
             }
             KeptCopy::of(&copy)
-                .remember(&machine)
+                .remember(&machine, file)
                 .map_err(|e| PrepareError::io("could not record where a copy came from", e))?;
             copies.insert(variable.clone(), copy.display().to_string());
         }

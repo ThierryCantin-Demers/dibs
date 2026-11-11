@@ -35,6 +35,7 @@ pub struct TreeSpec<'a> {
     pub nest: Option<&'a Nest>,
     pub fresh: &'a [String],
     pub copies: &'a BTreeMap<String, String>,
+    pub stamps: &'a BTreeMap<String, String>,
 }
 
 /// A tree as the machine is asked to lay it out, and the git databases it may need sent.
@@ -53,6 +54,12 @@ impl TreeSpec<'_> {
         cargo.fetch_private(&pins, private);
         let gitdbs = cargo.dbs(&pins);
         let lines = self.signature.packages(lock);
+        let version = match self.stamps.is_empty() {
+            true => None,
+            false => Repo(self.dir)
+                .manifest(fetched.as_deref())
+                .and_then(|manifest| cargo_version(&manifest)),
+        };
         let prepare = wire::Prepare {
             repo: self.repo_name.to_string(),
             source: match self.local {
@@ -73,6 +80,8 @@ impl TreeSpec<'_> {
             }),
             fresh: self.fresh.to_vec(),
             copies: self.copies.clone(),
+            stamps: self.stamps.clone(),
+            version,
             packages: (!lines.is_empty()).then(|| wire::Packages {
                 token: self.token.to_string(),
                 lines,
@@ -125,7 +134,7 @@ impl TreePlan {
     /// Laid out at the head of a job, which then does `then`.
     pub fn tree(&self, then: wire::Then) -> wire::Tree {
         wire::Tree {
-            place: wire::Place::Prepare(self.prepare.clone()),
+            place: wire::Place::Prepare(Box::new(self.prepare.clone())),
             then,
             step: None,
         }
@@ -156,6 +165,14 @@ impl TreePlan {
             }
         }
     }
+}
+
+/// The version a root Cargo.toml gives its package, or its workspace's packages.
+pub(super) fn cargo_version(manifest: &str) -> Option<String> {
+    let doc: toml::Table = toml::from_str(manifest).ok()?;
+    let version = |table: Option<&toml::Value>| Some(table?.get("version")?.as_str()?.to_string());
+    version(doc.get("package"))
+        .or_else(|| version(doc.get("workspace").and_then(|w| w.get("package"))))
 }
 
 /// What a job that only lays out a tree runs, which `--status` and `--log` show of it.

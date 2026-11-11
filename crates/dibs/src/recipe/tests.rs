@@ -352,6 +352,36 @@ fn a_tree_copy_names_a_variable_and_a_directory_on_the_machine() {
 }
 
 #[test]
+fn a_tree_stamp_names_a_file_at_the_top_of_a_copy() {
+    let tmp = std::env::temp_dir().join(format!("dibs-tree-stamps-{}", std::process::id()));
+    let copies = "copies = { TOOL_STORE = \"~/.cache/tool\" }";
+    write(
+        &tmp,
+        ".dibs.toml",
+        &format!("[tree]\n{copies}\nstamps = {{ TOOL_STORE = \"tool-version\" }}\n"),
+    );
+    let m = Manifest::load_from(&tmp, "app", &tmp.join("cfg")).unwrap();
+    assert_eq!(m.tree_stamps()["TOOL_STORE"], "tool-version");
+    for bad in [
+        r#"OTHER = "tool-version""#,
+        r#"TOOL_STORE = "a/b""#,
+        r#"TOOL_STORE = "..""#,
+        r#"TOOL_STORE = """#,
+    ] {
+        write(
+            &tmp,
+            ".dibs.toml",
+            &format!("[tree]\n{copies}\nstamps = {{ {bad} }}\n"),
+        );
+        let e = Manifest::load_from(&tmp, "app", &tmp.join("cfg"))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("[tree] stamps"), "{bad}: {e}");
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn a_tree_path_that_could_reach_outside_the_tree_is_refused() {
     let tmp = std::env::temp_dir().join(format!("dibs-tree-bad-{}", std::process::id()));
     for bad in [
