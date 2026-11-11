@@ -166,94 +166,89 @@ impl View {
         }
     }
 
+    /// The jobs as cards that fit the width they are given, since a page shares its width
+    /// with other views where a terminal gives dibstop all of its own.
     fn table(&mut self, ui: &mut Ui, rows: &[Item], at: Option<usize>, multi: bool) {
         if rows.is_empty() {
             ui.colored_label(green(ui), "nothing holding it, nothing queued");
             return;
         }
-        let any_device = rows.iter().any(|it| it.device.is_some());
-        let any_step = rows.iter().any(|it| it.batch.is_some());
         egui::ScrollArea::vertical()
             .id_salt("dibstop-jobs")
             .max_height(ui.available_height() * 0.6)
+            .auto_shrink([false, true])
             .show(ui, |ui| {
-                egui::Grid::new("dibstop-jobs-grid")
-                    .striped(true)
-                    .spacing([14.0, 4.0])
-                    .show(ui, |ui| {
-                        let mut heads = vec!["WHAT"];
-                        if multi {
-                            heads.insert(0, "MACHINE");
-                        }
-                        heads.extend(["MODE", "LABEL"]);
-                        if any_device {
-                            heads.push("DEVICE");
-                        }
-                        heads.extend(["AGENT", "TIME", "CORES"]);
-                        if any_step {
-                            heads.push("BATCH");
-                        }
-                        heads.push("NOTE");
-                        for head in heads {
-                            ui.label(RichText::new(head).weak().strong());
-                        }
-                        ui.end_row();
-                        for (i, it) in rows.iter().enumerate() {
-                            self.row(ui, it, at == Some(i), multi, any_device, any_step);
-                        }
-                    });
+                for (i, it) in rows.iter().enumerate() {
+                    if self.card(ui, it, at == Some(i), multi) {
+                        self.selected = Some((it.machine.clone(), it.pid));
+                    }
+                    ui.add_space(4.0);
+                }
             });
     }
 
-    fn row(
-        &mut self,
-        ui: &mut Ui,
-        it: &Item,
-        selected: bool,
-        multi: bool,
-        any_device: bool,
-        any_step: bool,
-    ) {
+    /// One job: what it is and how long it has run, its label, who and where, and its note.
+    /// Returns whether it was clicked.
+    fn card(&mut self, ui: &mut Ui, it: &Item, selected: bool, multi: bool) -> bool {
         let hue = xterm(agent_hue(&it.agent));
-        if multi {
-            ui.weak(&it.machine);
-        }
-        let slot = match (it.holding, it.alarm) {
-            (true, true) => RichText::new(&it.slot).color(ui.visuals().warn_fg_color),
-            (true, false) => RichText::new(&it.slot).strong(),
-            (false, _) => RichText::new(&it.slot).color(Color32::from_rgb(80, 180, 200)),
+        let fill = match selected {
+            true => ui.visuals().selection.bg_fill.gamma_multiply(0.5),
+            false => ui.visuals().faint_bg_color,
         };
-        if ui.selectable_label(selected, slot).clicked() {
-            self.selected = Some((it.machine.clone(), it.pid));
-        }
-        let mode = match it.mode {
-            Mode::Bench => ui.visuals().error_fg_color,
-            _ => ui.visuals().warn_fg_color,
-        };
-        ui.label(RichText::new(it.mode.to_string()).color(mode).strong());
-        ui.label(RichText::new(it.label.as_str()).color(hue));
-        if any_device {
-            match &it.device {
-                Some(device) => {
-                    ui.label(RichText::new(device.as_str()).color(Color32::from_rgb(200, 110, 200)))
+        let card = egui::Frame::new()
+            .fill(fill)
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::symmetric(8, 6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    let slot = match (it.holding, it.alarm) {
+                        (true, true) => RichText::new(&it.slot).color(ui.visuals().warn_fg_color),
+                        (true, false) => RichText::new(&it.slot).strong(),
+                        (false, _) => {
+                            RichText::new(&it.slot).color(Color32::from_rgb(80, 180, 200))
+                        }
+                    };
+                    ui.label(slot);
+                    let mode = match it.mode {
+                        Mode::Bench => ui.visuals().error_fg_color,
+                        _ => ui.visuals().warn_fg_color,
+                    };
+                    ui.label(RichText::new(it.mode.to_string()).color(mode).strong());
+                    if multi {
+                        ui.weak(&it.machine);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(Span(it.time).to_string()).strong());
+                    });
+                });
+                ui.add(egui::Label::new(RichText::new(it.label.as_str()).color(hue)).truncate());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(&it.agent).color(hue));
+                    if let Some(device) = &it.device {
+                        ui.label(
+                            RichText::new(device.as_str()).color(Color32::from_rgb(200, 110, 200)),
+                        );
+                    }
+                    if let Some(rate) = it.rate {
+                        ui.weak(cores(rate));
+                    }
+                    if let Some(batch) = &it.batch {
+                        ui.label(batch.progress());
+                    }
+                    // A queued job's note already says when it starts.
+                    if let Some(eta) = it.eta.filter(|_| it.holding) {
+                        ui.weak(format!("job ~{} left", Span(eta)));
+                    }
+                });
+                if !it.note.is_empty() {
+                    match it.alarm {
+                        true => ui.colored_label(ui.visuals().warn_fg_color, &it.note),
+                        false => ui.weak(&it.note),
+                    };
                 }
-                None => ui.weak("-"),
-            };
-        }
-        ui.label(RichText::new(&it.agent).color(hue));
-        ui.label(RichText::new(Span(it.time).to_string()).strong());
-        ui.weak(it.rate.map(cores).unwrap_or_else(|| "-".into()));
-        if any_step {
-            match &it.batch {
-                Some(batch) => ui.label(batch.progress()),
-                None => ui.weak("-"),
-            };
-        }
-        match it.alarm {
-            true => ui.colored_label(ui.visuals().warn_fg_color, &it.note),
-            false => ui.weak(&it.note),
-        };
-        ui.end_row();
+            });
+        card.response.interact(egui::Sense::click()).clicked()
     }
 
     fn detail(&mut self, ui: &mut Ui, it: &Item) -> Option<Action> {
