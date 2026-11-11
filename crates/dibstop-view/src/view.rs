@@ -178,11 +178,29 @@ impl View {
             .max_height(ui.available_height() * 0.6)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                for (i, it) in rows.iter().enumerate() {
-                    if self.card(ui, it, at == Some(i), multi) {
-                        self.selected = Some((it.machine.clone(), it.pid));
+                for running in [true, false] {
+                    let jobs: Vec<(usize, &Item)> = rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, it)| it.holding == running)
+                        .collect();
+                    if jobs.is_empty() {
+                        continue;
                     }
-                    ui.add_space(4.0);
+                    let heading = match running {
+                        true => RichText::new(format!("Running now ({})", jobs.len()))
+                            .color(green(ui))
+                            .strong(),
+                        false => RichText::new(format!("Waiting ({})", jobs.len())).weak(),
+                    };
+                    ui.label(heading);
+                    for (i, it) in jobs {
+                        if self.card(ui, it, at == Some(i), multi) {
+                            self.selected = Some((it.machine.clone(), it.pid));
+                        }
+                        ui.add_space(4.0);
+                    }
+                    ui.add_space(6.0);
                 }
             });
     }
@@ -191,9 +209,14 @@ impl View {
     /// Returns whether it was clicked.
     fn card(&mut self, ui: &mut Ui, it: &Item, selected: bool, multi: bool) -> bool {
         let hue = xterm(agent_hue(&it.agent));
-        let fill = match selected {
-            true => ui.visuals().selection.bg_fill.gamma_multiply(0.5),
-            false => ui.visuals().faint_bg_color,
+        let mode = match it.mode {
+            Mode::Bench => ui.visuals().error_fg_color,
+            _ => ui.visuals().warn_fg_color,
+        };
+        let fill = match (selected, it.holding) {
+            (true, _) => ui.visuals().selection.bg_fill.gamma_multiply(0.5),
+            (false, true) => green(ui).gamma_multiply(0.12),
+            (false, false) => ui.visuals().faint_bg_color,
         };
         let card = egui::Frame::new()
             .fill(fill)
@@ -202,24 +225,26 @@ impl View {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    let slot = match (it.holding, it.alarm) {
-                        (true, true) => RichText::new(&it.slot).color(ui.visuals().warn_fg_color),
-                        (true, false) => RichText::new(&it.slot).strong(),
-                        (false, _) => {
-                            RichText::new(&it.slot).color(Color32::from_rgb(80, 180, 200))
-                        }
+                    let frozen = it.holding && it.slot != "HOLDING";
+                    let slot = match (it.holding, frozen || it.alarm) {
+                        (true, true) => RichText::new(it.slot.to_lowercase())
+                            .color(ui.visuals().warn_fg_color)
+                            .strong(),
+                        (true, false) => RichText::new("running").color(green(ui)).strong(),
+                        (false, _) => RichText::new(it.slot.replace("queued ", "#") + " in queue")
+                            .color(Color32::from_rgb(80, 180, 200)),
                     };
                     ui.label(slot);
-                    let mode = match it.mode {
-                        Mode::Bench => ui.visuals().error_fg_color,
-                        _ => ui.visuals().warn_fg_color,
-                    };
                     ui.label(RichText::new(it.mode.to_string()).color(mode).strong());
                     if multi {
                         ui.weak(&it.machine);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(Span(it.time).to_string()).strong());
+                        let time = Span(it.time).to_string();
+                        match it.holding {
+                            true => ui.label(RichText::new(format!("for {time}")).strong()),
+                            false => ui.weak(format!("waited {time}")),
+                        };
                     });
                 });
                 ui.add(egui::Label::new(RichText::new(it.label.as_str()).color(hue)).truncate());
@@ -248,6 +273,11 @@ impl View {
                     };
                 }
             });
+        if it.holding {
+            let rect = card.response.rect;
+            let stripe = egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height()));
+            ui.painter().rect_filled(stripe, 2.0, mode);
+        }
         card.response.interact(egui::Sense::click()).clicked()
     }
 
