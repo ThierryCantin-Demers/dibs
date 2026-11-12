@@ -24,7 +24,7 @@ mod turn;
 pub use base::{KeptCopy, TreeConfig, Trees};
 pub use clocks::Clocks;
 pub use copy::{Copier, Mark, Reflinks};
-pub use gc::{Asked, Bytes};
+pub use gc::{Asked, Bytes, Free};
 pub use git::Commands;
 pub use runners::Runners;
 pub use step::{BuildMark, Spot, Stepping};

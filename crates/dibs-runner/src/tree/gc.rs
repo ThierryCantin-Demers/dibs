@@ -560,15 +560,15 @@ impl Rows {
 }
 
 /// Free space where a directory lives.
-struct Free {
-    available: u64,
-    used: u64,
-    size: u64,
-    mount: PathBuf,
+pub struct Free {
+    pub available: u64,
+    pub used: u64,
+    pub size: u64,
+    pub mount: PathBuf,
 }
 
 impl Free {
-    fn of(dir: &Path) -> Option<Free> {
+    pub fn of(dir: &Path) -> Option<Free> {
         let path = CString::new(dir.as_os_str().as_bytes()).ok()?;
         // SAFETY: statvfs is plain data, which statvfs fills from a NUL-terminated path.
         let mut found: libc::statvfs = unsafe { std::mem::zeroed() };

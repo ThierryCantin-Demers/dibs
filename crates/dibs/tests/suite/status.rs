@@ -735,6 +735,20 @@ fn metrics_are_read_only_for_a_status_that_asks_for_them() {
         first["mem_total"].as_u64().unwrap() >= first["mem_used"].as_u64().unwrap(),
         "{first}"
     );
+    let disks = first["disks"].as_array().unwrap();
+    let scratch = disks.iter().find(|d| d["role"] == "scratch").unwrap();
+    assert!(
+        scratch["total"].as_u64().unwrap() >= scratch["free"].as_u64().unwrap(),
+        "{first}"
+    );
+    assert!(
+        disks
+            .iter()
+            .filter(|d| d["mount"] == scratch["mount"])
+            .count()
+            == 1,
+        "each filesystem once: {first}"
+    );
     std::fs::write(s.lockdir().join("metrics.cpu"), "0 0 0\n").unwrap();
     let busy = metrics(&s)["cpu_busy_permille"].as_u64();
     assert!(

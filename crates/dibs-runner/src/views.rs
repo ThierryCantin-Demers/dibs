@@ -24,7 +24,11 @@ impl Views<'_> {
     pub fn status(&self) -> i32 {
         let mut status = self.look.status(self.request.verbose);
         if self.request.metrics {
-            status.metrics = Some(metrics::read(self.look.dir, &self.request.aliases));
+            status.metrics = Some(metrics::read(
+                self.look.machine,
+                self.look.dir,
+                &self.request.aliases,
+            ));
         }
         self.sink.out(self.shown(&status).as_bytes());
         0

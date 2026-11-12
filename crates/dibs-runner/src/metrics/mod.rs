@@ -2,16 +2,17 @@
 //! a status is answered beside a benchmark, and a tool started there would be measured with it.
 
 mod amd;
+mod disk;
 mod host;
 mod nvml;
 
-use crate::lock::LockDir;
+use crate::{lock::LockDir, machine::Site};
 use dibs_format::status::{GpuMetrics, Metrics};
 use std::{collections::BTreeMap, fs, path::Path};
 
 /// Every reading there is, the CPU against the one the last caller left in the lock directory,
 /// each card under the alias `aliases` gives its address.
-pub fn read(dir: &LockDir, aliases: &BTreeMap<String, String>) -> Metrics {
+pub fn read(machine: &Site, dir: &LockDir, aliases: &BTreeMap<String, String>) -> Metrics {
     let (cpu_busy_permille, cpu_over_ms) = host::Cpu::since_last(&dir.path.join("metrics.cpu"))
         .map_or((None, None), |busy| {
             (Some(busy.permille), Some(busy.over_ms))
@@ -27,6 +28,7 @@ pub fn read(dir: &LockDir, aliases: &BTreeMap<String, String>) -> Metrics {
         mem_used: memory.map(|m| m.used),
         mem_total: memory.map(|m| m.total),
         gpus,
+        disks: disk::disks(machine),
     }
 }
 

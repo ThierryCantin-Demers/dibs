@@ -18,6 +18,55 @@ pub struct Metrics {
     pub mem_total: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gpus: Vec<GpuMetrics>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disks: Vec<Disk>,
+}
+
+/// A filesystem a job writes to, each listed once, under the first role it plays.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Disk {
+    pub role: DiskRole,
+    pub mount: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fstype: Option<String>,
+    /// Bytes.
+    pub total: u64,
+    /// Bytes this account may still write, before any quota.
+    pub free: u64,
+    /// Each quota that counts what this account writes there, with a limit: a full quota stops
+    /// a job as a full disk does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quotas: Vec<Quota>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiskRole {
+    /// `$DIBS_SCRATCH`: trees, build caches and logs.
+    Scratch,
+    /// The `TMPDIR` a job is given.
+    Tmp,
+    /// `/tmp`, which a tool that ignores `TMPDIR` writes to.
+    SystemTmp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Quota {
+    pub kind: QuotaKind,
+    /// The user, group or project id it is kept for.
+    pub id: u32,
+    /// Bytes: the hard limit, or the soft one where there is none.
+    pub limit: u64,
+    /// Bytes.
+    pub used: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QuotaKind {
+    User,
+    Group,
+    Project,
 }
 
 /// One card, by its slot. A reading the driver does not give is absent.

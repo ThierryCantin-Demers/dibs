@@ -9,5 +9,5 @@ pub use base::{
     Ahead, BatchShown, Closure, Holder, Idle, IdleKind, Left, Leftover, Listing, LockState, Orphan,
     Overrun, Remaining, Scene, Scope, Service, Shown, Silent, Status, Waiter, Within,
 };
-pub use metrics::{GpuMetrics, Metrics, Vendor};
+pub use metrics::{Disk, DiskRole, GpuMetrics, Metrics, Quota, QuotaKind, Vendor};
 pub use text::Text;
