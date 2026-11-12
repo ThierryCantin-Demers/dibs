@@ -37,6 +37,10 @@ pub struct Disk {
     /// a job as a full disk does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quotas: Vec<Quota>,
+    /// Scratch's top-level entries that live here rather than on scratch's own filesystem, by
+    /// a symlink or a mount: `ws` and `target` moved to a bigger array, for one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +52,8 @@ pub enum DiskRole {
     Tmp,
     /// `/tmp`, which a tool that ignores `TMPDIR` writes to.
     SystemTmp,
+    /// Where only some of scratch's entries live, which `paths` names.
+    Linked,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

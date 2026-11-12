@@ -4,21 +4,44 @@ use crate::{
     tree::Free,
 };
 use dibs_format::status::{Disk, DiskRole, Quota};
-use std::{os::unix::fs::MetadataExt as _, path::Path};
+use std::{
+    os::unix::fs::MetadataExt as _,
+    path::{Path, PathBuf},
+};
 
-/// Each filesystem a job writes to, once: scratch, the `TMPDIR` jobs are given, and the system's
-/// `/tmp`, which is what a tool ignoring `TMPDIR` fills. Read by statvfs, which is exact where
-/// summing files is not: reflinked trees share their blocks.
+/// Each filesystem a job writes to, once: scratch, the `TMPDIR` jobs are given, the system's
+/// `/tmp`, which is what a tool ignoring `TMPDIR` fills, and wherever scratch's own entries were
+/// moved to. Read by statvfs, which is exact where summing files is not: reflinked trees share
+/// their blocks.
 pub fn disks(machine: &Site) -> Vec<Disk> {
+    let scratch = &machine.scratch;
+    let device = |dir: &Path| std::fs::metadata(dir).ok().map(|m| m.dev());
+    let home = device(scratch);
+    let mut entries: Vec<(String, PathBuf, u64)> = std::fs::read_dir(scratch)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let dev = device(&path).filter(|d| Some(*d) != home)?;
+            Some((entry.file_name().to_string_lossy().into_owned(), path, dev))
+        })
+        .collect();
+    entries.sort();
+    let linked = entries
+        .iter()
+        .map(|(_, path, _)| (DiskRole::Linked, path.clone()));
     let mut seen = Vec::new();
     [
-        (DiskRole::Scratch, machine.scratch.clone()),
+        (DiskRole::Scratch, scratch.clone()),
         (DiskRole::Tmp, machine.tmp()),
         (DiskRole::SystemTmp, "/tmp".into()),
     ]
     .into_iter()
-    .filter_map(|(role, dir)| {
-        let device = std::fs::metadata(&dir).ok()?.dev();
+    .chain(linked)
+    .filter_map(|(role, dir): (DiskRole, PathBuf)| {
+        let dir = dir.canonicalize().ok()?;
+        let device = device(&dir)?;
         if seen.contains(&device) {
             return None;
         }
@@ -31,6 +54,11 @@ pub fn disks(machine: &Site) -> Vec<Disk> {
             total: free.size,
             free: free.available,
             quotas: quotas(&dir),
+            paths: entries
+                .iter()
+                .filter(|(_, _, on)| *on == device)
+                .map(|(name, _, _)| name.clone())
+                .collect(),
         })
     })
     .collect()

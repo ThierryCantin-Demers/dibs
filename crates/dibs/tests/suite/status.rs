@@ -749,6 +749,27 @@ fn metrics_are_read_only_for_a_status_that_asks_for_them() {
             == 1,
         "each filesystem once: {first}"
     );
+    use std::os::unix::fs::MetadataExt as _;
+    let device = |p: &std::path::Path| std::fs::metadata(p).unwrap().dev();
+    let taken = [
+        device(&s.path("scratch")),
+        device(std::path::Path::new("/tmp")),
+    ];
+    if let Some(elsewhere) = ["/dev", "/run", "/dev/shm"]
+        .into_iter()
+        .find(|d| !taken.contains(&device(std::path::Path::new(d))))
+    {
+        std::os::unix::fs::symlink(elsewhere, s.path("scratch/moved")).unwrap();
+        let again = metrics(&s);
+        let linked: Vec<&serde_json::Value> = again["disks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["role"] == "linked")
+            .collect();
+        assert_eq!(linked.len(), 1, "{again}");
+        assert_eq!(linked[0]["paths"], serde_json::json!(["moved"]), "{again}");
+    }
     std::fs::write(s.lockdir().join("metrics.cpu"), "0 0 0\n").unwrap();
     let busy = metrics(&s)["cpu_busy_permille"].as_u64();
     assert!(

@@ -83,7 +83,8 @@ connection, so one never outlives a dibstop that was killed.
 `dibs status --json --metrics <machines|all>` adds a `metrics` object to each machine named: the
 CPU's busy share since the reading the last such caller left, memory, and for each card its use,
 memory, temperature, power, clock and, on NVIDIA, what holds the clock down, and the free space
-and quotas of scratch, the `TMPDIR` jobs get and `/tmp`, by statvfs. All of it is read
+and quotas of scratch, the `TMPDIR` jobs get, `/tmp`, and any filesystem one of scratch's own
+entries was moved to by a symlink or a mount, which `paths` names, by statvfs. All of it is read
 in the runner, from `/proc`, the NVIDIA driver's own library and amdgpu's sysfs, with no tool
 started and no suspended card woken, so it can be watched while a benchmark runs.
 
