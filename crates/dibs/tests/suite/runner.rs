@@ -17,8 +17,11 @@ fn toml(rel: &str) -> toml::Table {
 
 #[test]
 fn a_change_to_any_file_of_the_runners_tree_repacks_it() {
-    let output = Path::new(env!("OUT_DIR")).join("../output");
-    let output = fs::read_to_string(&output).unwrap();
+    // Beside OUT_DIR in cargo's old build directory layout, `run/stdout` in its new one.
+    let out = Path::new(env!("OUT_DIR"));
+    let output = fs::read_to_string(out.join("../output"))
+        .or_else(|_| fs::read_to_string(out.join("../run/stdout")))
+        .unwrap();
     let watched: Vec<PathBuf> = output
         .lines()
         .filter_map(|line| line.strip_prefix("cargo:rerun-if-changed="))
