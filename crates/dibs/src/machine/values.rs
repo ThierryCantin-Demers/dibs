@@ -7,6 +7,7 @@ use dibs_format::{
     Alias, Label, Mode,
     wire::{self, Request},
 };
+use std::collections::BTreeMap;
 
 /// Where `--max` came from, which decides whether history may raise it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,8 @@ pub struct CallValues {
     pub new_series: bool,
     /// A status that reads the machine's CPU, memory and cards too.
     pub metrics: bool,
+    /// Each card's alias by its PCI address, for those metrics to name it by.
+    pub aliases: BTreeMap<String, String>,
     /// `--preemptible`, or a recipe's step that only compiles.
     pub preempt: bool,
     /// The tree a recipe's job runs in.
@@ -136,6 +139,7 @@ impl CallValues {
             },
             new_series: self.new_series,
             metrics: self.metrics,
+            aliases: self.aliases.clone(),
             preempt: self.preempt,
             // From the environment, which `--when-open` sets, so a batch's steps and a sync's
             // transfer carry it too.

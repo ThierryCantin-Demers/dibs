@@ -157,6 +157,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
         agent_id: String::new(),
         subagent: None,
         metrics: false,
+        aliases: Default::default(),
         batch: None,
         watch: Watch {
             off: true,

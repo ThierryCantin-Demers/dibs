@@ -52,6 +52,10 @@ pub struct Request {
     /// A status that reads the machine's CPU, memory and cards as well.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub metrics: bool,
+    /// Each card's `--device` alias by its PCI address, from the caller's inventory, which is
+    /// what a metrics reading names a card by.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub aliases: std::collections::BTreeMap<String, String>,
     /// The tree the job runs in, prepared at its head when it is not yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<Tree>,

@@ -19,6 +19,7 @@ use crate::{
 use dibs_format::{Exit, Label, Mode, wire::Trailer};
 use dibs_runner::short_hostname;
 use std::{
+    collections::BTreeMap,
     fmt,
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
@@ -351,6 +352,7 @@ impl Request<'_> {
             services: Vec::new(),
             new_series: self.call.new_series,
             metrics: self.mode == Mode::Status && self.call.metrics.is_some(),
+            aliases: BTreeMap::new(),
             preempt: false,
             tree: None,
         }

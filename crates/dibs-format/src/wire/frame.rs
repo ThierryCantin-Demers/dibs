@@ -180,6 +180,7 @@ mod tests {
             agent_id: "id".into(),
             subagent: None,
             metrics: false,
+            aliases: Default::default(),
             batch: None,
             watch: Watch {
                 off: false,

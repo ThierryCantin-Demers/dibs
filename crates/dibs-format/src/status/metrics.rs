@@ -26,6 +26,9 @@ pub struct GpuMetrics {
     /// `domain:bus:device.function`, lowercase, as the inventory records it.
     pub pci: String,
     pub vendor: Vendor,
+    /// What `--device` names it by, where the caller's inventory has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Asleep, so nothing else was read: reading it would wake it.
@@ -62,6 +65,7 @@ impl GpuMetrics {
         GpuMetrics {
             pci,
             vendor,
+            alias: None,
             name: None,
             suspended: false,
             util_pct: None,

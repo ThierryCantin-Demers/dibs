@@ -10,7 +10,7 @@ use crate::{
 };
 use dibs_format::{Label, MachineName, Mode};
 use dibs_runner::short_hostname;
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 /// A call in a mode the machine half answers itself, rather than by running a command there.
 pub struct MachineCall<'a> {
@@ -102,6 +102,15 @@ impl<'a> MachineCall<'a> {
             caller: self.caller,
         }
         .values(asked.label.filed(), card, asked.command);
+        let aliases = match (values.metrics, target.entry(&self.fleet)) {
+            (true, Some(entry)) => entry
+                .devices
+                .iter()
+                .filter_map(|d| Some((d.pci.clone()?, d.alias.as_ref()?.to_string())))
+                .collect(),
+            _ => BTreeMap::new(),
+        };
+        let values = CallValues { aliases, ..values };
         Ok(match asked.streamed {
             true => CallValues {
                 stream: true,

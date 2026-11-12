@@ -104,6 +104,7 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         agent_id: "local_suite".into(),
         subagent: None,
         metrics: false,
+        aliases: Default::default(),
         batch: None,
         watch: Watch {
             off: true,
