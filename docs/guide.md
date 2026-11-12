@@ -545,7 +545,8 @@ ref the machine cannot fetch resolve there as they would here; your recipes; and
 The first detach to a machine sends whole repos, and later ones send only what changed. It also
 builds this version of dibs there, once per version, as a shared job, the way it builds its
 runner. A tree sent from your working copy builds in the same tree and target there as your own
-calls do.
+calls do, unless a batch sent from that copy is still running there: then the new batch builds it
+in a tree of its own, so each runs the files it sent, and says so when it starts.
 
 The call follows the batch and prints its summary as an ordinary batch does, with each step's
 output brought back beside it, and the run records and series filed with yours. If the call is

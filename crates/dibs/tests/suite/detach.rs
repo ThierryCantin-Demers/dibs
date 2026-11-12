@@ -170,6 +170,62 @@ fn a_detached_batch_is_stopped_from_here_on_its_machine() {
     );
 }
 
+#[test]
+fn a_batch_sent_from_a_tree_another_running_batch_was_sent_from_builds_apart() {
+    let mut s = detaching();
+    let dir = app(&s);
+    recipes(&s, PARAMS);
+    let up = s.gate("up");
+    let gate = s.gate("held");
+    s.write(
+        "first",
+        &format!(
+            "[held] dibs --on box-a --label detached-held '{}; {}'\n[one] dibs build app@local p --on box-a\n",
+            up.signal(),
+            gate.hold()
+        ),
+    );
+    let first = s.spawn(s.dibs(["batch", "--detach", &s.p("first")]));
+    up.reached();
+    s.write("app/added.txt", "only the second batch has this\n");
+    let second = s
+        .dibs(["batch", "--detach", "-"])
+        .stdin("[one] dibs build app@local p --on box-a\n")
+        .run();
+    assert_eq!(second.code, 0, "{}", second.all());
+    assert_eq!(
+        second
+            .stderr
+            .lines_with("still runs here, so this batch builds app in a tree of its own"),
+        1,
+        "{}",
+        second.all()
+    );
+    let trees: Vec<String> = fs::read_dir(s.path("hosts/box-a/scratch/ws/app"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("local-"))
+        .collect();
+    assert_eq!(trees.len(), 1, "{trees:?}");
+    assert_ne!(
+        trees[0],
+        format!("local-{}", short_hash(&dir)),
+        "the shared tree is left to the batch still running"
+    );
+    gate.open();
+    assert_eq!(s.wait(first), 0);
+    let shared = format!("hosts/box-a/scratch/ws/app/local-{}", short_hash(&dir));
+    assert!(
+        s.path(&shared).is_dir(),
+        "the first batch built in the shared tree"
+    );
+    assert!(
+        !s.path(&format!("{shared}/added.txt")).exists(),
+        "and built what it sent"
+    );
+}
+
 /// A recipe whose step says what its tool found saved, then saves its own.
 const TUNES: &str = "[tree]\ncopies = { TOOL_STORE = \"~/.cache/tool/store\" }\n\n\
                      [build.tool]\n  [[build.tool.step]]\n  lock = \"shared\"\n  \

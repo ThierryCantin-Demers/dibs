@@ -134,6 +134,11 @@ impl<'a> Driver<'a> {
         Ok(DriverClaim { _record: record })
     }
 
+    /// Whether the batch in `dir` has a driver running here.
+    pub fn runs(dir: &Path) -> bool {
+        Driver::of(dir).is_some()
+    }
+
     /// The driver of the batch in `dir`, while one runs here.
     fn of(dir: &'a Path) -> Option<Driver<'a>> {
         let record = File::open(dir.join(Driver::RECORD)).ok()?;

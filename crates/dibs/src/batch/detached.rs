@@ -116,6 +116,9 @@ impl Detached {
             }
         };
         self.collect_old(id);
+        // Held until the driver holds its batch, so two starts never miss each other.
+        let starting = File::open(&self.dir).and_then(|dir| dir.lock().map(|()| dir));
+        self.apart(id, &sent);
         let cwd = sent.join(&instructions.cwd);
         let errors = sent.join(Detached::DRIVER);
         let started = fs::create_dir_all(&cwd)
@@ -150,6 +153,7 @@ impl Detached {
         if let Some(out) = child.stdout.take() {
             let _ = BufReader::new(out).read_line(&mut said);
         }
+        drop(starting);
         if said.trim_end() == Detached::DRIVING {
             println!("its driver pid {} there", child.id());
             return 0;
@@ -160,6 +164,51 @@ impl Detached {
         match code {
             0 => Exit::Failed.status(),
             code => code,
+        }
+    }
+
+    /// A repo sent from where a batch still running here was sent from gets a tree of its own,
+    /// since each batch's steps would send its own copy over the other's.
+    fn apart(&self, id: &BatchId, sent: &Path) {
+        let file = sent.join(Detached::SENT_FROM);
+        let Ok(mine) = fs::read_to_string(&file) else {
+            return;
+        };
+        let Some(batches) = self.client().batches() else {
+            return;
+        };
+        let running: Vec<(String, String)> = fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != id.as_str() && Driver::runs(&batches.join(name)))
+            .flat_map(|name| {
+                let theirs = fs::read_to_string(self.dir.join(&name).join(Detached::SENT_FROM));
+                theirs
+                    .unwrap_or_default()
+                    .lines()
+                    .map(|line| (line.to_string(), name.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mut kept = String::new();
+        for line in mine.lines() {
+            match running.iter().find(|(theirs, _)| theirs == line) {
+                Some((_, other)) => {
+                    let (repo, from) = line.split_once('\t').unwrap_or((line, ""));
+                    eprintln!(
+                        "dibs: batch {other}, sent from {from} too, still runs here, so this batch builds {repo} in a tree of its own"
+                    );
+                }
+                None => {
+                    kept.push_str(line);
+                    kept.push('\n');
+                }
+            }
+        }
+        if kept != mine {
+            let _ = fs::write(&file, kept);
         }
     }
 

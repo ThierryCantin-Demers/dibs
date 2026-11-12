@@ -50,7 +50,12 @@ rather than mtimes, which a sent tree's working copy never builds from.
 
 A tree sent on from the machine's copy of a working tree is keyed by the path it was sent from
 (`DIBS_SENT_FROM`), not by where the copy is. A key per batch would give each one a cold tree and
-a new target directory, and a rented machine's disk fills.
+a new target directory, and a rented machine's disk fills. The exception is a batch sent from
+where a batch still running there was sent from: each step sends its batch's copy into the tree,
+so the two would put their own files back under each other's steps. Its start drops those repos
+from its `DIBS_SENT_FROM`, so they build in a tree keyed by the copy, and says so. The start
+holds a lock on the detached directory until its driver holds the batch, so two starts never miss
+each other.
 
 ## Following
 
