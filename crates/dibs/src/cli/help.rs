@@ -133,6 +133,7 @@ impl Help {
                 "dibs --status",
                 "dibs --watch",
                 "--json",
+                "--metrics <machines|all>",
                 "--all",
                 "--on <machine>",
                 "-v ",

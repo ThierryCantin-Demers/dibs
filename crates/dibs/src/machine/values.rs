@@ -39,6 +39,8 @@ pub struct CallValues {
     pub services: Vec<Service>,
     /// `--new-series`.
     pub new_series: bool,
+    /// A status that reads the machine's CPU, memory and cards too.
+    pub metrics: bool,
     /// `--preemptible`, or a recipe's step that only compiles.
     pub preempt: bool,
     /// The tree a recipe's job runs in.
@@ -133,6 +135,7 @@ impl CallValues {
                 lease: watch.lease,
             },
             new_series: self.new_series,
+            metrics: self.metrics,
             preempt: self.preempt,
             // From the environment, which `--when-open` sets, so a batch's steps and a sync's
             // transfer carry it too.

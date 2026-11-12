@@ -179,6 +179,7 @@ mod tests {
             agent: "session".into(),
             agent_id: "id".into(),
             subagent: None,
+            metrics: false,
             batch: None,
             watch: Watch {
                 off: false,

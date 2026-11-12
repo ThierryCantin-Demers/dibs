@@ -213,6 +213,10 @@ impl Parser {
                 }
                 "-v" | "--verbose" => self.call.verbose = true,
                 "--json" => self.call.json = true,
+                "--metrics" => {
+                    self.call.metrics = Some(need_some("--metrics")?);
+                    at += 1;
+                }
                 "--release" => self.word = Word::Release,
                 "--gc" => self.word = Word::Gc,
                 "--friction" => return friction(&words[at..]),

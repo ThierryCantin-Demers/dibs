@@ -15,6 +15,7 @@ mod kept;
 mod kill;
 mod lock;
 mod machine;
+mod metrics;
 mod platform;
 mod probe;
 mod provision;

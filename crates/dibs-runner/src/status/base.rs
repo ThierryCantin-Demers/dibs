@@ -102,6 +102,7 @@ impl Look<'_> {
             holders,
             queue,
             closed: (Shutter { dir: self.dir }).read(),
+            metrics: None,
             scene,
         }
     }

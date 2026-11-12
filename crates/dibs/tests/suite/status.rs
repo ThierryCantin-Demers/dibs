@@ -715,3 +715,30 @@ fn status_names_a_holders_job_which_out_reads() {
     g.open();
     s.wait(job);
 }
+
+#[test]
+fn metrics_are_read_only_for_a_status_that_asks_for_them() {
+    if !cfg!(target_os = "linux") {
+        skip("only Linux has a /proc to read the CPU and memory from");
+        return;
+    }
+    let s = Sandbox::new();
+    assert_eq!(s.status_json().get("metrics"), None);
+    let metrics = |s: &Sandbox| -> serde_json::Value {
+        let out = s.dibs(["--status", "--json", "--metrics", "all"]).run();
+        let status: serde_json::Value = serde_json::from_str(&out.stdout)
+            .unwrap_or_else(|e| panic!("--status --json --metrics: {e}\n{}", out.all()));
+        status["metrics"].clone()
+    };
+    let first = metrics(&s);
+    assert!(
+        first["mem_total"].as_u64().unwrap() >= first["mem_used"].as_u64().unwrap(),
+        "{first}"
+    );
+    std::fs::write(s.lockdir().join("metrics.cpu"), "0 0 0\n").unwrap();
+    let busy = metrics(&s)["cpu_busy_permille"].as_u64();
+    assert!(
+        busy.is_some_and(|b| b <= 1000),
+        "the CPU is diffed against the reading the last caller left: {busy:?}"
+    );
+}

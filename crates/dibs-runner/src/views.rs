@@ -1,6 +1,6 @@
 //! What is read of the machine without the lock: its status, a watch of it, and its log.
 
-use crate::{channel::Channel, clock::Moment, sink::Sink, status::Look};
+use crate::{channel::Channel, clock::Moment, metrics, sink::Sink, status::Look};
 use dibs_format::{status::Status, wire::Request};
 use std::{
     fs, thread,
@@ -22,7 +22,10 @@ pub struct Views<'a> {
 
 impl Views<'_> {
     pub fn status(&self) -> i32 {
-        let status = self.look.status(self.request.verbose);
+        let mut status = self.look.status(self.request.verbose);
+        if self.request.metrics {
+            status.metrics = Some(metrics::read(self.look.dir));
+        }
         self.sink.out(self.shown(&status).as_bytes());
         0
     }

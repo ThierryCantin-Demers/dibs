@@ -49,6 +49,9 @@ pub struct Request {
     /// Waits for a machine closed by its owners to open, rather than being refused.
     #[serde(default)]
     pub when_open: bool,
+    /// A status that reads the machine's CPU, memory and cards as well.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub metrics: bool,
     /// The tree the job runs in, prepared at its head when it is not yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<Tree>,

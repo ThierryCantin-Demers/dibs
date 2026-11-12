@@ -22,6 +22,9 @@ pub struct Status {
     pub queue: Vec<Waiter>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed: Option<Closure>,
+    /// Only for a caller that asked for them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<super::Metrics>,
     #[serde(skip)]
     pub scene: Scene,
 }

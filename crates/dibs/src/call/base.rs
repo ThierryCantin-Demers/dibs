@@ -350,6 +350,7 @@ impl Request<'_> {
             ports: Vec::new(),
             services: Vec::new(),
             new_series: self.call.new_series,
+            metrics: self.mode == Mode::Status && self.call.metrics.is_some(),
             preempt: false,
             tree: None,
         }

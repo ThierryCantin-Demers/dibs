@@ -228,6 +228,11 @@ pub const CALL: &[Flag] = &[
         "with --pick: the repo whose cache counts",
     ),
     Flag::new(&["--all"], Value::No, "every machine at once"),
+    Flag::new(
+        &["--metrics"],
+        Value::Machine,
+        "with --status --json: CPU, memory and cards",
+    ),
     Flag::new(&["--update"], Value::No, "pull dibs and reinstall it"),
     Flag::new(&["--friction"], Value::Free, "report what got in the way"),
     Flag::new(&["--json"], Value::No, "machine-readable output"),

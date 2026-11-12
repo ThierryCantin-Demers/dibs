@@ -40,6 +40,9 @@ pub struct Call {
     pub device: Option<Alias>,
     pub verbose: bool,
     pub json: bool,
+    /// `--metrics`: the machines, comma-separated, or `all`, whose status reads their CPU,
+    /// memory and cards too.
+    pub metrics: Option<String>,
     pub all: bool,
     pub stream: bool,
     pub new_series: bool,

@@ -80,6 +80,12 @@ PATH for its actions. A redraw costs a read of the lock on the far side rather t
 login, which is what makes it safe to leave open beside a benchmark. A watch ends with the
 connection, so one never outlives a dibstop that was killed.
 
+`dibs status --json --metrics <machines|all>` adds a `metrics` object to each machine named: the
+CPU's busy share since the reading the last such caller left, memory, and for each card its use,
+memory, temperature, power, clock and, on NVIDIA, what holds the clock down. All of it is read
+in the runner, from `/proc`, the NVIDIA driver's own library and amdgpu's sysfs, with no tool
+started and no suspended card woken, so it can be watched while a benchmark runs.
+
 Completions for fish or zsh are yours to ask for: `dibs completions fish --install`, or `zsh`.
 They offer machines, cards, repos, refs, recipes and the values a recipe takes, read from this
 computer's own files, so a Tab never waits on a machine. The script only asks `dibs`, so an

@@ -27,12 +27,17 @@ impl MachineCall<'_> {
             return Ok(i32::from(Exit::Refused.code()));
         }
         let names = self.fleet.names();
-        let flags = Call {
-            json: self.call.json,
-            ..Call::default()
-        };
         let bound = Bound::polled(STATUS_POLL_SECS, Kept::Everything);
         let answers = self.each(&names, |machine| {
+            let flags = Call {
+                json: self.call.json,
+                metrics: self.call.metrics.clone().filter(|named| {
+                    named
+                        .split(',')
+                        .any(|m| m.trim() == "all" || m.trim() == machine.as_str())
+                }),
+                ..Call::default()
+            };
             self.ask(
                 machine,
                 &flags,

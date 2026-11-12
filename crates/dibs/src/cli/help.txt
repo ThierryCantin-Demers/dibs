@@ -142,6 +142,10 @@ Calls: one command under the lock, and what the machines are doing.
   dibs --status               who holds it, how much longer, and the queue with ETAs
   dibs --watch [secs]         --status on a loop, one connection (default 5s, minimum 2)
   --json                       with --status or --watch: one JSON document per line
+  --metrics <machines|all>     with --status --json: the CPU, memory and each card's use,
+                               heat, power, clock and throttling of the machines named,
+                               comma-separated, or all. Read in place, so a benchmark is
+                               not disturbed
   dibs --peek <command>       look at the machine without taking the lock. Free things
                                only: ps, nvidia-smi, ls, tail, git status. It runs beside
                                a benchmark, so anything that costs CPU or IO spoils it.

@@ -156,6 +156,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
         agent: format!("{} build", built.name()),
         agent_id: String::new(),
         subagent: None,
+        metrics: false,
         batch: None,
         watch: Watch {
             off: true,

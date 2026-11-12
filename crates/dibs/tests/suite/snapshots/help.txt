@@ -144,6 +144,10 @@
 1|   dibs --status               who holds it, how much longer, and the queue with ETAs
 1|   dibs --watch [secs]         --status on a loop, one connection (default 5s, minimum 2)
 1|   --json                       with --status or --watch: one JSON document per line
+1|   --metrics <machines|all>     with --status --json: the CPU, memory and each card's use,
+1|                                heat, power, clock and throttling of the machines named,
+1|                                comma-separated, or all. Read in place, so a benchmark is
+1|                                not disturbed
 1|   dibs --peek <command>       look at the machine without taking the lock. Free things
 1|                                only: ps, nvidia-smi, ls, tail, git status. It runs beside
 1|                                a benchmark, so anything that costs CPU or IO spoils it.

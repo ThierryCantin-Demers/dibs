@@ -543,6 +543,7 @@ mod tests {
             clones: Vec::new(),
             holders: Vec::new(),
             queue: Vec::new(),
+            metrics: None,
             closed: None,
             scene,
         }
