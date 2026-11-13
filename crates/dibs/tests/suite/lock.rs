@@ -78,23 +78,24 @@ fn a_queued_benchmark_gates_later_shared_users() {
 
 #[test]
 fn wait_bounds_the_gate_and_the_lock_together() {
-    // The gate frees after about two seconds, when the holder ends and the queued benchmark takes
-    // the lock; a bound given to each would then wait four more. The bound leaves two seconds for
-    // that handover, which a loaded runner has been seen to need more than one for.
+    // The gate frees after two seconds, when the holder ends and the queued benchmark takes the
+    // lock; a bound given to each would then wait four more. The time passing is what is tested,
+    // so the holder ends on this test's clock rather than on a timeout of the job's shell.
     let mut s = Sandbox::new();
-    let (never, q) = (s.gate("never"), s.gate("q"));
-    let holder = s.spawn(s.dibs([
-        "--bench",
-        "--label",
-        "ends-soon",
-        &format!("read -r -t 2 _ <> {}", never.path.display()),
-    ]));
+    let (ends, q) = (s.gate("ends"), s.gate("q"));
+    let holder = s.spawn(s.dibs(["--bench", "--label", "ends-soon", &ends.hold()]));
     s.held(1);
     let queued = s.spawn(s.dibs(["--bench", "--label", "takes-over", &q.hold()]));
     s.queued(1);
+    let bounded = s.dibs(["--wait", "4", "--label", "bounded", "true"]);
     let began = std::time::Instant::now();
-    let out = s.dibs(["--wait", "4", "--label", "bounded", "true"]).run();
+    let ending = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(2));
+        ends.open();
+    });
+    let out = bounded.run();
     let took = began.elapsed();
+    ending.join().unwrap();
     assert_eq!(out.code, 75, "{}", out.stderr);
     assert_eq!(
         out.stderr.lines_with("still busy after 4s, gave up"),

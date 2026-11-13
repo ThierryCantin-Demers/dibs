@@ -78,6 +78,8 @@ fn a_batch_runs_its_steps_with_its_own_dibs_not_the_first_on_the_path() {
     assert_eq!(out.code, 0, "{}", out.all());
 }
 
+// Only Linux can start a binary renamed over (protocol.md, Platforms).
+#[cfg(target_os = "linux")]
 #[test]
 fn a_batch_keeps_its_own_dibs_when_an_update_renames_another_over_it() {
     let mut s = Sandbox::new();

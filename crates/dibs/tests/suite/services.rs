@@ -79,7 +79,7 @@ fn what_a_service_starts_outside_its_group_and_tree_is_stopped_with_it() {
     let away = s.p("away.pid");
     let held = s.gate("away-never");
     let launch = format!(
-        "(setsid bash -c \"echo \\$\\$ > {away}; exec cat {}\" > /dev/null 2>&1 &); ",
+        "(perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die' bash -c \"echo \\$\\$ > {away}; exec cat {}\" > /dev/null 2>&1 &); ",
         held.path.display()
     );
     let out = s

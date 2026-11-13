@@ -318,7 +318,7 @@ without `DIBS_`, then from its environment, then its defaults.
 
 What differs between operating systems is behind one trait, in
 `crates/dibs-runner/src/platform/`: Linux reads `/proc`, macOS reads libproc and sysctl. macOS
-differs in five ways.
+differs in seven ways.
 
 - It cannot say which process holds an flock, so `dibs status` names no orphan there, and an
   orphaned lock waits for a kill by hand.
@@ -331,6 +331,10 @@ differs in five ways.
   perl runs, writes a line the client drops once a second and stops when the write fails.
 - It cannot say which blocks a cloned cache shares with the one it was seeded from, so `dibs
   --gc` sizes a clone by its whole length.
+- It cannot say how much a transfer's rsync has read and written, so a transfer that moves
+  nothing keeps the lock until its connection ends, however long the lease.
+- It has no `/proc/<pid>/exe` to start a binary by once another is renamed over it, so a batch
+  running when `dibs --update` installs a new build runs its later steps with the new one.
 
 ## Viewers and the check
 

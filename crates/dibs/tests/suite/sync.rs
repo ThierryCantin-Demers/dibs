@@ -188,6 +188,8 @@ fn the_transports_files_are_private_and_named_where_nobody_can_plant_one() {
     assert!(!fs::exists(exit_file).unwrap(), "and gone once the sync is");
 }
 
+// Only Linux says how much a transfer has moved (protocol.md, Platforms).
+#[cfg(target_os = "linux")]
 #[test]
 fn a_transfer_that_moves_nothing_for_the_lease_lets_the_lock_go() {
     // A connection that drops without closing reaches neither side's rsync, which waits for good.
