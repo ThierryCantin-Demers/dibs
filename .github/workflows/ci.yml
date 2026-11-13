@@ -38,7 +38,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Pinned, so a new release's lints cannot fail a push that changed nothing.
-  RUST: 1.99.0
+  RUST: 1.100.0
 # Each job's rust-cache saves on failure too: a job that keeps failing would otherwise rebuild
 # every dependency on every run. It keeps dependencies only, never the workspace's own crates.
 
