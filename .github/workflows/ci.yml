@@ -65,7 +65,12 @@ jobs:
             echo "::error::PRIVATE_STRINGS holds only comments and blank lines, so there is nothing to scan for"
             exit 1
           fi
-          from=$(git merge-base "$BASE" "$HEAD")
+          # A run with no pull request scans the commit it runs on, and that commit's message.
+          HEAD=${HEAD:-$GITHUB_SHA}
+          commits=$HEAD
+          if [ -n "$BASE" ]; then
+            commits=$(git rev-list "$(git merge-base "$BASE" "$HEAD")..$HEAD")
+          fi
           # The patterns are secret, so the log names neither them nor a path that holds one.
           bad=0
           n=0
@@ -78,7 +83,7 @@ jobs:
               printf '%s\n' "$f" | grep -q -i -e "$pat" && continue
               echo "private pattern $n is in $f"; bad=1
             done
-            for c in $(git rev-list "$from..$HEAD"); do
+            for c in $commits; do
               if git log -1 --format=%B "$c" | grep -q -i -e "$pat"; then
                 echo "private pattern $n is in the message of $c"; bad=1
               fi
