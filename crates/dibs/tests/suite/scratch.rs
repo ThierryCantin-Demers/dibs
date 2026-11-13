@@ -1,5 +1,5 @@
 use crate::harness::*;
-use std::{fs, os::unix::fs::MetadataExt as _};
+use std::fs;
 
 #[test]
 fn a_job_gets_the_scratch_it_was_given() {
@@ -305,6 +305,7 @@ fn a_cache_seeded_from_another_that_would_go_is_sized_by_what_is_its_own() {
         .env("DIBS_SCRATCH", s.p("gc"))
         .run()
         .all();
+    use std::os::unix::fs::MetadataExt as _;
     let device = |p: &std::path::Path| fs::metadata(p).unwrap().dev();
     let disks = 1 + usize::from(device(&disk) != device(&s.path("gc")));
     let _ = fs::remove_dir_all(&disk);

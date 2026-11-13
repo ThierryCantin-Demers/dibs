@@ -79,7 +79,8 @@ fn a_queued_benchmark_gates_later_shared_users() {
 #[test]
 fn wait_bounds_the_gate_and_the_lock_together() {
     // The gate frees after about two seconds, when the holder ends and the queued benchmark takes
-    // the lock; a bound given to each would then wait three more.
+    // the lock; a bound given to each would then wait four more. The bound leaves two seconds for
+    // that handover, which a loaded runner has been seen to need more than one for.
     let mut s = Sandbox::new();
     let (never, q) = (s.gate("never"), s.gate("q"));
     let holder = s.spawn(s.dibs([
@@ -92,13 +93,18 @@ fn wait_bounds_the_gate_and_the_lock_together() {
     let queued = s.spawn(s.dibs(["--bench", "--label", "takes-over", &q.hold()]));
     s.queued(1);
     let began = std::time::Instant::now();
-    let out = s.dibs(["--wait", "3", "--label", "bounded", "true"]).run();
+    let out = s.dibs(["--wait", "4", "--label", "bounded", "true"]).run();
     let took = began.elapsed();
     assert_eq!(out.code, 75, "{}", out.stderr);
-    assert_eq!(out.stderr.lines_with("still busy after 3s, gave up"), 1);
+    assert_eq!(
+        out.stderr.lines_with("still busy after 4s, gave up"),
+        1,
+        "{}",
+        out.stderr
+    );
     assert!(
-        took < Duration::from_millis(4500),
-        "--wait 3 waited {took:?} in all"
+        took < Duration::from_millis(5500),
+        "--wait 4 waited {took:?} in all"
     );
     s.wait(holder);
     q.open();

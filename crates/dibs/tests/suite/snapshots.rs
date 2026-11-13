@@ -675,6 +675,9 @@ fn queued_line() {
         s.wait(j);
     }
 
+    // Without it, the queued benchmark is estimated by this test's own earlier benchmark, which
+    // takes as long as the machine running the suite makes it.
+    s.history(&"bench\tqueued-bench\t1\tan agent\n".repeat(3));
     let holder = s.spawn(s.dibs(["--bench", "--label", "long-bench", &gates[1].hold()]));
     s.held(1);
     let bench = s.spawn(s.dibs(["--bench", "--label", "queued-bench", "true"]));
