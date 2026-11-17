@@ -1,7 +1,7 @@
 use crate::{
     call::{Journal, Received},
     lock::LockDir,
-    platform::{Host, Platform as _},
+    platform::{Descendants as _, Host, Platform as _},
     sink::Sink,
 };
 use dibs_format::{Event, Exit, JobId};
@@ -120,9 +120,15 @@ impl Stopper {
         Journal { path: &self.log }.write(&line);
         match state.stage {
             Stage::Running(work) | Stage::Peeking(work) => Host::reap(&[work]),
-            Stage::Starting => Host::reap(&state.services),
+            Stage::Starting => Host::reap(&Stopper::starting()),
             _ => self.abort(&mut state, code),
         }
+    }
+
+    /// While services start, everything this process runs: the services, and the readiness
+    /// check beside them, which may wait on a service for as long as it is given.
+    fn starting() -> Vec<u32> {
+        Host::processes().below(std::process::id())
     }
 
     fn abort(&self, state: &mut State, code: i32) -> ! {
@@ -132,7 +138,10 @@ impl Stopper {
             }
             _ => None,
         };
-        let stopped: Vec<u32> = work.into_iter().chain(state.services.clone()).collect();
+        let stopped: Vec<u32> = match state.stage {
+            Stage::Starting => Stopper::starting(),
+            _ => work.into_iter().chain(state.services.clone()).collect(),
+        };
         if !stopped.is_empty() {
             Host::reap(&stopped);
         }

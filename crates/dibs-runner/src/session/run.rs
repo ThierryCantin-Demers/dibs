@@ -6,7 +6,8 @@ use crate::{
     closed::{self, Shutter},
     history::{History, Key, Scope},
     job::{
-        Cap, Environment, Guard, HoldFifo, Job, LogRead, Output, Ports, Readiness, Services, Start,
+        Cap, Environment, Guard, HoldFifo, Job, LogRead, Output, Ports, Readied, Readiness,
+        Services, Start,
     },
     lock::{Hold, Kind, Lock, LockDir},
     machine::Site,
@@ -709,28 +710,42 @@ impl<'a> Run<'a> {
             state.services = services.pids();
             state.stage = Stage::Starting;
             drop(state);
-            let ready = services.ready(
+            let cancelled = || {
+                self.at
+                    .call
+                    .batch_id()
+                    .is_some_and(|b| self.at.dir.cancelled(b))
+            };
+            let readied = services.ready(
                 request.ready_within,
+                deadline,
                 &Readiness {
                     ports: &hosted.ports,
                     environment: &environment,
                     sink: self.at.sink,
+                    cancelled: &cancelled,
                 },
             );
-            if !ready {
+            if readied != Readied::Ready {
                 services.stop();
             }
-            hosted.failed = !ready;
+            hosted.failed = matches!(readied, Readied::Failed | Readied::Cancelled);
+            hosted.overran = readied == Readied::Capped;
             hosted.services = Some(services);
             state = self.at.stopper.state();
         }
-        let status = match hosted.failed {
-            true => {
+        let status = match (hosted.failed, hosted.overran) {
+            (true, _) => {
                 drop(state);
                 begun.touch_log();
                 Exit::ServiceFailed.status()
             }
-            false => {
+            (false, true) => {
+                drop(state);
+                begun.touch_log();
+                Exit::Overran.status()
+            }
+            (false, false) => {
                 let command = arrived.held.as_ref().map(HoldFifo::command);
                 let command = command.as_deref().unwrap_or(&self.at.call.work);
                 let mark = running.as_ref().and_then(|r| r.mark.as_ref());

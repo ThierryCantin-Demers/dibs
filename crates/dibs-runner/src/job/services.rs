@@ -1,5 +1,6 @@
 use crate::{
     call::OneLine as _,
+    clock::Deadline,
     job::{Cap, Environment, Job, Output, ports::Ports},
     platform::{Host, Platform as _},
     sink::Sink,
@@ -28,6 +29,17 @@ const LOCAL: &str = "127.0.0.1";
 /// Each service's name, in the environment of everything it starts: what it starts outside its
 /// group and its tree, as a profiler's launcher does, is found by it.
 const WITH: &str = "DIBS_WITH";
+
+/// How the wait for the services to be ready ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Readied {
+    Ready,
+    Failed,
+    /// The job's `--max` ran out first.
+    Capped,
+    /// Its batch was cancelled with `dibs --kill`.
+    Cancelled,
+}
 
 /// The `--with` servers of one call, run for the length of its job.
 pub struct Services {
@@ -141,18 +153,21 @@ impl Services {
     }
 
     /// Each service in turn answers its readiness check, all within `within` seconds of their
-    /// start; the first that exits first, or runs out of time, fails the call.
-    pub fn ready(&mut self, within: u64, check: &Readiness) -> bool {
+    /// start and before `cap`; the first that exits first, or runs out of time, fails the call.
+    pub fn ready(&mut self, within: u64, cap: Deadline, check: &Readiness) -> Readied {
         let deadline = self.started + Duration::from_secs(within);
         for at in 0..self.list.len() {
             let mut answered = false;
             while !answered {
-                let left = deadline
-                    .saturating_duration_since(Instant::now())
+                let left = cap
+                    .within(deadline.saturating_duration_since(Instant::now()))
                     .max(Duration::from_secs(1));
                 answered = check.answers(self.list[at].ready.as_deref(), left);
                 if answered {
                     continue;
+                }
+                if (check.cancelled)() {
+                    return Readied::Cancelled;
                 }
                 let exited = match self.list[at].pid {
                     Some(_) => self.list[at].status.get().copied(),
@@ -165,7 +180,16 @@ impl Services {
                         "the command did not run",
                         check.sink,
                     );
-                    return false;
+                    return Readied::Failed;
+                }
+                if cap.passed() {
+                    self.failed(
+                        at,
+                        "was not ready when --max ran out",
+                        "the command did not run",
+                        check.sink,
+                    );
+                    return Readied::Capped;
                 }
                 if Instant::now() >= deadline {
                     self.failed(
@@ -174,13 +198,13 @@ impl Services {
                         "the command did not run. --ready-within <seconds> gives it longer",
                         check.sink,
                     );
-                    return false;
+                    return Readied::Failed;
                 }
                 thread::sleep(READY_POLL);
             }
             self.list[at].end = format!("ready after {}s", self.started.elapsed().as_secs());
         }
-        true
+        Readied::Ready
     }
 
     /// Stops the job when a service ends before it does.
@@ -312,6 +336,8 @@ pub struct Readiness<'a> {
     pub ports: &'a Ports,
     pub environment: &'a Environment,
     pub sink: &'a Sink,
+    /// A server may outlive the TERM a cancelled batch sends what runs under its holder.
+    pub cancelled: &'a dyn Fn() -> bool,
 }
 
 impl Readiness<'_> {

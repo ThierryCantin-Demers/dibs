@@ -1,5 +1,5 @@
 use crate::harness::*;
-use std::net::TcpListener;
+use std::{net::TcpListener, time::Duration};
 
 /// A service that says its pid, which exec keeps, and then blocks until it is stopped.
 fn service(s: &Sandbox, name: &str, first: &str) -> String {
@@ -181,6 +181,41 @@ fn a_service_not_ready_in_time_ends_the_call_and_is_stopped() {
         "one that is not ready in time ends the call with 77 too"
     );
     assert!(!alive(pid_file(&s, "w3")), "and is stopped");
+}
+
+#[test]
+fn a_service_not_ready_when_max_runs_out_ends_the_call_as_overran() {
+    let s = Sandbox::new();
+    let srv = service(&s, "w5", "");
+    let out = s
+        .dibs([
+            "--label",
+            "with-capped",
+            "--max",
+            "2",
+            "--with",
+            &format!("slow={srv}"),
+            "--ready",
+            "false",
+            "--ready-within",
+            "600",
+            &format!("touch {}", s.p("w-ran")),
+        ])
+        .within(Duration::from_secs(30))
+        .run();
+    assert_eq!(
+        (out.code, s.exists("w-ran")),
+        (124, false),
+        "the cap counts the wait for the service: {}",
+        out.all()
+    );
+    assert_eq!(
+        out.all().lines_with("  exit 124  by=dibs"),
+        1,
+        "{}",
+        out.all()
+    );
+    assert!(!alive(pid_file(&s, "w5")), "and the service is stopped");
 }
 
 #[test]

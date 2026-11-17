@@ -16,6 +16,6 @@ pub use held::HoldFifo;
 pub use outcome::{Digest, LogRead, Repeat};
 pub use ports::{PortRange, Ports};
 
-pub use services::{Guard, Readiness, Services, Start};
+pub use services::{Guard, Readied, Readiness, Services, Start};
 pub use tether::Tether;
 pub use tree::Tree;

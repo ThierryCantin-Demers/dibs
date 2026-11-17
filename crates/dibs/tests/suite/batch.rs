@@ -564,6 +564,49 @@ fn a_driver_is_found_here_however_its_command_line_reads() {
 }
 
 #[test]
+fn killing_a_batch_stops_a_step_whose_service_is_still_starting() {
+    for (name, elsewhere) in [("b11", true), ("b12", false)] {
+        let mut s = Sandbox::new();
+        let never = s.gate(&format!("{name}-never"));
+        let pid = s.p(&format!("{name}.pid"));
+        let srv = format!(
+            "trap \"\" TERM; echo $$ > {pid}; read -r _ <> {}",
+            never.path.display()
+        );
+        let file = batch_file(
+            &s,
+            name,
+            &[&format!(
+                "[with] dibs --label batch-kill-with --with 'slow={srv}' --ready 'read -r _ <> {}' --ready-within 600 true",
+                never.path.display()
+            )],
+        );
+        let (out, err) = (
+            s.path(&format!("{name}.out")),
+            s.path(&format!("{name}.err")),
+        );
+        let driver = s.spawn(s.dibs(["batch", file.as_str()]).streams_to(&out, &err));
+        until("the service to start", || s.exists(&format!("{name}.pid")));
+        let id = capture(&s.read(&format!("{name}.err")), r"^dibs: batch ([0-9-]*), ").unwrap();
+        let kill = s.dibs(["--kill", &id]);
+        match elsewhere {
+            true => kill.env("XDG_STATE_HOME", s.p("elsewhere")),
+            false => kill,
+        }
+        .run();
+        assert_eq!(
+            s.wait(driver),
+            76,
+            "{name}: {}",
+            s.read(&format!("{name}.err"))
+        );
+        let server: u32 = s.read(&format!("{name}.pid")).trim().parse().unwrap();
+        until("the service that ignores TERM to stop", || !alive(server));
+        s.gone();
+    }
+}
+
+#[test]
 fn killing_a_batch_on_a_machine_stops_its_jobs_and_refuses_its_later_steps() {
     let mut s = Sandbox::new();
     let (driver, id, after) = cancellable(&mut s, "b9", &[]);
