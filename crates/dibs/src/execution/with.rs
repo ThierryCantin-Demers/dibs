@@ -41,7 +41,11 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     }
     let dir = Checkouts::of(args)?.find(&args.repo)?;
     let repo_name = Repo(&dir).identity();
-    let manifest = Manifest::load(&dir, &repo_name)?;
+    let manifest = Manifest::load_at(
+        &dir,
+        &repo_name,
+        Side::only_ref(args.reference.as_deref()).as_deref(),
+    )?;
     let name = args
         .recipe
         .as_deref()

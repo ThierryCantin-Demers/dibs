@@ -66,6 +66,15 @@ impl Side {
         Ok(list)
     }
 
+    /// The one ref a call names, whose own recipes it runs; None for the tree here, a range or
+    /// several refs.
+    pub fn only_ref(reference: Option<&str>) -> Option<String> {
+        match Side::list(reference).ok()?.as_slice() {
+            [Side::Ref(r)] => Some(r.clone()),
+            _ => None,
+        }
+    }
+
     pub fn name(&self) -> String {
         match self {
             Side::Local => "local".into(),

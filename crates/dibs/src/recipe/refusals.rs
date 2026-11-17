@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     cli::{RecipeCall, RecipeVerb},
-    execution::Repo,
+    execution::{Repo, Side},
 };
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -80,7 +80,11 @@ impl Resolved {
         let manifest = if args.verb == RecipeVerb::Shell {
             Manifest::load_any(&dir, &repo_name)?
         } else {
-            Manifest::load(&dir, &repo_name)?
+            Manifest::load_at(
+                &dir,
+                &repo_name,
+                Side::only_ref(args.reference.as_deref()).as_deref(),
+            )?
         };
 
         let shell_reason = match args.verb {

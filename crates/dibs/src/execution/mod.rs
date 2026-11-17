@@ -19,5 +19,6 @@ pub use base::{raw, run_recipe};
 pub use error::{ArmError, CheckoutError, PinError, Refusal, RunError, Unprepared};
 pub use kept::KeptStores;
 pub use local::{Carried, Checkout, Fetched, Local, Repo, SentFrom};
+pub use refs::Side;
 pub use schedule::Job;
 pub use with::with_service;

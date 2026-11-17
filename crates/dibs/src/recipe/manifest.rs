@@ -12,7 +12,7 @@ use super::{
     base::Recipe,
     error::{ManifestError, RecipeError},
 };
-use crate::paths::Paths;
+use crate::{git::Git, paths::Paths};
 use dibs_format::{Lock, ProcedureStep, RunVerb};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -248,13 +248,24 @@ impl Manifest {
     /// local config, because that is the override. The format is the same in both, so a recipe
     /// moves between them unchanged. dibs carries no recipes of its own: it knows no repo.
     pub fn load(dir: &Path, repo: &str) -> Result<Manifest, RecipeError> {
-        Manifest::load_from(dir, repo, &Manifest::local_dir())
+        Manifest::load_at(dir, repo, None)
+    }
+
+    /// As `load`, with the repo's own layer as the commit `rev` names it, when this checkout has
+    /// that commit: a call at a ref runs that ref's recipes.
+    pub fn load_at(dir: &Path, repo: &str, rev: Option<&str>) -> Result<Manifest, RecipeError> {
+        Manifest::load_from(dir, repo, rev, &Manifest::local_dir())
     }
 
     /// The layer that is normally `Manifest::local_dir()`, passed in: a variable set for one test is read
     /// by every other test thread of the process.
-    pub fn load_from(dir: &Path, repo: &str, local_dir: &Path) -> Result<Manifest, RecipeError> {
-        Manifest::layers(dir, repo, local_dir)?.ok_or_else(|| RecipeError::NoRecipes {
+    pub fn load_from(
+        dir: &Path,
+        repo: &str,
+        rev: Option<&str>,
+        local_dir: &Path,
+    ) -> Result<Manifest, RecipeError> {
+        Manifest::layers(dir, repo, rev, local_dir)?.ok_or_else(|| RecipeError::NoRecipes {
             repo: repo.to_string(),
             in_repo: dir.join(".dibs.toml"),
             local: local_dir.join(format!("{repo}.toml")),
@@ -263,24 +274,35 @@ impl Manifest {
 
     /// For work in a tree that runs no recipe, where a repo declaring nothing is not an error.
     pub fn load_any(dir: &Path, repo: &str) -> Result<Manifest, RecipeError> {
-        Ok(Manifest::layers(dir, repo, &Manifest::local_dir())?.unwrap_or_default())
+        Ok(Manifest::layers(dir, repo, None, &Manifest::local_dir())?.unwrap_or_default())
     }
 
     /// None when neither layer has a file.
-    fn layers(dir: &Path, repo: &str, local_dir: &Path) -> Result<Option<Manifest>, RecipeError> {
+    fn layers(
+        dir: &Path,
+        repo: &str,
+        rev: Option<&str>,
+        local_dir: &Path,
+    ) -> Result<Option<Manifest>, RecipeError> {
         let mut found: Option<Manifest> = None;
-        for (path, src) in [
-            (dir.join(".dibs.toml"), Source::Repo),
-            (local_dir.join(format!("{repo}.toml")), Source::Local),
+        let local = local_dir.join(format!("{repo}.toml"));
+        for (layer, src) in [
+            (Manifest::repo_layer(dir, rev), Source::Repo),
+            (
+                local
+                    .exists()
+                    .then(|| (std::fs::read_to_string(&local), local)),
+                Source::Local,
+            ),
         ] {
-            if !path.exists() {
+            let Some((text, path)) = layer else {
                 continue;
-            }
+            };
             let at = |why: ManifestError| RecipeError::File {
                 path: path.clone(),
                 why,
             };
-            let text = std::fs::read_to_string(&path).map_err(|e| at(ManifestError::Read(e)))?;
+            let text = text.map_err(|e| at(ManifestError::Read(e)))?;
             let parsed: Manifest =
                 toml::from_str(&text).map_err(|e| at(ManifestError::Parse(Box::new(e))))?;
             parsed.refuse_needs().map_err(at)?;
@@ -295,6 +317,29 @@ impl Manifest {
                 .absorb(parsed, src);
         }
         Ok(found)
+    }
+
+    /// The repo's `.dibs.toml` and where it was read: at `rev` when this checkout has that commit,
+    /// whose lacking one is that commit declaring nothing, and otherwise in the checkout.
+    fn repo_layer(dir: &Path, rev: Option<&str>) -> Option<(std::io::Result<String>, PathBuf)> {
+        let git = Git(dir);
+        let commit = rev.and_then(|rev| {
+            git.run(&["rev-parse", "--verify", "-q", &format!("{rev}^{{commit}}")])
+                .ok()
+                .map(|_| rev)
+        });
+        match commit {
+            Some(rev) => {
+                let spec = format!("{rev}:.dibs.toml");
+                let text = git.run(&["show", &spec]).ok()?;
+                Some((Ok(text), PathBuf::from(spec)))
+            }
+            None => {
+                let path = dir.join(".dibs.toml");
+                path.exists()
+                    .then(|| (std::fs::read_to_string(&path), path))
+            }
+        }
     }
 
     fn refuse_needs(&self) -> Result<(), ManifestError> {

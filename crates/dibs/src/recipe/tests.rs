@@ -28,7 +28,7 @@ fn local_config_overrides_the_repo() {
         "cubek.toml",
         "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"from local\"\n",
     );
-    let m = Manifest::load_from(&repo, "cubek", &cfg).unwrap();
+    let m = Manifest::load_from(&repo, "cubek", None, &cfg).unwrap();
     let r = m.recipe(Verb::Build, "x").unwrap();
     assert_eq!(r.steps[0].run, "from local");
     assert_eq!(
@@ -51,7 +51,7 @@ fn a_service_carries_its_servers_ports_and_what_makes_them_ready() {
          [[service.gpus.serve]]\nname=\"cuda\"\nrun=\"server --listen :$DIBS_PORT_CUDA\"\nready=\"tcp:cuda\"\n\
          [[service.gpus.serve]]\nname=\"vulkan\"\nrun=\"server --vulkan\"\n",
     );
-    let m = Manifest::load_from(&repo, "app", &cfg).unwrap();
+    let m = Manifest::load_from(&repo, "app", None, &cfg).unwrap();
     let svc = m.service("gpus").unwrap();
     assert_eq!(svc.build.as_deref(), Some("cargo build -p server"));
     assert_eq!(svc.ports, ["cuda", "vulkan"]);
@@ -285,7 +285,7 @@ fn the_last_layer_to_describe_the_tree_decides_what_a_new_one_starts_without() {
     let (repo, cfg) = (tmp.join("app"), tmp.join("cfg"));
     write(&repo, ".dibs.toml", "[tree]\nfresh = [\"cache\"]\n");
     assert_eq!(
-        Manifest::load_from(&repo, "app", &cfg)
+        Manifest::load_from(&repo, "app", None, &cfg)
             .unwrap()
             .tree_fresh(),
         ["cache"]
@@ -296,7 +296,7 @@ fn the_last_layer_to_describe_the_tree_decides_what_a_new_one_starts_without() {
         "[tree]\nfresh = [\"target/environment\"]\n",
     );
     assert_eq!(
-        Manifest::load_from(&repo, "app", &cfg)
+        Manifest::load_from(&repo, "app", None, &cfg)
             .unwrap()
             .tree_fresh(),
         ["target/environment"]
@@ -307,7 +307,7 @@ fn the_last_layer_to_describe_the_tree_decides_what_a_new_one_starts_without() {
         "[build.x]\n[[build.x.step]]\nlock=\"shared\"\nrun=\"make\"\n",
     );
     assert_eq!(
-        Manifest::load_from(&repo, "app", &cfg)
+        Manifest::load_from(&repo, "app", None, &cfg)
             .unwrap()
             .tree_fresh(),
         ["cache"],
@@ -324,7 +324,7 @@ fn a_tree_copy_names_a_variable_and_a_directory_on_the_machine() {
         ".dibs.toml",
         "[tree]\ncopies = { TOOL_STORE = \"~/.cache/tool\", OTHER = \"/var/tool\" }\n",
     );
-    let m = Manifest::load_from(&tmp, "app", &tmp.join("cfg")).unwrap();
+    let m = Manifest::load_from(&tmp, "app", None, &tmp.join("cfg")).unwrap();
     assert_eq!(
         m.tree_copies().into_iter().collect::<Vec<_>>(),
         [
@@ -343,7 +343,7 @@ fn a_tree_copy_names_a_variable_and_a_directory_on_the_machine() {
             ".dibs.toml",
             &format!("[tree]\ncopies = {{ {bad} }}\n"),
         );
-        let e = Manifest::load_from(&tmp, "app", &tmp.join("cfg"))
+        let e = Manifest::load_from(&tmp, "app", None, &tmp.join("cfg"))
             .unwrap_err()
             .to_string();
         assert!(e.contains("[tree] copies"), "{bad}: {e}");
@@ -360,7 +360,7 @@ fn a_tree_stamp_names_a_file_at_the_top_of_a_copy() {
         ".dibs.toml",
         &format!("[tree]\n{copies}\nstamps = {{ TOOL_STORE = \"tool-version\" }}\n"),
     );
-    let m = Manifest::load_from(&tmp, "app", &tmp.join("cfg")).unwrap();
+    let m = Manifest::load_from(&tmp, "app", None, &tmp.join("cfg")).unwrap();
     assert_eq!(m.tree_stamps()["TOOL_STORE"], "tool-version");
     for bad in [
         r#"OTHER = "tool-version""#,
@@ -373,7 +373,7 @@ fn a_tree_stamp_names_a_file_at_the_top_of_a_copy() {
             ".dibs.toml",
             &format!("[tree]\n{copies}\nstamps = {{ {bad} }}\n"),
         );
-        let e = Manifest::load_from(&tmp, "app", &tmp.join("cfg"))
+        let e = Manifest::load_from(&tmp, "app", None, &tmp.join("cfg"))
             .unwrap_err()
             .to_string();
         assert!(e.contains("[tree] stamps"), "{bad}: {e}");
@@ -388,7 +388,7 @@ fn a_tree_path_that_could_reach_outside_the_tree_is_refused() {
         "..", "a/../..", "/etc", ".", "", "a//b", "a/", "a b", "$HOME", "*",
     ] {
         write(&tmp, ".dibs.toml", &format!("[tree]\nfresh = [{bad:?}]\n"));
-        let e = Manifest::load_from(&tmp, "app", &tmp.join("cfg"))
+        let e = Manifest::load_from(&tmp, "app", None, &tmp.join("cfg"))
             .unwrap_err()
             .to_string();
         assert!(e.contains("[tree] fresh"), "{bad:?}: {e}");
@@ -400,7 +400,7 @@ fn a_tree_path_that_could_reach_outside_the_tree_is_refused() {
 fn a_repo_with_no_recipes_anywhere_says_where_it_looked() {
     let tmp = std::env::temp_dir().join(format!("dibs-none-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
-    let e = Manifest::load_from(&tmp, "nothing", &tmp.join("empty"))
+    let e = Manifest::load_from(&tmp, "nothing", None, &tmp.join("empty"))
         .unwrap_err()
         .to_string();
     assert!(
@@ -533,4 +533,52 @@ fn a_card_gets_its_own_label_and_an_unpinned_run_is_left_alone() {
         run_label("cubecl", "bench", Some("throughput-all"), None),
         "cubecl/bench/throughput-all"
     );
+}
+
+#[test]
+fn a_call_at_a_commit_runs_the_recipes_that_commit_carries() {
+    let tmp = std::env::temp_dir().join(format!("dibs-recipe-at-{}", std::process::id()));
+    let repo = tmp.join("app");
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-C"])
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    write(
+        &repo,
+        ".dibs.toml",
+        "[build.grid]\n[[build.grid.step]]\nlock=\"shared\"\nrun=\"at the commit\"\n",
+    );
+    git(&["init", "-q"]);
+    git(&["add", ".dibs.toml"]);
+    git(&["commit", "-q", "-m", "recipes"]);
+    let commit = git(&["rev-parse", "HEAD"]);
+    write(
+        &repo,
+        ".dibs.toml",
+        "[build.other]\n[[build.other.step]]\nlock=\"shared\"\nrun=\"x\"\n",
+    );
+    let cfg = tmp.join("cfg");
+    let at = Manifest::load_from(&repo, "app", Some(&commit), &cfg).unwrap();
+    assert_eq!(
+        at.recipe(Verb::Build, "grid").unwrap().steps[0].run,
+        "at the commit"
+    );
+    assert!(at.recipe(Verb::Build, "other").is_none());
+    let here = Manifest::load_from(&repo, "app", None, &cfg).unwrap();
+    assert!(
+        here.recipe(Verb::Build, "grid").is_none(),
+        "the checkout's own"
+    );
+    let unknown = Manifest::load_from(&repo, "app", Some("not-here"), &cfg).unwrap();
+    assert!(
+        unknown.recipe(Verb::Build, "other").is_some(),
+        "a ref this checkout lacks falls back to it"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
 }
