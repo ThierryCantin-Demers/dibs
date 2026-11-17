@@ -3,12 +3,17 @@
 //! running stop. An empty file, as `touch` leaves, closes it to everyone.
 
 use crate::{
+    channel::Channel,
     lock::{LockDir, RecordFile},
     machine::{account_name, own_account},
     sink::Sink,
     stop::Stopper,
 };
-use dibs_format::{Exit, LockRecord, Moment, Span, status::Closure, wire::Close};
+use dibs_format::{
+    Exit, LockRecord, Moment, Span,
+    status::Closure,
+    wire::{self, Close},
+};
 use std::{
     fs, io,
     os::unix::fs::MetadataExt as _,
@@ -18,7 +23,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::{Duration, UNIX_EPOCH},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 /// How often a waiting call, and a running job, look whether the machine is still closed.
@@ -122,8 +127,9 @@ pub struct Owners<'a> {
 }
 
 impl Owners<'_> {
-    /// Closes the machine, then waits for the jobs it does not except to end, which `now` stops.
-    pub fn close(&self, close: &Close) -> i32 {
+    /// Closes the machine, then waits for the jobs it does not except to end, which `now` stops,
+    /// or for its caller to go.
+    pub fn close(&self, close: &Close, caller: Option<Channel>, watch: wire::Watch) -> i32 {
         let shutter = Shutter { dir: self.dir };
         if let Err(e) = shutter.close(close) {
             self.sink.say(&format!(
@@ -155,6 +161,8 @@ impl Owners<'_> {
         }
         said.push_str("  Waiting for them. Ctrl-C stops the wait; the machine stays closed.\n");
         self.sink.say(&said);
+        let mut caller = caller.filter(|_| !watch.off);
+        let mut heard = Instant::now();
         loop {
             if shutter.read().is_none() {
                 self.sink.say("dibs: opened again meanwhile.\n");
@@ -164,7 +172,16 @@ impl Owners<'_> {
                 self.sink.say("dibs: nothing of dibs's runs here now.\n");
                 return Exit::Success.status();
             }
-            thread::sleep(POLL);
+            let present = match caller.as_mut() {
+                Some(channel) => channel.attend(Instant::now() + POLL, watch.lease, &mut heard),
+                None => {
+                    thread::sleep(POLL);
+                    true
+                }
+            };
+            if !present {
+                return Exit::Interrupted.status();
+            }
         }
     }
 

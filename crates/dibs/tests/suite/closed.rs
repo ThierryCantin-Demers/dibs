@@ -135,3 +135,38 @@ fn a_bare_file_closes_it_to_everyone() {
     fs::remove_file(s.lockdir().join("closed")).unwrap();
     assert_eq!(s.dibs(["--label", "after", "true"]).run().code, 0);
 }
+
+#[test]
+fn a_close_whose_caller_goes_stops_waiting_on_the_machine() {
+    // A multiplexed ssh keeps the caller's session, and its stderr, open while the far side runs.
+    let mut s = Sandbox::new();
+    let running = s.gate("running");
+    let job = s.spawn(s.dibs(["--label", "running", &running.hold()]));
+    s.held(1);
+    let before = s.runners();
+    let close = s.spawn(s.remote(s.dibs(["--close"])));
+    s.until_records("the closure", || s.lockdir().join("closed").exists());
+    let mut far = 0;
+    until("the close to reach the machine", || {
+        far = s
+            .runners()
+            .into_iter()
+            .find(|pid| !before.contains(pid))
+            .unwrap_or(0);
+        far != 0
+    });
+    unsafe { libc::kill(close.pid as i32, libc::SIGKILL) };
+    s.wait(close);
+    until("the wait to end on the machine", || {
+        !s.runners().contains(&far)
+    });
+    assert_eq!(
+        s.status().lines_with("CLOSED by"),
+        1,
+        "the machine stays closed"
+    );
+    running.open();
+    assert_eq!(s.wait(job), 0);
+    assert_eq!(s.dibs(["--open"]).run().code, 0);
+    s.gone();
+}

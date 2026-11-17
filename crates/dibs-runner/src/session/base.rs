@@ -140,7 +140,11 @@ impl Visit {
                     dir: &dir,
                     sink: &self.sink,
                 };
-                return owners.close(&Close::of_text(&self.call.request.command));
+                return owners.close(
+                    &Close::of_text(&self.call.request.command),
+                    caller.channel(),
+                    self.call.request.watch,
+                );
             }
             Mode::Open => {
                 let owners = Owners {
