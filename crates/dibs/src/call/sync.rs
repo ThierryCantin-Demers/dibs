@@ -6,7 +6,7 @@ use crate::{
         output::Output,
     },
     caller::Caller,
-    cli::{BashQuoted, Call, Command as Words},
+    cli::{BashQuoted, Call, Command as Words, SCRATCH, in_scratch},
     itself::Itself,
     machine::{CallValues, Interrupt, Lines, Liveness, Relayed, Route, Session, Stream, Target},
     paths::Paths,
@@ -90,7 +90,13 @@ impl Sync<'_> {
         let machine_side = format!("{}:", target.host);
         let quoted: Vec<String> = args
             .iter()
-            .map(|a| BashQuoted(a.strip_prefix(&machine_side).unwrap_or(a)).to_string())
+            .map(|a| match a.strip_prefix(&machine_side) {
+                Some(path) => match in_scratch(path) {
+                    Some(rest) => format!("\"${SCRATCH}\"{}", BashQuoted(rest)),
+                    None => BashQuoted(path).to_string(),
+                },
+                None => BashQuoted(a).to_string(),
+            })
             .collect();
         let command = Words(vec![format!("rsync {}", quoted.join(" "))]);
         let call = Call {
@@ -306,6 +312,15 @@ impl Drop for Transport<'_> {
     }
 }
 
+/// A word of rsync's server command with a leading `$DIBS_SCRATCH`, which rsync escapes,
+/// left for the machine's shell to expand.
+fn scratch_expanded(word: &str) -> String {
+    match in_scratch(word.strip_prefix('\\').unwrap_or(word)) {
+        Some(rest) => format!("\"${SCRATCH}\"{rest}"),
+        None => word.to_string(),
+    }
+}
+
 /// The machine's end of a sync, which rsync starts as its transport: `dibs __rsh`, its own
 /// words, then rsync's `[-l <user>] <host> <command...>`.
 pub struct Rsh {
@@ -402,7 +417,8 @@ impl Rsh {
             ..Call::default()
         };
         let machine = MachineCall::new(&call, caller)?;
-        let command = self.command.join(" ");
+        let command: Vec<String> = self.command.iter().map(|w| scratch_expanded(w)).collect();
+        let command = command.join(" ");
         let label = self.label.clone().unwrap_or_else(|| Label::new(SYNC_LABEL));
         let target = machine.target()?;
         let session = Session::new(&target, &machine.here);

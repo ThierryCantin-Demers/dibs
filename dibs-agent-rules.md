@@ -29,8 +29,10 @@ spoiled without it.
   logged as `peek-slow`.
 - `dibs --sync` copies to or from a machine under the shared lock. Never scp or rsync straight at
   it: a copy competes with a measurement for memory bandwidth and writeback. Mark the machine's
-  side with a colon: `dibs --sync -a ./tree :~/.cache/dibs/tree` sends,
-  `dibs --sync -a :~/.cache/dibs/out ./` fetches, and rsync's own options pass through.
+  side with a colon: `dibs --sync -a ./tree ':$DIBS_SCRATCH/tree'` sends,
+  `dibs --sync -a ':$DIBS_SCRATCH/out' ./` fetches, and rsync's own options pass through. A
+  leading `$DIBS_SCRATCH`, quoted, is the machine's scratch wherever it is, and the only variable
+  expanded there.
 - `dibs --on <machine> --hold <command>` runs the command on your own side while the machine's lock
   is held for it, for work aimed at the machine from outside: provisioning it, or driving it over
   the network. Add `--bench` when nothing else may run there meanwhile. The command is stopped if

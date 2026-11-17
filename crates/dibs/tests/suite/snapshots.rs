@@ -1585,7 +1585,7 @@ fn refusals() {
         r(&["--sync", ":~/x"]),
         r(&["--sync", "./a", "./b"]),
         r(&["--sync", "--on", "x", "./a", ":~/b"]),
-        r(&["--sync", "./x", ":$DIBS_SCRATCH/x"]),
+        r(&["--sync", "./x", ":$HOME/x"]),
         r(&["--label", "x", "true"]).env("DIBS_LOCK_DIR", &ro),
         r(&["--label", "x", "true"]).env("DIBS_HOLDING", hostname()),
         r(&["--friction", "   "]),

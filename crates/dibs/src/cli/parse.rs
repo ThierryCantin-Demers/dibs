@@ -1,6 +1,7 @@
 use crate::cli::{
     Call, CliError, Hook, Invocation, KillTarget, Mode, OutTarget, PortName, RecipeCall,
-    RecipeVerb, Run, RunLock, Service, ServiceName, shell::Command,
+    RecipeVerb, Run, RunLock, Service, ServiceName,
+    shell::{Command, in_scratch},
 };
 use dibs_format::{Alias, BatchId, JobId, Label, MachineName, wire::Close};
 use std::str::FromStr;
@@ -443,15 +444,32 @@ impl Parser {
                     "dibs: {arg} is a dibs flag, and after --sync everything is rsync's.\n  Put it before:  dibs {arg} ... --sync <opts> <src> <dst>"
                 )));
             }
-            if arg.starts_with(':') && arg.contains('$') {
+            if let Some(path) = arg.strip_prefix(':')
+                && path.contains('$')
+                && in_scratch(path).is_none_or(|rest| rest.contains('$'))
+            {
                 return Err(CliError::new(format!(
-                    "dibs: --sync does not expand variables on the machine: {arg}\n  Name the directory: :~/.cache/dibs/... is $DIBS_SCRATCH, :~/... is $HOME"
+                    "dibs: --sync expands only a leading $DIBS_SCRATCH on the machine: {arg}\n  \
+                     Quoted, ':$DIBS_SCRATCH/...' is its scratch, wherever that is; :~/... is $HOME"
                 )));
             }
         }
+        let scratch = args
+            .iter()
+            .any(|a| a.strip_prefix(':').and_then(in_scratch).is_some());
+        let secluded = |a: &String| {
+            matches!(a.as_str(), "--secluded-args" | "--protect-args")
+                || (a.starts_with('-') && !a.starts_with("--") && a.contains('s'))
+        };
+        if scratch && let Some(flag) = args.iter().find(|a| secluded(a)) {
+            return Err(CliError::new(format!(
+                "dibs: --sync cannot expand $DIBS_SCRATCH with {flag}, which hands the paths to rsync \
+                 rather than to the machine's shell.\n  Drop it, or name the directory in full."
+            )));
+        }
         if !args.iter().any(|a| a.starts_with(':')) {
             return Err(CliError::new(
-                "--sync: mark the machine's side with a leading colon, as in :~/.cache/dibs/x",
+                "--sync: mark the machine's side with a leading colon, as in ':$DIBS_SCRATCH/x'",
             ));
         }
         self.finish(Mode::Sync(args.to_vec()))

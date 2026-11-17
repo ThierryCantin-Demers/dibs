@@ -40,23 +40,38 @@ fn a_variable_on_the_machine_side_is_refused_rather_than_sent_literally() {
     // Sent as is, it failed on the machine and came back as 69, which reads as the machine down.
     let s = Sandbox::new();
     for dst in [
-        ":$DIBS_SCRATCH/x",
         ":${DIBS_SCRATCH}/x",
+        ":$DIBS_SCRATCHY/x",
+        ":$DIBS_SCRATCH/a/$x",
         ":$HOME/x",
         ":~/a/$TMPDIR",
     ] {
         let out = s.dibs(["--sync", "./x", dst]).run();
         assert_eq!(
-            (out.code, out.all().lines_with("does not expand variables")),
+            (
+                out.code,
+                out.all().lines_with("expands only a leading $DIBS_SCRATCH")
+            ),
             (2, 1),
             "{dst}"
+        );
+    }
+    for flag in ["-as", "--secluded-args", "--protect-args"] {
+        let out = s.dibs(["--sync", flag, "./x", ":$DIBS_SCRATCH/x"]).run();
+        assert_eq!(
+            (
+                out.code,
+                out.all().lines_with("cannot expand $DIBS_SCRATCH")
+            ),
+            (2, 1),
+            "{flag}"
         );
     }
     assert_eq!(
         s.dibs(["--sync", "./$x", ":~/x"])
             .run()
             .all()
-            .lines_with("does not expand"),
+            .lines_with("expands only"),
         0,
         "a $ on this side is the shell's business"
     );

@@ -232,17 +232,17 @@ exit  call
 
 == dibs --sync ./a ./b
 -> exit 2
-2| --sync: mark the machine's side with a leading colon, as in :~/.cache/dibs/x
+2| --sync: mark the machine's side with a leading colon, as in ':$DIBS_SCRATCH/x'
 
 == dibs --sync --on x ./a ':~/b'
 -> exit 2
 2| dibs: --on is a dibs flag, and after --sync everything is rsync's.
 2|   Put it before:  dibs --on ... --sync <opts> <src> <dst>
 
-== dibs --sync ./x ':$DIBS_SCRATCH/x'
+== dibs --sync ./x ':$HOME/x'
 -> exit 2
-2| dibs: --sync does not expand variables on the machine: :$DIBS_SCRATCH/x
-2|   Name the directory: :~/.cache/dibs/... is $DIBS_SCRATCH, :~/... is $HOME
+2| dibs: --sync expands only a leading $DIBS_SCRATCH on the machine: :$HOME/x
+2|   Quoted, ':$DIBS_SCRATCH/...' is its scratch, wherever that is; :~/... is $HOME
 
 == DIBS_LOCK_DIR=<root>/ro-lock dibs --label x true
 -> exit 71

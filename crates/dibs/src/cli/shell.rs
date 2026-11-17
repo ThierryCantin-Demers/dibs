@@ -26,6 +26,16 @@ impl Command {
     }
 }
 
+/// The variable a sync's machine side may start with, which names its scratch wherever that is.
+pub const SCRATCH: &str = "DIBS_SCRATCH";
+
+/// What follows `$DIBS_SCRATCH` at the start of a machine's path, when it starts so.
+pub fn in_scratch(path: &str) -> Option<&str> {
+    path.strip_prefix('$')?
+        .strip_prefix(SCRATCH)
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
 /// A word quoted as bash's `printf %q` quotes it.
 pub struct BashQuoted<'a>(pub &'a str);
 

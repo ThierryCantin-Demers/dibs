@@ -220,6 +220,38 @@ fn a_sync_crosses_the_transport_intact_both_ways() {
 }
 
 #[test]
+fn a_sync_names_the_machines_scratch_wherever_it_is() {
+    let s = Sandbox::new();
+    fs::create_dir_all(s.path("ssrc")).unwrap();
+    fs::write(s.path("ssrc/a file"), "sent").unwrap();
+    for (how, sent) in [("over the transport", "remote"), ("on the machine", "here")] {
+        let call = |args: &[&str]| {
+            let call = s.dibs(["--sync"].iter().chain(args).copied());
+            match sent {
+                "remote" => s.remote(call),
+                _ => call,
+            }
+            .run()
+        };
+        let dst = format!(":$DIBS_SCRATCH/{sent} probe/");
+        let out = call(&["-r", &format!("{}/", s.p("ssrc")), &dst]);
+        assert_eq!(out.code, 0, "{how}: {}", out.all());
+        assert_eq!(
+            fs::read_to_string(s.path(&format!("scratch/{sent} probe/a file"))).ok(),
+            Some("sent".into()),
+            "{how}, it lands in the scratch"
+        );
+        let back = s.p(&format!("sback-{sent}/"));
+        assert_eq!(call(&["-r", &dst, &back]).code, 0, "{how}");
+        assert_eq!(
+            fs::read_to_string(s.path(&format!("sback-{sent}/a file"))).ok(),
+            Some("sent".into()),
+            "{how}, and comes back from it"
+        );
+    }
+}
+
+#[test]
 fn a_caller_that_goes_away_takes_the_whole_job_with_it() {
     // The channel closing is how the machine learns its caller is gone, and the lock is released as
     // soon as the job exits, so anything still running below the job would run unlocked.
