@@ -58,9 +58,9 @@ impl Clocks {
         all: true,
     };
 
-    /// Whether what was last used at `when` is past a clock of `keep` days.
+    /// Whether what was last used at `when` has gone unused for more than `keep` days of 24 hours.
     pub fn past(&self, now: u64, when: u64, keep: u64) -> bool {
-        self.all || Clocks::days(now, when) > keep
+        self.all || now.saturating_sub(when) > keep.saturating_mul(Span::DAY.0)
     }
 
     /// Whole days from `when` to `now`.
@@ -75,7 +75,7 @@ pub trait Dates {
     fn used(&self, now: u64) -> u64;
     /// When a job's directory or a leftover was last written.
     fn written(&self, now: u64) -> u64;
-    /// `find -mtime +keep`, unchanged for more than `keep` whole days, or every clock run out.
+    /// Unchanged for more than `keep` days of 24 hours, or every clock run out.
     fn past(&self, now: u64, clocks: &Clocks, keep: u64) -> bool;
     /// `touch`: made if missing, and dated now.
     fn touch(&self) -> io::Result<()>;
@@ -296,5 +296,23 @@ impl Contents for Path {
             all &= entry.removed_by(until);
         }
         all && fs::remove_dir(self).is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_days_clock_runs_out_after_that_many_24_hours() {
+        let (now, hour) = (Span::DAY.0 * 10, 3600);
+        let clocks = Clocks::DEFAULT;
+        assert!(!clocks.past(now, now - 23 * hour, 1));
+        assert!(
+            clocks.past(now, now - 25 * hour, 1),
+            "a day and an hour unused"
+        );
+        assert!(clocks.past(now, now - hour, 0));
+        assert!(!clocks.past(now, now, 0), "what is in use now is not past");
     }
 }

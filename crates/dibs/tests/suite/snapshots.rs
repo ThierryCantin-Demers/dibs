@@ -1118,34 +1118,34 @@ fn keep_boundaries() {
     );
     let aged = [
         (
-            "ws/demo/four-days",
-            "ws/demo/four-days/.dibs-used",
-            "4 days ago",
+            "ws/demo/95-hours",
+            "ws/demo/95-hours/.dibs-used",
+            "95 hours ago",
         ),
         (
-            "ws/demo/five-days",
-            "ws/demo/five-days/.dibs-used",
-            "5 days ago",
+            "ws/demo/97-hours",
+            "ws/demo/97-hours/.dibs-used",
+            "97 hours ago",
         ),
         (
             "jobs/20260101000000-4",
             "jobs/20260101000000-4",
-            "4 days ago",
+            "95 hours ago",
         ),
         (
             "jobs/20260101000000-5",
             "jobs/20260101000000-5",
-            "5 days ago",
+            "97 hours ago",
         ),
         (
-            "target/two-days",
-            "target/two-days/.dibs-used",
-            "2 days ago",
+            "target/47-hours",
+            "target/47-hours/.dibs-used",
+            "47 hours ago",
         ),
         (
-            "target/three-days",
-            "target/three-days/.dibs-used",
-            "3 days ago",
+            "target/49-hours",
+            "target/49-hours/.dibs-used",
+            "49 hours ago",
         ),
     ];
     for (dir, marker, when) in aged {

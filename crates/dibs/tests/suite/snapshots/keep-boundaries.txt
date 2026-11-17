@@ -2,12 +2,12 @@
 -> exit 0
 1| dibs --gc on <host>, under <root>/gc
 1|   worktrees, removed after 4 days unused
-1|     ws/demo/four-days                             <size>  used 4 days ago
-1|     ws/demo/five-days                             <size>  used 5 days ago   would remove
+1|     ws/demo/97-hours                              <size>  used 4 days ago   would remove
+1|     ws/demo/95-hours                              <size>  used 3 days ago
 1|   build caches on <mount>, removed after 2 days unused
-1|     target/two-days                               <size>  used 2 days ago
-1|     target/three-days                             <size>  used 3 days ago   would remove
-1|   job logs and artifacts, removed after 4 days: 3 entries, <size>, oldest 5 days, 1 past it holding <size>, which would go
+1|     target/49-hours                               <size>  used 2 days ago   would remove
+1|     target/47-hours                               <size>  used yesterday
+1|   job logs and artifacts, removed after 4 days: 3 entries, <size>, oldest 4 days, 1 past it holding <size>, which would go
 1|   runners in <root>/home/.cache/dibs/runner, replaced ones removed after 4 days unused
 1|     <hash>                              <size>
 1|   <size> is past its clock and would go. Run it without --dry-run.
