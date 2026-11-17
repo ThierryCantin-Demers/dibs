@@ -41,7 +41,7 @@ exit  call
 2     dibs --sync ':~/x'
 2     dibs --sync ./a ./b
 2     dibs --sync --on x ./a ':~/b'
-2     dibs --sync ./x ':$DIBS_SCRATCH/x'
+2     dibs --sync ./x ':$HOME/x'
 71    DIBS_LOCK_DIR=<root>/ro-lock dibs --label x true
 2     DIBS_HOLDING=<host> dibs --label x true
 2     dibs --friction '   '

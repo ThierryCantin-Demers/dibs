@@ -580,5 +580,12 @@ fn a_call_at_a_commit_runs_the_recipes_that_commit_carries() {
         unknown.recipe(Verb::Build, "other").is_some(),
         "a ref this checkout lacks falls back to it"
     );
+    git(&["rm", "-q", "--cached", ".dibs.toml"]);
+    git(&["commit", "-q", "-m", "untracked"]);
+    let bare = Manifest::load_from(&repo, "app", Some("HEAD"), &cfg).unwrap();
+    assert!(
+        bare.recipe(Verb::Build, "other").is_some(),
+        "and so does a commit that carries none"
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }

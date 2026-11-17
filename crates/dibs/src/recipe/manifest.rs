@@ -251,8 +251,8 @@ impl Manifest {
         Manifest::load_at(dir, repo, None)
     }
 
-    /// As `load`, with the repo's own layer as the commit `rev` names it, when this checkout has
-    /// that commit: a call at a ref runs that ref's recipes.
+    /// As `load`, with the repo's own layer as the commit `rev` carries it, when it carries one: a
+    /// call at a ref runs that ref's recipes.
     pub fn load_at(dir: &Path, repo: &str, rev: Option<&str>) -> Result<Manifest, RecipeError> {
         Manifest::load_from(dir, repo, rev, &Manifest::local_dir())
     }
@@ -319,27 +319,19 @@ impl Manifest {
         Ok(found)
     }
 
-    /// The repo's `.dibs.toml` and where it was read: at `rev` when this checkout has that commit,
-    /// whose lacking one is that commit declaring nothing, and otherwise in the checkout.
+    /// The repo's `.dibs.toml` and where it was read: as the commit `rev` carries it, when this
+    /// checkout has one there, and otherwise the checkout's, which may be one never committed.
     fn repo_layer(dir: &Path, rev: Option<&str>) -> Option<(std::io::Result<String>, PathBuf)> {
-        let git = Git(dir);
-        let commit = rev.and_then(|rev| {
-            git.run(&["rev-parse", "--verify", "-q", &format!("{rev}^{{commit}}")])
-                .ok()
-                .map(|_| rev)
+        let at_rev = rev.and_then(|rev| {
+            let spec = format!("{rev}:.dibs.toml");
+            let text = Git(dir).run(&["show", &spec]).ok()?;
+            Some((Ok(text), PathBuf::from(spec)))
         });
-        match commit {
-            Some(rev) => {
-                let spec = format!("{rev}:.dibs.toml");
-                let text = git.run(&["show", &spec]).ok()?;
-                Some((Ok(text), PathBuf::from(spec)))
-            }
-            None => {
-                let path = dir.join(".dibs.toml");
-                path.exists()
-                    .then(|| (std::fs::read_to_string(&path), path))
-            }
-        }
+        at_rev.or_else(|| {
+            let path = dir.join(".dibs.toml");
+            path.exists()
+                .then(|| (std::fs::read_to_string(&path), path))
+        })
     }
 
     fn refuse_needs(&self) -> Result<(), ManifestError> {
