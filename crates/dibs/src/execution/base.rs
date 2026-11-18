@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     call::{BatchStep, Destination, RecipeJob},
-    cli::{Call, RecipeCall, ShellWord},
+    cli::{Call, Expanding, RecipeCall, ShellWord},
     recipe::{self, Checkouts, Lock, Manifest, NotTaken, Resolved},
     records::{Affinity, RunLog},
 };
@@ -549,7 +549,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 let exports: String = st
                     .env
                     .iter()
-                    .map(|(k, v)| format!("export {k}={}; ", ShellWord(v)))
+                    .map(|(k, v)| format!("export {k}={}; ", Expanding(v)))
                     .collect();
                 ProcedureStep {
                     lock: st.lock,
@@ -861,8 +861,12 @@ impl StepPlan {
         // step as well as the first word of it.
         let exports: String = fresh_values(rec, fresh)
             .iter()
-            .chain(&step.env)
             .map(|(k, v)| format!("export {k}={}; ", ShellWord(v)))
+            .chain(
+                step.env
+                    .iter()
+                    .map(|(k, v)| format!("export {k}={}; ", Expanding(v))),
+            )
             .collect();
         StepPlan {
             command: format!("{exports}{}", step.run),

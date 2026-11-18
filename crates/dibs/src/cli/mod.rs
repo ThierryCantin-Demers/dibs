@@ -19,4 +19,4 @@ pub use base::{
 pub use error::CliError;
 pub use help::Help;
 pub use recipe::{RecipeCall, RecipeVerb, Sweep};
-pub use shell::{BashQuoted, Command, SCRATCH, ShellWord, in_scratch};
+pub use shell::{BashQuoted, Command, Expanding, SCRATCH, ShellWord, in_scratch};

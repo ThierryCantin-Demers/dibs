@@ -2556,3 +2556,26 @@ fn a_prepare_that_hangs_is_stopped_at_the_jobs_cap() {
         out.all()
     );
 }
+
+#[test]
+fn a_recipes_env_reads_the_machines_variables() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    recipes(
+        &s,
+        "[build.shim]\n  [[build.shim.step]]\n  lock = \"shared\"\n  env = { PATH = \"/shim:$PATH\", WHERE = \"${DIBS_SCRATCH}/x\" }\n  run = \"echo path=$PATH; echo where=$WHERE; command -v bash\"\n",
+    );
+    let out = s.dibs(["build", &format!("{app}@local"), "shim"]).run();
+    let scratch = s.var("DIBS_SCRATCH");
+    assert_eq!(
+        (
+            out.code,
+            out.stdout.lines_matching("^path=/shim:/"),
+            out.stdout.lines_matching(&format!("^where={scratch}/x$")),
+            out.stdout.lines_matching("/bash$"),
+        ),
+        (0, 1, 1, 1),
+        "PATH is extended rather than replaced: {}",
+        out.all()
+    );
+}

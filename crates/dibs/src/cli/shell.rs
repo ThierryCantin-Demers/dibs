@@ -115,9 +115,49 @@ impl fmt::Display for ShellWord<'_> {
     }
 }
 
+/// A value for the shell it reaches to expand: its `$VAR`s are read there, and nothing splits it.
+pub struct Expanding<'a>(pub &'a str);
+
+impl fmt::Display for Expanding<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bare = !self.0.is_empty()
+            && self
+                .0
+                .chars()
+                .all(|c| c.is_alphanumeric() || "/._-@".contains(c));
+        match bare {
+            true => f.write_str(self.0),
+            false => {
+                let escaped = self
+                    .0
+                    .replace('\\', r"\\")
+                    .replace('"', r#"\""#)
+                    .replace('`', r"\`");
+                write!(f, "\"{escaped}\"")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_expanding_value_reads_the_variables_of_the_shell_it_reaches() {
+        for (value, want) in [
+            ("/shim:$PATH", "/shim:/bin:/usr/bin"),
+            ("${PATH}/x", "/bin:/usr/bin/x"),
+            ("a \"quoted\" `word`", "a \"quoted\" `word`"),
+            ("plain", "plain"),
+        ] {
+            let script = format!(
+                "PATH=/bin:/usr/bin; export V={}; printf %s \"$V\"",
+                Expanding(value)
+            );
+            assert_eq!(bash(&script, &[]), want, "{value}");
+        }
+    }
 
     fn bash(script: &str, args: &[&str]) -> String {
         let out = std::process::Command::new("bash")
