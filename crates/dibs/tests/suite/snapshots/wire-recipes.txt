@@ -427,7 +427,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     ready_within: 300
     services: []
     stream: true
-    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
+    tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>","target":"<key>"}}}}
     tree.then: "transfer"
     tty: false
     verbose: false

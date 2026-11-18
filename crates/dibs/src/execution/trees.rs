@@ -66,6 +66,7 @@ impl TreeSpec<'_> {
                 Some(l) => wire::Source::Local {
                     key: l.key.clone(),
                     content: l.content.clone(),
+                    target: l.target.clone(),
                 },
                 None => wire::Source::Fetched {
                     reference: self.reference.to_string(),

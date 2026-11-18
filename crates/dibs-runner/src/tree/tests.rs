@@ -251,6 +251,7 @@ pub fn local(key: &str, packages: &[&str]) -> Prepare {
         source: Source::Local {
             key: key.into(),
             content: "c".into(),
+            target: None,
         },
         packages: (!packages.is_empty()).then(|| Packages {
             token: format!("t-{key}"),
@@ -474,6 +475,25 @@ fn a_local_tree_is_keyed_and_marked_and_its_lockfile_staged() {
         "aaa\nbbb\n"
     );
     assert!(m.p("scratch/out").is_dir());
+}
+
+#[test]
+fn two_commits_sent_from_one_slot_are_two_trees_over_one_target() {
+    let m = Machine::new();
+    let commit = |key: &str| Prepare {
+        source: Source::Local {
+            key: key.into(),
+            content: "c".into(),
+            target: Some("slot0".into()),
+        },
+        ..local(key, &[])
+    };
+    let first = m.prepared(&commit("c1"));
+    fs::write(PathBuf::from(&first.target).join("built"), "").unwrap();
+    let second = m.prepared(&commit("c2"));
+    assert_ne!(first.worktree, second.worktree);
+    assert!(second.target.ends_with("target/demo-local-slot0"));
+    assert!(PathBuf::from(&second.target).join("built").exists());
 }
 
 #[test]
@@ -1712,6 +1732,14 @@ fn a_value_from_the_wire_that_names_a_path_elsewhere_is_refused() {
             p.source = Source::Local {
                 key: "../../x".into(),
                 content: "c".into(),
+                target: None,
+            }
+        }),
+        with(&|p| {
+            p.source = Source::Local {
+                key: "k".into(),
+                content: "c".into(),
+                target: Some("../../x".into()),
             }
         }),
         with(&|p| {

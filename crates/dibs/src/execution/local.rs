@@ -164,6 +164,8 @@ const MACHINE_GITIGNORE: &str = "--filter=:-r .gitignore";
 /// are the same measurement only if it matches.
 pub struct Local {
     pub key: String,
+    /// The target's key, where it is not the tree's.
+    pub target: Option<String>,
     pub content: String,
     pub dirty: bool,
     pub carried: Carried,
@@ -208,6 +210,7 @@ impl Local {
         );
         Ok(Local {
             key: format!("{:.10}", k.finalize().hex()),
+            target: None,
             content,
             dirty,
             carried,
@@ -421,12 +424,14 @@ impl SentFrom {
 ///
 /// A few checkouts per repo, each a clone that borrows this checkout's objects, so nothing is
 /// copied but files and no worktree is registered in the checkout. Its machine tree is keyed by
-/// the commit rather than by the path, so two commits never build in one tree. Each is locked
-/// until it has been sent, which is why a comparison of two such commits takes two.
+/// the commit rather than by the path, so two commits never build in one tree, and its target by
+/// the slot, so they share a build cache as a fetched arm's commits do. Each is locked until it
+/// has been sent, which is why a comparison of two such commits takes two.
 pub struct Checkout {
     pub dir: PathBuf,
     pub sha: String,
     pub key: String,
+    pub target: String,
     pub lock: Option<std::fs::File>,
     /// Why the machine is not left to fetch it.
     pub why: Option<&'static str>,
@@ -484,10 +489,13 @@ impl Checkout {
         Git(&checkout).run(&["clean", "-fdxq"])?;
         let mut k = Sha256::new();
         k.update(format!("base\0{identity}\0{sha}"));
+        let mut t = Sha256::new();
+        t.update(format!("slot\0{identity}\0{slot}"));
         Ok(Checkout {
             dir: checkout,
             sha: sha.to_string(),
             key: format!("{:.10}", k.finalize().hex()),
+            target: format!("{:.10}", t.finalize().hex()),
             lock: Some(lock),
             why,
         })
@@ -528,6 +536,7 @@ impl Checkout {
     pub fn local(&self) -> Result<Local, GitError> {
         Ok(Local {
             key: self.key.clone(),
+            target: Some(self.target.clone()),
             ..Local::of(&self.dir)?
         })
     }

@@ -142,6 +142,10 @@ fn the_scratch_a_fixed_sequence_of_prepares_leaves() {
         &format!("local-{}", short_hash(&format!("base\0app\0{main}"))),
         "local-<main, sent>",
     );
+    n = n.literal(
+        &format!("local-{}", short_hash("slot\0app\00")),
+        "local-<slot 0, sent>",
+    );
     n = n
         .literal(&main[..12], "<main>")
         .rule(r"\b[0-9]+-[0-9]{16,}\b", "<token>")

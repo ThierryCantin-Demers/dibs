@@ -221,7 +221,7 @@ out/
 target/
   .app-local-<app-topk>.lock
   .app-local-<app>.lock
-  .app-local-<main, sent>.lock
+  .app-local-<slot 0, sent>.lock
   .app.lock
   app/
     .dibs-packages:
@@ -256,7 +256,7 @@ target/
       | <root>/scratch/ws/app/local-<app>
     .dibs-tree.lock  (empty)
     .dibs-used  (empty)
-  app-local-<main, sent>/
+  app-local-<slot 0, sent>/
     .dibs-packages:
       | 791b0c5685df
       | b2bac97260c6

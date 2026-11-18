@@ -95,8 +95,14 @@ pub enum Source {
         #[serde(default)]
         here: Option<String>,
     },
-    /// A tree this computer sends; `content` names what it holds.
-    Local { key: String, content: String },
+    /// A tree this computer sends; `content` names what it holds, and `target` the build cache
+    /// it shares with the other commits sent from one checkout, when it is one of those.
+    Local {
+        key: String,
+        content: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+    },
 }
 
 /// The directory a pinned tree is nested in, the cargo config that points it at the pins, and

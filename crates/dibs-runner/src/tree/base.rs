@@ -216,7 +216,13 @@ impl<'a> Trees<'a> {
                 packages.as_ref(),
                 &stamp,
             ),
-            Source::Local { key, .. } => self.local(prepare, key, packages.as_ref(), &stamp),
+            Source::Local { key, target, .. } => self.local(
+                prepare,
+                key,
+                target.as_deref().unwrap_or(key),
+                packages.as_ref(),
+                &stamp,
+            ),
         };
         let laid = self.within_cap(laid)?;
         let sha = match &prepare.source {
@@ -243,8 +249,11 @@ impl<'a> Trees<'a> {
     /// anywhere, and a fresh path that did would remove anything.
     fn placed(prepare: &Prepare) -> Result<(), PrepareError> {
         Named::Repo.check(&prepare.repo)?;
-        if let Source::Local { key, .. } = &prepare.source {
+        if let Source::Local { key, target, .. } = &prepare.source {
             Named::Key.check(key)?;
+            if let Some(target) = target {
+                Named::Key.check(target)?;
+            }
         }
         if let Some(nest) = &prepare.nest {
             Named::Nest.check(&nest.name)?;
@@ -479,11 +488,13 @@ impl<'a> Trees<'a> {
     }
 
     /// The same layout a fetched ref gets, without the fetch: the tree arrives by rsync, into a
-    /// target of its own, so two local trees of one repo cannot hand each other a binary.
+    /// target of its own, so two local trees of one repo cannot hand each other a binary. Commits
+    /// sent from one checkout slot share theirs, as a fetched arm's commits do.
     fn local(
         &self,
         prepare: &Prepare,
         key: &str,
+        target_key: &str,
         packages: Option<&Lines>,
         stamp: &Stamp,
     ) -> Result<Placed, PrepareError> {
@@ -500,7 +511,7 @@ impl<'a> Trees<'a> {
             .config
             .scratch
             .join("target")
-            .join(format!("{repo}-local-{key}{nest}"));
+            .join(format!("{repo}-local-{target_key}{nest}"));
         let trees = self.repo_turn(repo)?;
         self.made(worktree.parent().unwrap_or(self.config.scratch))?;
         self.revive(prepare, &worktree);

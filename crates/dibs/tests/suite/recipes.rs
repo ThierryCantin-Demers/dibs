@@ -2579,3 +2579,36 @@ fn a_recipes_env_reads_the_machines_variables() {
         out.all()
     );
 }
+
+#[test]
+fn commits_sent_one_after_another_build_in_one_target() {
+    let s = Sandbox::new();
+    let app = app(&s);
+    recipes(
+        &s,
+        "[build.where]\n  [[build.where.step]]\n  lock = \"shared\"\n  run = \"echo tree ${PWD##*/} cache ${CARGO_TARGET_DIR##*/}\"\n",
+    );
+    s.git("app", &["add", "-A"]);
+    s.git("app", &["commit", "-qm", "recipes"]);
+    let mut seen = Vec::new();
+    for n in ["one", "two"] {
+        s.write("app/a.txt", &format!("{n}\n"));
+        s.git("app", &["commit", "-qam", n]);
+        let sha = s.git("app", &["rev-parse", "HEAD"]).trim().to_string();
+        let out = s.dibs(["build", &format!("{app}@{sha}"), "where"]).run();
+        assert_eq!(out.code, 0, "{}", out.all());
+        let line = out
+            .stdout
+            .lines()
+            .find(|l| l.starts_with("tree "))
+            .unwrap()
+            .to_string();
+        seen.push(line);
+    }
+    let parts: Vec<Vec<&str>> = seen.iter().map(|l| l.split(' ').collect()).collect();
+    assert_ne!(parts[0][1], parts[1][1], "each commit is a tree: {seen:?}");
+    assert_eq!(
+        parts[0][3], parts[1][3],
+        "both build in one target: {seen:?}"
+    );
+}
