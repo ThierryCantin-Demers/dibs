@@ -109,6 +109,34 @@ fn what_a_service_starts_outside_its_group_and_tree_is_stopped_with_it() {
 }
 
 #[test]
+fn what_a_command_starts_outside_its_group_is_stopped_before_the_lock_goes() {
+    let s = Sandbox::new();
+    let away = s.p("left.pid");
+    let held = s.gate("left-never");
+    let command = format!(
+        "(perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or die' bash -c \"echo \\$\\$ > {away}; exec cat {}\" > /dev/null 2>&1 &); until test -s {away}; do :; done",
+        held.path.display()
+    );
+    let out = s.dibs(["--label", "left-behind", &command]).run();
+    let pid: u32 = s.read("left.pid").trim().parse().unwrap();
+    let outlived = alive(pid);
+    if outlived {
+        held.open();
+    }
+    assert!(!outlived, "{}", out.all());
+    assert_eq!(
+        (
+            out.code,
+            out.all()
+                .lines_with("stopped what the command left running outside its process group")
+        ),
+        (0, 1),
+        "{}",
+        out.all()
+    );
+}
+
+#[test]
 fn readiness_can_be_a_command() {
     let s = Sandbox::new();
     let up = s.p("w2.up");

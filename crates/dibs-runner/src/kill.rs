@@ -16,7 +16,7 @@ use std::{fs, thread, time::Duration};
 /// and letting go at once, and killing a passer-by is worse than the wedge.
 const SECOND_READING: Duration = Duration::from_millis(200);
 /// An orphan's description is cut to this many characters, its indent included.
-const DESCRIBED: usize = 100;
+pub const DESCRIBED: usize = 100;
 /// How long what a job left running is given to end after TERM before KILL.
 const LEFTOVER_GRACE: Duration = Duration::from_secs(5);
 /// How often it is looked at meanwhile.

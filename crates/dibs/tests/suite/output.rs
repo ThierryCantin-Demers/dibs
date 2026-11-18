@@ -446,28 +446,34 @@ fn an_overrun_takes_what_its_job_left_running_with_it() {
     until("the process that ignored TERM to go", || !alive(pid));
 }
 
-// A leftover in the job's group goes with the job, so this one leaves it; only Linux shows a
-// process's environment, which names its job.
+/// A process naming an ended job, as one does when its runner was killed outright and could not
+/// sweep what the job left; only Linux shows a process's environment.
+#[cfg(target_os = "linux")]
+fn left_by_an_ended_job(s: &mut Sandbox, ignores_term: bool) -> (Gate, u32) {
+    let out = s.dibs(["--label", "leaves", "true"]).run();
+    let job = capture(&out.stderr, r"^job (\S+) ").expect("a trailer");
+    let gate = s.gate("left");
+    let pidfile = s.p("left.pid");
+    let trap = match ignores_term {
+        true => "trap \"\" TERM; ",
+        false => "",
+    };
+    let script = format!("{trap}echo $$ > {pidfile}; {}", gate.hold());
+    s.spawn(s.command("bash", ["-c", &script]).env("DIBS_JOB", &job));
+    until("the leftover to start", || s.exists("left.pid"));
+    let pid = s.read("left.pid").trim().parse().unwrap();
+    (gate, pid)
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn status_warns_of_what_an_ended_job_left_running() {
-    let s = Sandbox::new();
-    let (gate, started) = (s.gate("left"), s.gate("started"));
-    let pidfile = s.p("left.pid");
-    // The job waits for its leftover to have left its group, which is swept when the job ends.
-    let cmd = format!(
-        "setsid bash -c 'echo $$ > {pidfile}; {}; {}' > /dev/null 2>&1 & {}",
-        started.signal(),
-        gate.hold(),
-        started.hold()
-    );
-    let out = s.dibs(["--max", "0", "--label", "leaves", &cmd]).run();
-    assert_eq!(out.code, 0, "{}", out.all());
-    let pid = s.read("left.pid").trim().to_string();
+    let mut s = Sandbox::new();
+    let (gate, pid) = left_by_an_ended_job(&mut s, false);
     let said = s.status();
     let left: Vec<&str> = said
         .lines()
-        .filter(|l| l.contains(&pid) && l.contains("leaves"))
+        .filter(|l| l.contains(&pid.to_string()) && l.contains("leaves"))
         .collect();
     assert_eq!(
         (said.lines_with("LEFT RUNNING"), left.len()),
@@ -475,26 +481,15 @@ fn status_warns_of_what_an_ended_job_left_running() {
         "{said}"
     );
     gate.open();
-    until("the leftover to go", || !alive(pid.parse().unwrap()));
+    until("the leftover to go", || !alive(pid));
     assert_eq!(s.status().lines_with("LEFT RUNNING"), 0);
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 fn kill_stops_what_an_ended_job_left_running() {
-    let s = Sandbox::new();
-    let (gate, started) = (s.gate("left"), s.gate("started"));
-    let pidfile = s.p("left.pid");
-    // The job waits for its leftover to have left its group, which is swept when the job ends.
-    let cmd = format!(
-        "setsid bash -c 'trap \"\" TERM; echo $$ > {pidfile}; {}; {}' > /dev/null 2>&1 & {}",
-        started.signal(),
-        gate.hold(),
-        started.hold()
-    );
-    let out = s.dibs(["--max", "0", "--label", "leaves", &cmd]).run();
-    assert_eq!(out.code, 0, "{}", out.all());
-    let pid: u32 = s.read("left.pid").trim().parse().unwrap();
+    let mut s = Sandbox::new();
+    let (_gate, pid) = left_by_an_ended_job(&mut s, true);
     let out = s.dibs(["--kill", &pid.to_string(), "--anyone"]).run();
     assert_eq!(
         (out.code, out.stdout.lines_with("left running by job")),

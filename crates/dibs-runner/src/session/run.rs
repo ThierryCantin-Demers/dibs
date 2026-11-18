@@ -9,6 +9,7 @@ use crate::{
         Cap, Environment, Guard, HoldFifo, Job, LogRead, Output, Ports, Readied, Readiness,
         Services, Start,
     },
+    kill::DESCRIBED,
     lock::{Hold, Kind, Lock, LockDir},
     machine::Site,
     platform::{Host, Platform as _},
@@ -780,6 +781,9 @@ impl<'a> Run<'a> {
         if let Some(services) = &mut hosted.services {
             services.stop();
         }
+        if begun.log.is_some() {
+            self.sweep_escaped(&arrived.job);
+        }
         let copier = Copier::new(self.at.settings.reflinks);
         for copy in environment.copied() {
             if let Err(e) = KeptCopy::of(Path::new(copy)).give_back(copier) {
@@ -921,6 +925,32 @@ impl<'a> Run<'a> {
             self.overran(end.max);
         }
         status
+    }
+
+    /// What the command started outside its group, as `setsid` does, which the group's own sweep
+    /// cannot reach and which would otherwise hold cards and memory past the lock.
+    fn sweep_escaped(&self, job: &JobId) {
+        let me = std::process::id();
+        let left: Vec<u32> = Host::processes()
+            .iter()
+            .map(|process| process.pid)
+            .filter(|&pid| pid != me)
+            .filter(|&pid| Host::variable(pid, "DIBS_JOB").as_deref() == Some(job.as_str()))
+            .collect();
+        if left.is_empty() {
+            return;
+        }
+        let described: String = left
+            .iter()
+            .map(|&pid| {
+                let line = Host::describe(pid).unwrap_or_else(|| pid.to_string());
+                format!("  {}\n", line.chars().take(DESCRIBED).collect::<String>())
+            })
+            .collect();
+        Host::reap(&left);
+        self.at.sink.say(&format!(
+            "dibs: stopped what the command left running outside its process group:\n{described}"
+        ));
     }
 
     /// `--max`, raised to twice what 90% of this job's own runs took when nobody chose it, so work
