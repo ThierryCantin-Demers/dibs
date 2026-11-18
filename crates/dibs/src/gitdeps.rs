@@ -62,16 +62,24 @@ impl GitPin {
 /// A cargo home, whose git cache may hold the commits a machine cannot fetch.
 pub struct CargoHome {
     path: PathBuf,
+    /// The databases a detached batch's sender carried, which the machine's own cargo lacks.
+    carried: Option<PathBuf>,
 }
 
 impl CargoHome {
+    /// Names the store a detached batch's driver reads the databases its sender carried from.
+    pub const CARRIED: &'static str = "DIBS_GITDBS";
+
     pub fn here() -> CargoHome {
         let path = std::env::var_os("CARGO_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cargo")
             });
-        CargoHome { path }
+        let carried = std::env::var_os(CargoHome::CARRIED)
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from);
+        CargoHome { path, carried }
     }
 
     /// The pinned commits this checkout's cargo can supply. Cargo names a cache directory after the
@@ -132,11 +140,11 @@ impl CargoHome {
 
     /// The directories cargo keeps for a repo, one per spelling of its URL.
     fn dirs(&self, repo: &str) -> Vec<(String, PathBuf)> {
-        let Ok(entries) = std::fs::read_dir(self.path.join("git/db")) else {
-            return Vec::new();
-        };
         let prefix = format!("{}-", repo.to_lowercase());
-        entries
+        std::iter::once(self.path.join("git/db"))
+            .chain(self.carried.clone())
+            .filter_map(|dir| std::fs::read_dir(dir).ok())
+            .flatten()
             .filter_map(|e| e.ok())
             .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
             .filter(|(name, _)| {
@@ -250,6 +258,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         ];
         let cargo = CargoHome {
             path: root.join("cargo"),
+            carried: None,
         };
         let dbs = cargo.dbs(&pins);
         assert_eq!(dbs.len(), 1);
@@ -268,6 +277,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         );
         let cargo = CargoHome {
             path: root.join("cargo"),
+            carried: None,
         };
         let pin = GitPin {
             repo: "widget".to_string(),
@@ -298,6 +308,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         };
         let cargo = CargoHome {
             path: root.join("cargo"),
+            carried: None,
         };
         cargo.fetch_private(std::slice::from_ref(&pin), |_| false);
         assert!(cargo.dbs(std::slice::from_ref(&pin)).is_empty());

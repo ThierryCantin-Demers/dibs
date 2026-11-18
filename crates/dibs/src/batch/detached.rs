@@ -3,7 +3,10 @@
 //! files under `~/.cache/dibs/detached/home`, apart from anyone's own dibs there.
 
 use super::base::{Options, run};
-use crate::{call::Driver, caller::Caller, execution::SentFrom, itself::Itself, paths::Paths};
+use crate::{
+    call::Driver, caller::Caller, execution::SentFrom, gitdeps::CargoHome, itself::Itself,
+    paths::Paths,
+};
 use dibs_format::{BatchId, Exit, MachineName, Span};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -61,6 +64,8 @@ impl Detached {
     pub const MACHINES: &'static str = "machines.toml";
     pub const SERIES: &'static str = "series";
     pub const SENT_FROM: &'static str = "sent-from";
+    /// The private git databases batches were sent, which every later batch adds to.
+    pub const GITDB: &'static str = "gitdb";
     /// The copies a later batch's repos are sent against, so only what changed travels.
     pub const LAST: &'static str = "last";
     const HOME: &'static str = "home";
@@ -230,6 +235,10 @@ impl Detached {
             ("DIBS_SERIES", at(Detached::SERIES)),
             ("DIBS_RUNS", at(Detached::RUNS)),
             (SentFrom::VAR, at(Detached::SENT_FROM)),
+            (
+                CargoHome::CARRIED,
+                self.dir.join(Detached::GITDB).into_os_string(),
+            ),
             ("DIBS_LOCAL", "1".into()),
             ("PATH", [cargo, path].join(&OsString::from(":"))),
         ]

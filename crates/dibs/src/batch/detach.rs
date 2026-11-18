@@ -10,8 +10,9 @@ use crate::{
     call::{CallError, Driver, MachineCall, Origin, Output, Series, Sync},
     caller::Caller,
     cli::{Call, Invocation, Mode, RecipeCall, RecipeVerb},
-    execution::{Carried, KeptStores, Repo, SentFrom},
+    execution::{Carried, KeptStores, Repo, SentFrom, private},
     git::{Git, GitError},
+    gitdeps::{CargoHome, GitPin},
     itself::Itself,
     machine::{
         Client, Delivery, Installed, Liveness, MISSING, Provision, Route, SSH_FAILED, Session, Ssh,
@@ -516,8 +517,50 @@ impl<'a> Detach<'a> {
                 return Ok(Some(code));
             }
         }
+        if let Some(code) = self.send_gitdbs(repos)? {
+            return Ok(Some(code));
+        }
         if let Some(kept) = self.kept() {
             kept.send();
+        }
+        Ok(None)
+    }
+
+    /// The private git dependencies the repos' lockfiles pin, which the machine cannot fetch and
+    /// its driver then offers its builds as this computer's cargo would.
+    fn send_gitdbs(&self, repos: &[SentRepo]) -> Result<Option<i32>, BatchError> {
+        let mut pins: Vec<GitPin> = Vec::new();
+        for repo in repos {
+            let lock = Repo(&repo.dir).lockfile(None).unwrap_or_default();
+            for pin in GitPin::all(&lock) {
+                if !pins.contains(&pin) {
+                    pins.push(pin);
+                }
+            }
+        }
+        pins.retain(|pin| private(&pin.url));
+        let cargo = CargoHome::here();
+        cargo.fetch_private(&pins, |_| true);
+        let mut sent: Vec<PathBuf> = Vec::new();
+        for db in cargo.dbs(&pins) {
+            if sent.contains(&db.path) {
+                continue;
+            }
+            eprintln!(
+                "dibs: sending {} at {:.8}, which the machine cannot fetch",
+                db.name, db.commit
+            );
+            let args = [
+                "-a".to_string(),
+                "--no-times".into(),
+                "--ignore-existing".into(),
+                format!("{}/", db.path.display()),
+                format!(":~/{}/{}/{}/", Detached::DIR, Detached::GITDB, db.name),
+            ];
+            if let Some(code) = self.transfer(&args, &db.name)? {
+                return Ok(Some(code));
+            }
+            sent.push(db.path);
         }
         Ok(None)
     }

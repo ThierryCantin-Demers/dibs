@@ -272,3 +272,59 @@ fn a_detached_batch_brings_what_its_tools_saved_home() {
     assert_eq!(out.code, 0, "{}", out.all());
     assert_eq!(s.read(KEPT_HERE), "tuned\n");
 }
+
+#[test]
+fn a_detached_batch_carries_the_private_git_dependencies_its_lockfile_pins() {
+    let s = detaching();
+    app(&s);
+    recipes(&s, PARAMS);
+    s.git(".", &["init", "-q", "dep"]);
+    s.write("dep/src/lib.rs", "");
+    s.git("dep", &["add", "-A"]);
+    s.git("dep", &["commit", "-qm", "dep"]);
+    let commit = s.git("dep", &["rev-parse", "HEAD"]).trim().to_string();
+    let db = "dep-0123456789abcdef";
+    s.git(
+        ".",
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            "dep",
+            &format!("home/.cargo/git/db/{db}"),
+        ],
+    );
+    let url = "https://example.invalid/dep.git";
+    s.write(
+        "home/.cache/dibs/remotes",
+        &format!("{url}\tprivate\t{}\n", dibs_format::Moment::epoch_now()),
+    );
+    s.write(
+        "app/Cargo.lock",
+        &format!("[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"dep\"\nversion = \"1.0.0\"\nsource = \"git+{url}?tag=v1#{commit}\"\n"),
+    );
+    let out = s
+        .dibs(["batch", "--detach", "-"])
+        .env("WIRE_FAR_CARGO_HOME", s.p("far"))
+        .stdin("[one] dibs build app@local p --on box-a\n")
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let held = s
+        .command(
+            "git",
+            [
+                "-C",
+                &s.p(&format!("far/git/db/{db}")),
+                "cat-file",
+                "-e",
+                &format!("{commit}^{{commit}}"),
+            ],
+        )
+        .run();
+    assert_eq!(
+        held.code,
+        0,
+        "the machine's cargo holds the commit only this computer's could fetch: {}",
+        out.all()
+    );
+}
