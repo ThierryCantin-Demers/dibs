@@ -572,14 +572,15 @@ impl<'a> Run<'a> {
     ) -> Result<Begun, i32> {
         let mode = self.at.call.mode();
         let job = &arrived.job;
-        self.at
-            .dir
-            .hold(&self.at.call.lock_record(acquired.at, job));
+        // Marked first, so no status shows a preemptible holder as an ordinary one.
         if acquired.ahead {
             self.at
                 .dir
                 .mark_ahead(self.at.call.pid, arrived.order, &Ahead::Running);
         }
+        self.at
+            .dir
+            .hold(&self.at.call.lock_record(acquired.at, job));
         if acquired.waited >= SAY_ACQUIRED_AFTER {
             self.at.sink.say(&format!(
                 "dibs: acquired the {mode} lock after {}\n",
