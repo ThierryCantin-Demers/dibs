@@ -143,7 +143,7 @@ fn the_scratch_a_fixed_sequence_of_prepares_leaves() {
         "local-<main, sent>",
     );
     n = n.literal(
-        &format!("local-{}", short_hash("slot\0app\00")),
+        &format!("local-{}", short_hash(&format!("slot\0app\0{}", 0))),
         "local-<slot 0, sent>",
     );
     n = n
