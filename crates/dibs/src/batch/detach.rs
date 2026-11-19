@@ -50,11 +50,6 @@ pub enum DetachError {
         step: String,
         why: &'static str,
     },
-    /// A step names a repo by a path, which means nothing on the machine.
-    Path {
-        step: String,
-        repo: String,
-    },
     Repo {
         step: String,
         error: RepoError,
@@ -88,11 +83,6 @@ impl fmt::Display for DetachError {
             DetachError::Here { step, why } => write!(
                 f,
                 "step {step} {why}, and a detached batch runs entirely on its machine"
-            ),
-            DetachError::Path { step, repo } => write!(
-                f,
-                "step {step} names {repo} by a path, which means nothing on the machine. Name the repo as\n  \
-                 DIBS_ROOT finds it, or run the batch from inside it and name it '.'"
             ),
             DetachError::Repo { step, error } => write!(f, "step {step}: {error}"),
             DetachError::Git { repo, error } => {
@@ -135,37 +125,47 @@ impl Steps<'_> {
         Ok(MachineName::new(first.ok_or(BatchError::NoSteps)?))
     }
 
-    /// Every repo the steps name, each once, refusing a step that acts on this computer.
-    fn repos(&self) -> Result<Vec<SentRepo>, BatchError> {
+    /// Every repo the steps name, each once, refusing a step that acts on this computer, and
+    /// the name each repo named by a path is sent under, which the steps are rewritten to.
+    fn repos(&self) -> Result<(Vec<SentRepo>, Vec<Renamed>), BatchError> {
         let checkouts = Checkouts::here().map_err(|error| DetachError::Repo {
             step: String::new(),
             error,
         })?;
         let mut repos: Vec<SentRepo> = Vec::new();
+        let mut renamed: Vec<Renamed> = Vec::new();
         for step in self.0 {
             for name in Steps::names(step)? {
-                if name.contains('/') || (name.starts_with('.') && name != ".") {
-                    return Err(DetachError::Path {
-                        step: step.name.clone(),
-                        repo: name,
-                    }
-                    .into());
-                }
                 let dir = checkouts.find(&name).map_err(|error| DetachError::Repo {
                     step: step.name.clone(),
                     error,
                 })?;
+                if let Some(sent) = repos.iter().find(|r| r.dir == dir) {
+                    if name != "." && name != sent.name && SentRepo::is_path(&name) {
+                        renamed.push(Renamed {
+                            path: name,
+                            name: sent.name.clone(),
+                        });
+                    }
+                    continue;
+                }
                 // `.` is the repo the batch runs in, which the driver starts in there.
-                let name = match name.as_str() {
+                let sent = match name.as_str() {
                     "." => SentRepo::folder(&dir),
+                    path if SentRepo::is_path(path) => {
+                        let free = SentRepo::free(&repos, &SentRepo::folder(&dir));
+                        renamed.push(Renamed {
+                            path: path.to_string(),
+                            name: free.clone(),
+                        });
+                        free
+                    }
                     _ => name,
                 };
-                if !repos.iter().any(|r| r.name == name) {
-                    repos.push(SentRepo { name, dir });
-                }
+                repos.push(SentRepo { name: sent, dir });
             }
         }
-        Ok(repos)
+        Ok((repos, renamed))
     }
 
     /// The repos a step names, or why it cannot run detached.
@@ -238,7 +238,53 @@ struct SentRepo {
     dir: PathBuf,
 }
 
+/// A repo a step named by a path here, and the name it is sent under, which the driver finds
+/// under its root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Renamed {
+    path: String,
+    name: String,
+}
+
+impl Renamed {
+    /// `text` with every word that is `path`, or starts `path@`, naming `name` instead.
+    fn apply(&self, text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find(&self.path) {
+            let before = rest[..at].chars().next_back();
+            let after = rest[at + self.path.len()..].chars().next();
+            let starts = before.is_none_or(|c| c.is_whitespace() || "'\"=".contains(c));
+            let ends = after.is_none_or(|c| c.is_whitespace() || "@'\"".contains(c));
+            out.push_str(&rest[..at]);
+            out.push_str(match starts && ends {
+                true => &self.name,
+                false => &self.path,
+            });
+            rest = &rest[at + self.path.len()..];
+        }
+        out.push_str(rest);
+        out
+    }
+}
+
 impl SentRepo {
+    /// A name that means a directory here, which the machine cannot resolve.
+    fn is_path(name: &str) -> bool {
+        name.contains('/') || name.starts_with('.')
+    }
+
+    /// `folder`, or it numbered past the repos already sent under that name.
+    fn free(repos: &[SentRepo], folder: &str) -> String {
+        (1..)
+            .map(|n| match n {
+                1 => folder.to_string(),
+                n => format!("{folder}-{n}"),
+            })
+            .find(|name| !repos.iter().any(|r| r.name == *name))
+            .expect("an unbounded range")
+    }
+
     fn folder(dir: &Path) -> String {
         dir.file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -316,7 +362,10 @@ pub fn detach(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let parsed = parse(text)?;
     let steps = Steps(&parsed);
     let name = steps.machine(opts.on.as_ref())?;
-    let repos = steps.repos()?;
+    let (repos, renamed) = steps.repos()?;
+    let text = &renamed
+        .iter()
+        .fold(text.to_string(), |text, r| r.apply(&text));
     if opts.dry_run {
         println!(
             "batch (dry run), {} steps, detached to {name}, sending:",
@@ -324,6 +373,9 @@ pub fn detach(text: &str, opts: &Options) -> Result<i32, BatchError> {
         );
         for repo in &repos {
             println!("  {}  from {}", repo.name, repo.dir.display());
+        }
+        for r in &renamed {
+            println!("  {} is named {} there", r.path, r.name);
         }
         println!("  your recipes and machines");
         return Ok(0);
@@ -796,5 +848,23 @@ impl<'a> Detach<'a> {
             self.name, self.name
         );
         followed.exit.unwrap_or(Exit::Failed.status())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_path_is_renamed_only_where_it_is_a_whole_word() {
+        let renamed = Renamed {
+            path: "/w/cubek".into(),
+            name: "cubek".into(),
+        };
+        assert_eq!(
+            renamed
+                .apply("[a] dibs bench m@x r --pin /w/cubek@local --pin /w/cubek-2@local /w/cubek"),
+            "[a] dibs bench m@x r --pin cubek@local --pin /w/cubek-2@local cubek"
+        );
     }
 }

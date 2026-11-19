@@ -113,10 +113,6 @@ fn a_batch_that_needs_this_computer_is_refused_before_anything_is_sent() {
             "[a] dibs with app svc --on box-a -- true\n",
             "--there runs it on the machine",
         ),
-        (
-            "[a] dibs build ./app@local p --on box-a\n",
-            "names ./app by a path",
-        ),
     ] {
         let out = s.dibs(["batch", "--detach", "-"]).stdin(steps).run();
         assert_eq!(out.code, 2, "{steps}{}", out.all());
@@ -325,6 +321,39 @@ fn a_detached_batch_carries_the_private_git_dependencies_its_lockfile_pins() {
         held.code,
         0,
         "the machine's cargo holds the commit only this computer's could fetch: {}",
+        out.all()
+    );
+}
+
+#[test]
+fn a_repo_named_by_a_path_is_sent_under_its_folders_name() {
+    let s = detaching();
+    let dir = app(&s);
+    recipes(&s, PARAMS);
+    s.write("app/uncommitted.txt", "sent as it is\n");
+    let steps = format!(
+        "[rel] dibs build ./app@local p --on box-a\n[abs] dibs build {dir}@local p --on box-a\n"
+    );
+    let dry = s
+        .dibs(["batch", "--detach", "--dry-run", "-"])
+        .stdin(&steps)
+        .run();
+    assert_eq!(
+        (
+            dry.code,
+            dry.stdout.lines_matching("^  app  from "),
+            dry.stdout.lines_matching("^  \\./app is named app there$"),
+        ),
+        (0, 1, 1),
+        "{}",
+        dry.all()
+    );
+    let out = s.dibs(["batch", "--detach", "-"]).stdin(&steps).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(
+        s.read("home/.cache/dibs/detached/last/app/uncommitted.txt"),
+        "sent as it is\n",
+        "both steps ran in the one copy sent: {}",
         out.all()
     );
 }
