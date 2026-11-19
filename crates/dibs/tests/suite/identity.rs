@@ -98,13 +98,13 @@ fn a_caller_with_no_session_is_named_for_what_it_is() {
 #[test]
 fn a_peek_that_costs_something_says_so() {
     let s = Sandbox::new();
-    let peek = |cmd: &str| s.dibs(["--peek", cmd]).env("DIBS_PEEK_WARN", "1");
+    let peek = |cmd: &str| s.dibs(["--peek", cmd]).env("DIBS_PEEK_WARN", "2");
     assert_eq!(
         peek("echo fine").run().all(),
         "fine\n",
         "a cheap peek says nothing"
     );
-    let out = peek("timeout 1.5 python3 -c 'while True: pass'")
+    let out = peek("timeout 3 python3 -c 'while True: pass'")
         .session("peeker")
         .run()
         .all();
