@@ -443,6 +443,7 @@ impl<'a> Detach<'a> {
             ]
             .into_iter()
             .chain(caller.subagent.clone().map(|id| ("CLAUDE_SUBAGENT_ID", id)))
+            .chain(caller.user.clone().map(|user| ("DIBS_USER", user)))
             .map(|(k, v)| (k.to_string(), v))
             .collect(),
             cwd,
