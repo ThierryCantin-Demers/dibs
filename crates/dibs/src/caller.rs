@@ -14,6 +14,8 @@ const HERDR_WITHIN: Duration = Duration::from_millis(500);
 pub struct Caller {
     pub id: String,
     pub name: String,
+    /// Whom to ask about the job: `DIBS_USER`, or the account here.
+    pub user: Option<String>,
     /// The Claude subagent within the session that made the call, which a view of the session
     /// hangs the job under.
     pub subagent: Option<String>,
@@ -63,6 +65,7 @@ impl Caller {
         Caller {
             id,
             name: name.chars().take(NAME_CHARS).collect(),
+            user: var("DIBS_USER").or_else(|| var("USER")),
             subagent: var("CLAUDE_SUBAGENT_ID"),
         }
     }

@@ -28,6 +28,10 @@ pub struct Request {
     pub agent: String,
     /// The caller's session id, which ownership is decided by.
     pub agent_id: String,
+    /// The person the caller runs as on its own computer, `DIBS_USER` or else `USER`: whom to
+    /// ask about the job, never whose it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
     /// The Claude subagent within that session that made the call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<String>,

@@ -49,6 +49,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -84,6 +85,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -116,6 +118,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":true,"pinned":[],"record":"<token>","state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -147,6 +150,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":true,"claim":false,"pinned":[],"record":null,"state":true}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -181,6 +185,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -212,6 +217,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -274,6 +280,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -335,6 +342,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -392,6 +400,7 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -430,6 +439,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>","target":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -465,6 +475,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":true,"pinned":[],"record":"<token>","state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -498,6 +509,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -531,6 +543,7 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":true,"pinned":[],"record":"<token>","state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -563,6 +576,7 @@ call 5: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":true,"claim":false,"pinned":[],"record":null,"state":true}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -594,6 +608,7 @@ call 6: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":true,"claim":false,"pinned":[],"record":null,"state":true}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -628,6 +643,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -659,6 +675,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":["results/*.json"],"check":false,"claim":false,"pinned":[],"record":null,"state":true}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -716,6 +733,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -745,6 +763,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -774,6 +793,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: true
@@ -805,6 +825,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -834,6 +855,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -863,6 +885,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -898,6 +921,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":null,"packages":null,"repo":"lib","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -929,6 +953,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[],"nest":{"config":"[patch.crates-io]\nserde = { path = \"lib\" }\n","name":"pin-<hash>","siblings":{"lib":"<root>/scratch/ws/lib/local-<key>"}},"packages":{"lines":["<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -960,6 +985,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -994,6 +1020,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.place: {"prepare":{"fresh":[],"gitdbs":[{"commit":"<commit>","name":"dep-0123456789abcdef"}],"nest":null,"packages":{"lines":["<sha>","<sha>"],"token":"<token>"},"repo":"app","source":{"local":{"content":"<sha>-<sha>","key":"<key>"}}}}
     tree.then: "transfer"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -1020,6 +1047,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -1051,6 +1079,7 @@ call 3: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     tree.step: {"artifacts":[],"check":false,"claim":false,"pinned":[],"record":null,"state":false}
     tree.then: "step"
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false

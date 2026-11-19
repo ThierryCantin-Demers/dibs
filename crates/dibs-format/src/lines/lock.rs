@@ -23,17 +23,21 @@ pub struct LockRecord {
     pub fingerprint: Option<String>,
     /// The job's directory, which `dibs out <job>` reads; a bash machine half names none.
     pub job: Option<JobId>,
+    /// The person the caller runs as on its own computer, whom to ask about the job.
+    pub user: Option<String>,
 }
 
 impl FromStr for LockRecord {
     type Err = LineError;
 
-    /// Reads the 10 fields a runner writes, and the 9, 8, 7 and 6 a bash machine half wrote: one
-    /// without the job, then without the fingerprint, the card, then the agent's id.
+    /// Reads the 11 fields a runner writes, the 10 one wrote before it named the caller's user,
+    /// and the 9, 8, 7 and 6 a bash machine half wrote: one without the job, then without the
+    /// fingerprint, the card, then the agent's id. Fields past the 11th, which a later runner may
+    /// add, are left unread rather than refused.
     fn from_str(line: &str) -> Result<Self, Self::Err> {
         let mut f = Fields::of(line);
         let found = f.count();
-        if !(6..=10).contains(&found) {
+        if found < 6 {
             return Err(LineError::FieldCount {
                 record: "lock",
                 found,
@@ -53,6 +57,7 @@ impl FromStr for LockRecord {
             command: f.text().to_string(),
             fingerprint: f.filled(),
             job: f.optional().map(JobId::new),
+            user: f.optional(),
         })
     }
 }
@@ -74,9 +79,16 @@ impl fmt::Display for LockRecord {
             Field(&self.command),
         )?;
         let fingerprint = self.fingerprint.as_deref().unwrap_or_default();
-        match &self.job {
-            Some(job) => write!(f, "{}\t{}", Filled(fingerprint), Field(job.as_str())),
-            None => write!(f, "{}", Field(fingerprint)),
+        match (&self.job, &self.user) {
+            (Some(job), Some(user)) => write!(
+                f,
+                "{}\t{}\t{}",
+                Filled(fingerprint),
+                Filled(job.as_str()),
+                Field(user)
+            ),
+            (Some(job), None) => write!(f, "{}\t{}", Filled(fingerprint), Field(job.as_str())),
+            (None, _) => write!(f, "{}", Field(fingerprint)),
         }
     }
 }
@@ -140,6 +152,16 @@ mod tests {
     }
 
     #[test]
+    fn a_record_names_the_callers_user_last_and_reads_past_fields_it_does_not_know() {
+        let line = format!("{PLAIN_WAITER}-\t20261001120000-4243\tthierry");
+        let record: LockRecord = line.parse().unwrap();
+        assert_eq!(record.user.as_deref(), Some("thierry"));
+        assert_eq!(record.to_string(), line);
+        let later: LockRecord = format!("{line}\tsomething later").parse().unwrap();
+        assert_eq!(later, record);
+    }
+
+    #[test]
     fn no_field_is_empty_where_another_follows_it() {
         let record = LockRecord {
             mode: Mode::Shared,
@@ -152,6 +174,7 @@ mod tests {
             command: "cmd".into(),
             fingerprint: None,
             job: Some(JobId::new("20261001120000-7")),
+            user: Some("someone".into()),
         };
         let line = record.to_string();
         assert!(!line.contains("\t\t"), "{line:?}");

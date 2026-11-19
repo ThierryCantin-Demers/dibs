@@ -29,7 +29,7 @@
 2|   Stop it with: dibs --kill <pid> --anyone
 2|   queued 1 of 1: shared  behind-it  waiting <dur>  pid <pid>   [starts as soon as the lock frees]
 2|     true
-2|     from session suite
+2|     from session suite (someone)
 
 == dibs --release
 -> exit 0

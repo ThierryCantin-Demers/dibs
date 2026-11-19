@@ -20,6 +20,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -49,6 +50,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -82,6 +84,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -111,6 +114,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tty: false
+    user: someone
     verbose: true
     wait: 5
     watch.hold: false
@@ -140,6 +144,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: [{"command":"./serve --port $DIBS_PORT_API","name":"srv","ready":"tcp:api"},{"command":"true","name":"side","ready":null}]
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -169,6 +174,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: true
@@ -198,6 +204,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -401,6 +408,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -430,6 +438,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -633,6 +642,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -662,6 +672,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: true
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -752,6 +763,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -782,6 +794,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -816,6 +829,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -877,6 +891,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -905,6 +920,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -934,6 +950,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -960,6 +977,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -1044,6 +1062,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -1073,6 +1092,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -1102,6 +1122,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -1131,6 +1152,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -1160,6 +1182,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false
@@ -1189,6 +1212,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=3 -o ServerAliv
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false

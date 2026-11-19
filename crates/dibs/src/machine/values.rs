@@ -130,6 +130,7 @@ impl CallValues {
             fingerprint: self.fingerprint.clone().filter(|f| !f.is_empty()),
             agent: self.caller.name.clone(),
             agent_id: self.caller.id.clone(),
+            user: self.caller.user.clone(),
             subagent: self.caller.subagent.clone(),
             batch: some(&self.batch),
             watch: wire::Watch {

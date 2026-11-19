@@ -178,6 +178,7 @@ mod tests {
             fingerprint: None,
             agent: "session".into(),
             agent_id: "id".into(),
+            user: None,
             subagent: None,
             metrics: false,
             aliases: Default::default(),

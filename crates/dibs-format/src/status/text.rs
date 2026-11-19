@@ -91,6 +91,7 @@ struct Row<'a> {
     mode: Mode,
     label: &'a str,
     agent: &'a str,
+    user: Option<&'a str>,
     device: Option<&'a Alias>,
     cmd: &'a str,
 }
@@ -111,9 +112,13 @@ impl Row<'_> {
             .device
             .map(|d| format!("{} on {}{d}", p.dim, p.off))
             .unwrap_or_default();
+        let user = self
+            .user
+            .map(|u| format!(" {}({u}){}", p.dim, p.off))
+            .unwrap_or_default();
         let _ = writeln!(
             out,
-            "    {}from{} {}{}{}{device}",
+            "    {}from{} {}{}{}{user}{device}",
             p.dim,
             p.off,
             self.hue(),
@@ -130,6 +135,7 @@ impl Text<'_> {
             mode: holder.mode,
             label: holder.label.as_str(),
             agent: &holder.agent,
+            user: holder.user.as_deref(),
             device: holder.device.as_ref(),
             cmd: &holder.cmd,
         };
@@ -263,6 +269,7 @@ impl Text<'_> {
             mode: waiter.mode,
             label: waiter.label.as_str(),
             agent: &waiter.agent,
+            user: waiter.user.as_deref(),
             device: waiter.device.as_ref(),
             cmd: &waiter.cmd,
         };
@@ -580,6 +587,7 @@ mod tests {
             job: Some(crate::JobId::new("20261001120000-42")),
             label: Label::new("build"),
             agent: "an agent".into(),
+            user: Some("someone".into()),
             subagent: None,
             device: None,
             cmd: "cargo build".into(),

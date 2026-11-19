@@ -9,7 +9,7 @@
   ran          -
   exit         -
   command      read -r _ < <root>/f-k
-  agent        session owner
+  agent        session owner (someone)
   batch        -
   job          <job>
 
@@ -24,7 +24,7 @@
   ran          -
   exit         -
   command      echo hi
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -39,7 +39,7 @@
   ran          -
   exit         -
   command      read -r _ < <root>/f-q
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -54,7 +54,7 @@
   ran          -
   exit         -
   command      read -r _ < <root>/f-b
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -69,7 +69,7 @@
   ran          -
   exit         -
   command      exit 3
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -84,7 +84,7 @@
   ran          -
   exit         -
   command      echo up > <root>/f-up; read -r _ < <root>/f-never
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -99,7 +99,7 @@
   ran          -
   exit         -
   command      read -r _ < <root>/f-k
-  agent        session owner
+  agent        session owner (someone)
   batch        -
   job          <job>
 
@@ -114,7 +114,7 @@
   ran          -
   exit         -
   command      true
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -129,7 +129,7 @@
   ran          -
   exit         -
   command      echo up > <root>/f-sup; read -r _ < <root>/f-shold
-  agent        session suite
+  agent        session suite (someone)
   batch        <batch> first
   job          <job>
 
@@ -144,7 +144,7 @@
   ran          -
   exit         -
   command      read -r _ < <root>/f-q
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -159,7 +159,7 @@
   ran          -
   exit         -
   command      caller gone: echo up > <root>/f-up; read -r _ < <root>/f-never
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -174,7 +174,7 @@
   ran          -
   exit         -
   command      cancelled batch <batch>: 1 job(s) stopped
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          -
 
@@ -189,7 +189,7 @@
   ran          <s>
   exit         0
   command      echo hi
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -204,7 +204,7 @@
   ran          <s>
   exit         0
   command      read -r _ < <root>/f-q
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -219,7 +219,7 @@
   ran          <s>
   exit         0
   command      read -r _ < <root>/f-b
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -234,7 +234,7 @@
   ran          <s>
   exit         3
   command      exit 3
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -249,7 +249,7 @@
   ran          <s>
   exit         143
   command      echo up > <root>/f-up; read -r _ < <root>/f-never
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -264,7 +264,7 @@
   ran          <s>
   exit         0
   command      true
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          <job>
 
@@ -279,7 +279,7 @@
   ran          <s>
   exit         76
   command      echo up > <root>/f-sup; read -r _ < <root>/f-shold
-  agent        session suite
+  agent        session suite (someone)
   batch        <batch> first
   job          <job>
 
@@ -294,7 +294,7 @@
   ran          -
   exit         -
   command      killed shared rec-killed (pid <pid>) after <dur>: read -r _ < <root>/f-k
-  agent        session stranger
+  agent        session stranger (someone)
   batch        -
   job          -
 
@@ -309,7 +309,7 @@
   ran          <s>
   exit         0
   command      true
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          -
 
@@ -324,7 +324,7 @@
   ran          <s>
   exit         0
   command      true
-  agent        session suite
+  agent        session suite (someone)
   batch        -
   job          -
 
@@ -339,7 +339,7 @@
   ran          -
   exit         -
   command      refused, batch cancelled: true
-  agent        session suite
+  agent        session suite (someone)
   batch        <batch> late
   job          -
 

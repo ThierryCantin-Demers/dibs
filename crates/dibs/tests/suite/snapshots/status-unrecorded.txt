@@ -21,7 +21,7 @@
 2| dibs: busy, a client has just taken the lock and is recording it.
 2|   queued 1 of 1: bench  behind-it  waiting <dur>  pid <pid>   [starts as soon as the lock frees]
 2|     true
-2|     from session suite
+2|     from session suite (someone)
 
 == dibs status, asked by a client that has just taken the lock and not yet recorded it
 -> exit 0

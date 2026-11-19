@@ -23,6 +23,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     services: []
     stream: false
     tty: false
+    user: someone
     verbose: false
     wait: null
     watch.hold: false

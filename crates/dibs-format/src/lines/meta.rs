@@ -55,6 +55,8 @@ pub struct JobMeta {
     /// The session that ran it, which `dibs --kill` asks of what it left running; absent in a
     /// job that ended before it was kept.
     pub who: Option<String>,
+    /// The person the caller ran as on its own computer, absent when it named none.
+    pub user: Option<String>,
 }
 
 impl FromStr for JobMeta {
@@ -84,6 +86,10 @@ impl FromStr for JobMeta {
                 .get("who")
                 .filter(|who| !who.is_empty())
                 .map(|who| who.to_string()),
+            user: values
+                .get("user")
+                .filter(|user| !user.is_empty())
+                .map(|user| user.to_string()),
         })
     }
 }
@@ -98,7 +104,11 @@ impl fmt::Display for JobMeta {
         writeln!(f, "by\t{}", self.by)?;
         writeln!(f, "agent\t{}", Field(&self.agent))?;
         writeln!(f, "lines\t{}", self.lines)?;
-        writeln!(f, "who\t{}", Field(self.who.as_deref().unwrap_or_default()))
+        writeln!(f, "who\t{}", Field(self.who.as_deref().unwrap_or_default()))?;
+        match &self.user {
+            Some(user) => writeln!(f, "user\t{}", Field(user)),
+            None => Ok(()),
+        }
     }
 }
 

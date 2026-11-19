@@ -14,6 +14,7 @@
     agent = session suite
     lines = 2
     who = local_suite
+    user = someone
 
 == jobs/<job>, a job that failed: dibs --label rec-fails 'exit 3'
   cmd
@@ -29,6 +30,7 @@
     agent = session suite
     lines = 0
     who = local_suite
+    user = someone
 
 == jobs/<job>, a job with a service: dibs --label rec-with --with 'srv=echo serving; : > "$DIBS_SCRATCH/srv-up"; read -r _ < "$DIBS_SCRATCH/never"' --ready 'test -e "$DIBS_SCRATCH/srv-up"' true
   cmd
@@ -44,6 +46,7 @@
     agent = session suite
     lines = 0
     who = local_suite
+    user = someone
   with-srv.log
     | serving
 
@@ -62,6 +65,7 @@
     agent = session suite
     lines = 1
     who = local_suite
+    user = someone
 
 == jobs/<job>, a recipe's job, with the files it kept
   artifacts/out/r.json
@@ -77,6 +81,7 @@
     agent = session suite
     lines = 0
     who = local_suite
+    user = someone
 
 == jobs/<job>, a recipe's job, with the files it kept
   cmd
@@ -91,3 +96,4 @@
     agent = session suite
     lines = 0
     who = local_suite
+    user = someone

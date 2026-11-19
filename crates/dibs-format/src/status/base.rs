@@ -110,6 +110,9 @@ pub struct Holder {
     pub job: Option<JobId>,
     pub label: Label,
     pub agent: String,
+    /// The person the agent runs as on its own computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
     /// The Claude subagent within the agent's session that started it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<String>,
@@ -173,6 +176,9 @@ pub struct Waiter {
     pub pid: u32,
     pub label: Label,
     pub agent: String,
+    /// The person the agent runs as on its own computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
     /// The Claude subagent within the agent's session that queued it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<String>,

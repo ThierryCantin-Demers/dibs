@@ -14,6 +14,8 @@ pub struct Received {
     pub agent: String,
     pub agent_id: String,
     pub subagent: Option<String>,
+    /// The caller's person on one line, when it named one.
+    pub user: Option<String>,
     /// The first line of the batch plan: the batch's id, then the step.
     pub batch_tag: Option<String>,
     /// The command on one line and cut short, as the records and the log carry it.
@@ -53,6 +55,11 @@ impl Received {
                 false => agent,
             },
             agent_id,
+            user: request
+                .user
+                .as_ref()
+                .map(|u| u.one_line(NAME))
+                .filter(|u| !u.is_empty()),
             subagent: request
                 .subagent
                 .as_ref()
@@ -94,6 +101,15 @@ impl Received {
             command: self.one_line.clone(),
             fingerprint: self.request.fingerprint.clone(),
             job: Some(job.clone()),
+            user: self.user.clone(),
+        }
+    }
+
+    /// The caller as a person reads it: its title, then whom it runs for.
+    pub fn asked(&self) -> String {
+        match &self.user {
+            Some(user) => format!("{} ({user})", self.agent),
+            None => self.agent.clone(),
         }
     }
 
@@ -117,7 +133,7 @@ impl Received {
                 true => self.label().to_string(),
                 false => self.one_line.clone(),
             },
-            agent: format!("{}{device}", self.agent),
+            agent: format!("{}{device}", self.asked()),
             batch: self.batch_tag.as_deref().map(BatchId::new),
             job: None,
         }
