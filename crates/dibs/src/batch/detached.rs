@@ -72,6 +72,9 @@ impl Detached {
     const RUNS: &'static str = "runs.jsonl";
     const DRIVER: &'static str = "driver.err";
     const EXIT: &'static str = "exit";
+    /// Held by the driver from before its batch starts until its exit is written, which comes
+    /// after the batch's own record is let go.
+    const ENDING: &'static str = "ending.lock";
     /// What the driver prints once it holds the batch, which is when its start returns.
     const DRIVING: &'static str = "driving";
 
@@ -248,6 +251,7 @@ impl Detached {
     /// sent against.
     fn drive(&self, id: &BatchId) -> i32 {
         let sent = self.sent(id);
+        let ending = File::create(sent.join(Detached::ENDING)).and_then(|f| f.lock().map(|()| f));
         let text = match fs::read_to_string(sent.join(Detached::BATCH)) {
             Ok(text) => text,
             Err(e) => {
@@ -271,6 +275,7 @@ impl Detached {
             Exit::Refused.status()
         });
         let _ = fs::write(sent.join(Detached::EXIT), format!("{code}\n"));
+        drop(ending);
         self.keep_repos(&sent);
         code
     }
@@ -341,6 +346,9 @@ impl Detached {
         // The driver holds this for as long as it runs, so taking it waits for the end.
         if let Ok(driver) = File::open(dir.join(Driver::RECORD)) {
             let _ = driver.lock_shared();
+        }
+        if let Ok(ending) = File::open(sent.join(Detached::ENDING)) {
+            let _ = ending.lock_shared();
         }
         let read = |path: PathBuf| fs::read_to_string(path).unwrap_or_default();
         let files = fs::read_dir(&dir)
