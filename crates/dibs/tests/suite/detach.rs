@@ -326,11 +326,34 @@ fn a_detached_batch_carries_the_private_git_dependencies_its_lockfile_pins() {
 }
 
 #[test]
-fn a_repo_named_by_a_path_is_sent_under_its_folders_name() {
+fn a_repo_named_by_a_path_is_sent_under_its_repos_name() {
     let s = detaching();
     let dir = app(&s);
     recipes(&s, PARAMS);
     s.write("app/uncommitted.txt", "sent as it is\n");
+    s.git("app", &["worktree", "add", "-q", "../wt/gather"]);
+    let worktree = s
+        .dibs(["batch", "--detach", "--dry-run", "-"])
+        .stdin("[w] dibs build ./wt/gather@local p --on box-a\n")
+        .run();
+    assert_eq!(
+        (
+            worktree.code,
+            worktree.stdout.lines_matching("^  app  from .*/wt/gather$"),
+            worktree
+                .stdout
+                .lines_matching("^  \\./wt/gather is named app there$"),
+        ),
+        (0, 1, 1),
+        "a worktree goes under its repo's name, not its folder's: {}",
+        worktree.all()
+    );
+    let twice = s
+        .dibs(["batch", "--detach", "-"])
+        .stdin("[a] dibs build ./app@local p --on box-a\n[w] dibs build ./wt/gather@local p --on box-a\n")
+        .run();
+    assert_eq!(twice.code, 2, "{}", twice.all());
+    assert!(twice.stderr.contains("both are app"), "{}", twice.all());
     let steps = format!(
         "[rel] dibs build ./app@local p --on box-a\n[abs] dibs build {dir}@local p --on box-a\n"
     );

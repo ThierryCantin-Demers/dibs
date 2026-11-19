@@ -59,6 +59,13 @@ pub enum DetachError {
         repo: String,
         error: GitError,
     },
+    /// Two trees of one repo, which the machine would hold under the one name.
+    Twice {
+        step: String,
+        repo: String,
+        first: PathBuf,
+        second: PathBuf,
+    },
     /// `--follow` of a batch this computer did not detach.
     NotDetached(BatchId),
 }
@@ -85,6 +92,18 @@ impl fmt::Display for DetachError {
                 "step {step} {why}, and a detached batch runs entirely on its machine"
             ),
             DetachError::Repo { step, error } => write!(f, "step {step}: {error}"),
+            DetachError::Twice {
+                step,
+                repo,
+                first,
+                second,
+            } => write!(
+                f,
+                "step {step} names {}, and an earlier step {}: both are {repo}, which a detached\n  \
+                 batch sends one tree of. Detach a batch per tree.",
+                second.display(),
+                first.display()
+            ),
             DetachError::Git { repo, error } => {
                 write!(f, "{repo} could not be read to be sent: {error}")
             }
@@ -149,19 +168,29 @@ impl Steps<'_> {
                     }
                     continue;
                 }
-                // `.` is the repo the batch runs in, which the driver starts in there.
+                // `.` is the repo the batch runs in, which the driver starts in there. A tree sent
+                // under a name is that repo there, so a worktree must go under its repo's.
                 let sent = match name.as_str() {
-                    "." => SentRepo::folder(&dir),
+                    "." => Repo(&dir).identity(),
                     path if SentRepo::is_path(path) => {
-                        let free = SentRepo::free(&repos, &SentRepo::folder(&dir));
+                        let identity = Repo(&dir).identity();
                         renamed.push(Renamed {
                             path: path.to_string(),
-                            name: free.clone(),
+                            name: identity.clone(),
                         });
-                        free
+                        identity
                     }
                     _ => name,
                 };
+                if let Some(other) = repos.iter().find(|r| r.name == sent) {
+                    return Err(DetachError::Twice {
+                        step: step.name.clone(),
+                        repo: sent,
+                        first: other.dir.clone(),
+                        second: dir,
+                    }
+                    .into());
+                }
                 repos.push(SentRepo { name: sent, dir });
             }
         }
@@ -272,17 +301,6 @@ impl SentRepo {
     /// A name that means a directory here, which the machine cannot resolve.
     fn is_path(name: &str) -> bool {
         name.contains('/') || name.starts_with('.')
-    }
-
-    /// `folder`, or it numbered past the repos already sent under that name.
-    fn free(repos: &[SentRepo], folder: &str) -> String {
-        (1..)
-            .map(|n| match n {
-                1 => folder.to_string(),
-                n => format!("{folder}-{n}"),
-            })
-            .find(|name| !repos.iter().any(|r| r.name == *name))
-            .expect("an unbounded range")
     }
 
     fn folder(dir: &Path) -> String {
