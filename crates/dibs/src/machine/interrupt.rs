@@ -1,9 +1,12 @@
+use dibs_format::Exit;
 use std::{
-    os::unix::process::ExitStatusExt as _,
+    ffi::CString,
+    os::unix::{ffi::OsStrExt as _, process::ExitStatusExt as _},
+    path::Path,
     process::ExitStatus,
     sync::{
         Mutex, PoisonError,
-        atomic::{AtomicBool, AtomicI32, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -139,11 +142,7 @@ impl Relayed {
         drop(self);
         let signal = RELAYED_SIGNAL.swap(0, Ordering::SeqCst);
         if signal != 0 {
-            // SAFETY: restores the default action and raises the signal on this process.
-            unsafe {
-                libc::signal(signal, libc::SIG_DFL);
-                libc::raise(signal);
-            }
+            Cancel::die_of(signal);
         }
     }
 
@@ -161,6 +160,45 @@ impl Drop for Relayed {
         for (signal, previous) in RELAYED.iter().zip(self.previous) {
             // SAFETY: puts back the handler `to` replaced.
             unsafe { libc::signal(*signal, previous) };
+        }
+    }
+}
+
+/// A TERM that ends this process once a file is there is a cancellation rather than a kill.
+pub struct Cancel;
+
+static CANCEL_MARK: AtomicPtr<libc::c_char> = AtomicPtr::new(std::ptr::null_mut());
+
+extern "C" fn terminated(signal: libc::c_int) {
+    Cancel::die_of(signal);
+}
+
+impl Cancel {
+    /// TERM ends this process with 76 from now on when `mark` exists, and as TERM otherwise.
+    pub fn arm(mark: &Path) {
+        let Ok(mark) = CString::new(mark.as_os_str().as_bytes()) else {
+            return;
+        };
+        // Leaked: a handler may be reading the one it replaces.
+        CANCEL_MARK.store(mark.into_raw(), Ordering::Release);
+        let handler = terminated as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        // SAFETY: the handler makes async-signal-safe calls only.
+        unsafe { libc::signal(libc::SIGTERM, handler) };
+    }
+
+    /// Ends this process of `signal`, or with 76 when it is TERM and the mark is there.
+    fn die_of(signal: libc::c_int) {
+        const SAID: &[u8] =
+            b"dibs: the batch was cancelled with dibs --kill, so this call sends and fetches nothing more\n";
+        let mark = CANCEL_MARK.load(Ordering::Acquire);
+        // SAFETY: access, write, _exit, signal and raise are async-signal-safe.
+        unsafe {
+            if signal == libc::SIGTERM && !mark.is_null() && libc::access(mark, libc::F_OK) == 0 {
+                libc::write(2, SAID.as_ptr().cast(), SAID.len());
+                libc::_exit(i32::from(Exit::Cancelled.code()));
+            }
+            libc::signal(signal, libc::SIG_DFL);
+            libc::raise(signal);
         }
     }
 }

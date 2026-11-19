@@ -7,7 +7,7 @@ use super::{
     parse::{BatchError, Step, parse, split_words},
 };
 use crate::{
-    call::{CallError, Driver, MachineCall, Origin, Output, Series, Sync},
+    call::{CallError, Driver, MachineCall, Origin, Output, Sender, Series, Sync},
     caller::Caller,
     cli::{Call, Invocation, Mode, RecipeCall, RecipeVerb},
     execution::{Carried, KeptStores, Repo, SentFrom, private},
@@ -402,6 +402,7 @@ pub fn detach(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let dir = state_dir().join(id.as_str());
     fs::create_dir_all(&dir).map_err(FileError::at(&dir))?;
     fs::write(dir.join(Driver::DETACHED), name.as_str()).map_err(FileError::at(&dir))?;
+    let _sender = Sender::claim(&dir);
     eprintln!(
         "dibs: batch {id}, {} steps, detached to {name}: it is driven there, and carries on whether or not this call does.",
         parsed.len()
@@ -438,6 +439,7 @@ pub fn follow(id: &BatchId) -> Result<i32, BatchError> {
         ..Call::default()
     };
     let machine = MachineCall::new(&call, &caller)?;
+    let _sender = Sender::claim(&dir);
     Detach::of(id.clone(), dir, name, &machine)?.follow()
 }
 
@@ -818,7 +820,9 @@ impl<'a> Detach<'a> {
         match serde_json::from_str::<Followed>(json.trim()) {
             Ok(followed) if status == 0 => {
                 let code = self.collect(followed);
-                if let Some(kept) = self.kept() {
+                let cancelled =
+                    code == i32::from(Exit::Cancelled.code()) || Sender::cancelled(&self.dir);
+                if let Some(kept) = self.kept().filter(|_| !cancelled) {
                     kept.fetch();
                 }
                 Ok(code)

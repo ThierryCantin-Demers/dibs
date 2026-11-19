@@ -4,7 +4,7 @@ use crate::{
         machine::{Asked, Bound, MachineCall},
     },
     cli::{Call, KillTarget},
-    machine::Kept,
+    machine::{Cancel, Kept},
     render::Answers,
 };
 use dibs_format::{BatchId, Exit, Label, MachineName, Mode};
@@ -59,6 +59,7 @@ impl Kill<'_> {
             return driver.stop(self, batch);
         }
         let detached = dir
+            .as_deref()
             .and_then(|d| fs::read_to_string(d.join(Driver::DETACHED)).ok())
             .map(|m| MachineName::new(m.trim()));
         let machines: Vec<MachineName> = match (&self.machine.call.on, &detached) {
@@ -74,6 +75,11 @@ impl Kill<'_> {
         let named: Vec<&str> = machines.iter().map(MachineName::as_str).collect();
         match &detached {
             Some(machine) => {
+                if let Some(pid) = dir.as_deref().and_then(Sender::stop) {
+                    eprintln!(
+                        "dibs: batch {batch}'s call here, pid {pid}, was stopped: it sends and fetches nothing more"
+                    );
+                }
                 eprintln!("dibs: batch {batch} is driven on {machine}, so it is stopped there")
             }
             None => eprintln!(
@@ -178,6 +184,56 @@ impl<'a> Driver<'a> {
             print!("{summary}");
         }
         Ok(0)
+    }
+}
+
+/// The call that sent a batch detached from here, which goes on sending its trees and then
+/// fetching what its tools kept until the batch is cancelled.
+pub struct Sender {
+    _record: File,
+}
+
+impl Sender {
+    const RECORD: &'static str = "sender";
+    const CANCEL: &'static str = "cancel";
+
+    /// Records this process as the batch's sender, so a kill of the batch stops it with 76,
+    /// unless another call already holds the record.
+    pub fn claim(dir: &Path) -> Option<Sender> {
+        let mut record = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(dir.join(Sender::RECORD))
+            .ok()?;
+        record.try_lock().ok()?;
+        record.set_len(0).ok()?;
+        writeln!(record, "{}", std::process::id()).ok()?;
+        Cancel::arm(&dir.join(Sender::CANCEL));
+        Some(Sender { _record: record })
+    }
+
+    /// Marks the batch in `dir` cancelled and stops its sender, when one runs here; its pid.
+    fn stop(dir: &Path) -> Option<i32> {
+        let _ = fs::write(dir.join(Sender::CANCEL), "");
+        let record = File::open(dir.join(Sender::RECORD)).ok()?;
+        match record.try_lock_shared() {
+            Err(TryLockError::WouldBlock) => {}
+            Ok(()) | Err(TryLockError::Error(_)) => return None,
+        }
+        let pid: i32 = fs::read_to_string(dir.join(Sender::RECORD))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()?;
+        // SAFETY: signals the process holding the record's lock, which is alive.
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+        Some(pid)
+    }
+
+    /// Whether the batch in `dir` was cancelled from here.
+    pub fn cancelled(dir: &Path) -> bool {
+        dir.join(Sender::CANCEL).exists()
     }
 }
 

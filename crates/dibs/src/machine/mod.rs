@@ -16,7 +16,7 @@ mod values;
 pub use card::{Card, CardError};
 pub use deadline::{Deadline, Stop, Stoppable};
 pub use held::{Held, Holder, Release};
-pub use interrupt::{Interrupt, Relayed};
+pub use interrupt::{Cancel, Interrupt, Relayed};
 pub use lines::{Lines, Listener, Stream};
 pub use provision::{Installed, Provision, Queueing};
 pub use served::{Client, Delivery, MISSING, RUNNER_WORD, Runner};

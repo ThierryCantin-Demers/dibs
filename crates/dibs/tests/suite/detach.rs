@@ -160,10 +160,64 @@ fn a_detached_batch_is_stopped_from_here_on_its_machine() {
         out.all()
     );
     assert_eq!(
+        out.all().lines_with("sends and fetches nothing more"),
+        1,
+        "{}",
+        out.all()
+    );
+    assert_eq!(
         s.wait(job),
         76,
-        "the driver there stops, and its follow here with it"
+        "the driver there stops, and its call here with it"
     );
+}
+
+#[test]
+fn a_batch_cancelled_while_its_call_still_queues_to_send_it_leaves_the_queue() {
+    let mut s = detaching();
+    let gate = s.gate("ahead");
+    let ahead = s.spawn(s.dibs([
+        "--on",
+        "box-a",
+        "--bench",
+        "--label",
+        "bench-ahead",
+        &gate.hold(),
+    ]));
+    let lock = s.path("hosts/box-a/lock");
+    let on_box_a = |prefix: &str| {
+        fs::read_dir(&lock)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
+            .count()
+    };
+    s.until_records("the benchmark to hold box-a", || on_box_a("holder.") == 1);
+    s.write("steps", "[one] dibs --on box-a --label detached-one true\n");
+    let job = s.spawn(s.dibs(["batch", "--detach", &s.p("steps")]));
+    s.until_records("the batch's call to queue on box-a", || {
+        on_box_a("waiting") == 1
+    });
+    let id = fs::read_dir(s.path("home/.local/state/dibs/batch"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .next()
+        .unwrap();
+    let out = s.dibs(["--kill", &id]).run();
+    assert_eq!(
+        out.all().lines_with("sends and fetches nothing more"),
+        1,
+        "{}",
+        out.all()
+    );
+    assert_eq!(s.wait(job), 76, "a cancelled batch's call says so");
+    s.until_records("its call to leave box-a's queue", || {
+        on_box_a("waiting") == 0
+    });
+    gate.open();
+    s.wait(ahead);
 }
 
 #[test]
