@@ -273,6 +273,9 @@ impl<'a> Run<'a> {
         if let Some(subagent) = &self.at.call.subagent {
             let _ = fs::write(self.at.dir.file("subagent", pid), format!("{subagent}\n"));
         }
+        if let Some(user) = &self.at.call.user {
+            let _ = fs::write(self.at.dir.file("user", pid), format!("{user}\n"));
+        }
         let mut line = self.at.call.log_line(Event::Arrived);
         line.job = Some(job.clone());
         self.at.journal().write(&line);

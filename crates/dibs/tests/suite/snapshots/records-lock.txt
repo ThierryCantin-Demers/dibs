@@ -1,5 +1,5 @@
 == holder.<pid>, a recipe's measurement holding and a batch step queued behind it
-  11 fields
+  10 fields
   mode         bench
   pid          <pid>
   start        <epoch>
@@ -10,10 +10,9 @@
   command      read -r _ < "$REC_GATE"
   fingerprint  21eafeca56a1b2ba
   job          <job>
-  field 11     someone
 
 == waiting.<pid>, a recipe's measurement holding and a batch step queued behind it
-  11 fields
+  10 fields
   mode         shared
   pid          <pid>
   start        <epoch>
@@ -24,7 +23,6 @@
   command      echo up > <root>/f-up; read -r _ < <root>/f-served
   fingerprint  -
   job          <job>
-  field 11     someone
 
 == batch.<pid>, the plan of the batch the queued job is a step of
 <batch>	app/bench/held@cpu
@@ -36,7 +34,7 @@
 next	shared	rec-next	1
 
 == holder.<pid>, once the queued job holds the lock
-  11 fields
+  10 fields
   mode         shared
   pid          <pid>
   start        <epoch>
@@ -47,7 +45,6 @@ next	shared	rec-next	1
   command      echo up > <root>/f-up; read -r _ < <root>/f-served
   fingerprint  -
   job          <job>
-  field 11     someone
 
 == with.<pid>, once the queued job holds the lock
   3 fields
@@ -66,7 +63,7 @@ next	shared	rec-next	1
   sampled  <a second since the epoch, within the last minute>
 
 == holder.<pid>, a hold
-  11 fields
+  10 fields
   mode         shared
   pid          <pid>
   start        <epoch>
@@ -77,7 +74,6 @@ next	shared	rec-next	1
   command      held for a command run elsewhere: read -r _ < <root>/f-held
   fingerprint  -
   job          <job>
-  field 11     someone
 
 == hold.<pid>, beside the hold's record
 <a fifo>

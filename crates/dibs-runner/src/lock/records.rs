@@ -197,7 +197,7 @@ impl LockDir {
     pub fn clear(&self, pid: u32) {
         for kind in [
             "waiting", "holder", "work", "cpu", "batch", "hold", "prep", "with", "ahead", "pause",
-            "subagent",
+            "subagent", "user",
         ] {
             let _ = fs::remove_file(self.file(kind, pid));
         }
@@ -254,7 +254,7 @@ impl LockDir {
         // By start time, not by pid alone: a lock directory on disk outlives a reboot, after which
         // its pids name other processes.
         for prefix in [
-            "cpu", "batch", "hold", "prep", "with", "ahead", "pause", "subagent",
+            "cpu", "batch", "hold", "prep", "with", "ahead", "pause", "subagent", "user",
         ] {
             for file in self.named(prefix) {
                 if !RecordFile(&file).alive() {

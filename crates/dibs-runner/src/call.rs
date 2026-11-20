@@ -101,7 +101,6 @@ impl Received {
             command: self.one_line.clone(),
             fingerprint: self.request.fingerprint.clone(),
             job: Some(job.clone()),
-            user: self.user.clone(),
         }
     }
 
