@@ -153,8 +153,15 @@ impl LockDir {
         })
     }
 
+    /// Written beside and renamed into place: a reader between `fs::write`'s truncate and its
+    /// write would read an empty record and drop a live job.
     pub fn write(&self, kind: Kind, record: &LockRecord) {
-        let _ = fs::write(self.file(kind.prefix(), record.pid), format!("{record}\n"));
+        let fresh = self
+            .path
+            .join(format!(".new.{}.{}", kind.prefix(), record.pid));
+        if fs::write(&fresh, format!("{record}\n")).is_ok() {
+            let _ = fs::rename(&fresh, self.file(kind.prefix(), record.pid));
+        }
     }
 
     /// Waiting becomes holding, restamped: a holder's clock starts when it takes the lock.
