@@ -527,7 +527,7 @@ fn a_lock_directory_it_cannot_write_is_refused_rather_than_run_around() {
 /// own, since held from here it would share a process group with every `--status` asked.
 /// Only Linux says which process holds an flock, so only there is an orphan found.
 #[cfg(target_os = "linux")]
-fn orphan(s: &mut Sandbox, mode: &str, up: &Gate, release: &Gate) -> Job {
+pub fn orphan(s: &mut Sandbox, mode: &str, up: &Gate, release: &Gate) -> Job {
     let script =
         format!("exec 8>\"$1/rw\"; flock {mode} 8; printf 'up\\n' > \"$2\"; read -r _ < \"$3\"");
     let lockdir = s.var("DIBS_LOCK_DIR");

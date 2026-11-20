@@ -9,7 +9,7 @@ fn an_urgent_benchmark_parks_a_shared_job_which_runs_again_after_it() {
         s.dibs([
             "--label",
             "work",
-            &format!("echo work >> {order}; {}", work.hold()),
+            &format!("trap 'exit 0' TERM; echo work >> {order}; {}", work.hold()),
         ])
         .streams_to(&s.path("a-out"), &s.path("a-err")),
     );
@@ -213,5 +213,59 @@ fn a_frozen_preemptible_job_is_parked_and_runs_again_after_the_urgent_job() {
     });
     compile.open();
     assert_eq!(s.wait(p), 0);
+    s.gone();
+}
+
+#[test]
+fn a_call_that_cannot_wait_gives_up_on_an_urgent_job() {
+    let mut s = Sandbox::new();
+    let measure = s.gate("measure");
+    let u = s.spawn(s.dibs([
+        "--bench",
+        "--urgent",
+        "deadline",
+        "--label",
+        "urgent",
+        &measure.hold(),
+    ]));
+    s.held(1);
+    s.until_records("the urgent job to claim the machine", || {
+        s.count("urgent") == 1
+    });
+    let out = s
+        .dibs(["--wait", "1", "--label", "impatient", "echo ran"])
+        .run();
+    assert_eq!(out.code, 75, "{}", out.all());
+    assert!(!out.stdout.contains("ran"));
+    measure.open();
+    assert_eq!(s.wait(u), 0);
+    s.gone();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_urgent_job_waits_for_an_orphan_holding_the_lock() {
+    let mut s = Sandbox::new();
+    let (up, release) = (s.gate("up"), s.gate("release"));
+    let o = crate::lock::orphan(&mut s, "-x", &up, &release);
+    up.reached();
+    let order = s.p("order");
+    let u = s.spawn(s.dibs([
+        "--bench",
+        "--urgent",
+        "deadline",
+        "--label",
+        "urgent",
+        &format!("echo urgent >> {order}"),
+    ]));
+    s.until_records("the urgent job to claim the machine", || {
+        s.count("urgent") == 1
+    });
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert_eq!(s.read("order"), "", "nothing runs beside what holds rw");
+    release.open();
+    s.wait(o);
+    assert_eq!(s.wait(u), 0);
+    assert_eq!(s.read("order"), "urgent\n");
     s.gone();
 }

@@ -4,7 +4,11 @@
 
 use crate::{call::Rsh, inventory::Inventory};
 use serde_json::Value;
-use std::io::Read;
+use std::{
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 /// A PreToolUse hook that exits 2 stops the tool call and shows the agent its stderr.
 const BLOCKS: i32 = 2;
@@ -83,15 +87,16 @@ impl UrgentHook {
     pub fn serve() -> i32 {
         let mut input = String::new();
         let _ = std::io::stdin().read_to_string(&mut input);
-        let command = serde_json::from_str::<Value>(&input)
-            .ok()
-            .and_then(|call| {
-                call.pointer("/tool_input/command")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .unwrap_or_default();
-        if UrgentHook::asks(&command) {
+        let call = serde_json::from_str::<Value>(&input).unwrap_or_default();
+        let read = |key: &str| {
+            call.pointer(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let command = read("/tool_input/command");
+        let cwd = PathBuf::from(read("/cwd"));
+        if UrgentHook::asks(&command) || UrgentHook::batches(&command, &cwd) {
             let asked = serde_json::json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
@@ -107,15 +112,32 @@ impl UrgentHook {
     /// Read as words of the whole text, heredocs and quotes included: a batch's steps arrive in a
     /// heredoc, and the variable may be set anywhere before the call.
     pub fn asks(text: &str) -> bool {
-        let words: Vec<&str> = text
-            .split(|c: char| c.is_whitespace() || "\"';|&()`$<>".contains(c))
-            .filter(|w| !w.is_empty())
-            .collect();
-        let dibs = words.iter().any(|w| *w == "dibs" || w.ends_with("/dibs"));
+        let words = UrgentHook::words(text);
+        let dibs = words.iter().any(|w| UrgentHook::dibs(w));
         let urgent = words.iter().any(|w| {
             *w == "--urgent" || w.starts_with("--urgent=") || w.starts_with("DIBS_URGENT")
         });
         dibs && urgent
+    }
+
+    /// Whether a `dibs batch <file>` in the command names a file with an urgent step.
+    pub fn batches(text: &str, cwd: &Path) -> bool {
+        let words = UrgentHook::words(text);
+        words
+            .windows(3)
+            .filter(|w| UrgentHook::dibs(w[0]) && w[1] == "batch" && !w[2].starts_with('-'))
+            .filter_map(|w| fs::read_to_string(cwd.join(w[2])).ok())
+            .any(|steps| UrgentHook::asks(&steps))
+    }
+
+    fn words(text: &str) -> Vec<&str> {
+        text.split(|c: char| c.is_whitespace() || "\"';|&()`$<>".contains(c))
+            .filter(|w| !w.is_empty())
+            .collect()
+    }
+
+    fn dibs(word: &str) -> bool {
+        word == "dibs" || word.ends_with("/dibs")
     }
 }
 
@@ -754,5 +776,18 @@ hostname = "workstation-b"
         ] {
             assert!(!UrgentHook::asks(command), "{command}");
         }
+    }
+
+    #[test]
+    fn a_batch_file_with_an_urgent_step_is_asked_about() {
+        let dir = std::env::temp_dir().join(format!("dibs-urgent-hook-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("steps"), "[m] dibs run --bench --urgent 'why' x\n").unwrap();
+        fs::write(dir.join("plain"), "[m] dibs run --bench x\n").unwrap();
+        assert!(UrgentHook::batches("dibs batch steps", &dir));
+        assert!(UrgentHook::batches("DIBS_ON=a dibs batch steps", &dir));
+        assert!(!UrgentHook::batches("dibs batch plain", &dir));
+        assert!(!UrgentHook::batches("dibs batch missing", &dir));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
