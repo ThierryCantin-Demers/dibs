@@ -790,6 +790,7 @@ fn how_quick_a_job_must_be_to_go_around_is_the_machines_alone() {
     s.held(1);
     let b = s.spawn(s.dibs(["--bench", "--label", "blocked", &blocked.hold()]));
     s.queued(1);
+    s.gate_taken();
     let t = s.spawn(s.dibs(["--label", "tens", &tens.hold()]));
     s.queued(2);
     assert_eq!(

@@ -155,6 +155,21 @@ impl<'a> Wire<'a> {
         out
     }
 
+    /// Its wire, made to every machine at once, and what it printed, which names a machine whose
+    /// call failed before reaching ssh.
+    pub fn record_said(&mut self, title: &str, call: Call) -> Output {
+        self.clear();
+        let out = call.run();
+        let body = format!(
+            "-> exit {}\n{}  it printed:\n{}",
+            out.code,
+            self.captured(Cmd::AsSent, Calls::AtOnce),
+            indent(&self.n.apply(&out.all()))
+        );
+        self.t.section(&self.n.apply(title), &body);
+        out
+    }
+
     pub fn text(&self) -> &str {
         self.t.text()
     }
@@ -369,11 +384,9 @@ fn what_each_call_sends() {
         "dibs batch steps  (two steps on box-a)",
         s.dibs(["batch", &s.p("steps")]),
     );
-    w.record_as(
+    w.record_said(
         "dibs --kill 20260101-120000-42  (a batch driven from elsewhere)",
         s.dibs(["--kill", "20260101-120000-42"]),
-        Cmd::AsSent,
-        Calls::AtOnce,
     );
     s.write(
         "fleet.toml",

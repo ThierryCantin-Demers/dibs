@@ -984,6 +984,12 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     watch.lease: 120
     watch.off: false
     when_open: false
+  it printed:
+    box-a
+      no answer
+    box-b
+      no answer
+    dibs: batch <batch> is not driven from this computer, so it is stopped on the machines: box-a box-b
 
 == dibs machines
 -> exit 1
