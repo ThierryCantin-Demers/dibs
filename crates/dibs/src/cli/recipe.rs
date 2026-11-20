@@ -150,6 +150,8 @@ pub struct RecipeCall {
     pub max: Option<u64>,
     /// Waits for a machine its owners closed rather than being refused.
     pub when_open: bool,
+    /// `--urgent`, and why.
+    pub urgent: Option<String>,
     /// Measure even when another tree built into the target after this one did.
     pub anyway: bool,
     /// with only: the command runs on the machine, in the tree, rather than here.
@@ -208,6 +210,7 @@ impl RecipeCall {
             preempt: false,
             max: None,
             when_open: false,
+            urgent: None,
             anyway: false,
             there: false,
             json: false,
@@ -236,6 +239,7 @@ impl RecipeCall {
                     break;
                 }
                 "--reason" => call.reason = Some(value("--reason needs a sentence")?),
+                "--urgent" => call.urgent = Some(value("--urgent needs the reason")?),
                 "--device" => call.device = Some(value("--device needs an alias")?),
                 "--on" => call.on = Some(value("--on needs a machine")?),
                 "-h" | "--help" => return Ok(Invocation::Help(Some(verb.as_str()))),

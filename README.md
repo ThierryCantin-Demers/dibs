@@ -99,11 +99,17 @@ rsync through dibs's own transport passes, and with no inventory everything does
 {
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "dibs hook ssh" }] }
+      { "matcher": "Bash", "hooks": [
+        { "type": "command", "command": "dibs hook ssh" },
+        { "type": "command", "command": "dibs hook urgent" }
+      ] }
     ]
   }
 }
 ```
+
+`dibs hook urgent` asks you before an agent's call that is `--urgent`, which stops everyone's shared
+jobs on the machine until it ends.
 
 A hook that stops an agent sleeping under the lock is still yours to write.
 

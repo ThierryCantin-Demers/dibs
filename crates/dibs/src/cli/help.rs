@@ -161,7 +161,7 @@ impl Help {
         },
         Topic {
             words: &["hook"],
-            entries: &["dibs hook ssh"],
+            entries: &["dibs hook ssh", "dibs hook urgent"],
         },
     ];
 

@@ -65,7 +65,7 @@ fn hook_takes_one_kind() {
     let out = s.dibs(["hook", "scp"]).run();
     assert_eq!(
         (out.code, out.stderr.trim()),
-        (2, "dibs: hook takes one kind of hook: ssh")
+        (2, "dibs: hook takes one kind of hook: ssh or urgent")
     );
 }
 

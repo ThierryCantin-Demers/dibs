@@ -144,6 +144,12 @@ pub struct Holder {
     /// Preemptible: a benchmark queued before it freezes it while it runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ahead: Option<Ahead>,
+    /// Why it is urgent: it has the machine to itself, the shared jobs parked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub urgent: Option<String>,
+    /// The urgent job it runs nothing for until that ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parked: Option<JobId>,
     #[serde(skip)]
     pub services: Vec<Service>,
 }

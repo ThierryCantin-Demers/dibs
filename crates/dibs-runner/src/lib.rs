@@ -16,6 +16,7 @@ mod kill;
 mod lock;
 mod machine;
 mod metrics;
+mod park;
 mod platform;
 mod probe;
 mod provision;

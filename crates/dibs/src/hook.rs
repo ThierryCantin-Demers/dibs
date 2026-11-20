@@ -1,5 +1,6 @@
 //! `dibs hook ssh`: a Claude Code PreToolUse hook that refuses a shell command reaching a machine
-//! in the inventory with ssh, scp, sftp or rsync, which would take no lock there.
+//! in the inventory with ssh, scp, sftp or rsync, which would take no lock there. `dibs hook
+//! urgent` asks the person before a command makes an urgent call.
 
 use crate::{call::Rsh, inventory::Inventory};
 use serde_json::Value;
@@ -73,6 +74,50 @@ const WRAPPERS: [Wrapper; 10] = [
 ];
 /// Shells whose `-c` runs the text after it.
 const SHELLS: [&str; 4] = ["sh", "bash", "zsh", "dash"];
+
+/// Asks the person before a shell command makes a dibs call urgent, which stops everyone else's
+/// shared work on the machine until it ends.
+pub struct UrgentHook;
+
+impl UrgentHook {
+    pub fn serve() -> i32 {
+        let mut input = String::new();
+        let _ = std::io::stdin().read_to_string(&mut input);
+        let command = serde_json::from_str::<Value>(&input)
+            .ok()
+            .and_then(|call| {
+                call.pointer("/tool_input/command")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        if UrgentHook::asks(&command) {
+            let asked = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": "dibs --urgent stops every shared job on the machine, everyone's, and runs them again after it. Only on your yes to this call.",
+                }
+            });
+            println!("{asked}");
+        }
+        0
+    }
+
+    /// Read as words of the whole text, heredocs and quotes included: a batch's steps arrive in a
+    /// heredoc, and the variable may be set anywhere before the call.
+    pub fn asks(text: &str) -> bool {
+        let words: Vec<&str> = text
+            .split(|c: char| c.is_whitespace() || "\"';|&()`$<>".contains(c))
+            .filter(|w| !w.is_empty())
+            .collect();
+        let dibs = words.iter().any(|w| *w == "dibs" || w.ends_with("/dibs"));
+        let urgent = words.iter().any(|w| {
+            *w == "--urgent" || w.starts_with("--urgent=") || w.starts_with("DIBS_URGENT")
+        });
+        dibs && urgent
+    }
+}
 
 /// The names the inventory's machines are reached by, each with the machine it names.
 pub struct SshHook {
@@ -688,5 +733,26 @@ hostname = "workstation-b"
                 .refusal()
                 .starts_with("dibs: scp reaches box-b around its lock. Nothing was run.\n")
         );
+    }
+
+    #[test]
+    fn an_urgent_call_is_asked_about_however_it_is_made() {
+        for command in [
+            "dibs run --bench --urgent 'review numbers' cargo bench",
+            "~/.local/bin/dibs --on gpu06 --bench --urgent=why x",
+            "DIBS_URGENT=why dibs --bench x",
+            "set -x DIBS_URGENT why; dibs --bench x",
+            "dibs batch - <<'EOF'\n[m] dibs run --bench --urgent 'why' x\nEOF",
+            "bash -c \"dibs bench app@main gemv --urgent 'why'\"",
+        ] {
+            assert!(UrgentHook::asks(command), "{command}");
+        }
+        for command in [
+            "dibs run --bench cargo bench",
+            "grep -- --urgent notes.md",
+            "dibs status",
+        ] {
+            assert!(!UrgentHook::asks(command), "{command}");
+        }
     }
 }

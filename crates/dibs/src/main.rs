@@ -8,7 +8,7 @@ use dibs::{
     completion::Shell,
     execution::{self, Refusal, RunError},
     fleet,
-    hook::SshHook,
+    hook::{SshHook, UrgentHook},
     inventory::Inventory,
     machine::{Client, Runner},
     paths::FileError,
@@ -89,9 +89,13 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         Invocation::Version => Ok(version()),
         Invocation::Friction(text) => friction(&text),
         Invocation::Hook(Hook::Ssh) => Ok(ExitCode::from(SshHook::serve() as u8)),
+        Invocation::Hook(Hook::Urgent) => Ok(ExitCode::from(UrgentHook::serve() as u8)),
         Invocation::Recipe(call) => {
             if call.when_open {
                 wait_for_open();
+            }
+            if let Some(why) = &call.urgent {
+                urgent(why);
             }
             let caller = Caller::from_env();
             ChangeNotice::tell_once(&caller);
@@ -100,6 +104,9 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         Invocation::Call(call) => {
             if call.when_open {
                 wait_for_open();
+            }
+            if let Some(why) = &call.urgent {
+                urgent(why);
             }
             let caller = Caller::from_env();
             if call.mode != Mode::Update {
@@ -277,6 +284,12 @@ fn completions(words: &[String]) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// `--urgent`, carried in the environment to every request this call and its children send.
+fn urgent(why: &str) {
+    // SAFETY: set while only the main thread runs, before anything reads the environment.
+    unsafe { std::env::set_var("DIBS_URGENT", why) };
 }
 
 /// `--when-open`, carried in the environment to every request this call and its children send.

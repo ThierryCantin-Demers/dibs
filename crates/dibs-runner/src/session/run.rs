@@ -10,8 +10,9 @@ use crate::{
         Services, Start,
     },
     kill::DESCRIBED,
-    lock::{Hold, Kind, Lock, LockDir},
+    lock::{Hold, Kind, Lock, LockDir, Urgent},
     machine::Site,
+    park::{self, Parking},
     platform::{Host, Platform as _},
     queue::Queue,
     series::Binding,
@@ -31,7 +32,8 @@ use dibs_format::{
     wire::{MaxFrom, Record},
 };
 use std::{
-    fs, io,
+    fs::{self, File},
+    io,
     path::{Path, PathBuf},
     sync::{Arc, MutexGuard},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -99,6 +101,8 @@ struct Acquired {
     waited: u64,
     /// Preemptible: it holds `ahead` as well, and a benchmark queued before it freezes it.
     ahead: bool,
+    /// Urgent: the machine's claim, which no other urgent job can take while this lives.
+    claim: Option<File>,
 }
 
 /// Where a job that holds the lock keeps what it leaves: its directory, and its log unless it is
@@ -184,9 +188,10 @@ impl<'a> Run<'a> {
             if let Err(code) = self.until_open(&arrived) {
                 return code;
             }
-            let acquired = match preempts {
-                true => self.acquire_ahead(&history, &arrived),
-                false => self.acquire(&history, &arrived),
+            let acquired = match (preempts, self.urgent()) {
+                (_, Some(why)) => self.acquire_urgent(&arrived, why),
+                (true, None) => self.acquire_ahead(&history, &arrived),
+                (false, None) => self.acquire(&history, &arrived),
             };
             let acquired = match acquired {
                 Ok(acquired) => acquired,
@@ -314,6 +319,124 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
+    /// Why the call is urgent, when it is a benchmark that is: a shared job marked urgent only
+    /// goes around the gate.
+    fn urgent(&self) -> Option<&str> {
+        let request = &self.at.call.request;
+        (self.at.call.mode() == Mode::Bench && !request.watch.hold)
+            .then_some(request.urgent.as_deref())
+            .flatten()
+    }
+
+    /// A shared job whose command can be stopped and run again from the start: nothing held from
+    /// elsewhere and no server to bring back.
+    fn parkable(&self) -> bool {
+        let request = &self.at.call.request;
+        self.at.call.mode() == Mode::Shared && !request.watch.hold && request.services.is_empty()
+    }
+
+    /// Takes the machine's claim, then waits for every other holder to park or end, without the
+    /// gate. One urgent job at a time: a second is refused.
+    fn acquire_urgent(&self, arrived: &Arrived, why: &str) -> Result<Acquired, i32> {
+        let request = &self.at.call.request;
+        let pid = self.at.call.pid;
+        let refused = |e: &io::Error| {
+            self.at.sink.say(&format!(
+                "dibs: the lock in {} could not be taken: {e}. Nothing was run.\n",
+                self.at.dir.path.display()
+            ));
+            self.at.dir.clear(pid);
+            Exit::NoLock.status()
+        };
+        let lock = Lock::open(self.at.dir).map_err(|e| refused(&e))?;
+        let claim = match self.at.dir.claim_urgent() {
+            Ok(Some(claim)) => claim,
+            Ok(None) => {
+                let first = self.at.dir.urgent_besides(pid).map_or_else(
+                    || "another urgent job".to_string(),
+                    |u| format!("the urgent job {} from {}: {}", u.job, u.agent, u.why),
+                );
+                self.at.sink.say(&format!(
+                    "dibs: {} already runs {first}. One urgent job at a time, so this one did not run.\n",
+                    self.at.machine.host
+                ));
+                let mut state = self.at.stopper.state();
+                self.abandon(&arrived.job, &mut state);
+                return Err(Exit::Refused.status());
+            }
+            Err(e) => return Err(refused(&e)),
+        };
+        self.at.dir.mark_urgent(&Urgent {
+            pid,
+            job: arrived.job.clone(),
+            agent: self.at.call.agent.clone(),
+            why: why.to_string(),
+        });
+        let deadline = request
+            .wait
+            .map(|wait| Instant::now() + Duration::from_secs(wait));
+        let mut told = false;
+        loop {
+            let running = self.at.dir.unparked(pid);
+            if running.is_empty() {
+                break;
+            }
+            if !told {
+                let labels: Vec<String> = running.iter().map(|h| h.label.to_string()).collect();
+                self.at.sink.say(&format!(
+                    "dibs: urgent, so the shared jobs here are parked and run again after it. Waiting for {} to park or end: {}\n",
+                    running.len(),
+                    labels.join(", ")
+                ));
+                told = true;
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                let wait = request.wait.unwrap_or_default();
+                self.at.sink.say(&format!(
+                    "dibs: still busy after {wait}s, gave up: what cannot be parked still runs.\n"
+                ));
+                let mut state = self.at.stopper.state();
+                self.abandon(&arrived.job, &mut state);
+                return Err(Exit::Busy.status());
+            }
+            std::thread::sleep(BENCH_POLL);
+        }
+        // Keeps out a benchmark from a runner that knows nothing of the claim. Held exclusive, `rw`
+        // is a benchmark waiting parked behind this one, which runs nothing either.
+        let _ = lock.take(Hold::Shared, Some(Instant::now()));
+        let now = Moment::epoch_now();
+        Ok(Acquired {
+            lock,
+            at: now,
+            waited: now.saturating_sub(arrived.start),
+            ahead: false,
+            claim: Some(claim),
+        })
+    }
+
+    /// Runs nothing, with `parked.<pid>` written, while another call's urgent job has the machine.
+    fn yield_to_urgent(&self, mut state: MutexGuard<'a, State>) -> MutexGuard<'a, State> {
+        let pid = self.at.call.pid;
+        let Some(urgent) = self.at.dir.urgent_besides(pid) else {
+            return state;
+        };
+        let was = state.stage;
+        state.stage = Stage::Parked;
+        drop(state);
+        self.at.dir.park(pid, &urgent.job);
+        self.at.sink.say(&format!(
+            "dibs: parked for the urgent job {} from {}: {}. It runs again from the start once that ends.\n",
+            urgent.job, urgent.agent, urgent.why
+        ));
+        while self.at.dir.urgent_besides(pid).is_some() {
+            std::thread::sleep(park::POLL);
+        }
+        self.at.dir.unpark(pid);
+        let mut state = self.at.stopper.state();
+        state.stage = was;
+        state
+    }
+
     /// A job that only compiles may be frozen, which nothing that holds a card, serves, or is
     /// held from elsewhere can be.
     fn preempts(&self) -> bool {
@@ -401,6 +524,7 @@ impl<'a> Run<'a> {
             at: now,
             waited: now.saturating_sub(arrived.start),
             ahead: true,
+            claim: None,
         })
     }
 
@@ -442,7 +566,8 @@ impl<'a> Run<'a> {
             .wait
             .map(|wait| Instant::now() + Duration::from_secs(wait));
         let block = lock.free(Hold::Shared) && !lock.free(Hold::Exclusive);
-        let passed = match queue.may_bypass(self.at.settings, block) {
+        let urgent = request.urgent.is_some() && self.at.call.mode() == Mode::Shared;
+        let passed = match urgent || queue.may_bypass(self.at.settings, block) {
             true => {
                 let mut line = self.at.call.log_line(Event::Bypassed);
                 line.job = Some(arrived.job.clone());
@@ -518,6 +643,7 @@ impl<'a> Run<'a> {
             at: now,
             waited: now.saturating_sub(arrived.start),
             ahead: false,
+            claim: None,
         })
     }
 
@@ -642,7 +768,8 @@ impl<'a> Run<'a> {
             (Some(log), false) => Output::Log(log),
             (None, _) => Output::Caller,
         };
-        let deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
+        state = self.yield_to_urgent(state);
+        let mut deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
         let ports = Ports::take(&request.ports, self.at.settings.ports, self.at.dir, pid);
         for picked in &ports.picked {
             environment.port(picked);
@@ -753,31 +880,55 @@ impl<'a> Run<'a> {
                 let command = arrived.held.as_ref().map(HoldFifo::command);
                 let command = command.as_deref().unwrap_or(&self.at.call.work);
                 let mark = running.as_ref().and_then(|r| r.mark.as_ref());
-                match Job::spawn(command, &environment, output, self.at.sink, mark) {
-                    Ok(work) => {
-                        state.stage = Stage::Running(work.pid);
+                let parkable = self.parkable();
+                loop {
+                    state = self.yield_to_urgent(state);
+                    // Parked while a benchmark had it frozen, it waits to be let go; parked first,
+                    // since that benchmark may itself wait parked behind the urgent job.
+                    if frozen.now() {
                         drop(state);
-                        if self.at.call.mode() == Mode::Rsh {
-                            Channel::watch_transfer(
-                                work.pid,
-                                request.watch.lease,
-                                Arc::clone(self.at.stopper),
-                            );
+                        while frozen.now() {
+                            std::thread::sleep(park::POLL);
                         }
-                        let cap = deadline.left().map(|after| Cap {
-                            after,
-                            grace: JOB_GRACE,
-                            frozen: Some(Arc::clone(&frozen)),
-                        });
-                        self.work(work, cap, arrived.held.is_some(), &mut hosted)
+                        state = self.at.stopper.state();
+                        continue;
                     }
-                    Err(e) => {
-                        drop(state);
-                        self.at
-                            .sink
-                            .say(&format!("dibs: bash could not start: {e}\n"));
-                        NOT_STARTED
+                    let work = match Job::spawn(command, &environment, output, self.at.sink, mark) {
+                        Ok(work) => work,
+                        Err(e) => {
+                            drop(state);
+                            self.at
+                                .sink
+                                .say(&format!("dibs: bash could not start: {e}\n"));
+                            break NOT_STARTED;
+                        }
+                    };
+                    state.stage = Stage::Running(work.pid);
+                    drop(state);
+                    if self.at.call.mode() == Mode::Rsh {
+                        Channel::watch_transfer(
+                            work.pid,
+                            request.watch.lease,
+                            Arc::clone(self.at.stopper),
+                        );
                     }
+                    let cap = deadline.left().map(|after| Cap {
+                        after,
+                        grace: JOB_GRACE,
+                        frozen: Some(Arc::clone(&frozen)),
+                    });
+                    let parking = parkable.then(|| {
+                        Parking::start(self.at.dir.clone(), pid, Arc::clone(self.at.stopper))
+                    });
+                    let status = self.work(work, cap, arrived.held.is_some(), &mut hosted);
+                    // A command that finished as it was parked has run; it is not run twice.
+                    if !parking.is_some_and(Parking::end) || status == 0 {
+                        break status;
+                    }
+                    self.sweep_escaped(&arrived.job);
+                    hosted.overran = false;
+                    deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
+                    state = self.at.stopper.state();
                 }
             }
         };
@@ -921,6 +1072,7 @@ impl<'a> Run<'a> {
         }
         self.at.dir.clear(self.at.call.pid);
         drop(end.acquired.lock);
+        drop(end.acquired.claim);
         if let Some(ended) = &ended {
             ended.report();
         }

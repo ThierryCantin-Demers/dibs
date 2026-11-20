@@ -171,6 +171,11 @@ pub const CALL: &[Flag] = &[
         "queue on a closed machine until it opens",
     ),
     Flag::new(
+        &["--urgent"],
+        Value::Free,
+        "why: the machine to itself, shared jobs parked",
+    ),
+    Flag::new(
         &["--log"],
         Value::No,
         "what ran, what it cost, what was killed",
@@ -274,6 +279,11 @@ pub const RECIPE: &[Flag] = &[
         &["--when-open"],
         Value::No,
         "queue on a closed machine until it opens",
+    ),
+    Flag::new(
+        &["--urgent"],
+        Value::Free,
+        "why: the machine to itself, shared jobs parked",
     ),
     Flag::new(
         &["--there"],

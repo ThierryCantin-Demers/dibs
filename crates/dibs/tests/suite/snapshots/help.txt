@@ -220,6 +220,8 @@
 1|   dibs hook ssh               a Claude Code PreToolUse hook: reads the tool call on stdin and
 1|                                refuses, with exit 2, ssh, scp, sftp or rsync aimed at a
 1|                                machine in the inventory. rsync through dibs passes.
+1|   dibs hook urgent            a Claude Code PreToolUse hook: asks the person before a command
+1|                                that makes a dibs call --urgent, or sets DIBS_URGENT.
 1| 
 1| A shared job quick enough to be gone before a queued benchmark could have started anyway
 1| goes around it rather than waiting for the whole benchmark. DIBS_PATIENCE (60s) is how long
@@ -232,6 +234,10 @@
 1|                      machine, or DIBS_HOST without one, needs neither.
 1|   --wait <seconds>   give up rather than queue past this
 1|   --when-open        queue on a machine its owners closed, until it opens, rather than exit 79
+1|   --urgent '<why>'   a benchmark that has the machine to itself: the shared jobs running there
+1|                      are stopped and run again from the start once it ends, a running
+1|                      benchmark is waited for, and it goes before the queue. One per machine.
+1|                      A shared job goes around the queue. Only on your person's yes to the call.
 1|   --max <seconds>    kill the command if it holds the lock longer than this (default 7200
 1|                      for --bench and 1800 otherwise, or twice the label's 90th percentile
 1|                      where its history runs longer, said when it starts)

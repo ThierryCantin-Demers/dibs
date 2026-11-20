@@ -1,7 +1,8 @@
 use crate::platform::{Host, Platform as _};
 use dibs_format::{JobId, LockRecord, Span, status::Ahead};
 use std::{
-    fs,
+    fs::{self, File, OpenOptions, TryLockError},
+    io,
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -46,6 +47,15 @@ pub struct Takers {
     pub seen: bool,
     /// Those that no record accounts for, outside the asking process's own group.
     pub orphans: Vec<u32>,
+}
+
+/// A call's urgent job, which has the machine to itself while it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Urgent {
+    pub pid: u32,
+    pub job: JobId,
+    pub agent: String,
+    pub why: String,
 }
 
 /// The two records a job names itself by.
@@ -164,6 +174,78 @@ impl LockDir {
         }
     }
 
+    /// `urgent-claim`, taken for as long as the returned file lives; None while another urgent
+    /// job has it. Only urgent jobs touch it, so a look never makes one refused.
+    pub fn claim_urgent(&self) -> io::Result<Option<File>> {
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.path.join("urgent-claim"))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(file)),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(e)) => Err(e),
+        }
+    }
+
+    /// `urgent.<pid>`, which every other job reads as the machine being taken.
+    pub fn mark_urgent(&self, urgent: &Urgent) {
+        let flat = |s: &str| s.replace(['\t', '\n'], " ");
+        let _ = fs::write(
+            self.file("urgent", urgent.pid),
+            format!(
+                "{}\t{}\t{}\n",
+                urgent.job,
+                flat(&urgent.agent),
+                flat(&urgent.why)
+            ),
+        );
+    }
+
+    /// The live urgent job of a call other than `pid`'s.
+    pub fn urgent_besides(&self, pid: u32) -> Option<Urgent> {
+        self.named("urgent").into_iter().find_map(|file| {
+            let record = RecordFile(&file);
+            let of = record.pid().filter(|&of| of != pid)?;
+            record.alive().then_some(())?;
+            self.urgent_of(of)
+        })
+    }
+
+    pub fn urgent_of(&self, pid: u32) -> Option<Urgent> {
+        let said = fs::read_to_string(self.file("urgent", pid)).ok()?;
+        let mut fields = said.trim_end_matches('\n').splitn(3, '\t');
+        Some(Urgent {
+            pid,
+            job: JobId::checked(fields.next()?)?,
+            agent: fields.next()?.to_string(),
+            why: fields.next().unwrap_or_default().to_string(),
+        })
+    }
+
+    /// `parked.<pid>`: the job runs nothing until that urgent job ends, which may start beside it.
+    pub fn park(&self, pid: u32, urgent: &JobId) {
+        let _ = fs::write(self.file("parked", pid), format!("{urgent}\n"));
+    }
+
+    pub fn unpark(&self, pid: u32) {
+        let _ = fs::remove_file(self.file("parked", pid));
+    }
+
+    pub fn parked_for(&self, pid: u32) -> Option<JobId> {
+        JobId::checked(fs::read_to_string(self.file("parked", pid)).ok()?.trim())
+    }
+
+    /// The live holders besides `pid` that still run, which an urgent job waits for.
+    pub fn unparked(&self, pid: u32) -> Vec<LockRecord> {
+        self.records(Kind::Holder)
+            .into_iter()
+            .filter(|h| h.pid != pid && !self.file("parked", h.pid).exists())
+            .filter(|h| RecordFile(&self.file("holder", h.pid)).alive())
+            .collect()
+    }
+
     /// Waiting becomes holding, restamped: a holder's clock starts when it takes the lock.
     pub fn hold(&self, record: &LockRecord) {
         self.write(Kind::Waiting, record);
@@ -204,7 +286,7 @@ impl LockDir {
     pub fn clear(&self, pid: u32) {
         for kind in [
             "waiting", "holder", "work", "cpu", "batch", "hold", "prep", "with", "ahead", "pause",
-            "subagent", "user",
+            "subagent", "user", "urgent", "parked",
         ] {
             let _ = fs::remove_file(self.file(kind, pid));
         }
@@ -261,7 +343,8 @@ impl LockDir {
         // By start time, not by pid alone: a lock directory on disk outlives a reboot, after which
         // its pids name other processes.
         for prefix in [
-            "cpu", "batch", "hold", "prep", "with", "ahead", "pause", "subagent", "user",
+            "cpu", "batch", "hold", "prep", "with", "ahead", "pause", "subagent", "user", "urgent",
+            "parked",
         ] {
             for file in self.named(prefix) {
                 if !RecordFile(&file).alive() {

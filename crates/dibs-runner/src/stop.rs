@@ -28,6 +28,8 @@ pub enum Stage {
     /// It holds the lock, and its services are starting.
     Starting,
     Running(u32),
+    /// It holds the lock and runs nothing while another call's urgent job has the machine.
+    Parked,
     /// Its job has ended.
     Finishing,
 }
@@ -110,6 +112,7 @@ impl Stopper {
                 | Stage::Preparing(_)
                 | Stage::Starting
                 | Stage::Running(_)
+                | Stage::Parked
                 | Stage::Peeking(_)
         ) {
             return;
@@ -151,6 +154,7 @@ impl Stopper {
                 | Stage::Preparing(_)
                 | Stage::Starting
                 | Stage::Running(_)
+                | Stage::Parked
                 | Stage::Finishing
         ) {
             self.dir.clear(self.call.pid);

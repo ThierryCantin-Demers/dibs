@@ -25,6 +25,8 @@ pub enum Invocation {
 pub enum Hook {
     /// ssh, scp, sftp and rsync aimed at a machine in the inventory.
     Ssh,
+    /// A dibs call made urgent, which parks everyone else's work on its machine.
+    Urgent,
 }
 
 /// A call and the flags that shape it. A flag the mode does not read is accepted and ignored.
@@ -36,6 +38,8 @@ pub struct Call {
     pub wait: Option<u64>,
     /// `--when-open`: waits for a machine its owners closed rather than being refused.
     pub when_open: bool,
+    /// `--urgent`, and why: a benchmark that parks the shared jobs running and has the machine.
+    pub urgent: Option<String>,
     pub max: Option<u64>,
     pub device: Option<Alias>,
     pub verbose: bool,

@@ -50,6 +50,10 @@ pub struct Request {
     /// Only compiles, so it may start ahead of a queued benchmark and be frozen while one runs.
     #[serde(default)]
     pub preempt: bool,
+    /// `--urgent`, and why: a benchmark that parks the shared jobs running and has the machine to
+    /// itself, and a shared job that goes around the gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub urgent: Option<String>,
     /// Waits for a machine closed by its owners to open, rather than being refused.
     #[serde(default)]
     pub when_open: bool,

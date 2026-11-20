@@ -171,6 +171,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
         new_series: false,
         preempt: false,
         when_open: false,
+        urgent: None,
         tree: None,
     };
     let code = Visit::new(request, sink)

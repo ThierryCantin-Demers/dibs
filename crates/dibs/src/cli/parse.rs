@@ -305,6 +305,10 @@ impl Parser {
                     at += 1;
                 }
                 "--when-open" => self.call.when_open = true,
+                "--urgent" => {
+                    self.call.urgent = Some(need_some("--urgent")?);
+                    at += 1;
+                }
                 "--wait" => {
                     self.wait = Some(need("--wait")?);
                     at += 1;
@@ -813,10 +817,13 @@ impl Hook {
         }
         match words {
             [kind] if kind == "ssh" => Ok(Invocation::Hook(Hook::Ssh)),
+            [kind] if kind == "urgent" => Ok(Invocation::Hook(Hook::Urgent)),
             [help] if matches!(help.as_str(), "-h" | "--help") => {
                 Ok(Invocation::Help(Some("hook")))
             }
-            _ => Err(CliError::new("dibs: hook takes one kind of hook: ssh")),
+            _ => Err(CliError::new(
+                "dibs: hook takes one kind of hook: ssh or urgent",
+            )),
         }
     }
 }

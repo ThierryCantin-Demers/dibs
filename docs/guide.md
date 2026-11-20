@@ -927,6 +927,25 @@ the copy a new tree starts from or the build it waits for.
 Never poll dibs. Launch it in the background and do other work: queueing then costs nothing, and
 the notification arrives when the command is done.
 
+## Numbers needed now
+
+`--urgent '<why>'` makes a benchmark that has the machine to itself and goes before the queue.
+The shared jobs running there, everyone's and on every card, are parked: their commands are
+stopped, they keep their place, and each runs again from the start, in the same tree, once the
+urgent job ends. The caller of a parked job is told why, and sees one run, the last. A running
+benchmark is never parked: the urgent job waits for it to end, and neither is a transfer, a
+`--hold` or a job with `--with` servers. One urgent job runs on a machine at a time, and a second
+is refused, naming the first and its reason. `dibs status` shows the reason beside it and marks
+each parked job.
+
+A shared job marked `--urgent` only goes around the queue, parking nothing. On a recipe or a
+batch, the flag reaches every step, so its measurements are urgent and its builds go around.
+
+Parking repeats whatever a job had done, so it is a person's call to make: an agent runs
+`--urgent` only on its person's yes to that one call, which `dibs hook urgent` asks for. A runner
+older than the flag knows nothing of it, so a shared job it starts during an urgent one runs
+beside it; updating the runners closes that.
+
 ## The two halves
 
 `crates/dibs-runner/` is the half of dibs that runs on a machine: it takes the lock, runs the
@@ -965,6 +984,11 @@ through dibs's own transport. It knows a machine only by the names the inventory
 alias in `~/.ssh/config` or an address gets through, and with no inventory everything does.
 `docs/design/protocol.md` says exactly what it reads. The README has the lines for
 `~/.claude/settings.json`; wiring it is yours to do.
+
+`dibs hook urgent`, wired the same way, answers "ask" for a command that makes a dibs call
+`--urgent` or sets `DIBS_URGENT`, so Claude Code shows the person the exact command and runs it
+only on their yes. It reads the whole text, heredocs included, since a batch's steps arrive in
+one; a batch file written earlier is beyond it.
 
 A hook that stops an agent sleeping under the exclusive lock is not here: `dibs-agent-rules.md`
 describes what it enforces, so you can write your own.

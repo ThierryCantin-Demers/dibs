@@ -167,6 +167,23 @@ impl Text<'_> {
             "    {}stop it with: dibs --kill {}{}",
             p.warn, holder.pid, p.off
         );
+        let waits = match (&holder.urgent, &holder.parked) {
+            (Some(why), _) => Some(format!("{}[URGENT: {why}]{}", p.warn, p.off)),
+            (None, Some(urgent)) => Some(format!(
+                "{}[parked for the urgent job {urgent}, and runs again from the start after it]{}",
+                p.dim, p.off
+            )),
+            (None, None) => None,
+        };
+        if let Some(waits) = waits {
+            let _ = writeln!(out, "{lead}   {waits}");
+            row.command(out);
+            row.from(out);
+            if let Some(batch) = &holder.batch {
+                batch_lines(out, p, batch, false);
+            }
+            return;
+        }
         if let Some(Ahead::Paused(bench)) = &holder.ahead {
             let _ = writeln!(
                 out,
@@ -602,6 +619,8 @@ mod tests {
             batch: None,
             prepare: None,
             ahead: None,
+            urgent: None,
+            parked: None,
             services: Vec::new(),
         });
         let said = text(&held);

@@ -194,6 +194,7 @@ mod tests {
             new_series: false,
             preempt: false,
             when_open: false,
+            urgent: None,
             tree: None,
         }
     }

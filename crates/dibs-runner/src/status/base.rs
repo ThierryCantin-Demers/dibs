@@ -223,6 +223,8 @@ impl Look<'_> {
             batch: self.batch(pid, left, tail),
             prepare,
             ahead: self.dir.ahead_of(pid),
+            urgent: self.dir.urgent_of(pid).map(|u| u.why),
+            parked: self.dir.parked_for(pid),
             services: self.services(pid),
         }
     }

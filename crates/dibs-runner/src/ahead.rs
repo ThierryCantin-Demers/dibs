@@ -42,6 +42,14 @@ impl Frozen {
         }
     }
 
+    pub fn now(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .0
+            .is_some()
+    }
+
     pub fn total(&self) -> Duration {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.1 + state.0.map_or(Duration::ZERO, |since| since.elapsed())

@@ -32,4 +32,5 @@ mod sync;
 mod transport;
 mod trees;
 mod update;
+mod urgent;
 mod wire;

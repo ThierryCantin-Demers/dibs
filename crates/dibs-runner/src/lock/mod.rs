@@ -4,4 +4,4 @@ mod base;
 mod records;
 
 pub use base::{Hold, Lock};
-pub use records::{Kind, LockDir, RecordFile};
+pub use records::{Kind, LockDir, RecordFile, Urgent};

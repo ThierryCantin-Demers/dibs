@@ -145,6 +145,9 @@ impl CallValues {
             // From the environment, which `--when-open` sets, so a batch's steps and a sync's
             // transfer carry it too.
             when_open: std::env::var("DIBS_WHEN_OPEN").is_ok_and(|v| v == "1"),
+            urgent: std::env::var("DIBS_URGENT")
+                .ok()
+                .filter(|why| !why.is_empty()),
             ports: self.ports.iter().map(|p| p.0.clone()).collect(),
             services: self
                 .services
