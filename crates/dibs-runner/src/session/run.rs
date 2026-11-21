@@ -472,18 +472,17 @@ impl<'a> Run<'a> {
             "dibs: parked for the urgent job {} from {}: {}. It runs again from the start once that ends.\n",
             urgent.job, urgent.agent, urgent.why
         ));
-        let cancelled = || {
-            self.at
-                .call
-                .batch_id()
-                .is_some_and(|b| self.at.dir.cancelled(b))
-        };
         let yielded = loop {
-            if cancelled() {
+            if self.cancelled() {
                 break Yielded::Cancelled;
             }
-            if self.at.dir.urgent_besides(pid).is_none() {
+            let Some(now) = self.at.dir.urgent_besides(pid) else {
                 break Yielded::Waited;
+            };
+            // Said again each look: an urgent job that follows the last waits for its own job's
+            // name, and a write the disk refused once may go through.
+            if self.at.dir.parked_for(pid).as_ref() != Some(&now.job) {
+                self.at.dir.park(pid, &now.job);
             }
             if until.is_some_and(|until| Instant::now() >= until) {
                 let wait = self.at.call.request.wait.unwrap_or_default();
@@ -498,6 +497,14 @@ impl<'a> Run<'a> {
         let mut state = self.at.stopper.state();
         state.stage = was;
         (state, yielded)
+    }
+
+    /// The call is a step of a batch cancelled since it arrived.
+    fn cancelled(&self) -> bool {
+        self.at
+            .call
+            .batch_id()
+            .is_some_and(|b| self.at.dir.cancelled(b))
     }
 
     /// When `--wait` runs out, counted from the call's arrival.
@@ -974,6 +981,7 @@ impl<'a> Run<'a> {
                 loop {
                     // Servers already started are never left running beside the urgent job, which
                     // waits for this one instead.
+                    let left = deadline.left();
                     if hosted.services.is_none() {
                         let until = (runs == 0).then(|| self.wait_until(arrived)).flatten();
                         let (held, yielded) = self.yield_to_urgent(state, until);
@@ -985,6 +993,11 @@ impl<'a> Run<'a> {
                         }
                         waited |= yielded == Yielded::Waited;
                     }
+                    if runs > 0 && self.cancelled() {
+                        drop(state);
+                        hosted.laid = Some(By::Dibs);
+                        break Exit::Cancelled.status();
+                    }
                     // Parked while a benchmark had it frozen, it waits to be let go; parked first,
                     // since that benchmark may itself wait parked behind the urgent job.
                     if frozen.now() {
@@ -995,10 +1008,15 @@ impl<'a> Run<'a> {
                         state = self.at.stopper.state();
                         continue;
                     }
-                    if runs > 0 || waited {
+                    // The time parked is not the command's: a rerun has its whole cap again, and a
+                    // first run what it had left when it parked.
+                    if runs > 0 {
                         deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
-                        waited = false;
+                        frozen.restart();
+                    } else if waited {
+                        deadline = Deadline::after(left);
                     }
+                    waited = false;
                     if runs > 0 {
                         // A build stopped partway leaves crates rustc would reuse half made.
                         if let Some(running) = running.as_mut()
@@ -1034,7 +1052,12 @@ impl<'a> Run<'a> {
                         frozen: Some(Arc::clone(&frozen)),
                     });
                     let parking = parkable.then(|| {
-                        Parking::start(self.at.dir.clone(), pid, Arc::clone(self.at.stopper))
+                        Parking::start(
+                            self.at.dir.clone(),
+                            pid,
+                            Arc::clone(self.at.stopper),
+                            Arc::clone(&frozen),
+                        )
                     });
                     let status = self.work(work, cap, arrived.held.is_some(), &mut hosted);
                     if !parking.is_some_and(Parking::end) {

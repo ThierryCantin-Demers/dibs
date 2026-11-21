@@ -42,6 +42,11 @@ impl Frozen {
         }
     }
 
+    /// Forgets the time frozen so far, which a command run again from the start does not get.
+    pub fn restart(&self) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).1 = Duration::ZERO;
+    }
+
     pub fn now(&self) -> bool {
         self.state
             .lock()

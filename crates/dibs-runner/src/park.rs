@@ -1,8 +1,9 @@
 //! Shared jobs stopped while another call's urgent job has the machine, and run again after it.
 
 use crate::{
+    ahead::Frozen,
     lock::LockDir,
-    platform::{Host, Platform as _},
+    platform::{Descendants as _, Host, Platform as _},
     stop::{Stage, Stopper},
 };
 use std::{
@@ -25,7 +26,7 @@ pub struct Parking {
 
 impl Parking {
     /// `pid` is the runner's, which its records are named by.
-    pub fn start(dir: LockDir, pid: u32, stopper: Arc<Stopper>) -> Parking {
+    pub fn start(dir: LockDir, pid: u32, stopper: Arc<Stopper>, frozen: Arc<Frozen>) -> Parking {
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
         let thread = thread::spawn(move || {
@@ -35,7 +36,14 @@ impl Parking {
                     let Stage::Running(job) = state.stage else {
                         return false;
                     };
-                    Host::reap(&[job]);
+                    // A command that has already ended has run, and is not run twice.
+                    if !Host::running(job) {
+                        return false;
+                    }
+                    match frozen.now() {
+                        true => kill_frozen(job),
+                        false => Host::reap(&[job]),
+                    }
                     state.stage = Stage::Parked;
                     return true;
                 }
@@ -50,5 +58,18 @@ impl Parking {
     pub fn end(self) -> bool {
         self.stop.store(true, Ordering::Relaxed);
         self.thread.join().unwrap_or(false)
+    }
+}
+
+/// KILL rather than TERM, which would let the tree go to run its handlers beside the benchmark
+/// that froze it.
+fn kill_frozen(job: u32) {
+    let below = Host::processes().below(job);
+    // SAFETY: kill only sends a signal, to the job's group and to what it started outside it.
+    unsafe {
+        libc::kill(-(job as libc::pid_t), libc::SIGKILL);
+        for pid in below.into_iter().chain([job]) {
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        }
     }
 }
