@@ -11,8 +11,11 @@ use std::fs;
 /// `ssh -G` reaches no machine, so it answers as ssh would and is not recorded.
 const RECORDING_SSH: &str = r#"#!/bin/bash
 [ "$1" = -G ] && { echo "hostname ${2##*@}"; exit 0; }
+printf '%s started for %s\n' "$$" "${@: -2:1}" >> "$WIRE.log"
+trap 'printf "%s exited %s\n" "$$" "$?" >> "$WIRE.log"' EXIT
 n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
 printf '%s\0' ssh "$@" > "$WIRE/$n.argv"
+printf '%s recorded as %s\n' "$$" "$n" >> "$WIRE.log"
 cmd=${@: -1} host=${@: -2:1}
 if [[ $cmd == *'"$r" serve'* ]]; then
     IFS= read -r header
@@ -167,6 +170,11 @@ impl<'a> Wire<'a> {
             indent(&self.n.apply(&out.all()))
         );
         self.t.section(&self.n.apply(title), &body);
+        // Shown only when the test fails: what each ssh started for this call did.
+        eprintln!(
+            "the recording ssh, for {title}:\n{}",
+            fs::read_to_string(self.s.path("wire.log")).unwrap_or_default()
+        );
         out
     }
 
@@ -176,6 +184,7 @@ impl<'a> Wire<'a> {
 
     fn clear(&self) {
         let wire = self.s.path("wire");
+        let _ = fs::remove_file(self.s.path("wire.log"));
         let _ = fs::remove_dir_all(&wire);
         fs::create_dir_all(&wire).unwrap();
     }
