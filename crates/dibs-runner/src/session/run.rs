@@ -87,8 +87,12 @@ struct Arrived {
 }
 
 /// How waiting for another call's urgent job ended.
+#[derive(PartialEq, Eq)]
 enum Yielded {
+    /// No urgent job was there.
     Free,
+    /// It ended.
+    Waited,
     GaveUp,
     Cancelled,
 }
@@ -97,7 +101,7 @@ impl Yielded {
     /// The status a call that never ran its command ends with.
     fn status(&self) -> Option<i32> {
         match self {
-            Yielded::Free => None,
+            Yielded::Free | Yielded::Waited => None,
             Yielded::GaveUp => Some(Exit::Busy.status()),
             Yielded::Cancelled => Some(Exit::Cancelled.status()),
         }
@@ -223,6 +227,7 @@ impl<'a> Run<'a> {
                 break acquired;
             }
             drop(acquired);
+            let _ = fs::remove_file(self.at.dir.file("urgent", self.at.call.pid));
             self.at.dir.write(Kind::Waiting, &record);
             let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
         };
@@ -383,19 +388,26 @@ impl<'a> Run<'a> {
             }
             Err(e) => return Err(refused(&e)),
         };
-        self.at.dir.mark_urgent(&Urgent {
-            pid,
-            job: arrived.job.clone(),
-            agent: self.at.call.agent.clone(),
-            why: why.to_string(),
-        });
+        self.at
+            .dir
+            .mark_urgent(&Urgent {
+                pid,
+                job: arrived.job.clone(),
+                agent: self.at.call.agent.clone(),
+                why: why.to_string(),
+            })
+            .map_err(|e| refused(&e))?;
         let deadline = request
             .wait
             .map(|wait| Instant::now() + Duration::from_secs(wait));
         let mut told = false;
         loop {
-            let running = self.at.dir.unparked(pid);
-            if running.is_empty() && self.urgent_rw(&lock).map_err(|e| refused(&e))? {
+            let running = self.at.dir.unparked(pid, &arrived.job);
+            if running.is_empty()
+                && self
+                    .urgent_rw(&lock, &arrived.job)
+                    .map_err(|e| refused(&e))?
+            {
                 break;
             }
             if !told {
@@ -430,15 +442,15 @@ impl<'a> Run<'a> {
         })
     }
 
-    /// `rw` shared, which keeps out a benchmark from a runner that knows nothing of the claim; or,
-    /// held exclusive, held only by a benchmark with a record, which waits behind this one and
-    /// runs nothing. An orphan or a system that cannot say who holds it is waited for.
-    fn urgent_rw(&self, lock: &Lock) -> io::Result<bool> {
-        if lock.take(Hold::Shared, Some(Instant::now()))? {
-            return Ok(true);
+    /// `rw` shared with no orphan beside it, which keeps out a benchmark from a runner that knows
+    /// nothing of the claim; or held exclusive by a benchmark parked for this job, which runs
+    /// nothing. An orphan is waited for, where the system can say who holds a lock.
+    fn urgent_rw(&self, lock: &Lock, job: &JobId) -> io::Result<bool> {
+        let held = lock.take(Hold::Shared, Some(Instant::now()))?;
+        if !self.at.dir.takers(self.at.call.pid).orphans.is_empty() {
+            return Ok(false);
         }
-        let takers = self.at.dir.takers(self.at.call.pid);
-        Ok(takers.seen && takers.orphans.is_empty())
+        Ok(held || self.at.dir.bench_parked_for(self.at.call.pid, job))
     }
 
     /// Runs nothing, with `parked.<pid>` written, while another call's urgent job has the machine.
@@ -467,11 +479,11 @@ impl<'a> Run<'a> {
                 .is_some_and(|b| self.at.dir.cancelled(b))
         };
         let yielded = loop {
-            if self.at.dir.urgent_besides(pid).is_none() {
-                break Yielded::Free;
-            }
             if cancelled() {
                 break Yielded::Cancelled;
+            }
+            if self.at.dir.urgent_besides(pid).is_none() {
+                break Yielded::Waited;
             }
             if until.is_some_and(|until| Instant::now() >= until) {
                 let wait = self.at.call.request.wait.unwrap_or_default();
@@ -958,6 +970,7 @@ impl<'a> Run<'a> {
                 let command = command.as_deref().unwrap_or(&self.at.call.work);
                 let parkable = self.parkable();
                 let mut runs = 0;
+                let mut waited = false;
                 loop {
                     // Servers already started are never left running beside the urgent job, which
                     // waits for this one instead.
@@ -970,6 +983,7 @@ impl<'a> Run<'a> {
                             hosted.laid = Some(By::Dibs);
                             break status;
                         }
+                        waited |= yielded == Yielded::Waited;
                     }
                     // Parked while a benchmark had it frozen, it waits to be let go; parked first,
                     // since that benchmark may itself wait parked behind the urgent job.
@@ -981,8 +995,11 @@ impl<'a> Run<'a> {
                         state = self.at.stopper.state();
                         continue;
                     }
-                    if runs > 0 {
+                    if runs > 0 || waited {
                         deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
+                        waited = false;
+                    }
+                    if runs > 0 {
                         // A build stopped partway leaves crates rustc would reuse half made.
                         if let Some(running) = running.as_mut()
                             && running.mark.take().is_some()

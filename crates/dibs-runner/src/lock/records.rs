@@ -190,9 +190,9 @@ impl LockDir {
     }
 
     /// `urgent.<pid>`, which every other job reads as the machine being taken.
-    pub fn mark_urgent(&self, urgent: &Urgent) {
+    pub fn mark_urgent(&self, urgent: &Urgent) -> io::Result<()> {
         let flat = |s: &str| s.replace(['\t', '\n'], " ");
-        let _ = fs::write(
+        fs::write(
             self.file("urgent", urgent.pid),
             format!(
                 "{}\t{}\t{}\n",
@@ -200,7 +200,7 @@ impl LockDir {
                 flat(&urgent.agent),
                 flat(&urgent.why)
             ),
-        );
+        )
     }
 
     /// The live urgent job of a call other than `pid`'s.
@@ -237,13 +237,24 @@ impl LockDir {
         JobId::checked(fs::read_to_string(self.file("parked", pid)).ok()?.trim())
     }
 
-    /// The live holders besides `pid` that still run, which an urgent job waits for.
-    pub fn unparked(&self, pid: u32) -> Vec<LockRecord> {
+    /// The live holders besides `pid` that are not parked for its urgent job `job`, which it
+    /// waits for: one parked for an urgent job before it may be about to start.
+    pub fn unparked(&self, pid: u32, job: &JobId) -> Vec<LockRecord> {
         self.records(Kind::Holder)
             .into_iter()
-            .filter(|h| h.pid != pid && !self.file("parked", h.pid).exists())
+            .filter(|h| h.pid != pid && self.parked_for(h.pid).as_ref() != Some(job))
             .filter(|h| RecordFile(&self.file("holder", h.pid)).alive())
             .collect()
+    }
+
+    /// Whether a live holder besides `pid` parked for `job` is a benchmark, which holds `rw`
+    /// exclusive while it runs nothing.
+    pub fn bench_parked_for(&self, pid: u32, job: &JobId) -> bool {
+        self.records(Kind::Holder).into_iter().any(|h| {
+            h.pid != pid
+                && h.mode == dibs_format::Mode::Bench
+                && self.parked_for(h.pid).as_ref() == Some(job)
+        })
     }
 
     /// Waiting becomes holding, restamped: a holder's clock starts when it takes the lock.

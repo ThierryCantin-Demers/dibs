@@ -124,9 +124,11 @@ impl UrgentHook {
     pub fn batches(text: &str, cwd: &Path) -> bool {
         let words = UrgentHook::words(text);
         words
-            .windows(3)
-            .filter(|w| UrgentHook::dibs(w[0]) && w[1] == "batch" && !w[2].starts_with('-'))
-            .filter_map(|w| fs::read_to_string(cwd.join(w[2])).ok())
+            .windows(2)
+            .enumerate()
+            .filter(|(_, w)| UrgentHook::dibs(w[0]) && w[1] == "batch")
+            .filter_map(|(at, _)| words[at + 2..].iter().find(|w| !w.starts_with('-')))
+            .filter_map(|file| fs::read_to_string(cwd.join(file)).ok())
             .any(|steps| UrgentHook::asks(&steps))
     }
 
@@ -786,6 +788,7 @@ hostname = "workstation-b"
         fs::write(dir.join("plain"), "[m] dibs run --bench x\n").unwrap();
         assert!(UrgentHook::batches("dibs batch steps", &dir));
         assert!(UrgentHook::batches("DIBS_ON=a dibs batch steps", &dir));
+        assert!(UrgentHook::batches("dibs batch --detach steps", &dir));
         assert!(!UrgentHook::batches("dibs batch plain", &dir));
         assert!(!UrgentHook::batches("dibs batch missing", &dir));
         let _ = fs::remove_dir_all(&dir);
