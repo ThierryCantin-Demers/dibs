@@ -763,7 +763,7 @@ hostname = "workstation-b"
     fn an_urgent_call_is_asked_about_however_it_is_made() {
         for command in [
             "dibs run --bench --urgent 'review numbers' cargo bench",
-            "~/.local/bin/dibs --on gpu06 --bench --urgent=why x",
+            "~/.local/bin/dibs --on box-a --bench --urgent=why x",
             "DIBS_URGENT=why dibs --bench x",
             "set -x DIBS_URGENT why; dibs --bench x",
             "dibs batch - <<'EOF'\n[m] dibs run --bench --urgent 'why' x\nEOF",
