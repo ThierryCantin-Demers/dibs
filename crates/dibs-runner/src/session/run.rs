@@ -323,7 +323,10 @@ impl<'a> Run<'a> {
                 self.at.dir.mark_cards(pid, &pcis);
                 self.at.dir.mark_arrived(pid, order);
             }
-            Some(Takes::Machine) => self.at.dir.mark_arrived(pid, order),
+            Some(Takes::Machine) => {
+                self.at.dir.open_window(pid);
+                self.at.dir.mark_arrived(pid, order);
+            }
             None => {}
         }
         self.at
@@ -844,10 +847,9 @@ impl<'a> Run<'a> {
                 && dir.urgent_besides(pid).is_none()
                 && let Some(cards) = self.join(&mut lock, pcis, deadline)?
             {
-                // A card benchmark records its end before its card comes free, so one taken here
-                // after the window closed shows as closed now. Its copies of the machine's locks
-                // are closed, never unlocked, which would free them for every member.
-                if !dir.bench_first(pid, arrived.order, Some(pcis)) {
+                // Its copies of the machine's locks are closed, never unlocked, which would free
+                // them for every member.
+                if dir.enter_windows(pid, arrived.order, pcis, true) {
                     break Some((Some(cards), true));
                 }
                 drop(cards);
@@ -875,8 +877,14 @@ impl<'a> Run<'a> {
                 if let Some(pcis) = pcis
                     && let Some(cards) = self.join(&mut lock, pcis, deadline)?
                 {
-                    lock.leave_gate();
-                    break Some((Some(cards), true));
+                    if dir.enter_windows(pid, arrived.order, pcis, false) {
+                        lock.leave_gate();
+                        break Some((Some(cards), true));
+                    }
+                    drop(cards);
+                    lock = Lock::open(dir).map_err(no_lock)?;
+                    at_gate = false;
+                    continue;
                 }
                 if lock
                     .take(Hold::Exclusive, Some(Instant::now()))
@@ -886,12 +894,16 @@ impl<'a> Run<'a> {
                         Some(pcis) => Cards::take_now(dir, pcis).map_err(no_lock)?.map(Some),
                         None => Some(None),
                     };
+                    let entered = |cards: &Option<Cards>| {
+                        cards.is_none()
+                            || pcis.is_some_and(|p| dir.enter_windows(pid, arrived.order, p, false))
+                    };
                     match taken {
-                        Some(cards) => {
+                        Some(cards) if entered(&cards) => {
                             lock.leave_gate();
                             break Some((cards, false));
                         }
-                        None => lock.let_go(),
+                        _ => lock.let_go(),
                     }
                 } else if !asked && dir.only_later_preemptible(arrived.order) {
                     dir.ask_to_pause(pid, arrived.order, &arrived.job);
@@ -1531,9 +1543,6 @@ impl<'a> Run<'a> {
                     fingerprint: request.fingerprint.clone(),
                 },
             );
-        }
-        if end.acquired.sharing.is_some() {
-            self.at.dir.mark_departed();
         }
         drop(end.acquired.sharing);
         self.at.dir.clear(self.at.call.pid);
