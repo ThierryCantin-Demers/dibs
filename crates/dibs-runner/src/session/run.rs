@@ -92,6 +92,8 @@ fn guard_wait(deadline: Option<Instant>) -> Duration {
 /// A call in the queue: its job's id, and the fifo a hold waits on.
 struct Arrived {
     start: u64,
+    /// When it arrived, for `--wait`, which whole seconds of `start` would round.
+    since: Instant,
     /// When it arrived, in nanoseconds: the order a benchmark and a preemptible job are compared
     /// by, which a second cannot tell apart.
     order: u128,
@@ -257,10 +259,13 @@ impl<'a> Run<'a> {
                 break acquired;
             }
             drop(acquired);
+            // No window may list it between losing its admission and its holder record.
+            let guard = self.at.dir.join_guard(GUARD_WAIT);
             self.at.dir.leave_windows(self.at.call.pid);
             let _ = fs::remove_file(self.at.dir.file("urgent", self.at.call.pid));
             self.at.dir.write(Kind::Waiting, &record);
             let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
+            drop(guard);
         };
         // The machine as well as the cards: while the group winds down, shared work must not start.
         if let Some(cards) = &acquired.cards {
@@ -310,6 +315,7 @@ impl<'a> Run<'a> {
         let request = &self.at.call.request;
         let pid = self.at.call.pid;
         let start = Moment::epoch_now();
+        let since = Instant::now();
         let order = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_nanos());
@@ -373,6 +379,7 @@ impl<'a> Run<'a> {
         state.job = Some(job.clone());
         Ok(Arrived {
             start,
+            since,
             order,
             job,
             held,
@@ -571,12 +578,11 @@ impl<'a> Run<'a> {
 
     /// When `--wait` runs out, counted from the call's arrival.
     fn wait_until(&self, arrived: &Arrived) -> Option<Instant> {
-        let waited = Moment::epoch_now().saturating_sub(arrived.start);
         self.at
             .call
             .request
             .wait
-            .map(|wait| Instant::now() + Duration::from_secs(wait.saturating_sub(waited)))
+            .map(|wait| arrived.since + Duration::from_secs(wait))
     }
 
     /// A job that only compiles may be frozen, which nothing that holds a card, serves, or is
