@@ -110,11 +110,11 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     if args.device.is_some() {
         let req = JobRequest {
             label: &label,
-            lock: Lock::Shared,
+            lock,
             device: device.as_deref(),
             job: &RecipeJob::default(),
             max: None,
-            new_series: false,
+            new_series: args.new_series,
             preempt: false,
             tree: None,
         };

@@ -217,6 +217,9 @@ impl Card {
         if entry.device(one).is_some() {
             return vec![Alias::new(one)];
         }
+        if one == "cpu" {
+            return Vec::new();
+        }
         let named = match one.contains(':') {
             true => one.to_string(),
             false => format!("gpu:{one}"),

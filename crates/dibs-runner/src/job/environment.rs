@@ -256,6 +256,10 @@ impl Environment {
             let (Some(at), Some(size), Some(count)) = (word(32), half(54), half(56)) else {
                 return true;
             };
+            let end = at as usize + usize::from(count) * usize::from(size);
+            if count == 0 || size < 4 || end > bytes.len() {
+                return true;
+            }
             (0..usize::from(count)).any(|i| {
                 let entry = at as usize + i * usize::from(size);
                 bytes.get(entry..entry + 4) == Some(&3u32.to_le_bytes()[..])
