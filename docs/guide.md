@@ -749,10 +749,10 @@ keys on vendor and model, which names both halves of a matched pair. Set togethe
 reorders last and wins, which sends both aliases of a pair to one card while each looks pinned.
 So `DRI_PRIME` always, and the model selector only where the model names one card.
 
-Where the model names one card, the layer also hides the others, so a job that enumerates and
+`MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE` then has the layer hide every card but the default
+one, which `DRI_PRIME` chose for a matched pair, NVIDIA's included, so a job that enumerates and
 takes an index of its own still lands on the card that was named: the guarantee the CUDA
-variable gives. A matched pair cannot have it, the selector having no way to name one of the
-two, so there `DRI_PRIME` reorders and the other card stays visible.
+variable gives, and what lets benchmarks share a machine card by card.
 
 **One label, one series.** A label is the key a measurement's history is filed under, so two
 runs of it are meant to be two samples of one thing. They are not if they ran on different

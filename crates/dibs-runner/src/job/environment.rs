@@ -248,11 +248,11 @@ impl Pinned<'_> {
     fn vulkan(&self, vars: &mut BTreeMap<&'static str, String>) {
         let Pinned { card, pci, .. } = self;
         vars.insert("DRI_PRIME", format!("pci-{}", pci.replace([':', '.'], "_")));
+        vars.insert("MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE", "1".into());
         if let Some(chip) = &card.chip
             && card.twins == 1
         {
             vars.insert("MESA_VK_DEVICE_SELECT", chip.clone());
-            vars.insert("MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE", "1".into());
         }
     }
 
