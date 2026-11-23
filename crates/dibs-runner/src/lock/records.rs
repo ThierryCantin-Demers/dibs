@@ -120,6 +120,35 @@ impl LockDir {
         let _ = fs::write(self.file("arrived", pid), format!("{order}\n"));
     }
 
+    /// That a card benchmark ended, at `order`: a whole-machine benchmark queued before then lets
+    /// no more join the ones still running.
+    pub fn mark_departed(&self, order: u128) {
+        let _ = fs::write(self.path.join("departed"), format!("{order}\n"));
+    }
+
+    /// Whether a whole-machine benchmark that arrived before `order` waits with no card benchmark
+    /// ended since, so card benchmarks may still join the running ones ahead of it.
+    pub fn open_to_join(&self, pid: u32, order: u128) -> bool {
+        let ended = self.departed();
+        self.records(Kind::Waiting).iter().any(|w| {
+            w.mode == dibs_format::Mode::Bench
+                && w.pid != pid
+                && self.cards_of(w.pid).is_none()
+                && RecordFile(&self.file("waiting", w.pid)).alive()
+                && self
+                    .arrived(w.pid)
+                    .is_some_and(|theirs| theirs < order && ended.is_none_or(|e| e <= theirs))
+        })
+    }
+
+    fn departed(&self) -> Option<u128> {
+        fs::read_to_string(self.path.join("departed"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
     fn arrived(&self, pid: u32) -> Option<u128> {
         fs::read_to_string(self.file("arrived", pid))
             .ok()?
@@ -128,19 +157,23 @@ impl LockDir {
             .ok()
     }
 
-    /// A benchmark that arrived before `order` and must go first: one for the whole machine, or
-    /// one for a card among `pcis`, which None makes every card.
+    /// A benchmark that arrived before `order` and must go first: one for a card among `pcis`,
+    /// which None makes every card, or one for the whole machine, which card benchmarks join the
+    /// running ones ahead of only until the first of those ends.
     pub fn bench_first(&self, pid: u32, order: u128, pcis: Option<&[String]>) -> bool {
         self.records(Kind::Waiting).iter().any(|w| {
+            let Some(theirs) = self.arrived(w.pid) else {
+                return false;
+            };
             w.mode == dibs_format::Mode::Bench
                 && w.pid != pid
-                && self
-                    .arrived(w.pid)
-                    .is_some_and(|theirs| (theirs, w.pid) < (order, pid))
+                && (theirs, w.pid) < (order, pid)
                 && RecordFile(&self.file("waiting", w.pid)).alive()
-                && self.cards_of(w.pid).is_none_or(|theirs| {
-                    pcis.is_none_or(|pcis| theirs.iter().any(|c| pcis.contains(c)))
-                })
+                && match (self.cards_of(w.pid), pcis) {
+                    (Some(cards), Some(pcis)) => cards.iter().any(|c| pcis.contains(c)),
+                    (None, Some(_)) => self.departed().is_some_and(|ended| ended > theirs),
+                    (_, None) => true,
+                }
         })
     }
 

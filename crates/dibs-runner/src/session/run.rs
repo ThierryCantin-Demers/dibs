@@ -834,15 +834,37 @@ impl<'a> Run<'a> {
             .map(|wait| Instant::now() + Duration::from_secs(wait));
         let (mut at_gate, mut told, mut asked) = (false, false, false);
         let held = loop {
+            // A whole-machine benchmark keeps the gate while it waits, so a card benchmark it lets
+            // go ahead joins the running ones without it, as an urgent one does.
+            let open = pcis.is_some() && dir.open_to_join(pid, arrived.order);
+            if !at_gate
+                && open
+                && let Some(pcis) = pcis
+                && !dir.bench_first(pid, arrived.order, Some(pcis))
+                && dir.urgent_besides(pid).is_none()
+                && let Some(cards) = self.join(&mut lock, pcis, deadline)?
+            {
+                break Some((Some(cards), true));
+            }
+            let mut gated_out = false;
             if !at_gate {
-                if !lock.pass_gate(deadline).map_err(no_lock)? {
-                    break None;
+                let attempt = match open {
+                    true => Some(deadline.map_or(Instant::now() + BENCH_POLL, |d| {
+                        d.min(Instant::now() + BENCH_POLL)
+                    })),
+                    false => deadline,
+                };
+                match lock.pass_gate(attempt).map_err(no_lock)? {
+                    true => at_gate = true,
+                    false if open && deadline.is_none_or(|d| Instant::now() < d) => {
+                        gated_out = true;
+                    }
+                    false => break None,
                 }
-                at_gate = true;
             }
             let others_first =
                 dir.bench_first(pid, arrived.order, pcis) || dir.urgent_besides(pid).is_some();
-            if !others_first {
+            if at_gate && !others_first {
                 if let Some(pcis) = pcis
                     && let Some(cards) = self.join(&mut lock, pcis, deadline)?
                 {
@@ -901,11 +923,13 @@ impl<'a> Run<'a> {
                 .records(Kind::Holder)
                 .iter()
                 .any(|h| h.pid != pid && dir.cards_of(h.pid).is_some());
-            if others_first || (pcis.is_some() && card_running) {
+            if at_gate && (others_first || (pcis.is_some() && card_running)) {
                 lock.leave_gate();
                 at_gate = false;
             }
-            std::thread::sleep(BENCH_POLL);
+            if !gated_out {
+                std::thread::sleep(BENCH_POLL);
+            }
         };
         let Some((cards, adopted)) = held else {
             lock.leave_gate();
@@ -1500,6 +1524,12 @@ impl<'a> Run<'a> {
                     fingerprint: request.fingerprint.clone(),
                 },
             );
+        }
+        if end.acquired.sharing.is_some() {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos());
+            self.at.dir.mark_departed(now);
         }
         drop(end.acquired.sharing);
         self.at.dir.clear(self.at.call.pid);

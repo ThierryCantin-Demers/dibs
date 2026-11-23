@@ -869,7 +869,9 @@ a card. It refuses jobs, so it is off until everyone has updated.
 cards with `--device` locks those cards, all of them at once or none, and runs beside benchmarks
 on the others; together they hold the machine as one benchmark does, so builds and tests wait for
 the last of them. One waiting for a busy card holds up nobody on another, and one queued before
-it for the same card, or for the whole machine, still goes first. A card is locked alone only
+it for the same card still goes first. A benchmark of the whole machine queued behind running card
+benchmarks lets more join them on free cards until the first of them ends; then it waits for the
+rest, and goes next. A card is locked alone only
 where the job cannot reach another: every runtime it lists is pinned (CUDA, ROCm unless another
 PCI domain repeats its slot, and Vulkan for one card, with Mesa's device-select layer on), so the
 setting is for a machine whose cards are all of one vendor. Everything else, a benchmark naming no

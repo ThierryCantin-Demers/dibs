@@ -175,9 +175,9 @@ fn a_benchmark_waiting_for_a_busy_card_holds_up_nobody_on_another() {
 }
 
 #[test]
-fn a_benchmark_naming_no_card_closes_the_machine_to_card_benchmarks_after_it() {
+fn a_whole_machine_benchmark_lets_card_benchmarks_join_until_the_first_of_them_ends() {
     let Some(mut s) = card_machine() else { return };
-    let (first, whole) = (s.gate("first"), s.gate("whole"));
+    let (first, second, whole) = (s.gate("first"), s.gate("second"), s.gate("whole"));
     let order = s.p("order");
     let a = s.spawn(bench(
         &s,
@@ -193,17 +193,32 @@ fn a_benchmark_naming_no_card_closes_the_machine_to_card_benchmarks_after_it() {
         &format!("echo whole >> {order}; {}", whole.hold()),
     ));
     s.gate_taken();
-    let b = s.spawn(bench(&s, Some("gpu:b"), "b", &format!("echo b >> {order}")));
-    s.queued(2);
+    let b = s.spawn(bench(
+        &s,
+        Some("gpu:b"),
+        "b",
+        &format!("echo b >> {order}; {}", second.hold()),
+    ));
+    s.until_records("a free card to be joined while nothing has ended", || {
+        s.read("order") == "a\nb\n"
+    });
     first.open();
     assert_eq!(s.wait(a), 0);
+    let c = s.spawn(bench(&s, Some("gpu:a"), "c", &format!("echo c >> {order}")));
+    s.queued(2);
+    second.open();
+    assert_eq!(s.wait(b), 0);
     s.until_records("the whole-machine benchmark to run", || {
-        s.read("order") == "a\nwhole\n"
+        s.read("order") == "a\nb\nwhole\n"
     });
     whole.open();
     assert_eq!(s.wait(machine), 0);
-    assert_eq!(s.wait(b), 0);
-    assert_eq!(s.read("order"), "a\nwhole\nb\n");
+    assert_eq!(s.wait(c), 0);
+    assert_eq!(
+        s.read("order"),
+        "a\nb\nwhole\nc\n",
+        "once one has ended, the rest finish and the whole machine goes next"
+    );
     s.gone();
 }
 

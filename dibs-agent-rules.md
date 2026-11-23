@@ -213,7 +213,8 @@ spoiled without it.
   measured on that machine goes back to its card, waiting for it if it is busy, so its series
   stays comparable. Name a slot only to measure that slot.
 - On a machine set to `benchmarks = "card"`, a benchmark that names its cards runs beside
-  benchmarks on the others; builds and tests still wait for all of them.
+  benchmarks on the others; builds and tests still wait for all of them. A whole-machine
+  benchmark queued behind them lets card benchmarks join until the first of them ends.
 - Each machine keeps its own series of a label, since numbers from two machines never compare.
   The first run of a label on a machine says on stderr where its other series are: read it, since
   a forgotten `--on` is exactly that line. Keep the plain label for new work; `-kd` and `-mg`
