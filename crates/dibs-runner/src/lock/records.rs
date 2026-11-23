@@ -143,7 +143,7 @@ impl LockDir {
             .filter(|file| RecordFile(file).alive())
             .filter_map(|file| RecordFile(file).pid())
             .filter(|&p| p != pid)
-            .filter_map(|p| Member::of(p).filter(|m| self.member_live(m)))
+            .filter_map(|p| self.member(p).filter(|m| self.member_live(m)))
             .map(|m| m.to_string())
             .collect();
         members.sort_unstable();
@@ -159,7 +159,11 @@ impl LockDir {
     /// so has one sent back to the queue, which keeps its card record.
     fn member_live(&self, member: &Member) -> bool {
         let card = self.file("card", member.pid);
-        (self.file("admitted", member.pid).exists() || self.file("holder", member.pid).exists())
+        let admitted = match member.admission {
+            0 => self.file("holder", member.pid).exists(),
+            admission => self.admission(member.pid) == Some(admission),
+        };
+        admitted
             && card.exists()
             && RecordFile(&card).alive()
             && Host::running(member.pid)
@@ -241,17 +245,44 @@ impl LockDir {
 
     fn write_count(&self, pid: u32, order: u128) -> io::Result<()> {
         let began = Host::started_at(pid).ok_or_else(|| io::Error::other("no start time"))?;
-        fs::write(self.file("admitted", pid), "")?;
+        let admission = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(1, |since| since.as_nanos().max(1));
+        fs::write(self.file("admitted", pid), format!("{admission}\n"))?;
         for machine in self.machines_before(pid, order) {
-            fs::write(self.file(&format!("joined.{machine}.{began}"), pid), "")?;
+            fs::write(
+                self.file(&format!("joined.{machine}.{began}.{admission}"), pid),
+                "",
+            )?;
         }
         Ok(())
+    }
+
+    /// This admission of `pid`, which a job sent back to the queue and admitted again does not
+    /// share with the one a window counted.
+    fn admission(&self, pid: u32) -> Option<u128> {
+        fs::read_to_string(self.file("admitted", pid))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
+    /// `pid` as a window counts it: by its current admission, or by its holder record when a
+    /// runner from before admissions holds the card.
+    fn member(&self, pid: u32) -> Option<Member> {
+        Some(Member {
+            pid,
+            began: Host::started_at(pid)?,
+            admission: self.admission(pid).unwrap_or(0),
+        })
     }
 
     /// Counts `pid` in, then whether it may still run: a member that ended before it counted
     /// closed the window, and a group is started only with no whole-machine benchmark queued
     /// before it. One that may not is taken out again.
-    /// A guard still held after `within` refuses it for now, as a busy card would.
+    /// A guard still held after `within`, when the call's deadline cut it short, refuses it for
+    /// now, as a busy card would; held for the whole of GUARD_WAIT, its holder is stuck.
     pub fn enter_windows(
         &self,
         pid: u32,
@@ -262,7 +293,9 @@ impl LockDir {
     ) -> io::Result<bool> {
         let _guard = match self.join_guard(within) {
             Ok(guard) => guard,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock && within < GUARD_WAIT => {
+                return Ok(false);
+            }
             Err(e) => return Err(e),
         };
         self.count_in(pid, order)?;
@@ -282,8 +315,8 @@ impl LockDir {
     /// Takes back this process's admission; a finished one of the same pid keeps its join
     /// records, which are what close its windows.
     pub fn leave_windows(&self, pid: u32) {
+        let me = self.member(pid).filter(|m| m.admission != 0);
         let _ = fs::remove_file(self.file("admitted", pid));
-        let me = Member::of(pid);
         for joined in self.named("joined") {
             if me.is_some() && Member::joined(&joined) == me {
                 let _ = fs::remove_file(joined);
@@ -649,42 +682,45 @@ impl LockDir {
     }
 }
 
-/// A card benchmark a window counts, as `<pid>:<start>`: a pid alone would name whoever has it next.
+/// A card benchmark a window counts, as `<pid>:<start>:<admission>`: a pid alone would name
+/// whoever has it next, and a pid and start the same job admitted again after a closure.
 #[derive(Debug, PartialEq, Eq)]
 struct Member {
     pid: u32,
     began: u64,
+    /// 0 for a holder whose runner wrote no admission.
+    admission: u128,
 }
 
 impl Member {
-    fn of(pid: u32) -> Option<Member> {
-        Some(Member {
-            pid,
-            began: Host::started_at(pid)?,
-        })
-    }
-
     fn parse(text: &str) -> Option<Member> {
-        let (pid, began) = text.split_once(':')?;
-        Some(Member {
-            pid: pid.parse().ok()?,
-            began: began.parse().ok()?,
-        })
+        let mut parts = text.split(':');
+        let member = Member {
+            pid: parts.next()?.parse().ok()?,
+            began: parts.next()?.parse().ok()?,
+            admission: parts.next()?.parse().ok()?,
+        };
+        parts.next().is_none().then_some(member)
     }
 
-    /// From `joined.<machine>.<start>.<pid>`.
+    /// From `joined.<machine>.<start>.<admission>.<pid>`.
     fn joined(path: &Path) -> Option<Member> {
         let name = path.file_name()?.to_str()?;
         let mut parts = name.split('.').skip(2);
         let began = parts.next()?.parse().ok()?;
+        let admission = parts.next()?.parse().ok()?;
         let pid = parts.next()?.parse().ok()?;
-        Some(Member { pid, began })
+        Some(Member {
+            pid,
+            began,
+            admission,
+        })
     }
 }
 
 impl std::fmt::Display for Member {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.pid, self.began)
+        write!(f, "{}:{}:{}", self.pid, self.began, self.admission)
     }
 }
 
@@ -758,15 +794,22 @@ mod tests {
         dir.open_window(machine);
         assert!(dir.window_open(machine));
         let listed = fs::read_to_string(dir.file("window", machine)).unwrap();
-        fs::write(dir.file("window", machine), format!("{me}:1\n")).unwrap();
+        fs::write(dir.file("window", machine), format!("{me}:1:1\n")).unwrap();
         assert!(
             !dir.window_open(machine),
             "another process given a member's pid is not that member"
         );
-        fs::write(dir.file("window", machine), listed).unwrap();
+        fs::write(dir.file("window", machine), &listed).unwrap();
+        dir.count_in(me, 0).unwrap();
+        assert!(
+            !dir.window_open(machine),
+            "the same job admitted again is not the admission the window counted"
+        );
+        let counted = listed.trim().rsplit(':').next().unwrap().to_string();
+        fs::write(dir.file("admitted", me), counted).unwrap();
         dir.mark_cards(gone, &["0000:83:00.0".to_string()]);
         fs::write(dir.file("admitted", gone), "").unwrap();
-        fs::write(dir.file(&format!("joined.{machine}.1"), gone), "").unwrap();
+        fs::write(dir.file(&format!("joined.{machine}.1.1"), gone), "").unwrap();
         assert!(
             !dir.window_open(machine),
             "a joiner killed outright has ended"
@@ -777,7 +820,7 @@ mod tests {
             !dir.window_open(machine),
             "a joiner that finished keeps its record when another of its pid steps back"
         );
-        fs::remove_file(dir.file(&format!("joined.{machine}.1"), gone)).unwrap();
+        fs::remove_file(dir.file(&format!("joined.{machine}.1.1"), gone)).unwrap();
         assert!(dir.window_open(machine));
         dir.clear(me);
         assert!(

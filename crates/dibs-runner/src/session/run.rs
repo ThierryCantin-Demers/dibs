@@ -459,9 +459,7 @@ impl<'a> Run<'a> {
                 why: why.to_string(),
             })
             .map_err(|e| refused(&e))?;
-        let deadline = request
-            .wait
-            .map(|wait| Instant::now() + Duration::from_secs(wait));
+        let deadline = self.wait_until(arrived);
         let mut told = false;
         loop {
             let running = self.at.dir.unparked(pid, &arrived.job);
@@ -855,9 +853,7 @@ impl<'a> Run<'a> {
             Takes::Machine => None,
         };
         let mut lock = Lock::open(dir).map_err(no_lock)?;
-        let deadline = request
-            .wait
-            .map(|wait| Instant::now() + Duration::from_secs(wait));
+        let deadline = self.wait_until(arrived);
         let (mut at_gate, mut told, mut asked) = (false, false, false);
         let held = loop {
             // A whole-machine benchmark keeps the gate while it waits, so a card benchmark it lets
@@ -1039,18 +1035,16 @@ impl<'a> Run<'a> {
         // Around the gate, since a benchmark of the whole machine may wait there for the very
         // benchmarks this one joins.
         let mut lock = Lock::open(self.at.dir).map_err(|e| self.no_lock(&e))?;
-        let deadline = self
-            .at
-            .call
-            .request
-            .wait
-            .map(|wait| Instant::now() + Duration::from_secs(wait));
+        let deadline = self.wait_until(arrived);
         let Some(cards) = self.join(&mut lock, pcis, deadline)? else {
             return Ok(None);
         };
-        let guard = match self.at.dir.join_guard(guard_wait(deadline)) {
+        let within = guard_wait(deadline);
+        let guard = match self.at.dir.join_guard(within) {
             Ok(guard) => guard,
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock && within < GUARD_WAIT => {
+                return Ok(None);
+            }
             Err(e) => return Err(self.no_lock(&e)),
         };
         self.at
