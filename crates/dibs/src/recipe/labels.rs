@@ -55,11 +55,11 @@ pub fn shell_name(label: Option<&str>, command: &str) -> String {
     }
 }
 
-/// Whether `label` is filed as written: anything else would be filed under a name another label
-/// shares, and `dibs runs` would not find it under the one given.
+/// Whether `label` is filed as written and apart from every other: anything outside these would
+/// be filed as `_`, and so would the `@` before a card, so `a_cpu` and `a` on `cpu` would meet.
 pub fn files_as_written(label: &str) -> bool {
     !label.is_empty()
         && label
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
 }

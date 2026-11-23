@@ -30,7 +30,7 @@ pub struct Resolved {
 
 /// A shell's own words are refused before its tree is looked for, and all in one refusal, so
 /// one try finds them all.
-fn refuse_shell_words(args: &RecipeCall) -> Result<(), RecipeError> {
+fn refuse_shell_words(args: &RecipeCall, planned: bool) -> Result<(), RecipeError> {
     let mut wrong = Vec::new();
     if args.reason.is_none() {
         wrong.push(ShellWords::NoReason);
@@ -40,7 +40,12 @@ fn refuse_shell_words(args: &RecipeCall) -> Result<(), RecipeError> {
         (None, None) => wrong.push(ShellWords::NoCommand),
         _ => {}
     }
-    if let Some(label) = args.params.get("label").filter(|l| !files_as_written(l)) {
+    // A batch reads its lines before the shell that runs each step expands them.
+    if let Some(label) = args
+        .params
+        .get("label")
+        .filter(|l| !(planned && l.contains('$')) && !files_as_written(l))
+    {
         wrong.push(ShellWords::Label(label.clone()));
     }
     wrong.extend(
@@ -57,12 +62,12 @@ fn refuse_shell_words(args: &RecipeCall) -> Result<(), RecipeError> {
 impl Resolved {
     /// What a shell call refuses in its own words, which a batch refuses before it starts.
     pub fn shell_words(args: &RecipeCall) -> Result<(), RecipeError> {
-        refuse_shell_words(args)
+        refuse_shell_words(args, true)
     }
 
     pub fn of(args: &RecipeCall) -> Result<Resolved, RecipeError> {
         if args.verb == RecipeVerb::Shell {
-            Resolved::shell_words(args)?;
+            refuse_shell_words(args, false)?;
         }
         let found = Checkouts::of(args).and_then(|checkouts| checkouts.find(&args.repo));
         let dir = found?;

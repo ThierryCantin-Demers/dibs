@@ -206,8 +206,8 @@ the recipe's own output, which `dibs out <job>` reads.
 default cap is too short for it. Its durations and its series are filed under the command:
 `app/shell/cargo-bench-3f9a1c07d2e4`, from the program's first words and a hash of the whole, so the same
 command run again is one history and a changed one starts another. `--label <work>` files it under
-the work instead, `app/shell/<work>`, for a command that changes in what does not matter, such as a
-scratch path; name the kind of work, never the run. A measured `cargo bench` or `cargo test` is built first with
+the work instead, `app/shell/<work>`, in letters, digits, `.` and `-`, for a command that changes
+in what does not matter, such as a scratch path; name the kind of work, never the run. A measured `cargo bench` or `cargo test` is built first with
 `--no-run` under the shared lock, as a recipe's steps would be. `dibs raw` and `dibs shell` refuse
 any other `--name value` rather than drop it, `raw` also refuses the flags only a recipe acts on,
 such as `--bench` and `--reps`, and both point `--with`, `--port` and `--ready` at `dibs run`,

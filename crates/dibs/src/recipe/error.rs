@@ -289,7 +289,7 @@ impl fmt::Display for ShellWords {
             ShellWords::NoCommand => f.write_str("needs -- <command>"),
             ShellWords::Label(label) => write!(
                 f,
-                "--label takes letters, digits, '.', '_' and '-', and '{label}' has more: name the work in those"
+                "--label takes letters, digits, '.' and '-', and '{label}' has more: name the work in those"
             ),
             ShellWords::NotTaken(not_taken) => not_taken.fmt(f),
         }

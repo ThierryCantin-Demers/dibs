@@ -125,7 +125,10 @@ impl Wanted {
             if word == "--" {
                 return Wanted::Nothing;
             }
-            if let Some(flag) = Flag::named(RECIPE, word) {
+            // Only a shell takes --label; for a recipe it is a parameter with choices of its own.
+            if let Some(flag) = Flag::named(RECIPE, word)
+                .filter(|f| verb == RecipeVerb::Shell || !f.names.contains(&"--label"))
+            {
                 let takes = flag.value != Value::No;
                 match rest.get(at + 1) {
                     None if takes => return Wanted::value(flag, current, on),
