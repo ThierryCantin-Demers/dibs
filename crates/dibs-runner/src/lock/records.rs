@@ -109,7 +109,7 @@ impl LockDir {
     pub fn set_deadline(&self, pid: u32, at: Option<f64>) {
         let file = self.file("deadline", pid);
         let _ = match at {
-            Some(at) => fs::write(file, format!("{at:.3}\n")),
+            Some(at) => fs::write(file, format!("{at}\n")),
             None => fs::remove_file(file),
         };
     }

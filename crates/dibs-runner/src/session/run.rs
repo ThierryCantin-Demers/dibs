@@ -1393,6 +1393,7 @@ impl<'a> Run<'a> {
                 },
             );
             if readied != Readied::Ready {
+                self.at.dir.set_deadline(pid, None);
                 services.stop();
             }
             hosted.failed = matches!(readied, Readied::Failed | Readied::Cancelled);

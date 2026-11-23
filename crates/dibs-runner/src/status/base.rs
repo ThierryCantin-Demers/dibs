@@ -269,12 +269,13 @@ impl Look<'_> {
         Some(said.trim().to_string()).filter(|s| !s.is_empty())
     }
 
-    /// None while frozen or parked, whose ends move the deadline.
+    /// On the clock `elapsed` counts by, whole seconds since the epoch. None while frozen or
+    /// parked, whose ends move the deadline.
     fn killed_at(&self, pid: u32, start: u64) -> Option<u64> {
         let waiting = matches!(self.dir.ahead_of(pid), Some(Ahead::Paused(_)))
             || self.dir.parked_for(pid).is_some();
         let at = self.dir.deadline(pid).filter(|_| !waiting)?;
-        Some((at - start as f64).round().max(0.0) as u64)
+        Some((at.floor() as u64).saturating_sub(start))
     }
 
     fn command(&self, pid: u32) -> Option<String> {
