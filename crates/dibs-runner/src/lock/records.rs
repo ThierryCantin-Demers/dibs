@@ -155,10 +155,12 @@ impl LockDir {
     }
 
     /// A card benchmark ends when its records go, which a runner killed outright never removes,
-    /// so one whose process is gone, a zombie, or another process given its pid, has ended too.
+    /// so one whose process is gone, a zombie, or another process given its pid, has ended too;
+    /// so has one sent back to the queue, which keeps its card record.
     fn member_live(&self, member: &Member) -> bool {
         let card = self.file("card", member.pid);
-        card.exists()
+        (self.file("admitted", member.pid).exists() || self.file("holder", member.pid).exists())
+            && card.exists()
             && RecordFile(&card).alive()
             && Host::running(member.pid)
             && Host::started_at(member.pid) == Some(member.began)
@@ -249,14 +251,20 @@ impl LockDir {
     /// Counts `pid` in, then whether it may still run: a member that ended before it counted
     /// closed the window, and a group is started only with no whole-machine benchmark queued
     /// before it. One that may not is taken out again.
+    /// A guard still held after `within` refuses it for now, as a busy card would.
     pub fn enter_windows(
         &self,
         pid: u32,
         order: u128,
         pcis: &[String],
         entry: Entry,
+        within: Duration,
     ) -> io::Result<bool> {
-        let _guard = self.join_guard(GUARD_WAIT)?;
+        let _guard = match self.join_guard(within) {
+            Ok(guard) => guard,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+            Err(e) => return Err(e),
+        };
         self.count_in(pid, order)?;
         let may = match entry {
             Entry::Starts => self.machines_before(pid, order).is_empty(),

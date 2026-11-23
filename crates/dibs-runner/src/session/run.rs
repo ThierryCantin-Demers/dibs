@@ -51,6 +51,9 @@ const AHEAD_POLL: Duration = Duration::from_millis(100);
 /// How often a benchmark tries `rw` again while it waits for the jobs that hold it, which is
 /// how it learns that only preemptible ones it may freeze are left.
 const BENCH_POLL: Duration = Duration::from_millis(50);
+
+/// How often a card benchmark kept from the gate looks whether a window opened for it to join.
+const JOIN_RECHECK: Duration = Duration::from_secs(1);
 /// The log is cut back to its last lines once it outgrows the bound.
 const LOG_BOUND: usize = 20000;
 const LOG_KEPT: usize = 10000;
@@ -77,6 +80,13 @@ impl Serving<'_> {
             path: &self.machine.log,
         }
     }
+}
+
+/// The join guard's wait, cut to what is left of the call's own.
+fn guard_wait(deadline: Option<Instant>) -> Duration {
+    deadline.map_or(GUARD_WAIT, |d| {
+        GUARD_WAIT.min(d.saturating_duration_since(Instant::now()))
+    })
 }
 
 /// A call in the queue: its job's id, and the fifo a hold waits on.
@@ -247,6 +257,7 @@ impl<'a> Run<'a> {
                 break acquired;
             }
             drop(acquired);
+            self.at.dir.leave_windows(self.at.call.pid);
             let _ = fs::remove_file(self.at.dir.file("urgent", self.at.call.pid));
             self.at.dir.write(Kind::Waiting, &record);
             let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
@@ -321,7 +332,10 @@ impl<'a> Run<'a> {
         let machine = matches!(claim, Some(Takes::Machine));
         // A whole-machine benchmark's record and the card benchmarks it lets ahead appear at once;
         // without the guard it lists none, and lets none ahead.
-        let window = machine.then(|| self.at.dir.join_guard(GUARD_WAIT));
+        let within = request
+            .wait
+            .map_or(GUARD_WAIT, |wait| GUARD_WAIT.min(Duration::from_secs(wait)));
+        let window = machine.then(|| self.at.dir.join_guard(within));
         // Before the record, so nobody reads it as a benchmark of the whole machine.
         match &claim {
             Some(Takes::Cards(pcis)) => {
@@ -859,7 +873,13 @@ impl<'a> Run<'a> {
                 // Its copies of the machine's locks are closed, never unlocked, which would free
                 // them for every member.
                 if dir
-                    .enter_windows(pid, arrived.order, pcis, Entry::JoinsAhead)
+                    .enter_windows(
+                        pid,
+                        arrived.order,
+                        pcis,
+                        Entry::JoinsAhead,
+                        guard_wait(deadline),
+                    )
                     .map_err(no_lock)?
                 {
                     break Some((Some(cards), true));
@@ -870,8 +890,8 @@ impl<'a> Run<'a> {
             let mut gated_out = false;
             if !at_gate {
                 let attempt = match pcis.is_some() {
-                    true => Some(deadline.map_or(Instant::now() + BENCH_POLL, |d| {
-                        d.min(Instant::now() + BENCH_POLL)
+                    true => Some(deadline.map_or(Instant::now() + JOIN_RECHECK, |d| {
+                        d.min(Instant::now() + JOIN_RECHECK)
                     })),
                     false => deadline,
                 };
@@ -890,7 +910,7 @@ impl<'a> Run<'a> {
                     && let Some(cards) = self.join(&mut lock, pcis, deadline)?
                 {
                     if dir
-                        .enter_windows(pid, arrived.order, pcis, Entry::Joins)
+                        .enter_windows(pid, arrived.order, pcis, Entry::Joins, guard_wait(deadline))
                         .map_err(no_lock)?
                     {
                         lock.leave_gate();
@@ -915,7 +935,13 @@ impl<'a> Run<'a> {
                     };
                     let entered = match (&taken, pcis) {
                         (Some(Some(_)), Some(p)) => dir
-                            .enter_windows(pid, arrived.order, p, Entry::Starts)
+                            .enter_windows(
+                                pid,
+                                arrived.order,
+                                p,
+                                Entry::Starts,
+                                guard_wait(deadline),
+                            )
                             .map_err(no_lock)?,
                         _ => true,
                     };
@@ -1022,11 +1048,11 @@ impl<'a> Run<'a> {
         let Some(cards) = self.join(&mut lock, pcis, deadline)? else {
             return Ok(None);
         };
-        let guard = self
-            .at
-            .dir
-            .join_guard(GUARD_WAIT)
-            .map_err(|e| self.no_lock(&e))?;
+        let guard = match self.at.dir.join_guard(guard_wait(deadline)) {
+            Ok(guard) => guard,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+            Err(e) => return Err(self.no_lock(&e)),
+        };
         self.at
             .dir
             .count_in(self.at.call.pid, arrived.order)
