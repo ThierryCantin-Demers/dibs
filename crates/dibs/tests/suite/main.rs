@@ -6,6 +6,7 @@ mod harness;
 mod ahead;
 mod baselines;
 mod batch;
+mod cards;
 mod cli;
 mod client;
 mod closed;

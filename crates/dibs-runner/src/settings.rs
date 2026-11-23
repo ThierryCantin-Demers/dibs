@@ -45,11 +45,12 @@ enum Whose {
 }
 
 impl Key {
-    const ALL: [Key; 24] = [
+    const ALL: [Key; 25] = [
         Key::of_setter("bypass", Setter::Machine),
         Key::of_setter("quick", Setter::Machine),
         Key::of_setter("patience", Setter::Machine),
         Key::of_setter("machine_series", Setter::Machine),
+        Key::of_setter("benchmarks", Setter::Machine),
         Key::of_setter("peek_warn", Setter::Account),
         Key::of_setter("digest_head", Setter::Account),
         Key::of_setter("digest_tail", Setter::Account),
@@ -289,6 +290,9 @@ pub struct Settings {
     pub reflinks: Reflinks,
     /// The machine holds every label's measurements to one card, whoever runs them.
     pub machine_series: bool,
+    /// `benchmarks = "card"`: a benchmark that names its cards holds only them, beside other
+    /// card benchmarks, and keeps everything else off the machine as a benchmark does.
+    pub card_benchmarks: bool,
     /// The kernel cannot list a process's children, so the whole table is read instead.
     #[cfg(target_os = "linux")]
     pub no_children: bool,
@@ -326,6 +330,7 @@ impl Settings {
             sweep_budget: number("DIBS_SWEEP_BUDGET", 5),
             reflinks: Reflinks::of(var("DIBS_REFLINK").as_deref()),
             machine_series: setting("DIBS_MACHINE_SERIES").is_some_and(|v| v == "1"),
+            card_benchmarks: setting("DIBS_BENCHMARKS").is_some_and(|v| v == "card"),
             bypass: setting("DIBS_BYPASS").is_none_or(|v| v == "1"),
             patience: number("DIBS_PATIENCE", 60),
             quick: number("DIBS_QUICK", 10),

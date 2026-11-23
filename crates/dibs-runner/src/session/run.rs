@@ -10,7 +10,10 @@ use crate::{
         Services, Start,
     },
     kill::DESCRIBED,
-    lock::{Hold, Kind, Lock, LockDir, Urgent},
+    lock::{
+        Cards, Hold, Kind, Lock, LockDir, Urgent,
+        cohort::{self, Sharing},
+    },
     machine::Site,
     park::{self, Parking},
     platform::{Host, Platform as _},
@@ -116,8 +119,11 @@ enum Waited {
     GaveUpAtLock,
 }
 
-/// The lock, taken.
+/// The lock, taken. Fields drop in order, so a card benchmark stops handing out copies of the
+/// lock before its own go.
 struct Acquired {
+    sharing: Option<Sharing>,
+    cards: Option<Cards>,
     lock: Lock,
     at: u64,
     waited: u64,
@@ -210,10 +216,11 @@ impl<'a> Run<'a> {
             if let Err(code) = self.until_open(&arrived) {
                 return code;
             }
-            let acquired = match (preempts, self.urgent()) {
-                (_, Some(why)) => self.acquire_urgent(&arrived, why),
-                (true, None) => self.acquire_ahead(&history, &arrived),
-                (false, None) => self.acquire(&history, &arrived),
+            let acquired = match (preempts, self.urgent(), self.card_pcis()) {
+                (_, Some(why), _) => self.acquire_urgent(&arrived, why),
+                (true, None, _) => self.acquire_ahead(&history, &arrived),
+                (false, None, Some(pcis)) => self.acquire_card(&arrived, &pcis),
+                (false, None, None) => self.acquire(&history, &arrived),
             };
             let acquired = match acquired {
                 Ok(acquired) => acquired,
@@ -295,6 +302,9 @@ impl<'a> Run<'a> {
             .write(Kind::Waiting, &self.at.call.lock_record(start, &job));
         if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
             let _ = fs::write(self.at.dir.file("batch", pid), format!("{batch}\n"));
+        }
+        if let Some(pcis) = self.card_pcis() {
+            self.at.dir.mark_cards(pid, &pcis);
         }
         // Beside the lock record rather than in it: a runner reading a record with a field it
         // does not know drops the record, and with it a holder its benchmark must not run beside.
@@ -434,6 +444,8 @@ impl<'a> Run<'a> {
         }
         let now = Moment::epoch_now();
         Ok(Acquired {
+            sharing: None,
+            cards: None,
             lock,
             at: now,
             waited: now.saturating_sub(arrived.start),
@@ -600,6 +612,8 @@ impl<'a> Run<'a> {
         }
         let now = Moment::epoch_now();
         Ok(Acquired {
+            sharing: None,
+            cards: None,
             lock,
             at: now,
             waited: now.saturating_sub(arrived.start),
@@ -719,6 +733,143 @@ impl<'a> Run<'a> {
         }
         let now = Moment::epoch_now();
         Ok(Acquired {
+            sharing: None,
+            cards: None,
+            lock,
+            at: now,
+            waited: now.saturating_sub(arrived.start),
+            ahead: false,
+            claim: None,
+        })
+    }
+
+    /// The slots of the cards a benchmark names, on a machine whose benchmarks hold only their
+    /// cards. A hold or a job with servers holds the machine: what runs outside it, or beside
+    /// it, has no card of its own.
+    fn card_pcis(&self) -> Option<Vec<String>> {
+        let request = &self.at.call.request;
+        if !self.at.settings.card_benchmarks
+            || self.at.call.mode() != Mode::Bench
+            || request.watch.hold
+            || !request.services.is_empty()
+        {
+            return None;
+        }
+        let pcis: Option<Vec<String>> = request
+            .card
+            .iter()
+            .chain(&request.also)
+            .map(|card| card.pci.clone())
+            .collect();
+        pcis.filter(|pcis| !pcis.is_empty())
+    }
+
+    /// A card benchmark joins the ones running when its cards are free, and takes the machine as
+    /// a benchmark does when none runs. It never waits holding part of what it needs, so one
+    /// waiting on a busy card keeps nobody from an idle one.
+    fn acquire_card(&self, arrived: &Arrived, pcis: &[String]) -> Result<Acquired, i32> {
+        let request = &self.at.call.request;
+        let pid = self.at.call.pid;
+        let dir = self.at.dir;
+        let no_lock = |e: io::Error| {
+            self.at.sink.say(&format!(
+                "dibs: the lock in {} could not be taken: {e}. Nothing was run.\n",
+                dir.path.display()
+            ));
+            dir.clear(pid);
+            Exit::NoLock.status()
+        };
+        let mut lock = Lock::open(dir).map_err(no_lock)?;
+        let deadline = request
+            .wait
+            .map(|wait| Instant::now() + Duration::from_secs(wait));
+        let (mut at_gate, mut told, mut asked) = (false, false, false);
+        let joined = loop {
+            if !at_gate {
+                if !lock.pass_gate(deadline).map_err(no_lock)? {
+                    break None;
+                }
+                at_gate = true;
+            }
+            let others_first =
+                dir.bench_first(pid, arrived.start, pcis) || dir.urgent_besides(pid).is_some();
+            if !others_first {
+                if let Some((rw, ahead)) = cohort::join(dir, pid) {
+                    if let Some(cards) = Cards::take_now(dir, pcis).map_err(no_lock)? {
+                        lock.adopt(rw, ahead);
+                        lock.leave_gate();
+                        break Some((cards, true));
+                    }
+                } else if lock
+                    .take(Hold::Exclusive, Some(Instant::now()))
+                    .map_err(no_lock)?
+                {
+                    match Cards::take_now(dir, pcis).map_err(no_lock)? {
+                        Some(cards) => {
+                            lock.leave_gate();
+                            break Some((cards, false));
+                        }
+                        None => lock.let_go(),
+                    }
+                } else if !asked && dir.only_later_preemptible(arrived.order) {
+                    dir.ask_to_pause(pid, arrived.order, &arrived.job);
+                    asked = true;
+                }
+            }
+            if !told {
+                self.at.sink.say(&format!(
+                    "dibs: waiting for {} and the benchmarks ahead of it.\n",
+                    pcis.join(" ")
+                ));
+                told = true;
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                break None;
+            }
+            // Waiting out shared work keeps the gate, as a benchmark does, so none starts
+            // meanwhile; waiting on a card or on a benchmark ahead lets others reach theirs.
+            let card_running = dir
+                .records(Kind::Holder)
+                .iter()
+                .any(|h| h.pid != pid && dir.cards_of(h.pid).is_some());
+            if others_first || card_running {
+                lock.leave_gate();
+                at_gate = false;
+            }
+            std::thread::sleep(BENCH_POLL);
+        };
+        let Some((cards, adopted)) = joined else {
+            lock.leave_gate();
+            let _ = fs::remove_file(dir.file("pause", pid));
+            let wait = request.wait.unwrap_or_default();
+            self.at
+                .sink
+                .say(&format!("dibs: still busy after {wait}s, gave up.\n"));
+            let mut state = self.at.stopper.state();
+            self.abandon(&arrived.job, &mut state);
+            return Err(Exit::Busy.status());
+        };
+        if !adopted
+            && !self
+                .pause_ahead(&lock, arrived, deadline)
+                .map_err(no_lock)?
+        {
+            let wait = request.wait.unwrap_or_default();
+            self.at.sink.say(&format!(
+                "dibs: still busy after {wait}s, gave up: a job queued before it still runs.\n"
+            ));
+            let mut state = self.at.stopper.state();
+            self.abandon(&arrived.job, &mut state);
+            return Err(Exit::Busy.status());
+        }
+        let sharing = lock
+            .handles()
+            .and_then(|(ahead, rw)| Sharing::start(dir, pid, rw, ahead))
+            .ok();
+        let now = Moment::epoch_now();
+        Ok(Acquired {
+            sharing,
+            cards: Some(cards),
             lock,
             at: now,
             waited: now.saturating_sub(arrived.start),
@@ -1211,7 +1362,9 @@ impl<'a> Run<'a> {
                 },
             );
         }
+        drop(end.acquired.sharing);
         self.at.dir.clear(self.at.call.pid);
+        drop(end.acquired.cards);
         drop(end.acquired.lock);
         drop(end.acquired.claim);
         if let Some(ended) = &ended {

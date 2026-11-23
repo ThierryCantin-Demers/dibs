@@ -37,7 +37,7 @@ impl Lock {
         })
     }
 
-    fn file(path: &Path) -> io::Result<File> {
+    pub fn file(path: &Path) -> io::Result<File> {
         OpenOptions::new()
             .write(true)
             .create(true)
@@ -83,6 +83,11 @@ impl Lock {
         Lock::wait(&self.rw, hold, deadline)
     }
 
+    /// Lets go of `rw`, held by this call's own handle alone.
+    pub fn let_go(&self) {
+        let _ = self.rw.unlock();
+    }
+
     /// Takes `ahead`, giving up at the deadline where there is one: false then.
     pub fn take_ahead(&self, hold: Hold, deadline: Option<Instant>) -> io::Result<bool> {
         Lock::wait(&self.ahead, hold, deadline)
@@ -99,6 +104,13 @@ impl Lock {
 
     pub fn let_ahead_go(&self) {
         let _ = self.ahead.unlock();
+    }
+
+    /// Copies of the `rw` and `ahead` a card benchmark already running holds exclusive, in
+    /// place of this call's own: the machine is then held for as long as either holds them.
+    pub fn adopt(&mut self, rw: File, ahead: File) {
+        self.rw = rw;
+        self.ahead = ahead;
     }
 
     /// `ahead` and `rw` as second handles on the same locks, for the thread that freezes the
