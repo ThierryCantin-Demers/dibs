@@ -1,6 +1,6 @@
 use super::{
     base::{Isolation, Recipe, Step},
-    labels::{run_label, shell_name},
+    labels::{files_as_written, run_label, shell_name},
     manifest::{Manifest, Source, Verb},
 };
 use dibs_format::Lock;
@@ -613,4 +613,10 @@ fn a_shell_command_is_filed_under_its_program_and_a_hash_of_the_whole() {
     );
     assert!(shell_name(None, "$CARGO_TARGET_DIR/release/examples/mnist").starts_with("mnist-"));
     assert_eq!(shell_name(Some("matmul-sweep"), "anything"), "matmul-sweep");
+    assert_ne!(
+        shell_name(None, "cargo bench --bench matmul -- --size 18"),
+        shell_name(None, "cargo bench --bench matmul -- --size 7993")
+    );
+    assert!(files_as_written("simd_f32-v2.1"));
+    assert!(!files_as_written("simd/f32"));
 }

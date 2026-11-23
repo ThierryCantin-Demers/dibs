@@ -165,14 +165,14 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent: session suite
     agent_id: local_suite
     batch:
-      | <batch>	app/shell/cat-atxt-41aae2:send
+      | <batch>	app/shell/cat-atxt-<sha>:send
       | 1	2
-      | app/shell/cat-atxt-41aae2	shared	app_shell_cat-atxt-41aae2	1
+      | app/shell/cat-atxt-<sha>	shared	app_shell_cat-atxt-<sha>	1
     card: null
     command: rsync --server <what this rsync asks of its far side>
     fingerprint: ae20812789dc44ec
     json: false
-    label: app_shell_cat-atxt-41aae2_send
+    label: app_shell_cat-atxt-2e17f3b5a943_send
     max: 3600
     max_from: default
     mode: rsh
@@ -197,13 +197,13 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent: session suite
     agent_id: local_suite
     batch:
-      | <batch>	app/shell/cat-atxt-41aae2
+      | <batch>	app/shell/cat-atxt-<sha>
       | 2	2
     card: null
     command: cat a.txt
     fingerprint: ae20812789dc44ec
     json: false
-    label: app_shell_cat-atxt-41aae2
+    label: app_shell_cat-atxt-<sha>
     max: 1800
     max_from: default
     mode: shared

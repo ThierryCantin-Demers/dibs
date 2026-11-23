@@ -45,11 +45,21 @@ pub fn shell_name(label: Option<&str>, command: &str) -> String {
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
         .join("-");
-    let hash = command.bytes().fold(0x811c_9dc5_u32, |h, b| {
-        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    let hash = command.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });
+    let hash = format!("{:012x}", hash >> 16);
     match stem.is_empty() {
-        true => format!("{hash:08x}"),
-        false => format!("{stem}-{:06x}", hash >> 8),
+        true => hash,
+        false => format!("{stem}-{hash}"),
     }
+}
+
+/// Whether `label` is filed as written: anything else would be filed under a name another label
+/// shares, and `dibs runs` would not find it under the one given.
+pub fn files_as_written(label: &str) -> bool {
+    !label.is_empty()
+        && label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }

@@ -89,6 +89,8 @@
 1|   --preemptible  shell only: the command only compiles, so it starts ahead of a queued
 1|                benchmark and is frozen while one queued before it runs. A shell's cargo
 1|                build, check, clippy or --no-run is marked so already
+1|   --label      shell only: the work a shell files its durations and series under, in place
+1|                of its command, for one whose command changes in what does not matter
 1|   --anyway     measure even when another tree built into the target after this one did,
 1|                which is otherwise refused with exit 78
 1|   --dry-run    print what would run, take no lock, record nothing

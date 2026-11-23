@@ -89,6 +89,8 @@ pub enum ShellWords {
     /// A word after the repo with no `--` before it, which reads as a recipe's name.
     RecipeName(String),
     NoCommand,
+    /// A `--label` that would not be filed as written.
+    Label(String),
     NotTaken(NotTaken),
 }
 
@@ -285,6 +287,10 @@ impl fmt::Display for ShellWords {
                 "needs -- before its command: '{word}' after the repo would be a recipe's name"
             ),
             ShellWords::NoCommand => f.write_str("needs -- <command>"),
+            ShellWords::Label(label) => write!(
+                f,
+                "--label takes letters, digits, '.', '_' and '-', and '{label}' has more: name the work in those"
+            ),
             ShellWords::NotTaken(not_taken) => not_taken.fmt(f),
         }
     }

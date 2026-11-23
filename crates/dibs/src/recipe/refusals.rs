@@ -1,7 +1,7 @@
 use super::{
     base::{Isolation, Recipe, Step},
     error::{NotTaken, RecipeError, ShellWords},
-    labels::{run_label, shell_name},
+    labels::{files_as_written, run_label, shell_name},
     manifest::{Manifest, Source, Verb},
     repo::Checkouts,
 };
@@ -39,6 +39,9 @@ fn refuse_shell_words(args: &RecipeCall) -> Result<(), RecipeError> {
         (None, Some(word)) => wrong.push(ShellWords::RecipeName(word.clone())),
         (None, None) => wrong.push(ShellWords::NoCommand),
         _ => {}
+    }
+    if let Some(label) = args.params.get("label").filter(|l| !files_as_written(l)) {
+        wrong.push(ShellWords::Label(label.clone()));
     }
     wrong.extend(
         NotTaken::of(args.params.keys().filter(|n| *n != "label"))

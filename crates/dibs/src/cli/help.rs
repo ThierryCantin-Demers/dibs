@@ -65,6 +65,7 @@ impl Help {
                 "--reason",
                 "--bench      shell only",
                 "--preemptible  shell only",
+                "--label      shell only",
                 "--device     the card",
                 "--pin",
                 "--dry-run",

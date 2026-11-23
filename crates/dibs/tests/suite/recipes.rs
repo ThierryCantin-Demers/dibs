@@ -345,7 +345,7 @@ fn a_recipe_at_a_ref_runs_in_one_job() {
     );
     assert_eq!(
         s.log().lines_matching(
-            r#"	arrived	.*	app_shell_echo-in-0752c1	.*	echo "in \$PWD"; cat a.txt	"#
+            r#"	arrived	.*	app_shell_echo-in-9ab8b9e921f8	.*	echo "in \$PWD"; cat a.txt	"#
         ),
         1,
         "and the log shows the step's command rather than the setup's"
@@ -408,7 +408,7 @@ fn a_recipe_waiting_in_a_batch_is_planned_as_the_jobs_it_will_make() {
     let mut s = Sandbox::new();
     let app = app(&s);
     s.history(
-        &"rsh\tapp_shell_true-4db211_send\t4\tx\nshared\tapp_shell_true-4db211\t60\tx\nshared\tbatch-rhold\t10\tx\n"
+        &"rsh\tapp_shell_true-5b5c98ef514d_send\t4\tx\nshared\tapp_shell_true-5b5c98ef514d\t60\tx\nshared\tbatch-rhold\t10\tx\n"
             .repeat(3),
     );
     let (up, hold) = (s.gate("up"), s.gate("hold"));
@@ -424,7 +424,7 @@ fn a_recipe_waiting_in_a_batch_is_planned_as_the_jobs_it_will_make() {
     assert_eq!(
         status
             .lines_matching(
-                r"^    then here: rec: app/shell/true-4db211:send ~4s, rec: app/shell/true-4db211 ~[0-9ms]+$",
+                r"^    then here: rec: app/shell/true-5b5c98ef514d:send ~4s, rec: app/shell/true-5b5c98ef514d ~[0-9ms]+$",
             ),
         1,
         "a recipe waiting in a batch is planned as the jobs it will make, each estimated:\n{status}"
@@ -952,7 +952,7 @@ fn shell_takes_bench_and_max() {
         .run();
     assert_eq!(
         s.log()
-            .lines_matching("\tarrived\t.*\tbench\tapp_shell_echo-measured-a71e57\t"),
+            .lines_matching("\tarrived\t.*\tbench\tapp_shell_echo-measured-c079eaa95086\t"),
         1,
         "shell --bench takes the exclusive lock"
     );

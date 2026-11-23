@@ -273,6 +273,11 @@ pub const RECIPE: &[Flag] = &[
     Flag::new(&["--max"], Value::Free, "seconds before it is stopped"),
     Flag::new(&["--root"], Value::Path, "where checkouts are looked up"),
     Flag::new(&["--bench", "-b"], Value::No, "shell: the exclusive lock"),
+    Flag::new(
+        &["--label"],
+        Value::Free,
+        "shell: the work, in place of its command",
+    ),
     Flag::new(&["--preemptible"], Value::No, "shell: it only compiles"),
     Flag::new(&["--anyway"], Value::No, "measure whatever binary is there"),
     Flag::new(
