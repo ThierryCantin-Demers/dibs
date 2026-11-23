@@ -336,9 +336,13 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         if failed.is_some() {
             break;
         }
-        // A comparison or reps sums its jobs up once all have ended, which a follower does not.
+        // A comparison or reps sums its jobs up once all have ended, which a follower does not,
+        // and a job that lays its tree out first is let go of before it says where.
         let env = RecipeJob {
-            last: k + 1 == pins.len() + jobs.len() && !compared && args.reps == 1,
+            last: k + 1 == pins.len() + jobs.len()
+                && !compared
+                && args.reps == 1
+                && matches!(job, Job::Step { setup: false, .. }),
             ..env_of(k)
         };
         let setup = JobRequest {
@@ -625,7 +629,10 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     if let Some(job) = checked_in {
         Unfinished {
             record,
-            artifacts_to: args.artifacts_to.clone(),
+            // A follower may run from anywhere.
+            artifacts_to: args.artifacts_to.as_deref().map(|to| {
+                std::path::absolute(to).map_or_else(|_| to.into(), |p| p.display().to_string())
+            }),
             copies: tree_copies,
         }
         .keep(&job);

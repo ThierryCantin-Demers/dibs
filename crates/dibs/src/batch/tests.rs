@@ -1,5 +1,6 @@
 use super::{
     base::{State, StepStderr},
+    check_in::Hint,
     parse::{Step, StepKind, parse, split_words},
     plan::Batch,
 };
@@ -487,12 +488,38 @@ fn a_step_that_checked_in_is_followed_by_the_call_it_named_and_shown_without_it(
                compiling\n  \
                dibs --on m --follow 1-2  waits for it: it ends with the job, or after another 30m00s of running\n  \
                dibs --on m --kill 77  stops it\n";
-    let stderr = StepStderr(err);
-    assert_eq!(stderr.follow().as_deref(), Some("dibs --on m --follow 1-2"));
+    let hint = Hint::read(err).unwrap();
+    assert_eq!(Hint::line(&hint.follow), "dibs --on m --follow 1-2");
     assert_eq!(
-        stderr.check_in(),
+        Hint::line(hint.kill.as_deref().unwrap()),
+        "dibs --on m --kill 77"
+    );
+    assert_eq!(hint.job(), Some("1-2"));
+    assert_eq!(
+        StepStderr(err).check_in(),
         "dibs: job 1-2 has run 30m00s (time frozen or parked not counted) and still runs. This call lets go of it, and the job goes on.\n  \
          log, last 10 lines:\ncompiling\n"
     );
-    assert_eq!(StepStderr("job 1-2  shared  a  exit 80\n").follow(), None);
+    assert_eq!(Hint::read("job 1-2  shared  a  exit 80\n"), None);
+}
+
+#[test]
+fn only_a_follow_dibs_prints_is_taken_from_what_a_step_said() {
+    let read = |line: &str| Hint::read(&format!("{line}  waits for it\n")).map(|h| h.follow);
+    assert_eq!(read("dibs --follow 1-2; rm -rf x"), None);
+    assert_eq!(read("dibs --on $(x) --follow 1-2"), None);
+    assert_eq!(read("dibs --on -x --follow 1-2"), None);
+    assert_eq!(read("dibs --follow 1-2 --anyone"), None);
+    assert_eq!(read("dibs run --follow 1-2"), None);
+    assert_eq!(read("sh -c --follow 1-2"), None);
+    let batch = Hint::read("  dibs batch --follow 20261123-1-2  waits for them, then\n  dibs --kill 20261123-1-2  stops the batch\n").unwrap();
+    assert_eq!(
+        Hint::line(&batch.follow),
+        "dibs batch --follow 20261123-1-2"
+    );
+    assert_eq!(
+        batch.job(),
+        None,
+        "a batch is followed to its summary, not a trailer"
+    );
 }

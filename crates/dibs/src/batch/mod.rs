@@ -7,6 +7,7 @@
 //! which is the lifetime a single job already has. The design is `docs/design/history/batch.md`.
 
 mod base;
+mod check_in;
 mod detach;
 mod detached;
 mod guard;

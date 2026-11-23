@@ -1,4 +1,5 @@
 use super::{
+    check_in::Hint,
     guard::StepGuard,
     parse::{BatchError, Step, StepKind, parse},
     plan::Batch,
@@ -8,6 +9,7 @@ use crate::{
     caller::Caller,
     cli::Call,
     execution::Job,
+    itself::Itself,
     paths::{FileError, Paths},
 };
 use dibs_format::{BatchId, Exit, MachineName, Span};
@@ -16,6 +18,7 @@ use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
+    process::Stdio,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -29,9 +32,9 @@ pub enum State {
         seconds: u64,
     },
     NotRun,
-    /// Its job runs on without the step's call, which `follow` waits for.
+    /// Its job runs on without the step's call, which the hint's follow waits for.
     CheckedIn {
-        follow: String,
+        hint: Hint,
         seconds: u64,
     },
 }
@@ -104,21 +107,13 @@ impl<'a> StepStderr<'a> {
         locks
     }
 
-    /// The dibs call that follows the job a step's call let go of, when it said one.
-    pub fn follow(&self) -> Option<String> {
-        self.0.lines().rev().find_map(|l| {
-            let (call, _) = l.trim_start().split_once("  waits for it")?;
-            (call.starts_with("dibs ") && call.contains(" --follow ")).then(|| call.to_string())
-        })
-    }
-
     /// What the step's call said as it let go of its job, the ways on from it left out: the
     /// batch is followed as a whole.
     pub fn check_in(&self) -> String {
         let lines: Vec<&str> = self.0.lines().collect();
         let Some(from) = lines
             .iter()
-            .rposition(|l| l.starts_with("dibs: job ") && l.contains("and still runs"))
+            .rposition(|l| l.contains("dibs: job ") && l.contains("and still runs"))
         else {
             return String::new();
         };
@@ -272,7 +267,20 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         steps.len()
     );
     let states = vec![State::Waiting; steps.len()];
-    drive(text, batch, &dir, &id, opts, states, 0)
+    let on = opts
+        .on
+        .as_ref()
+        .map(ToString::to_string)
+        .or_else(|| std::env::var("DIBS_ON").ok().filter(|on| !on.is_empty()));
+    let kept = Paused {
+        text: text.to_string(),
+        cwd: std::env::current_dir().unwrap_or_default(),
+        on,
+        verbose: opts.verbose,
+        states: Vec::new(),
+        seconds: 0,
+    };
+    drive(&kept, batch, &dir, &id, opts, states)
 }
 
 /// `dibs batch --follow` of a batch paused here: the jobs its steps let go of followed, then
@@ -319,30 +327,23 @@ pub fn resume(id: &BatchId) -> Result<i32, BatchError> {
     eprintln!(
         "dibs: batch {id}: following the {following} job(s) its steps let go of, then the steps still to come. You are told when it ends; there is nothing to watch."
     );
-    drive(
-        &paused.text,
-        batch,
-        &dir,
-        id.as_str(),
-        &opts,
-        paused.states,
-        paused.seconds,
-    )
+    let states = paused.states.clone();
+    drive(&paused, batch, &dir, id.as_str(), &opts, states)
 }
 
 /// Where a batch's exit is kept once it has ended, for a follow that comes after.
 const EXIT: &str = "exit";
 
 /// Drives the steps from `states` until every one has ended, or until those running have ended
-/// or checked in once one has checked in.
+/// or checked in once one has checked in. `kept` is the batch as a pause keeps it, its states
+/// aside.
 fn drive(
-    text: &str,
+    kept: &Paused,
     batch: Batch,
     dir: &Path,
     id: &str,
     opts: &Options,
     states: Vec<State>,
-    earlier: u64,
 ) -> Result<i32, BatchError> {
     let steps = batch.steps;
     let cwd = std::env::current_dir()
@@ -360,6 +361,7 @@ fn drive(
         .collect();
     let started = Instant::now();
     let (tx, rx) = mpsc::channel();
+    let resumed = states.iter().any(|s| matches!(s, State::CheckedIn { .. }));
     let mut driving = Driving {
         batch,
         recipes,
@@ -370,8 +372,11 @@ fn drive(
         states,
         stopped: false,
         paused: false,
+        lost: None,
         cancelled: None,
         running: HashMap::new(),
+        following: HashMap::new(),
+        said_from: HashMap::new(),
         tx,
         rx,
     };
@@ -381,17 +386,25 @@ fn drive(
         let end = driving.next_end()?;
         driving.ended(end);
         driving.start();
+        // A resumed batch is kept as it goes, so a driver that dies runs nothing twice.
+        if resumed {
+            let seconds = kept.seconds + started.elapsed().as_secs();
+            driving.keep(kept, seconds);
+        }
+    }
+    let seconds = kept.seconds + started.elapsed().as_secs();
+    let checked_in = driving
+        .states
+        .iter()
+        .any(|s| matches!(s, State::CheckedIn { .. }));
+    if checked_in && driving.cancelled.is_none() {
+        return Ok(driving.pause(kept, seconds));
     }
     let Driving {
         mut states,
         cancelled,
         ..
     } = driving;
-    let seconds = earlier + started.elapsed().as_secs();
-    let checked_in = states.iter().any(|s| matches!(s, State::CheckedIn { .. }));
-    if checked_in && cancelled.is_none() {
-        return Ok(pause(text, batch, dir, id, opts, states, seconds));
-    }
     for s in states.iter_mut() {
         if matches!(s, State::Waiting | State::CheckedIn { .. }) {
             *s = State::NotRun;
@@ -413,58 +426,6 @@ fn drive(
     let _ = std::fs::write(dir.join(EXIT), format!("{code}\n"));
     let _ = std::fs::remove_file(dir.join(Paused::FILE));
     Ok(code)
-}
-
-/// The batch left for `dibs batch --follow`, and what its steps said as they let go of their
-/// jobs, so whoever reads it can tell a job that is stuck from one that is slow.
-fn pause(
-    text: &str,
-    batch: Batch,
-    dir: &Path,
-    id: &str,
-    opts: &Options,
-    states: Vec<State>,
-    seconds: u64,
-) -> i32 {
-    let report = batch.summary(id, &states, dir, seconds, None);
-    print!("{report}");
-    let paused = Paused {
-        text: text.to_string(),
-        cwd: std::env::current_dir().unwrap_or_default(),
-        on: opts.on.as_ref().map(ToString::to_string),
-        verbose: opts.verbose,
-        states,
-        seconds,
-    };
-    let kept = serde_json::to_vec(&paused)
-        .is_ok_and(|json| std::fs::write(dir.join(Paused::FILE), json).is_ok());
-    let mut said = String::new();
-    let mut to_come = 0;
-    for (i, state) in paused.states.iter().enumerate() {
-        match state {
-            State::CheckedIn { .. } => {
-                let step = &batch.steps[i].name;
-                let err =
-                    std::fs::read_to_string(dir.join(format!("{step}.err"))).unwrap_or_default();
-                said.push_str(&format!("step {step}: {}", StepStderr(&err).check_in()));
-            }
-            State::Waiting => to_come += 1,
-            _ => {}
-        }
-    }
-    eprint!("{said}");
-    match kept {
-        true => eprintln!(
-            "dibs: batch {id} checked in: the jobs above run on without this call, and no step starts until it is followed.\n  \
-             dibs batch --follow {id}  waits for them, then runs the {to_come} step(s) still to come; it checks in again as a job does\n  \
-             dibs --kill {id}  stops the batch"
-        ),
-        false => eprintln!(
-            "dibs: batch {id} checked in, but could not be kept in {} to be followed: the jobs above run on, and dibs --kill {id} stops them",
-            dir.display()
-        ),
-    }
-    Exit::CheckedIn.status()
 }
 
 /// How often a wait for a step to end looks for a cancellation.
@@ -489,8 +450,14 @@ struct Driving<'a> {
     stopped: bool,
     /// A step checked in, so no other starts until the batch is followed.
     paused: bool,
+    /// The exit of a follow that never heard how its job ended, when no step checked in.
+    lost: Option<i32>,
     cancelled: Option<String>,
     running: HashMap<usize, u32>,
+    /// The steps waiting on a job they let go of, with how long each had run.
+    following: HashMap<usize, (Hint, u64)>,
+    /// Where each running step's stderr began, since a follow's is added to what it said before.
+    said_from: HashMap<usize, u64>,
     tx: mpsc::Sender<StepEnded>,
     rx: mpsc::Receiver<StepEnded>,
 }
@@ -499,18 +466,24 @@ impl Driving<'_> {
     /// Follows the job of every step that let go of one before the batch was paused, its
     /// output added to what the step wrote before.
     fn follow(&mut self) {
-        let following: Vec<(usize, String, u64)> = (0..self.states.len())
+        let following: Vec<(usize, Hint, u64)> = (0..self.states.len())
             .filter_map(|i| match &self.states[i] {
-                State::CheckedIn { follow, seconds } => Some((i, follow.clone(), *seconds)),
+                State::CheckedIn { hint, seconds } => Some((i, hint.clone(), *seconds)),
                 _ => None,
             })
             .collect();
         for &(i, ..) in &following {
             self.states[i] = State::Running;
         }
-        for (i, follow, seconds) in following {
-            self.spawn(i, &follow, true, seconds);
+        for (i, hint, seconds) in following {
+            self.follow_step(i, hint, seconds);
         }
+    }
+
+    fn follow_step(&mut self, i: usize, hint: Hint, seconds: u64) {
+        let line = Hint::line(&hint.follow);
+        self.following.insert(i, (hint, seconds));
+        self.spawn(i, &line, true, seconds);
     }
 
     /// Starts every step whose turn has come.
@@ -525,8 +498,24 @@ impl Driving<'_> {
         }
     }
 
+    fn err(&self, i: usize) -> PathBuf {
+        self.dir.join(format!("{}.err", self.batch.steps[i].name))
+    }
+
+    /// What step `i` said on stderr since it last started.
+    fn said(&self, i: usize) -> String {
+        let all = std::fs::read(self.err(i)).unwrap_or_default();
+        let from = self.said_from.get(&i).copied().unwrap_or_default() as usize;
+        String::from_utf8_lossy(all.get(from..).unwrap_or_default()).into_owned()
+    }
+
     /// Runs `line` as step `i`, which has run `before` seconds already.
     fn spawn(&mut self, i: usize, line: &str, append: bool, before: u64) {
+        let from = match append {
+            true => std::fs::metadata(self.err(i)).map_or(0, |m| m.len()),
+            false => 0,
+        };
+        self.said_from.insert(i, from);
         {
             let step = self.batch.steps[i].clone();
             let (out, err) = (
@@ -622,25 +611,34 @@ impl Driving<'_> {
             seconds,
         } = end;
         self.running.remove(&i);
-        let err = || {
-            std::fs::read_to_string(self.dir.join(format!("{}.err", self.batch.steps[i].name)))
-                .unwrap_or_default()
-        };
+        let said = self.said(i);
+        let followed = self.following.remove(&i);
         if exit == Exit::CheckedIn.status()
             && self.cancelled.is_none()
-            && let Some(follow) = StepStderr(&err()).follow()
+            && let Some(hint) = Hint::read(&said)
         {
             // Nobody waits on a driver detached to its machine, so it follows the job itself.
             match self.opts.driving {
                 Some(_) => {
                     self.states[i] = State::Running;
-                    self.spawn(i, &follow, true, seconds);
+                    self.follow_step(i, hint, seconds);
                 }
                 None => {
-                    self.states[i] = State::CheckedIn { follow, seconds };
+                    self.states[i] = State::CheckedIn { hint, seconds };
                     self.paused = true;
                 }
             }
+            return;
+        }
+        if let Some((hint, before)) = followed
+            && self.cancelled.is_none()
+            && !Driving::heard_end(&hint, &said, exit)
+        {
+            self.states[i] = State::CheckedIn {
+                hint,
+                seconds: before,
+            };
+            self.lost.get_or_insert(exit);
             return;
         }
         self.states[i] = State::Done { exit, seconds };
@@ -664,9 +662,105 @@ impl Driving<'_> {
         }
     }
 
+    /// The batch as `dibs batch --follow` reads it: a step still following its job is kept
+    /// checked in, and one cut off otherwise runs again.
+    fn keep(&self, kept: &Paused, seconds: u64) -> bool {
+        let states = (0..self.states.len())
+            .map(|i| match (&self.states[i], self.following.get(&i)) {
+                (State::Running, Some((hint, before))) => State::CheckedIn {
+                    hint: hint.clone(),
+                    seconds: *before,
+                },
+                (State::Running, None) => State::Waiting,
+                (state, _) => state.clone(),
+            })
+            .collect();
+        let paused = Paused {
+            states,
+            seconds,
+            text: kept.text.clone(),
+            cwd: kept.cwd.clone(),
+            on: kept.on.clone(),
+            verbose: kept.verbose,
+        };
+        serde_json::to_vec(&paused)
+            .is_ok_and(|json| std::fs::write(self.dir.join(Paused::FILE), json).is_ok())
+    }
+
+    /// The batch left for `dibs batch --follow`, and what its steps said as they let go of their
+    /// jobs, so whoever reads it can tell a job that is stuck from one that is slow.
+    fn pause(&self, kept: &Paused, seconds: u64) -> i32 {
+        let id = self.id;
+        print!(
+            "{}",
+            self.batch
+                .summary(id, &self.states, self.dir, seconds, None)
+        );
+        let stored = self.keep(kept, seconds);
+        let mut said = String::new();
+        let mut to_come = 0;
+        for (i, state) in self.states.iter().enumerate() {
+            match state {
+                State::CheckedIn { .. } => {
+                    let step = &self.batch.steps[i].name;
+                    said.push_str(&format!(
+                        "step {step}: {}",
+                        StepStderr(&self.said(i)).check_in()
+                    ));
+                }
+                State::Waiting => to_come += 1,
+                _ => {}
+            }
+        }
+        if !self.paused
+            && let Some(exit) = self.lost
+        {
+            eprintln!(
+                "dibs: batch {id} could not hear how a job it follows ended (exit {exit}), so it stops here with that job still running.\n  \
+                 dibs batch --follow {id}  tries again, then runs the {to_come} step(s) still to come\n  \
+                 dibs --kill {id}  stops the batch"
+            );
+            return exit;
+        }
+        eprint!("{said}");
+        match stored {
+            true => eprintln!(
+                "dibs: batch {id} checked in: the jobs above run on without this call, and no step starts until it is followed.\n  \
+                 dibs batch --follow {id}  waits for them, then runs the {to_come} step(s) still to come; it checks in again as a job does\n  \
+                 dibs --kill {id}  stops the batch"
+            ),
+            false => eprintln!(
+                "dibs: batch {id} checked in, but could not be kept in {} to be followed: the jobs above run on, and dibs --kill {id} stops them",
+                self.dir.display()
+            ),
+        }
+        Exit::CheckedIn.status()
+    }
+
+    /// Whether a follow heard how what it waited on ended: a job's trailer, or a batch's end.
+    fn heard_end(hint: &Hint, said: &str, exit: i32) -> bool {
+        match hint.job() {
+            Some(job) => said.lines().any(|l| l.starts_with(&format!("job {job} "))),
+            None => ![Exit::Unreachable, Exit::NoLock, Exit::NoRunner]
+                .iter()
+                .any(|e| e.status() == exit),
+        }
+    }
+
     /// Each step is its own process group, so the signal reaches the dibs call under it and that
-    /// call's death reaches the machine, which stops the job and releases its lock.
+    /// call's death reaches the machine, which stops the job and releases its lock. A job a step
+    /// let go of outlives its follower, so it is stopped on its machine first.
     fn stop_running(&self) {
+        for (hint, _) in self.following.values() {
+            if let Some(kill) = &hint.kill {
+                let _ = Itself::command()
+                    .args(kill)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
         for &pid in self.running.values() {
             // SAFETY: signals the step's process group, which its guard leads.
             unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };

@@ -67,7 +67,14 @@ impl Unfinished {
         let mut reader = Reader::new(&mut on_prepared);
         let exit = Jobs::exit(machine.follow_into(job, &mut Output::Listening(&mut reader)));
         let reported = reader.reported(exit);
-        if reported.outcome.checked_in.is_some() {
+        // Only the job's own trailer says it ended: a follow that never reached it leaves the
+        // run for the next.
+        let ended = reported
+            .outcome
+            .trailer
+            .as_ref()
+            .is_some_and(|t| t.job == job.as_str());
+        if reported.outcome.checked_in.is_some() || !ended {
             return Ok(exit);
         }
         let claimed = path.with_extension(std::process::id().to_string());
@@ -77,15 +84,23 @@ impl Unfinished {
         let unfinished = fs::read(&claimed)
             .ok()
             .and_then(|json| serde_json::from_slice::<Unfinished>(&json).ok());
-        let _ = fs::remove_file(&claimed);
         let Some(unfinished) = unfinished else {
+            let _ = fs::remove_file(&claimed);
             eprintln!(
                 "dibs: the run job {job} ended could not be read back, so it is not recorded"
             );
             return Ok(exit);
         };
-        unfinished.finish(reported)?;
-        Ok(exit)
+        match unfinished.finish(reported) {
+            Ok(()) => {
+                let _ = fs::remove_file(&claimed);
+                Ok(exit)
+            }
+            Err(e) => {
+                let _ = fs::rename(&claimed, path);
+                Err(e)
+            }
+        }
     }
 
     fn finish(self, reported: Reported) -> Result<(), RunError> {
