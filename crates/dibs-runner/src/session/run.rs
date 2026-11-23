@@ -319,8 +319,9 @@ impl<'a> Run<'a> {
         let mut state = self.at.stopper.state();
         let claim = self.card_claim();
         let machine = matches!(claim, Some(Takes::Machine));
-        // A whole-machine benchmark's record and the card benchmarks it lets ahead appear at once.
-        let window = machine.then(|| self.at.dir.window_guard());
+        // A whole-machine benchmark's record and the card benchmarks it lets ahead appear at once;
+        // without the guard it lists none, and lets none ahead.
+        let window = machine.then(|| self.at.dir.join_guard());
         // Before the record, so nobody reads it as a benchmark of the whole machine.
         match &claim {
             Some(Takes::Cards(pcis)) => {
@@ -329,6 +330,9 @@ impl<'a> Run<'a> {
             }
             Some(Takes::Machine) => {
                 self.at.dir.forget_window(pid);
+                if let Some(Ok(_)) = &window {
+                    self.at.dir.open_window(pid);
+                }
                 self.at.dir.mark_arrived(pid, order);
             }
             None => {}
@@ -336,9 +340,6 @@ impl<'a> Run<'a> {
         self.at
             .dir
             .write(Kind::Waiting, &self.at.call.lock_record(start, &job));
-        if machine {
-            self.at.dir.open_window(pid);
-        }
         drop(window);
         if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
             let _ = fs::write(self.at.dir.file("batch", pid), format!("{batch}\n"));
@@ -857,7 +858,10 @@ impl<'a> Run<'a> {
             {
                 // Its copies of the machine's locks are closed, never unlocked, which would free
                 // them for every member.
-                if dir.enter_windows(pid, arrived.order, pcis, Entry::JoinsAhead) {
+                if dir
+                    .enter_windows(pid, arrived.order, pcis, Entry::JoinsAhead)
+                    .map_err(no_lock)?
+                {
                     break Some((Some(cards), true));
                 }
                 drop(cards);
@@ -885,13 +889,20 @@ impl<'a> Run<'a> {
                 if let Some(pcis) = pcis
                     && let Some(cards) = self.join(&mut lock, pcis, deadline)?
                 {
-                    if dir.enter_windows(pid, arrived.order, pcis, Entry::Joins) {
+                    if dir
+                        .enter_windows(pid, arrived.order, pcis, Entry::Joins)
+                        .map_err(no_lock)?
+                    {
                         lock.leave_gate();
                         break Some((Some(cards), true));
                     }
                     drop(cards);
                     lock = Lock::open(dir).map_err(no_lock)?;
                     at_gate = false;
+                    if deadline.is_some_and(|d| Instant::now() >= d) {
+                        break None;
+                    }
+                    std::thread::sleep(BENCH_POLL);
                     continue;
                 }
                 if lock
@@ -902,14 +913,14 @@ impl<'a> Run<'a> {
                         Some(pcis) => Cards::take_now(dir, pcis).map_err(no_lock)?.map(Some),
                         None => Some(None),
                     };
-                    let entered = |cards: &Option<Cards>| {
-                        cards.is_none()
-                            || pcis.is_some_and(|p| {
-                                dir.enter_windows(pid, arrived.order, p, Entry::Starts)
-                            })
+                    let entered = match (&taken, pcis) {
+                        (Some(Some(_)), Some(p)) => dir
+                            .enter_windows(pid, arrived.order, p, Entry::Starts)
+                            .map_err(no_lock)?,
+                        _ => true,
                     };
                     match taken {
-                        Some(cards) if entered(&cards) => {
+                        Some(cards) if entered => {
                             lock.leave_gate();
                             break Some((cards, false));
                         }
@@ -1011,10 +1022,11 @@ impl<'a> Run<'a> {
         let Some(cards) = self.join(&mut lock, pcis, deadline)? else {
             return Ok(None);
         };
-        {
-            let _guard = self.at.dir.window_guard();
-            self.at.dir.count_in(self.at.call.pid, arrived.order);
-        }
+        self.at
+            .dir
+            .join_guard()
+            .and_then(|_guard| self.at.dir.count_in(self.at.call.pid, arrived.order))
+            .map_err(|e| self.no_lock(&e))?;
         self.at
             .dir
             .mark_urgent(&Urgent {
