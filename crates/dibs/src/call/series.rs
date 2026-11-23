@@ -55,10 +55,13 @@ impl Pending {
         );
     }
 
-    /// The entry kept for this job, taken so it is filed once.
+    /// The entry kept for this job, claimed by a rename so that two followers file it once.
     pub fn take(path: &Path) -> Option<Pending> {
-        let text = fs::read_to_string(path).ok()?;
-        let _ = fs::remove_file(path);
+        let claimed = path.with_extension(std::process::id().to_string());
+        fs::rename(path, &claimed).ok()?;
+        let text = fs::read_to_string(&claimed).ok();
+        let _ = fs::remove_file(&claimed);
+        let text = text?;
         let mut fields = text.trim_end().split('\t').map(str::to_string);
         Some(Pending {
             label: fields.next()?,

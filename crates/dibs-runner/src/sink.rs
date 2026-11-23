@@ -143,6 +143,7 @@ impl Sink {
     /// for whoever follows the job, and the caller's streams are let go so its connection can end.
     /// Nothing is let go when the caller cannot be told.
     pub fn hand_over(&self, checked: CheckedIn, text: &str, report: &File) -> io::Result<()> {
+        let null = File::options().read(true).write(true).open("/dev/null")?;
         let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
         for frame in [
             Frame::Record(Record::CheckedIn(checked)),
@@ -152,7 +153,6 @@ impl Sink {
             out.write_all(&frame.encode())?;
         }
         out.flush()?;
-        let null = File::options().read(true).write(true).open("/dev/null")?;
         for (from, to) in [
             (report.as_raw_fd(), libc::STDOUT_FILENO),
             (null.as_raw_fd(), libc::STDIN_FILENO),

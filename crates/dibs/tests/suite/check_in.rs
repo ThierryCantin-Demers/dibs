@@ -87,7 +87,9 @@ fn the_follower_passes_on_the_trailer_of_a_job_already_ended() {
     let job = job_named(&checked);
     up.reached();
     hold.open();
-    s.until_records("the job ended", || s.holders() == 0);
+    std::fs::File::open(s.path(&format!("scratch/jobs/{job}/handed")))
+        .and_then(|handed| handed.lock_shared())
+        .expect("the runner that let go of the job ended");
     let follow = s.remote(s.dibs(["--follow", &job])).run();
     assert_eq!(follow.code, 0, "{}", follow.all());
     assert_eq!(follow.stdout.lines_with("finished"), 1, "{}", follow.all());

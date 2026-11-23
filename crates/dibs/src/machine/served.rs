@@ -571,11 +571,11 @@ impl Served<'_> {
                 Heard::Exit(code) => {
                     self.session.said.exited();
                     exit = Some(code);
-                    if code == Exit::CheckedIn.status() {
-                        if let Some(checked) = &checked {
-                            let said = self.ways_on(checked);
-                            delivery.give(Stream::Err, said.as_bytes(), &mut buffers);
-                        }
+                    if code == Exit::CheckedIn.status()
+                        && let Some(checked) = &checked
+                    {
+                        let said = self.ways_on(checked);
+                        delivery.give(Stream::Err, said.as_bytes(), &mut buffers);
                         break;
                     }
                 }
@@ -588,7 +588,7 @@ impl Served<'_> {
         delivery.flush(&mut buffers);
         // A job the runner let go of outlives it, and sshd keeps the session open until the
         // runner exits; the runner said its last, so its ssh goes, and a local runner is left.
-        if exit == Some(Exit::CheckedIn.status()) {
+        if exit == Some(Exit::CheckedIn.status()) && checked.is_some() {
             if self.over_ssh() {
                 // SAFETY: kill only sends a signal, to the ssh this call started.
                 unsafe { libc::kill(runner as libc::pid_t, libc::SIGTERM) };

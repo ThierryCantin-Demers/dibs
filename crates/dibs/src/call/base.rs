@@ -305,7 +305,8 @@ impl<'a> LockedCall<'a> {
         {
             series.record(&entry, &caller.name, call.new_series);
         }
-        let checked_in = status == Exit::CheckedIn.status();
+        let checked_in =
+            status == Exit::CheckedIn.status() && session.said.checked_in_job().is_some();
         if serial
             && checked_in
             && env.series_check
