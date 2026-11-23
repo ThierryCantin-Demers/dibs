@@ -12,7 +12,7 @@ use crate::{
     app::{App, Overlay, PendingKill},
     feed::Msg,
 };
-use dibs_format::Span;
+use dibs_format::{Mode, Span};
 
 const WHEEL_LINES: u16 = 3;
 const PAGE_LINES: u16 = 15;
@@ -149,11 +149,14 @@ impl App {
                 "It is still queued, so it has written nothing yet.",
             ));
         } else if !it.readable() {
-            self.overlay = Some(Overlay::new(
-                format!("{} names no job", it.label),
-                "The machine started it without a job of its own, so it keeps \
-                 none of its output to read.",
-            ));
+            let why = match it.mode {
+                Mode::Rsh => "A transfer keeps no log of its output, so there is nothing to read.",
+                _ => {
+                    "The machine started it without a job of its own, so it keeps none of its \
+                      output to read."
+                }
+            };
+            self.overlay = Some(Overlay::new(format!("{} keeps no output", it.label), why));
         } else {
             self.start_action(Action::output(&it), tx);
         }

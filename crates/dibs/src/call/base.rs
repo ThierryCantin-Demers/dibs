@@ -23,6 +23,7 @@ use std::{
     fmt,
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 const FINGERPRINT_CHARS: usize = 16;
@@ -153,7 +154,7 @@ impl<'a> LockedCall<'a> {
         let running = reading.as_ref().filter(|_| bench).and_then(|r| {
             labels
                 .iter()
-                .flat_map(|l| r.cards_of(l.as_str()))
+                .flat_map(|l| r.bench_cards_of(l.as_str()))
                 .find(|cards| Card::fits(alias, cards, entry))
                 .map(str::to_string)
         });
@@ -180,9 +181,18 @@ impl<'a> LockedCall<'a> {
     /// Says so when shared work names a busy card by its slot while another of its model is idle:
     /// it goes where it was sent, and the model's name would have let dibs choose.
     fn idle_beside(named: &Alias, entry: &Machine) {
+        // A recipe's step is called once for its preflight and again to run.
+        static SAID: Mutex<Vec<Alias>> = Mutex::new(Vec::new());
         let siblings = Card::siblings(named, entry);
         if siblings.is_empty() {
             return;
+        }
+        {
+            let mut said = SAID.lock().unwrap_or_else(|e| e.into_inner());
+            if said.contains(named) {
+                return;
+            }
+            said.push(named.clone());
         }
         let Some(reading) = Reading::asked(&entry.name) else {
             return;

@@ -31,6 +31,8 @@ const UNMEASURED_PENALTY: u64 = 500;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Occupant {
     #[serde(default)]
+    pub mode: Option<Mode>,
+    #[serde(default)]
     pub device: Option<String>,
     #[serde(default)]
     pub label: String,
@@ -108,12 +110,13 @@ impl Reading {
             .find_map(|line| serde_json::from_str(line).ok())
     }
 
-    /// The cards each job running or queued under `label` named.
-    pub fn cards_of(&self, label: &str) -> impl Iterator<Item = &str> {
+    /// The cards each benchmark running or queued under `label` named: shared jobs of a label
+    /// spread over the model's cards, and a series follows only its measurements.
+    pub fn bench_cards_of(&self, label: &str) -> impl Iterator<Item = &str> {
         self.holders
             .iter()
             .chain(&self.queue)
-            .filter(move |o| o.label == label)
+            .filter(move |o| o.label == label && o.mode == Some(Mode::Bench))
             .filter_map(|o| o.device.as_deref())
     }
 
