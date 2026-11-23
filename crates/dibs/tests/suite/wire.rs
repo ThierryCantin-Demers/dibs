@@ -15,7 +15,7 @@ printf '%s started for %s\n' "$$" "${@: -2:1}" >> "$WIRE.log"
 trap 'printf "%s exited %s\n" "$$" "$?" >> "$WIRE.log"' EXIT
 n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
 printf '%s\0' ssh "$@" > "$WIRE/$n.argv"
-printf '%s recorded as %s\n' "$$" "$n" >> "$WIRE.log"
+printf '%s recorded as %s in wire %s\n' "$$" "$n" "$(ls -di "$WIRE" 2>/dev/null)" >> "$WIRE.log"
 cmd=${@: -1} host=${@: -2:1}
 if [[ $cmd == *'"$r" serve'* ]]; then
     IFS= read -r header
