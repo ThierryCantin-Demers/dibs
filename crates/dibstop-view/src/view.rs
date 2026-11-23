@@ -249,7 +249,7 @@ impl View {
                 });
                 ui.add(egui::Label::new(RichText::new(it.label.as_str()).color(hue)).truncate());
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(&it.agent).color(hue));
+                    ui.label(RichText::new(it.who()).color(hue));
                     if let Some(device) = &it.device {
                         ui.label(
                             RichText::new(device.as_str()).color(Color32::from_rgb(200, 110, 200)),
@@ -285,7 +285,7 @@ impl View {
         let mut asked = None;
         ui.horizontal_wrapped(|ui| {
             ui.weak("from");
-            ui.label(RichText::new(&it.agent).color(xterm(agent_hue(&it.agent))));
+            ui.label(RichText::new(it.who()).color(xterm(agent_hue(&it.agent))));
             ui.weak(format!("pid {} on {}", it.pid, it.machine));
         });
         ui.label(RichText::new(&it.cmd).monospace());

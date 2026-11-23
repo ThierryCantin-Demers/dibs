@@ -178,7 +178,7 @@ impl App {
                 "It has no processes yet: it is waiting for the lock.\n\n\
                  waiting   {}\n starts in {starts}\n agent     {}\n\n{}",
                 Span(it.time),
-                it.agent,
+                it.who(),
                 it.cmd
             ),
         ));
