@@ -107,6 +107,8 @@ struct Record {
     pub when: u64,
     pub verb: RunVerb,
     pub label: String,
+    /// The cards it measured on, which a label naming a model does not say.
+    pub device: Option<String>,
     pub variant: Option<String>,
     pub fingerprint: String,
     /// The series it ran under, or its machine when that names none.
@@ -169,6 +171,7 @@ impl Record {
             when: run.when,
             verb: run.verb,
             label: run.label,
+            device: run.device.map(|d| d.to_string()),
             variant: run.variant,
             fingerprint: run.fingerprint,
             machine: run.series.or_else(|| run.machine.map(|m| m.to_string())),
@@ -252,6 +255,7 @@ fn short(run: &str) -> String {
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct SameCode<'a> {
     label: &'a str,
+    device: &'a str,
     fingerprint: &'a str,
     machine: &'a str,
     revisions: String,
@@ -377,6 +381,7 @@ impl Runs {
             if r.measured.is_some() {
                 let key = SameCode {
                     label: r.label.as_str(),
+                    device: r.device.as_deref().unwrap_or_default(),
                     fingerprint: r.fingerprint.as_str(),
                     machine: r.machine.as_deref().unwrap_or("-"),
                     revisions: words(&r.revisions, "@"),

@@ -371,7 +371,7 @@ impl Jobs {
     /// record, go to the same ones.
     pub fn concrete(
         &self,
-        label: &str,
+        labels: &[&str],
         lock: Lock,
         device: Option<&str>,
         new_series: bool,
@@ -381,7 +381,7 @@ impl Jobs {
         };
         let call = self.call(
             &JobRequest {
-                label,
+                label: labels.first().copied().unwrap_or_default(),
                 lock,
                 device: Some(device),
                 job: &RecipeJob::default(),
@@ -395,7 +395,8 @@ impl Jobs {
         let Mode::Run(run) = &call.mode else {
             unreachable!("a recipe's call is a run");
         };
-        let cards = LockedCall::run_of(run).concrete(&call)?;
+        let labels: Vec<Label> = labels.iter().map(|l| Label::new(*l)).collect();
+        let cards = LockedCall::run_of(run).concrete(&call, &labels)?;
         Ok(Some(cards.map_or(device.to_string(), |c| c.to_string())))
     }
 

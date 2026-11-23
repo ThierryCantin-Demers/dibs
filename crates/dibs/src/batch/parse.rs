@@ -2,6 +2,7 @@ use super::detach::DetachError;
 use crate::{
     call::{CallError, Pending, Planned},
     cli::{CliError, Invocation, Mode, RecipeCall, RecipeVerb, RunLock},
+    machine::Card,
     paths::FileError,
     recipe::{RecipeError, Resolved},
 };
@@ -486,7 +487,7 @@ impl Step {
                 .filter(|d| *d != "cpu")
                 .map(|d| d.split(',').map(str::to_string).collect::<Vec<_>>())
         };
-        let apart = matches!((cards(self), cards(other)), (Some(a), Some(b)) if a.iter().all(|c| !b.contains(c)));
+        let apart = matches!((cards(self), cards(other)), (Some(a), Some(b)) if a.iter().all(|c| !b.iter().any(|d| Card::may_meet(c, d))));
         !self.measures() && !other.measures() && (self.overlap || other.overlap || apart)
     }
 

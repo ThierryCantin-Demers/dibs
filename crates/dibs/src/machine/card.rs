@@ -104,19 +104,57 @@ impl Card {
             }
             taken[at] = Some(card);
         }
-        for (at, matching) in choices.into_iter().enumerate() {
-            if taken[at].is_some() {
-                continue;
-            }
-            let card = matching
-                .into_iter()
-                .filter(|a| !taken.contains(&Some(a.clone())))
-                .min_by_key(&cost)
-                .ok_or_else(too_few)?;
-            taken[at] = Some(card);
+        let mut open: Vec<usize> = (0..asked.len()).filter(|&at| taken[at].is_none()).collect();
+        open.sort_by_key(|&at| choices[at].len());
+        let mut choices = choices;
+        for list in &mut choices {
+            list.sort_by_key(&cost);
+        }
+        if !Card::assign(&open, &choices, &mut taken) {
+            return Err(too_few());
         }
         let names: Vec<&str> = taken.iter().flatten().map(Alias::as_str).collect();
         Ok(Alias::new(names.join(",")))
+    }
+
+    /// Fills each of `open` with one of its `choices` no other entry has, trying the cheaper
+    /// first; a greedy pass can spend a card a narrower entry needed.
+    fn assign(open: &[usize], choices: &[Vec<Alias>], taken: &mut [Option<Alias>]) -> bool {
+        let Some((&at, rest)) = open.split_first() else {
+            return true;
+        };
+        for card in &choices[at] {
+            if taken.contains(&Some(card.clone())) {
+                continue;
+            }
+            taken[at] = Some(card.clone());
+            if Card::assign(rest, choices, taken) {
+                return true;
+            }
+            taken[at] = None;
+        }
+        false
+    }
+
+    /// `device` with `gpu:` before every entry that leaves it out, so that two spellings of one
+    /// request are one label.
+    pub fn spelled(device: &str) -> String {
+        device
+            .split(',')
+            .map(|one| match one.contains(':') || one == "cpu" {
+                true => one.to_string(),
+                false => format!("gpu:{one}"),
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// Whether two entries of `--device` could take the same card: one names it, or a model it is
+    /// of, as the other does.
+    pub fn may_meet(a: &str, b: &str) -> bool {
+        let (a, b) = (Card::spelled(a), Card::spelled(b));
+        let within = |x: &str, y: &str| x.strip_prefix(y).is_some_and(|rest| rest.starts_with('.'));
+        a == b || within(&a, &b) || within(&b, &a)
     }
 
     /// Whether `alias` names more than one card for some entry, which a pick must then choose.
@@ -348,5 +386,45 @@ mod tests {
             ..card
         };
         assert!(unknown.runs("cargo bench --features rocm").is_ok());
+    }
+
+    fn machine(aliases: &[&str]) -> Machine {
+        let devices: String = aliases
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                format!(
+                    "[[machine.box.device]]\nkind = \"gpu\"\nalias = \"{a}\"\nname = \"x\"\npci = \"0000:0{i}:00.0\"\nchip = \"1:2\"\n"
+                )
+            })
+            .collect();
+        crate::inventory::Inventory::parse(&format!("[machine.box]\nssh = \"box\"\n{devices}"))
+            .unwrap()
+            .machine("box")
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn a_broad_prefix_leaves_a_narrower_one_the_cards_only_it_can_take() {
+        let entry = machine(&["gpu:twin.41.00", "gpu:twin.41.01", "gpu:twin.83"]);
+        let cards = Card::concrete(&Alias::new("twin,twin.41,twin.41"), &entry, |_| 0).unwrap();
+        assert_eq!(cards.as_str(), "gpu:twin.83,gpu:twin.41.00,gpu:twin.41.01");
+    }
+
+    #[test]
+    fn an_exact_card_is_kept_from_a_prefix_and_never_named_twice() {
+        let entry = machine(&["gpu:twin.a", "gpu:twin.b"]);
+        let cards = Card::concrete(&Alias::new("twin,twin.a"), &entry, |_| 0).unwrap();
+        assert_eq!(cards.as_str(), "gpu:twin.b,gpu:twin.a");
+        assert!(Card::concrete(&Alias::new("gpu:twin.a,twin.a"), &entry, |_| 0).is_err());
+    }
+
+    #[test]
+    fn two_spellings_of_a_card_may_meet_and_two_cards_do_not() {
+        assert!(Card::may_meet("twin.a", "gpu:twin.a"));
+        assert!(Card::may_meet("twin", "gpu:twin.a"));
+        assert!(!Card::may_meet("gpu:twin.a", "gpu:twin.b"));
+        assert!(!Card::may_meet("twin", "gpu:twins.a"));
     }
 }

@@ -8,7 +8,7 @@ use dibs_format::wire::{Card, Picked};
 use std::{
     collections::{BTreeMap, HashSet},
     os::fd::RawFd,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -183,12 +183,44 @@ impl Environment {
         roots.push(own("XDG_DATA_HOME", ".local/share"));
         roots.extend(listed("XDG_DATA_DIRS", "/usr/local/share:/usr/share"));
         roots.iter().any(|root| {
-            std::fs::read_dir(root.join("vulkan/implicit_layer.d")).is_ok_and(|entries| {
-                entries
-                    .flatten()
-                    .any(|e| e.file_name().to_string_lossy().contains("device_select"))
-            })
+            std::fs::read_dir(root.join("vulkan/implicit_layer.d"))
+                .is_ok_and(|entries| entries.flatten().any(|e| Environment::selects(&e.path())))
         })
+    }
+
+    /// Whether the manifest at `path` names Mesa's device-select layer and a library the loader
+    /// can find for it: a file that only has the name loads nothing.
+    fn selects(path: &Path) -> bool {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        let quoted = |key: &str| {
+            let after = text.split_once(&format!("\"{key}\""))?.1;
+            let value = after.split_once(':')?.1.trim_start().strip_prefix('"')?;
+            value.split_once('"').map(|(v, _)| v.to_string())
+        };
+        if quoted("name").as_deref() != Some("VK_LAYER_MESA_device_select") {
+            return false;
+        }
+        let Some(library) = quoted("library_path") else {
+            return false;
+        };
+        let at = Path::new(&library);
+        match (at.is_absolute(), library.contains('/')) {
+            (true, _) => at.exists(),
+            (false, true) => path.parent().is_some_and(|dir| dir.join(at).exists()),
+            (false, false) => [
+                "/usr/lib64",
+                "/usr/lib",
+                "/usr/lib/x86_64-linux-gnu",
+                "/usr/lib/aarch64-linux-gnu",
+                "/lib64",
+                "/lib",
+                "/usr/local/lib",
+            ]
+            .iter()
+            .any(|dir| Path::new(dir).join(at).exists()),
+        }
     }
 
     /// The command started in `dir`, with `target` as its build cache.

@@ -8,7 +8,7 @@ pub fn run_label(repo: &str, verb: &str, name: Option<&str>, device: Option<&str
     // per card, so the second card was refused and --new-series answered by discarding the
     // first: two cards could be measured, never both kept.
     match device {
-        Some(d) => format!("{base}@{d}"),
+        Some(d) => format!("{base}@{}", crate::machine::Card::spelled(d)),
         None => base,
     }
 }

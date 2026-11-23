@@ -124,7 +124,7 @@ impl<'a> LockedCall<'a> {
         target: &Target,
         fleet: &Fleet,
         series: Option<&Series>,
-        label: &Label,
+        labels: &[Label],
     ) -> Result<Option<Alias>, CallError> {
         let (Some(alias), Some(entry)) = (&call.device, target.entry(fleet)) else {
             return Ok(None);
@@ -134,16 +134,25 @@ impl<'a> LockedCall<'a> {
             return Ok((named != *alias).then_some(named));
         }
         let bound = series
-            .and_then(|s| s.card_of(label.as_str(), &target.series_key()))
-            .filter(|cards| !call.new_series && Card::fits(alias, cards, entry));
+            .filter(|_| !call.new_series)
+            .into_iter()
+            .flat_map(|s| {
+                labels
+                    .iter()
+                    .filter_map(|l| s.card_of(l.as_str(), &target.series_key()))
+            })
+            .find(|cards| Card::fits(alias, cards, entry));
         if let Some(cards) = bound {
             return Ok(Some(Alias::new(cards)));
         }
         let reading = Reading::asked(&entry.name);
-        let running = reading
-            .as_ref()
-            .and_then(|r| r.cards_of(label.as_str()))
-            .filter(|cards| Card::fits(alias, cards, entry));
+        let running = reading.as_ref().and_then(|r| {
+            labels
+                .iter()
+                .flat_map(|l| r.cards_of(l.as_str()))
+                .find(|cards| Card::fits(alias, cards, entry))
+                .map(str::to_string)
+        });
         if let Some(cards) = running {
             return Ok(Some(Alias::new(cards)));
         }
@@ -155,20 +164,15 @@ impl<'a> LockedCall<'a> {
         Ok(Some(Card::concrete(alias, entry, cost)?))
     }
 
-    /// The cards `call`'s `--device` goes to, where it names them by model or leaves out `gpu:`.
-    pub fn concrete(&self, call: &Call) -> Result<Option<Alias>, CallError> {
+    /// The cards `call`'s `--device` goes to, where it names them by model or leaves out `gpu:`,
+    /// kept to the series of any of `labels`.
+    pub fn concrete(&self, call: &Call, labels: &[Label]) -> Result<Option<Alias>, CallError> {
         let env = Environment::read();
         let paths = Paths::from_env();
         let fleet = Fleet::load(paths.inventory())?;
         let target = self.target(call, &env, &fleet)?;
         let series = paths.series().map(|path| Series { path });
-        LockedCall::pick(
-            call,
-            &target,
-            &fleet,
-            series.as_ref(),
-            &Request::label(call),
-        )
+        LockedCall::pick(call, &target, &fleet, series.as_ref(), labels)
     }
 
     /// Runs the call and returns the exit to give.
@@ -203,7 +207,8 @@ impl<'a> LockedCall<'a> {
         let label = Request::label(call);
         let series = paths.series().map(|path| Series { path });
         let picked;
-        let call = match LockedCall::pick(call, &target, &fleet, series.as_ref(), &label)? {
+        let picked_for = [label.clone()];
+        let call = match LockedCall::pick(call, &target, &fleet, series.as_ref(), &picked_for)? {
             Some(cards) => {
                 picked = Call {
                     device: Some(cards),

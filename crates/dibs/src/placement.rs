@@ -108,13 +108,13 @@ impl Reading {
             .find_map(|line| serde_json::from_str(line).ok())
     }
 
-    /// The cards a job running or queued under `label` named.
-    pub fn cards_of(&self, label: &str) -> Option<&str> {
+    /// The cards each job running or queued under `label` named.
+    pub fn cards_of(&self, label: &str) -> impl Iterator<Item = &str> {
         self.holders
             .iter()
             .chain(&self.queue)
-            .find(|o| o.label == label)
-            .and_then(|o| o.device.as_deref())
+            .filter(move |o| o.label == label)
+            .filter_map(|o| o.device.as_deref())
     }
 
     /// How many jobs running or queued name `card`.

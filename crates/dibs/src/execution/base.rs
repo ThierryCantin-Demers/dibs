@@ -158,7 +158,16 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         // Which card, printed whether or not one was named: a dry run is where someone checks
         // they are about to measure the thing they mean to, and "no card named" is the answer
         // that most needs saying, because that run is the one nobody can repeat.
-        match &args.device {
+        let picked = match &args.device {
+            Some(_) => concrete(
+                &Jobs::on(destination(rec, &repo_name, name, &args)?),
+                rec,
+                &step_labels,
+                &args,
+            )?,
+            None => None,
+        };
+        match &picked {
             Some(d) => println!("device      {d}"),
             None => println!("device      none named, so the runtime picks and a repeat is luck"),
         }
@@ -201,15 +210,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     if refused_before_building(&backend, rec, &step_labels, &args) {
         return Ok(ExitCode::from(Exit::Refused.code()));
     }
-    let measured = (0..rec.steps.len())
-        .find(|&i| rec.steps[i].lock == Lock::Exclusive)
-        .unwrap_or(0);
-    let device = backend.concrete(
-        &step_labels[measured],
-        rec.steps[measured].lock,
-        args.device.as_deref(),
-        args.new_series,
-    )?;
+    let device = concrete(&backend, rec, &step_labels, &args)?;
     let args = RecipeCall { device, ..args };
     let kept = KeptStores::of(backend.machine.clone(), &tree_copies);
     if let Some(kept) = &kept {
@@ -612,6 +613,25 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         Some(c) => ExitCode::from(c.clamp(1, 255) as u8),
         None => ExitCode::SUCCESS,
     })
+}
+
+/// The cards a recipe's `--device` goes to, picked once for all its steps and kept to the series
+/// of any step that measures.
+fn concrete(
+    backend: &Jobs,
+    rec: &recipe::Recipe,
+    step_labels: &[String],
+    args: &RecipeCall,
+) -> Result<Option<String>, RunError> {
+    let measured: Vec<&str> = (0..rec.steps.len())
+        .filter(|&i| rec.steps[i].lock == Lock::Exclusive)
+        .map(|i| step_labels[i].as_str())
+        .collect();
+    let (labels, lock) = match measured.is_empty() {
+        true => (vec![step_labels[0].as_str()], rec.steps[0].lock),
+        false => (measured, Lock::Exclusive),
+    };
+    Ok(backend.concrete(&labels, lock, args.device.as_deref(), args.new_series)?)
 }
 
 /// A sweep is a batch of ordinary calls, which is what makes it one wake and one summary rather
