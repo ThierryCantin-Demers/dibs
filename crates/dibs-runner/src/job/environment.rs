@@ -115,15 +115,55 @@ impl Environment {
         &self.held
     }
 
+    /// Whether every runtime `card` lists keeps a job to it, one of `named` cards the job names.
+    pub fn confines(card: &Card, named: usize) -> bool {
+        let Some(pci) = &card.pci else {
+            return false;
+        };
+        !card.runtimes.is_empty()
+            && card.runtimes.iter().all(|runtime| match runtime.as_str() {
+                "cuda" => true,
+                "rocm" => Environment::alone_at(pci),
+                "vulkan" => named == 1 && Environment::vulkan_confines(),
+                _ => false,
+            })
+    }
+
+    /// Whether no card in another PCI domain shares `pci`'s bus, device and function, which is
+    /// all rocminfo tells cards apart by.
+    fn alone_at(pci: &str) -> bool {
+        let Some((_, slot)) = pci.split_once(':') else {
+            return false;
+        };
+        std::fs::read_dir("/sys/bus/pci/devices").is_ok_and(|devices| {
+            devices
+                .flatten()
+                .filter(|d| {
+                    d.file_name()
+                        .to_string_lossy()
+                        .split_once(':')
+                        .is_some_and(|(_, theirs)| theirs.eq_ignore_ascii_case(slot))
+                })
+                .count()
+                == 1
+        })
+    }
+
     /// Whether Vulkan here hides every card but the one pinned: only Mesa's device-select layer
     /// does, and only while nothing turns it off.
-    pub fn vulkan_confines() -> bool {
+    fn vulkan_confines() -> bool {
         const LAYERS: [&str; 3] = [
             "/usr/share/vulkan/implicit_layer.d",
             "/etc/vulkan/implicit_layer.d",
             "/usr/local/share/vulkan/implicit_layer.d",
         ];
+        let disabled = var("VK_LOADER_LAYERS_DISABLE").is_some_and(|layers| {
+            layers
+                .split(',')
+                .any(|l| l.contains("device_select") || l == "~all~" || l == "~implicit~")
+        });
         var("NODEVICE_SELECT").is_none()
+            && !disabled
             && LAYERS.iter().any(|dir| {
                 std::fs::read_dir(dir).is_ok_and(|entries| {
                     entries

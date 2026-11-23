@@ -251,8 +251,12 @@ impl<'a> Run<'a> {
             self.at.dir.write(Kind::Waiting, &record);
             let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
         };
+        // The machine as well as the cards: while the group winds down, shared work must not start.
         if let Some(cards) = &acquired.cards {
-            cards.descriptors().for_each(|fd| environment.hold(fd));
+            cards
+                .descriptors()
+                .chain(acquired.lock.descriptors())
+                .for_each(|fd| environment.hold(fd));
         }
         let mut state = self.at.stopper.state();
         let begun = match self.begin(&arrived, &acquired, &mut environment, &mut state) {
@@ -778,14 +782,12 @@ impl<'a> Run<'a> {
             .chain(&request.also)
             .map(|card| card.pci.clone())
             .collect();
-        // A card whose runtimes are unknown gets no variable confining the job to it.
-        let confined = request.card.iter().chain(&request.also).all(|card| {
-            !card.runtimes.is_empty()
-                && card
-                    .runtimes
-                    .iter()
-                    .all(|r| r != "vulkan" || Environment::vulkan_confines())
-        });
+        let named = request.card.iter().chain(&request.also).count();
+        let confined = request
+            .card
+            .iter()
+            .chain(&request.also)
+            .all(|card| Environment::confines(card, named));
         match pcis {
             Some(pcis)
                 if !pcis.is_empty()
@@ -927,16 +929,10 @@ impl<'a> Run<'a> {
         let Ok(Some(claim)) = self.at.dir.claim_urgent() else {
             return Ok(None);
         };
+        // Around the gate, since a benchmark of the whole machine may wait there for the very
+        // benchmarks this one joins.
         let mut lock = Lock::open(self.at.dir).map_err(|e| self.no_lock(&e))?;
-        if !lock
-            .pass_gate(Some(Instant::now()))
-            .map_err(|e| self.no_lock(&e))?
-        {
-            return Ok(None);
-        }
-        let joined = self.join(&mut lock, pcis);
-        lock.leave_gate();
-        let Some(cards) = joined? else {
+        let Some(cards) = self.join(&mut lock, pcis)? else {
             return Ok(None);
         };
         self.at

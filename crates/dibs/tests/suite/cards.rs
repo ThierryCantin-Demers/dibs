@@ -30,9 +30,34 @@ fn card_machine() -> Option<Sandbox> {
         return None;
     };
     let mut s = Sandbox::new();
+    let bdf = |pci: &str| {
+        let mut parts = pci
+            .rsplit([':', '.'])
+            .map(|f| u32::from_str_radix(f, 16).unwrap());
+        let (function, device, bus) = (
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+            parts.next().unwrap(),
+        );
+        (bus << 8) | (device << 3) | function
+    };
+    let agent = |n: u32, pci: &str| {
+        format!(
+            "*******\nAgent {n}\n*******\n  Name:                    gfx\n  Uuid:                    GPU-XX\n  Device Type:             GPU\n  BDFID:                   {}\n",
+            bdf(pci)
+        )
+    };
+    s.write_exec(
+        "bin/rocminfo",
+        &format!(
+            "#!/bin/sh\ncat <<'EOF'\nHSA Agents\n==========\n{}{}EOF\n",
+            agent(1, &a),
+            agent(2, &b)
+        ),
+    );
     let card = |alias: &str, pci: &str, chip: &str| {
         format!(
-            "\n  [[machine.here.device]]\n  kind     = \"gpu\"\n  alias    = \"{alias}\"\n  name     = \"a card\"\n  pci      = \"{pci}\"\n  chip     = \"{chip}\"\n  runtimes = [\"vulkan\"]\n"
+            "\n  [[machine.here.device]]\n  kind     = \"gpu\"\n  alias    = \"{alias}\"\n  name     = \"a card\"\n  pci      = \"{pci}\"\n  chip     = \"{chip}\"\n  runtimes = [\"rocm\"]\n"
         )
     };
     s.machines(&format!(

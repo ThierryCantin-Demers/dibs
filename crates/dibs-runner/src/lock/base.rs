@@ -2,6 +2,7 @@ use crate::lock::records::LockDir;
 use std::{
     fs::{File, OpenOptions, TryLockError},
     io,
+    os::fd::{AsRawFd as _, RawFd},
     path::Path,
     thread,
     time::{Duration, Instant},
@@ -111,6 +112,11 @@ impl Lock {
     pub fn adopt(&mut self, rw: File, ahead: File) {
         self.rw = rw;
         self.ahead = ahead;
+    }
+
+    /// `rw` and `ahead`, for a process that must keep them held as long as this does.
+    pub fn descriptors(&self) -> [RawFd; 2] {
+        [self.rw.as_raw_fd(), self.ahead.as_raw_fd()]
     }
 
     /// `ahead` and `rw` as second handles on the same locks, for the thread that freezes the
