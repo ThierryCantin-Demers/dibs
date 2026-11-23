@@ -484,7 +484,7 @@ fn a_call_that_takes_no_lock_gives_its_runners_build_up_behind_a_benchmark() {
     assert_ne!(kill.code, 72, "{}", kill.all());
     for out in [&status, &peek, &kill] {
         assert_eq!(
-            out.stderr.lines_with("the runner already there answers"),
+            out.stderr.lines_with("the runner already there answered this"),
             1,
             "{}",
             out.all()

@@ -207,6 +207,14 @@ impl Served<'_> {
             }
             return Ok(provision.not_for_a_question(delivery));
         }
+        // A build can wait on more than the lock, such as cargo's package cache, which every
+        // cargo of the machine's account shares; a look never waits on one.
+        if self.values.an_older_runner_answers()
+            && let Attempted::Exit(code) = self.attempt(Reached::Newest, delivery)?
+        {
+            provision.left_to_build(delivery);
+            return Ok(code);
+        }
         let queueing = match self.values.takes_no_lock() {
             true => Queueing::GivesUp,
             false => Queueing::Waits,

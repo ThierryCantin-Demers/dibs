@@ -294,6 +294,13 @@ impl Provision<'_> {
         i32::from(Exit::NoRunner.code())
     }
 
+    pub fn left_to_build(&self, delivery: &mut Delivery) {
+        delivery.say(&format!(
+            "dibs: {} has no runner for this dibs yet, so the runner already there answered this; the next call that takes a lock builds it.\n",
+            self.session.name
+        ));
+    }
+
     pub fn older_answers(&self, delivery: &mut Delivery) {
         delivery.say(&format!(
             "dibs: {} has no runner for this dibs yet, and building it waits for the lock, so the runner already there answers this.\n",
