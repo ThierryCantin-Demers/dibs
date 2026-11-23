@@ -158,7 +158,7 @@ impl View {
                 None
             }
             Key::P | Key::Enter => it.map(Action::process_tree),
-            Key::O => it.filter(|it| it.output.is_some()).map(Action::output),
+            Key::O => it.filter(|it| it.readable()).map(Action::output),
             Key::N => machine().map(Action::gpu),
             Key::L => machine().map(Action::log),
             Key::R => machine().map(Action::status),
@@ -352,7 +352,7 @@ impl View {
             if ui.button("p  process tree").clicked() {
                 asked = Some(Action::process_tree(it));
             }
-            if it.output.is_some() && ui.button("o  output").clicked() {
+            if it.readable() && ui.button("o  output").clicked() {
                 asked = Some(Action::output(it));
             }
             let kill = RichText::new("K  kill").color(ui.visuals().error_fg_color);

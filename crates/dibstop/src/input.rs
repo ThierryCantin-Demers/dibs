@@ -149,13 +149,11 @@ impl App {
                 format!("{} has not started", it.label),
                 "It is still queued, so it has written nothing yet.",
             ));
-        } else if it.output.is_none() {
+        } else if !it.readable() {
             self.overlay = Some(Overlay::new(
-                format!("{} writes to no file", it.label),
-                "Its output goes straight back to the agent that started it \
-                 and is kept nowhere, so there is nothing here to read.\n\n\
-                 A job that redirects into a file, which is what a recipe \
-                 does for every step, can be read from here while it runs.",
+                format!("{} names no job", it.label),
+                "The machine started it without a job of its own, so it keeps \
+                 none of its output to read.",
             ));
         } else {
             self.start_action(Action::output(&it), tx);

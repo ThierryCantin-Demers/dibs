@@ -1,7 +1,7 @@
 //! One row of the jobs table, and what the pane under it says about that job.
 
 use dibs_format::{
-    Alias, Label, Mode, Span,
+    Alias, JobId, Label, Mode, Span,
     status::{Ahead, BatchShown, Holder, IdleKind, Scope, Shown, Status, Waiter},
 };
 
@@ -15,6 +15,8 @@ pub struct Item {
     pub slot: String,
     pub mode: Mode,
     pub pid: u32,
+    /// Whose log on the machine `dibs out` reads, for a job holding the lock.
+    pub job: Option<JobId>,
     pub label: Label,
     pub agent: String,
     /// The person the agent runs as, where its call said.
@@ -41,6 +43,11 @@ impl Item {
         }
     }
 
+    /// Whether there is output to read: a file the job writes to, or else the log of its job.
+    pub fn readable(&self) -> bool {
+        self.holding && (self.output.is_some() || self.job.is_some())
+    }
+
     /// Every job one machine's document lists, holders before the queue.
     pub fn all(machine: &str, s: &Status) -> Vec<Item> {
         s.holders
@@ -62,6 +69,7 @@ impl Item {
             },
             mode: h.mode,
             pid: h.pid,
+            job: h.job.clone(),
             label: h.label.clone(),
             agent: h.agent.clone(),
             user: h.user.clone(),
@@ -87,6 +95,7 @@ impl Item {
             slot: format!("queued {}", q.position),
             mode: q.mode,
             pid: q.pid,
+            job: None,
             label: q.label.clone(),
             agent: q.agent.clone(),
             user: q.user.clone(),
@@ -350,6 +359,17 @@ mod tests {
             (v[0].note.as_str(), v[0].alarm),
             ("preparing: laying out its tree", false),
             "a prepare is not timed against the command's history"
+        );
+    }
+
+    #[test]
+    fn a_job_writing_to_no_file_of_its_own_is_read_from_its_log() {
+        let s = status(&holder("b", r#","job":"20261123211956-7""#), "");
+        let v = Item::all("m", &s);
+        assert!(v[0].readable());
+        assert_eq!(
+            crate::action::Action::output(&v[0]).args,
+            ["--out", "20261123211956-7"]
         );
     }
 

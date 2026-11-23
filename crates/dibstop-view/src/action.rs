@@ -15,14 +15,21 @@ const LOG_LINES: usize = 40;
 
 /// Which call an action is, enough to make the same one again in another process, as the
 /// one that runs a web page's actions does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Call {
     Log,
     Gpu,
     Status,
-    Output { pid: u32 },
-    Tree { pid: u32 },
-    Kill { pid: u32 },
+    /// A running job's pid, for a file it writes to itself, or its job id, for its log.
+    Output {
+        of: String,
+    },
+    Tree {
+        pid: u32,
+    },
+    Kill {
+        pid: u32,
+    },
 }
 
 pub struct Action {
@@ -38,7 +45,7 @@ pub struct Action {
 
 impl Action {
     pub fn new(machine: String, call: Call, label: &str) -> Action {
-        let (doing, title, args): (String, String, Vec<String>) = match call {
+        let (doing, title, args): (String, String, Vec<String>) = match &call {
             Call::Log => (
                 "reading the log".into(),
                 "recent arrivals and outcomes".into(),
@@ -54,10 +61,10 @@ impl Action {
                 "status".into(),
                 vec!["--status".into()],
             ),
-            Call::Output { pid } => (
-                format!("reading what {pid} is writing"),
-                format!("output of {pid} ({label})"),
-                vec!["--out".into(), pid.to_string()],
+            Call::Output { of } => (
+                format!("reading what {of} is writing"),
+                format!("output of {of} ({label})"),
+                vec!["--out".into(), of.clone()],
             ),
             Call::Tree { pid } => (
                 format!("looking at {pid}"),
@@ -94,11 +101,11 @@ impl Action {
     }
 
     pub fn output(job: &Item) -> Action {
-        Action::new(
-            job.machine.clone(),
-            Call::Output { pid: job.pid },
-            job.label.as_str(),
-        )
+        let of = match (&job.output, &job.job) {
+            (None, Some(id)) => id.to_string(),
+            _ => job.pid.to_string(),
+        };
+        Action::new(job.machine.clone(), Call::Output { of }, job.label.as_str())
     }
 
     pub fn process_tree(job: &Item) -> Action {
