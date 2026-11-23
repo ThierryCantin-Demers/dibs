@@ -318,7 +318,7 @@ pub const RECIPE: &[Flag] = &[
     Flag::new(
         &["--follow"],
         Value::No,
-        "batch: a detached batch's summary, by its id",
+        "batch: a detached batch's summary, or a paused one run on, by its id",
     ),
     Flag::new(
         &["--dry-run"],

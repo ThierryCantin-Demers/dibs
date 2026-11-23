@@ -478,3 +478,21 @@ fn the_job_ids_come_from_the_trailers() {
         ]
     );
 }
+
+#[test]
+fn a_step_that_checked_in_is_followed_by_the_call_it_named_and_shown_without_it() {
+    let err = "dibs: step 1/1 [Shared]\n\
+               dibs: job 1-2 has run 30m00s (time frozen or parked not counted) and still runs. This call lets go of it, and the job goes on.\n  \
+               log, last 10 lines:\n\
+               compiling\n  \
+               dibs --on m --follow 1-2  waits for it: it ends with the job, or after another 30m00s of running\n  \
+               dibs --on m --kill 77  stops it\n";
+    let stderr = StepStderr(err);
+    assert_eq!(stderr.follow().as_deref(), Some("dibs --on m --follow 1-2"));
+    assert_eq!(
+        stderr.check_in(),
+        "dibs: job 1-2 has run 30m00s (time frozen or parked not counted) and still runs. This call lets go of it, and the job goes on.\n  \
+         log, last 10 lines:\ncompiling\n"
+    );
+    assert_eq!(StepStderr("job 1-2  shared  a  exit 80\n").follow(), None);
+}

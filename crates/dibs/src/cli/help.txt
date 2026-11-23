@@ -48,7 +48,8 @@ Recipes: a repo's builds, tests and benchmarks, prepared and recorded.
                                carries on when this computer sleeps or leaves. Each repo a
                                step names is sent there whole, with your recipes and
                                machines; a step that acts on this computer is refused
-  dibs batch --follow <id>     a detached batch's summary, once it has ended
+  dibs batch --follow <id>     a detached batch's summary, once it has ended, or a batch
+                               paused by a check-in, followed and run to its end
 
   <verb>       bench, build or test
   <repo>       a path to a checkout, or a name: the checkout you are in when it is that
@@ -247,7 +248,8 @@ DIBS_BYPASS=0 turns it off. A benchmark can be delayed by their sum and no more.
   --check-in <time>  once the job has run this long, frozen or parked time not counted, the
                      call lets go of it and exits 80, naming it; the job goes on, and
                      --follow <job> waits for it (default 30m; off never; s, m or h, bare
-                     minutes). A batch's steps and a recipe's jobs never do.
+                     minutes). DIBS_CHECK_IN sets it for a recipe or a batch: a recipe
+                     checks in at its last job, a batch pauses until dibs batch --follow.
   --label <name>     what shows up in --status (default: the caller's directory)
   -v                 with --status, also dump the raw lock directory; with a call that
                      queues, the whole queue rather than one line

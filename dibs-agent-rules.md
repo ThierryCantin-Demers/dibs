@@ -124,7 +124,12 @@ spoiled without it.
   and exit or checks in again after another 30 minutes. Kill it with the `--kill` line only when
   what it printed shows it stuck, never because its log is quiet: a long build or a benchmark is
   often silent. Never leave a check-in unanswered: nobody else is watching that job.
-  `--check-in <time>` or `off` changes it for a call you know runs long.
+  `--check-in <time>` or `off` changes it for a call you know runs long, and
+  `DIBS_CHECK_IN=<time>` for a recipe, a `dibs shell` or a batch's steps.
+- **A batch whose step checks in pauses**: the call exits 80 with that step's check-in, and no
+  further step starts. `dibs batch --follow <id>`, in the background, follows its jobs and runs
+  the rest, and checks in the same way. A recipe or `dibs shell` that checks in is recorded, and
+  what it kept fetched, by the `--follow` that sees its job end.
 - **Do not batch across a decision.** If a later step depends on what an earlier one *said*, you
   will not see that until the whole batch is done. Two batches with a look in between is still far
   cheaper than one call per job. When the criterion can be stated up front, put it in the step and

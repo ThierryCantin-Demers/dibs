@@ -6,7 +6,7 @@ use dibs::{
     caller::Caller,
     cli::{Call, Help, Hook, Invocation, Mode, RecipeCall, RecipeVerb},
     completion::Shell,
-    execution::{self, Refusal, RunError},
+    execution::{self, Refusal, RunError, Unfinished},
     fleet,
     hook::{SshHook, UrgentHook},
     inventory::Inventory,
@@ -111,6 +111,12 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             let caller = Caller::from_env();
             if call.mode != Mode::Update {
                 ChangeNotice::tell_once(&caller);
+            }
+            if let Mode::Follow(job) = &call.mode
+                && let Some(run) = Unfinished::of(job)
+            {
+                let code = Unfinished::follow(&run, job, &call, &caller)?;
+                return Ok(ExitCode::from(code.rem_euclid(256) as u8));
             }
             let code = Dispatch {
                 call: &call,

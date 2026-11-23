@@ -7,7 +7,7 @@ use crate::{
         series::{Entry, Moved, Pending, Series},
     },
     caller::Caller,
-    cli::{Call, Command, PortName, Run, RunLock, Service},
+    cli::{Call, Command, PortName, Run, RunLock, Service, check_in},
     inventory::{InventoryError, Machine},
     machine::{
         CallValues, Card, CardError, Delivery, Fleet, Here, Liveness, MaxFrom, Named, Session,
@@ -456,11 +456,10 @@ impl<'a> LockedCall<'a> {
                 Origin::Recipe(job) => job.tree.clone(),
                 Origin::Words => None,
             },
-            // A recipe records its run and fetches its artifacts once its job has ended, so its
-            // job cannot be let go of.
+            // A recipe's jobs before its last have more after them, which the call must run.
             check_in: match self.origin {
-                Origin::Recipe(_) => None,
-                Origin::Words => values.check_in,
+                Origin::Recipe(job) if !job.last => None,
+                _ => values.check_in,
             },
             ..values
         }
@@ -518,7 +517,11 @@ impl Request<'_> {
             aliases: BTreeMap::new(),
             preempt: false,
             tree: None,
-            check_in: match self.call.check_in {
+            check_in: match self
+                .call
+                .check_in
+                .or_else(|| set(CHECK_IN).and_then(|v| check_in(&v).ok()))
+            {
                 Some(0) => None,
                 Some(seconds) => Some(seconds),
                 None => Some(DEFAULT_CHECK_IN),
@@ -555,6 +558,10 @@ fn carries_batch(mode: Mode) -> bool {
 
 /// Seconds a job runs before its call lets go of it when `--check-in` does not say.
 const DEFAULT_CHECK_IN: u64 = 1800;
+
+/// `--check-in` for every call made where it is set: a recipe's or a batch's, which take no
+/// flag of their own for it, and `off` in the steps of a driver nobody waits on.
+pub const CHECK_IN: &str = "DIBS_CHECK_IN";
 
 /// How long a call may hold the lock when `--max` does not say.
 fn default_max(mode: Mode) -> u64 {

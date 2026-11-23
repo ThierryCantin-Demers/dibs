@@ -9,6 +9,7 @@ use super::{
     schedule::Job,
     sweep::SweepPoints,
     trees::{Announce, TreePlan, TreeSpec, new_token, preparing_title},
+    unfinished::Unfinished,
 };
 use crate::{
     call::{BatchStep, Destination, RecipeJob},
@@ -226,6 +227,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         batch: BatchStep::for_recipe_job(&own_batch, &calls, k),
         fingerprint: Some(fingerprint.clone()),
         tree: None,
+        last: false,
     };
     let mut announce = |prepared: &wire::Prepared| prepared.announce();
 
@@ -324,6 +326,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     let mut steps = Vec::new();
     let mut failed = None;
     let mut state = Pairs::default();
+    let mut checked_in = None;
     for (k, job) in jobs
         .iter()
         .copied()
@@ -333,7 +336,11 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         if failed.is_some() {
             break;
         }
-        let env = env_of(k);
+        // A comparison or reps sums its jobs up once all have ended, which a follower does not.
+        let env = RecipeJob {
+            last: k + 1 == pins.len() + jobs.len() && !compared && args.reps == 1,
+            ..env_of(k)
+        };
         let setup = JobRequest {
             label: calls[k].label.as_str(),
             lock: Lock::Shared,
@@ -475,7 +482,9 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     state = read;
                 }
                 steps.push(record(&out, stepped.as_ref()));
-                if out.status != 0 {
+                if out.checked_in.is_some() {
+                    checked_in = out.checked_in;
+                } else if out.status != 0 {
                     failed = Some(out.status);
                 }
                 continue;
@@ -517,12 +526,16 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             state = read;
         }
         steps.push(record(&out, stepped.as_ref()));
-        if out.status != 0 {
+        if out.checked_in.is_some() {
+            checked_in = out.checked_in;
+        } else if out.status != 0 {
             failed = Some(out.status);
         }
     }
-    backend.fetch_artifacts(&steps, args.artifacts_to.as_deref(), compared);
-    if let Some(kept) = &kept {
+    // A job that checked in keeps on, and whoever follows it fetches what it keeps.
+    let fetched = steps.len() - usize::from(checked_in.is_some());
+    backend.fetch_artifacts(&steps[..fetched], args.artifacts_to.as_deref(), compared);
+    if let Some(kept) = kept.as_ref().filter(|_| checked_in.is_none()) {
         kept.fetch();
     }
 
@@ -609,6 +622,15 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         outcome: Some(Outcome::of_steps(&steps)),
         steps,
     };
+    if let Some(job) = checked_in {
+        Unfinished {
+            record,
+            artifacts_to: args.artifacts_to.clone(),
+            copies: tree_copies,
+        }
+        .keep(&job);
+        return Ok(ExitCode::from(Exit::CheckedIn.code()));
+    }
     RunLog::here()?.append(&record)?;
 
     Ok(match failed {

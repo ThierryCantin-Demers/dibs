@@ -1,4 +1,4 @@
-use dibs_format::wire::{Prepared, Stepped};
+use dibs_format::wire::{CheckedIn, Prepared, Stepped};
 use std::{
     io::{BufRead as _, BufReader, Read},
     process::{Child, ChildStderr, ChildStdout},
@@ -14,6 +14,9 @@ pub trait Listener {
 
     /// What was done around a recipe step's command.
     fn stepped(&mut self, stepped: &Stepped);
+
+    /// The runner let go of the job, which goes on without this call.
+    fn checked_in(&mut self, checked: &CheckedIn);
 }
 
 /// Which of a child's streams a line came on.

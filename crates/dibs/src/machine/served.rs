@@ -561,6 +561,7 @@ impl Served<'_> {
                 Heard::Stepped(stepped) => delivery.stepped(&stepped),
                 Heard::CheckedIn(c) => {
                     self.session.said.checked_in(&c.job);
+                    delivery.checked_in(&c);
                     checked = Some(c);
                 }
                 Heard::Trailer(trailer) => {
@@ -725,6 +726,12 @@ impl Delivery<'_> {
     fn stepped(&mut self, stepped: &Stepped) {
         if let Delivery::Listening(listener) = self {
             listener.stepped(stepped);
+        }
+    }
+
+    fn checked_in(&mut self, checked: &CheckedIn) {
+        if let Delivery::Listening(listener) = self {
+            listener.checked_in(checked);
         }
     }
 }

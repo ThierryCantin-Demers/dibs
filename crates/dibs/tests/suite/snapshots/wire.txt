@@ -884,6 +884,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | 1	2
       | measure	bench	gemm	1
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -913,6 +914,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | <batch>	measure
       | 2	2
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false

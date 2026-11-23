@@ -571,9 +571,20 @@ output, which a stuck job can show either way; the agent knows what its job shou
 `dibs --on <machine> --follow <job>` waits on it again. It ends with the job, passing on its
 digest, trailer and exit as the call would have, or exits 80 at its next check-in, after another
 30 minutes of running, so an agent following in the background is woken at least that often.
-`--check-in <time>` changes the 30 minutes and `--check-in off` turns it off. A job whose `--max`
-comes first never checks in, nor does a hold, nor a step of a batch or a job of a recipe or `dibs shell`,
-whose driver goes on only once the job has ended.
+`--check-in <time>` changes the 30 minutes and `--check-in off` turns it off; `DIBS_CHECK_IN`
+does the same for every call made where it is set, a recipe's and a batch's included. A job whose
+`--max` comes first never checks in, nor does a hold.
+
+A recipe or `dibs shell` checks in only at its last job, since the jobs before it have more after
+them that its call must run. Its call keeps the run beside the job, and the `--follow` that sees
+the job end fetches what the job kept and records the run, once however many follow it. A
+comparison or a run with `--reps` sums its arms up only once all have ended, so it never checks in.
+
+A batch whose step checks in pauses: no further step starts, the steps already running end or
+check in, and the batch exits 80 with each one's check-in and `dibs batch --follow <id>`. That
+follows the jobs those steps let go of, from the directory the batch was started in, then runs
+the steps still to come, and checks in again as a job does; a second follow waits for the first.
+A detached batch's steps never check in, since nobody waits on its driver.
 
 ## Holding a lock for a command run elsewhere
 

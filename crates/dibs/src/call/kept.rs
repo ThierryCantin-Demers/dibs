@@ -2,10 +2,11 @@ use crate::{
     call::{
         base::CallError,
         machine::{Asked, MachineCall},
+        output::Output,
         series::{Pending, Series},
     },
     cli::OutTarget,
-    machine::Target,
+    machine::{CallValues, Delivery, Liveness, Session, Target},
     render::{Indented, KeptLog},
 };
 use dibs_format::{Exit, JobId, Label, Mode, base64};
@@ -47,7 +48,19 @@ impl MachineCall<'_> {
     /// `dibs --follow`: waits on a job its call let go of, until it ends or checks in again. A
     /// benchmark's card series is filed once it is followed to a success.
     pub fn follow(&self, job: &JobId) -> Result<i32, CallError> {
-        let exit = self.answer(Asked::plain(Mode::Follow, Label::new(job.as_str())))?;
+        self.follow_into(job, &mut Output::Inherit)
+    }
+
+    /// `follow`, its output given to `output`.
+    pub fn follow_into(&self, job: &JobId, output: &mut Output) -> Result<i32, CallError> {
+        let asked = Asked::plain(Mode::Follow, Label::new(job.as_str()));
+        let exit = match output {
+            Output::Inherit => self.answer(asked)?,
+            Output::Lines(on_line) => self.reading(asked, Delivery::Lines(&mut **on_line))?,
+            Output::Listening(listener) => {
+                self.reading(asked, Delivery::Listening(&mut **listener))?
+            }
+        };
         if exit == 0
             && let (Some(kept), Some(series)) = (self.paths.kept_jobs(), self.paths.series())
             && let Some(pending) = Pending::take(&Pending::path(&kept, job))
@@ -55,6 +68,18 @@ impl MachineCall<'_> {
             pending.file(&Series { path: series });
         }
         Ok(exit)
+    }
+
+    fn reading(&self, asked: Asked, delivery: Delivery) -> Result<i32, CallError> {
+        let target = self.target()?;
+        self.somewhere(&target)?;
+        let values = CallValues {
+            tty: false,
+            ..self.values(asked, &target)?
+        };
+        let session = Session::new(&target, &self.here);
+        let status = session.run_reading(&values, Liveness::from_env(), delivery)?;
+        Ok(session.exit(status, &target))
     }
 
     /// `dibs --fetch`: a job's files, kept here and copied where asked.

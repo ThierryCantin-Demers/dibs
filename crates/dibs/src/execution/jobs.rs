@@ -12,8 +12,8 @@ use crate::{
     recipe::Lock,
 };
 use dibs_format::{
-    Alias, JobId, Label, MachineName, StepRecord,
-    wire::{Built, Prepared, Stepped, Tree},
+    Alias, Exit, JobId, Label, MachineName, StepRecord,
+    wire::{Built, CheckedIn, Prepared, Stepped, Tree},
 };
 use std::{io::Write as _, path::PathBuf, time::Instant};
 
@@ -44,6 +44,8 @@ pub struct JobOutcome {
     pub seconds: u64,
     /// What the job's trailer said, when its stderr passed through here and it printed one.
     pub trailer: Option<Trailer>,
+    /// The job its runner let go of, which goes on without this call.
+    pub checked_in: Option<JobId>,
 }
 
 /// A job's outcome, the tree the machine laid out for it, and what it did around a step.
@@ -79,6 +81,7 @@ impl JobOutcome {
                 log: None,
                 ran: Some(t.ran),
             }),
+            checked_in: None,
         }
     }
 
@@ -139,21 +142,23 @@ impl Trailer {
 }
 
 /// A job's output as it arrives: passed through, with what the recipe layer reads kept aside.
-struct Reader<'a> {
+pub(super) struct Reader<'a> {
     on_prepared: &'a mut dyn FnMut(&Prepared),
     prepared: Option<Prepared>,
     stepped: Option<Stepped>,
     trailer: Option<Trailer>,
+    checked_in: Option<JobId>,
     start: Instant,
 }
 
 impl<'a> Reader<'a> {
-    fn new(on_prepared: &'a mut dyn FnMut(&Prepared)) -> Reader<'a> {
+    pub(super) fn new(on_prepared: &'a mut dyn FnMut(&Prepared)) -> Reader<'a> {
         Reader {
             on_prepared,
             prepared: None,
             stepped: None,
             trailer: None,
+            checked_in: None,
             start: Instant::now(),
         }
     }
@@ -171,7 +176,7 @@ impl<'a> Reader<'a> {
         };
     }
 
-    fn reported(self, status: i32) -> Reported {
+    pub(super) fn reported(self, status: i32) -> Reported {
         Reported {
             outcome: JobOutcome {
                 status,
@@ -181,6 +186,9 @@ impl<'a> Reader<'a> {
                     .and_then(|t| t.ran)
                     .unwrap_or_else(|| self.start.elapsed().as_secs()),
                 trailer: self.trailer,
+                checked_in: self
+                    .checked_in
+                    .filter(|_| status == Exit::CheckedIn.status()),
             },
             prepared: self.prepared,
             stepped: self.stepped,
@@ -204,6 +212,10 @@ impl Listener for Reader<'_> {
 
     fn stepped(&mut self, stepped: &Stepped) {
         self.stepped = Some(stepped.clone());
+    }
+
+    fn checked_in(&mut self, checked: &CheckedIn) {
+        self.checked_in = Some(checked.job.clone());
     }
 }
 
@@ -411,7 +423,7 @@ impl Jobs {
 
     /// A call's exit, with what refused it said. A Ctrl-C the job was given ends the run here too,
     /// once the job has released its lock.
-    fn exit(exit: Result<i32, CallError>) -> i32 {
+    pub(super) fn exit(exit: Result<i32, CallError>) -> i32 {
         let exit = exit.unwrap_or_else(|e| {
             eprint!("{e}");
             e.exit()

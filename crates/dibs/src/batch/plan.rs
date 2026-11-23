@@ -153,6 +153,8 @@ impl Batch<'_> {
             let (wall, exit) = match &states[i] {
                 State::Done { exit: -1, seconds } => (duration(*seconds), "killed".into()),
                 State::Done { exit, seconds } => (duration(*seconds), exit.to_string()),
+                State::CheckedIn { seconds, .. } => (duration(*seconds), "runs on".into()),
+                State::Waiting => ("-".into(), "to come".into()),
                 _ => ("-".into(), "not run".into()),
             };
             let stderr = StepStderr(err);

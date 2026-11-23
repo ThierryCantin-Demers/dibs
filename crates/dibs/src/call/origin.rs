@@ -21,6 +21,8 @@ pub struct RecipeJob {
     pub fingerprint: Option<String>,
     /// The tree it runs in, prepared at its head when it is not yet.
     pub tree: Option<Tree>,
+    /// The run's last job, which nothing waits on but the record, so it may check in.
+    pub last: bool,
 }
 
 /// Which batch a call is a step of and what is still to come, so the machine can say how long

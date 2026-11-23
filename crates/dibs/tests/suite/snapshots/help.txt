@@ -50,7 +50,8 @@
 1|                                carries on when this computer sleeps or leaves. Each repo a
 1|                                step names is sent there whole, with your recipes and
 1|                                machines; a step that acts on this computer is refused
-1|   dibs batch --follow <id>     a detached batch's summary, once it has ended
+1|   dibs batch --follow <id>     a detached batch's summary, once it has ended, or a batch
+1|                                paused by a check-in, followed and run to its end
 1| 
 1|   <verb>       bench, build or test
 1|   <repo>       a path to a checkout, or a name: the checkout you are in when it is that
@@ -249,7 +250,8 @@
 1|   --check-in <time>  once the job has run this long, frozen or parked time not counted, the
 1|                      call lets go of it and exits 80, naming it; the job goes on, and
 1|                      --follow <job> waits for it (default 30m; off never; s, m or h, bare
-1|                      minutes). A batch's steps and a recipe's jobs never do.
+1|                      minutes). DIBS_CHECK_IN sets it for a recipe or a batch: a recipe
+1|                      checks in at its last job, a batch pauses until dibs batch --follow.
 1|   --label <name>     what shows up in --status (default: the caller's directory)
 1|   -v                 with --status, also dump the raw lock directory; with a call that
 1|                      queues, the whole queue rather than one line

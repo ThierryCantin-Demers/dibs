@@ -4,7 +4,11 @@
 
 use super::base::{Options, run};
 use crate::{
-    call::Driver, caller::Caller, execution::SentFrom, gitdeps::CargoHome, itself::Itself,
+    call::{CHECK_IN, Driver},
+    caller::Caller,
+    execution::SentFrom,
+    gitdeps::CargoHome,
+    itself::Itself,
     paths::Paths,
 };
 use dibs_format::{BatchId, Exit, MachineName, Span};
@@ -243,6 +247,7 @@ impl Detached {
                 self.dir.join(Detached::GITDB).into_os_string(),
             ),
             ("DIBS_LOCAL", "1".into()),
+            (CHECK_IN, "off".into()),
             ("PATH", [cargo, path].join(&OsString::from(":"))),
         ]
     }

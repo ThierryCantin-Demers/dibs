@@ -18,5 +18,6 @@ pub use base::{
 };
 pub use error::CliError;
 pub use help::Help;
+pub use parse::check_in;
 pub use recipe::{RecipeCall, RecipeVerb, Sweep};
 pub use shell::{BashQuoted, Command, Expanding, SCRATCH, ShellWord, in_scratch};

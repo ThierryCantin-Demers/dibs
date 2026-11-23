@@ -11,6 +11,7 @@ use crate::{
     paths::{FileError, Paths},
 };
 use dibs_format::{BatchId, Exit, MachineName, Span};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
@@ -19,12 +20,44 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum State {
     Waiting,
     Running,
-    Done { exit: i32, seconds: u64 },
+    Done {
+        exit: i32,
+        seconds: u64,
+    },
     NotRun,
+    /// Its job runs on without the step's call, which `follow` waits for.
+    CheckedIn {
+        follow: String,
+        seconds: u64,
+    },
+}
+
+/// A batch paused once a step checked in, as its driver left it for `dibs batch --follow`.
+#[derive(Debug, Serialize, Deserialize)]
+struct Paused {
+    text: String,
+    /// Where the driver ran, which its steps' own trees and labels are read from.
+    cwd: PathBuf,
+    on: Option<String>,
+    verbose: bool,
+    states: Vec<State>,
+    /// How long the batch had run, its pauses not counted.
+    seconds: u64,
+}
+
+impl Paused {
+    const FILE: &'static str = "paused";
+}
+
+/// Whether the batch in `dir` is driven here, so `resume` follows it: paused by a step that
+/// checked in, or ended.
+pub fn driven_here(dir: &Path) -> bool {
+    dir.join(Paused::FILE).is_file()
+        || (dir.join(EXIT).is_file() && !dir.join(Driver::DETACHED).exists())
 }
 
 /// What a step printed on stderr, read for what dibs said of its jobs.
@@ -69,6 +102,31 @@ impl<'a> StepStderr<'a> {
             }
         }
         locks
+    }
+
+    /// The dibs call that follows the job a step's call let go of, when it said one.
+    pub fn follow(&self) -> Option<String> {
+        self.0.lines().rev().find_map(|l| {
+            let (call, _) = l.trim_start().split_once("  waits for it")?;
+            (call.starts_with("dibs ") && call.contains(" --follow ")).then(|| call.to_string())
+        })
+    }
+
+    /// What the step's call said as it let go of its job, the ways on from it left out: the
+    /// batch is followed as a whole.
+    pub fn check_in(&self) -> String {
+        let lines: Vec<&str> = self.0.lines().collect();
+        let Some(from) = lines
+            .iter()
+            .rposition(|l| l.starts_with("dibs: job ") && l.contains("and still runs"))
+        else {
+            return String::new();
+        };
+        lines[from..]
+            .iter()
+            .filter(|l| !l.trim_start().starts_with("dibs "))
+            .map(|l| format!("{l}\n"))
+            .collect()
     }
 
     /// A command may exit 76 of its own accord, so only dibs saying so makes it a cancellation.
@@ -213,7 +271,80 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         "dibs: batch {id}, {} steps. You are told when it ends; there is nothing to watch.\n{plan}",
         steps.len()
     );
+    let states = vec![State::Waiting; steps.len()];
+    drive(text, batch, &dir, &id, opts, states, 0)
+}
 
+/// `dibs batch --follow` of a batch paused here: the jobs its steps let go of followed, then
+/// the steps still to come run. A follow that finds another already driving it waits for that
+/// one, then follows what it left.
+pub fn resume(id: &BatchId) -> Result<i32, BatchError> {
+    let dir = state_dir().join(id.as_str());
+    let _driving = Driver::claim(&dir).map_err(FileError::at(&dir))?;
+    let Some(paused) = std::fs::read(dir.join(Paused::FILE))
+        .ok()
+        .and_then(|json| serde_json::from_slice::<Paused>(&json).ok())
+    else {
+        if let Ok(summary) = std::fs::read_to_string(dir.join("summary")) {
+            print!("{summary}");
+        }
+        return Ok(std::fs::read_to_string(dir.join(EXIT))
+            .ok()
+            .and_then(|code| code.trim().parse().ok())
+            .unwrap_or(1));
+    };
+    std::env::set_current_dir(&paused.cwd).map_err(FileError::at(&paused.cwd))?;
+    let steps = parse(&paused.text)?;
+    let opts = Options {
+        dry_run: false,
+        verbose: paused.verbose,
+        on: paused.on.as_deref().map(MachineName::new),
+        owner: None,
+        id: Some(id.clone()),
+        driving: None,
+    };
+    let machines: Vec<String> = steps
+        .iter()
+        .map(|s| machine_of(s, opts.on.as_ref()).unwrap_or_else(|| "?".into()))
+        .collect();
+    let batch = Batch {
+        steps: &steps,
+        machines: &machines,
+    };
+    let following = paused
+        .states
+        .iter()
+        .filter(|s| matches!(s, State::CheckedIn { .. }))
+        .count();
+    eprintln!(
+        "dibs: batch {id}: following the {following} job(s) its steps let go of, then the steps still to come. You are told when it ends; there is nothing to watch."
+    );
+    drive(
+        &paused.text,
+        batch,
+        &dir,
+        id.as_str(),
+        &opts,
+        paused.states,
+        paused.seconds,
+    )
+}
+
+/// Where a batch's exit is kept once it has ended, for a follow that comes after.
+const EXIT: &str = "exit";
+
+/// Drives the steps from `states` until every one has ended, or until those running have ended
+/// or checked in once one has checked in.
+fn drive(
+    text: &str,
+    batch: Batch,
+    dir: &Path,
+    id: &str,
+    opts: &Options,
+    states: Vec<State>,
+    earlier: u64,
+) -> Result<i32, BatchError> {
+    let steps = batch.steps;
     let cwd = std::env::current_dir()
         .map(|d| d.display().to_string())
         .unwrap_or_default();
@@ -232,17 +363,19 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let mut driving = Driving {
         batch,
         recipes,
-        dir: &dir,
-        id: &id,
+        dir,
+        id,
         cwd,
         opts,
-        states: vec![State::Waiting; steps.len()],
+        states,
         stopped: false,
+        paused: false,
         cancelled: None,
         running: HashMap::new(),
         tx,
         rx,
     };
+    driving.follow();
     driving.start();
     while driving.states.contains(&State::Running) {
         let end = driving.next_end()?;
@@ -254,21 +387,20 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         cancelled,
         ..
     } = driving;
+    let seconds = earlier + started.elapsed().as_secs();
+    let checked_in = states.iter().any(|s| matches!(s, State::CheckedIn { .. }));
+    if checked_in && cancelled.is_none() {
+        return Ok(pause(text, batch, dir, id, opts, states, seconds));
+    }
     for s in states.iter_mut() {
-        if *s == State::Waiting {
+        if matches!(s, State::Waiting | State::CheckedIn { .. }) {
             *s = State::NotRun;
         }
     }
-    let report = batch.summary(
-        &id,
-        &states,
-        &dir,
-        started.elapsed().as_secs(),
-        cancelled.as_deref(),
-    );
+    let report = batch.summary(id, &states, dir, seconds, cancelled.as_deref());
     let _ = std::fs::write(dir.join("summary"), &report);
     print!("{report}");
-    Ok(if cancelled.is_some() {
+    let code = if cancelled.is_some() {
         i32::from(Exit::Cancelled.code())
     } else if states
         .iter()
@@ -277,7 +409,62 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         0
     } else {
         1
-    })
+    };
+    let _ = std::fs::write(dir.join(EXIT), format!("{code}\n"));
+    let _ = std::fs::remove_file(dir.join(Paused::FILE));
+    Ok(code)
+}
+
+/// The batch left for `dibs batch --follow`, and what its steps said as they let go of their
+/// jobs, so whoever reads it can tell a job that is stuck from one that is slow.
+fn pause(
+    text: &str,
+    batch: Batch,
+    dir: &Path,
+    id: &str,
+    opts: &Options,
+    states: Vec<State>,
+    seconds: u64,
+) -> i32 {
+    let report = batch.summary(id, &states, dir, seconds, None);
+    print!("{report}");
+    let paused = Paused {
+        text: text.to_string(),
+        cwd: std::env::current_dir().unwrap_or_default(),
+        on: opts.on.as_ref().map(ToString::to_string),
+        verbose: opts.verbose,
+        states,
+        seconds,
+    };
+    let kept = serde_json::to_vec(&paused)
+        .is_ok_and(|json| std::fs::write(dir.join(Paused::FILE), json).is_ok());
+    let mut said = String::new();
+    let mut to_come = 0;
+    for (i, state) in paused.states.iter().enumerate() {
+        match state {
+            State::CheckedIn { .. } => {
+                let step = &batch.steps[i].name;
+                let err =
+                    std::fs::read_to_string(dir.join(format!("{step}.err"))).unwrap_or_default();
+                said.push_str(&format!("step {step}: {}", StepStderr(&err).check_in()));
+            }
+            State::Waiting => to_come += 1,
+            _ => {}
+        }
+    }
+    eprint!("{said}");
+    match kept {
+        true => eprintln!(
+            "dibs: batch {id} checked in: the jobs above run on without this call, and no step starts until it is followed.\n  \
+             dibs batch --follow {id}  waits for them, then runs the {to_come} step(s) still to come; it checks in again as a job does\n  \
+             dibs --kill {id}  stops the batch"
+        ),
+        false => eprintln!(
+            "dibs: batch {id} checked in, but could not be kept in {} to be followed: the jobs above run on, and dibs --kill {id} stops them",
+            dir.display()
+        ),
+    }
+    Exit::CheckedIn.status()
 }
 
 /// How often a wait for a step to end looks for a cancellation.
@@ -300,6 +487,8 @@ struct Driving<'a> {
     opts: &'a Options,
     states: Vec<State>,
     stopped: bool,
+    /// A step checked in, so no other starts until the batch is followed.
+    paused: bool,
     cancelled: Option<String>,
     running: HashMap<usize, u32>,
     tx: mpsc::Sender<StepEnded>,
@@ -307,13 +496,38 @@ struct Driving<'a> {
 }
 
 impl Driving<'_> {
+    /// Follows the job of every step that let go of one before the batch was paused, its
+    /// output added to what the step wrote before.
+    fn follow(&mut self) {
+        let following: Vec<(usize, String, u64)> = (0..self.states.len())
+            .filter_map(|i| match &self.states[i] {
+                State::CheckedIn { follow, seconds } => Some((i, follow.clone(), *seconds)),
+                _ => None,
+            })
+            .collect();
+        for &(i, ..) in &following {
+            self.states[i] = State::Running;
+        }
+        for (i, follow, seconds) in following {
+            self.spawn(i, &follow, true, seconds);
+        }
+    }
+
     /// Starts every step whose turn has come.
     fn start(&mut self) {
-        let starting = self.batch.ready(&self.states, self.stopped);
+        let starting = self.batch.ready(&self.states, self.stopped || self.paused);
         for &i in &starting {
             self.states[i] = State::Running;
         }
         for i in starting {
+            let line = self.batch.steps[i].line.clone();
+            self.spawn(i, &line, false, 0);
+        }
+    }
+
+    /// Runs `line` as step `i`, which has run `before` seconds already.
+    fn spawn(&mut self, i: usize, line: &str, append: bool, before: u64) {
+        {
             let step = self.batch.steps[i].clone();
             let (out, err) = (
                 self.dir.join(format!("{}.out", step.name)),
@@ -349,18 +563,20 @@ impl Driving<'_> {
             let tx = self.tx.clone();
             let verbose = self.opts.verbose;
             let t = Instant::now();
-            match StepGuard::spawn(&step.line, &batch, self.opts.on.as_ref()) {
+            match StepGuard::spawn(line, &batch, self.opts.on.as_ref()) {
                 Ok(mut guarded) => {
                     self.running.insert(i, guarded.id());
                     std::thread::spawn(move || {
                         let o = copy(
                             guarded.take_stdout(),
                             out,
+                            append,
                             verbose.then(|| format!("{} ", step.name)),
                         );
                         let e = copy(
                             guarded.take_stderr(),
                             err,
+                            append,
                             verbose.then(|| format!("{} ", step.name)),
                         );
                         // No code means a signal ended it, which the summary shows as killed.
@@ -369,7 +585,7 @@ impl Driving<'_> {
                         let _ = tx.send(StepEnded {
                             step: i,
                             exit: status,
-                            seconds: t.elapsed().as_secs(),
+                            seconds: before + t.elapsed().as_secs(),
                         });
                     });
                 }
@@ -377,7 +593,7 @@ impl Driving<'_> {
                     let _ = self.tx.send(StepEnded {
                         step: i,
                         exit: 127,
-                        seconds: 0,
+                        seconds: before,
                     });
                 }
             }
@@ -406,6 +622,27 @@ impl Driving<'_> {
             seconds,
         } = end;
         self.running.remove(&i);
+        let err = || {
+            std::fs::read_to_string(self.dir.join(format!("{}.err", self.batch.steps[i].name)))
+                .unwrap_or_default()
+        };
+        if exit == Exit::CheckedIn.status()
+            && self.cancelled.is_none()
+            && let Some(follow) = StepStderr(&err()).follow()
+        {
+            // Nobody waits on a driver detached to its machine, so it follows the job itself.
+            match self.opts.driving {
+                Some(_) => {
+                    self.states[i] = State::Running;
+                    self.spawn(i, &follow, true, seconds);
+                }
+                None => {
+                    self.states[i] = State::CheckedIn { follow, seconds };
+                    self.paused = true;
+                }
+            }
+            return;
+        }
         self.states[i] = State::Done { exit, seconds };
         if exit == i32::from(Exit::Cancelled.code())
             && self.cancelled.is_none()
@@ -440,10 +677,17 @@ impl Driving<'_> {
 fn copy(
     from: Option<impl std::io::Read + Send + 'static>,
     to: PathBuf,
+    append: bool,
     echo: Option<String>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let (Some(from), Ok(mut file)) = (from, std::fs::File::create(&to)) else {
+        let file = std::fs::File::options()
+            .create(true)
+            .write(true)
+            .append(append)
+            .truncate(!append)
+            .open(&to);
+        let (Some(from), Ok(mut file)) = (from, file) else {
             return;
         };
         for line in BufReader::new(from).lines().map_while(Result::ok) {

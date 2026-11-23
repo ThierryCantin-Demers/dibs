@@ -163,11 +163,9 @@ impl CallValues {
                 .collect(),
             tree: self.tree.clone(),
             ready_within: u64::from(self.ready_within),
-            // A batch's driver goes on to the next step only once a step has ended, so it cannot
-            // let go of one.
-            check_in: self.check_in.filter(|_| {
-                self.batch.is_empty() && matches!(self.mode, Mode::Shared | Mode::Bench)
-            }),
+            check_in: self
+                .check_in
+                .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
         }
     }
 }

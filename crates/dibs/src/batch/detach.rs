@@ -2,7 +2,7 @@
 //! computer, then followed from here to its summary. `docs/design/detach.md` is the design.
 
 use super::{
-    base::{Options, machine_of, state_dir},
+    base::{Options, driven_here, machine_of, resume, state_dir},
     detached::{Detached, Followed, Instructions},
     parse::{BatchError, Step, parse, split_words},
 };
@@ -427,9 +427,13 @@ pub fn detach(text: &str, opts: &Options) -> Result<i32, BatchError> {
     detach.follow()
 }
 
-/// Follows a batch detached from here to its summary, which it prints at once if it has ended.
+/// Follows a batch detached from here to its summary, which it prints at once if it has ended,
+/// or follows one driven here: run on from where a step's check-in paused it, or its summary.
 pub fn follow(id: &BatchId) -> Result<i32, BatchError> {
     let dir = state_dir().join(id.as_str());
+    if driven_here(&dir) {
+        return resume(id);
+    }
     let name = fs::read_to_string(dir.join(Driver::DETACHED))
         .map_err(|_| DetachError::NotDetached(id.clone()))?;
     let name = MachineName::new(name.trim());

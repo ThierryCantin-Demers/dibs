@@ -746,7 +746,7 @@ impl Parser {
 
 /// `--check-in`'s time: `off`, or a number of minutes, or of seconds, minutes or hours marked
 /// `s`, `m` or `h`.
-fn check_in(value: &str) -> Result<u64, CliError> {
+pub fn check_in(value: &str) -> Result<u64, CliError> {
     if value == "off" {
         return Ok(0);
     }
