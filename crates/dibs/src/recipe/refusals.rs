@@ -1,7 +1,7 @@
 use super::{
     base::{Isolation, Recipe, Step},
     error::{NotTaken, RecipeError, ShellWords},
-    labels::run_label,
+    labels::{run_label, shell_name},
     manifest::{Manifest, Source, Verb},
     repo::Checkouts,
 };
@@ -30,7 +30,7 @@ pub struct Resolved {
 
 /// A shell's own words are refused before its tree is looked for, and all in one refusal, so
 /// one try finds them all.
-fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> {
+fn refuse_shell_words(args: &RecipeCall) -> Result<(), RecipeError> {
     let mut wrong = Vec::new();
     if args.reason.is_none() {
         wrong.push(ShellWords::NoReason);
@@ -39,14 +39,6 @@ fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> 
         (None, Some(word)) => wrong.push(ShellWords::RecipeName(word.clone())),
         (None, None) => wrong.push(ShellWords::NoCommand),
         _ => {}
-    }
-    if args.params.contains_key("label") {
-        wrong.push(ShellWords::Label(run_label(
-            repo,
-            "shell",
-            None,
-            args.device.as_deref(),
-        )));
     }
     wrong.extend(
         NotTaken::of(args.params.keys().filter(|n| *n != "label"))
@@ -62,12 +54,7 @@ fn refuse_shell_words(args: &RecipeCall, repo: &str) -> Result<(), RecipeError> 
 impl Resolved {
     /// What a shell call refuses in its own words, which a batch refuses before it starts.
     pub fn shell_words(args: &RecipeCall) -> Result<(), RecipeError> {
-        let found = Checkouts::of(args).and_then(|checkouts| checkouts.find(&args.repo));
-        let repo = found
-            .as_deref()
-            .map(|dir| Repo(dir).identity())
-            .unwrap_or_else(|_| args.repo.clone());
-        refuse_shell_words(args, &repo)
+        refuse_shell_words(args)
     }
 
     pub fn of(args: &RecipeCall) -> Result<Resolved, RecipeError> {
@@ -147,9 +134,18 @@ impl Resolved {
         //
         // The verb is in it because a recipe name is only unique within a verb: `build cubek cuda`
         // and `test cubek cuda` are different work, and one history for both predicts each from
-        // the other. Shell has no recipe name to carry.
+        // the other. Shell has no recipe name, so its command stands in for one unless --label
+        // names the work.
         let label = match &shell_recipe {
-            Some(_) => run_label(&repo_name, "shell", None, args.device.as_deref()),
+            Some(_) => run_label(
+                &repo_name,
+                "shell",
+                Some(&shell_name(
+                    args.params.get("label").map(String::as_str),
+                    args.command.as_deref().unwrap_or_default(),
+                )),
+                args.device.as_deref(),
+            ),
             None => run_label(
                 &repo_name,
                 verb.as_str(),
@@ -157,14 +153,23 @@ impl Resolved {
                 args.device.as_deref(),
             ),
         };
-        if args.params.contains_key("label") && !rec.params.contains_key("label") {
+        if args.params.contains_key("label")
+            && shell_recipe.is_none()
+            && !rec.params.contains_key("label")
+        {
             return Err(RecipeError::Labelled {
                 verb,
                 name: name.to_string(),
                 label,
             });
         }
-        let params = rec.values(&args.params).map_err(|why| RecipeError::Param {
+        let given: BTreeMap<String, String> = args
+            .params
+            .iter()
+            .filter(|(name, _)| shell_recipe.is_none() || *name != "label")
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let params = rec.values(&given).map_err(|why| RecipeError::Param {
             recipe: name.to_string(),
             why,
         })?;

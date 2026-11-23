@@ -89,8 +89,6 @@ pub enum ShellWords {
     /// A word after the repo with no `--` before it, which reads as a recipe's name.
     RecipeName(String),
     NoCommand,
-    /// `--label`, with the label its durations are filed under.
-    Label(String),
     NotTaken(NotTaken),
 }
 
@@ -287,10 +285,6 @@ impl fmt::Display for ShellWords {
                 "needs -- before its command: '{word}' after the repo would be a recipe's name"
             ),
             ShellWords::NoCommand => f.write_str("needs -- <command>"),
-            ShellWords::Label(label) => write!(
-                f,
-                "takes no --label: its durations are filed under {label}, {LABEL_DERIVED} A one-off that keeps coming back is a recipe to write, and its --reason is what\n  dibs gaps counts to say so"
-            ),
             ShellWords::NotTaken(not_taken) => not_taken.fmt(f),
         }
     }

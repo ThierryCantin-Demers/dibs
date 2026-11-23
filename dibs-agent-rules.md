@@ -263,6 +263,9 @@ spoiled without it.
 - `dibs shell` takes `--bench` when the one-off is a measurement, and `--max <seconds>` when it
   would otherwise be killed at the default cap. A measured `cargo bench` or `cargo test` is built
   first under the shared lock by itself. Without a repo it runs in the tree you are in.
+- A shell measurement is filed under its exact command, so run it the same way each time. When
+  the command must change in what does not matter, a scratch path or a timestamp, give the work a
+  `--label`: `dibs shell burn --bench --label fusion-matmul ...`, the same name every time.
 - `@local` in place of a ref sends your working tree, uncommitted changes included, following the
   repo's ignore rules. A ref the machine cannot fetch, because it was never pushed, the repo is
   private (the machines hold no credentials) or the machine has no clone of it, is checked out

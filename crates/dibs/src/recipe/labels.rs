@@ -12,3 +12,44 @@ pub fn run_label(repo: &str, verb: &str, name: Option<&str>, device: Option<&str
         None => base,
     }
 }
+
+/// What a shell run is filed under within its repo: the work `--label` names, else its command,
+/// as its program's first words and a hash of the whole, so a command run again is one series
+/// and a changed one starts another.
+pub fn shell_name(label: Option<&str>, command: &str) -> String {
+    if let Some(label) = label {
+        return label.to_string();
+    }
+    let words: Vec<&str> = command.split_whitespace().collect();
+    let mut at = 0;
+    while at < words.len() {
+        match words[at] {
+            "cd" => at += 2,
+            "&&" | ";" | "exec" | "env" | "time" => at += 1,
+            word if word.contains('=') && !word.starts_with('-') => at += 1,
+            _ => break,
+        }
+    }
+    let stem: String = words
+        .iter()
+        .skip(at)
+        .take(2)
+        .map(|w| {
+            w.rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect::<String>()
+        })
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let hash = command.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    match stem.is_empty() {
+        true => format!("{hash:08x}"),
+        false => format!("{stem}-{:06x}", hash >> 8),
+    }
+}

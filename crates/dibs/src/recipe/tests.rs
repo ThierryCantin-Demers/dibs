@@ -1,6 +1,6 @@
 use super::{
     base::{Isolation, Recipe, Step},
-    labels::run_label,
+    labels::{run_label, shell_name},
     manifest::{Manifest, Source, Verb},
 };
 use dibs_format::Lock;
@@ -588,4 +588,29 @@ fn a_call_at_a_commit_runs_the_recipes_that_commit_carries() {
         "and so does a commit that carries none"
     );
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn a_shell_command_is_filed_under_its_program_and_a_hash_of_the_whole() {
+    let one = shell_name(
+        None,
+        "cd $DIBS_SCRATCH/x && RUST_LOG=info cargo bench --bench gemv",
+    );
+    assert!(one.starts_with("cargo-bench-"), "{one}");
+    assert_eq!(
+        one,
+        shell_name(
+            None,
+            "cd $DIBS_SCRATCH/x && RUST_LOG=info cargo bench --bench gemv"
+        )
+    );
+    assert_ne!(
+        one,
+        shell_name(
+            None,
+            "cd $DIBS_SCRATCH/x && RUST_LOG=info cargo bench --bench gemm"
+        )
+    );
+    assert!(shell_name(None, "$CARGO_TARGET_DIR/release/examples/mnist").starts_with("mnist-"));
+    assert_eq!(shell_name(Some("matmul-sweep"), "anything"), "matmul-sweep");
 }

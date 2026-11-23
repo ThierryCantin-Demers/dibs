@@ -109,17 +109,10 @@ fn anything_that_is_not_one_dibs_call_is_refused() {
 
 #[test]
 fn a_shell_step_is_refused_for_what_the_shell_itself_refuses() {
-    for (line, why) in [
-        (
-            "dibs shell app --label x --reason r -- 'true'",
-            "takes no --label",
-        ),
-        ("dibs shell app -- 'true'", "needs --reason"),
-    ] {
-        let e = parse(line).unwrap_err().to_string();
-        assert!(e.contains(why), "{line}: {e}");
-    }
+    let e = parse("dibs shell app -- 'true'").unwrap_err().to_string();
+    assert!(e.contains("needs --reason"), "{e}");
     assert!(parse("dibs shell app --reason r -- 'true'").is_ok());
+    assert!(parse("dibs shell app --label x --reason r -- 'true'").is_ok());
 }
 
 #[test]

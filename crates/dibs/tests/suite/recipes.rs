@@ -344,8 +344,9 @@ fn a_recipe_at_a_ref_runs_in_one_job() {
         "in its worktree"
     );
     assert_eq!(
-        s.log()
-            .lines_matching(r#"	arrived	.*	app_shell	.*	echo "in \$PWD"; cat a.txt	"#),
+        s.log().lines_matching(
+            r#"	arrived	.*	app_shell_echo-in-0752c1	.*	echo "in \$PWD"; cat a.txt	"#
+        ),
         1,
         "and the log shows the step's command rather than the setup's"
     );
@@ -407,7 +408,7 @@ fn a_recipe_waiting_in_a_batch_is_planned_as_the_jobs_it_will_make() {
     let mut s = Sandbox::new();
     let app = app(&s);
     s.history(
-        &"rsh\tapp_shell_send\t4\tx\nshared\tapp_shell\t60\tx\nshared\tbatch-rhold\t10\tx\n"
+        &"rsh\tapp_shell_true-4db211_send\t4\tx\nshared\tapp_shell_true-4db211\t60\tx\nshared\tbatch-rhold\t10\tx\n"
             .repeat(3),
     );
     let (up, hold) = (s.gate("up"), s.gate("hold"));
@@ -422,7 +423,9 @@ fn a_recipe_waiting_in_a_batch_is_planned_as_the_jobs_it_will_make() {
     let status = s.dibs(["status"]).run().stdout;
     assert_eq!(
         status
-            .lines_matching(r"^    then here: rec: app/shell:send ~4s, rec: app/shell ~[0-9ms]+$"),
+            .lines_matching(
+                r"^    then here: rec: app/shell/true-4db211:send ~4s, rec: app/shell/true-4db211 ~[0-9ms]+$",
+            ),
         1,
         "a recipe waiting in a batch is planned as the jobs it will make, each estimated:\n{status}"
     );
@@ -948,7 +951,8 @@ fn shell_takes_bench_and_max() {
         ])
         .run();
     assert_eq!(
-        s.log().lines_matching("\tarrived\t.*\tbench\tapp_shell\t"),
+        s.log()
+            .lines_matching("\tarrived\t.*\tbench\tapp_shell_echo-measured-a71e57\t"),
         1,
         "shell --bench takes the exclusive lock"
     );
@@ -989,12 +993,11 @@ fn shell_takes_bench_and_max() {
     assert_eq!(
         (
             out.code,
-            out.stderr
-                .lines_with("shell takes no --label: its durations are filed under app/shell"),
+            s.log().lines_matching("\tarrived\t.*\tapp_shell_mine\t"),
             out.stderr.lines_with("recipe takes no parameters")
         ),
-        (2, 1, 0),
-        "a label is refused as the derived thing it is, not as a parameter of a recipe: {}",
+        (0, 1, 0),
+        "a label names the work in place of the command, not a parameter of a recipe: {}",
         out.all()
     );
     assert_eq!(
@@ -2417,20 +2420,11 @@ fn a_shell_in_a_worktree_needs_no_repo_and_answers_to_its_directory_name() {
         "and a worktree's directory name is that worktree: {}",
         out.all()
     );
-    let out = inside(&[
-        "shell",
-        "nothing-here@local",
-        "--reason",
-        "r",
-        "--label",
-        "mine",
-        "--",
-        "true",
-    ]);
+    let out = inside(&["shell", "nothing-here@local", "--", "true"]);
     assert_eq!(
         (
             out.code,
-            out.stderr.lines_with("shell takes no --label"),
+            out.stderr.lines_with("shell needs --reason"),
             out.stderr.lines_with("no repo at")
         ),
         (2, 1, 0),

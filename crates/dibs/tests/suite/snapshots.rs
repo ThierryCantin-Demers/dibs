@@ -1680,9 +1680,6 @@ fn recipe_refusals() {
         r(&["bench", &main, "stolen"]),
         r(&["shell", &local, "--", "true"]),
         r(&[
-            "shell", &local, "--reason", "r", "--label", "mine", "--", "true",
-        ]),
-        r(&[
             "shell",
             &local,
             "--reason",

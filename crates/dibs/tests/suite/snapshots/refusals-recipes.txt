@@ -20,7 +20,6 @@ exit  call
 3     dibs bench <root>/app@no-such-ref stolen
 78    dibs bench <root>/app@main stolen
 2     dibs shell <root>/app@local -- true
-2     dibs shell <root>/app@local --reason r --label mine -- true
 2     dibs shell <root>/app@local --reason r --bench -- 'cargo build --release && cargo bench --bench gemm'
 2     dibs shell <root>/loose --reason r -- true
 2     dibs raw -- true
@@ -152,13 +151,6 @@ exit  call
 -> exit 2
 2| dibs: shell needs --reason <why>: most of what gets run is neither a build nor a benchmark,
 2|   and knowing what those were is how the next recipe gets written.
-2|   usage: dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>
-
-== dibs shell <root>/app@local --reason r --label mine -- true
--> exit 2
-2| dibs: shell takes no --label: its durations are filed under app/shell, derived so that every run of one piece of
-2|   work lands in one history. A one-off that keeps coming back is a recipe to write, and its --reason is what
-2|   dibs gaps counts to say so.
 2|   usage: dibs shell <repo>[@<ref>] --reason <why> [--bench] -- <cmd>
 
 == dibs shell <root>/app@local --reason r --bench -- 'cargo build --release && cargo bench --bench gemm'
