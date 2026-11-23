@@ -8,7 +8,7 @@ use crate::machine::{
     unreachable::Unreachable,
     values::CallValues,
 };
-use dibs_format::{Exit, wire::Trailer};
+use dibs_format::{Exit, JobId, wire::Trailer};
 use std::{
     io,
     net::Ipv4Addr,
@@ -48,6 +48,8 @@ pub struct Session {
     pub lock_at: String,
     /// What notices call the machine: its inventory name, or the host.
     pub name: String,
+    /// The inventory entry the call was sent by, which `--on` takes again.
+    pub entry: Option<String>,
     pub said: Said,
     /// The first call builds dibs's runner there, as `--check` would.
     pub leased: bool,
@@ -65,6 +67,7 @@ struct Heard {
     stderr: Vec<u8>,
     exited: bool,
     trailer: Option<Trailer>,
+    checked_in: Option<JobId>,
 }
 
 impl Said {
@@ -97,6 +100,15 @@ impl Said {
 
     pub fn trailer(&self) -> Option<Trailer> {
         self.heard().trailer.clone()
+    }
+
+    pub fn checked_in(&self, job: &JobId) {
+        self.heard().checked_in = Some(job.clone());
+    }
+
+    /// The job the call let go of at a check-in.
+    pub fn checked_in_job(&self) -> Option<JobId> {
+        self.heard().checked_in.clone()
     }
 
     fn heard(&self) -> MutexGuard<'_, Heard> {
@@ -207,6 +219,7 @@ impl Session {
                 route: Route::Here,
                 lock_at: me,
                 name: String::new(),
+                entry: None,
                 said: Said::default(),
                 leased: false,
             },
@@ -217,11 +230,13 @@ impl Session {
                 },
                 lock_at: target.hostname.to_ascii_lowercase(),
                 name: String::new(),
+                entry: None,
                 said: Said::default(),
                 leased: target.leased,
             },
         };
         session.name = session.at(target, here);
+        session.entry = target.machine.as_ref().map(ToString::to_string);
         session
     }
 

@@ -44,7 +44,7 @@ impl Parking {
                         true => kill_frozen(job),
                         false => Host::reap(&[job]),
                     }
-                    state.stage = Stage::Parked;
+                    state.set_stage(Stage::Parked);
                     return true;
                 }
                 thread::sleep(POLL);

@@ -1,7 +1,7 @@
 //! A job's call lets go of it once it has run as long as `--check-in` gives it, so the agent that
 //! started it hears of it, while the job goes on; `dibs --follow` hears each check-in after.
 
-use crate::{ahead::Frozen, kept::tail, stop::Stage, stop::Stopper};
+use crate::{ahead::Frozen, kept::tail, stop::Stopper};
 use dibs_format::{JobId, Span, wire::CheckedIn};
 use std::{
     fs::{self, File},
@@ -87,27 +87,28 @@ pub struct CheckIn {
 }
 
 impl CheckIn {
-    /// Counts the job's running time a second at a time: time frozen is taken off as the freeze
-    /// clock measured it, and a second is counted only when the job was not parked at either end.
+    /// Counts the job's running time a second at a time, less the time frozen and parked in it as
+    /// their own clocks measured them.
     pub fn start(every: Duration, job: Job, stopper: Arc<Stopper>, frozen: Arc<Frozen>) -> Self {
         let (end, ended) = mpsc::channel();
         let thread = thread::spawn(move || {
             let mut ran = Duration::ZERO;
             let mut last = Instant::now();
             let mut was_frozen = frozen.total();
-            let mut was_parked = false;
+            let mut was_parked = stopper.state().parked();
+            let mut handed = false;
             let mut n = 0;
             while let Err(RecvTimeoutError::Timeout) = ended.recv_timeout(TICK) {
                 let now = Instant::now();
                 let frozen_now = frozen.total();
-                let parked = matches!(stopper.state().stage, Stage::Parked);
-                if !parked && !was_parked {
-                    ran += (now - last).saturating_sub(frozen_now.saturating_sub(was_frozen));
-                }
+                let parked = stopper.state().parked();
+                let idle =
+                    frozen_now.saturating_sub(was_frozen) + parked.saturating_sub(was_parked);
+                ran += (now - last).saturating_sub(idle);
                 (last, was_frozen, was_parked) = (now, frozen_now, parked);
                 if ran >= every * (n + 1) {
                     n += 1;
-                    job.check_in(n, ran, every, &stopper);
+                    handed |= job.check_in(n, ran, every, &stopper, handed);
                 }
             }
         });
@@ -121,7 +122,15 @@ impl CheckIn {
 }
 
 impl Job {
-    fn check_in(&self, n: u32, ran: Duration, every: Duration, stopper: &Stopper) {
+    /// Whether the job has been handed over, by this check-in or an earlier one.
+    fn check_in(
+        &self,
+        n: u32,
+        ran: Duration,
+        every: Duration,
+        stopper: &Stopper,
+        handed: bool,
+    ) -> bool {
         let check_ins = CheckIns { dir: &self.dir };
         let checked = CheckedIn {
             job: self.id.clone(),
@@ -130,17 +139,15 @@ impl Job {
         };
         let text = self.text(ran);
         check_ins.write_latest(n, &checked, &text);
-        if n == 1 {
-            Job::hand_over(&check_ins, checked, &text, stopper);
-        }
+        handed || Job::hand_over(&check_ins, checked, &text, stopper)
     }
 
-    fn hand_over(check_ins: &CheckIns, checked: CheckedIn, text: &str, stopper: &Stopper) {
+    fn hand_over(check_ins: &CheckIns, checked: CheckedIn, text: &str, stopper: &Stopper) -> bool {
         let Ok(handed) = File::create(check_ins.handed()) else {
-            return;
+            return false;
         };
         if handed.try_lock().is_err() {
-            return;
+            return false;
         }
         let handed_over = File::create(check_ins.report())
             .is_ok_and(|report| stopper.hand_over(checked, text, &report));
@@ -152,6 +159,7 @@ impl Job {
                 let _ = fs::remove_file(check_ins.handed());
             }
         }
+        handed_over
     }
 
     fn text(&self, ran: Duration) -> String {
@@ -193,11 +201,15 @@ fn last_lines(path: &Path, lines: usize) -> String {
     let Ok(mut file) = File::open(path) else {
         return String::new();
     };
-    let from = file
-        .metadata()
-        .map_or(0, |m| m.len().saturating_sub(TAIL_BYTES));
+    let length = file.metadata().map_or(0, |m| m.len());
+    let from = length.saturating_sub(TAIL_BYTES);
     let mut end = Vec::new();
-    if file.seek(SeekFrom::Start(from)).is_err() || file.read_to_end(&mut end).is_err() {
+    if file.seek(SeekFrom::Start(from)).is_err()
+        || (&mut file)
+            .take(length - from)
+            .read_to_end(&mut end)
+            .is_err()
+    {
         return String::new();
     }
     String::from_utf8_lossy(&tail(&end, lines)).into_owned()

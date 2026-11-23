@@ -402,7 +402,7 @@ impl<'a> Run<'a> {
         let mut line = self.at.call.log_line(Event::Arrived);
         line.job = Some(job.clone());
         self.at.journal().write(&line);
-        state.stage = Stage::Queued;
+        state.set_stage(Stage::Queued);
         state.job = Some(job.clone());
         Ok(Arrived {
             start,
@@ -561,7 +561,7 @@ impl<'a> Run<'a> {
             return (state, Yielded::Free);
         };
         let was = state.stage;
-        state.stage = Stage::Parked;
+        state.set_stage(Stage::Parked);
         drop(state);
         self.at.dir.park(pid, &urgent.job);
         self.at.sink.say(&format!(
@@ -591,7 +591,7 @@ impl<'a> Run<'a> {
         };
         self.at.dir.unpark(pid);
         let mut state = self.at.stopper.state();
-        state.stage = was;
+        state.set_stage(was);
         (state, yielded)
     }
 
@@ -1312,7 +1312,7 @@ impl<'a> Run<'a> {
         if let Some(tree) = &request.tree
             && hosted.ports.complete()
         {
-            state.stage = Stage::Preparing(None);
+            state.set_stage(Stage::Preparing(None));
             drop(state);
             let laid = layout.lay_out(tree, &mut environment, deadline);
             state = self.at.stopper.state();
@@ -1362,7 +1362,7 @@ impl<'a> Run<'a> {
                 sink: self.at.sink,
             });
             state.services = services.pids();
-            state.stage = Stage::Starting;
+            state.set_stage(Stage::Starting);
             drop(state);
             let cancelled = || {
                 self.at
@@ -1464,7 +1464,7 @@ impl<'a> Run<'a> {
                             break NOT_STARTED;
                         }
                     };
-                    state.stage = Stage::Running(work.pid);
+                    state.set_stage(Stage::Running(work.pid));
                     drop(state);
                     if self.at.call.mode() == Mode::Rsh {
                         Channel::watch_transfer(
@@ -1579,7 +1579,7 @@ impl<'a> Run<'a> {
         let ran = Moment::epoch_now().saturating_sub(end.acquired.at);
         {
             let mut state = self.at.stopper.state();
-            state.stage = Stage::Finishing;
+            state.set_stage(Stage::Finishing);
             let mut line = self.at.call.log_line(Event::Finished);
             line.queued = Some(end.acquired.waited);
             line.ran = Some(ran);

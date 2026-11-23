@@ -760,7 +760,7 @@ fn check_in(value: &str) -> Result<u64, CliError> {
         .parse::<u64>()
         .ok()
         .filter(|n| *n > 0)
-        .map(|n| n * unit)
+        .and_then(|n| n.checked_mul(unit))
         .ok_or_else(|| {
             CliError::new("dibs: --check-in takes off, or a time such as 30m, 90s or 2h")
         })

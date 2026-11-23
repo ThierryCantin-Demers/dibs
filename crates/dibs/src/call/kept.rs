@@ -2,6 +2,7 @@ use crate::{
     call::{
         base::CallError,
         machine::{Asked, MachineCall},
+        series::{Pending, Series},
     },
     cli::OutTarget,
     machine::Target,
@@ -43,9 +44,17 @@ impl MachineCall<'_> {
         self.send(Asked::plain(Mode::Out, label), &at)
     }
 
-    /// `dibs --follow`: waits on a job its call let go of, until it ends or checks in again.
+    /// `dibs --follow`: waits on a job its call let go of, until it ends or checks in again. A
+    /// benchmark's card series is filed once it is followed to a success.
     pub fn follow(&self, job: &JobId) -> Result<i32, CallError> {
-        self.answer(Asked::plain(Mode::Follow, Label::new(job.as_str())))
+        let exit = self.answer(Asked::plain(Mode::Follow, Label::new(job.as_str())))?;
+        if exit == 0
+            && let (Some(kept), Some(series)) = (self.paths.kept_jobs(), self.paths.series())
+            && let Some(pending) = Pending::take(&Pending::path(&kept, job))
+        {
+            pending.file(&Series { path: series });
+        }
+        Ok(exit)
     }
 
     /// `dibs --fetch`: a job's files, kept here and copied where asked.

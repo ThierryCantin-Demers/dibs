@@ -47,10 +47,10 @@ impl<'a> Peek<'a> {
                 return NOT_STARTED;
             }
         };
-        state.stage = Stage::Peeking(job.pid);
+        state.set_stage(Stage::Peeking(job.pid));
         drop(state);
         let status = job.wait(cap).status;
-        at.stopper.state().stage = Stage::Setup;
+        at.stopper.state().set_stage(Stage::Setup);
         let took = Moment::epoch_now().saturating_sub(start);
         let journal = Journal {
             path: &at.machine.log,

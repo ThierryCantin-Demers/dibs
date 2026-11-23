@@ -12,6 +12,7 @@ use std::{
     process::Command,
     sync::{Arc, Mutex, MutexGuard},
     thread,
+    time::{Duration, Instant},
 };
 
 /// What a call has got to, which decides what stopping it means.
@@ -37,7 +38,10 @@ pub enum Stage {
 /// Where a call is, guarded so that a stop and the call's own next step never interleave.
 #[derive(Debug)]
 pub struct State {
+    /// Set through `set_stage`, which keeps the time parked.
     pub stage: Stage,
+    parked: Duration,
+    parked_since: Option<Instant>,
     /// Its end is in the log, so stopping it now adds no `aborted`.
     pub logged_end: bool,
     /// Named once it arrives, and on every line it logs from then on.
@@ -46,8 +50,33 @@ pub struct State {
     pub services: Vec<u32>,
     /// Stopped because its machine was closed with `--now`, which its exit says.
     pub closed: bool,
-    /// Its call let go of the job at a check-in, so the caller going no longer stops it.
+    /// Its call let go of the job at a check-in, or is telling its caller it does, so the caller
+    /// going no longer stops it.
     pub handed: bool,
+    /// The caller went while being told: it is stopped after all if the telling failed.
+    pub gone_while_handing: bool,
+}
+
+impl State {
+    pub fn set_stage(&mut self, stage: Stage) {
+        match (self.stage, stage) {
+            (Stage::Parked, Stage::Parked) => {}
+            (Stage::Parked, _) => {
+                self.parked += self
+                    .parked_since
+                    .take()
+                    .map_or(Duration::ZERO, |s| s.elapsed());
+            }
+            (_, Stage::Parked) => self.parked_since = Some(Instant::now()),
+            _ => {}
+        }
+        self.stage = stage;
+    }
+
+    /// All the time the call has spent parked, the park it is in included.
+    pub fn parked(&self) -> Duration {
+        self.parked + self.parked_since.map_or(Duration::ZERO, |s| s.elapsed())
+    }
 }
 
 /// Stops a call from another thread, leaving the machine as the call's own end would.
@@ -66,11 +95,14 @@ impl Stopper {
         Stopper {
             state: Mutex::new(State {
                 stage: Stage::Setup,
+                parked: Duration::ZERO,
+                parked_since: None,
                 logged_end: false,
                 job: None,
                 services: Vec::new(),
                 closed: false,
                 handed: false,
+                gone_while_handing: false,
             }),
             call,
             dir,
@@ -103,21 +135,35 @@ impl Stopper {
 
     /// Lets go of the job at its first check-in: the caller is told, and from then on its going
     /// stops nothing. False when the call is already ending, or nothing could be handed over.
+    /// The caller is told without the state held, so a stop is never kept waiting on a caller
+    /// that stopped reading.
     pub fn hand_over(&self, checked: CheckedIn, text: &str, report: &File) -> bool {
-        let mut state = self.state();
-        if !matches!(
-            state.stage,
-            Stage::Preparing(_) | Stage::Starting | Stage::Running(_) | Stage::Parked
-        ) || !self.sink.framed()
-            || self.sink.hand_over(checked, text, report).is_err()
         {
-            return false;
+            let mut state = self.state();
+            if !matches!(
+                state.stage,
+                Stage::Preparing(_) | Stage::Starting | Stage::Running(_) | Stage::Parked
+            ) || !self.sink.framed()
+            {
+                return false;
+            }
+            state.handed = true;
         }
-        state.handed = true;
-        let mut line = self.call.log_line(Event::HandedOver);
-        line.job = state.job.clone();
-        Journal { path: &self.log }.write(&line);
-        true
+        let told = self.sink.hand_over(checked, text, report).is_ok();
+        let mut state = self.state();
+        if told {
+            let mut line = self.call.log_line(Event::HandedOver);
+            line.job = state.job.clone();
+            Journal { path: &self.log }.write(&line);
+            return true;
+        }
+        state.handed = false;
+        let gone = std::mem::take(&mut state.gone_while_handing);
+        drop(state);
+        if gone {
+            self.caller_gone("caller gone while told of its check-in");
+        }
+        false
     }
 
     /// Its machine closed with `--now`: stopped as for a caller gone, ending with exit 79.
@@ -129,6 +175,7 @@ impl Stopper {
     fn stop_for(&self, event: Event, why: &str, code: i32) {
         let mut state = self.state();
         if state.handed && event == Event::CallerGone {
+            state.gone_while_handing = true;
             return;
         }
         if !matches!(

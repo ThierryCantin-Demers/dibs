@@ -17,6 +17,8 @@ use std::{
 #[derive(Clone)]
 pub struct Sink {
     plain: Arc<AtomicBool>,
+    /// Stdout is the report a follower reads, which a write never blocks on.
+    handed: Arc<AtomicBool>,
     out: Arc<Mutex<io::Stdout>>,
 }
 
@@ -30,6 +32,7 @@ impl Sink {
     pub fn frames() -> Sink {
         Sink {
             plain: Arc::new(AtomicBool::new(false)),
+            handed: Arc::new(AtomicBool::new(false)),
             out: Arc::new(Mutex::new(io::stdout())),
         }
     }
@@ -37,6 +40,7 @@ impl Sink {
     pub fn plain() -> Sink {
         Sink {
             plain: Arc::new(AtomicBool::new(true)),
+            handed: Arc::new(AtomicBool::new(false)),
             out: Arc::new(Mutex::new(io::stdout())),
         }
     }
@@ -115,7 +119,11 @@ impl Sink {
         if self.kind() != Kind::Frames {
             return;
         }
-        let Ok(mut out) = self.out.try_lock() else {
+        let out = match self.handed.load(Ordering::SeqCst) {
+            true => Ok(self.out.lock().unwrap_or_else(|e| e.into_inner())),
+            false => self.out.try_lock().map_err(|_| ()),
+        };
+        let Ok(mut out) = out else {
             return;
         };
         // SAFETY: fcntl sets a flag on this process's stdout, which it is about to leave.
@@ -155,6 +163,7 @@ impl Sink {
                 return Err(io::Error::last_os_error());
             }
         }
+        self.handed.store(true, Ordering::SeqCst);
         Ok(())
     }
 

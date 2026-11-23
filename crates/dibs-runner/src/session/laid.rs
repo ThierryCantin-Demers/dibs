@@ -69,7 +69,7 @@ impl<'a> Layout<'a> {
             preparing.doing(text);
             self.output.tell(self.at.sink, text);
         };
-        let running = |pid| self.at.stopper.state().stage = Stage::Preparing(pid);
+        let running = |pid| self.at.stopper.state().set_stage(Stage::Preparing(pid));
         let unstopped = |act: &mut dyn FnMut()| {
             let _state = self.at.stopper.state();
             act();

@@ -63,7 +63,7 @@ fn a_job_past_its_check_in_is_let_go_and_followed_to_its_end() {
     hold.open();
     let ended = s.wait(follow);
     assert_eq!(ended, 3, "the follower ends with the job's own exit");
-    s.held(0);
+    s.until_records("the job ended", || s.holders() == 0);
     let log = s.log();
     assert!(
         log.lines()
@@ -87,10 +87,20 @@ fn the_follower_passes_on_the_trailer_of_a_job_already_ended() {
     let job = job_named(&checked);
     up.reached();
     hold.open();
-    s.held(0);
+    s.until_records("the job ended", || s.holders() == 0);
     let follow = s.remote(s.dibs(["--follow", &job])).run();
     assert_eq!(follow.code, 0, "{}", follow.all());
     assert_eq!(follow.stdout.lines_with("finished"), 1, "{}", follow.all());
+    assert_eq!(
+        follow
+            .stderr
+            .lines()
+            .filter(|l| l.starts_with(&format!("job {job} ")) && l.contains("exit 0"))
+            .count(),
+        1,
+        "{}",
+        follow.all()
+    );
 }
 
 #[test]
@@ -158,7 +168,7 @@ fn a_job_killed_after_its_check_in_is_followed_to_its_kill() {
     up.reached();
     let kill = s.remote(s.dibs(["--kill", &pid])).run();
     assert_eq!(kill.code, 0, "{}", kill.all());
-    s.held(0);
+    s.until_records("the job ended", || s.holders() == 0);
     let follow = s.remote(s.dibs(["--follow", &job])).run();
     assert_eq!(follow.code, 143, "{}", follow.all());
 }

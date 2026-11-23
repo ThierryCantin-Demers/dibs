@@ -4,7 +4,7 @@ use crate::{
         machine::MachineCall,
         origin::{BatchStep, Origin, RecipeJob},
         output::Output,
-        series::{Entry, Moved, Series},
+        series::{Entry, Moved, Pending, Series},
     },
     caller::Caller,
     cli::{Call, Command, PortName, Run, RunLock, Service},
@@ -298,16 +298,30 @@ impl<'a> LockedCall<'a> {
             }
         };
 
-        // A benchmark that checked in is measuring on its card, which its series follows.
-        let measuring = status == 0 || status == Exit::CheckedIn.status();
         if serial
-            && measuring
+            && status == 0
             && env.series_check
             && let Some(series) = &series
         {
             series.record(&entry, &caller.name, call.new_series);
         }
-        if self.bench() && call.new_series && !measuring {
+        let checked_in = status == Exit::CheckedIn.status();
+        if serial
+            && checked_in
+            && env.series_check
+            && series.is_some()
+            && let (Some(job), Some(kept)) = (session.said.checked_in_job(), paths.kept_jobs())
+        {
+            Pending {
+                label: entry.label.to_string(),
+                machine: entry.machine.to_string(),
+                card: entry.card.to_string(),
+                by: caller.name.clone(),
+                new_series: call.new_series,
+            }
+            .keep(&Pending::path(&kept, &job));
+        }
+        if self.bench() && call.new_series && status != 0 && !checked_in {
             output.say(&Series::stayed_put(label.as_str()));
         }
         let diagnosis = session.diagnose(status, &target);

@@ -2,9 +2,12 @@
 //! histories, so a benchmark that moves to another card without saying so is refused.
 
 use crate::machine::Fleet;
-use dibs_format::Moment;
+use dibs_format::{JobId, Moment};
 use dibs_runner::shared::SharedFile;
-use std::{fmt, path::PathBuf};
+use std::{
+    fmt, fs,
+    path::{Path, PathBuf},
+};
 
 /// A file without this first line is from another keying and is ignored whole.
 const HEADER: &str = "#dibs-series 1";
@@ -20,6 +23,60 @@ pub struct Entry<'a> {
     pub machine: &'a str,
     /// The alias the run named, or `none`.
     pub card: &'a str,
+}
+
+/// A benchmark that checked in, filed once it is followed to a success; filing it at the
+/// check-in would move the series for a run that then fails.
+pub struct Pending {
+    pub label: String,
+    pub machine: String,
+    pub card: String,
+    pub by: String,
+    pub new_series: bool,
+}
+
+impl Pending {
+    /// Where it waits: beside the job's kept log.
+    pub fn path(kept_jobs: &Path, job: &JobId) -> PathBuf {
+        kept_jobs.join(job.as_str()).join("series")
+    }
+
+    pub fn keep(&self, path: &Path) {
+        if let Some(dir) = path.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
+        let new = if self.new_series { "new" } else { "same" };
+        let _ = fs::write(
+            path,
+            format!(
+                "{}\t{}\t{}\t{}\t{new}\n",
+                self.label, self.machine, self.card, self.by
+            ),
+        );
+    }
+
+    /// The entry kept for this job, taken so it is filed once.
+    pub fn take(path: &Path) -> Option<Pending> {
+        let text = fs::read_to_string(path).ok()?;
+        let _ = fs::remove_file(path);
+        let mut fields = text.trim_end().split('\t').map(str::to_string);
+        Some(Pending {
+            label: fields.next()?,
+            machine: fields.next()?,
+            card: fields.next()?,
+            by: fields.next()?,
+            new_series: fields.next()? == "new",
+        })
+    }
+
+    pub fn file(&self, series: &Series) {
+        let entry = Entry {
+            label: &self.label,
+            machine: &self.machine,
+            card: &self.card,
+        };
+        series.record(&entry, &self.by, self.new_series);
+    }
 }
 
 #[derive(Debug)]

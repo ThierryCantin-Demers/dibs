@@ -559,7 +559,10 @@ impl Served<'_> {
                 }
                 Heard::Prepared(prepared) => delivery.prepared(&prepared),
                 Heard::Stepped(stepped) => delivery.stepped(&stepped),
-                Heard::CheckedIn(c) => checked = Some(c),
+                Heard::CheckedIn(c) => {
+                    self.session.said.checked_in(&c.job);
+                    checked = Some(c);
+                }
                 Heard::Trailer(trailer) => {
                     self.session.said.ended(&trailer);
                     let line = format!("{trailer}\n");
@@ -612,12 +615,18 @@ impl Served<'_> {
 }
 
 impl Served<'_> {
-    /// How to follow or stop a job its call let go of, by the name this call reached it by.
+    /// How to follow or stop a job its call let go of, sent as this call was: by its inventory
+    /// entry, or by nothing where nothing named the machine.
     fn ways_on(&self, checked: &CheckedIn) -> String {
-        let (on, job) = (&self.session.name, &checked.job);
+        let job = &checked.job;
+        let on = self
+            .session
+            .entry
+            .as_ref()
+            .map_or_else(String::new, |entry| format!("--on {entry} "));
         format!(
-            "  dibs --on {on} --follow {job}  waits for it: it ends with the job, or after another {} of running\n  \
-             dibs --on {on} --kill {}  stops it\n",
+            "  dibs {on}--follow {job}  waits for it: it ends with the job, or after another {} of running\n  \
+             dibs {on}--kill {}  stops it\n",
             Span(checked.every),
             checked.pid
         )
