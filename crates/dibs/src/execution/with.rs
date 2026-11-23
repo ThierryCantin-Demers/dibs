@@ -106,7 +106,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         true => Lock::Exclusive,
         false => Lock::Shared,
     };
-    let device = backend.concrete(&[&label], lock, args.device.as_deref(), false)?;
+    let device = backend.concrete(&[&label], lock, args.device.as_deref(), args.new_series)?;
     if args.device.is_some() {
         let req = JobRequest {
             label: &label,
@@ -225,7 +225,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         arms: Vec::new(),
         reps: 1,
         anyway: args.anyway,
-        new_series: false,
+        new_series: args.new_series,
         fresh: Pairs::default(),
         state: Pairs::default(),
         params: BTreeMap::new(),
@@ -383,6 +383,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         label: Some(Label::new(&label)),
         max: args.max,
         device: device.as_deref().map(Alias::new),
+        new_series: args.new_series,
         ..Call::default()
     };
     // Timed, the servers are refused before they start when another tree has built over them.

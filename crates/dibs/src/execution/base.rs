@@ -958,12 +958,14 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
         device: args.device.as_deref().map(Alias::from),
         ..Call::default()
     })?;
-    let device = backend.concrete(
-        &["raw"],
-        Lock::Shared,
-        args.device.as_deref(),
-        args.new_series,
-    )?;
+    let device = backend
+        .concrete(
+            &["raw"],
+            Lock::Shared,
+            args.device.as_deref(),
+            args.new_series,
+        )
+        .unwrap_or_else(|_| args.device.clone());
     let out = backend.run(
         &JobRequest {
             label: "raw",

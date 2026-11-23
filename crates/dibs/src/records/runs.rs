@@ -400,6 +400,7 @@ impl Runs {
             for (
                 SameCode {
                     label,
+                    device,
                     machine,
                     revisions: revs,
                     params,
@@ -423,7 +424,11 @@ impl Runs {
                     .filter(|s| !s.is_empty())
                     .map(|s| format!(", {s}"))
                     .collect();
-                out.push_str(&format!("  {label} on {machine} at {revs}{context}: measured {n} times, median {m}s, {lo}s to {hi}s\n"));
+                let on = match device.is_empty() {
+                    true => machine.to_string(),
+                    false => format!("{machine} {device}"),
+                };
+                out.push_str(&format!("  {label} on {on} at {revs}{context}: measured {n} times, median {m}s, {lo}s to {hi}s\n"));
             }
         }
 

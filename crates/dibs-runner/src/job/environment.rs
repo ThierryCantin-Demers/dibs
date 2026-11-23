@@ -235,15 +235,33 @@ impl Environment {
             "aarch64" => 183,
             _ => return false,
         };
-        let mut head = [0u8; 20];
-        std::fs::File::open(library)
-            .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut head))
-            .is_ok_and(|()| {
-                head[..4] == *b"\x7fELF"
-                    && head[4] == 2
-                    && head[5] == 1
-                    && u16::from_le_bytes([head[18], head[19]]) == machine
+        let Ok(bytes) = std::fs::read(library) else {
+            return false;
+        };
+        let half = |at: usize| {
+            bytes
+                .get(at..at + 2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        };
+        let word = |at: usize| {
+            bytes
+                .get(at..at + 8)
+                .and_then(|b| b.try_into().ok())
+                .map(u64::from_le_bytes)
+        };
+        let elf = bytes.starts_with(b"\x7fELF") && bytes.get(4..6) == Some(&[2, 1]);
+        // A position-independent executable is ET_DYN as well, and the loader refuses it; it is
+        // told apart by the interpreter it names.
+        let interpreted = || {
+            let (Some(at), Some(size), Some(count)) = (word(32), half(54), half(56)) else {
+                return true;
+            };
+            (0..usize::from(count)).any(|i| {
+                let entry = at as usize + i * usize::from(size);
+                bytes.get(entry..entry + 4) == Some(&3u32.to_le_bytes()[..])
             })
+        };
+        elf && half(16) == Some(3) && half(18) == Some(machine) && !interpreted()
     }
 
     /// The command started in `dir`, with `target` as its build cache.
