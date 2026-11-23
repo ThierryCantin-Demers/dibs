@@ -120,10 +120,43 @@ impl LockDir {
         let _ = fs::write(self.file("arrived", pid), format!("{order}\n"));
     }
 
-    /// That a card benchmark ended, at `order`: a whole-machine benchmark queued before then lets
-    /// no more join the ones still running.
-    pub fn mark_departed(&self, order: u128) {
-        let _ = fs::write(self.path.join("departed"), format!("{order}\n"));
+    /// That a card benchmark ended now: a whole-machine benchmark queued before then lets no
+    /// more join the ones still running. Under its own lock and never moved back, since a writer
+    /// that read the clock earlier may write later.
+    pub fn mark_departed(&self) {
+        let Ok(mut file) = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.path.join("departed"))
+        else {
+            return;
+        };
+        if file.lock().is_err() {
+            return;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        let mut text = String::new();
+        let before: u128 = std::io::Read::read_to_string(&mut file, &mut text)
+            .ok()
+            .and_then(|_| text.trim().parse().ok())
+            .unwrap_or(0);
+        if now > before {
+            let _ = file.set_len(0);
+            let _ = std::io::Seek::rewind(&mut file);
+            let _ = std::io::Write::write_all(&mut file, format!("{now}\n").as_bytes());
+        }
+        let _ = file.unlock();
+    }
+
+    /// Whether a card benchmark other than `pid` holds the machine, which a joiner can join.
+    fn card_running(&self, pid: u32) -> bool {
+        self.records(Kind::Holder)
+            .iter()
+            .any(|h| h.pid != pid && self.cards_of(h.pid).is_some())
     }
 
     /// Whether a whole-machine benchmark that arrived before `order` waits with no card benchmark
@@ -171,7 +204,10 @@ impl LockDir {
                 && RecordFile(&self.file("waiting", w.pid)).alive()
                 && match (self.cards_of(w.pid), pcis) {
                     (Some(cards), Some(pcis)) => cards.iter().any(|c| pcis.contains(c)),
-                    (None, Some(_)) => self.departed().is_some_and(|ended| ended > theirs),
+                    (None, Some(_)) => {
+                        !self.card_running(pid)
+                            || self.departed().is_some_and(|ended| ended > theirs)
+                    }
                     (_, None) => true,
                 }
         })

@@ -157,6 +157,13 @@ impl Stopper {
                 | Stage::Parked
                 | Stage::Finishing
         ) {
+            if matches!(
+                state.stage,
+                Stage::Running(_) | Stage::Starting | Stage::Finishing
+            ) && self.dir.cards_of(self.call.pid).is_some()
+            {
+                self.dir.mark_departed();
+            }
             self.dir.clear(self.call.pid);
             if !state.logged_end {
                 let mut line = self.call.log_line(Event::Aborted);

@@ -844,7 +844,14 @@ impl<'a> Run<'a> {
                 && dir.urgent_besides(pid).is_none()
                 && let Some(cards) = self.join(&mut lock, pcis, deadline)?
             {
-                break Some((Some(cards), true));
+                // A card benchmark records its end before its card comes free, so one taken here
+                // after the window closed shows as closed now. Its copies of the machine's locks
+                // are closed, never unlocked, which would free them for every member.
+                if !dir.bench_first(pid, arrived.order, Some(pcis)) {
+                    break Some((Some(cards), true));
+                }
+                drop(cards);
+                lock = Lock::open(dir).map_err(no_lock)?;
             }
             let mut gated_out = false;
             if !at_gate {
@@ -1526,10 +1533,7 @@ impl<'a> Run<'a> {
             );
         }
         if end.acquired.sharing.is_some() {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |since| since.as_nanos());
-            self.at.dir.mark_departed(now);
+            self.at.dir.mark_departed();
         }
         drop(end.acquired.sharing);
         self.at.dir.clear(self.at.call.pid);
