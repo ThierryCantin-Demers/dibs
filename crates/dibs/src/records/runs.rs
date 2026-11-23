@@ -235,6 +235,7 @@ fn matches(label: &str, query: &str) -> bool {
     path == query
         || path.starts_with(&format!("{query}/"))
         || path.rsplit('/').next() == Some(query)
+        || (query == "shell" && path.split('/').nth(1) == Some("shell"))
 }
 
 fn words(kv: &[(String, String)], join: &str) -> String {
@@ -574,6 +575,8 @@ mod tests {
         ] {
             assert!(matches(full, q), "{q} should reach {full}");
         }
+        assert!(matches("app/shell/true-5b5c98ef514d", "shell"));
+        assert!(matches("app/shell", "shell"));
         for q in [
             "topk5",
             "cubek/test",

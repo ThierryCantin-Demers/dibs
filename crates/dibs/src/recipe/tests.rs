@@ -617,6 +617,7 @@ fn a_shell_command_is_filed_under_its_program_and_a_hash_of_the_whole() {
         shell_name(None, "cargo bench --bench matmul -- --size 18"),
         shell_name(None, "cargo bench --bench matmul -- --size 7993")
     );
+    assert!(shell_name(None, &format!("echo {}", "x".repeat(65536))).len() < 64);
     assert!(files_as_written("simd-f32-v2.1"));
     assert!(!files_as_written("reduce_cpu"));
     assert!(!files_as_written("simd/f32"));

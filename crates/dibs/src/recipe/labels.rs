@@ -44,7 +44,10 @@ pub fn shell_name(label: Option<&str>, command: &str) -> String {
         })
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
-        .join("-");
+        .join("-")
+        .chars()
+        .take(32)
+        .collect();
     let hash = command.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });

@@ -62,7 +62,12 @@ impl Sources {
                 .collect(),
             Wanted::RecipeFlags { verb, repo, recipe } => {
                 let mut found = self.params(*verb, repo, recipe.as_deref());
-                found.extend(flags(RECIPE));
+                let shell = *verb == RecipeVerb::Shell;
+                found.extend(
+                    flags(RECIPE)
+                        .into_iter()
+                        .filter(|c| shell || c.value != "--label"),
+                );
                 found
             }
             Wanted::Choices {
