@@ -259,13 +259,13 @@ impl<'a> Run<'a> {
                 break acquired;
             }
             // No window may list it between losing its admission and its holder record, and none
-            // may count it live once its card is free for another.
+            // may count it live once its card is free for another, even if the guard is stuck.
             let guard = self.at.dir.join_guard(GUARD_WAIT);
             self.at.dir.leave_windows(self.at.call.pid);
-            drop(acquired);
             let _ = fs::remove_file(self.at.dir.file("urgent", self.at.call.pid));
             self.at.dir.write(Kind::Waiting, &record);
             let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
+            drop(acquired);
             drop(guard);
         };
         // The machine as well as the cards: while the group winds down, shared work must not start.
@@ -993,6 +993,10 @@ impl<'a> Run<'a> {
                 told = true;
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
+                if pcis.is_some() && !last_look {
+                    last_look = true;
+                    continue;
+                }
                 break None;
             }
             // Waiting out shared work keeps the gate, as a benchmark does, so none starts
