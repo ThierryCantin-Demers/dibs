@@ -298,14 +298,16 @@ impl<'a> LockedCall<'a> {
             }
         };
 
+        // A benchmark that checked in is measuring on its card, which its series follows.
+        let measuring = status == 0 || status == Exit::CheckedIn.status();
         if serial
-            && status == 0
+            && measuring
             && env.series_check
             && let Some(series) = &series
         {
             series.record(&entry, &caller.name, call.new_series);
         }
-        if self.bench() && call.new_series && status != 0 {
+        if self.bench() && call.new_series && !measuring {
             output.say(&Series::stayed_put(label.as_str()));
         }
         let diagnosis = session.diagnose(status, &target);

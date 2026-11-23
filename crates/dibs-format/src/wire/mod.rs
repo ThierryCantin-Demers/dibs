@@ -6,7 +6,7 @@ mod request;
 mod tree;
 
 pub use frame::{Frame, FrameError, Unframer};
-pub use record::{Built, Picked, Record, Trailer};
+pub use record::{Built, CheckedIn, Picked, Record, Trailer};
 pub use request::{Card, Close, MaxFrom, Request, Service, Watch};
 pub use tree::{
     At, GitDb, GitDbs, Nest, Packages, Place, Prepare, Prepared, Revision, Seeded, Shared, Source,

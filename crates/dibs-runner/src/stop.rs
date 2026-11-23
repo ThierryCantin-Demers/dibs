@@ -4,7 +4,7 @@ use crate::{
     platform::{Descendants as _, Host, Platform as _},
     sink::Sink,
 };
-use dibs_format::{Event, Exit, JobId};
+use dibs_format::{Event, Exit, JobId, wire::CheckedIn};
 use std::{
     fs::{self, File},
     os::unix::process::CommandExt as _,
@@ -103,13 +103,13 @@ impl Stopper {
 
     /// Lets go of the job at its first check-in: the caller is told, and from then on its going
     /// stops nothing. False when the call is already ending, or nothing could be handed over.
-    pub fn hand_over(&self, text: &str, report: &File) -> bool {
+    pub fn hand_over(&self, checked: CheckedIn, text: &str, report: &File) -> bool {
         let mut state = self.state();
         if !matches!(
             state.stage,
             Stage::Preparing(_) | Stage::Starting | Stage::Running(_) | Stage::Parked
         ) || !self.sink.framed()
-            || self.sink.hand_over(text, report).is_err()
+            || self.sink.hand_over(checked, text, report).is_err()
         {
             return false;
         }

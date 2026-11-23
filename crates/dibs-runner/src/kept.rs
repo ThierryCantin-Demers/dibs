@@ -12,10 +12,11 @@ use crate::{
 };
 use dibs_format::{
     Exit, JobId, JobMeta, base64,
-    wire::{Frame, Unframer},
+    wire::{Frame, Record, Unframer},
 };
 use std::{
     fs::{self, File},
+    io::Read as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -70,9 +71,9 @@ impl KeptJobs<'_> {
     pub fn follow(&self, target: &str, caller: Caller, lease: u64) -> i32 {
         let jobs = self.machine.jobs();
         let host = &self.machine.host;
-        let Some(dir) = JobId::checked(target)
-            .map(|id| jobs.join(id.as_str()))
-            .filter(|dir| dir.is_dir())
+        let Some((id, dir)) = JobId::checked(target)
+            .map(|id| (id.clone(), jobs.join(id.as_str())))
+            .filter(|(_, dir)| dir.is_dir())
         else {
             self.sink
                 .say(&format!("no job {target} under {}\n", jobs.display()));
@@ -85,7 +86,7 @@ impl KeptJobs<'_> {
             ));
             return Exit::Refused.status();
         };
-        let seen = check_ins.read_latest().map_or(0, |(n, _)| n);
+        let seen = check_ins.read_latest(&id).map_or(0, |(n, _, _)| n);
         let mut channel = match caller {
             Caller::Channel(channel) => Some(channel),
             Caller::Stdout => None,
@@ -95,7 +96,10 @@ impl KeptJobs<'_> {
             if handed.try_lock_shared().is_ok() {
                 return self.relay(&check_ins.report(), target);
             }
-            if let Some((_, text)) = check_ins.read_latest().filter(|(n, _)| *n > seen) {
+            if let Some((_, checked, text)) =
+                check_ins.read_latest(&id).filter(|(n, _, _)| *n > seen)
+            {
+                self.sink.record(Record::CheckedIn(checked));
                 self.sink.say(&text);
                 return Exit::CheckedIn.status();
             }
@@ -113,19 +117,25 @@ impl KeptJobs<'_> {
         }
     }
 
-    /// What the call that let go of the job would have said at its end, and its exit.
+    /// What the call that let go of the job would have said at its end, and its exit, read a
+    /// piece at a time: a streamed job's report holds all it wrote after the hand-over.
     fn relay(&self, report: &Path, target: &str) -> i32 {
         let mut unframer = Unframer::default();
-        unframer.feed(&fs::read(report).unwrap_or_default());
-        while let Ok(Some(frame)) = unframer.next_frame() {
-            match frame {
-                Frame::Out(bytes) => {
-                    self.sink.out(&bytes);
+        let mut chunk = vec![0u8; 64 * 1024];
+        if let Ok(mut report) = File::open(report) {
+            while let Ok(n @ 1..) = report.read(&mut chunk) {
+                unframer.feed(&chunk[..n]);
+                while let Ok(Some(frame)) = unframer.next_frame() {
+                    match frame {
+                        Frame::Out(bytes) => {
+                            self.sink.out(&bytes);
+                        }
+                        Frame::Err(bytes) => self.sink.err(&bytes),
+                        Frame::Record(record) => self.sink.record(record),
+                        Frame::Exit(code) => return code,
+                        Frame::Request(_) | Frame::Beat | Frame::Release(_) => {}
+                    }
                 }
-                Frame::Err(bytes) => self.sink.err(&bytes),
-                Frame::Record(record) => self.sink.record(record),
-                Frame::Exit(code) => return code,
-                Frame::Request(_) | Frame::Beat | Frame::Release(_) => {}
             }
         }
         self.sink.say(&format!(

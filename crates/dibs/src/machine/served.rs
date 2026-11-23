@@ -13,7 +13,7 @@ use crate::{
 };
 use dibs_format::{
     Exit, Span,
-    wire::{Frame, Picked, Prepared, Record, Stepped, Trailer, Unframer},
+    wire::{CheckedIn, Frame, Picked, Prepared, Record, Stepped, Trailer, Unframer},
 };
 use std::{
     fs::File,
@@ -139,6 +139,7 @@ pub enum Heard {
     Prepared(Box<Prepared>),
     Stepped(Stepped),
     Trailer(Trailer),
+    CheckedIn(CheckedIn),
     Exit(i32),
     Broken(String),
 }
@@ -536,6 +537,7 @@ impl Served<'_> {
             status
         });
         let mut exit = None;
+        let mut checked = None;
         let mut any = false;
         let mut buffers = LineBuffers::default();
         for item in heard {
@@ -557,6 +559,7 @@ impl Served<'_> {
                 }
                 Heard::Prepared(prepared) => delivery.prepared(&prepared),
                 Heard::Stepped(stepped) => delivery.stepped(&stepped),
+                Heard::CheckedIn(c) => checked = Some(c),
                 Heard::Trailer(trailer) => {
                     self.session.said.ended(&trailer);
                     let line = format!("{trailer}\n");
@@ -566,6 +569,10 @@ impl Served<'_> {
                     self.session.said.exited();
                     exit = Some(code);
                     if code == Exit::CheckedIn.status() {
+                        if let Some(checked) = &checked {
+                            let said = self.ways_on(checked);
+                            delivery.give(Stream::Err, said.as_bytes(), &mut buffers);
+                        }
                         break;
                     }
                 }
@@ -601,6 +608,19 @@ impl Served<'_> {
             None if !any && self.broke_off(Exit::shell_status(status)) => Attempted::BrokeOff,
             None => Attempted::Exit(Exit::shell_status(status)),
         })
+    }
+}
+
+impl Served<'_> {
+    /// How to follow or stop a job its call let go of, by the name this call reached it by.
+    fn ways_on(&self, checked: &CheckedIn) -> String {
+        let (on, job) = (&self.session.name, &checked.job);
+        format!(
+            "  dibs --on {on} --follow {job}  waits for it: it ends with the job, or after another {} of running\n  \
+             dibs --on {on} --kill {}  stops it\n",
+            Span(checked.every),
+            checked.pid
+        )
     }
 }
 
@@ -760,6 +780,7 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
                 Frame::Record(Record::Holding(ports)) => Heard::Holding(ports),
                 Frame::Record(Record::Prepared(prepared)) => Heard::Prepared(prepared),
                 Frame::Record(Record::Stepped(stepped)) => Heard::Stepped(stepped),
+                Frame::Record(Record::CheckedIn(checked)) => Heard::CheckedIn(checked),
                 Frame::Exit(code) => Heard::Exit(code),
                 Frame::Request(_)
                 | Frame::Beat

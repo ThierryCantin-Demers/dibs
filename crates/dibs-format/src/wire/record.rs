@@ -20,6 +20,18 @@ pub enum Record {
     Prepared(Box<Prepared>),
     /// What was done around a recipe step's command, before its trailer.
     Stepped(Stepped),
+    /// The job ran past its check-in and goes on without the call, which ends 80.
+    CheckedIn(CheckedIn),
+}
+
+/// What a caller needs to follow or stop a job its call let go of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckedIn {
+    pub job: JobId,
+    /// The runner's, which `--kill` takes.
+    pub pid: u32,
+    /// Seconds of running between check-ins.
+    pub every: u64,
 }
 
 /// A `--port` name and the port the machine picked for it.

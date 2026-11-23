@@ -1,6 +1,6 @@
 use dibs_format::{
     Exit,
-    wire::{Frame, Record},
+    wire::{CheckedIn, Frame, Record},
 };
 use std::{
     fs::File,
@@ -96,7 +96,8 @@ impl Sink {
                 Record::Holding(_)
                 | Record::Transferring
                 | Record::Prepared(_)
-                | Record::Stepped(_),
+                | Record::Stepped(_)
+                | Record::CheckedIn(_),
             ) => {}
         }
     }
@@ -124,17 +125,25 @@ impl Sink {
                 libc::fcntl(libc::STDOUT_FILENO, libc::F_SETFL, flags | libc::O_NONBLOCK);
             }
         }
-        let _ = out.write_all(&Frame::Exit(code).encode());
+        // Flushed: stdout is line-buffered, and `_exit` would drop the code after the newline.
+        let _ = out
+            .write_all(&Frame::Exit(code).encode())
+            .and_then(|()| out.flush());
     }
 
     /// The caller's last words and exit 80; what the call says from here on goes to `report`,
     /// for whoever follows the job, and the caller's streams are let go so its connection can end.
-    pub fn hand_over(&self, text: &str, report: &File) -> io::Result<()> {
+    /// Nothing is let go when the caller cannot be told.
+    pub fn hand_over(&self, checked: CheckedIn, text: &str, report: &File) -> io::Result<()> {
         let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = out
-            .write_all(&Frame::Err(text.as_bytes().to_vec()).encode())
-            .and_then(|()| out.write_all(&Frame::Exit(Exit::CheckedIn.status()).encode()))
-            .and_then(|()| out.flush());
+        for frame in [
+            Frame::Record(Record::CheckedIn(checked)),
+            Frame::Err(text.as_bytes().to_vec()),
+            Frame::Exit(Exit::CheckedIn.status()),
+        ] {
+            out.write_all(&frame.encode())?;
+        }
+        out.flush()?;
         let null = File::options().read(true).write(true).open("/dev/null")?;
         for (from, to) in [
             (report.as_raw_fd(), libc::STDOUT_FILENO),

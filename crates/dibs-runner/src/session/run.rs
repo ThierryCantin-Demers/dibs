@@ -311,7 +311,6 @@ impl<'a> Run<'a> {
                     check_in::Job {
                         id: arrived.job.clone(),
                         dir: begun.dir.clone(),
-                        host: self.at.machine.host.clone(),
                         pid: self.at.call.pid,
                     },
                     Arc::clone(self.at.stopper),

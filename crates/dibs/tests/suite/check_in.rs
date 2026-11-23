@@ -134,3 +134,31 @@ fn a_local_call_lets_go_of_its_job_too() {
     hold.open();
     assert_eq!(s.wait(follow), 4);
 }
+
+#[test]
+fn a_job_killed_after_its_check_in_is_followed_to_its_kill() {
+    let s = Sandbox::new();
+    let (up, hold) = (s.gate("up"), s.gate("hold"));
+    let checked = s
+        .remote(s.dibs([
+            "--check-in",
+            "1s",
+            &format!("{}; {}", up.signal(), hold.hold()),
+        ]))
+        .run();
+    assert_eq!(checked.code, 80, "{}", checked.all());
+    let job = job_named(&checked);
+    let pid = checked
+        .stderr
+        .lines()
+        .find_map(|line| line.split("--kill ").nth(1))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no kill named: {}", checked.all()))
+        .to_string();
+    up.reached();
+    let kill = s.remote(s.dibs(["--kill", &pid])).run();
+    assert_eq!(kill.code, 0, "{}", kill.all());
+    s.held(0);
+    let follow = s.remote(s.dibs(["--follow", &job])).run();
+    assert_eq!(follow.code, 143, "{}", follow.all());
+}
