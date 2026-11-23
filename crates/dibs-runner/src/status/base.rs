@@ -215,6 +215,7 @@ impl Look<'_> {
             command: self.command(pid),
             started: record.start,
             elapsed,
+            killed_at: self.deadline(pid).map(|at| at.saturating_sub(record.start)),
             cpu: ticks / Host::clock_ticks(),
             estimate: shown,
             output,
@@ -266,6 +267,14 @@ impl Look<'_> {
     fn user(&self, pid: u32) -> Option<String> {
         let said = fs::read_to_string(self.dir.file("user", pid)).ok()?;
         Some(said.trim().to_string()).filter(|s| !s.is_empty())
+    }
+
+    fn deadline(&self, pid: u32) -> Option<u64> {
+        fs::read_to_string(self.dir.file("deadline", pid))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
     }
 
     fn command(&self, pid: u32) -> Option<String> {

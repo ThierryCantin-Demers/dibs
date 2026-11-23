@@ -148,8 +148,12 @@ impl Text<'_> {
             Some(_) => format!("  {}preemptible{}", p.dim, p.off),
             None => String::new(),
         };
+        let cap = holder
+            .killed_at
+            .map(|at| format!(" {}of {} at most{}", p.dim, Span(at), p.off))
+            .unwrap_or_default();
         let lead = format!(
-            "  {}{}{}  {}{}{}  {}{}{}  {}pid {}{}{job}{ahead}",
+            "  {}{}{}  {}{}{}  {}{}{}{cap}  {}pid {}{}{job}{ahead}",
             p.mode(row.mode),
             row.mode,
             p.off,
@@ -611,6 +615,7 @@ mod tests {
             command: None,
             started: 0,
             elapsed: 65,
+            killed_at: None,
             cpu: 0,
             estimate: None,
             output: None,
@@ -629,6 +634,13 @@ mod tests {
             said.contains("  shared  build  1m05s  pid 42  job 20261001120000-42   [no history"),
             "{said}"
         );
+        held.holders[0].killed_at = Some(1800);
+        assert!(
+            text(&held).contains("  shared  build  1m05s of 30m00s at most  pid 42  job "),
+            "{}",
+            text(&held)
+        );
+        held.holders[0].killed_at = None;
         held.holders[0].prepare = Some("copying a-target's target to start this tree from".into());
         assert!(
             text(&held).contains("pid 42  job 20261001120000-42   [preparing its tree, before the command: copying a-target's target to start this tree from]"),

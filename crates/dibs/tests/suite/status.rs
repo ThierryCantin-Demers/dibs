@@ -737,6 +737,28 @@ fn status_names_a_holders_job_which_out_reads() {
 }
 
 #[test]
+fn status_says_when_a_holders_cap_kills_it() {
+    let mut s = Sandbox::new();
+    let g = s.gate("g");
+    let job = s.spawn(s.dibs(["--max", "3600", "--label", "capped", &g.hold()]));
+    s.held(1);
+    until("status to know the job's cap", || {
+        s.status_json()["holders"][0]["killed_at"].is_u64()
+    });
+    let at = s.status_json()["holders"][0]["killed_at"]
+        .as_u64()
+        .unwrap_or_default();
+    assert!(
+        (3600..3660).contains(&at),
+        "an hour from the command's start, which is a moment past the lock's: {at}"
+    );
+    let said = s.dibs(["--status"]).run().stdout;
+    assert!(said.contains(" at most  pid "), "{said}");
+    g.open();
+    s.wait(job);
+}
+
+#[test]
 fn metrics_are_read_only_for_a_status_that_asks_for_them() {
     if !cfg!(target_os = "linux") {
         skip("only Linux has a /proc to read the CPU and memory from");

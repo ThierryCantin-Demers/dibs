@@ -11,8 +11,8 @@ use std::fs;
 fn status_clock(n: Normal) -> Normal {
     n.clocked()
         .rule(
-            r"(?m)^(  [a-z]+  \S+  )[0-9]+[hms][0-9hms]*(  pid )",
-            "$1<dur>$2",
+            r"(?m)^(  [a-z]+  \S+  )[0-9]+[hms][0-9hms]*( of [0-9]+[hms][0-9hms]* at most)?(  pid )",
+            "$1<dur>$2$3",
         )
         .rule(r"(~|under )([0-9]+[hms][0-9hms]*) left", "$1{$2} left")
         .rule(r"waiting [0-9]+[hms][0-9hms]*", "waiting <dur>")

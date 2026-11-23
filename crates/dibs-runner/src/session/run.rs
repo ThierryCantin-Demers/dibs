@@ -1257,6 +1257,18 @@ impl<'a> Run<'a> {
         Ok(Begun { dir, log })
     }
 
+    /// When the job's cap kills it, in seconds since the epoch, for status to say.
+    fn show_deadline(&self, deadline: Deadline) {
+        let file = self.at.dir.file("deadline", self.at.call.pid);
+        let at = deadline
+            .left()
+            .and_then(|left| (SystemTime::now() + left).duration_since(UNIX_EPOCH).ok());
+        let _ = match at {
+            Some(at) => fs::write(file, format!("{}\n", at.as_secs_f64().round())),
+            None => fs::remove_file(file),
+        };
+    }
+
     /// The ports and services the job asked for, then the job itself, to its end.
     fn host(
         &self,
@@ -1293,6 +1305,7 @@ impl<'a> Run<'a> {
             };
         }
         let mut deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
+        self.show_deadline(deadline);
         let ports = Ports::take(&request.ports, self.at.settings.ports, self.at.dir, pid);
         for picked in &ports.picked {
             environment.port(picked);
@@ -1440,8 +1453,10 @@ impl<'a> Run<'a> {
                     if runs > 0 {
                         deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
                         frozen.restart();
+                        self.show_deadline(deadline);
                     } else if waited {
                         deadline = Deadline::after(left);
+                        self.show_deadline(deadline);
                     }
                     waited = false;
                     if runs > 0 {
