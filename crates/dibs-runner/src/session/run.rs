@@ -1,6 +1,6 @@
 use crate::{
     ahead::{Frozen, Preemption, Watch},
-    call::{Journal, Received},
+    call::{Journal, ONE_LINE, Received},
     channel::{Caller, Channel},
     clock::{Deadline, Moment, Span},
     closed::{self, Shutter},
@@ -368,6 +368,9 @@ impl<'a> Run<'a> {
         // does not know drops the record, and with it a holder its benchmark must not run beside.
         if let Some(subagent) = &self.at.call.subagent {
             let _ = fs::write(self.at.dir.file("subagent", pid), format!("{subagent}\n"));
+        }
+        if request.command.len() > ONE_LINE && request.mode != Mode::Gc {
+            let _ = fs::write(self.at.dir.file("command", pid), &request.command);
         }
         if let Some(user) = &self.at.call.user {
             let _ = fs::write(self.at.dir.file("user", pid), format!("{user}\n"));

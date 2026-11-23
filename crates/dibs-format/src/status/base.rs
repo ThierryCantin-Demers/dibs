@@ -119,6 +119,9 @@ pub struct Holder {
     #[serde(default, with = "dashed")]
     pub device: Option<Alias>,
     pub cmd: String,
+    /// The whole command, where `cmd` cut it short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     pub started: u64,
     pub elapsed: u64,
     /// CPU seconds its whole tree has used, reaped children included.
@@ -191,6 +194,9 @@ pub struct Waiter {
     #[serde(default, with = "dashed")]
     pub device: Option<Alias>,
     pub cmd: String,
+    /// The whole command, where `cmd` cut it short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     pub arrived: u64,
     pub waiting: u64,
     /// Seconds until it should start.

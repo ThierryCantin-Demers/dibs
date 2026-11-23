@@ -212,6 +212,7 @@ impl Look<'_> {
             subagent: self.subagent(pid),
             device: record.device.clone(),
             cmd: record.command.clone(),
+            command: self.command(pid),
             started: record.start,
             elapsed,
             cpu: ticks / Host::clock_ticks(),
@@ -254,6 +255,7 @@ impl Look<'_> {
             subagent: self.subagent(record.pid),
             device: record.device.clone(),
             cmd: record.command.clone(),
+            command: self.command(record.pid),
             arrived: record.start,
             waiting: now.saturating_sub(record.start),
             eta: starts,
@@ -264,6 +266,10 @@ impl Look<'_> {
     fn user(&self, pid: u32) -> Option<String> {
         let said = fs::read_to_string(self.dir.file("user", pid)).ok()?;
         Some(said.trim().to_string()).filter(|s| !s.is_empty())
+    }
+
+    fn command(&self, pid: u32) -> Option<String> {
+        fs::read_to_string(self.dir.file("command", pid)).ok()
     }
 
     fn subagent(&self, pid: u32) -> Option<String> {

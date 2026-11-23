@@ -608,6 +608,7 @@ mod tests {
             subagent: None,
             device: None,
             cmd: "cargo build".into(),
+            command: None,
             started: 0,
             elapsed: 65,
             cpu: 0,

@@ -547,6 +547,11 @@ fn the_json_has_a_pinned_shape() {
         (&"session jsonner".into(), &"sub-1".into()),
         "with its agent, and the subagent that started it"
     );
+    assert_eq!(
+        d["holders"][0].get("command"),
+        None,
+        "a command shown whole in cmd is not repeated"
+    );
     assert!(
         !s.dibs(["--status", "--json"]).run().stdout.contains('\x1b'),
         "and no colour ever"
@@ -555,7 +560,11 @@ fn the_json_has_a_pinned_shape() {
     let queued = s.spawn(s.dibs([
         "--label",
         "j-queued",
-        &format!("echo \"a\\b\" > /dev/null; {}", j2.hold()),
+        &format!(
+            "echo \"a\\b\" > /dev/null; : {}; {}",
+            "x".repeat(250),
+            j2.hold()
+        ),
     ]));
     s.queued(1);
     let d = s.status_json();
@@ -571,6 +580,17 @@ fn the_json_has_a_pinned_shape() {
         d["queue"][0].get("subagent"),
         None,
         "a call no subagent made has no subagent"
+    );
+    assert!(
+        d["queue"][0]["cmd"].as_str().unwrap().ends_with(" …"),
+        "a long command is cut in cmd"
+    );
+    assert!(
+        d["queue"][0]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with(&j2.hold()),
+        "and whole in command"
     );
     j.open();
     s.wait(holder);
