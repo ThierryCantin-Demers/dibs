@@ -1508,14 +1508,20 @@ fn what_jobs_named_is_dated_by_its_newest_write_and_never_removed() {
     sweep.collect(&mut section, Moment::epoch_now());
     drop(working.stdin.take());
     working.wait().unwrap();
-    assert_eq!(fate_of(&section, &old), Fate::Past);
-    assert_eq!(fate_of(&section, &loose), Fate::Past);
-    assert_eq!(
-        fate_of(&section, &built),
-        Fate::Kept,
+    let used = |path: &Path| {
+        section
+            .verdicts
+            .iter()
+            .find(|v| v.path == *path)
+            .map(|v| v.used)
+    };
+    assert!(
+        used(&built) > used(&old),
         "a file written deep inside dates it"
     );
-    assert_eq!(fate_of(&section, &kept), Fate::Kept);
+    for path in [&old, &loose, &built, &kept] {
+        assert_eq!(fate_of(&section, path), Fate::Kept, "{}", path.display());
+    }
     assert_eq!(fate_of(&section, &worked_in), Fate::Held);
     assert!(
         [&old, &loose, &built, &kept, &worked_in, &own]

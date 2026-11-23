@@ -4,7 +4,7 @@ use crate::{
     tree::{
         base::LOCAL,
         builds::Builds,
-        clocks::{Clocks, Contents as _, Dates as _, Fate, KEEP, Removal, USED},
+        clocks::{Clocks, Contents as _, Dates as _, Fate, Removal, USED},
         runners::Runners,
         spread::Spread as _,
         turn::Turn,
@@ -465,15 +465,9 @@ impl<'a> Sweep<'a> {
             false => Some(cutoff),
         };
         let written = path.newest(enough);
-        if path.join(KEEP).exists() {
-            return (Fate::Kept, written);
-        }
-        if !self.clocks.past(now, written, self.clocks.named_keep_days) {
-            return (Fate::Kept, written);
-        }
         match self.used_now(path) {
             true => (Fate::Held, written),
-            false => (Fate::Past, written),
+            false => (Fate::Kept, written),
         }
     }
 
