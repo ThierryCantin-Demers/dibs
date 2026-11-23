@@ -494,10 +494,7 @@ impl SweepReport {
                 ),
             });
         }
-        rows.out(&format!(
-            "  named by jobs, {}, unless it holds {KEEP}",
-            self.removed_after(self.clocks.named_keep_days, " unwritten")
-        ))
+        rows.out("  named by jobs, listed and never removed by this")
     }
 
     fn removed_after(&self, days: u64, unused: &str) -> String {

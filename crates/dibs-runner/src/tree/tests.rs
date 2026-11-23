@@ -1468,7 +1468,7 @@ fn what_may_go_is_read_without_dating_a_cache_and_names_what_the_sweep_judges_pa
 }
 
 #[test]
-fn what_jobs_named_goes_by_its_newest_write_unless_kept_or_in_use() {
+fn what_jobs_named_is_dated_by_its_newest_write_and_never_removed() {
     let m = Machine::new();
     let (scratch, home) = (m.p("scratch"), m.p("home"));
     let named = |rel: &str| {
@@ -1508,12 +1508,21 @@ fn what_jobs_named_goes_by_its_newest_write_unless_kept_or_in_use() {
     sweep.collect(&mut section, Moment::epoch_now());
     drop(working.stdin.take());
     working.wait().unwrap();
-    assert!(!old.exists() && !loose.exists());
-    assert!(built.exists(), "a file written deep inside keeps it");
-    assert!(kept.exists(), "its .dibs-keep keeps it");
+    assert_eq!(fate_of(&section, &old), Fate::Past);
+    assert_eq!(fate_of(&section, &loose), Fate::Past);
+    assert_eq!(
+        fate_of(&section, &built),
+        Fate::Kept,
+        "a file written deep inside dates it"
+    );
+    assert_eq!(fate_of(&section, &kept), Fate::Kept);
     assert_eq!(fate_of(&section, &worked_in), Fate::Held);
-    assert!(worked_in.exists());
-    assert!(own.exists(), "what dibs made is swept by its own clocks");
+    assert!(
+        [&old, &loose, &built, &kept, &worked_in, &own]
+            .iter()
+            .all(|p| p.exists()),
+        "a tool a job only reads is never written, so nothing it named is removed"
+    );
 }
 
 fn fate_of(section: &Section, path: &Path) -> Fate {

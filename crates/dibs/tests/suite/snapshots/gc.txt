@@ -13,7 +13,7 @@
 1|     <hash>                              <size>
 1|     0000000000000000                              <size>   would remove
 1|     .src.0000000000000000.42                      <size>   would remove
-1|   named by jobs, removed after 3 days unwritten, unless it holds .dibs-keep
+1|   named by jobs, listed and never removed by this
 1|     byhand                                       <size>  written today
 1|   <size> is past its clock and would go. Run it without --dry-run.
 1|   took <times>
@@ -36,7 +36,7 @@
 1|     <hash>                              <size>
 1|     0000000000000000                              <size>   would remove
 1|     .src.0000000000000000.42                      <size>   would remove
-1|   named by jobs, removed after 2 days unwritten, unless it holds .dibs-keep
+1|   named by jobs, listed and never removed by this
 1|     byhand                                       <size>  written today
 1|   <size> is past its clock and would go. Run it without --dry-run.
 1|   took <times>
@@ -59,7 +59,7 @@
 1|     <hash>                              <size>
 1|     0000000000000000                              <size>   removed
 1|     .src.0000000000000000.42                      <size>   removed
-1|   named by jobs, removed after 3 days unwritten, unless it holds .dibs-keep
+1|   named by jobs, listed and never removed by this
 1|     byhand                                       <size>  written today
 1|   reclaimed <size>
 1|   took <times>

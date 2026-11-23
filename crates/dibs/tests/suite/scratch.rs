@@ -211,10 +211,9 @@ fn a_sweep_removes_only_what_nobody_used() {
     );
     assert!(s.exists("gc/byhand"), "and what a job named, written today");
     assert!(
-        !s.exists("gc/byhand-stale"),
-        "but not one nothing has written for its clock: {out}"
+        s.exists("gc/byhand-stale") && s.exists("gc/models"),
+        "nor what a job named, however long unwritten: {out}"
     );
-    assert!(s.exists("gc/models"), "unless it holds a .dibs-keep");
     assert_eq!(
         out.lines_with("reclaimed "),
         1,
@@ -284,8 +283,8 @@ fn gc_all_removes_what_nothing_holds_whatever_its_clock() {
         );
     }
     assert!(
-        !s.exists("gc/byhand"),
-        "and so does what a job named, written today or not: {out}"
+        s.exists("gc/byhand"),
+        "and still never what a job named: {out}"
     );
     assert!(
         s.exists("gc/ws/demo/running"),

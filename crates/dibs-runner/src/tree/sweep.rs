@@ -55,13 +55,12 @@ impl Swept {
         Swept::Named,
     ];
     /// What a prepare sweeps: results go only when a person asks, with `dibs --gc`.
-    pub const BY_PREPARE: [Swept; 6] = [
+    pub const BY_PREPARE: [Swept; 5] = [
         Swept::Trees,
         Swept::Caches,
         Swept::Jobs,
         Swept::Leftovers,
         Swept::Runners,
-        Swept::Named,
     ];
 
     /// The section as the sweep's timing names it.
@@ -293,9 +292,11 @@ impl<'a> Sweep<'a> {
                     section.verdicts[*at].removed = self.removal.removed(aside, went);
                 }
             }
-            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners | Swept::Named
-                if self.dry => {}
-            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners | Swept::Named => {
+            // Listed, never removed: a tool a job only reads, such as a shim on its PATH, is never
+            // written, so its newest write says nothing of whether anybody still uses it.
+            Swept::Named => {}
+            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners if self.dry => {}
+            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners => {
                 for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
                     verdict.removed = self.removal.path(&verdict.path);
                     gone(&verdict.path);
