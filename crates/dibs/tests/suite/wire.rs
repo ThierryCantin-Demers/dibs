@@ -14,13 +14,14 @@ const RECORDING_SSH: &str = r#"#!/bin/bash
 printf '%s started for %s\n' "$$" "${@: -2:1}" >> "$WIRE.log"
 trap 'printf "%s exited %s\n" "$$" "$?" >> "$WIRE.log"' EXIT
 n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
-printf '%s\0' ssh "$@" > "$WIRE/$n.argv"
+k=$n.$$
+printf '%s\0' ssh "$@" > "$WIRE/$k.argv"
 printf '%s recorded as %s in wire %s\n' "$$" "$n" "$(ls -di "$WIRE" 2>/dev/null)" >> "$WIRE.log"
 cmd=${@: -1} host=${@: -2:1}
 if [[ $cmd == *'"$r" serve'* ]]; then
     IFS= read -r header
-    head -c "${header#request }" > "$WIRE/$n.request"
-    { printf '%s\n' "$header"; cat "$WIRE/$n.request"; } > "$WIRE/$n.frame"
+    head -c "${header#request }" > "$WIRE/$k.request"
+    { printf '%s\n' "$header"; cat "$WIRE/$k.request"; } > "$WIRE/$k.frame"
 fi
 [ -n "${WIRE_SAYS:-}" ] && printf '%s\n' "$WIRE_SAYS" >&2
 if [ "${WIRE_RUN:-0}" = 1 ]; then
@@ -30,10 +31,10 @@ if [ "${WIRE_RUN:-0}" = 1 ]; then
         export DIBS_LOCK_DIR=$far/lock DIBS_HISTORY=$far/history DIBS_LOG=$far/log DIBS_SCRATCH=$far/scratch
         mkdir -p "$DIBS_LOCK_DIR" "$DIBS_SCRATCH"
     fi
-    if [ -e "$WIRE/$n.frame" ] && [ "${WIRE_STDIN:-0}" = 1 ]; then
-        exec bash -c "$cmd" < <(cat "$WIRE/$n.frame"; exec tee "$WIRE/$n.rest")
+    if [ -e "$WIRE/$k.frame" ] && [ "${WIRE_STDIN:-0}" = 1 ]; then
+        exec bash -c "$cmd" < <(cat "$WIRE/$k.frame"; exec tee "$WIRE/$k.rest")
     fi
-    if [ -e "$WIRE/$n.frame" ]; then exec bash -c "$cmd" < <(cat "$WIRE/$n.frame"; exec cat); fi
+    if [ -e "$WIRE/$k.frame" ]; then exec bash -c "$cmd" < <(cat "$WIRE/$k.frame"; exec cat); fi
     exec bash -c "$cmd"
 fi
 exit "${WIRE_EXIT:-0}"
@@ -52,7 +53,8 @@ while [ $# -gt 0 ]; do
     args+=("$1"); shift
 done
 n=1; while ! mkdir "$WIRE/$n.slot" 2>/dev/null; do n=$((n + 1)); done
-printf '%s\0' rsync "${args[@]}" > "$WIRE/$n.argv"
+k=$n.$$
+printf '%s\0' rsync "${args[@]}" > "$WIRE/$k.argv"
 host=${remote%%:*}
 case $host in *@*) set -- -l "${host%@*}" "${host#*@}" ;; *) set -- "$host" ;; esac
 exec $rsh "$@" rsync --server -logDtprze.iLsfxCIvu . "${remote#*:}"
@@ -200,18 +202,22 @@ impl<'a> Wire<'a> {
     /// What the recorded calls sent, with the machine script checked rather than shown.
     fn captured(&self, cmd: Cmd, calls: Calls) -> String {
         let wire = self.s.path("wire");
-        let mut numbers: Vec<usize> = fs::read_dir(&wire)
+        // Keyed by slot and the ssh's pid, so two that take one slot each keep their record.
+        let mut keys: Vec<(usize, u32, String)> = fs::read_dir(&wire)
             .unwrap()
             .flatten()
             .filter_map(|e| {
-                e.file_name()
+                let key = e
+                    .file_name()
                     .to_string_lossy()
-                    .strip_suffix(".argv")
-                    .and_then(|k| k.parse().ok())
+                    .strip_suffix(".argv")?
+                    .to_string();
+                let (slot, pid) = key.split_once('.')?;
+                Some((slot.parse().ok()?, pid.parse().ok()?, key))
             })
             .collect();
-        numbers.sort();
-        let mut blocks: Vec<String> = numbers.iter().map(|&k| self.call(k, cmd)).collect();
+        keys.sort();
+        let mut blocks: Vec<String> = keys.iter().map(|(_, _, k)| self.call(k, cmd)).collect();
         if calls == Calls::AtOnce {
             blocks.sort();
         }
@@ -223,7 +229,7 @@ impl<'a> Wire<'a> {
     }
 
     /// One recorded call, from just after its number.
-    fn call(&self, k: usize, cmd: Cmd) -> String {
+    fn call(&self, k: &str, cmd: Cmd) -> String {
         let wire = self.s.path("wire");
         let argv = fs::read(wire.join(format!("{k}.argv"))).unwrap();
         let argv: Vec<String> = argv
