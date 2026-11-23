@@ -10,6 +10,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+/// How long a call waits for the join guard before it calls its holder stuck.
+pub const GUARD_WAIT: Duration = Duration::from_secs(5);
+
 /// A record outlives a pid that comes round again only by being older than the process that has
 /// it now; two seconds of slack for the rounding.
 const SAME_PROCESS_SLACK: u64 = 2;
@@ -132,12 +135,13 @@ impl LockDir {
     /// join ahead of it until one of these, or of the ones that join, ends. Under the join guard
     /// and before its record, so whichever ends after the record is listed.
     pub fn open_window(&self, pid: u32) {
-        let holders = self.records(Kind::Holder);
+        let holders = self.named("holder");
         let mut members: Vec<String> = self
             .named("admitted")
             .iter()
+            .chain(&holders)
+            .filter(|file| RecordFile(file).alive())
             .filter_map(|file| RecordFile(file).pid())
-            .chain(holders.iter().map(|h| h.pid))
             .filter(|&p| p != pid)
             .filter_map(|p| Member::of(p).filter(|m| self.member_live(m)))
             .map(|m| m.to_string())
@@ -162,15 +166,28 @@ impl LockDir {
 
     /// Held while a whole-machine benchmark publishes its window and record, while a card
     /// benchmark counts itself in, and while join records are pruned, so none reads another half
-    /// done. Let go when dropped.
-    pub fn join_guard(&self) -> io::Result<fs::File> {
+    /// done. Let go when dropped. Each holds it for a few file writes, so one still held after
+    /// `within` is a holder stopped mid-way, which nobody should wait out.
+    pub fn join_guard(&self, within: Duration) -> io::Result<fs::File> {
         let file = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(false)
             .open(self.path.join("join.guard"))?;
-        file.lock()?;
-        Ok(file)
+        let until = std::time::Instant::now() + within;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(file),
+                Err(TryLockError::Error(e)) => return Err(e),
+                Err(TryLockError::WouldBlock) if std::time::Instant::now() >= until => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "join.guard is held by a runner that has not let go",
+                    ));
+                }
+                Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
     }
 
     fn window_open(&self, machine: u32) -> bool {
@@ -239,7 +256,7 @@ impl LockDir {
         pcis: &[String],
         entry: Entry,
     ) -> io::Result<bool> {
-        let _guard = self.join_guard()?;
+        let _guard = self.join_guard(GUARD_WAIT)?;
         self.count_in(pid, order)?;
         let may = match entry {
             Entry::Starts => self.machines_before(pid, order).is_empty(),
@@ -254,10 +271,13 @@ impl LockDir {
         Ok(may)
     }
 
-    fn leave_windows(&self, pid: u32) {
+    /// Takes back this process's admission; a finished one of the same pid keeps its join
+    /// records, which are what close its windows.
+    pub fn leave_windows(&self, pid: u32) {
         let _ = fs::remove_file(self.file("admitted", pid));
+        let me = Member::of(pid);
         for joined in self.named("joined") {
-            if RecordFile(&joined).pid() == Some(pid) {
+            if me.is_some() && Member::joined(&joined) == me {
                 let _ = fs::remove_file(joined);
             }
         }
@@ -606,7 +626,7 @@ impl LockDir {
             }
         }
         let joins = self.named("joined");
-        let guard = (!joins.is_empty()).then(|| self.join_guard());
+        let guard = (!joins.is_empty()).then(|| self.join_guard(Duration::ZERO));
         for joined in joins
             .iter()
             .filter(|_| guard.as_ref().is_some_and(|g| g.is_ok()))
@@ -744,12 +764,13 @@ mod tests {
             "a joiner killed outright has ended"
         );
         dir.clear(gone);
+        dir.leave_windows(gone);
         assert!(
             !dir.window_open(machine),
-            "a joiner that finished has ended too"
+            "a joiner that finished keeps its record when another of its pid steps back"
         );
-        dir.leave_windows(gone);
-        assert!(dir.window_open(machine), "one that stepped back never ran");
+        fs::remove_file(dir.file(&format!("joined.{machine}.1"), gone)).unwrap();
+        assert!(dir.window_open(machine));
         dir.clear(me);
         assert!(
             !dir.window_open(machine),

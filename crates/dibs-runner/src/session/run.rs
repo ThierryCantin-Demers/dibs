@@ -11,7 +11,7 @@ use crate::{
     },
     kill::DESCRIBED,
     lock::{
-        Cards, Entry, Hold, Kind, Lock, LockDir, Urgent,
+        Cards, Entry, GUARD_WAIT, Hold, Kind, Lock, LockDir, Urgent,
         cohort::{self, Sharing},
     },
     machine::Site,
@@ -321,7 +321,7 @@ impl<'a> Run<'a> {
         let machine = matches!(claim, Some(Takes::Machine));
         // A whole-machine benchmark's record and the card benchmarks it lets ahead appear at once;
         // without the guard it lists none, and lets none ahead.
-        let window = machine.then(|| self.at.dir.join_guard());
+        let window = machine.then(|| self.at.dir.join_guard(GUARD_WAIT));
         // Before the record, so nobody reads it as a benchmark of the whole machine.
         match &claim {
             Some(Takes::Cards(pcis)) => {
@@ -1022,20 +1022,26 @@ impl<'a> Run<'a> {
         let Some(cards) = self.join(&mut lock, pcis, deadline)? else {
             return Ok(None);
         };
-        self.at
+        let guard = self
+            .at
             .dir
-            .join_guard()
-            .and_then(|_guard| self.at.dir.count_in(self.at.call.pid, arrived.order))
+            .join_guard(GUARD_WAIT)
             .map_err(|e| self.no_lock(&e))?;
         self.at
             .dir
-            .mark_urgent(&Urgent {
-                pid: self.at.call.pid,
-                job: arrived.job.clone(),
-                agent: self.at.call.agent.clone(),
-                why: why.to_string(),
-            })
+            .count_in(self.at.call.pid, arrived.order)
             .map_err(|e| self.no_lock(&e))?;
+        let marked = self.at.dir.mark_urgent(&Urgent {
+            pid: self.at.call.pid,
+            job: arrived.job.clone(),
+            agent: self.at.call.agent.clone(),
+            why: why.to_string(),
+        });
+        if marked.is_err() {
+            self.at.dir.leave_windows(self.at.call.pid);
+        }
+        drop(guard);
+        marked.map_err(|e| self.no_lock(&e))?;
         let mut acquired = self.with_cards(lock, Some(cards), arrived);
         acquired.claim = Some(claim);
         Ok(Some(acquired))
