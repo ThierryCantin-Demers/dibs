@@ -260,11 +260,13 @@ impl<'a> Run<'a> {
             }
             // No window may list it between losing its admission and its holder record, and none
             // may count it live once its card is free for another, even if the guard is stuck.
+            // The holder record goes first: without it, a window taken before the admission goes
+            // counts this admission, which ends with it, rather than a holder that comes back.
             let guard = self.at.dir.join_guard(GUARD_WAIT);
-            self.at.dir.leave_windows(self.at.call.pid);
-            let _ = fs::remove_file(self.at.dir.file("urgent", self.at.call.pid));
             self.at.dir.write(Kind::Waiting, &record);
             let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
+            self.at.dir.leave_windows(self.at.call.pid);
+            let _ = fs::remove_file(self.at.dir.file("urgent", self.at.call.pid));
             drop(acquired);
             drop(guard);
         };
@@ -339,9 +341,7 @@ impl<'a> Run<'a> {
         let machine = matches!(claim, Some(Takes::Machine));
         // A whole-machine benchmark's record and the card benchmarks it lets ahead appear at once;
         // without the guard it lists none, and lets none ahead.
-        let within = request
-            .wait
-            .map_or(GUARD_WAIT, |wait| GUARD_WAIT.min(Duration::from_secs(wait)));
+        let within = guard_wait(request.wait.map(|wait| since + Duration::from_secs(wait)));
         let window = machine.then(|| self.at.dir.join_guard(within));
         // Before the record, so nobody reads it as a benchmark of the whole machine.
         match &claim {
