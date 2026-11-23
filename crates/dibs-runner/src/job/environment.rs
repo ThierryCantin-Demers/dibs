@@ -209,8 +209,10 @@ impl Environment {
         };
         let at = Path::new(&library);
         match (at.is_absolute(), library.contains('/')) {
-            (true, _) => at.exists(),
-            (false, true) => path.parent().is_some_and(|dir| dir.join(at).exists()),
+            (true, _) => Environment::loadable(at),
+            (false, true) => path
+                .parent()
+                .is_some_and(|dir| Environment::loadable(&dir.join(at))),
             (false, false) => [
                 "/usr/lib64",
                 "/usr/lib",
@@ -221,8 +223,27 @@ impl Environment {
                 "/usr/local/lib",
             ]
             .iter()
-            .any(|dir| Path::new(dir).join(at).exists()),
+            .any(|dir| Environment::loadable(&Path::new(dir).join(at))),
         }
+    }
+
+    /// Whether `library` is a shared object of this machine's word size and architecture: a
+    /// 32-bit copy sits in /usr/lib on some systems and the loader cannot load it.
+    fn loadable(library: &Path) -> bool {
+        let machine: u16 = match std::env::consts::ARCH {
+            "x86_64" => 62,
+            "aarch64" => 183,
+            _ => return false,
+        };
+        let mut head = [0u8; 20];
+        std::fs::File::open(library)
+            .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut head))
+            .is_ok_and(|()| {
+                head[..4] == *b"\x7fELF"
+                    && head[4] == 2
+                    && head[5] == 1
+                    && u16::from_le_bytes([head[18], head[19]]) == machine
+            })
     }
 
     /// The command started in `dir`, with `target` as its build cache.

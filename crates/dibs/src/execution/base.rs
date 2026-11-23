@@ -958,11 +958,17 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
         device: args.device.as_deref().map(Alias::from),
         ..Call::default()
     })?;
+    let device = backend.concrete(
+        &["raw"],
+        Lock::Shared,
+        args.device.as_deref(),
+        args.new_series,
+    )?;
     let out = backend.run(
         &JobRequest {
             label: "raw",
             lock: Lock::Shared,
-            device: args.device.as_deref(),
+            device: device.as_deref(),
             job: &RecipeJob::default(),
             max: args.max,
             new_series: args.new_series,
@@ -984,7 +990,7 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
         backend: BACKEND.into(),
         machine: backend.machine.clone(),
         series: backend.series(),
-        device: args.device.as_deref().map(Alias::from),
+        device: device.as_deref().map(Alias::from),
         needs: None,
         reason: Some(reason.to_string()),
         seeded: None,

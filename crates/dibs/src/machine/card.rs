@@ -110,8 +110,28 @@ impl Card {
         for list in &mut choices {
             list.sort_by_key(&cost);
         }
-        if !Card::assign(&open, &choices, &mut taken) {
-            return Err(too_few());
+        let mut ceilings: Vec<u64> = choices.iter().flatten().map(&cost).collect();
+        ceilings.sort_unstable();
+        ceilings.dedup();
+        let assigned = ceilings
+            .iter()
+            .chain(open.is_empty().then_some(&0))
+            .find_map(|&ceiling| {
+                let within: Vec<Vec<Alias>> = choices
+                    .iter()
+                    .map(|list| {
+                        list.iter()
+                            .filter(|a| cost(a) <= ceiling)
+                            .cloned()
+                            .collect()
+                    })
+                    .collect();
+                let mut tried = taken.clone();
+                Card::assign(&open, &within, &mut tried).then_some(tried)
+            });
+        match assigned {
+            Some(assigned) => taken = assigned,
+            None => return Err(too_few()),
         }
         let names: Vec<&str> = taken.iter().flatten().map(Alias::as_str).collect();
         Ok(Alias::new(names.join(",")))
@@ -438,6 +458,27 @@ mod tests {
         let cards = Card::concrete(&Alias::new("twin,twin.a"), &entry, |_| 0).unwrap();
         assert_eq!(cards.as_str(), "gpu:twin.b,gpu:twin.a");
         assert!(Card::concrete(&Alias::new("gpu:twin.a,twin.a"), &entry, |_| 0).is_err());
+    }
+
+    #[test]
+    fn a_free_card_is_taken_over_moving_an_entry_onto_a_busy_one() {
+        let entry = machine(&["gpu:twin.41.a", "gpu:twin.41.b", "gpu:twin.83"]);
+        let busy = |a: &Alias| u64::from(a.as_str() == "gpu:twin.41.b") * 1000;
+        let cards = Card::concrete(&Alias::new("twin.41,twin"), &entry, busy).unwrap();
+        assert_eq!(cards.as_str(), "gpu:twin.41.a,gpu:twin.83");
+    }
+
+    #[test]
+    fn a_processor_with_no_alias_of_its_own_is_kept_as_named() {
+        let entry = crate::inventory::Inventory::parse(
+            "[machine.box]\nssh = \"box\"\n[[machine.box.device]]\nkind = \"cpu\"\nname = \"a processor\"\ncores = 4\n",
+        )
+        .unwrap()
+        .machine("box")
+        .unwrap()
+        .clone();
+        let cards = Card::concrete(&Alias::new("cpu"), &entry, |_| 0).unwrap();
+        assert_eq!(cards.as_str(), "cpu");
     }
 
     #[test]

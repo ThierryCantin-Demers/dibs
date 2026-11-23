@@ -252,8 +252,8 @@ impl<'a> LockedCall<'a> {
             machine: &machine,
             card: &device,
         };
-        if self.bench()
-            && !self.hold
+        let serial = self.bench() && (!self.hold || !self.services.is_empty());
+        if serial
             && env.series_check
             && !call.new_series
             && let Some(series) = &series
@@ -298,8 +298,7 @@ impl<'a> LockedCall<'a> {
             }
         };
 
-        if self.bench()
-            && !self.hold
+        if serial
             && status == 0
             && env.series_check
             && let Some(series) = &series
