@@ -420,3 +420,58 @@ fn a_label_measured_on_one_card_waits_for_it_rather_than_take_another() {
     assert_eq!(ran_on(&mut s, "twin", "series"), (0, card));
     s.gone();
 }
+
+#[test]
+fn a_card_named_exactly_is_kept_out_of_a_prefix_beside_it() {
+    let Some(mut s) = machine_of(["gpu:twin.a", "gpu:twin.b"]) else {
+        return;
+    };
+    assert_eq!(
+        ran_on(&mut s, "twin,gpu:twin.a", "exact"),
+        (0, "gpu:twin.b,gpu:twin.a".to_string())
+    );
+    assert_eq!(ran_on(&mut s, "gpu:twin.a,twin.a", "twice").0, 2);
+    s.gone();
+}
+
+#[test]
+fn a_card_named_without_gpu_is_the_same_series_as_with_it() {
+    let Some(mut s) = machine_of(["gpu:twin.a", "gpu:twin.b"]) else {
+        return;
+    };
+    assert_eq!(
+        ran_on(&mut s, "twin.a", "short"),
+        (0, "gpu:twin.a".to_string())
+    );
+    assert_eq!(
+        ran_on(&mut s, "gpu:twin.a", "short"),
+        (0, "gpu:twin.a".to_string())
+    );
+    s.gone();
+}
+
+#[test]
+fn a_label_with_no_series_yet_follows_the_card_its_first_run_holds() {
+    let Some(mut s) = machine_of(["gpu:twin.a", "gpu:twin.b"]) else {
+        return;
+    };
+    let held = s.gate("held");
+    let order = s.p("order");
+    let first = s.spawn(bench(
+        &s,
+        Some("twin"),
+        "same",
+        &format!("echo first >> {order}; {}", held.hold()),
+    ));
+    s.until_records("the first run to hold its card", || {
+        s.read("order") == "first\n"
+    });
+    assert_eq!(
+        ran_on(&mut s, "twin", "same").0,
+        75,
+        "the other card is free, and taking it would start a second history"
+    );
+    held.open();
+    assert_eq!(s.wait(first), 0);
+    s.gone();
+}

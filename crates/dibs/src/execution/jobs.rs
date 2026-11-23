@@ -367,6 +367,38 @@ impl Jobs {
         reader.reported(Jobs::exit(exit))
     }
 
+    /// `device` made the cards it names, picked once so that every step of a recipe, and its
+    /// record, go to the same ones.
+    pub fn concrete(
+        &self,
+        label: &str,
+        lock: Lock,
+        device: Option<&str>,
+        new_series: bool,
+    ) -> Result<Option<String>, CallError> {
+        let Some(device) = device else {
+            return Ok(None);
+        };
+        let call = self.call(
+            &JobRequest {
+                label,
+                lock,
+                device: Some(device),
+                job: &RecipeJob::default(),
+                max: None,
+                new_series,
+                preempt: false,
+                tree: None,
+            },
+            "true",
+        );
+        let Mode::Run(run) = &call.mode else {
+            unreachable!("a recipe's call is a run");
+        };
+        let cards = LockedCall::run_of(run).concrete(&call)?;
+        Ok(Some(cards.map_or(device.to_string(), |c| c.to_string())))
+    }
+
     fn locked(&self, call: &Call, job: &RecipeJob, output: &mut Output) -> Result<i32, CallError> {
         let Mode::Run(run) = &call.mode else {
             unreachable!("a recipe's call is a run");

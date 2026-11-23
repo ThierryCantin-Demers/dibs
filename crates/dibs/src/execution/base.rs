@@ -201,6 +201,16 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     if refused_before_building(&backend, rec, &step_labels, &args) {
         return Ok(ExitCode::from(Exit::Refused.code()));
     }
+    let measured = (0..rec.steps.len())
+        .find(|&i| rec.steps[i].lock == Lock::Exclusive)
+        .unwrap_or(0);
+    let device = backend.concrete(
+        &step_labels[measured],
+        rec.steps[measured].lock,
+        args.device.as_deref(),
+        args.new_series,
+    )?;
+    let args = RecipeCall { device, ..args };
     let kept = KeptStores::of(backend.machine.clone(), &tree_copies);
     if let Some(kept) = &kept {
         kept.send();

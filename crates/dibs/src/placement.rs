@@ -32,6 +32,8 @@ const UNMEASURED_PENALTY: u64 = 500;
 pub struct Occupant {
     #[serde(default)]
     pub device: Option<String>,
+    #[serde(default)]
+    pub label: String,
 }
 
 /// What placement reads of a machine's status.
@@ -104,6 +106,15 @@ impl Reading {
         String::from_utf8_lossy(output)
             .lines()
             .find_map(|line| serde_json::from_str(line).ok())
+    }
+
+    /// The cards a job running or queued under `label` named.
+    pub fn cards_of(&self, label: &str) -> Option<&str> {
+        self.holders
+            .iter()
+            .chain(&self.queue)
+            .find(|o| o.label == label)
+            .and_then(|o| o.device.as_deref())
     }
 
     /// How many jobs running or queued name `card`.

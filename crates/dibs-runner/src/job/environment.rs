@@ -172,10 +172,16 @@ impl Environment {
                 .map(PathBuf::from)
                 .collect()
         };
-        let mut roots = listed("XDG_CONFIG_DIRS", "/etc/xdg");
+        let own = |name: &str, default: &str| {
+            var(name)
+                .filter(|dir| !dir.is_empty())
+                .map_or_else(|| home().join(default), PathBuf::from)
+        };
+        let mut roots = vec![own("XDG_CONFIG_HOME", ".config")];
+        roots.extend(listed("XDG_CONFIG_DIRS", "/etc/xdg"));
         roots.push(PathBuf::from("/etc"));
+        roots.push(own("XDG_DATA_HOME", ".local/share"));
         roots.extend(listed("XDG_DATA_DIRS", "/usr/local/share:/usr/share"));
-        roots.push(home().join(".local/share"));
         roots.iter().any(|root| {
             std::fs::read_dir(root.join("vulkan/implicit_layer.d")).is_ok_and(|entries| {
                 entries

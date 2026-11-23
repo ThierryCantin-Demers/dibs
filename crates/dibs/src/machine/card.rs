@@ -33,6 +33,8 @@ pub enum CardError {
         aliases: Vec<Alias>,
         cpu: bool,
     },
+    /// `--device` asks for more distinct cards than match it.
+    TooFew { machine: MachineName, asked: Alias },
     /// The command builds for GPU runtimes the card has none of.
     NoRuntime {
         alias: String,
@@ -74,28 +76,46 @@ impl Card {
 
     /// Every entry of `alias` made one card of `entry`, none taken twice. An alias named exactly
     /// stays, `gpu:` may be left out, and a prefix such as `aipror9700` takes the cheapest by
-    /// `cost` of the cards whose alias it starts, the first listed among equals.
+    /// `cost` of the cards whose alias it starts and no other entry names exactly, the first
+    /// listed among equals.
     pub fn concrete(
         alias: &Alias,
         entry: &Machine,
         cost: impl Fn(&Alias) -> u64,
     ) -> Result<Alias, CardError> {
-        let mut taken: Vec<Alias> = Vec::new();
-        for one in alias.as_str().split(',') {
-            let mut matching: Vec<Alias> = Card::matching(one, entry)
-                .into_iter()
-                .filter(|a| !taken.contains(a))
-                .collect();
-            matching.sort_by_key(&cost);
-            match matching.into_iter().next() {
-                Some(card) => taken.push(card),
-                None => {
-                    Card::on(&Alias::new(one), entry)?;
-                    taken.push(Alias::new(one));
+        let asked: Vec<&str> = alias.as_str().split(',').collect();
+        let choices: Vec<Vec<Alias>> = asked.iter().map(|one| Card::matching(one, entry)).collect();
+        let too_few = || CardError::TooFew {
+            machine: entry.name.clone(),
+            asked: alias.clone(),
+        };
+        let mut taken: Vec<Option<Alias>> = vec![None; asked.len()];
+        for (at, one) in asked.iter().enumerate() {
+            let card = match choices[at].as_slice() {
+                [only] => only.clone(),
+                [] => {
+                    Card::on(&Alias::new(*one), entry)?;
+                    Alias::new(*one)
                 }
+                _ => continue,
+            };
+            if taken.contains(&Some(card.clone())) {
+                return Err(too_few());
             }
+            taken[at] = Some(card);
         }
-        let names: Vec<&str> = taken.iter().map(Alias::as_str).collect();
+        for (at, matching) in choices.into_iter().enumerate() {
+            if taken[at].is_some() {
+                continue;
+            }
+            let card = matching
+                .into_iter()
+                .filter(|a| !taken.contains(&Some(a.clone())))
+                .min_by_key(&cost)
+                .ok_or_else(too_few)?;
+            taken[at] = Some(card);
+        }
+        let names: Vec<&str> = taken.iter().flatten().map(Alias::as_str).collect();
         Ok(Alias::new(names.join(",")))
     }
 
@@ -266,6 +286,13 @@ impl fmt::Display for CardError {
                     writeln!(f, "    cpu")?;
                 }
                 Ok(())
+            }
+            CardError::TooFew { machine, asked } => {
+                writeln!(
+                    f,
+                    "dibs: --device {asked} needs a different card of {machine} for each entry, and fewer match."
+                )?;
+                writeln!(f, "  Its cards are listed by:  dibs --machines -v")
             }
             CardError::NoRuntime { alias, has, asked } => {
                 writeln!(

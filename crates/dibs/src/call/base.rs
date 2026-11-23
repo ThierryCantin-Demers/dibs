@@ -115,9 +115,10 @@ impl<'a> LockedCall<'a> {
     }
 
     /// A `--device` that names cards by a prefix, made the cards the job goes to: the ones its
-    /// label's series was measured on here, so the series stays on them, else the matching cards
-    /// the fewest jobs there run or wait for. Several callers picking at once may pick alike, and
-    /// the later then waits for its card as if it had named it.
+    /// label's series was measured on here, so the series stays on them, else the ones a job of the
+    /// label there runs or waits on, else the matching cards the fewest jobs there run or wait for.
+    /// Several callers picking at once may pick alike, and the later then waits for its card as if
+    /// it had named it.
     fn pick(
         call: &Call,
         target: &Target,
@@ -129,7 +130,8 @@ impl<'a> LockedCall<'a> {
             return Ok(None);
         };
         if !Card::chooses(alias, entry) {
-            return Ok(None);
+            let named = Card::concrete(alias, entry, |_| 0)?;
+            return Ok((named != *alias).then_some(named));
         }
         let bound = series
             .and_then(|s| s.card_of(label.as_str(), &target.series_key()))
@@ -138,12 +140,35 @@ impl<'a> LockedCall<'a> {
             return Ok(Some(Alias::new(cards)));
         }
         let reading = Reading::asked(&entry.name);
+        let running = reading
+            .as_ref()
+            .and_then(|r| r.cards_of(label.as_str()))
+            .filter(|cards| Card::fits(alias, cards, entry));
+        if let Some(cards) = running {
+            return Ok(Some(Alias::new(cards)));
+        }
         let spread = RandomState::new();
         let cost = |card: &Alias| {
             let used = reading.as_ref().map_or(0, |r| r.using(card.as_str()));
             used * 1000 + spread.hash_one(card.as_str()) % 1000
         };
         Ok(Some(Card::concrete(alias, entry, cost)?))
+    }
+
+    /// The cards `call`'s `--device` goes to, where it names them by model or leaves out `gpu:`.
+    pub fn concrete(&self, call: &Call) -> Result<Option<Alias>, CallError> {
+        let env = Environment::read();
+        let paths = Paths::from_env();
+        let fleet = Fleet::load(paths.inventory())?;
+        let target = self.target(call, &env, &fleet)?;
+        let series = paths.series().map(|path| Series { path });
+        LockedCall::pick(
+            call,
+            &target,
+            &fleet,
+            series.as_ref(),
+            &Request::label(call),
+        )
     }
 
     /// Runs the call and returns the exit to give.
