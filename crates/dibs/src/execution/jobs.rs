@@ -395,7 +395,7 @@ impl Jobs {
         let Mode::Run(run) = &call.mode else {
             unreachable!("a recipe's call is a run");
         };
-        let labels: Vec<Label> = labels.iter().map(|l| Label::new(*l)).collect();
+        let labels: Vec<Label> = labels.iter().map(|l| Label::new(*l).filed()).collect();
         let cards = LockedCall::run_of(run).concrete(&call, &labels)?;
         Ok(Some(cards.map_or(device.to_string(), |c| c.to_string())))
     }

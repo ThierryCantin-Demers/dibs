@@ -102,11 +102,16 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         Destination::Unchosen => return Err(Refusal::WithUnplaced.into()),
     });
     let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
+    let lock = match args.bench {
+        true => Lock::Exclusive,
+        false => Lock::Shared,
+    };
+    let device = backend.concrete(&[&label], lock, args.device.as_deref(), false)?;
     if args.device.is_some() {
         let req = JobRequest {
             label: &label,
             lock: Lock::Shared,
-            device: args.device.as_deref(),
+            device: device.as_deref(),
             job: &RecipeJob::default(),
             max: None,
             new_series: false,
@@ -137,7 +142,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             arm.preparing(&repo_name, local.as_ref(), &dir)
         );
         pins.iter().for_each(Pinned::show);
-        if let Some(d) = &args.device {
+        if let Some(d) = &device {
             println!("device      {d}");
         }
         if let Some(b) = &svc.build {
@@ -211,7 +216,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         backend: BACKEND.into(),
         machine: backend.machine.clone(),
         series: backend.series(),
-        device: args.device.as_deref().map(Alias::from),
+        device: device.as_deref().map(Alias::from),
         needs: None,
         reason: None,
         seeded: None,
@@ -337,7 +342,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         let req = JobRequest {
             label: &build_label,
             lock: Lock::Shared,
-            device: args.device.as_deref(),
+            device: device.as_deref(),
             job: &RecipeJob::default(),
             max: None,
             new_series: false,
@@ -377,7 +382,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         on: backend.machine.clone(),
         label: Some(Label::new(&label)),
         max: args.max,
-        device: args.device.as_deref().map(Alias::new),
+        device: device.as_deref().map(Alias::new),
         ..Call::default()
     };
     // Timed, the servers are refused before they start when another tree has built over them.

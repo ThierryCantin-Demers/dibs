@@ -109,12 +109,21 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     if args.dry_run {
         // Asked what the real run asks before it builds, so a card or a series it would refuse
         // is refused here, where someone reads the device line before measuring.
-        if rec.steps.iter().any(|s| s.lock == Lock::Exclusive) || args.device.is_some() {
-            let backend = Jobs::on(destination(rec, &repo_name, name, &args)?);
-            if refused_before_building(&backend, rec, &step_labels, &args) {
-                return Ok(ExitCode::from(Exit::Refused.code()));
-            }
-        }
+        let args =
+            match rec.steps.iter().any(|s| s.lock == Lock::Exclusive) || args.device.is_some() {
+                true => {
+                    let backend = Jobs::on(destination(rec, &repo_name, name, &args)?);
+                    let args = RecipeCall {
+                        device: concrete(&backend, rec, &step_labels, &args)?,
+                        ..args
+                    };
+                    if refused_before_building(&backend, rec, &step_labels, &args) {
+                        return Ok(ExitCode::from(Exit::Refused.code()));
+                    }
+                    args
+                }
+                false => args,
+            };
         println!("label       {label}");
         println!("recipe      {name}  ({fingerprint})");
         println!("isolation   {:?}", rec.isolation);
@@ -158,16 +167,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         // Which card, printed whether or not one was named: a dry run is where someone checks
         // they are about to measure the thing they mean to, and "no card named" is the answer
         // that most needs saying, because that run is the one nobody can repeat.
-        let picked = match &args.device {
-            Some(_) => concrete(
-                &Jobs::on(destination(rec, &repo_name, name, &args)?),
-                rec,
-                &step_labels,
-                &args,
-            )?,
-            None => None,
-        };
-        match &picked {
+        match &args.device {
             Some(d) => println!("device      {d}"),
             None => println!("device      none named, so the runtime picks and a repeat is luck"),
         }
@@ -207,11 +207,13 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     if let Some(m) = backend.machine.as_ref().filter(|_| !args.pinned()) {
         Affinity::here().set(&repo_name, m.as_str());
     }
+    let args = RecipeCall {
+        device: concrete(&backend, rec, &step_labels, &args)?,
+        ..args
+    };
     if refused_before_building(&backend, rec, &step_labels, &args) {
         return Ok(ExitCode::from(Exit::Refused.code()));
     }
-    let device = concrete(&backend, rec, &step_labels, &args)?;
-    let args = RecipeCall { device, ..args };
     let kept = KeptStores::of(backend.machine.clone(), &tree_copies);
     if let Some(kept) = &kept {
         kept.send();
@@ -616,7 +618,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
 }
 
 /// The cards a recipe's `--device` goes to, picked once for all its steps and kept to the series
-/// of any step that measures.
+/// of any step that measures; the preflight then holds every measurement to them.
 fn concrete(
     backend: &Jobs,
     rec: &recipe::Recipe,

@@ -117,23 +117,37 @@ impl Card {
         Ok(Alias::new(names.join(",")))
     }
 
-    /// Fills each of `open` with one of its `choices` no other entry has, trying the cheaper
-    /// first; a greedy pass can spend a card a narrower entry needed.
+    /// Fills each of `open` with one of its `choices` no other entry has, the cheaper first, by
+    /// augmenting paths: a greedy pass can spend a card a narrower entry needed, and a search
+    /// over orderings takes factorial time to say there is no way.
     fn assign(open: &[usize], choices: &[Vec<Alias>], taken: &mut [Option<Alias>]) -> bool {
-        let Some((&at, rest)) = open.split_first() else {
-            return true;
-        };
-        for card in &choices[at] {
-            if taken.contains(&Some(card.clone())) {
-                continue;
+        fn place(
+            at: usize,
+            choices: &[Vec<Alias>],
+            taken: &mut [Option<Alias>],
+            fixed: &[bool],
+            seen: &mut Vec<Alias>,
+        ) -> bool {
+            for card in &choices[at] {
+                if seen.contains(card) {
+                    continue;
+                }
+                seen.push(card.clone());
+                let holder = taken.iter().position(|t| t.as_ref() == Some(card));
+                let free = match holder {
+                    None => true,
+                    Some(other) => !fixed[other] && place(other, choices, taken, fixed, seen),
+                };
+                if free {
+                    taken[at] = Some(card.clone());
+                    return true;
+                }
             }
-            taken[at] = Some(card.clone());
-            if Card::assign(rest, choices, taken) {
-                return true;
-            }
-            taken[at] = None;
+            false
         }
-        false
+        let fixed: Vec<bool> = taken.iter().map(Option::is_some).collect();
+        open.iter()
+            .all(|&at| place(at, choices, taken, &fixed, &mut Vec::new()))
     }
 
     /// `device` with `gpu:` before every entry that leaves it out, so that two spellings of one
@@ -187,6 +201,9 @@ impl Card {
             true => one.to_string(),
             false => format!("gpu:{one}"),
         };
+        if entry.device(&named).is_some() {
+            return vec![Alias::new(named)];
+        }
         entry
             .aliases()
             .filter(|a| {
@@ -394,7 +411,7 @@ mod tests {
             .enumerate()
             .map(|(i, a)| {
                 format!(
-                    "[[machine.box.device]]\nkind = \"gpu\"\nalias = \"{a}\"\nname = \"x\"\npci = \"0000:0{i}:00.0\"\nchip = \"1:2\"\n"
+                    "[[machine.box.device]]\nkind = \"gpu\"\nalias = \"{a}\"\nname = \"x\"\npci = \"0000:{i:02x}:00.0\"\nchip = \"1:2\"\n"
                 )
             })
             .collect();
@@ -409,7 +426,10 @@ mod tests {
     fn a_broad_prefix_leaves_a_narrower_one_the_cards_only_it_can_take() {
         let entry = machine(&["gpu:twin.41.00", "gpu:twin.41.01", "gpu:twin.83"]);
         let cards = Card::concrete(&Alias::new("twin,twin.41,twin.41"), &entry, |_| 0).unwrap();
-        assert_eq!(cards.as_str(), "gpu:twin.83,gpu:twin.41.00,gpu:twin.41.01");
+        let mut cards: Vec<&str> = cards.as_str().split(',').collect();
+        assert_eq!(cards.remove(0), "gpu:twin.83");
+        cards.sort_unstable();
+        assert_eq!(cards, ["gpu:twin.41.00", "gpu:twin.41.01"]);
     }
 
     #[test]
@@ -418,6 +438,28 @@ mod tests {
         let cards = Card::concrete(&Alias::new("twin,twin.a"), &entry, |_| 0).unwrap();
         assert_eq!(cards.as_str(), "gpu:twin.b,gpu:twin.a");
         assert!(Card::concrete(&Alias::new("gpu:twin.a,twin.a"), &entry, |_| 0).is_err());
+    }
+
+    #[test]
+    fn a_model_no_card_count_can_satisfy_is_refused_at_once() {
+        let names: Vec<String> = (0..12).map(|i| format!("gpu:twin.{i:02}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let entry = machine(&names);
+        let asked = ["twin"; 13].join(",");
+        assert!(Card::concrete(&Alias::new(asked), &entry, |_| 0).is_err());
+        let asked = ["twin"; 12].join(",");
+        assert!(Card::concrete(&Alias::new(asked), &entry, |_| 0).is_ok());
+    }
+
+    #[test]
+    fn a_card_named_like_its_model_is_that_card() {
+        let entry = machine(&["gpu:twin", "gpu:twin.a"]);
+        let cards = Card::concrete(&Alias::new("twin"), &entry, |a| match a.as_str() {
+            "gpu:twin" => 5,
+            _ => 0,
+        })
+        .unwrap();
+        assert_eq!(cards.as_str(), "gpu:twin");
     }
 
     #[test]

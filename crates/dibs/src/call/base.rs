@@ -19,9 +19,8 @@ use crate::{
 use dibs_format::{Alias, Exit, Label, Mode, wire::Trailer};
 use dibs_runner::short_hostname;
 use std::{
-    collections::{BTreeMap, hash_map::RandomState},
+    collections::BTreeMap,
     fmt,
-    hash::BuildHasher as _,
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
 };
@@ -156,10 +155,19 @@ impl<'a> LockedCall<'a> {
         if let Some(cards) = running {
             return Ok(Some(Alias::new(cards)));
         }
-        let spread = RandomState::new();
+        // Equal cards are told apart by a hash of the label, so labels spread over them and two
+        // first calls of one label pick alike.
+        let first = labels.first().map_or("", Label::as_str);
+        let spread = |card: &Alias| {
+            format!("{first}\0{card}")
+                .bytes()
+                .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+                    (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+                })
+        };
         let cost = |card: &Alias| {
             let used = reading.as_ref().map_or(0, |r| r.using(card.as_str()));
-            used * 1000 + spread.hash_one(card.as_str()) % 1000
+            used * 1000 + spread(card) % 1000
         };
         Ok(Some(Card::concrete(alias, entry, cost)?))
     }
