@@ -258,10 +258,11 @@ impl<'a> Run<'a> {
             if (Shutter { dir: self.at.dir }).shut().is_none() {
                 break acquired;
             }
-            drop(acquired);
-            // No window may list it between losing its admission and its holder record.
+            // No window may list it between losing its admission and its holder record, and none
+            // may count it live once its card is free for another.
             let guard = self.at.dir.join_guard(GUARD_WAIT);
             self.at.dir.leave_windows(self.at.call.pid);
+            drop(acquired);
             let _ = fs::remove_file(self.at.dir.file("urgent", self.at.call.pid));
             self.at.dir.write(Kind::Waiting, &record);
             let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
@@ -357,15 +358,9 @@ impl<'a> Run<'a> {
             }
             None => {}
         }
-        self.at
-            .dir
-            .write(Kind::Waiting, &self.at.call.lock_record(start, &job));
-        drop(window);
-        if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
-            let _ = fs::write(self.at.dir.file("batch", pid), format!("{batch}\n"));
-        }
         // Beside the lock record rather than in it: a runner reading a record with a field it
         // does not know drops the record, and with it a holder its benchmark must not run beside.
+        // Before it, so the first status to see the call sees them too.
         if let Some(subagent) = &self.at.call.subagent {
             let _ = fs::write(self.at.dir.file("subagent", pid), format!("{subagent}\n"));
         }
@@ -374,6 +369,13 @@ impl<'a> Run<'a> {
         }
         if let Some(user) = &self.at.call.user {
             let _ = fs::write(self.at.dir.file("user", pid), format!("{user}\n"));
+        }
+        self.at
+            .dir
+            .write(Kind::Waiting, &self.at.call.lock_record(start, &job));
+        drop(window);
+        if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
+            let _ = fs::write(self.at.dir.file("batch", pid), format!("{batch}\n"));
         }
         let mut line = self.at.call.log_line(Event::Arrived);
         line.job = Some(job.clone());
@@ -863,7 +865,7 @@ impl<'a> Run<'a> {
         };
         let mut lock = Lock::open(dir).map_err(no_lock)?;
         let deadline = self.wait_until(arrived);
-        let (mut at_gate, mut told, mut asked) = (false, false, false);
+        let (mut at_gate, mut told, mut asked, mut last_look) = (false, false, false, false);
         let held = loop {
             // A whole-machine benchmark keeps the gate while it waits, so a card benchmark it lets
             // go ahead joins the running ones without it, as an urgent one does.
@@ -904,6 +906,11 @@ impl<'a> Run<'a> {
                     true => at_gate = true,
                     false if pcis.is_some() && deadline.is_none_or(|d| Instant::now() < d) => {
                         gated_out = true;
+                    }
+                    // Out of time at the gate: one more look whether a group opened to join.
+                    false if pcis.is_some() && !last_look => {
+                        last_look = true;
+                        continue;
                     }
                     false => break None,
                 }
