@@ -29,6 +29,8 @@ struct Group(pub u32);
 
 impl Tether {
     pub const WORD: &str = "tether";
+    /// In a tether's environment, so that `--release` knows it for one.
+    pub const MARK: &str = "DIBS_TETHER";
 
     /// Started before the job it ties, so no moment of the job's runs untied. It keeps `held`
     /// open until the group it sweeps is gone.
@@ -37,6 +39,7 @@ impl Tether {
         let mut command = Itself::command();
         command
             .arg(Tether::WORD)
+            .env(Tether::MARK, "1")
             .stdin(sweeper_end)
             .stdout(Stdio::null())
             .stderr(Stdio::null())

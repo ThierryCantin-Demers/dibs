@@ -16,7 +16,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// How often a member looks for the next one to join, and how long a joiner waits for its copies.
@@ -72,15 +72,17 @@ impl Drop for Sharing {
 }
 
 /// Copies of `rw` and `ahead` from any live member, as `(rw, ahead)`; None when no member
-/// answers, which leaves the joiner to take the machine itself.
-pub fn join(dir: &LockDir, me: u32) -> Option<(File, File)> {
+/// answers by `deadline`, or in ANSWER each, which leaves the joiner to take the machine itself.
+pub fn join(dir: &LockDir, me: u32, deadline: Option<Instant>) -> Option<(File, File)> {
     dir.named("cohort").into_iter().find_map(|path| {
         let pid = RecordFile(&path).pid()?;
         if pid == me || !RecordFile(&path).alive() {
             return None;
         }
+        let left = deadline.map_or(ANSWER, |d| d.saturating_duration_since(Instant::now()));
+        let wait = left.min(ANSWER).max(Duration::from_millis(50));
         let stream = UnixStream::connect(&path).ok()?;
-        stream.set_read_timeout(Some(ANSWER)).ok()?;
+        stream.set_read_timeout(Some(wait)).ok()?;
         let mut fds = receive(&stream, 2).ok()?.into_iter();
         let (rw, ahead) = (fds.next()?, fds.next()?);
         Some((File::from(rw), File::from(ahead)))

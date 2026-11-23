@@ -232,7 +232,7 @@ impl<'a> Run<'a> {
                 }
                 (_, Some(why), _) => self.acquire_urgent(&arrived, why),
                 (true, None, _) => self.acquire_ahead(&history, &arrived),
-                (false, None, Some(takes)) => self.acquire_card(&arrived, &takes),
+                (false, None, Some(takes)) => self.acquire_card(&history, &arrived, &takes),
                 (false, None, None) => self.acquire(&history, &arrived),
             };
             let acquired = match acquired {
@@ -814,7 +814,12 @@ impl<'a> Run<'a> {
     /// a benchmark does when none runs. It never waits holding part of what it needs, so one
     /// waiting on a busy card keeps nobody from an idle one. A benchmark of the whole machine
     /// waits here too, so that one queued for a card before it still goes first.
-    fn acquire_card(&self, arrived: &Arrived, takes: &Takes) -> Result<Acquired, i32> {
+    fn acquire_card(
+        &self,
+        history: &History,
+        arrived: &Arrived,
+        takes: &Takes,
+    ) -> Result<Acquired, i32> {
         let request = &self.at.call.request;
         let pid = self.at.call.pid;
         let dir = self.at.dir;
@@ -839,7 +844,7 @@ impl<'a> Run<'a> {
                 dir.bench_first(pid, arrived.order, pcis) || dir.urgent_besides(pid).is_some();
             if !others_first {
                 if let Some(pcis) = pcis
-                    && let Some(cards) = self.join(&mut lock, pcis)?
+                    && let Some(cards) = self.join(&mut lock, pcis, deadline)?
                 {
                     lock.leave_gate();
                     break Some((Some(cards), true));
@@ -873,6 +878,18 @@ impl<'a> Run<'a> {
                     None => "dibs: waiting for what runs here and the benchmarks ahead of it.\n"
                         .to_string(),
                 });
+                if request.verbose {
+                    let look = Look {
+                        machine: self.at.machine,
+                        dir,
+                        history,
+                        settings: self.at.settings,
+                        asking: pid,
+                    };
+                    self.at
+                        .sink
+                        .say(&look.text(&look.status(true), request.tty));
+                }
                 told = true;
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
@@ -932,7 +949,13 @@ impl<'a> Run<'a> {
         // Around the gate, since a benchmark of the whole machine may wait there for the very
         // benchmarks this one joins.
         let mut lock = Lock::open(self.at.dir).map_err(|e| self.no_lock(&e))?;
-        let Some(cards) = self.join(&mut lock, pcis)? else {
+        let deadline = self
+            .at
+            .call
+            .request
+            .wait
+            .map(|wait| Instant::now() + Duration::from_secs(wait));
+        let Some(cards) = self.join(&mut lock, pcis, deadline)? else {
             return Ok(None);
         };
         self.at
@@ -950,8 +973,13 @@ impl<'a> Run<'a> {
     }
 
     /// The cards, with copies of the running benchmarks' hold on the machine.
-    fn join(&self, lock: &mut Lock, pcis: &[String]) -> Result<Option<Cards>, i32> {
-        let Some((rw, ahead)) = cohort::join(self.at.dir, self.at.call.pid) else {
+    fn join(
+        &self,
+        lock: &mut Lock,
+        pcis: &[String],
+        deadline: Option<Instant>,
+    ) -> Result<Option<Cards>, i32> {
+        let Some((rw, ahead)) = cohort::join(self.at.dir, self.at.call.pid, deadline) else {
             return Ok(None);
         };
         let cards = Cards::take_now(self.at.dir, pcis).map_err(|e| self.no_lock(&e))?;

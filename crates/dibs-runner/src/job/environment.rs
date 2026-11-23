@@ -150,23 +150,39 @@ impl Environment {
     }
 
     /// Whether Vulkan here hides every card but the one pinned: only Mesa's device-select layer
-    /// does, and only while nothing turns it off.
+    /// does, found where the loader looks for implicit layers, and only while nothing turns it
+    /// off. The loader's filter takes wildcards, so any filter at all may have turned it off.
     fn vulkan_confines() -> bool {
-        const LAYERS: [&str; 3] = [
-            "/usr/share/vulkan/implicit_layer.d",
-            "/etc/vulkan/implicit_layer.d",
-            "/usr/local/share/vulkan/implicit_layer.d",
-        ];
-        // The loader's filter takes wildcards, so any filter at all may have turned it off.
-        var("NODEVICE_SELECT").is_none()
-            && var("VK_LOADER_LAYERS_DISABLE").is_none()
-            && LAYERS.iter().any(|dir| {
-                std::fs::read_dir(dir).is_ok_and(|entries| {
-                    entries
-                        .flatten()
-                        .any(|e| e.file_name().to_string_lossy().contains("device_select"))
-                })
+        if [
+            "NODEVICE_SELECT",
+            "VK_LOADER_LAYERS_DISABLE",
+            "VK_IMPLICIT_LAYER_PATH",
+        ]
+        .iter()
+        .any(|name| var(name).is_some())
+        {
+            return false;
+        }
+        let listed = |name: &str, default: &str| -> Vec<PathBuf> {
+            var(name)
+                .filter(|dirs| !dirs.is_empty())
+                .unwrap_or_else(|| default.to_string())
+                .split(':')
+                .filter(|dir| !dir.is_empty())
+                .map(PathBuf::from)
+                .collect()
+        };
+        let mut roots = listed("XDG_CONFIG_DIRS", "/etc/xdg");
+        roots.push(PathBuf::from("/etc"));
+        roots.extend(listed("XDG_DATA_DIRS", "/usr/local/share:/usr/share"));
+        roots.push(home().join(".local/share"));
+        roots.iter().any(|root| {
+            std::fs::read_dir(root.join("vulkan/implicit_layer.d")).is_ok_and(|entries| {
+                entries
+                    .flatten()
+                    .any(|e| e.file_name().to_string_lossy().contains("device_select"))
             })
+        })
     }
 
     /// The command started in `dir`, with `target` as its build cache.
