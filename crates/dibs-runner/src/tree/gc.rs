@@ -9,7 +9,7 @@ use crate::{
     platform::{Host, Platform as _},
     settings::{Settings, home},
     tree::{
-        clocks::{Clocks, Contents as _, Dates as _, Fate, Removal},
+        clocks::{Clocks, Fate, KEEP, Removal},
         copy::Reflinks,
         runners::Runners,
         spread::Spread as _,
@@ -38,8 +38,6 @@ const LISTED: usize = 20;
 const PROGRESS_EVERY: Duration = Duration::from_secs(10);
 const LIVE_EVERY: Duration = Duration::from_millis(250);
 const BAR_WIDTH: usize = 20;
-/// Directories under scratch that dibs makes; anything else is somebody's and never removed.
-const DIBS_OWN: [&str; 7] = ["ws", "target", "jobs", "tmp", "out", "runner", "run"];
 
 /// `dibs --gc`'s listing of one sweep, a section at a time as the sweep goes: what each holds,
 /// biggest first, and what went or would.
@@ -173,6 +171,7 @@ impl Asked {
                 (false, Some(days)) => Clocks {
                     keep_days: days,
                     target_keep_days: days,
+                    named_keep_days: days,
                     all: false,
                 },
                 (false, None) => settings.clocks,
@@ -205,7 +204,7 @@ impl SweepReport {
             scratch.display()
         ));
         let removal = Removal::new(None, &SweepReport::say);
-        let sweep = Sweep::new(scratch, &self.home, self.clocks, removal);
+        let sweep = Sweep::new(scratch, &self.home, self.clocks, removal).exact();
         let sweep = match self.dry {
             true => sweep.dry(),
             false => sweep,
@@ -270,13 +269,11 @@ impl SweepReport {
                     self.bulk("results kept under out", &section, &sizes, now, &mut tally)
                 }
                 Swept::Runners => self.runners(&section, &sizes, &mut tally),
+                Swept::Named => self.named(&section, &sizes, now, &mut tally),
             };
             took.push((kind, section_began.elapsed()));
             SweepReport::say(&listed);
         }
-        let others_began = Instant::now();
-        self.others(now, &mut tally);
-        let others = others_began.elapsed();
         match self.dry {
             true => SweepReport::say(&format!(
                 "  {} is past its clock and would go. Run it without --dry-run.\n",
@@ -285,13 +282,12 @@ impl SweepReport {
             false => SweepReport::say(&format!("  reclaimed {}\n", Kib(tally.freed))),
         }
         SweepReport::say(&format!(
-            "  took {}: {}, not dibs's {}\n",
+            "  took {}: {}\n",
             Span(began.elapsed().as_secs()),
             took.iter()
                 .map(|(kind, spent)| format!("{} {}", kind.named(), Span(spent.as_secs())))
                 .collect::<Vec<_>>()
-                .join(", "),
-            Span(others.as_secs())
+                .join(", ")
         ));
         let mut mounts = Vec::new();
         for dir in [scratch.clone(), scratch.join("target")] {
@@ -477,37 +473,31 @@ impl SweepReport {
         ))
     }
 
-    /// Nothing dibs made, so nothing dibs deletes: a directory written by hand may be the only
-    /// copy of somebody's work. Sized and dated, so they can be asked.
-    fn others(&self, now: u64, tally: &mut Totals) {
-        let others: Vec<PathBuf> = self
-            .scratch
-            .entries()
-            .into_iter()
-            .filter(|p| {
-                p.file_name()
-                    .is_some_and(|n| !DIBS_OWN.iter().any(|own| n == *own))
-            })
-            .collect();
-        if others.is_empty() {
-            return;
-        }
-        let sizes = tally.measure("not dibs's", &others, |_| false).sizes;
+    /// Dated by the last write anywhere in each, which is what keeps one.
+    fn named(&self, section: &Section, sizes: &Sizes, now: u64, tally: &mut Totals) -> String {
         let mut rows = Rows::default();
-        for other in &others {
-            let kib = sizes.of(other);
+        for verdict in &section.verdicts {
+            let kib = sizes.of(&verdict.path);
+            let state = match (verdict.fate, verdict.path.join(KEEP).exists()) {
+                (Fate::Held, _) => "   in use",
+                (_, true) => "   kept by its .dibs-keep",
+                _ => self.verdict(verdict),
+            };
             rows.push(Row {
                 kib,
-                past: false,
+                past: self.count(verdict, kib, tally),
                 line: format!(
-                    "    {:<40} {:>7}  written {}",
-                    self.shown(other),
+                    "    {:<40} {:>7}  written {}{state}",
+                    self.shown(&verdict.path),
                     Kib(kib),
-                    SweepReport::ago(now, other.written(now))
+                    SweepReport::ago(now, verdict.used),
                 ),
             });
         }
-        SweepReport::say(&rows.out("  not dibs's, never removed by this"));
+        rows.out(&format!(
+            "  named by jobs, {}, unless it holds {KEEP}",
+            self.removed_after(self.clocks.named_keep_days, " unwritten")
+        ))
     }
 
     fn removed_after(&self, days: u64, unused: &str) -> String {

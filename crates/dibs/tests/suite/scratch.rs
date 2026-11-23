@@ -173,9 +173,28 @@ fn a_dry_run_names_what_is_past_its_clock_and_removes_nothing() {
 }
 
 #[test]
-fn a_sweep_removes_only_what_dibs_made_and_nobody_used() {
+fn a_sweep_removes_only_what_nobody_used() {
     let s = Sandbox::new();
     let g = scratch_to_sweep(&s);
+    for named in ["byhand-stale/release", "models"] {
+        fs::create_dir_all(s.path(&format!("gc/{named}"))).unwrap();
+    }
+    s.write("gc/models/.dibs-keep", "");
+    assert_eq!(
+        s.command(
+            "sh",
+            [
+                "-c",
+                &format!(
+                    "find {} {} -exec touch -h -d '30 days ago' {{}} +",
+                    s.p("gc/byhand-stale"),
+                    s.p("gc/models")
+                ),
+            ],
+        )
+        .code(),
+        0
+    );
     let out = s.dibs(["--gc"]).env("DIBS_SCRATCH", &g).run().all();
     assert!(
         !s.exists("gc/ws/demo/stale"),
@@ -190,8 +209,12 @@ fn a_sweep_removes_only_what_dibs_made_and_nobody_used() {
         s.exists("gc/target/demo"),
         "and keeps the one built into today"
     );
-    // A directory somebody wrote by hand may be the only copy of what they are working on.
-    assert!(s.exists("gc/byhand"), "and never what it did not make");
+    assert!(s.exists("gc/byhand"), "and what a job named, written today");
+    assert!(
+        !s.exists("gc/byhand-stale"),
+        "but not one nothing has written for its clock: {out}"
+    );
+    assert!(s.exists("gc/models"), "unless it holds a .dibs-keep");
     assert_eq!(
         out.lines_with("reclaimed "),
         1,
@@ -261,8 +284,8 @@ fn gc_all_removes_what_nothing_holds_whatever_its_clock() {
         );
     }
     assert!(
-        s.exists("gc/byhand"),
-        "and still never what dibs did not make"
+        !s.exists("gc/byhand"),
+        "and so does what a job named, written today or not: {out}"
     );
     assert!(
         s.exists("gc/ws/demo/running"),

@@ -3,6 +3,7 @@ use crate::{
     tree::git::{Commands, Git},
 };
 use std::{
+    collections::VecDeque,
     ffi::CString,
     fs::{self, FileTimes},
     io,
@@ -14,6 +15,8 @@ use std::{
 
 /// The marker a prepare leaves, whose time is when a tree or a cache was last used.
 pub const USED: &str = ".dibs-used";
+/// What a person puts in a directory a job named under scratch, so the sweep leaves it.
+pub const KEEP: &str = ".dibs-keep";
 
 /// What one sweep makes of a tree or a build cache, whether a prepare or `dibs --gc` runs it, so
 /// the two never disagree on what goes.
@@ -39,6 +42,8 @@ pub enum Fate {
 pub struct Clocks {
     pub keep_days: u64,
     pub target_keep_days: u64,
+    /// What a job named under scratch itself, which fills a machine fastest of all.
+    pub named_keep_days: u64,
     /// `dibs --gc --all`: every clock already run out.
     pub all: bool,
 }
@@ -48,6 +53,7 @@ impl Clocks {
     pub const DEFAULT: Clocks = Clocks {
         keep_days: 14,
         target_keep_days: 5,
+        named_keep_days: 3,
         all: false,
     };
 
@@ -55,6 +61,7 @@ impl Clocks {
     pub const ALL: Clocks = Clocks {
         keep_days: 0,
         target_keep_days: 0,
+        named_keep_days: 0,
         all: true,
     };
 
@@ -75,6 +82,9 @@ pub trait Dates {
     fn used(&self, now: u64) -> u64;
     /// When a job's directory or a leftover was last written.
     fn written(&self, now: u64) -> u64;
+    /// The latest time anything under it was written, itself included, symlinks not followed;
+    /// read no further once something written at or after `enough` turns up.
+    fn newest(&self, enough: Option<u64>) -> u64;
     /// Unchanged for more than `keep` days of 24 hours, or every clock run out.
     fn past(&self, now: u64, clocks: &Clocks, keep: u64) -> bool;
     /// `touch`: made if missing, and dated now.
@@ -94,6 +104,37 @@ impl Dates for Path {
 
     fn written(&self, now: u64) -> u64 {
         fs::symlink_metadata(self).map_or(now, |m| m.mtime().max(0) as u64)
+    }
+
+    /// Breadth first, since a build's directories near the top are dated by every file it adds.
+    fn newest(&self, enough: Option<u64>) -> u64 {
+        let enough = enough.unwrap_or(u64::MAX);
+        let Ok(meta) = fs::symlink_metadata(self) else {
+            return 0;
+        };
+        let mut newest = meta.mtime().max(0) as u64;
+        let mut dirs = VecDeque::new();
+        if meta.is_dir() {
+            dirs.push_back(self.to_path_buf());
+        }
+        while let Some(dir) = dirs.pop_front() {
+            if newest >= enough {
+                break;
+            }
+            for path in dir.entries() {
+                let Ok(meta) = fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                newest = newest.max(meta.mtime().max(0) as u64);
+                if newest >= enough {
+                    break;
+                }
+                if meta.is_dir() {
+                    dirs.push_back(path);
+                }
+            }
+        }
+        newest
     }
 
     fn past(&self, now: u64, clocks: &Clocks, keep: u64) -> bool {

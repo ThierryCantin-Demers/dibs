@@ -60,9 +60,11 @@ spoiled without it.
   start the work, then `read -r _ < f`.
 - Scratch on a machine goes under `$DIBS_SCRATCH`, never `/tmp`, which is a small tmpfs shared by
   everyone that one build tree fills for all of us. dibs exports it and points `TMPDIR` into it;
-  put build trees, logs and binaries in a subdirectory you name, which dibs never removes. What
-  sits under `TMPDIR` unchanged for two weeks, by default, goes at the next recipe's prepare; what
-  is under `$DIBS_SCRATCH/out` goes only when a person runs `dibs --gc`.
+  put build trees, logs and binaries in a subdirectory you name. What you name there goes once
+  nothing in it has been written for three days, by default; a `.dibs-keep` file in it keeps it,
+  which is for a person to decide. What sits under `TMPDIR` unchanged for two weeks goes at the
+  next recipe's prepare; what is under `$DIBS_SCRATCH/out` goes only when a person runs
+  `dibs --gc`.
 - **A full machine is read with `dibs --gc --dry-run`**, which says what is there, how big it is
   and when each of it was last used, and deletes nothing. Report that; removing it is the
   person's call, since a build cache you would reclaim may be the one someone is measuring

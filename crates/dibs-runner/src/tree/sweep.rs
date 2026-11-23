@@ -1,10 +1,10 @@
 use crate::{
-    clock::Moment,
+    clock::{Moment, Span},
     platform::{Host, Platform as _},
     tree::{
         base::LOCAL,
         builds::Builds,
-        clocks::{Clocks, Contents as _, Dates as _, Fate, Removal, USED},
+        clocks::{Clocks, Contents as _, Dates as _, Fate, KEEP, Removal, USED},
         runners::Runners,
         spread::Spread as _,
         turn::Turn,
@@ -25,6 +25,8 @@ pub const PREPARE_LOCK: &str = ".prepare.lock";
 const TEMPORARY: [&str; 2] = [".seed.", ".old."];
 /// What a sweep writes in a cache it found unmarked; a prepare's marker is empty.
 const DATED: &str = "swept\n";
+/// What dibs makes under scratch; everything else there a job named itself.
+pub const DIBS_OWN: [&str; 7] = ["ws", "target", "jobs", "tmp", "out", "runner", "run"];
 
 /// What a sweep walks, in the order it walks it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,25 +39,29 @@ pub enum Swept {
     /// Under `out`, where a person keeps what a job made.
     Results,
     Runners,
+    /// What a job named under scratch itself, beside what dibs makes there.
+    Named,
 }
 
 impl Swept {
     /// What `dibs --gc` sweeps.
-    pub const ALL: [Swept; 6] = [
+    pub const ALL: [Swept; 7] = [
         Swept::Trees,
         Swept::Caches,
         Swept::Jobs,
         Swept::Leftovers,
         Swept::Results,
         Swept::Runners,
+        Swept::Named,
     ];
     /// What a prepare sweeps: results go only when a person asks, with `dibs --gc`.
-    pub const BY_PREPARE: [Swept; 5] = [
+    pub const BY_PREPARE: [Swept; 6] = [
         Swept::Trees,
         Swept::Caches,
         Swept::Jobs,
         Swept::Leftovers,
         Swept::Runners,
+        Swept::Named,
     ];
 
     /// The section as the sweep's timing names it.
@@ -67,6 +73,7 @@ impl Swept {
             Swept::Leftovers => "leftovers",
             Swept::Results => "results",
             Swept::Runners => "runners",
+            Swept::Named => "named by jobs",
         }
     }
 }
@@ -119,6 +126,8 @@ pub struct Sweep<'a> {
     clocks: Clocks,
     removal: Removal<'a>,
     dry: bool,
+    /// Date what jobs named by everything in it, rather than stopping once it is recent enough.
+    exact: bool,
     /// Where running processes work, read once: past every clock, nothing else keeps a tree that
     /// a job's step is running in.
     in_use: OnceLock<Vec<PathBuf>>,
@@ -132,6 +141,7 @@ impl<'a> Sweep<'a> {
             clocks,
             removal,
             dry: false,
+            exact: false,
             in_use: OnceLock::new(),
         }
     }
@@ -162,6 +172,14 @@ impl<'a> Sweep<'a> {
         Sweep { dry: true, ..self }
     }
 
+    /// One that dates what jobs named exactly, for a person reading the listing.
+    pub fn exact(self) -> Self {
+        Sweep {
+            exact: true,
+            ..self
+        }
+    }
+
     /// What a prepare sweeps judged, and what is past its clock removed.
     pub fn run(&self) {
         let now = Moment::epoch_now();
@@ -189,6 +207,15 @@ impl<'a> Sweep<'a> {
             Swept::Leftovers => under("tmp"),
             Swept::Results => under("out"),
             Swept::Runners => Runners::in_home(self.home).dir().entries(),
+            Swept::Named => self
+                .scratch
+                .entries()
+                .into_iter()
+                .filter(|p| {
+                    p.file_name()
+                        .is_some_and(|n| !DIBS_OWN.iter().any(|own| n == *own))
+                })
+                .collect(),
         }
     }
 
@@ -218,6 +245,12 @@ impl<'a> Sweep<'a> {
                 })
                 .collect(),
             Swept::Runners => return Runners::in_home(self.home).judged(&self.clocks, now),
+            Swept::Named => entries
+                .map(|path| {
+                    let (fate, written) = self.named(&path, now);
+                    Verdict::of(path, fate, written)
+                })
+                .collect(),
         };
         Some(Section::holding(kind, verdicts, None))
     }
@@ -260,8 +293,9 @@ impl<'a> Sweep<'a> {
                     section.verdicts[*at].removed = self.removal.removed(aside, went);
                 }
             }
-            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners if self.dry => {}
-            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners => {
+            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners | Swept::Named
+                if self.dry => {}
+            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners | Swept::Named => {
                 for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
                     verdict.removed = self.removal.path(&verdict.path);
                     gone(&verdict.path);
@@ -418,6 +452,27 @@ impl<'a> Sweep<'a> {
         match written.is_ok_and(|at| self.clocks.past(now, at, self.clocks.keep_days)) {
             true => Fate::Past,
             false => Fate::Kept,
+        }
+    }
+
+    /// What a job named, by the last write anywhere in it: a build deep inside keeps all of it.
+    /// Kept while a process works in it, or while it holds a person's keep marker.
+    fn named(&self, path: &Path, now: u64) -> (Fate, u64) {
+        let cutoff = now.saturating_sub(self.clocks.named_keep_days.saturating_mul(Span::DAY.0));
+        let enough = match self.exact || self.clocks.all {
+            true => None,
+            false => Some(cutoff),
+        };
+        let written = path.newest(enough);
+        if path.join(KEEP).exists() {
+            return (Fate::Kept, written);
+        }
+        if !self.clocks.past(now, written, self.clocks.named_keep_days) {
+            return (Fate::Kept, written);
+        }
+        match self.used_now(path) {
+            true => (Fate::Held, written),
+            false => (Fate::Past, written),
         }
     }
 

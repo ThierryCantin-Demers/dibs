@@ -45,7 +45,7 @@ enum Whose {
 }
 
 impl Key {
-    const ALL: [Key; 23] = [
+    const ALL: [Key; 24] = [
         Key::of_setter("bypass", Setter::Machine),
         Key::of_setter("quick", Setter::Machine),
         Key::of_setter("patience", Setter::Machine),
@@ -60,6 +60,7 @@ impl Key {
         Key::of_setter("silent_after", Setter::Account),
         Key::of_setter("keep_days", Setter::Account),
         Key::of_setter("target_keep_days", Setter::Account),
+        Key::of_setter("named_keep_days", Setter::Account),
         Key::of_setter("seed_wait", Setter::Account),
         Key::of_setter("sweep_budget", Setter::Account),
         Key::of_setter("no_children", Setter::Account),
@@ -318,6 +319,7 @@ impl Settings {
             clocks: Clocks {
                 keep_days: number("DIBS_KEEP_DAYS", Clocks::DEFAULT.keep_days),
                 target_keep_days: number("DIBS_TARGET_KEEP_DAYS", Clocks::DEFAULT.target_keep_days),
+                named_keep_days: number("DIBS_NAMED_KEEP_DAYS", Clocks::DEFAULT.named_keep_days),
                 all: false,
             },
             seed_wait: number("DIBS_SEED_WAIT", 900),

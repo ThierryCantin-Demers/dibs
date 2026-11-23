@@ -413,6 +413,10 @@ Every prepare, local or fetched, sweeps the machine's whole scratch, across ever
   those builds share goes once unused for `target_keep_days`.
 - An entry under `$DIBS_SCRATCH/out`, where results are kept, goes by `keep_days` too, but only
   on `dibs --gc`.
+- Anything else directly under `$DIBS_SCRATCH`, which a job named itself (a target directory, a
+  log, a downloaded model), goes once nothing anywhere in it has been written for
+  `named_keep_days` (3), unless a process works in it or builds into it, or it holds a
+  `.dibs-keep` file. These fill a machine fastest, and a cargo build deep inside one keeps it.
 
 Nothing goes while a build or a prepare holds it. A prepare's call waits on its sweep, so the sweep
 renames an expired build cache aside at once, where nothing seeds from it, and spends at most
@@ -429,10 +433,10 @@ then removes what is past the clock above, and says how much that was and what i
 `--dry-run` removes nothing and marks what would go. An entry past its clock that a prepare or a
 build is using says `held by a prepare` or `held by a build`, and is left for the next sweep.
 `--days <n>` treats anything unused for n days as past its clock, everything listed alike, which
-is the knob when a machine is full now. `--all` goes past every clock: everything dibs made that
-no prepare or build holds goes, used today or not. Anything under scratch that dibs did not put there is
-listed under "not dibs's" with its size and never touched: a directory somebody wrote by hand
-may be the only copy of what they are working on.
+is the knob when a machine is full now. `--all` goes past every clock: everything that no
+prepare, build or process holds goes, used today or not. What jobs named under scratch is
+listed with its size and its newest write; one that must stay, such as a model cache, holds a
+`.dibs-keep` file, and says so.
 
 It takes the shared lock, because deleting gigabytes is as much IO as writing them, so it queues
 behind a measurement rather than competing with one, and it is recorded like any other job.
@@ -834,6 +838,7 @@ over the same names in `/etc/dibs/runner.toml`:
 ```toml
 keep_days = 14         # worktrees, job directories, tmp, out, and replaced runners
 target_keep_days = 5   # build caches
+named_keep_days = 3    # what jobs named directly under scratch
 ports = "20000-29999"  # what --port picks from
 ```
 

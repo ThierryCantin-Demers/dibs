@@ -1467,6 +1467,55 @@ fn what_may_go_is_read_without_dating_a_cache_and_names_what_the_sweep_judges_pa
     assert_ne!(fate_of(&section, &fresh), Fate::Past);
 }
 
+#[test]
+fn what_jobs_named_goes_by_its_newest_write_unless_kept_or_in_use() {
+    let m = Machine::new();
+    let (scratch, home) = (m.p("scratch"), m.p("home"));
+    let named = |rel: &str| {
+        let dir = m.p(&format!("scratch/{rel}"));
+        fs::create_dir_all(dir.join("release/deps")).unwrap();
+        fs::write(dir.join("release/deps/lib.rlib"), "").unwrap();
+        run(
+            Path::new("/"),
+            &format!(
+                "find '{}' -depth -exec touch -h -d '400 days ago' {{}} +",
+                dir.display()
+            ),
+        );
+        dir
+    };
+    let (old, built, kept, worked_in) = (
+        named("old-target"),
+        named("built-target"),
+        named("models"),
+        named("worked-in"),
+    );
+    fs::write(built.join("release/deps/new.rlib"), "").unwrap();
+    fs::write(kept.join(".dibs-keep"), "").unwrap();
+    aged(&kept.join(".dibs-keep"));
+    aged(&kept);
+    let loose = m.p("scratch/run.log");
+    fs::write(&loose, "").unwrap();
+    aged(&loose);
+    let own = m.abandoned("ws/demo/tree");
+    let mut working = Command::new("cat")
+        .current_dir(worked_in.join("release"))
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let sweep = m.sweeping(&scratch, &home);
+    let mut section = sweep.judged(Swept::Named, Moment::epoch_now()).unwrap();
+    sweep.collect(&mut section, Moment::epoch_now());
+    drop(working.stdin.take());
+    working.wait().unwrap();
+    assert!(!old.exists() && !loose.exists());
+    assert!(built.exists(), "a file written deep inside keeps it");
+    assert!(kept.exists(), "its .dibs-keep keeps it");
+    assert_eq!(fate_of(&section, &worked_in), Fate::Held);
+    assert!(worked_in.exists());
+    assert!(own.exists(), "what dibs made is swept by its own clocks");
+}
+
 fn fate_of(section: &Section, path: &Path) -> Fate {
     let verdict = section.verdicts.iter().find(|v| v.path == path).unwrap();
     verdict.fate
