@@ -132,13 +132,17 @@ impl LockDir {
     /// join ahead of it until one of these, or of the ones that join, ends. After its record:
     /// each card benchmark marks itself admitted before it looks for one, so each sees the other.
     pub fn open_window(&self, pid: u32) {
-        let members: Vec<String> = self
+        let holders = self.records(Kind::Holder);
+        let mut members: Vec<u32> = self
             .named("admitted")
             .iter()
             .filter_map(|file| RecordFile(file).pid())
+            .chain(holders.iter().map(|h| h.pid))
             .filter(|&p| p != pid && self.member_live(p))
-            .map(|p| p.to_string())
             .collect();
+        members.sort_unstable();
+        members.dedup();
+        let members: Vec<String> = members.iter().map(u32::to_string).collect();
         let draft = self.file("window-draft", pid);
         if fs::write(&draft, format!("{}\n", members.join(" "))).is_ok() {
             let _ = fs::rename(&draft, self.file("window", pid));
@@ -149,10 +153,21 @@ impl LockDir {
     /// so one whose process is gone, or a zombie, has ended too.
     fn member_live(&self, pid: u32) -> bool {
         let card = self.file("card", pid);
-        self.file("admitted", pid).exists()
-            && card.exists()
-            && RecordFile(&card).alive()
-            && Host::running(pid)
+        card.exists() && RecordFile(&card).alive() && Host::running(pid)
+    }
+
+    /// Held while a whole-machine benchmark publishes its record and window, while a card
+    /// benchmark counts itself in, and while join records are pruned, so none reads another half
+    /// done. Let go when dropped.
+    pub fn window_guard(&self) -> Option<fs::File> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(self.path.join("window.lock"))
+            .ok()?;
+        file.lock().ok()?;
+        Some(file)
     }
 
     fn window_open(&self, machine: u32) -> bool {
@@ -196,26 +211,28 @@ impl LockDir {
     }
 
     /// `pid`, which holds its cards, as admitted, and among the ones joining each whole-machine
-    /// benchmark queued before it.
-    pub fn count_in(&self, pid: u32, order: u128) {
-        let _ = fs::write(self.file("admitted", pid), "");
+    /// benchmark queued before it; false if a record could not be written. Under the window guard.
+    pub fn count_in(&self, pid: u32, order: u128) -> bool {
+        let mut written = fs::write(self.file("admitted", pid), "").is_ok();
         for machine in self.machines_before(pid, order) {
-            let _ = fs::write(self.file(&format!("joined.{machine}"), pid), "");
+            written &= fs::write(self.file(&format!("joined.{machine}"), pid), "").is_ok();
         }
+        written
     }
 
     /// Counts `pid` in, then whether it may still run: a member that ended before it counted
     /// closed the window, and a group is started only with no whole-machine benchmark queued
     /// before it. One that may not is taken out again.
     pub fn enter_windows(&self, pid: u32, order: u128, pcis: &[String], entry: Entry) -> bool {
-        self.count_in(pid, order);
-        let may = match entry {
-            Entry::Starts => self.machines_before(pid, order).is_empty(),
-            Entry::Joins => !self.bench_first(pid, order, Some(pcis)),
-            Entry::JoinsAhead => {
-                !self.bench_first(pid, order, Some(pcis)) && self.open_to_join(pid, order)
-            }
-        };
+        let _guard = self.window_guard();
+        let may = self.count_in(pid, order)
+            && match entry {
+                Entry::Starts => self.machines_before(pid, order).is_empty(),
+                Entry::Joins => !self.bench_first(pid, order, Some(pcis)),
+                Entry::JoinsAhead => {
+                    !self.bench_first(pid, order, Some(pcis)) && self.open_to_join(pid, order)
+                }
+            };
         if !may {
             self.leave_windows(pid);
         }
@@ -573,7 +590,9 @@ impl LockDir {
                 }
             }
         }
-        for joined in self.named("joined") {
+        let joins = self.named("joined");
+        let _guard = (!joins.is_empty()).then(|| self.window_guard());
+        for joined in joins {
             let machine: Option<u32> = joined
                 .file_name()
                 .and_then(|n| n.to_str()?.split('.').nth(1)?.parse().ok());

@@ -317,10 +317,14 @@ impl<'a> Run<'a> {
             false => None,
         };
         let mut state = self.at.stopper.state();
+        let claim = self.card_claim();
+        let machine = matches!(claim, Some(Takes::Machine));
+        // A whole-machine benchmark's record and the card benchmarks it lets ahead appear at once.
+        let window = machine.then(|| self.at.dir.window_guard());
         // Before the record, so nobody reads it as a benchmark of the whole machine.
-        match self.card_claim() {
+        match &claim {
             Some(Takes::Cards(pcis)) => {
-                self.at.dir.mark_cards(pid, &pcis);
+                self.at.dir.mark_cards(pid, pcis);
                 self.at.dir.mark_arrived(pid, order);
             }
             Some(Takes::Machine) => {
@@ -332,9 +336,10 @@ impl<'a> Run<'a> {
         self.at
             .dir
             .write(Kind::Waiting, &self.at.call.lock_record(start, &job));
-        if let Some(Takes::Machine) = self.card_claim() {
+        if machine {
             self.at.dir.open_window(pid);
         }
+        drop(window);
         if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
             let _ = fs::write(self.at.dir.file("batch", pid), format!("{batch}\n"));
         }
@@ -1006,7 +1011,10 @@ impl<'a> Run<'a> {
         let Some(cards) = self.join(&mut lock, pcis, deadline)? else {
             return Ok(None);
         };
-        self.at.dir.count_in(self.at.call.pid, arrived.order);
+        {
+            let _guard = self.at.dir.window_guard();
+            self.at.dir.count_in(self.at.call.pid, arrived.order);
+        }
         self.at
             .dir
             .mark_urgent(&Urgent {
