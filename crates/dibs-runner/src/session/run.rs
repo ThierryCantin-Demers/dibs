@@ -119,14 +119,14 @@ enum Waited {
     GaveUpAtLock,
 }
 
-/// The lock, taken. Fields drop in order, so a card benchmark stops handing out copies of the
-/// lock before its own go.
 /// What a benchmark takes on a machine whose benchmarks lock cards.
-enum Claim {
+enum Takes {
     Cards(Vec<String>),
     Machine,
 }
 
+/// The lock, taken. Fields drop in order, so a card benchmark stops handing out copies of the
+/// lock before its own go.
 struct Acquired {
     sharing: Option<Sharing>,
     cards: Option<Cards>,
@@ -223,14 +223,16 @@ impl<'a> Run<'a> {
                 return code;
             }
             let acquired = match (preempts, self.urgent(), self.card_claim()) {
-                (_, Some(why), Some(Claim::Cards(pcis))) => match self.join_now(&arrived, &pcis) {
-                    Ok(Some(acquired)) => Ok(acquired),
-                    Ok(None) => self.acquire_urgent(&arrived, why),
-                    Err(code) => Err(code),
-                },
+                (_, Some(why), Some(Takes::Cards(pcis))) => {
+                    match self.join_now(&arrived, &pcis, why) {
+                        Ok(Some(acquired)) => Ok(acquired),
+                        Ok(None) => self.acquire_urgent(&arrived, why),
+                        Err(code) => Err(code),
+                    }
+                }
                 (_, Some(why), _) => self.acquire_urgent(&arrived, why),
                 (true, None, _) => self.acquire_ahead(&history, &arrived),
-                (false, None, Some(claim)) => self.acquire_card(&arrived, &claim),
+                (false, None, Some(takes)) => self.acquire_card(&arrived, &takes),
                 (false, None, None) => self.acquire(&history, &arrived),
             };
             let acquired = match acquired {
@@ -250,7 +252,7 @@ impl<'a> Run<'a> {
             let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
         };
         if let Some(cards) = &acquired.cards {
-            cards.descriptors().for_each(|fd| environment.inherit(fd));
+            cards.descriptors().for_each(|fd| environment.hold(fd));
         }
         let mut state = self.at.stopper.state();
         let begun = match self.begin(&arrived, &acquired, &mut environment, &mut state) {
@@ -311,14 +313,20 @@ impl<'a> Run<'a> {
             false => None,
         };
         let mut state = self.at.stopper.state();
+        // Before the record, so nobody reads it as a benchmark of the whole machine.
+        match self.card_claim() {
+            Some(Takes::Cards(pcis)) => {
+                self.at.dir.mark_cards(pid, &pcis);
+                self.at.dir.mark_arrived(pid, order);
+            }
+            Some(Takes::Machine) => self.at.dir.mark_arrived(pid, order),
+            None => {}
+        }
         self.at
             .dir
             .write(Kind::Waiting, &self.at.call.lock_record(start, &job));
         if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
             let _ = fs::write(self.at.dir.file("batch", pid), format!("{batch}\n"));
-        }
-        if let Some(Claim::Cards(pcis)) = self.card_claim() {
-            self.at.dir.mark_cards(pid, &pcis);
         }
         // Beside the lock record rather than in it: a runner reading a record with a field it
         // does not know drops the record, and with it a holder its benchmark must not run beside.
@@ -759,7 +767,7 @@ impl<'a> Run<'a> {
 
     /// What a benchmark takes on a machine whose benchmarks lock cards. A hold or a job with
     /// servers takes the whole machine, since nothing confines what it starts to a card.
-    fn card_claim(&self) -> Option<Claim> {
+    fn card_claim(&self) -> Option<Takes> {
         let request = &self.at.call.request;
         if !self.at.settings.card_benchmarks || self.at.call.mode() != Mode::Bench {
             return None;
@@ -770,13 +778,24 @@ impl<'a> Run<'a> {
             .chain(&request.also)
             .map(|card| card.pci.clone())
             .collect();
+        // A card whose runtimes are unknown gets no variable confining the job to it.
+        let confined = request.card.iter().chain(&request.also).all(|card| {
+            !card.runtimes.is_empty()
+                && card
+                    .runtimes
+                    .iter()
+                    .all(|r| r != "vulkan" || Environment::vulkan_confines())
+        });
         match pcis {
             Some(pcis)
-                if !pcis.is_empty() && !request.watch.hold && request.services.is_empty() =>
+                if !pcis.is_empty()
+                    && confined
+                    && !request.watch.hold
+                    && request.services.is_empty() =>
             {
-                Some(Claim::Cards(pcis))
+                Some(Takes::Cards(pcis))
             }
-            _ => Some(Claim::Machine),
+            _ => Some(Takes::Machine),
         }
     }
 
@@ -793,14 +812,14 @@ impl<'a> Run<'a> {
     /// a benchmark does when none runs. It never waits holding part of what it needs, so one
     /// waiting on a busy card keeps nobody from an idle one. A benchmark of the whole machine
     /// waits here too, so that one queued for a card before it still goes first.
-    fn acquire_card(&self, arrived: &Arrived, claim: &Claim) -> Result<Acquired, i32> {
+    fn acquire_card(&self, arrived: &Arrived, takes: &Takes) -> Result<Acquired, i32> {
         let request = &self.at.call.request;
         let pid = self.at.call.pid;
         let dir = self.at.dir;
         let no_lock = |e: io::Error| self.no_lock(&e);
-        let pcis = match claim {
-            Claim::Cards(pcis) => Some(pcis.as_slice()),
-            Claim::Machine => None,
+        let pcis = match takes {
+            Takes::Cards(pcis) => Some(pcis.as_slice()),
+            Takes::Machine => None,
         };
         let mut lock = Lock::open(dir).map_err(no_lock)?;
         let deadline = request
@@ -815,7 +834,7 @@ impl<'a> Run<'a> {
                 at_gate = true;
             }
             let others_first =
-                dir.bench_first(pid, arrived.start, pcis) || dir.urgent_besides(pid).is_some();
+                dir.bench_first(pid, arrived.order, pcis) || dir.urgent_besides(pid).is_some();
             if !others_first {
                 if let Some(pcis) = pcis
                     && let Some(cards) = self.join(&mut lock, pcis)?
@@ -897,11 +916,17 @@ impl<'a> Run<'a> {
     }
 
     /// An urgent benchmark whose cards are free beside the ones running joins them at once,
-    /// ahead of any queue, rather than wait for the machine to empty.
-    fn join_now(&self, arrived: &Arrived, pcis: &[String]) -> Result<Option<Acquired>, i32> {
-        if self.at.dir.urgent_besides(self.at.call.pid).is_some() {
+    /// ahead of any queue, rather than wait for the machine to empty. It takes the machine's one
+    /// urgent claim all the same.
+    fn join_now(
+        &self,
+        arrived: &Arrived,
+        pcis: &[String],
+        why: &str,
+    ) -> Result<Option<Acquired>, i32> {
+        let Ok(Some(claim)) = self.at.dir.claim_urgent() else {
             return Ok(None);
-        }
+        };
         let mut lock = Lock::open(self.at.dir).map_err(|e| self.no_lock(&e))?;
         if !lock
             .pass_gate(Some(Instant::now()))
@@ -911,7 +936,21 @@ impl<'a> Run<'a> {
         }
         let joined = self.join(&mut lock, pcis);
         lock.leave_gate();
-        Ok(joined?.map(|cards| self.with_cards(lock, Some(cards), arrived)))
+        let Some(cards) = joined? else {
+            return Ok(None);
+        };
+        self.at
+            .dir
+            .mark_urgent(&Urgent {
+                pid: self.at.call.pid,
+                job: arrived.job.clone(),
+                agent: self.at.call.agent.clone(),
+                why: why.to_string(),
+            })
+            .map_err(|e| self.no_lock(&e))?;
+        let mut acquired = self.with_cards(lock, Some(cards), arrived);
+        acquired.claim = Some(claim);
+        Ok(Some(acquired))
     }
 
     /// The cards, with copies of the running benchmarks' hold on the machine.

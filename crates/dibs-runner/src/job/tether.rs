@@ -1,7 +1,10 @@
 use crate::{itself::Itself, stop::Signals};
 use std::{
     io::{self, PipeWriter, Read as _},
-    os::{fd::AsRawFd as _, unix::process::CommandExt as _},
+    os::{
+        fd::{AsRawFd as _, RawFd},
+        unix::process::CommandExt as _,
+    },
     process::{Child, Command, Stdio},
     thread,
     time::Duration,
@@ -27,8 +30,9 @@ struct Group(pub u32);
 impl Tether {
     pub const WORD: &str = "tether";
 
-    /// Started before the job it ties, so no moment of the job's runs untied.
-    pub fn start() -> io::Result<Tether> {
+    /// Started before the job it ties, so no moment of the job's runs untied. It keeps `held`
+    /// open until the group it sweeps is gone.
+    pub fn start(held: &[RawFd]) -> io::Result<Tether> {
         let (sweeper_end, runner_end) = io::pipe()?;
         let mut command = Itself::command();
         command
@@ -38,6 +42,15 @@ impl Tether {
             .stderr(Stdio::null())
             .process_group(0);
         Signals::unblocked(&mut command);
+        for &fd in held {
+            // SAFETY: fcntl is async-signal-safe, on a descriptor open until exec.
+            unsafe {
+                command.pre_exec(move || match libc::fcntl(fd, libc::F_SETFD, 0) {
+                    -1 => Err(io::Error::last_os_error()),
+                    _ => Ok(()),
+                });
+            }
+        }
         let sweeper = command.spawn()?;
         Ok(Tether {
             runner_end: Some(runner_end),

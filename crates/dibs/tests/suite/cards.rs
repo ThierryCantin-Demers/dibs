@@ -32,7 +32,7 @@ fn card_machine() -> Option<Sandbox> {
     let mut s = Sandbox::new();
     let card = |alias: &str, pci: &str, chip: &str| {
         format!(
-            "\n  [[machine.here.device]]\n  kind     = \"gpu\"\n  alias    = \"{alias}\"\n  name     = \"a card\"\n  pci      = \"{pci}\"\n  chip     = \"{chip}\"\n"
+            "\n  [[machine.here.device]]\n  kind     = \"gpu\"\n  alias    = \"{alias}\"\n  name     = \"a card\"\n  pci      = \"{pci}\"\n  chip     = \"{chip}\"\n  runtimes = [\"vulkan\"]\n"
         )
     };
     s.machines(&format!(
@@ -200,21 +200,72 @@ fn a_card_benchmark_queued_before_a_whole_machine_one_goes_first() {
 }
 
 #[test]
-fn a_card_benchmarks_job_holds_its_card_itself() {
+fn a_card_benchmarks_tether_holds_its_card_until_the_job_is_gone() {
     let Some(mut s) = card_machine() else { return };
-    let fds = s.p("fds");
+    let holders = s.p("holders");
     let a = s.spawn(bench(
         &s,
         Some("gpu:a"),
         "a",
-        &format!("ls -l /proc/$$/fd > {fds}"),
+        &format!(
+            "for p in /proc/[0-9]*; do ls -l $p/fd 2>/dev/null | grep -q /cards/ && tr '\\0' ' ' < $p/cmdline && echo; done > {holders}; true"
+        ),
     ));
     assert_eq!(s.wait(a), 0);
     assert!(
-        s.read("fds").contains("/cards/"),
-        "so a runner that dies frees no card its job still uses: {}",
-        s.read("fds")
+        s.read("holders").contains(" tether"),
+        "so a runner that dies frees no card while its job winds down: {}",
+        s.read("holders")
     );
+    s.gone();
+}
+
+#[test]
+fn an_urgent_benchmark_that_joined_keeps_a_second_one_out() {
+    let Some(mut s) = card_machine() else { return };
+    let (first, second) = (s.gate("first"), s.gate("second"));
+    let order = s.p("order");
+    let a = s.spawn(bench(
+        &s,
+        Some("gpu:a"),
+        "a",
+        &format!("echo a >> {order}; {}", first.hold()),
+    ));
+    s.until_records("the first benchmark to run", || s.read("order") == "a\n");
+    let urgent = |s: &Sandbox, card: &str, command: &str| {
+        s.dibs([
+            "--on",
+            "here",
+            "--bench",
+            "--urgent",
+            "a release",
+            "--wait",
+            "0",
+            "--device",
+            card,
+            "--label",
+            "u",
+            command,
+        ])
+    };
+    let joined = s.spawn(urgent(
+        &s,
+        "gpu:b",
+        &format!("echo b >> {order}; {}", second.hold()),
+    ));
+    s.until_records("the urgent one to join", || s.read("order") == "a\nb\n");
+    let out = urgent(&s, "gpu:a", &format!("echo late >> {order}")).run();
+    assert_ne!(out.code, 0, "{}", out.all());
+    assert!(
+        out.all().contains("One urgent job at a time"),
+        "{}",
+        out.all()
+    );
+    first.open();
+    second.open();
+    assert_eq!(s.wait(a), 0);
+    assert_eq!(s.wait(joined), 0);
+    assert_eq!(s.read("order"), "a\nb\n");
     s.gone();
 }
 

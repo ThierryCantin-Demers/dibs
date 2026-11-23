@@ -7,8 +7,7 @@ use crate::{
 use dibs_format::wire::{Card, Picked};
 use std::{
     collections::{BTreeMap, HashSet},
-    io,
-    os::{fd::RawFd, unix::process::CommandExt as _},
+    os::fd::RawFd,
     path::PathBuf,
     process::Command,
 };
@@ -23,8 +22,8 @@ pub struct Environment {
     copies: BTreeMap<String, String>,
     /// Where the command starts, when not where the runner did.
     dir: Option<PathBuf>,
-    /// Descriptors the command keeps open across its exec.
-    inherited: Vec<RawFd>,
+    /// Descriptors held for as long as the job's process group lives.
+    held: Vec<RawFd>,
 }
 
 /// A card the job cannot be pinned to, so it does not run: running it on whichever card is
@@ -63,7 +62,7 @@ impl Environment {
             ports: BTreeMap::new(),
             copies: BTreeMap::new(),
             dir: None,
-            inherited: Vec::new(),
+            held: Vec::new(),
         })
     }
 
@@ -104,21 +103,34 @@ impl Environment {
         if let Some(dir) = &self.dir {
             command.current_dir(dir);
         }
-        for &fd in &self.inherited {
-            // SAFETY: fcntl is async-signal-safe, on a descriptor open until exec.
-            unsafe {
-                command.pre_exec(move || match libc::fcntl(fd, libc::F_SETFD, 0) {
-                    -1 => Err(io::Error::last_os_error()),
-                    _ => Ok(()),
-                });
-            }
-        }
     }
 
-    /// `fd` stays open in the command and everything it starts, which must keep it open until
-    /// the command is spawned.
-    pub fn inherit(&mut self, fd: RawFd) {
-        self.inherited.push(fd);
+    /// `fd` stays open until the job's process group is gone: its tether keeps it, which outlives
+    /// a runner that dies only until it has swept the group. The caller keeps it open until then.
+    pub fn hold(&mut self, fd: RawFd) {
+        self.held.push(fd);
+    }
+
+    pub fn held(&self) -> &[RawFd] {
+        &self.held
+    }
+
+    /// Whether Vulkan here hides every card but the one pinned: only Mesa's device-select layer
+    /// does, and only while nothing turns it off.
+    pub fn vulkan_confines() -> bool {
+        const LAYERS: [&str; 3] = [
+            "/usr/share/vulkan/implicit_layer.d",
+            "/etc/vulkan/implicit_layer.d",
+            "/usr/local/share/vulkan/implicit_layer.d",
+        ];
+        var("NODEVICE_SELECT").is_none()
+            && LAYERS.iter().any(|dir| {
+                std::fs::read_dir(dir).is_ok_and(|entries| {
+                    entries
+                        .flatten()
+                        .any(|e| e.file_name().to_string_lossy().contains("device_select"))
+                })
+            })
     }
 
     /// The command started in `dir`, with `target` as its build cache.
@@ -258,10 +270,7 @@ impl Pinned<'_> {
 
     /// CUDA takes an index or a UUID, never a bus id, and ignores one without a word.
     fn cuda_uuid(pci: &str) -> Option<String> {
-        let want = pci
-            .split_once(':')
-            .map_or(pci, |(_, bus)| bus)
-            .to_ascii_lowercase();
+        let want = Pinned::slot(pci)?;
         let mut query = Command::new("nvidia-smi");
         query.args(["--query-gpu=uuid,pci.bus_id", "--format=csv,noheader"]);
         Signals::unblocked(&mut query);
@@ -270,11 +279,18 @@ impl Pinned<'_> {
             .lines()
             .find_map(|line| {
                 let (uuid, bus) = line.split_once(',')?;
-                bus.trim()
-                    .to_ascii_lowercase()
-                    .ends_with(&want)
-                    .then(|| uuid.trim().to_string())
+                (Pinned::slot(bus.trim()) == Some(want.clone())).then(|| uuid.trim().to_string())
             })
+    }
+
+    /// A PCI address as its domain's number and the rest: nvidia-smi writes the domain in eight
+    /// digits where sysfs writes four.
+    fn slot(pci: &str) -> Option<(u32, String)> {
+        let (domain, rest) = pci.split_once(':')?;
+        Some((
+            u32::from_str_radix(domain, 16).ok()?,
+            rest.to_ascii_lowercase(),
+        ))
     }
 
     /// ROCr takes the index it enumerates a card at, the order rocminfo lists its GPU agents in.

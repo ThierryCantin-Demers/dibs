@@ -107,7 +107,7 @@ impl Job {
         if let Some(mark) = mark {
             mark.hand_to(&mut bash);
         }
-        let tether = Tether::start().ok();
+        let tether = Tether::start(environment.held()).ok();
         if let Some(tether) = &tether {
             tether.tie(&mut bash);
         }

@@ -111,13 +111,29 @@ impl LockDir {
         Some(text.split_whitespace().map(str::to_string).collect())
     }
 
-    /// A benchmark that arrived before `(start, pid)` and must go first: one for the whole
-    /// machine, or one for a card among `pcis`, which None makes every card.
-    pub fn bench_first(&self, pid: u32, start: u64, pcis: Option<&[String]>) -> bool {
+    /// When a benchmark on a card machine arrived, to the nanosecond: two arriving in one second
+    /// keep their order, which the record's start in seconds loses.
+    pub fn mark_arrived(&self, pid: u32, order: u128) {
+        let _ = fs::write(self.file("arrived", pid), format!("{order}\n"));
+    }
+
+    fn arrived(&self, pid: u32) -> Option<u128> {
+        fs::read_to_string(self.file("arrived", pid))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
+    /// A benchmark that arrived before `order` and must go first: one for the whole machine, or
+    /// one for a card among `pcis`, which None makes every card.
+    pub fn bench_first(&self, pid: u32, order: u128, pcis: Option<&[String]>) -> bool {
         self.records(Kind::Waiting).iter().any(|w| {
             w.mode == dibs_format::Mode::Bench
                 && w.pid != pid
-                && (w.start, w.pid) < (start, pid)
+                && self
+                    .arrived(w.pid)
+                    .is_some_and(|theirs| (theirs, w.pid) < (order, pid))
                 && RecordFile(&self.file("waiting", w.pid)).alive()
                 && self.cards_of(w.pid).is_none_or(|theirs| {
                     pcis.is_none_or(|pcis| theirs.iter().any(|c| pcis.contains(c)))
@@ -331,7 +347,7 @@ impl LockDir {
     pub fn clear(&self, pid: u32) {
         for kind in [
             "waiting", "holder", "work", "cpu", "batch", "hold", "prep", "with", "ahead", "pause",
-            "subagent", "user", "urgent", "parked", "card", "cohort",
+            "subagent", "user", "urgent", "parked", "card", "cohort", "arrived",
         ] {
             let _ = fs::remove_file(self.file(kind, pid));
         }
@@ -389,7 +405,7 @@ impl LockDir {
         // its pids name other processes.
         for prefix in [
             "cpu", "batch", "hold", "prep", "with", "ahead", "pause", "subagent", "user", "urgent",
-            "parked", "card", "cohort",
+            "parked", "card", "cohort", "arrived",
         ] {
             for file in self.named(prefix) {
                 if !RecordFile(&file).alive() {
