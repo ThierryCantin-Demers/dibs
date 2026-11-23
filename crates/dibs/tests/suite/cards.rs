@@ -169,3 +169,84 @@ fn a_benchmark_naming_no_card_closes_the_machine_to_card_benchmarks_after_it() {
     assert_eq!(s.read("order"), "a\nwhole\nb\n");
     s.gone();
 }
+
+#[test]
+fn a_card_benchmark_queued_before_a_whole_machine_one_goes_first() {
+    let Some(mut s) = card_machine() else { return };
+    let first = s.gate("first");
+    let order = s.p("order");
+    let a1 = s.spawn(bench(
+        &s,
+        Some("gpu:a"),
+        "a1",
+        &format!("echo a1 >> {order}; {}", first.hold()),
+    ));
+    s.until_records("the first benchmark to run", || s.read("order") == "a1\n");
+    let a2 = s.spawn(bench(
+        &s,
+        Some("gpu:a"),
+        "a2",
+        &format!("echo a2 >> {order}"),
+    ));
+    s.queued(1);
+    let machine = s.spawn(bench(&s, None, "whole", &format!("echo whole >> {order}")));
+    s.queued(2);
+    first.open();
+    assert_eq!(s.wait(a1), 0);
+    assert_eq!(s.wait(a2), 0);
+    assert_eq!(s.wait(machine), 0);
+    assert_eq!(s.read("order"), "a1\na2\nwhole\n");
+    s.gone();
+}
+
+#[test]
+fn a_card_benchmarks_job_holds_its_card_itself() {
+    let Some(mut s) = card_machine() else { return };
+    let fds = s.p("fds");
+    let a = s.spawn(bench(
+        &s,
+        Some("gpu:a"),
+        "a",
+        &format!("ls -l /proc/$$/fd > {fds}"),
+    ));
+    assert_eq!(s.wait(a), 0);
+    assert!(
+        s.read("fds").contains("/cards/"),
+        "so a runner that dies frees no card its job still uses: {}",
+        s.read("fds")
+    );
+    s.gone();
+}
+
+#[test]
+fn an_urgent_benchmark_on_a_free_card_joins_the_ones_running() {
+    let Some(mut s) = card_machine() else { return };
+    let first = s.gate("first");
+    let order = s.p("order");
+    let a = s.spawn(bench(
+        &s,
+        Some("gpu:a"),
+        "a",
+        &format!("echo a >> {order}; {}", first.hold()),
+    ));
+    s.until_records("the first benchmark to run", || s.read("order") == "a\n");
+    let urgent = s.spawn(s.dibs([
+        "--on",
+        "here",
+        "--bench",
+        "--urgent",
+        "a release",
+        "--wait",
+        "0",
+        "--device",
+        "gpu:b",
+        "--label",
+        "b",
+        &format!("echo b >> {order}"),
+    ]));
+    assert_eq!(s.wait(urgent), 0, "its card was free");
+    assert_eq!(s.read("order"), "a\nb\n");
+    first.open();
+    assert_eq!(s.wait(a), 0);
+    s.gone();
+}

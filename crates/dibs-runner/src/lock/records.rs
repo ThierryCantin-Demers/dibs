@@ -112,16 +112,16 @@ impl LockDir {
     }
 
     /// A benchmark that arrived before `(start, pid)` and must go first: one for the whole
-    /// machine, or one for a card among `pcis`.
-    pub fn bench_first(&self, pid: u32, start: u64, pcis: &[String]) -> bool {
+    /// machine, or one for a card among `pcis`, which None makes every card.
+    pub fn bench_first(&self, pid: u32, start: u64, pcis: Option<&[String]>) -> bool {
         self.records(Kind::Waiting).iter().any(|w| {
             w.mode == dibs_format::Mode::Bench
                 && w.pid != pid
                 && (w.start, w.pid) < (start, pid)
                 && RecordFile(&self.file("waiting", w.pid)).alive()
-                && self
-                    .cards_of(w.pid)
-                    .is_none_or(|theirs| theirs.iter().any(|c| pcis.contains(c)))
+                && self.cards_of(w.pid).is_none_or(|theirs| {
+                    pcis.is_none_or(|pcis| theirs.iter().any(|c| pcis.contains(c)))
+                })
         })
     }
 

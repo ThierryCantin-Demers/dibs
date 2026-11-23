@@ -2,12 +2,15 @@ use crate::lock::{Hold, Lock, LockDir};
 use std::{
     fs::{self, File},
     io,
-    os::unix::fs::PermissionsExt as _,
+    os::{
+        fd::{AsRawFd, RawFd},
+        unix::fs::PermissionsExt as _,
+    },
 };
 
 /// The cards a benchmark runs on, each held exclusive.
 pub struct Cards {
-    _held: Vec<File>,
+    held: Vec<File>,
 }
 
 impl Cards {
@@ -32,6 +35,12 @@ impl Cards {
             }
             held.push(file);
         }
-        Ok(Some(Cards { _held: held }))
+        Ok(Some(Cards { held }))
+    }
+
+    /// A flock lasts as long as any copy of its descriptor, so a job given these keeps its cards
+    /// while it winds down after its runner died.
+    pub fn descriptors(&self) -> impl Iterator<Item = RawFd> + '_ {
+        self.held.iter().map(AsRawFd::as_raw_fd)
     }
 }

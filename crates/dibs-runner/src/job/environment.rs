@@ -7,6 +7,8 @@ use crate::{
 use dibs_format::wire::{Card, Picked};
 use std::{
     collections::{BTreeMap, HashSet},
+    io,
+    os::{fd::RawFd, unix::process::CommandExt as _},
     path::PathBuf,
     process::Command,
 };
@@ -21,6 +23,8 @@ pub struct Environment {
     copies: BTreeMap<String, String>,
     /// Where the command starts, when not where the runner did.
     dir: Option<PathBuf>,
+    /// Descriptors the command keeps open across its exec.
+    inherited: Vec<RawFd>,
 }
 
 /// A card the job cannot be pinned to, so it does not run: running it on whichever card is
@@ -59,6 +63,7 @@ impl Environment {
             ports: BTreeMap::new(),
             copies: BTreeMap::new(),
             dir: None,
+            inherited: Vec::new(),
         })
     }
 
@@ -99,6 +104,21 @@ impl Environment {
         if let Some(dir) = &self.dir {
             command.current_dir(dir);
         }
+        for &fd in &self.inherited {
+            // SAFETY: fcntl is async-signal-safe, on a descriptor open until exec.
+            unsafe {
+                command.pre_exec(move || match libc::fcntl(fd, libc::F_SETFD, 0) {
+                    -1 => Err(io::Error::last_os_error()),
+                    _ => Ok(()),
+                });
+            }
+        }
+    }
+
+    /// `fd` stays open in the command and everything it starts, which must keep it open until
+    /// the command is spawned.
+    pub fn inherit(&mut self, fd: RawFd) {
+        self.inherited.push(fd);
     }
 
     /// The command started in `dir`, with `target` as its build cache.

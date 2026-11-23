@@ -86,6 +86,11 @@ impl<'a> KeptCopy<'a> {
         };
         let mut lines = origin.lines();
         let machine = Path::new(lines.next().unwrap_or_default());
+        fs::create_dir_all(machine)?;
+        // Two jobs giving back at once would each find their file newer before either renames
+        // it in, and the older could land last.
+        let giving = fs::File::open(machine)?;
+        giving.lock()?;
         if let Some(file) = lines.next() {
             let copy = Written::read(self.copy, file);
             let fits = match Written::read(machine, file) {
