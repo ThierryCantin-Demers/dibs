@@ -380,6 +380,12 @@ impl<'a> LockedCall<'a> {
                 Origin::Recipe(job) => job.tree.clone(),
                 Origin::Words => None,
             },
+            // A recipe records its run and fetches its artifacts once its job has ended, so its
+            // job cannot be let go of.
+            check_in: match self.origin {
+                Origin::Recipe(_) => None,
+                Origin::Words => values.check_in,
+            },
             ..values
         }
     }
@@ -436,6 +442,11 @@ impl Request<'_> {
             aliases: BTreeMap::new(),
             preempt: false,
             tree: None,
+            check_in: match self.call.check_in {
+                Some(0) => None,
+                Some(seconds) => Some(seconds),
+                None => Some(DEFAULT_CHECK_IN),
+            },
         }
     }
 
@@ -465,6 +476,9 @@ impl Fingerprint<'_> {
 fn carries_batch(mode: Mode) -> bool {
     matches!(mode, Mode::Shared | Mode::Bench | Mode::Peek | Mode::Rsh)
 }
+
+/// Seconds a job runs before its call lets go of it when `--check-in` does not say.
+const DEFAULT_CHECK_IN: u64 = 1800;
 
 /// How long a call may hold the lock when `--max` does not say.
 fn default_max(mode: Mode) -> u64 {

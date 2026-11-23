@@ -41,6 +41,8 @@ pub struct Call {
     /// `--urgent`, and why: a benchmark that parks the shared jobs running and has the machine.
     pub urgent: Option<String>,
     pub max: Option<u64>,
+    /// `--check-in`: seconds a job runs before its call lets go of it; 0 never does.
+    pub check_in: Option<u64>,
     pub device: Option<Alias>,
     pub verbose: bool,
     pub json: bool,
@@ -82,6 +84,8 @@ pub enum Mode {
         dry_run: bool,
     },
     Out(Option<OutTarget>),
+    /// `--follow <job>`: waits on a job its call let go of.
+    Follow(JobId),
     Fetch {
         job: JobId,
         into: Option<String>,

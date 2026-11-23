@@ -185,6 +185,9 @@ Calls: one command under the lock, and what the machines are doing.
                                running job made itself. The first read of a finished job
                                keeps its whole log in ~/.local/state/dibs/jobs, which
                                answers later reads even once the machine is gone.
+  dibs --follow <job>         wait on a job its call let go of at a check-in: ends with the
+                               job, passing on its trailer and exit, or exits 80 at its next
+                               check-in, after another --check-in of running
   dibs --fetch <job> [dir]    the files a recipe's job kept, the ones its `artifacts` name
                                and it wrote itself. Kept beside the job's log in
                                ~/.local/state/dibs/jobs/<job>/artifacts, and copied into dir
@@ -241,6 +244,10 @@ DIBS_BYPASS=0 turns it off. A benchmark can be delayed by their sum and no more.
   --max <seconds>    kill the command if it holds the lock longer than this (default 7200
                      for --bench and 1800 otherwise, or twice the label's 90th percentile
                      where its history runs longer, said when it starts)
+  --check-in <time>  once the job has run this long, frozen or parked time not counted, the
+                     call lets go of it and exits 80, naming it; the job goes on, and
+                     --follow <job> waits for it (default 30m; off never; s, m or h, bare
+                     minutes). A batch's steps and a recipe's jobs never do.
   --label <name>     what shows up in --status (default: the caller's directory)
   -v                 with --status, also dump the raw lock directory; with a call that
                      queues, the whole queue rather than one line

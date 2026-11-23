@@ -1,6 +1,11 @@
-use dibs_format::wire::{Frame, Record};
+use dibs_format::{
+    Exit,
+    wire::{Frame, Record},
+};
 use std::{
+    fs::File,
     io::{self, Write as _},
+    os::fd::AsRawFd as _,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -40,6 +45,11 @@ impl Sink {
     pub fn transferring(&self) {
         self.record(Record::Transferring);
         self.plain.store(true, Ordering::SeqCst);
+    }
+
+    /// Frames to a client, which a check-in can hand a job over from.
+    pub fn framed(&self) -> bool {
+        self.kind() == Kind::Frames
     }
 
     fn kind(&self) -> Kind {
@@ -115,6 +125,28 @@ impl Sink {
             }
         }
         let _ = out.write_all(&Frame::Exit(code).encode());
+    }
+
+    /// The caller's last words and exit 80; what the call says from here on goes to `report`,
+    /// for whoever follows the job, and the caller's streams are let go so its connection can end.
+    pub fn hand_over(&self, text: &str, report: &File) -> io::Result<()> {
+        let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = out
+            .write_all(&Frame::Err(text.as_bytes().to_vec()).encode())
+            .and_then(|()| out.write_all(&Frame::Exit(Exit::CheckedIn.status()).encode()))
+            .and_then(|()| out.flush());
+        let null = File::options().read(true).write(true).open("/dev/null")?;
+        for (from, to) in [
+            (report.as_raw_fd(), libc::STDOUT_FILENO),
+            (null.as_raw_fd(), libc::STDIN_FILENO),
+            (null.as_raw_fd(), libc::STDERR_FILENO),
+        ] {
+            // SAFETY: dup2 only replaces a descriptor of this process with another it holds.
+            if unsafe { libc::dup2(from, to) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(())
     }
 
     fn frame(&self, frame: Frame) -> bool {

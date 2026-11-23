@@ -104,6 +104,7 @@ impl Dispatch<'_> {
             }),
             Words::Check { host } => machine()?.check(host.as_deref()),
             Words::Out(target) => machine()?.out(target.as_ref()),
+            Words::Follow(job) => machine()?.follow(job),
             Words::Fetch { job, into } => {
                 machine()?.fetch(job, into.as_deref(), &mut std::io::stdout())
             }

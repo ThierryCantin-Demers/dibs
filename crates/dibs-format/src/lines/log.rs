@@ -18,10 +18,11 @@ pub enum Event {
     Aborted,
     CallerGone,
     Reclaimed,
+    HandedOver,
 }
 
 impl Event {
-    const ALL: [Event; 11] = [
+    const ALL: [Event; 12] = [
         Event::Arrived,
         Event::Refused,
         Event::Cancelled,
@@ -33,6 +34,7 @@ impl Event {
         Event::Aborted,
         Event::CallerGone,
         Event::Reclaimed,
+        Event::HandedOver,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -48,6 +50,7 @@ impl Event {
             Event::Aborted => "aborted",
             Event::CallerGone => "caller-gone",
             Event::Reclaimed => "reclaimed",
+            Event::HandedOver => "handed-over",
         }
     }
 }

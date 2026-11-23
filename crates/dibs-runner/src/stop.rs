@@ -6,7 +6,7 @@ use crate::{
 };
 use dibs_format::{Event, Exit, JobId};
 use std::{
-    fs,
+    fs::{self, File},
     os::unix::process::CommandExt as _,
     path::PathBuf,
     process::Command,
@@ -46,6 +46,8 @@ pub struct State {
     pub services: Vec<u32>,
     /// Stopped because its machine was closed with `--now`, which its exit says.
     pub closed: bool,
+    /// Its call let go of the job at a check-in, so the caller going no longer stops it.
+    pub handed: bool,
 }
 
 /// Stops a call from another thread, leaving the machine as the call's own end would.
@@ -68,6 +70,7 @@ impl Stopper {
                 job: None,
                 services: Vec::new(),
                 closed: false,
+                handed: false,
             }),
             call,
             dir,
@@ -98,6 +101,25 @@ impl Stopper {
         self.stop_for(Event::CallerGone, why, 128 + libc::SIGTERM);
     }
 
+    /// Lets go of the job at its first check-in: the caller is told, and from then on its going
+    /// stops nothing. False when the call is already ending, or nothing could be handed over.
+    pub fn hand_over(&self, text: &str, report: &File) -> bool {
+        let mut state = self.state();
+        if !matches!(
+            state.stage,
+            Stage::Preparing(_) | Stage::Starting | Stage::Running(_) | Stage::Parked
+        ) || !self.sink.framed()
+            || self.sink.hand_over(text, report).is_err()
+        {
+            return false;
+        }
+        state.handed = true;
+        let mut line = self.call.log_line(Event::HandedOver);
+        line.job = state.job.clone();
+        Journal { path: &self.log }.write(&line);
+        true
+    }
+
     /// Its machine closed with `--now`: stopped as for a caller gone, ending with exit 79.
     pub fn closed(&self, why: &str) {
         self.state().closed = true;
@@ -106,6 +128,9 @@ impl Stopper {
 
     fn stop_for(&self, event: Event, why: &str, code: i32) {
         let mut state = self.state();
+        if state.handed && event == Event::CallerGone {
+            return;
+        }
         if !matches!(
             state.stage,
             Stage::Queued
@@ -211,13 +236,18 @@ impl Signals {
         }
     }
 
-    /// Hands the first of them to the stopper, on a thread of its own.
+    /// Hands the first of them to the stopper, on a thread of its own. A hangup is the caller's
+    /// connection going, which a job its call let go of outlives.
     pub fn listen(self, stopper: Arc<Stopper>) {
         thread::spawn(move || {
-            let mut signal = 0;
-            // SAFETY: the set was built by `block`, and sigwait writes one int.
-            unsafe { libc::sigwait(&self.set, &mut signal) };
-            stopper.signalled(signal)
+            loop {
+                let mut signal = 0;
+                // SAFETY: the set was built by `block`, and sigwait writes one int.
+                unsafe { libc::sigwait(&self.set, &mut signal) };
+                if signal != libc::SIGHUP || !stopper.state().handed {
+                    stopper.signalled(signal)
+                }
+            }
         });
     }
 }

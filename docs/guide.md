@@ -559,6 +559,22 @@ cut off, it exits 69 and says so; the batch carries on, and `dibs batch --follow
 summary once it has ended, or at once if it has. `dibs --kill <id>` stops it from here, and `dibs
 status` shows its steps as any batch's.
 
+## A job that runs past its check-in
+
+An agent hears of its job only when the call that started it exits, so a job that hangs holds
+the machine until a person notices. Once a job has run 30 minutes, its call lets go of it and
+exits 80: the job goes on, and the call prints how long it has run, the end of its log and of
+each `--with` server's, and how to follow or stop it. Only running counts: not the queue, and not
+time frozen behind a benchmark or parked behind an urgent one. Nothing is judged from CPU or
+output, which a stuck job can show either way; the agent knows what its job should be doing.
+
+`dibs --on <machine> --follow <job>` waits on it again. It ends with the job, passing on its
+digest, trailer and exit as the call would have, or exits 80 at its next check-in, after another
+30 minutes of running, so an agent following in the background is woken at least that often.
+`--check-in <time>` changes the 30 minutes and `--check-in off` turns it off. A job whose `--max`
+comes first never checks in, nor does a hold, nor a step of a batch or a job of a recipe or `dibs shell`,
+whose driver goes on only once the job has ended.
+
 ## Holding a lock for a command run elsewhere
 
 Some work on a machine does not run on it: a playbook that provisions it, or a client driving it

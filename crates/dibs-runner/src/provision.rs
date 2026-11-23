@@ -173,6 +173,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
         when_open: false,
         urgent: None,
         tree: None,
+        check_in: None,
     };
     let code = Visit::new(request, sink)
         .with_temporary(vec![source.clone(), archive.clone()])

@@ -272,6 +272,11 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
             ))))),
         ),
         (vec!["--out", "--on", "m"], on("m", Mode::Out(None))),
+        (vec!["--follow", "1-2"], of(Mode::Follow(JobId::new("1-2")))),
+        (
+            vec!["follow", "1-2", "--on", "m"],
+            on("m", Mode::Follow(JobId::new("1-2"))),
+        ),
         (vec!["--fetch", "1-2"], of(fetch("1-2", None))),
         (vec!["--fetch", "1-2", "dir"], of(fetch("1-2", Some("dir")))),
         (vec!["fetch", "1-2", "dir"], of(fetch("1-2", Some("dir")))),
@@ -383,6 +388,34 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
             })
         }),
         (vec!["--label", "", "x"], of(run(RunLock::Shared, &["x"]))),
+        (
+            vec!["--check-in", "90s", "x"],
+            with(Call {
+                check_in: Some(90),
+                ..call(run(RunLock::Shared, &["x"]))
+            }),
+        ),
+        (
+            vec!["--check-in", "45", "x"],
+            with(Call {
+                check_in: Some(2700),
+                ..call(run(RunLock::Shared, &["x"]))
+            }),
+        ),
+        (
+            vec!["--check-in", "2h", "x"],
+            with(Call {
+                check_in: Some(7200),
+                ..call(run(RunLock::Shared, &["x"]))
+            }),
+        ),
+        (
+            vec!["--check-in", "off", "x"],
+            with(Call {
+                check_in: Some(0),
+                ..call(run(RunLock::Shared, &["x"]))
+            }),
+        ),
         (
             vec!["--label", "", "--gc"],
             of(Mode::Gc {
@@ -687,6 +720,21 @@ fn refusals() -> Vec<(Vec<&'static str>, &'static str, bool)> {
             false,
         ),
         (vec!["--max", "1h", "x"], "dibs: --max takes seconds", false),
+        (
+            vec!["--check-in", "soon", "x"],
+            "dibs: --check-in takes off, or a time such as 30m, 90s or 2h",
+            false,
+        ),
+        (
+            vec!["--check-in", "0m", "x"],
+            "dibs: --check-in takes off, or a time such as 30m, 90s or 2h",
+            false,
+        ),
+        (
+            vec!["--follow", "x"],
+            "--follow needs a job id, the one a check-in names",
+            false,
+        ),
         (
             vec!["--measure", "m"],
             "dibs: --measure <machine> takes on or off after the machine",

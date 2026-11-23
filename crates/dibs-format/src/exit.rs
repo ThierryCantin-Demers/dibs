@@ -31,6 +31,8 @@ pub enum Exit {
     TargetRebuilt,
     /// The machine is closed by its owners, so the call was refused or its job stopped.
     Closed,
+    /// The job had run as long as `--check-in` gives it and still runs, now without its call.
+    CheckedIn,
     /// The command overran `--max` and was killed while holding the lock.
     Overran,
     /// Stopped by SIGHUP.
@@ -42,7 +44,7 @@ pub enum Exit {
 }
 
 impl Exit {
-    pub const ALL: [Exit; 17] = [
+    pub const ALL: [Exit; 18] = [
         Exit::Success,
         Exit::Failed,
         Exit::Refused,
@@ -56,6 +58,7 @@ impl Exit {
         Exit::ServiceFailed,
         Exit::TargetRebuilt,
         Exit::Closed,
+        Exit::CheckedIn,
         Exit::Overran,
         Exit::HungUp,
         Exit::Interrupted,
@@ -77,6 +80,7 @@ impl Exit {
             Exit::ServiceFailed => 77,
             Exit::TargetRebuilt => 78,
             Exit::Closed => 79,
+            Exit::CheckedIn => 80,
             Exit::Overran => 124,
             Exit::HungUp => 129,
             Exit::Interrupted => 130,
@@ -124,6 +128,7 @@ impl Exit {
                 "a recipe's measurement refused: another tree built into its target since"
             }
             Exit::Closed => "the machine is closed by its owners",
+            Exit::CheckedIn => "checked in: the job still runs, and --follow waits for it",
             Exit::Overran => "overran --max",
             Exit::HungUp => "hung up",
             Exit::Interrupted => "interrupted",

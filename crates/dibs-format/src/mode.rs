@@ -34,6 +34,8 @@ pub enum Mode {
     Log,
     Check,
     Out,
+    /// Waits on a job its call let go of, until it ends or checks in again.
+    Follow,
     Fetch,
     Kill,
     KillForce,
@@ -45,7 +47,7 @@ pub enum Mode {
 }
 
 impl Mode {
-    const ALL: [Mode; 16] = [
+    const ALL: [Mode; 17] = [
         Mode::Shared,
         Mode::Bench,
         Mode::Peek,
@@ -55,6 +57,7 @@ impl Mode {
         Mode::Log,
         Mode::Check,
         Mode::Out,
+        Mode::Follow,
         Mode::Fetch,
         Mode::Kill,
         Mode::KillForce,
@@ -75,6 +78,7 @@ impl Mode {
             Mode::Log => "log",
             Mode::Check => "check",
             Mode::Out => "out",
+            Mode::Follow => "follow",
             Mode::Fetch => "fetch",
             Mode::Kill => "kill",
             Mode::KillForce => "kill-force",

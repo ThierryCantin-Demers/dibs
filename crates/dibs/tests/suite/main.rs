@@ -7,6 +7,7 @@ mod ahead;
 mod baselines;
 mod batch;
 mod cards;
+mod check_in;
 mod cli;
 mod client;
 mod closed;

@@ -119,6 +119,12 @@ spoiled without it.
   a sleep or a network change here stops nothing there. Every step must go to that one machine,
   and nothing in it may act on this computer. Cut off, the call exits 69 and says so; then
   `dibs batch --follow <id>`, in the background, wakes you once with the summary.
+- **A job that has run 30 minutes checks in**: its call exits 80 and the job goes on. Read what
+  it printed, the end of its log and its servers' logs, and decide: if it is doing what it
+  should, follow it with `dibs --on <machine> --follow <job>` in the background, which ends with
+  the job's own trailer and exit or checks in again after another 30 minutes; if it is stuck,
+  `dibs --on <machine> --kill <pid>`. Never leave a check-in unanswered: nobody else is watching
+  that job. `--check-in <time>` or `off` changes it for a call you know runs long.
 - **Do not batch across a decision.** If a later step depends on what an earlier one *said*, you
   will not see that until the whole batch is done. Two batches with a look in between is still far
   cheaper than one call per job. When the criterion can be stated up front, put it in the step and
@@ -333,5 +339,7 @@ spoiled without it.
 - **79** the machine's owners closed it, which `dibs status` says, with their reason. Never
   `dibs --open` a machine you did not close. Send the work elsewhere, or add `--when-open` to
   queue it for when they open it, as for work left to run overnight.
+- **80** the job checked in: it is still running, without its call. Follow it or stop it, as
+  above.
 - **124** it overran `--max` and was killed while holding the lock. Without `--max`, a label whose
   history runs past the default is given twice its 90th percentile, and says so when it starts.

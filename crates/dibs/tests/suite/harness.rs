@@ -120,6 +120,7 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         when_open: false,
         urgent: None,
         tree: None,
+        check_in: None,
     }
 }
 

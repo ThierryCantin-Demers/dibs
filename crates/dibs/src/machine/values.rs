@@ -48,6 +48,8 @@ pub struct CallValues {
     pub preempt: bool,
     /// The tree a recipe's job runs in.
     pub tree: Option<wire::Tree>,
+    /// Seconds a job runs before its call lets go of it, None never.
+    pub check_in: Option<u64>,
 }
 
 /// How the runner learns its caller is gone.
@@ -86,6 +88,7 @@ impl CallValues {
                 | Mode::Watch
                 | Mode::Log
                 | Mode::Out
+                | Mode::Follow
                 | Mode::Kill
                 | Mode::KillForce
                 | Mode::Release
@@ -94,10 +97,10 @@ impl CallValues {
         )
     }
 
-    /// Closing and opening a machine are left out: a runner from before they existed cannot read
-    /// the call, and neither has anything to look at or stop behind a held lock.
+    /// Closing, opening and following are left out: a runner from before they existed cannot
+    /// read the call, and none has anything to look at or stop behind a held lock.
     pub fn an_older_runner_answers(&self) -> bool {
-        self.takes_no_lock() && !matches!(self.mode, Mode::Close | Mode::Open)
+        self.takes_no_lock() && !matches!(self.mode, Mode::Close | Mode::Open | Mode::Follow)
     }
 
     /// The values as the runner is asked for them.
@@ -160,6 +163,11 @@ impl CallValues {
                 .collect(),
             tree: self.tree.clone(),
             ready_within: u64::from(self.ready_within),
+            // A batch's driver goes on to the next step only once a step has ended, so it cannot
+            // let go of one.
+            check_in: self.check_in.filter(|_| {
+                self.batch.is_empty() && matches!(self.mode, Mode::Shared | Mode::Bench)
+            }),
         }
     }
 }

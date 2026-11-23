@@ -43,6 +43,11 @@ impl MachineCall<'_> {
         self.send(Asked::plain(Mode::Out, label), &at)
     }
 
+    /// `dibs --follow`: waits on a job its call let go of, until it ends or checks in again.
+    pub fn follow(&self, job: &JobId) -> Result<i32, CallError> {
+        self.answer(Asked::plain(Mode::Follow, Label::new(job.as_str())))
+    }
+
     /// `dibs --fetch`: a job's files, kept here and copied where asked.
     pub fn fetch(
         &self,

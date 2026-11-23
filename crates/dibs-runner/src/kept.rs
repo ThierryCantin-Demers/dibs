@@ -1,18 +1,25 @@
 //! What a job left on the machine, read back without the lock: `dibs --out` and `dibs --fetch`.
 
 use crate::{
+    channel::Caller,
     clock::{Moment, Span},
     job::Tree,
     lock::{Kind, LockDir},
     machine::Site,
+    session::CheckIns,
     settings::var,
     sink::Sink,
 };
-use dibs_format::{Exit, JobId, JobMeta, base64};
+use dibs_format::{
+    Exit, JobId, JobMeta, base64,
+    wire::{Frame, Unframer},
+};
 use std::{
-    fs,
+    fs::{self, File},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
 /// Lines of a log shown when the caller asked for its whole.
@@ -21,6 +28,8 @@ const WHOLE_SHOWN: usize = 40;
 const WHOLE_MAX: u64 = 16 * 1024 * 1024;
 const FILES_MAX: u64 = 64 * 1024 * 1024;
 const COMMAND_SHOWN: usize = 200;
+/// How often a follower looks at the job it waits on.
+const FOLLOW_TICK: Duration = Duration::from_secs(1);
 const OUT_HEAD: &str = "DIBS-OUT-HEAD";
 const OUT_LOG: &str = "DIBS-OUT-LOG";
 const FETCHED: &str = "DIBS-FETCH";
@@ -54,6 +63,76 @@ impl KeptJobs<'_> {
             true => self.job(&asked),
             false => self.holders(&asked),
         }
+    }
+
+    /// `dibs --follow`: a job its call let go of, waited on until it ends, when what that call
+    /// would have said is passed on with its exit, or until it checks in again.
+    pub fn follow(&self, target: &str, caller: Caller, lease: u64) -> i32 {
+        let jobs = self.machine.jobs();
+        let host = &self.machine.host;
+        let Some(dir) = JobId::checked(target)
+            .map(|id| jobs.join(id.as_str()))
+            .filter(|dir| dir.is_dir())
+        else {
+            self.sink
+                .say(&format!("no job {target} under {}\n", jobs.display()));
+            return Exit::Failed.status();
+        };
+        let check_ins = CheckIns { dir: &dir };
+        let Ok(handed) = File::open(check_ins.handed()) else {
+            self.sink.say(&format!(
+                "dibs: job {target} was never let go of by its call, so there is nothing to follow: dibs --on {host} --out {target} reads its log\n"
+            ));
+            return Exit::Refused.status();
+        };
+        let seen = check_ins.read_latest().map_or(0, |(n, _)| n);
+        let mut channel = match caller {
+            Caller::Channel(channel) => Some(channel),
+            Caller::Stdout => None,
+        };
+        let mut heard = Instant::now();
+        loop {
+            if handed.try_lock_shared().is_ok() {
+                return self.relay(&check_ins.report(), target);
+            }
+            if let Some((_, text)) = check_ins.read_latest().filter(|(n, _)| *n > seen) {
+                self.sink.say(&text);
+                return Exit::CheckedIn.status();
+            }
+            let until = Instant::now() + FOLLOW_TICK;
+            let present = match &mut channel {
+                Some(channel) => channel.attend(until, lease, &mut heard),
+                None => {
+                    thread::sleep(FOLLOW_TICK);
+                    true
+                }
+            };
+            if !present {
+                return Exit::Terminated.status();
+            }
+        }
+    }
+
+    /// What the call that let go of the job would have said at its end, and its exit.
+    fn relay(&self, report: &Path, target: &str) -> i32 {
+        let mut unframer = Unframer::default();
+        unframer.feed(&fs::read(report).unwrap_or_default());
+        while let Ok(Some(frame)) = unframer.next_frame() {
+            match frame {
+                Frame::Out(bytes) => {
+                    self.sink.out(&bytes);
+                }
+                Frame::Err(bytes) => self.sink.err(&bytes),
+                Frame::Record(record) => self.sink.record(record),
+                Frame::Exit(code) => return code,
+                Frame::Request(_) | Frame::Beat | Frame::Release(_) => {}
+            }
+        }
+        self.sink.say(&format!(
+            "dibs: the runner of job {target} ended without saying how the job did: dibs --on {} --out {target} reads its log\n",
+            self.machine.host
+        ));
+        Exit::Failed.status()
     }
 
     /// A job by its id, running or finished; the whole of a finished one's log for the caller to
@@ -235,7 +314,7 @@ impl KeptJobs<'_> {
 }
 
 /// The last lines of a text, each shown under a bar.
-fn tail(text: &[u8], lines: usize) -> Vec<u8> {
+pub fn tail(text: &[u8], lines: usize) -> Vec<u8> {
     let body = text.strip_suffix(b"\n").unwrap_or(text);
     if body.is_empty() || lines == 0 {
         return Vec::new();

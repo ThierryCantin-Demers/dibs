@@ -125,6 +125,7 @@ impl Help {
                 "--on <machine>",
                 "--wait <seconds>",
                 "--max <seconds>",
+                "--check-in <time>",
                 "--label <name>",
             ],
         },
@@ -143,6 +144,10 @@ impl Help {
         Topic {
             words: &["out"],
             entries: &["dibs --out", "--on <machine>"],
+        },
+        Topic {
+            words: &["follow"],
+            entries: &["dibs --follow", "--on <machine>"],
         },
         Topic {
             words: &["fetch"],

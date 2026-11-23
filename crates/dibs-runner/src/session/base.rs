@@ -226,6 +226,11 @@ impl Visit {
                 Run::new(at).serve(environment, caller)
             }
             Mode::Out => kept.out(self.call.label().as_str()),
+            Mode::Follow => kept.follow(
+                self.call.label().as_str(),
+                caller,
+                self.call.request.watch.lease,
+            ),
             Mode::Fetch => kept.fetch(self.call.label().as_str()),
             mode => {
                 self.sink

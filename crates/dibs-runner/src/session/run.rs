@@ -20,6 +20,7 @@ use crate::{
     queue::Queue,
     series::Binding,
     session::{
+        check_in::{self, CheckIn},
         ended::{Ended, Tally},
         laid::{Begins, Laid, Layout},
     },
@@ -298,7 +299,29 @@ impl<'a> Run<'a> {
                 })
             });
         let shut = closed::Watch::start(self.at.dir.clone(), Arc::clone(self.at.stopper));
+        let check_in = request
+            .check_in
+            // A job its cap stops first wakes its caller then anyway.
+            .filter(|every| {
+                begun.log.is_some() && !request.watch.hold && (max == 0 || *every < max)
+            })
+            .map(|every| {
+                CheckIn::start(
+                    Duration::from_secs(every),
+                    check_in::Job {
+                        id: arrived.job.clone(),
+                        dir: begun.dir.clone(),
+                        host: self.at.machine.host.clone(),
+                        pid: self.at.call.pid,
+                    },
+                    Arc::clone(self.at.stopper),
+                    Arc::clone(&frozen),
+                )
+            });
         let hosted = self.host(state, &arrived, &begun, environment, max, frozen);
+        if let Some(check_in) = check_in {
+            check_in.end();
+        }
         shut.end();
         if let Some(preemption) = preemption {
             preemption.end();

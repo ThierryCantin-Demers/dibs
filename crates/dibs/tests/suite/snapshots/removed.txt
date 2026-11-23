@@ -9,6 +9,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false

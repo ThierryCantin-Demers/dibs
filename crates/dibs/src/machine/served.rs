@@ -505,6 +505,7 @@ impl Served<'_> {
         }
         self.session.said.clear();
         let mut child = command.spawn()?;
+        let runner = child.id();
         drop(command);
         let request = Frame::Request(Box::new(self.values.request(watch))).encode();
         let stdin = child.stdin.take().expect("stdin was piped");
@@ -564,6 +565,9 @@ impl Served<'_> {
                 Heard::Exit(code) => {
                     self.session.said.exited();
                     exit = Some(code);
+                    if code == Exit::CheckedIn.status() {
+                        break;
+                    }
                 }
                 Heard::Broken(why) => {
                     delivery.say(&format!("dibs: the runner's answer broke off: {why}\n"))
@@ -572,6 +576,15 @@ impl Served<'_> {
         }
         drop(release);
         delivery.flush(&mut buffers);
+        // A job the runner let go of outlives it, and sshd keeps the session open until the
+        // runner exits; the runner said its last, so its ssh goes, and a local runner is left.
+        if exit == Some(Exit::CheckedIn.status()) {
+            if self.over_ssh() {
+                // SAFETY: kill only sends a signal, to the ssh this call started.
+                unsafe { libc::kill(runner as libc::pid_t, libc::SIGTERM) };
+            }
+            return Ok(Attempted::Exit(Exit::CheckedIn.status()));
+        }
         let _ = frames.join();
         if let Some(err) = err {
             let _ = err.join();

@@ -67,6 +67,9 @@ pub struct Request {
     /// The tree the job runs in, prepared at its head when it is not yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<Tree>,
+    /// Seconds the job runs, frozen and parked time not counted, before its call lets go of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<u64>,
 }
 
 /// A machine taken back by its owners.

@@ -77,6 +77,11 @@ pub const CALL: &[Flag] = &[
         "the kind of work its time is filed under",
     ),
     Flag::new(&["--max"], Value::Free, "seconds before it is stopped"),
+    Flag::new(
+        &["--check-in"],
+        Value::Free,
+        "running time before the call lets go of the job",
+    ),
     Flag::new(&["--wait"], Value::Free, "seconds to wait for the lock"),
     Flag::new(&["--device"], Value::Card, "the card to run on"),
     Flag::new(
@@ -133,6 +138,11 @@ pub const CALL: &[Flag] = &[
         &["--out"],
         Value::No,
         "a job's output, or the running jobs'",
+    ),
+    Flag::new(
+        &["--follow"],
+        Value::Free,
+        "wait on a job its call let go of",
     ),
     Flag::new(&["--stream"], Value::No, "the whole output inline"),
     Flag::new(&["--fetch"], Value::Free, "a job's kept files"),

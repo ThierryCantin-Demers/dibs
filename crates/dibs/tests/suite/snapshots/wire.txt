@@ -6,6 +6,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: echo hi; exit 3
     fingerprint: null
     json: false
@@ -36,6 +37,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -70,6 +72,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     card.pci: "0000:01:00.0"
     card.runtimes: ["cuda","vulkan"]
     card.twins: 1
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -100,6 +103,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -130,6 +134,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -160,6 +165,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -810,6 +816,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command, as the words it runs:
       | printf
       | %s|
@@ -1054,6 +1061,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -1084,6 +1092,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: shell-someone@<host>
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -1114,6 +1123,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -1144,6 +1154,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -1174,6 +1185,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false
@@ -1204,6 +1216,7 @@ call 1: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=3 -o ServerAliv
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: true
     fingerprint: null
     json: false

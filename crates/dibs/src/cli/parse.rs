@@ -53,6 +53,7 @@ enum Word {
     Release,
     Gc,
     Out,
+    Follow,
     Fetch,
     Kill,
     Check,
@@ -83,6 +84,7 @@ struct Parser {
     days: Option<String>,
     check_host: Option<String>,
     out: Option<String>,
+    follow: String,
     fetch_job: String,
     fetch_into: Option<String>,
     kill: Option<String>,
@@ -96,6 +98,7 @@ struct Parser {
     reason: Option<String>,
     wait: Option<String>,
     max: Option<String>,
+    check_in: Option<String>,
     call: Call,
     expansion: Expansion,
 }
@@ -116,6 +119,7 @@ impl Default for Parser {
             days: None,
             check_host: None,
             out: None,
+            follow: String::new(),
             fetch_job: String::new(),
             fetch_into: None,
             kill: None,
@@ -129,6 +133,7 @@ impl Default for Parser {
             reason: None,
             wait: None,
             max: None,
+            check_in: None,
             call: Call::default(),
             expansion: Expansion::Done,
         }
@@ -278,6 +283,11 @@ impl Parser {
                     }
                 }
                 "--out" => at += self.out(value),
+                "--follow" => {
+                    self.word = Word::Follow;
+                    self.follow = need_some("--follow")?;
+                    at += 1;
+                }
                 "--fetch" => at += self.fetch(&words[at..]),
                 "--kill" => {
                     self.word = Word::Kill;
@@ -317,6 +327,10 @@ impl Parser {
                     self.max = Some(need("--max")?);
                     at += 1;
                 }
+                "--check-in" => {
+                    self.check_in = Some(need("--check-in")?);
+                    at += 1;
+                }
                 "--device" => {
                     self.call.device = Some(Alias::new(need("--device")?));
                     at += 1;
@@ -350,6 +364,13 @@ impl Parser {
                         "friction" if shared => return friction(&words[at..]),
                         "hook" if shared => return Hook::parse(&words[..at - 1], &words[at..]),
                         "out" if shared => at += self.out(words.get(at)),
+                        "follow" if shared => {
+                            self.word = Word::Follow;
+                            if let Some(job) = words.get(at) {
+                                self.follow = job.clone();
+                                at += 1;
+                            }
+                        }
                         "fetch" if shared => at += self.fetch(&words[at..]),
                         verb => match RecipeVerb::of_word(verb) {
                             Some(verb) => return self.recipe(verb, words, at),
@@ -368,6 +389,7 @@ impl Parser {
         match self.word {
             Word::Status | Word::Watch => Some("status"),
             Word::Out => Some("out"),
+            Word::Follow => Some("follow"),
             Word::Fetch => Some("fetch"),
             Word::Gc => Some("gc"),
             Word::Bench => Some("run"),
@@ -551,6 +573,16 @@ impl Parser {
                     host: self.check_host.clone(),
                 }
             }
+            Word::Follow => {
+                takes_nothing("--follow takes only a job id")?;
+                let job = &self.follow;
+                if job.is_empty() || !job.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+                    return Err(CliError::new(
+                        "--follow needs a job id, the one a check-in names",
+                    ));
+                }
+                Mode::Follow(JobId::new(job.as_str()))
+            }
             Word::Fetch => {
                 takes_nothing("--fetch takes a job id and, optionally, a directory to copy into")?;
                 let job = &self.fetch_job;
@@ -701,9 +733,37 @@ impl Parser {
             mode,
             wait: seconds("--wait", &self.wait)?,
             max: seconds("--max", &self.max)?,
+            check_in: self
+                .check_in
+                .as_deref()
+                .filter(|v| !self.expansion.pending(v))
+                .map(check_in)
+                .transpose()?,
             ..self.call
         }))
     }
+}
+
+/// `--check-in`'s time: `off`, or a number of minutes, or of seconds, minutes or hours marked
+/// `s`, `m` or `h`.
+fn check_in(value: &str) -> Result<u64, CliError> {
+    if value == "off" {
+        return Ok(0);
+    }
+    let (number, unit) = match value.char_indices().last() {
+        Some((at, 's')) => (&value[..at], 1),
+        Some((at, 'm')) => (&value[..at], 60),
+        Some((at, 'h')) => (&value[..at], 3600),
+        _ => (value, 60),
+    };
+    number
+        .parse::<u64>()
+        .ok()
+        .filter(|n| *n > 0)
+        .map(|n| n * unit)
+        .ok_or_else(|| {
+            CliError::new("dibs: --check-in takes off, or a time such as 30m, 90s or 2h")
+        })
 }
 
 impl Service {

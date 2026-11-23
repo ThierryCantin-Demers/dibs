@@ -187,6 +187,9 @@
 1|                                running job made itself. The first read of a finished job
 1|                                keeps its whole log in ~/.local/state/dibs/jobs, which
 1|                                answers later reads even once the machine is gone.
+1|   dibs --follow <job>         wait on a job its call let go of at a check-in: ends with the
+1|                                job, passing on its trailer and exit, or exits 80 at its next
+1|                                check-in, after another --check-in of running
 1|   dibs --fetch <job> [dir]    the files a recipe's job kept, the ones its `artifacts` name
 1|                                and it wrote itself. Kept beside the job's log in
 1|                                ~/.local/state/dibs/jobs/<job>/artifacts, and copied into dir
@@ -243,6 +246,10 @@
 1|   --max <seconds>    kill the command if it holds the lock longer than this (default 7200
 1|                      for --bench and 1800 otherwise, or twice the label's 90th percentile
 1|                      where its history runs longer, said when it starts)
+1|   --check-in <time>  once the job has run this long, frozen or parked time not counted, the
+1|                      call lets go of it and exits 80, naming it; the job goes on, and
+1|                      --follow <job> waits for it (default 30m; off never; s, m or h, bare
+1|                      minutes). A batch's steps and a recipe's jobs never do.
 1|   --label <name>     what shows up in --status (default: the caller's directory)
 1|   -v                 with --status, also dump the raw lock directory; with a call that
 1|                      queues, the whole queue rather than one line
