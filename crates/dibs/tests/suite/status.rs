@@ -753,7 +753,7 @@ fn status_says_when_a_holders_cap_kills_it() {
         "an hour from the command's start, which is a moment past the lock's: {at}"
     );
     let said = s.dibs(["--status"]).run().stdout;
-    assert!(said.contains(" at most  pid "), "{said}");
+    assert!(said.contains(", cap 1h00m  pid "), "{said}");
     g.open();
     s.wait(job);
 }

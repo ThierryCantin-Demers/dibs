@@ -97,6 +97,30 @@ impl LockDir {
         self.path.join(format!("{kind}.{pid}"))
     }
 
+    /// When a holder's cap stops it, in seconds since the epoch, for status to say.
+    pub fn deadline(&self, pid: u32) -> Option<u64> {
+        fs::read_to_string(self.file("deadline", pid))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
+    pub fn set_deadline(&self, pid: u32, at: Option<u64>) {
+        let file = self.file("deadline", pid);
+        let _ = match at {
+            Some(at) => fs::write(file, format!("{at}\n")),
+            None => fs::remove_file(file),
+        };
+    }
+
+    /// Moves a holder's deadline on by time its cap did not count.
+    pub fn defer_deadline(&self, pid: u32, by: Duration) {
+        if let Some(at) = self.deadline(pid) {
+            self.set_deadline(pid, Some(at + by.as_secs_f64().round() as u64));
+        }
+    }
+
     /// The lock one card is held by, in a namespace of its own: no record is ever named for it.
     pub fn card_lock(&self, pci: &str) -> PathBuf {
         self.path.join("cards").join(pci)

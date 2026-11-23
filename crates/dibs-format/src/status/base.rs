@@ -124,7 +124,7 @@ pub struct Holder {
     pub command: Option<String>,
     pub started: u64,
     pub elapsed: u64,
-    /// The `elapsed` at which its cap kills it, where it has one.
+    /// The `elapsed` at which its cap starts stopping it, where it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub killed_at: Option<u64>,
     /// CPU seconds its whole tree has used, reaped children included.

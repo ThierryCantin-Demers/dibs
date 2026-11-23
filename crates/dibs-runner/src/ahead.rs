@@ -35,11 +35,15 @@ impl Frozen {
         state.0.get_or_insert_with(Instant::now);
     }
 
-    fn thaw(&self) {
+    /// How long this freeze lasted.
+    fn thaw(&self) -> Duration {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(since) = state.0.take() {
-            state.1 += since.elapsed();
-        }
+        let lasted = state
+            .0
+            .take()
+            .map_or(Duration::ZERO, |since| since.elapsed());
+        state.1 += lasted;
+        lasted
     }
 
     /// Forgets the time frozen so far, which a command run again from the start does not get.
@@ -137,7 +141,8 @@ impl Watch {
             thread::sleep(POLL);
         }
         signal_group(job, libc::SIGCONT);
-        self.frozen.thaw();
+        let lasted = self.frozen.thaw();
+        self.dir.defer_deadline(self.pid, lasted);
         self.dir.mark_ahead(self.pid, self.arrived, &Ahead::Running);
     }
 

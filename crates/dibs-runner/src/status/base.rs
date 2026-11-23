@@ -16,8 +16,8 @@ use crate::{
 use dibs_format::{
     JobId, JobMeta, LockRecord, Mode,
     status::{
-        BatchShown, Holder, Leftover, Listing, LockState, Orphan, Remaining, Scene, Service, Shown,
-        Silent, Status, Text, Waiter,
+        Ahead, BatchShown, Holder, Leftover, Listing, LockState, Orphan, Remaining, Scene, Service,
+        Shown, Silent, Status, Text, Waiter,
     },
 };
 use std::{
@@ -215,7 +215,7 @@ impl Look<'_> {
             command: self.command(pid),
             started: record.start,
             elapsed,
-            killed_at: self.deadline(pid).map(|at| at.saturating_sub(record.start)),
+            killed_at: self.killed_at(pid, record.start),
             cpu: ticks / Host::clock_ticks(),
             estimate: shown,
             output,
@@ -269,12 +269,12 @@ impl Look<'_> {
         Some(said.trim().to_string()).filter(|s| !s.is_empty())
     }
 
-    fn deadline(&self, pid: u32) -> Option<u64> {
-        fs::read_to_string(self.dir.file("deadline", pid))
-            .ok()?
-            .trim()
-            .parse()
-            .ok()
+    /// None while frozen or parked, whose ends move the deadline.
+    fn killed_at(&self, pid: u32, start: u64) -> Option<u64> {
+        let waiting = matches!(self.dir.ahead_of(pid), Some(Ahead::Paused(_)))
+            || self.dir.parked_for(pid).is_some();
+        let at = self.dir.deadline(pid).filter(|_| !waiting)?;
+        Some(at.saturating_sub(start))
     }
 
     fn command(&self, pid: u32) -> Option<String> {

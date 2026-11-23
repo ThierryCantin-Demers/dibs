@@ -1259,14 +1259,13 @@ impl<'a> Run<'a> {
 
     /// When the job's cap kills it, in seconds since the epoch, for status to say.
     fn show_deadline(&self, deadline: Deadline) {
-        let file = self.at.dir.file("deadline", self.at.call.pid);
         let at = deadline
             .left()
             .and_then(|left| (SystemTime::now() + left).duration_since(UNIX_EPOCH).ok());
-        let _ = match at {
-            Some(at) => fs::write(file, format!("{}\n", at.as_secs_f64().round())),
-            None => fs::remove_file(file),
-        };
+        self.at.dir.set_deadline(
+            self.at.call.pid,
+            at.map(|at| at.as_secs_f64().round() as u64),
+        );
     }
 
     /// The ports and services the job asked for, then the job itself, to its end.
@@ -1518,6 +1517,7 @@ impl<'a> Run<'a> {
         if let Some(services) = &mut hosted.services {
             services.stop();
         }
+        self.at.dir.set_deadline(pid, None);
         if begun.log.is_some() {
             self.sweep_escaped(&arrived.job);
         }

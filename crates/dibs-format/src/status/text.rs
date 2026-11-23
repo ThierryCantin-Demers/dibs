@@ -150,7 +150,7 @@ impl Text<'_> {
         };
         let cap = holder
             .killed_at
-            .map(|at| format!(" {}of {} at most{}", p.dim, Span(at), p.off))
+            .map(|at| format!(", {}cap {}{}", p.dim, Span(at), p.off))
             .unwrap_or_default();
         let lead = format!(
             "  {}{}{}  {}{}{}  {}{}{}{cap}  {}pid {}{}{job}{ahead}",
@@ -636,7 +636,7 @@ mod tests {
         );
         held.holders[0].killed_at = Some(1800);
         assert!(
-            text(&held).contains("  shared  build  1m05s of 30m00s at most  pid 42  job "),
+            text(&held).contains("  shared  build  1m05s, cap 30m00s  pid 42  job "),
             "{}",
             text(&held)
         );
