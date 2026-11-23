@@ -1261,11 +1261,11 @@ impl<'a> Run<'a> {
     fn show_deadline(&self, deadline: Deadline) {
         let at = deadline
             .left()
-            .and_then(|left| (SystemTime::now() + left).duration_since(UNIX_EPOCH).ok());
-        self.at.dir.set_deadline(
-            self.at.call.pid,
-            at.map(|at| at.as_secs_f64().round() as u64),
-        );
+            .and_then(|left| SystemTime::now().checked_add(left))
+            .and_then(|at| at.duration_since(UNIX_EPOCH).ok());
+        self.at
+            .dir
+            .set_deadline(self.at.call.pid, at.map(|at| at.as_secs_f64()));
     }
 
     /// The ports and services the job asked for, then the job itself, to its end.
@@ -1514,10 +1514,10 @@ impl<'a> Run<'a> {
                 }
             }
         };
+        self.at.dir.set_deadline(pid, None);
         if let Some(services) = &mut hosted.services {
             services.stop();
         }
-        self.at.dir.set_deadline(pid, None);
         if begun.log.is_some() {
             self.sweep_escaped(&arrived.job);
         }

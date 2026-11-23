@@ -10,13 +10,10 @@ use std::fs;
 /// The durations a holder's clock or the queue's decides, with what history says left alone.
 fn status_clock(n: Normal) -> Normal {
     n.clocked()
+        .rule(r", cap [0-9]+[hms][0-9hms]*  pid ", "  pid ")
         .rule(
             r"(?m)^(  [a-z]+  \S+  )[0-9]+[hms][0-9hms]*(  pid )",
             "$1<dur>$2",
-        )
-        .rule(
-            r"(?m)^(  [a-z]+  \S+  )[0-9]+[hms][0-9hms]*, cap ([0-9]+[hms][0-9hms]*)(  pid )",
-            "$1<dur>, cap {$2}$3",
         )
         .rule(r"(~|under )([0-9]+[hms][0-9hms]*) left", "$1{$2} left")
         .rule(r"waiting [0-9]+[hms][0-9hms]*", "waiting <dur>")

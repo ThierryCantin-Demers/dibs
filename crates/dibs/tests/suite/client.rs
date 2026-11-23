@@ -35,6 +35,7 @@ fn client_normal(s: &Sandbox) -> Normal {
         .rule(r"\b[0-9a-f]{12}\b", "<sha>")
         .rule(r"\b[0-9a-f]{10}\b", "<sha>")
         .rule(r"\b[0-9a-f]{7}\b", "<sha>")
+        .rule(r", cap [0-9]+[hms][0-9hms]*  pid ", "  pid ")
         .rule(r"\b[0-9]+(\.[0-9]+)?(ms|s)\b", "<dur>")
 }
 

@@ -274,7 +274,7 @@ impl Look<'_> {
         let waiting = matches!(self.dir.ahead_of(pid), Some(Ahead::Paused(_)))
             || self.dir.parked_for(pid).is_some();
         let at = self.dir.deadline(pid).filter(|_| !waiting)?;
-        Some(at.saturating_sub(start))
+        Some((at - start as f64).round().max(0.0) as u64)
     }
 
     fn command(&self, pid: u32) -> Option<String> {

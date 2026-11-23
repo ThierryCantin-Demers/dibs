@@ -98,7 +98,7 @@ impl LockDir {
     }
 
     /// When a holder's cap stops it, in seconds since the epoch, for status to say.
-    pub fn deadline(&self, pid: u32) -> Option<u64> {
+    pub fn deadline(&self, pid: u32) -> Option<f64> {
         fs::read_to_string(self.file("deadline", pid))
             .ok()?
             .trim()
@@ -106,10 +106,10 @@ impl LockDir {
             .ok()
     }
 
-    pub fn set_deadline(&self, pid: u32, at: Option<u64>) {
+    pub fn set_deadline(&self, pid: u32, at: Option<f64>) {
         let file = self.file("deadline", pid);
         let _ = match at {
-            Some(at) => fs::write(file, format!("{at}\n")),
+            Some(at) => fs::write(file, format!("{at:.3}\n")),
             None => fs::remove_file(file),
         };
     }
@@ -117,7 +117,7 @@ impl LockDir {
     /// Moves a holder's deadline on by time its cap did not count.
     pub fn defer_deadline(&self, pid: u32, by: Duration) {
         if let Some(at) = self.deadline(pid) {
-            self.set_deadline(pid, Some(at + by.as_secs_f64().round() as u64));
+            self.set_deadline(pid, Some(at + by.as_secs_f64()));
         }
     }
 
