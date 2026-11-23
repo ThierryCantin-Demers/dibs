@@ -21,7 +21,7 @@ pub const HELP: &str = "\
   j / k        move down and up
   g / G        first and last
   p or Enter   the selected job's process tree, through --peek
-  o            what the selected job is writing, if it redirected to a file
+  o            what the selected job is writing
   n            the machine's GPUs, through nvidia-smi or rocm-smi
   L            recent arrivals and outcomes
   K            stop the selected job, with a confirmation
@@ -34,10 +34,9 @@ pub const HELP: &str = "\
   ?            this
   q            quit
 
-A job's output goes straight back to the agent that started it and is kept
-nowhere, so o can only show a job that redirected into a file. That is what
-agents mostly do, and the file is found by asking the kernel where the job's
-open descriptors point, so nothing has to be arranged in advance.
+o shows the file a job redirected into, found by asking the kernel where its
+open descriptors point, or else the log the machine keeps of every job's
+output. A transfer keeps none.
 
 While this has the mouse, the terminal cannot do its own text selection. Press m
 to hand it back, and the wheel goes back to whatever your terminal does with it.

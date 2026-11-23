@@ -35,15 +35,14 @@ impl Frozen {
         state.0.get_or_insert_with(Instant::now);
     }
 
-    /// How long this freeze lasted.
-    fn thaw(&self) -> Duration {
+    /// `published` hears how long this freeze lasted before the job counts as thawed, so a
+    /// rerun's deadline, set once it is, is not moved by it.
+    fn thaw(&self, published: impl FnOnce(Duration)) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let lasted = state
-            .0
-            .take()
-            .map_or(Duration::ZERO, |since| since.elapsed());
+        let lasted = state.0.map_or(Duration::ZERO, |since| since.elapsed());
+        published(lasted);
+        state.0 = None;
         state.1 += lasted;
-        lasted
     }
 
     /// Forgets the time frozen so far, which a command run again from the start does not get.
@@ -141,8 +140,8 @@ impl Watch {
             thread::sleep(POLL);
         }
         signal_group(job, libc::SIGCONT);
-        let lasted = self.frozen.thaw();
-        self.dir.defer_deadline(self.pid, lasted);
+        self.frozen
+            .thaw(|lasted| self.dir.defer_deadline(self.pid, lasted));
         self.dir.mark_ahead(self.pid, self.arrived, &Ahead::Running);
     }
 
@@ -190,7 +189,7 @@ mod tests {
         assert_eq!(frozen.total(), Duration::ZERO);
         frozen.freeze();
         thread::sleep(Duration::from_millis(20));
-        frozen.thaw();
+        frozen.thaw(|_| {});
         let once = frozen.total();
         assert!(once >= Duration::from_millis(20));
         thread::sleep(Duration::from_millis(20));

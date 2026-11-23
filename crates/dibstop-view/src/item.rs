@@ -43,9 +43,10 @@ impl Item {
         }
     }
 
-    /// Whether there is output to read: a file the job writes to, or else the log of its job.
+    /// Whether there is output to read: a file the job writes to, or else the log of its job,
+    /// which a transfer does not keep.
     pub fn readable(&self) -> bool {
-        self.holding && (self.output.is_some() || self.job.is_some())
+        self.holding && (self.output.is_some() || (self.job.is_some() && self.mode != Mode::Rsh))
     }
 
     /// Every job one machine's document lists, holders before the queue.
@@ -370,6 +371,19 @@ mod tests {
         assert_eq!(
             crate::action::Action::output(&v[0]).args,
             ["--out", "20261123211956-7"]
+        );
+        let odd = crate::action::Action::new(
+            "m".into(),
+            crate::action::Call::JobLog {
+                pid: 7,
+                job: "--help".into(),
+            },
+            "b",
+        );
+        assert_eq!(
+            odd.args,
+            ["--out", "7"],
+            "a job id that is not one goes as the pid"
         );
     }
 

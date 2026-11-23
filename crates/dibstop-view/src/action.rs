@@ -1,6 +1,6 @@
 //! The one-off `dibs` calls a person starts from a view, whose output it shows over itself.
 
-use dibs_format::Label;
+use dibs_format::{JobId, Label};
 use serde::{Deserialize, Serialize};
 
 use crate::item::Item;
@@ -20,9 +20,13 @@ pub enum Call {
     Log,
     Gpu,
     Status,
-    /// A running job's pid, for a file it writes to itself, or its job id, for its log.
     Output {
-        of: String,
+        pid: u32,
+    },
+    /// The log the machine keeps of a job that writes to no file of its own.
+    JobLog {
+        pid: u32,
+        job: JobId,
     },
     Tree {
         pid: u32,
@@ -61,11 +65,23 @@ impl Action {
                 "status".into(),
                 vec!["--status".into()],
             ),
-            Call::Output { of } => (
-                format!("reading what {of} is writing"),
-                format!("output of {of} ({label})"),
-                vec!["--out".into(), of.clone()],
+            Call::Output { pid } => (
+                format!("reading what {pid} is writing"),
+                format!("output of {pid} ({label})"),
+                vec!["--out".into(), pid.to_string()],
             ),
+            Call::JobLog { pid, job } => {
+                // Only an id's shape goes to dibs as one: a page's action could carry any string.
+                let of = match is_job_id(job.as_str()) {
+                    true => job.to_string(),
+                    false => pid.to_string(),
+                };
+                (
+                    format!("reading what {pid} is writing"),
+                    format!("output of {pid} ({label})"),
+                    vec!["--out".into(), of],
+                )
+            }
             Call::Tree { pid } => (
                 format!("looking at {pid}"),
                 format!("process tree under {pid} ({label})"),
@@ -101,11 +117,14 @@ impl Action {
     }
 
     pub fn output(job: &Item) -> Action {
-        let of = match (&job.output, &job.job) {
-            (None, Some(id)) => id.to_string(),
-            _ => job.pid.to_string(),
+        let call = match (&job.output, &job.job) {
+            (None, Some(id)) => Call::JobLog {
+                pid: job.pid,
+                job: id.clone(),
+            },
+            _ => Call::Output { pid: job.pid },
         };
-        Action::new(job.machine.clone(), Call::Output { of }, job.label.as_str())
+        Action::new(job.machine.clone(), call, job.label.as_str())
     }
 
     pub fn process_tree(job: &Item) -> Action {
@@ -154,6 +173,14 @@ impl Action {
         };
         on.into_iter().chain(self.args.iter().cloned()).collect()
     }
+}
+
+fn is_job_id(id: &str) -> bool {
+    id.split_once('-').is_some_and(|(when, pid)| {
+        [when, pid]
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 /// A job's output is whatever the job printed, and build tools print two things this cannot
