@@ -213,6 +213,22 @@ impl Card {
             })
     }
 
+    /// The other cards of the model `card` is one of, where it names one by its slot, which may
+    /// itself hold a dot: twins on one bus are `.41.00` and `.41.01`.
+    pub fn siblings(card: &Alias, entry: &Machine) -> Vec<Alias> {
+        let Some(model) = Card::model(card) else {
+            return Vec::new();
+        };
+        Card::matching(model, entry)
+            .into_iter()
+            .filter(|a| a != card)
+            .collect()
+    }
+
+    pub fn model(card: &Alias) -> Option<&str> {
+        card.as_str().split_once('.').map(|(model, _)| model)
+    }
+
     fn matching(one: &str, entry: &Machine) -> Vec<Alias> {
         if entry.device(one).is_some() {
             return vec![Alias::new(one)];
@@ -493,6 +509,16 @@ mod tests {
         assert!(Card::concrete(&Alias::new(asked), &entry, |_| 0).is_err());
         let asked = ["twin"; 12].join(",");
         assert!(Card::concrete(&Alias::new(asked), &entry, |_| 0).is_ok());
+    }
+
+    #[test]
+    fn a_slot_has_the_other_cards_of_its_model_beside_it() {
+        let entry = machine(&["gpu:twin.41.00", "gpu:twin.83", "gpu:other.a"]);
+        assert_eq!(
+            Card::siblings(&Alias::new("gpu:twin.41.00"), &entry),
+            [Alias::new("gpu:twin.83")]
+        );
+        assert!(Card::siblings(&Alias::new("cpu"), &entry).is_empty());
     }
 
     #[test]

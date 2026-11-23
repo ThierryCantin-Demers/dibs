@@ -8,7 +8,7 @@ use crate::{
     },
     caller::Caller,
     cli::{Call, Command, PortName, Run, RunLock, Service},
-    inventory::InventoryError,
+    inventory::{InventoryError, Machine},
     machine::{
         CallValues, Card, CardError, Delivery, Fleet, Here, Liveness, MaxFrom, Named, Session,
         Target, TargetEnv, TargetError,
@@ -113,13 +113,15 @@ impl<'a> LockedCall<'a> {
         self.mode == Mode::Bench
     }
 
-    /// A `--device` that names cards by a prefix, made the cards the job goes to: the ones its
-    /// label's series was measured on here, so the series stays on them, else the ones a job of the
-    /// label there runs or waits on, else the matching cards the fewest jobs there run or wait for.
-    /// Several callers picking at once may pick alike, and the later then waits for its card as if
-    /// it had named it.
+    /// A `--device` that names cards by a prefix, made the cards the job goes to. A benchmark
+    /// goes to the ones its label's series was measured on here, so the series stays on them,
+    /// else the ones a job of the label there runs or waits on; any job otherwise to the matching
+    /// cards the fewest jobs there run or wait for. Several callers picking at once may pick
+    /// alike, and the later then waits for its card as if it had named it.
     fn pick(
         call: &Call,
+        bench: bool,
+        hint: bool,
         target: &Target,
         fleet: &Fleet,
         series: Option<&Series>,
@@ -130,10 +132,13 @@ impl<'a> LockedCall<'a> {
         };
         if !Card::chooses(alias, entry) {
             let named = Card::concrete(alias, entry, |_| 0)?;
+            if hint && !bench {
+                LockedCall::idle_beside(&named, entry);
+            }
             return Ok((named != *alias).then_some(named));
         }
         let bound = series
-            .filter(|_| !call.new_series)
+            .filter(|_| bench && !call.new_series)
             .into_iter()
             .flat_map(|s| {
                 labels
@@ -145,7 +150,7 @@ impl<'a> LockedCall<'a> {
             return Ok(Some(Alias::new(cards)));
         }
         let reading = Reading::asked(&entry.name);
-        let running = reading.as_ref().and_then(|r| {
+        let running = reading.as_ref().filter(|_| bench).and_then(|r| {
             labels
                 .iter()
                 .flat_map(|l| r.cards_of(l.as_str()))
@@ -172,6 +177,34 @@ impl<'a> LockedCall<'a> {
         Ok(Some(Card::concrete(alias, entry, cost)?))
     }
 
+    /// Says so when shared work names a busy card by its slot while another of its model is idle:
+    /// it goes where it was sent, and the model's name would have let dibs choose.
+    fn idle_beside(named: &Alias, entry: &Machine) {
+        let siblings = Card::siblings(named, entry);
+        if siblings.is_empty() {
+            return;
+        }
+        let Some(reading) = Reading::asked(&entry.name) else {
+            return;
+        };
+        let busy = reading.using(named.as_str());
+        let idle: Vec<&str> = siblings
+            .iter()
+            .map(Alias::as_str)
+            .filter(|card| reading.using(card) == 0)
+            .collect();
+        if busy == 0 || idle.is_empty() {
+            return;
+        }
+        let model = Card::model(named).unwrap_or_default();
+        eprintln!(
+            "dibs: {named} already has {busy} job(s) on it, while {} has none. \
+             --device {} lets dibs take the least busy card of the model.",
+            idle.join(" and "),
+            model.strip_prefix("gpu:").unwrap_or(model)
+        );
+    }
+
     /// The cards `call`'s `--device` goes to, where it names them by model or leaves out `gpu:`,
     /// kept to the series of any of `labels`.
     pub fn concrete(&self, call: &Call, labels: &[Label]) -> Result<Option<Alias>, CallError> {
@@ -180,7 +213,15 @@ impl<'a> LockedCall<'a> {
         let fleet = Fleet::load(paths.inventory())?;
         let target = self.target(call, &env, &fleet)?;
         let series = paths.series().map(|path| Series { path });
-        LockedCall::pick(call, &target, &fleet, series.as_ref(), labels)
+        LockedCall::pick(
+            call,
+            self.bench(),
+            false,
+            &target,
+            &fleet,
+            series.as_ref(),
+            labels,
+        )
     }
 
     /// Runs the call and returns the exit to give.
@@ -216,7 +257,15 @@ impl<'a> LockedCall<'a> {
         let series = paths.series().map(|path| Series { path });
         let picked;
         let picked_for = [label.clone()];
-        let call = match LockedCall::pick(call, &target, &fleet, series.as_ref(), &picked_for)? {
+        let call = match LockedCall::pick(
+            call,
+            self.bench(),
+            true,
+            &target,
+            &fleet,
+            series.as_ref(),
+            &picked_for,
+        )? {
             Some(cards) => {
                 picked = Call {
                     device: Some(cards),

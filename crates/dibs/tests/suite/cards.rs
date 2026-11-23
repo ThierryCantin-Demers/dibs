@@ -490,3 +490,55 @@ fn a_label_with_no_series_yet_follows_the_card_its_first_run_holds() {
     assert_eq!(s.wait(first), 0);
     s.gone();
 }
+
+#[test]
+fn shared_work_named_by_model_spreads_over_its_cards_and_a_busy_slot_names_the_idle_one() {
+    let Some(mut s) = machine_of(["gpu:twin.a", "gpu:twin.b"]) else {
+        return;
+    };
+    let held = s.gate("held");
+    let first_card = s.p("first");
+    let first = s.spawn(s.dibs([
+        "--on",
+        "here",
+        "--device",
+        "twin",
+        "--label",
+        "tests",
+        &format!("echo $DIBS_DEVICE > {first_card}; {}", held.hold()),
+    ]));
+    s.until_records("the first to hold its card", || !s.read("first").is_empty());
+    let first_card = s.read("first").trim().to_string();
+    let second = s
+        .dibs([
+            "--on",
+            "here",
+            "--device",
+            "twin",
+            "--label",
+            "tests",
+            "echo $DIBS_DEVICE",
+        ])
+        .run();
+    assert_eq!(second.code, 0, "{}", second.all());
+    assert_ne!(
+        second.stdout.trim(),
+        first_card,
+        "a shared job has no series to keep, so it takes the idle card"
+    );
+    let pinned = s
+        .dibs(["--on", "here", "--device", &first_card, "true"])
+        .run();
+    assert_eq!(pinned.code, 0, "{}", pinned.all());
+    assert_eq!(
+        pinned
+            .stderr
+            .lines_with("lets dibs take the least busy card"),
+        1,
+        "{}",
+        pinned.all()
+    );
+    held.open();
+    assert_eq!(s.wait(first), 0);
+    s.gone();
+}
