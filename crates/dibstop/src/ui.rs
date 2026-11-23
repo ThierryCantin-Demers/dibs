@@ -276,7 +276,7 @@ impl Widths {
                 &mut w.device,
                 longest(&|it| it.device.as_ref().map(|d| count(d.as_str()))),
             ),
-            (true, &mut w.agent, longest(&|it| Some(count(&it.agent)))),
+            (true, &mut w.agent, longest(&|it| Some(count(&it.who())))),
             (true, &mut w.note, longest(&|it| Some(count(&it.note)))),
         ];
         // One character at a time, round the columns, so a long label, agent and note share what
@@ -356,7 +356,7 @@ fn job_row(it: &Item, selected: bool, w: &Widths) -> Row<'static> {
         });
     }
     cells.extend([
-        Span::styled(fit(&it.agent, w.agent), base.fg(hue)),
+        Span::styled(fit(&it.who(), w.agent), base.fg(hue)),
         Span::styled(
             DibsSpan(it.time).to_string(),
             base.add_modifier(Modifier::BOLD),
@@ -388,6 +388,13 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
         Line::from(vec![
             Span::styled("from  ", DIM),
             Span::styled(it.agent.clone(), Style::new().fg(agent_hue(&it.agent))),
+            Span::styled(
+                it.user
+                    .as_ref()
+                    .map(|user| format!(" ({user})"))
+                    .unwrap_or_default(),
+                DIM,
+            ),
             Span::styled(format!("   pid {}", it.pid), DIM),
         ]),
         Line::from(Span::raw(it.cmd.clone())),

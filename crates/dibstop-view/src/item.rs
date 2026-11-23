@@ -17,6 +17,8 @@ pub struct Item {
     pub pid: u32,
     pub label: Label,
     pub agent: String,
+    /// The person the agent runs as, where its call said.
+    pub user: Option<String>,
     pub cmd: String,
     pub time: u64,
     pub cpu: Option<u64>,
@@ -31,6 +33,14 @@ pub struct Item {
 }
 
 impl Item {
+    /// The agent, and the person it runs as, as `dibs status` writes them.
+    pub fn who(&self) -> String {
+        match &self.user {
+            Some(user) => format!("{} ({user})", self.agent),
+            None => self.agent.clone(),
+        }
+    }
+
     /// Every job one machine's document lists, holders before the queue.
     pub fn all(machine: &str, s: &Status) -> Vec<Item> {
         s.holders
@@ -54,6 +64,7 @@ impl Item {
             pid: h.pid,
             label: h.label.clone(),
             agent: h.agent.clone(),
+            user: h.user.clone(),
             cmd: h.cmd.clone(),
             time: h.elapsed,
             cpu: Some(h.cpu),
@@ -78,6 +89,7 @@ impl Item {
             pid: q.pid,
             label: q.label.clone(),
             agent: q.agent.clone(),
+            user: q.user.clone(),
             cmd: q.cmd.clone(),
             time: q.waiting,
             cpu: None,
@@ -339,6 +351,17 @@ mod tests {
             ("preparing: laying out its tree", false),
             "a prepare is not timed against the command's history"
         );
+    }
+
+    #[test]
+    fn a_job_names_the_person_its_agent_runs_as() {
+        let s = status(
+            &holder("b", r#","user":"nathaniel""#),
+            r#"{"position":1,"mode":"bench","pid":8,"label":"q","agent":"x","device":"-","cmd":"c","arrived":0,"waiting":1}"#,
+        );
+        let v = Item::all("m", &s);
+        assert_eq!(v[0].who(), format!("{} (nathaniel)", v[0].agent));
+        assert_eq!(v[1].who(), "x");
     }
 
     #[test]
