@@ -155,6 +155,10 @@ impl<'a> Wire<'a> {
         let out = call.run();
         let body = format!("-> exit {}\n{}", out.code, self.captured(cmd, calls));
         self.t.section(&self.n.apply(title), &body);
+        if calls == Calls::AtOnce {
+            self.show_ssh_log(title);
+            eprintln!("and what it said:\n{}", out.all());
+        }
         out
     }
 
@@ -170,12 +174,16 @@ impl<'a> Wire<'a> {
             indent(&self.n.apply(&out.all()))
         );
         self.t.section(&self.n.apply(title), &body);
-        // Shown only when the test fails: what each ssh started for this call did.
+        self.show_ssh_log(title);
+        out
+    }
+
+    /// Shown only when the test fails: what each ssh started for this call did.
+    fn show_ssh_log(&self, title: &str) {
         eprintln!(
             "the recording ssh, for {title}:\n{}",
             fs::read_to_string(self.s.path("wire.log")).unwrap_or_default()
         );
-        out
     }
 
     pub fn text(&self) -> &str {
