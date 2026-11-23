@@ -726,6 +726,14 @@ would use before anything runs. `--device a,b` pins a job to several cards, whic
 the order given, and files its series under the pair as written. Vulkan selects a single card, so a
 job over several is refused when one of them runs neither CUDA nor ROCm.
 
+An entry may leave out `gpu:`, and may name a model rather than a card: `--device aipror9700`
+takes one of the cards whose alias starts `gpu:aipror9700.`, and `--device aipror9700,aipror9700`
+two different ones. The label's series decides first: a label measured on a card here goes to that
+card again, and waits for it when it is busy, since another would start a second history. A label
+with no series here takes the matching card the fewest jobs run on or wait for, read from the
+machine's status as the call starts. Two callers picking in the same moment may pick alike, and
+the later then waits for that card as if it had named it.
+
 What that turns into differs per runtime, and none of it is guessable. First, whatever the runtime,
 the slot is read back at launch: one that is empty, or holds another model than the inventory
 recorded, refuses the job with exit 2 and says what the slot holds now, since every selector below

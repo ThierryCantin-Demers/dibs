@@ -14,13 +14,14 @@ use crate::{
         Target, TargetEnv, TargetError,
     },
     paths::Paths,
-    placement::{Placement, Unplaced},
+    placement::{Placement, Reading, Unplaced},
 };
-use dibs_format::{Exit, Label, Mode, wire::Trailer};
+use dibs_format::{Alias, Exit, Label, Mode, wire::Trailer};
 use dibs_runner::short_hostname;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, hash_map::RandomState},
     fmt,
+    hash::BuildHasher as _,
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
 };
@@ -113,6 +114,38 @@ impl<'a> LockedCall<'a> {
         self.mode == Mode::Bench
     }
 
+    /// A `--device` that names cards by a prefix, made the cards the job goes to: the ones its
+    /// label's series was measured on here, so the series stays on them, else the matching cards
+    /// the fewest jobs there run or wait for. Several callers picking at once may pick alike, and
+    /// the later then waits for its card as if it had named it.
+    fn pick(
+        call: &Call,
+        target: &Target,
+        fleet: &Fleet,
+        series: Option<&Series>,
+        label: &Label,
+    ) -> Result<Option<Alias>, CallError> {
+        let (Some(alias), Some(entry)) = (&call.device, target.entry(fleet)) else {
+            return Ok(None);
+        };
+        if !Card::chooses(alias, entry) {
+            return Ok(None);
+        }
+        let bound = series
+            .and_then(|s| s.card_of(label.as_str(), &target.series_key()))
+            .filter(|cards| !call.new_series && Card::fits(alias, cards, entry));
+        if let Some(cards) = bound {
+            return Ok(Some(Alias::new(cards)));
+        }
+        let reading = Reading::asked(&entry.name);
+        let spread = RandomState::new();
+        let cost = |card: &Alias| {
+            let used = reading.as_ref().map_or(0, |r| r.using(card.as_str()));
+            used * 1000 + spread.hash_one(card.as_str()) % 1000
+        };
+        Ok(Some(Card::concrete(alias, entry, cost)?))
+    }
+
     /// Runs the call and returns the exit to give.
     pub fn run(&self, call: &Call, caller: &Caller) -> Result<i32, CallError> {
         self.run_into(call, caller, &mut Output::Inherit)
@@ -142,6 +175,19 @@ impl<'a> LockedCall<'a> {
             local: env.local,
         };
         let target = self.target(call, &env, &fleet)?;
+        let label = Request::label(call);
+        let series = paths.series().map(|path| Series { path });
+        let picked;
+        let call = match LockedCall::pick(call, &target, &fleet, series.as_ref(), &label)? {
+            Some(cards) => {
+                picked = Call {
+                    device: Some(cards),
+                    ..call.clone()
+                };
+                &picked
+            }
+            None => call,
+        };
 
         let card = match &call.device {
             Some(alias) => Card::resolve(alias, &target, &fleet)?,
@@ -158,7 +204,6 @@ impl<'a> LockedCall<'a> {
             output.say(&note);
         }
 
-        let label = Request::label(call);
         let device = call
             .device
             .as_ref()
@@ -169,7 +214,6 @@ impl<'a> LockedCall<'a> {
             machine: &machine,
             card: &device,
         };
-        let series = paths.series().map(|path| Series { path });
         if self.bench()
             && !self.hold
             && env.series_check

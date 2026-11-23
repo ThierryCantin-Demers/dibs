@@ -32,6 +32,11 @@ fn two_slots() -> Option<[(String, String); 2]> {
 
 /// A sandbox on a card machine with `gpu:a` and `gpu:b`; None where there are no slots to use.
 fn card_machine() -> Option<Sandbox> {
+    machine_of(["gpu:a", "gpu:b"])
+}
+
+/// A sandbox on a card machine with two cards under `aliases`.
+fn machine_of(aliases: [&str; 2]) -> Option<Sandbox> {
     let Some([(a, chip_a), (b, chip_b)]) = two_slots() else {
         skip("this computer has no two PCI devices to stand in for cards");
         return None;
@@ -70,8 +75,8 @@ fn card_machine() -> Option<Sandbox> {
     s.machines(&format!(
         "[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n{}{}",
         hostname(),
-        card("gpu:a", &a, &chip_a),
-        card("gpu:b", &b, &chip_b),
+        card(aliases[0], &a, &chip_a),
+        card(aliases[1], &b, &chip_b),
     ));
     s.set("DIBS_BENCHMARKS", "card");
     Some(s)
@@ -331,5 +336,87 @@ fn an_urgent_benchmark_on_a_free_card_joins_the_ones_running() {
     assert_eq!(s.read("order"), "a\nb\n");
     first.open();
     assert_eq!(s.wait(a), 0);
+    s.gone();
+}
+
+/// The cards a benchmark naming `device` ran on, as its job saw them.
+fn ran_on(s: &mut Sandbox, device: &str, label: &str) -> (i32, String) {
+    let seen = s.p(&format!("seen-{label}"));
+    let out = s
+        .dibs([
+            "--on",
+            "here",
+            "--bench",
+            "--wait",
+            "0",
+            "--device",
+            device,
+            "--label",
+            label,
+            &format!("echo $DIBS_DEVICE > {seen}"),
+        ])
+        .run();
+    (
+        out.code,
+        s.read(&format!("seen-{label}")).trim().to_string(),
+    )
+}
+
+#[test]
+fn a_prefix_takes_a_free_card_among_the_ones_it_names() {
+    let Some(mut s) = machine_of(["gpu:twin.a", "gpu:twin.b"]) else {
+        return;
+    };
+    let first = s.gate("first");
+    let order = s.p("order");
+    let a = s.spawn(bench(
+        &s,
+        Some("gpu:twin.a"),
+        "a",
+        &format!("echo a >> {order}; {}", first.hold()),
+    ));
+    s.until_records("the first benchmark to run", || s.read("order") == "a\n");
+    assert_eq!(
+        ran_on(&mut s, "twin", "free"),
+        (0, "gpu:twin.b".to_string()),
+        "gpu: may be left out, and the card in use is passed over"
+    );
+    first.open();
+    assert_eq!(s.wait(a), 0);
+    let (code, both) = ran_on(&mut s, "gpu:twin,twin", "both");
+    let mut both: Vec<&str> = both.split(',').collect();
+    both.sort_unstable();
+    assert_eq!(
+        (code, both),
+        (0, vec!["gpu:twin.a", "gpu:twin.b"]),
+        "each entry takes a card of its own"
+    );
+    s.gone();
+}
+
+#[test]
+fn a_label_measured_on_one_card_waits_for_it_rather_than_take_another() {
+    let Some(mut s) = machine_of(["gpu:twin.a", "gpu:twin.b"]) else {
+        return;
+    };
+    let (code, card) = ran_on(&mut s, "twin", "series");
+    assert_eq!(code, 0);
+    let held = s.gate("held");
+    let order = s.p("order");
+    let busy = s.spawn(bench(
+        &s,
+        Some(card.as_str()),
+        "busy",
+        &format!("echo busy >> {order}; {}", held.hold()),
+    ));
+    s.until_records("its card to be taken", || s.read("order") == "busy\n");
+    assert_eq!(
+        ran_on(&mut s, "twin", "series").0,
+        75,
+        "its series is on {card}, so the other card would start a second history"
+    );
+    held.open();
+    assert_eq!(s.wait(busy), 0);
+    assert_eq!(ran_on(&mut s, "twin", "series"), (0, card));
     s.gone();
 }

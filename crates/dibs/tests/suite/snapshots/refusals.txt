@@ -59,7 +59,6 @@ exit  call
 1     DIBS_MACHINES=/nonexistent/machines.toml dibs --which
 2     DIBS_MACHINES=/nonexistent/machines.toml DIBS_LOCAL=0 dibs --check --write
 2     DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device gpu:nope true
-2     DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device card true
 2     DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device gpu:card 'cargo bench --features rocm'
 2     DIBS_MACHINES=<root>/two.toml dibs --on box-a --device gpu:card true
 2     DIBS_MACHINES=/nonexistent/machines.toml dibs --device gpu:card true
@@ -330,15 +329,6 @@ exit  call
 == DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device gpu:nope true
 -> exit 2
 2| dibs: box-a has no device called 'gpu:nope'.
-2|   it has:
-2|     gpu:card
-2|     gpu:other
-2|     cpu
-
-== DIBS_MACHINES=<root>/cards.toml dibs --on box-a --device card true
--> exit 2
-2| dibs: box-a has no device called 'card'.
-2|   Did you mean gpu:card?
 2|   it has:
 2|     gpu:card
 2|     gpu:other

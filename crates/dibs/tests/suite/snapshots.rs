@@ -1619,7 +1619,6 @@ fn refusals() {
             .env("DIBS_MACHINES", none)
             .env("DIBS_LOCAL", "0"),
         r(&["--on", "box-a", "--device", "gpu:nope", "true"]).env("DIBS_MACHINES", &cards),
-        r(&["--on", "box-a", "--device", "card", "true"]).env("DIBS_MACHINES", &cards),
         r(&[
             "--on",
             "box-a",

@@ -30,8 +30,6 @@ pub enum CardError {
     NoSuchCard {
         machine: MachineName,
         alias: Alias,
-        /// It has `gpu:<alias>`, which is not taken as this: two spellings would be two histories.
-        gpu_spelling: bool,
         aliases: Vec<Alias>,
         cpu: bool,
     },
@@ -62,6 +60,7 @@ impl Card {
     /// `a,b`: each card named, the first carrying the rest, under the alias as written, which is
     /// what the series is filed under.
     pub fn all_on(alias: &Alias, entry: &Machine) -> Result<Card, CardError> {
+        let alias = &Card::concrete(alias, entry, |_| 0)?;
         let mut cards = alias
             .as_str()
             .split(',')
@@ -71,6 +70,75 @@ impl Card {
         first.alias = alias.to_string();
         first.also = cards;
         Ok(first)
+    }
+
+    /// Every entry of `alias` made one card of `entry`, none taken twice. An alias named exactly
+    /// stays, `gpu:` may be left out, and a prefix such as `aipror9700` takes the cheapest by
+    /// `cost` of the cards whose alias it starts, the first listed among equals.
+    pub fn concrete(
+        alias: &Alias,
+        entry: &Machine,
+        cost: impl Fn(&Alias) -> u64,
+    ) -> Result<Alias, CardError> {
+        let mut taken: Vec<Alias> = Vec::new();
+        for one in alias.as_str().split(',') {
+            let mut matching: Vec<Alias> = Card::matching(one, entry)
+                .into_iter()
+                .filter(|a| !taken.contains(a))
+                .collect();
+            matching.sort_by_key(&cost);
+            match matching.into_iter().next() {
+                Some(card) => taken.push(card),
+                None => {
+                    Card::on(&Alias::new(one), entry)?;
+                    taken.push(Alias::new(one));
+                }
+            }
+        }
+        let names: Vec<&str> = taken.iter().map(Alias::as_str).collect();
+        Ok(Alias::new(names.join(",")))
+    }
+
+    /// Whether `alias` names more than one card for some entry, which a pick must then choose.
+    pub fn chooses(alias: &Alias, entry: &Machine) -> bool {
+        alias
+            .as_str()
+            .split(',')
+            .any(|one| Card::matching(one, entry).len() > 1)
+    }
+
+    /// Whether each card of `cards` is one the same entry of `alias` names.
+    pub fn fits(alias: &Alias, cards: &str, entry: &Machine) -> bool {
+        let (asked, named): (Vec<&str>, Vec<&str>) = (
+            alias.as_str().split(',').collect(),
+            cards.split(',').collect(),
+        );
+        asked.len() == named.len()
+            && asked.iter().zip(&named).all(|(one, card)| {
+                Card::matching(one, entry)
+                    .iter()
+                    .any(|a| a.as_str() == *card)
+            })
+    }
+
+    fn matching(one: &str, entry: &Machine) -> Vec<Alias> {
+        if entry.device(one).is_some() {
+            return vec![Alias::new(one)];
+        }
+        let named = match one.contains(':') {
+            true => one.to_string(),
+            false => format!("gpu:{one}"),
+        };
+        entry
+            .aliases()
+            .filter(|a| {
+                a.as_str() == named
+                    || a.as_str()
+                        .strip_prefix(named.as_str())
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+            .cloned()
+            .collect()
     }
 
     /// The card `alias` names on the machine `entry` describes.
@@ -88,9 +156,6 @@ impl Card {
             return Err(CardError::NoSuchCard {
                 machine: entry.name.clone(),
                 alias: alias.clone(),
-                gpu_spelling: entry
-                    .device(&format!("gpu:{alias}"))
-                    .is_some_and(|d| d.pci.as_deref().is_some_and(|p| !p.is_empty())),
                 aliases: entry.aliases().cloned().collect(),
                 cpu: entry.cpu_name().is_some(),
             });
@@ -183,14 +248,10 @@ impl fmt::Display for CardError {
             CardError::NoSuchCard {
                 machine,
                 alias,
-                gpu_spelling,
                 aliases,
                 cpu,
             } => {
                 writeln!(f, "dibs: {machine} has no device called '{alias}'.")?;
-                if *gpu_spelling {
-                    writeln!(f, "  Did you mean gpu:{alias}?")?;
-                }
                 if aliases.is_empty() && !cpu {
                     return writeln!(
                         f,

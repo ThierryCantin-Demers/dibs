@@ -63,6 +63,15 @@ impl<'a> Line<'a> {
 }
 
 impl Series {
+    /// The card `label`'s series on `machine` was measured on.
+    pub fn card_of(&self, label: &str, machine: &str) -> Option<String> {
+        let text = self.text()?;
+        text.lines()
+            .map(Line::of)
+            .find(|l| l.is(label, machine))
+            .map(|l| l.field(2).to_string())
+    }
+
     fn text(&self) -> Option<String> {
         let text = std::fs::read_to_string(&self.path).ok()?;
         (text.lines().next() == Some(HEADER)).then_some(text)

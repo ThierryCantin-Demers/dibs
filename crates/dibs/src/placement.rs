@@ -27,9 +27,20 @@ const BENCH_PENALTY: u64 = 1000;
 /// A cache landing where no benchmark can follow it is a cache in the wrong place.
 const UNMEASURED_PENALTY: u64 = 500;
 
+/// A job in a machine's status, as a pick of cards reads it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Occupant {
+    #[serde(default)]
+    pub device: Option<String>,
+}
+
 /// What placement reads of a machine's status.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Reading {
+    #[serde(default)]
+    pub holders: Vec<Occupant>,
+    #[serde(default)]
+    pub queue: Vec<Occupant>,
     pub state: LockState,
     pub cores: Option<u64>,
     pub load: Option<u64>,
@@ -93,6 +104,19 @@ impl Reading {
         String::from_utf8_lossy(output)
             .lines()
             .find_map(|line| serde_json::from_str(line).ok())
+    }
+
+    /// How many jobs running or queued name `card`.
+    pub fn using(&self, card: &str) -> u64 {
+        self.holders
+            .iter()
+            .chain(&self.queue)
+            .filter(|o| {
+                o.device
+                    .as_deref()
+                    .is_some_and(|d| d.split(',').any(|c| c == card))
+            })
+            .count() as u64
     }
 
     /// Held exclusively, so it cannot start shared work.
@@ -452,6 +476,8 @@ mod tests {
         Candidate {
             name: MachineName::new(name),
             reading: Some(Reading {
+                holders: Vec::new(),
+                queue: Vec::new(),
                 state,
                 cores: Some(1),
                 load: Some(load),

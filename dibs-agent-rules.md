@@ -208,6 +208,12 @@ spoiled without it.
   machine that names no card is not reproducible**, because which card the runtime picks is
   recorded nowhere. A job over several cards names them all, `--device a,b`, in the order
   the runtime numbers them; only CUDA and ROCm can be pinned to more than one.
+- **Name the model, not the slot, where the cards are alike**: `--device aipror9700` takes a free
+  card of that model, and `--device aipror9700,aipror9700` two different ones. A label already
+  measured on that machine goes back to its card, waiting for it if it is busy, so its series
+  stays comparable. Name a slot only to measure that slot.
+- On a machine set to `benchmarks = "card"`, a benchmark that names its cards runs beside
+  benchmarks on the others; builds and tests still wait for all of them.
 - Each machine keeps its own series of a label, since numbers from two machines never compare.
   The first run of a label on a machine says on stderr where its other series are: read it, since
   a forgotten `--on` is exactly that line. Keep the plain label for new work; `-kd` and `-mg`
