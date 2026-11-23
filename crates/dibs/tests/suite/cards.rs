@@ -4,9 +4,10 @@
 use crate::harness::*;
 use std::fs;
 
-/// Two PCI devices here, as `(slot, vendor:device)`.
+/// Two PCI devices here, as `(slot, vendor:device)`, whose bus, device and function no other
+/// device shares in another domain: rocminfo tells cards apart by those alone.
 fn two_slots() -> Option<[(String, String); 2]> {
-    let mut found = fs::read_dir("/sys/bus/pci/devices")
+    let found: Vec<(String, String)> = fs::read_dir("/sys/bus/pci/devices")
         .ok()?
         .flatten()
         .filter_map(|dev| {
@@ -19,8 +20,14 @@ fn two_slots() -> Option<[(String, String); 2]> {
                 dev.file_name().to_string_lossy().into_owned(),
                 format!("{}:{}", read("vendor")?, read("device")?),
             ))
-        });
-    Some([found.next()?, found.next()?])
+        })
+        .collect();
+    let slot = |pci: &str| pci.split_once(':').map(|(_, s)| s.to_string());
+    let mut alone = found
+        .iter()
+        .filter(|(pci, _)| found.iter().filter(|(o, _)| slot(o) == slot(pci)).count() == 1)
+        .cloned();
+    Some([alone.next()?, alone.next()?])
 }
 
 /// A sandbox on a card machine with `gpu:a` and `gpu:b`; None where there are no slots to use.

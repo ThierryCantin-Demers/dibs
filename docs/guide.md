@@ -826,6 +826,7 @@ patience = 60          # seconds a queued benchmark lets quick jobs go around it
 quick = 10             # what a job's own history must say it takes, at most, to go around
 bypass = true          # whether quick jobs, and transfers during a shared block, go around
 machine_series = false # see below
+benchmarks = "machine" # or "card", see below
 ```
 
 The rest may differ by account, in `~/.config/dibs/runner.toml` in the account dibs runs as,
@@ -851,6 +852,16 @@ table.
 `machine_series = true` has the machine hold each label's measurements to one card, whoever runs
 them, from the file `cards` beside its history; without it, each laptop holds only its own runs to
 a card. It refuses jobs, so it is off until everyone has updated.
+
+`benchmarks = "card"` lets benchmarks on different cards run at once. A benchmark that names its
+cards with `--device` locks those cards, all of them at once or none, and runs beside benchmarks
+on the others; together they hold the machine as one benchmark does, so builds and tests wait for
+the last of them. One waiting for a busy card holds up nobody on another, and one queued before
+it for the same card, or for the whole machine, still goes first. A card is locked alone only
+where the job cannot reach another: every runtime it lists is pinned (CUDA, ROCm unless another
+PCI domain repeats its slot, and Vulkan for one card, with Mesa's device-select layer on), so the
+setting is for a machine whose cards are all of one vendor. Everything else, a benchmark naming no
+card, a hold, one with `--with` servers, takes the whole machine as before.
 
 ## How the lock behaves
 

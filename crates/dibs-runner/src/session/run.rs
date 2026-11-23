@@ -963,11 +963,20 @@ impl<'a> Run<'a> {
 
     /// Held, and offering its hold on the machine to the card benchmarks that come after it.
     fn with_cards(&self, lock: Lock, cards: Option<Cards>, arrived: &Arrived) -> Acquired {
-        let sharing = cards
-            .is_some()
-            .then(|| lock.handles().ok())
-            .flatten()
-            .and_then(|(ahead, rw)| Sharing::start(self.at.dir, self.at.call.pid, rw, ahead).ok());
+        let shared = cards.is_some().then(|| {
+            lock.handles()
+                .and_then(|(ahead, rw)| Sharing::start(self.at.dir, self.at.call.pid, rw, ahead))
+        });
+        let sharing = match shared {
+            Some(Ok(sharing)) => Some(sharing),
+            Some(Err(e)) => {
+                self.at.sink.say(&format!(
+                    "dibs: benchmarks on other cards cannot run beside this one, which could not offer them its hold on the machine: {e}\n"
+                ));
+                None
+            }
+            None => None,
+        };
         let now = Moment::epoch_now();
         Acquired {
             sharing,

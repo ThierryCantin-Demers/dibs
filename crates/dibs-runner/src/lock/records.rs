@@ -359,20 +359,23 @@ impl LockDir {
     }
 
     /// Who holds `rw`. A process taking it and letting go at once is a client testing it, and the
-    /// asking process's own group is the invocation asking, so neither is an orphan.
+    /// asking process's own group is the invocation asking, so neither is an orphan; nor is a
+    /// card benchmark's tether while its runner lives, which holds the lock for its job.
     pub fn takers(&self, asking: u32) -> Takers {
         let mine = Host::group_of(asking);
         let holding: Vec<u32> = Host::lock_holders(&self.rw())
             .into_iter()
             .filter(|&pid| Host::exists(pid))
             .collect();
+        let recorded =
+            |pid: u32| self.file("holder", pid).exists() || self.file("waiting", pid).exists();
+        let processes = Host::processes();
+        let parent = |pid: u32| processes.iter().find(|p| p.pid == pid).map(|p| p.parent);
         let orphans = holding
             .iter()
             .copied()
             .filter(|&pid| mine.is_none() || Host::group_of(pid) != mine)
-            .filter(|&pid| {
-                !self.file("holder", pid).exists() && !self.file("waiting", pid).exists()
-            })
+            .filter(|&pid| !recorded(pid) && !parent(pid).is_some_and(recorded))
             .collect();
         Takers {
             seen: !holding.is_empty(),

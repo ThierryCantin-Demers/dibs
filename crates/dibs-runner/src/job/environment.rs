@@ -157,13 +157,9 @@ impl Environment {
             "/etc/vulkan/implicit_layer.d",
             "/usr/local/share/vulkan/implicit_layer.d",
         ];
-        let disabled = var("VK_LOADER_LAYERS_DISABLE").is_some_and(|layers| {
-            layers
-                .split(',')
-                .any(|l| l.contains("device_select") || l == "~all~" || l == "~implicit~")
-        });
+        // The loader's filter takes wildcards, so any filter at all may have turned it off.
         var("NODEVICE_SELECT").is_none()
-            && !disabled
+            && var("VK_LOADER_LAYERS_DISABLE").is_none()
             && LAYERS.iter().any(|dir| {
                 std::fs::read_dir(dir).is_ok_and(|entries| {
                     entries
