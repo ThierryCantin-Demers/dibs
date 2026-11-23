@@ -7,4 +7,4 @@ mod records;
 
 pub use base::{Hold, Lock};
 pub use cards::Cards;
-pub use records::{Kind, LockDir, RecordFile, Urgent};
+pub use records::{Entry, Kind, LockDir, RecordFile, Urgent};

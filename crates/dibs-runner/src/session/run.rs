@@ -11,7 +11,7 @@ use crate::{
     },
     kill::DESCRIBED,
     lock::{
-        Cards, Hold, Kind, Lock, LockDir, Urgent,
+        Cards, Entry, Hold, Kind, Lock, LockDir, Urgent,
         cohort::{self, Sharing},
     },
     machine::Site,
@@ -324,7 +324,7 @@ impl<'a> Run<'a> {
                 self.at.dir.mark_arrived(pid, order);
             }
             Some(Takes::Machine) => {
-                self.at.dir.open_window(pid);
+                self.at.dir.forget_window(pid);
                 self.at.dir.mark_arrived(pid, order);
             }
             None => {}
@@ -332,6 +332,9 @@ impl<'a> Run<'a> {
         self.at
             .dir
             .write(Kind::Waiting, &self.at.call.lock_record(start, &job));
+        if let Some(Takes::Machine) = self.card_claim() {
+            self.at.dir.open_window(pid);
+        }
         if let Some(batch) = request.batch.as_deref().filter(|b| !b.is_empty()) {
             let _ = fs::write(self.at.dir.file("batch", pid), format!("{batch}\n"));
         }
@@ -849,7 +852,7 @@ impl<'a> Run<'a> {
             {
                 // Its copies of the machine's locks are closed, never unlocked, which would free
                 // them for every member.
-                if dir.enter_windows(pid, arrived.order, pcis, true) {
+                if dir.enter_windows(pid, arrived.order, pcis, Entry::JoinsAhead) {
                     break Some((Some(cards), true));
                 }
                 drop(cards);
@@ -857,7 +860,7 @@ impl<'a> Run<'a> {
             }
             let mut gated_out = false;
             if !at_gate {
-                let attempt = match open {
+                let attempt = match pcis.is_some() {
                     true => Some(deadline.map_or(Instant::now() + BENCH_POLL, |d| {
                         d.min(Instant::now() + BENCH_POLL)
                     })),
@@ -865,7 +868,7 @@ impl<'a> Run<'a> {
                 };
                 match lock.pass_gate(attempt).map_err(no_lock)? {
                     true => at_gate = true,
-                    false if open && deadline.is_none_or(|d| Instant::now() < d) => {
+                    false if pcis.is_some() && deadline.is_none_or(|d| Instant::now() < d) => {
                         gated_out = true;
                     }
                     false => break None,
@@ -877,7 +880,7 @@ impl<'a> Run<'a> {
                 if let Some(pcis) = pcis
                     && let Some(cards) = self.join(&mut lock, pcis, deadline)?
                 {
-                    if dir.enter_windows(pid, arrived.order, pcis, false) {
+                    if dir.enter_windows(pid, arrived.order, pcis, Entry::Joins) {
                         lock.leave_gate();
                         break Some((Some(cards), true));
                     }
@@ -896,7 +899,9 @@ impl<'a> Run<'a> {
                     };
                     let entered = |cards: &Option<Cards>| {
                         cards.is_none()
-                            || pcis.is_some_and(|p| dir.enter_windows(pid, arrived.order, p, false))
+                            || pcis.is_some_and(|p| {
+                                dir.enter_windows(pid, arrived.order, p, Entry::Starts)
+                            })
                     };
                     match taken {
                         Some(cards) if entered(&cards) => {
@@ -1001,6 +1006,7 @@ impl<'a> Run<'a> {
         let Some(cards) = self.join(&mut lock, pcis, deadline)? else {
             return Ok(None);
         };
+        self.at.dir.count_in(self.at.call.pid, arrived.order);
         self.at
             .dir
             .mark_urgent(&Urgent {

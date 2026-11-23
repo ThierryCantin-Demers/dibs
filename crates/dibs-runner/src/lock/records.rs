@@ -120,18 +120,24 @@ impl LockDir {
         let _ = fs::write(self.file("arrived", pid), format!("{order}\n"));
     }
 
-    /// The card benchmarks running as a whole-machine benchmark arrives, which card benchmarks
-    /// join ahead of it until one of these, or of the ones that join, ends. Before its record,
-    /// and renamed into place, so nobody reads it half written.
-    pub fn open_window(&self, pid: u32) {
-        for joined in self.named(&format!("joined.{pid}")) {
-            let _ = fs::remove_file(joined);
+    /// Before a whole-machine benchmark's record: what a dead one of its pid left.
+    pub fn forget_window(&self, pid: u32) {
+        for file in self.named(&format!("joined.{pid}")) {
+            let _ = fs::remove_file(file);
         }
+        let _ = fs::remove_file(self.file("window", pid));
+    }
+
+    /// The card benchmarks admitted as a whole-machine benchmark arrives, which card benchmarks
+    /// join ahead of it until one of these, or of the ones that join, ends. After its record:
+    /// each card benchmark marks itself admitted before it looks for one, so each sees the other.
+    pub fn open_window(&self, pid: u32) {
         let members: Vec<String> = self
-            .records(Kind::Holder)
+            .named("admitted")
             .iter()
-            .filter(|h| h.pid != pid && self.card_live(h.pid))
-            .map(|h| h.pid.to_string())
+            .filter_map(|file| RecordFile(file).pid())
+            .filter(|&p| p != pid && self.member_live(p))
+            .map(|p| p.to_string())
             .collect();
         let draft = self.file("window-draft", pid);
         if fs::write(&draft, format!("{}\n", members.join(" "))).is_ok() {
@@ -139,24 +145,30 @@ impl LockDir {
         }
     }
 
-    /// A card benchmark ends when its record goes, which a runner killed outright never removes,
-    /// so one whose process is gone has ended too.
-    fn card_live(&self, pid: u32) -> bool {
+    /// A card benchmark ends when its records go, which a runner killed outright never removes,
+    /// so one whose process is gone, or a zombie, has ended too.
+    fn member_live(&self, pid: u32) -> bool {
         let card = self.file("card", pid);
-        card.exists() && RecordFile(&card).alive()
+        self.file("admitted", pid).exists()
+            && card.exists()
+            && RecordFile(&card).alive()
+            && Host::running(pid)
     }
 
     fn window_open(&self, machine: u32) -> bool {
         let Ok(text) = fs::read_to_string(self.file("window", machine)) else {
             return false;
         };
-        let joined = self.named(&format!("joined.{machine}"));
-        let mut members = text
+        let ran: Vec<u32> = text
             .split_whitespace()
             .filter_map(|p| p.parse().ok())
-            .chain(joined.iter().filter_map(|p| RecordFile(p).pid()))
-            .peekable();
-        members.peek().is_some() && members.all(|p| self.card_live(p))
+            .collect();
+        let joined = self.named(&format!("joined.{machine}"));
+        !ran.is_empty()
+            && ran
+                .into_iter()
+                .chain(joined.iter().filter_map(|p| RecordFile(p).pid()))
+                .all(|p| self.member_live(p))
     }
 
     fn machines_before(&self, pid: u32, order: u128) -> Vec<u32> {
@@ -183,15 +195,27 @@ impl LockDir {
             .any(|m| self.window_open(m))
     }
 
-    /// Counts `pid`, which holds its cards, among the ones joining each whole-machine benchmark
-    /// queued before it, then whether it may still run: a member that ended before it counted
-    /// closed the window. One that may not is taken out again.
-    pub fn enter_windows(&self, pid: u32, order: u128, pcis: &[String], gateless: bool) -> bool {
+    /// `pid`, which holds its cards, as admitted, and among the ones joining each whole-machine
+    /// benchmark queued before it.
+    pub fn count_in(&self, pid: u32, order: u128) {
+        let _ = fs::write(self.file("admitted", pid), "");
         for machine in self.machines_before(pid, order) {
             let _ = fs::write(self.file(&format!("joined.{machine}"), pid), "");
         }
-        let may = !self.bench_first(pid, order, Some(pcis))
-            && (!gateless || self.open_to_join(pid, order));
+    }
+
+    /// Counts `pid` in, then whether it may still run: a member that ended before it counted
+    /// closed the window, and a group is started only with no whole-machine benchmark queued
+    /// before it. One that may not is taken out again.
+    pub fn enter_windows(&self, pid: u32, order: u128, pcis: &[String], entry: Entry) -> bool {
+        self.count_in(pid, order);
+        let may = match entry {
+            Entry::Starts => self.machines_before(pid, order).is_empty(),
+            Entry::Joins => !self.bench_first(pid, order, Some(pcis)),
+            Entry::JoinsAhead => {
+                !self.bench_first(pid, order, Some(pcis)) && self.open_to_join(pid, order)
+            }
+        };
         if !may {
             self.leave_windows(pid);
         }
@@ -199,6 +223,7 @@ impl LockDir {
     }
 
     fn leave_windows(&self, pid: u32) {
+        let _ = fs::remove_file(self.file("admitted", pid));
         for joined in self.named("joined") {
             if RecordFile(&joined).pid() == Some(pid) {
                 let _ = fs::remove_file(joined);
@@ -458,10 +483,11 @@ impl LockDir {
             "arrived",
             "window",
             "window-draft",
+            "admitted",
         ] {
             let _ = fs::remove_file(self.file(kind, pid));
         }
-        self.leave_windows(pid);
+        // A joiner's own mark stays: its end is what closes the window, until that one clears.
         for joined in self.named(&format!("joined.{pid}")) {
             let _ = fs::remove_file(joined);
         }
@@ -523,13 +549,36 @@ impl LockDir {
         // By start time, not by pid alone: a lock directory on disk outlives a reboot, after which
         // its pids name other processes.
         for prefix in [
-            "cpu", "batch", "hold", "prep", "with", "ahead", "pause", "subagent", "user", "urgent",
-            "parked", "card", "cohort", "arrived",
+            "cpu",
+            "batch",
+            "hold",
+            "prep",
+            "with",
+            "ahead",
+            "pause",
+            "subagent",
+            "user",
+            "urgent",
+            "parked",
+            "card",
+            "cohort",
+            "arrived",
+            "window",
+            "window-draft",
+            "admitted",
         ] {
             for file in self.named(prefix) {
                 if !RecordFile(&file).alive() {
                     let _ = fs::remove_file(&file);
                 }
+            }
+        }
+        for joined in self.named("joined") {
+            let machine: Option<u32> = joined
+                .file_name()
+                .and_then(|n| n.to_str()?.split('.').nth(1)?.parse().ok());
+            if machine.is_none_or(|m| !self.file("window", m).exists()) {
+                let _ = fs::remove_file(&joined);
             }
         }
     }
@@ -538,6 +587,17 @@ impl LockDir {
 /// A record's file in the lock directory, named `<kind>.<pid>`.
 #[derive(Debug, Clone, Copy)]
 pub struct RecordFile<'a>(pub &'a Path);
+
+/// How a card benchmark comes to run while a whole-machine benchmark may be queued.
+#[derive(Debug, Clone, Copy)]
+pub enum Entry {
+    /// Holding the machine alone, so it starts a group.
+    Starts,
+    /// Joining a group, having taken its turn at the gate.
+    Joins,
+    /// Joining a group past a whole-machine benchmark that keeps the gate.
+    JoinsAhead,
+}
 
 impl RecordFile<'_> {
     /// The pid its name ends in.
@@ -587,19 +647,26 @@ mod tests {
         };
         fs::create_dir_all(&dir.path).unwrap();
         let (me, gone, machine) = (std::process::id(), u32::MAX - 1, u32::MAX - 2);
-        fs::write(dir.file("window", machine), "\n").unwrap();
-        assert!(!dir.window_open(machine), "nothing running to join");
+        dir.open_window(machine);
+        assert!(!dir.window_open(machine), "nothing ran to join");
         dir.mark_cards(me, &["0000:03:00.0".to_string()]);
-        fs::write(dir.file("window", machine), format!("{me}\n")).unwrap();
+        dir.count_in(me, 0);
+        dir.open_window(machine);
         assert!(dir.window_open(machine));
         dir.mark_cards(gone, &["0000:83:00.0".to_string()]);
+        fs::write(dir.file("admitted", gone), "").unwrap();
         fs::write(dir.file(&format!("joined.{machine}"), gone), "").unwrap();
         assert!(
             !dir.window_open(machine),
             "a joiner killed outright has ended"
         );
         dir.clear(gone);
-        assert!(dir.window_open(machine));
+        assert!(
+            !dir.window_open(machine),
+            "a joiner that finished has ended too"
+        );
+        dir.leave_windows(gone);
+        assert!(dir.window_open(machine), "one that stepped back never ran");
         dir.clear(me);
         assert!(
             !dir.window_open(machine),
