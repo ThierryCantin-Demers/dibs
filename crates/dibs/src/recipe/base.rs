@@ -188,6 +188,20 @@ impl Recipe {
         format!("{:x}", h.finalize())[..16].to_string()
     }
 
+    /// Built in an image, a recipe is other work than built natively: its binary links another
+    /// C library.
+    pub fn fingerprint_in(&self, image: Option<&str>) -> String {
+        match image {
+            None => self.fingerprint(),
+            Some(image) => {
+                let mut h = Sha256::new();
+                h.update(self.fingerprint().as_bytes());
+                h.update(image.as_bytes());
+                format!("{:x}", h.finalize())[..16].to_string()
+            }
+        }
+    }
+
     /// The two ways a recipe invalidates its own measurement, refused before anything is paid
     /// for rather than found in the numbers afterwards.
     /// One label per step, suffixed only where it has to be. A recipe with a build and a

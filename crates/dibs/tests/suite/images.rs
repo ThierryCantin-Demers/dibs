@@ -1,4 +1,5 @@
 use crate::harness::*;
+use crate::recipes::app;
 use std::fs;
 
 const IMAGE: &str = "registry.example/floor@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -33,15 +34,25 @@ fn calls(s: &Sandbox, tool: &str) -> Vec<String> {
         .collect()
 }
 
+fn shell(s: &Sandbox, app: &str, image: &str, command: &str) -> Output {
+    let at = format!("{app}@local");
+    s.dibs(["shell", &at, "--reason", "test", "--", command])
+        .env("DIBS_IMAGE", image)
+        .run()
+}
+
+fn uid() -> String {
+    let id = std::process::Command::new("id").arg("-u").output().unwrap();
+    String::from_utf8_lossy(&id.stdout).trim().to_string()
+}
+
 #[test]
 fn a_shared_job_runs_in_its_image_unpacked_once() {
     let s = Sandbox::new();
     fakes(&s);
+    let app = app(&s);
     for _ in 0..2 {
-        let out = s
-            .dibs(["--label", "imaged", "echo inside"])
-            .env("DIBS_IMAGE", IMAGE)
-            .run();
+        let out = shell(&s, &app, IMAGE, "echo inside");
         assert_eq!(out.code, 0, "{}", out.all());
         assert_eq!(out.stdout.lines_with("inside"), 1, "{}", out.all());
     }
@@ -57,11 +68,33 @@ fn a_shared_job_runs_in_its_image_unpacked_once() {
         bwrap[0]
     );
     let passwd = fs::read_to_string(rootfs.join("etc/passwd")).unwrap();
-    assert_eq!(
-        passwd.lines().count(),
-        2,
-        "the account is known inside: {passwd}"
+    let ours = passwd
+        .lines()
+        .filter(|l| l.split(':').nth(2) == Some(uid().as_str()))
+        .count();
+    assert_eq!(ours, 1, "the account is known inside: {passwd}");
+    let targets: Vec<String> = fs::read_dir(s.path("scratch/target"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        targets.iter().any(|t| t.ends_with("-img0123456789ab")),
+        "{targets:?}"
     );
+}
+
+#[test]
+fn a_command_with_no_tree_is_not_built_in_an_image() {
+    let s = Sandbox::new();
+    fakes(&s);
+    let out = s
+        .dibs(["--label", "imaged", "echo inside"])
+        .env("DIBS_IMAGE", IMAGE)
+        .run();
+    assert_eq!(out.code, 3, "{}", out.all());
+    assert_eq!(out.stderr.lines_with("needs a tree"), 1, "{}", out.all());
+    assert!(calls(&s, "skopeo").is_empty());
 }
 
 #[test]
@@ -86,10 +119,8 @@ fn a_measurement_runs_natively_whatever_image_its_build_used() {
 fn an_image_named_without_its_digest_runs_nothing() {
     let s = Sandbox::new();
     fakes(&s);
-    let out = s
-        .dibs(["--label", "imaged", "echo inside"])
-        .env("DIBS_IMAGE", "registry.example/floor:latest")
-        .run();
+    let app = app(&s);
+    let out = shell(&s, &app, "registry.example/floor:latest", "echo inside");
     assert_eq!(out.code, 3, "{}", out.all());
     assert_eq!(
         out.stderr.lines_with("only a digest pins"),
@@ -104,15 +135,14 @@ fn an_image_named_without_its_digest_runs_nothing() {
 #[ignore = "fetches a real image and needs skopeo, umoci and bwrap"]
 fn a_real_image_gives_its_own_glibc_and_cannot_be_changed() {
     let s = Sandbox::new();
+    let app = app(&s);
     let image = "docker.io/library/buildpack-deps:noble@sha256:924bf5a2e44d8ad64669df739cc3a7d331dfb0a5b41815f0ca71a4819a503e8a";
-    let out = s
-        .dibs([
-            "--label",
-            "imaged",
-            "ldd --version | head -1; id -un; touch $DIBS_SCRATCH/images/x || echo sealed",
-        ])
-        .env("DIBS_IMAGE", image)
-        .run();
+    let out = shell(
+        &s,
+        &app,
+        image,
+        "ldd --version | head -1; id -un; touch $DIBS_SCRATCH/images/x || echo sealed",
+    );
     assert_eq!(out.code, 0, "{}", out.all());
     assert_eq!(out.stdout.lines_with("2.39"), 1, "{}", out.all());
     assert_eq!(out.stdout.lines_with("sealed"), 1, "{}", out.all());

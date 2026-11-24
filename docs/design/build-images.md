@@ -90,6 +90,9 @@ bwrap --ro-bind <rootfs> / --dev /dev --unshare-pid --proc /proc --tmpfs /tmp \
   clones fetched trees are worktrees of. Binding the two leaves nothing to forget.
 - `--unshare-pid` is what lets an unprivileged `bwrap` mount `/proc` at all. The host still sees
   every process inside, so idle detection and the escape sweep read them as now.
+- Mount points are made in the unpacked root before each run. A link the image holds on the way
+  to one is refused rather than followed, since it would be followed on the host; a link at
+  `/etc/resolv.conf`, as systemd-resolved leaves, is replaced by a file to bind over.
 - The root is read-only, with a private `/tmp`, and `$DIBS_SCRATCH/images` is bound read-only over
   the scratch bind, so one build cannot change the copy of an image every build shares. Mount
   points for home and scratch are made when the image is unpacked.
@@ -139,7 +142,10 @@ attempt, so every job a recipe or a batch makes carries it. A shared call runs i
 measurement runs natively what was built there, since the image has neither the machine's GPU
 devices nor its driver, and a tree laid out by a measurement still gets the image's target. The
 transfer of a sent tree carries it, since that is where the tree's target is chosen, and so does a
-detached batch's driver. A name without a digest is refused for every mode.
+detached batch's driver. A name without a digest is refused for every mode, and so is a shared
+call with no tree dibs lays out, whose cargo would build in whatever target the command names,
+natively built objects included. A recipe's record carries the image, and its fingerprint differs
+from the same recipe built natively.
 
 The orchestrator's profile names one image for every split build, beside its `rustflags`, and
 the bundle's attested inputs include it; a native build attests what it did before. The `rustc -vV` recorded with a bundle stays right, since

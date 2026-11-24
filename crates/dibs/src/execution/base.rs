@@ -12,7 +12,7 @@ use super::{
     unfinished::Unfinished,
 };
 use crate::{
-    call::{BatchStep, Destination, RecipeJob},
+    call::{BatchStep, Destination, IMAGE, RecipeJob},
     cli::{Call, Expanding, RecipeCall, ShellWord},
     recipe::{self, Checkouts, Lock, Manifest, NotTaken, Resolved},
     records::{Affinity, RunLog},
@@ -80,7 +80,8 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         tree_stamps,
     } = resolved;
     let (name, rec) = (name.as_str(), &rec);
-    let fingerprint = rec.fingerprint();
+    let image = std::env::var(IMAGE).ok().filter(|i| !i.is_empty());
+    let fingerprint = rec.fingerprint_in(image.as_deref());
     let patched: Option<std::collections::BTreeSet<String>> = (!pins.is_empty()).then(|| {
         pins.iter()
             .flat_map(|p| p.sources.values().flatten().cloned())
@@ -578,9 +579,13 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     .iter()
                     .map(|(k, v)| format!("export {k}={}; ", Expanding(v)))
                     .collect();
+                let image = image
+                    .as_deref()
+                    .map(|i| format!("export {IMAGE}={i}; "))
+                    .unwrap_or_default();
                 ProcedureStep {
                     lock: st.lock,
-                    run: format!("{exports}{}", st.run),
+                    run: format!("{image}{exports}{}", st.run),
                 }
             })
             .collect(),

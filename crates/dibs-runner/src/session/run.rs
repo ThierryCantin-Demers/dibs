@@ -1605,6 +1605,7 @@ impl<'a> Run<'a> {
         let mut spot = None;
         // Held to the end of the job: a transfer's lock on the tree it copies into.
         let mut _copying = None;
+        let mut transfer = false;
         if let Some(tree) = &request.tree
             && hosted.ports.complete()
         {
@@ -1614,7 +1615,10 @@ impl<'a> Run<'a> {
             state = self.at.stopper.state();
             match laid {
                 Laid::Run(laid) => spot = laid,
-                Laid::Transfer(turn) => _copying = turn,
+                Laid::Transfer(turn) => {
+                    _copying = turn;
+                    transfer = true;
+                }
                 Laid::Done { status, by } => {
                     drop(state);
                     begun.touch_log();
@@ -1626,12 +1630,23 @@ impl<'a> Run<'a> {
             }
         }
         let say = |text: &str| output.tell(self.at.sink, text);
-        // A hold's command only waits on a fifo in the lock directory, which no image binds.
+        // A hold's command only waits on a fifo in the lock directory, which no image binds, and
+        // a transfer carries the image only to name the target it lands beside.
         let built_in = image
             .as_ref()
-            .filter(|_| request.mode == Mode::Shared && !request.watch.hold);
+            .filter(|_| request.mode == Mode::Shared && !request.watch.hold && !transfer);
         let sandbox = match built_in {
             None => None,
+            Some(_) if request.tree.is_none() => {
+                drop(state);
+                self.at.sink.say(
+                    "dibs: building in an image needs a tree dibs lays out, from a recipe or `dibs shell <repo>@<ref>`, since only it gets a target of the image's own\n",
+                );
+                begun.touch_log();
+                hosted.laid = Some(By::Dibs);
+                hosted.status = Exit::Setup.status();
+                return hosted;
+            }
             Some(image) => {
                 drop(state);
                 let sandbox = self.sandbox(image, &environment, deadline);

@@ -5,7 +5,7 @@ use crate::tree::Commands;
 use std::{
     fs::{self, File, TryLockError},
     io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
     thread,
     time::Duration,
@@ -30,7 +30,8 @@ impl Image {
     pub fn parse(text: &str) -> Result<Image, String> {
         text.rsplit_once("@sha256:")
             .filter(|(name, _)| {
-                !name.is_empty() && !name.contains(|c: char| c.is_whitespace() || c == '@')
+                !Image::repository(name).is_empty()
+                    && !name.contains(|c: char| c.is_whitespace() || c == '@')
             })
             .map(|(_, digest)| digest)
             .filter(|digest| Image::hex(digest, DIGEST))
@@ -49,11 +50,15 @@ impl Image {
     /// since skopeo refuses a reference with both.
     fn pinned(&self) -> String {
         let (name, _) = self.reference.rsplit_once('@').unwrap_or_default();
-        let repository = match name.rfind(':') {
+        format!("{}@sha256:{}", Image::repository(name), self.digest)
+    }
+
+    /// A name without its tag; a colon before the last slash is a registry's port.
+    fn repository(name: &str) -> &str {
+        match name.rfind(':') {
             Some(colon) if !name[colon..].contains('/') => &name[..colon],
             _ => name,
-        };
-        format!("{repository}@sha256:{}", self.digest)
+        }
     }
 
     /// Ends the name of every target built in this image, so no other build shares or seeds it.
@@ -129,6 +134,14 @@ impl Images<'_> {
                 Err(TryLockError::Error(e)) => return Err(failed(e).into()),
             }
         }
+        // Under the image's lock, any part of it left by a job stopped mid-unpack is abandoned.
+        let suffix = format!("-{}", &image.digest[..TAG]);
+        for left in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = left.file_name().to_string_lossy().into_owned();
+            if name.starts_with(".part-") && name.ends_with(&suffix) {
+                remove(commands, &left.path())?;
+            }
+        }
         if !done.join("rootfs").is_dir() {
             self.unpack(image, &dir, &done, commands)?;
         }
@@ -143,18 +156,16 @@ impl Images<'_> {
         done: &Path,
         commands: &Commands,
     ) -> Result<(), Unready> {
-        let suffix = format!("-{}", &image.digest[..TAG]);
-        // Under the image's lock, any part of it left by a job stopped mid-unpack is abandoned.
-        for left in fs::read_dir(dir).into_iter().flatten().flatten() {
-            let name = left.file_name().to_string_lossy().into_owned();
-            if name.starts_with(".part-") && name.ends_with(&suffix) {
-                remove(commands, &left.path())?;
-            }
-        }
-        let part = dir.join(format!(".part-{}{suffix}", std::process::id()));
+        let part = dir.join(format!(
+            ".part-{}-{}",
+            std::process::id(),
+            &image.digest[..TAG]
+        ));
         let unpacked = self.unpack_into(image, &part, done, commands);
-        let removed = remove(commands, &part);
-        unpacked.and(removed)
+        match remove(commands, &part) {
+            Err(unready) if unready.overran => Err(unready),
+            removed => unpacked.and(removed),
+        }
     }
 
     fn unpack_into(
@@ -205,11 +216,13 @@ impl Images<'_> {
 
     fn layout(&self, rootfs: PathBuf) -> Sandbox {
         let mut binds = vec![self.home.to_path_buf()];
-        if !self.scratch.starts_with(self.home) {
-            binds.push(self.scratch.to_path_buf());
+        // Scratch, or a part of it moved to another disk, may be a link, which must resolve
+        // inside.
+        let scratch = fs::canonicalize(self.scratch).unwrap_or_else(|_| self.scratch.into());
+        if !scratch.starts_with(self.home) {
+            binds.push(scratch.clone());
         }
-        // A part of scratch moved to another disk is a link here, which must resolve inside.
-        let moved: Vec<PathBuf> = fs::read_dir(self.scratch)
+        let moved: Vec<PathBuf> = fs::read_dir(&scratch)
             .map(|d| {
                 d.flatten()
                     .filter(|e| e.file_type().is_ok_and(|t| t.is_symlink()))
@@ -222,7 +235,7 @@ impl Images<'_> {
         Sandbox {
             rootfs,
             binds,
-            sealed: vec![self.scratch.join(IMAGES)],
+            sealed: vec![scratch.join(IMAGES)],
         }
     }
 }
@@ -250,7 +263,10 @@ impl Account {
                 },
                 false => line.to_string(),
             };
-            let path = rootfs.join("etc").join(file);
+            let path = within(rootfs, Path::new("etc"))?.join(file);
+            if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+                return Err(io::Error::other(format!("{} is a link", path.display())));
+            }
             let image = fs::read_to_string(&path).unwrap_or_default();
             fs::write(&path, Account::replace(&image, &line))?;
         }
@@ -292,15 +308,19 @@ pub struct Sandbox {
 impl Sandbox {
     /// The root is bound read-only, so what is bound over it needs its mount point made first.
     fn mount_points(&self) -> io::Result<()> {
-        let inside = |p: &Path| self.rootfs.join(p.strip_prefix("/").unwrap_or(p));
-        for dir in &self.binds {
-            fs::create_dir_all(inside(dir))?;
+        for dir in self.binds.iter().chain(&self.sealed) {
+            within(&self.rootfs, dir)?;
         }
         for file in NETWORK.iter().map(Path::new).filter(|f| f.exists()) {
-            let point = inside(file);
-            if fs::symlink_metadata(&point).is_err() {
-                fs::create_dir_all(point.parent().unwrap_or(&self.rootfs))?;
-                File::create(point)?;
+            let dir = within(&self.rootfs, file.parent().unwrap_or(Path::new("/")))?;
+            let point = dir.join(file.file_name().unwrap_or_default());
+            match fs::symlink_metadata(&point) {
+                Ok(m) if m.file_type().is_symlink() => {
+                    fs::remove_file(&point)?;
+                    File::create(&point)?;
+                }
+                Ok(_) => {}
+                Err(_) => drop(File::create(&point)?),
             }
         }
         Ok(())
@@ -369,6 +389,30 @@ fn tool(commands: &Commands, name: &str, args: &[&str]) -> Result<(), Unready> {
     }
 }
 
+/// `path` inside the image's root, its missing directories made. A link the image holds is
+/// refused rather than followed, since it would be followed on the host.
+fn within(rootfs: &Path, path: &Path) -> io::Result<PathBuf> {
+    let mut at = rootfs.to_path_buf();
+    for part in path.components() {
+        let Component::Normal(part) = part else {
+            continue;
+        };
+        at.push(part);
+        match fs::symlink_metadata(&at) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err(io::Error::other(format!(
+                    "{} is a link in the image, which dibs cannot bind over",
+                    at.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => fs::create_dir(&at)?,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(at)
+}
+
 /// Removes an unpacked tree, whose directories an image may have left read-only, within the
 /// job's cap; one left behind is removed by the next unpack of its image.
 fn remove(commands: &Commands, path: &Path) -> Result<(), Unready> {
@@ -392,6 +436,7 @@ mod tests {
         assert_eq!(image.unwrap().tag(), "-img0123456789ab");
         assert!(Image::parse("docker.io/library/buildpack-deps:noble").is_err());
         assert!(Image::parse(&format!("@sha256:{DIGEST}")).is_err());
+        assert!(Image::parse(&format!(":noble@sha256:{DIGEST}")).is_err());
         assert!(Image::parse("x@sha256:0123").is_err());
         assert!(Image::parse(&format!("x@sha256:{}", DIGEST.to_uppercase())).is_err());
     }
@@ -470,6 +515,7 @@ mod tests {
             home: &home,
         };
         let rootfs = root.join("rootfs");
+        fs::create_dir_all(&rootfs).unwrap();
         let joined = images
             .sandbox(rootfs.clone())
             .unwrap()
@@ -492,6 +538,14 @@ mod tests {
         if Path::new("/etc/hosts").exists() {
             assert!(rootfs.join("etc/hosts").is_file());
         }
+        fs::create_dir_all(root.join("elsewhere")).unwrap();
+        let _ = fs::remove_dir_all(rootfs.join("etc"));
+        std::os::unix::fs::symlink(root.join("elsewhere"), rootfs.join("etc")).unwrap();
+        assert!(
+            images.sandbox(rootfs.clone()).is_err(),
+            "a link in the image is not followed"
+        );
+        assert_eq!(fs::read_dir(root.join("elsewhere")).unwrap().count(), 0);
         let _ = fs::remove_dir_all(&root);
     }
 }

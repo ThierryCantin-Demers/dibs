@@ -469,6 +469,8 @@ fn the_fingerprint_follows_the_procedure_and_nothing_else() {
         steps: vec![step(Lock::Exclusive, "cargo build")],
     };
     assert_eq!(a.fingerprint(), same.fingerprint());
+    assert_eq!(a.fingerprint_in(None), a.fingerprint());
+    assert_ne!(a.fingerprint_in(Some("img@sha256:0")), a.fingerprint());
     assert_ne!(a.fingerprint(), changed_command.fingerprint());
     // A step moved from the shared lock to the exclusive one is a different procedure
     // even though it runs the same command, and comparing across it would be wrong.
