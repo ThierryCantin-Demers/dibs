@@ -125,13 +125,18 @@ impl Unfinished {
         }
         record.outcome = Some(Outcome::of_steps(&record.steps));
         record.when = Moment::epoch_now();
+        let log = RunLog::here()?;
+        let job = record.steps.last().and_then(|s| s.job.clone());
+        if job.is_some_and(|job| log.names_job(job.as_str())) {
+            return Ok(());
+        }
         let backend = Jobs::on(record.machine.clone());
         let at = record.steps.len() - 1;
         backend.fetch_artifacts(&record.steps[at..], artifacts_to.as_deref(), false);
         if let Some(kept) = KeptStores::of(record.machine.clone(), &copies) {
             kept.fetch();
         }
-        RunLog::here()?.append(&record)?;
+        log.append(&record)?;
         Ok(())
     }
 }

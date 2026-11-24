@@ -27,9 +27,10 @@ impl StepGuard {
         check_in: Option<&str>,
     ) -> io::Result<Watched> {
         let mut guard = Itself::command();
-        if let Some(on) = on {
-            guard.env("DIBS_ON", on.as_str());
-        }
+        match on {
+            Some(on) => guard.env("DIBS_ON", on.as_str()),
+            None => guard.env_remove("DIBS_ON"),
+        };
         match check_in {
             Some(time) => guard.env(CHECK_IN, time),
             None => guard.env_remove(CHECK_IN),

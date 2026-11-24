@@ -376,6 +376,9 @@ fn drive(
         states,
         stopped: false,
         paused: false,
+        checked: false,
+        unstopped: Vec::new(),
+        on: kept.on.as_deref().map(MachineName::new),
         lost: None,
         cancelled: None,
         running: HashMap::new(),
@@ -390,12 +393,13 @@ fn drive(
     while driving.states.contains(&State::Running) {
         let end = driving.next_end()?;
         driving.ended(end);
-        driving.start();
-        // A resumed batch is kept as it goes, so a driver that dies runs nothing twice.
+        // A resumed batch is kept as it goes, before what waited on a step starts, so a driver
+        // that dies runs nothing twice.
         if resumed {
             let seconds = kept.seconds + started.elapsed().as_secs();
             driving.keep(kept, seconds);
         }
+        driving.start();
     }
     let seconds = kept.seconds + started.elapsed().as_secs();
     let checked_in = driving
@@ -404,6 +408,19 @@ fn drive(
         .any(|s| matches!(s, State::CheckedIn { .. }));
     if checked_in && driving.cancelled.is_none() {
         return Ok(driving.pause(kept, seconds));
+    }
+    if driving.cancelled.is_some() {
+        for s in driving.states.iter_mut() {
+            if *s == State::Waiting {
+                *s = State::NotRun;
+            }
+        }
+    }
+    let followable = checked_in && !driving.unstopped.is_empty() && driving.keep(kept, seconds);
+    if followable {
+        eprintln!(
+            "dibs: batch {id} was cancelled, but a job one of its steps let go of could not be stopped: dibs batch --follow {id} still follows it"
+        );
     }
     let Driving {
         mut states,
@@ -429,7 +446,9 @@ fn drive(
         1
     };
     let _ = std::fs::write(dir.join(EXIT), format!("{code}\n"));
-    let _ = std::fs::remove_file(dir.join(Paused::FILE));
+    if !followable {
+        let _ = std::fs::remove_file(dir.join(Paused::FILE));
+    }
     Ok(code)
 }
 
@@ -453,8 +472,14 @@ struct Driving<'a> {
     opts: &'a Options,
     states: Vec<State>,
     stopped: bool,
-    /// A step checked in, so no other starts until the batch is followed.
+    /// A step checked in, or lost its job, so no other starts until the batch is followed.
     paused: bool,
+    /// A step checked in on this drive.
+    checked: bool,
+    /// The steps whose jobs a cancellation could not stop, which stay followable.
+    unstopped: Vec<usize>,
+    /// The machine of every step that names none, as the batch was started with.
+    on: Option<MachineName>,
     /// The exit of a follow that never heard how its job ended, when no step checked in.
     lost: Option<i32>,
     cancelled: Option<String>,
@@ -559,12 +584,7 @@ impl Driving<'_> {
             let tx = self.tx.clone();
             let verbose = self.opts.verbose;
             let t = Instant::now();
-            match StepGuard::spawn(
-                line,
-                &batch,
-                self.opts.on.as_ref(),
-                self.check_in.as_deref(),
-            ) {
+            match StepGuard::spawn(line, &batch, self.on.as_ref(), self.check_in.as_deref()) {
                 Ok(mut guarded) => {
                     self.running.insert(i, guarded.id());
                     std::thread::spawn(move || {
@@ -638,12 +658,13 @@ impl Driving<'_> {
                 None => {
                     self.states[i] = State::CheckedIn { hint, seconds };
                     self.paused = true;
+                    self.checked = true;
                 }
             }
             return;
         }
         if let Some((hint, before)) = followed
-            && self.cancelled.is_none()
+            && (self.cancelled.is_none() || self.unstopped.contains(&i))
             && !Driving::heard_end(&hint, &said, exit)
         {
             self.states[i] = State::CheckedIn {
@@ -651,6 +672,7 @@ impl Driving<'_> {
                 seconds: before,
             };
             self.lost.get_or_insert(exit);
+            self.paused = true;
             return;
         }
         self.states[i] = State::Done { exit, seconds };
@@ -696,8 +718,11 @@ impl Driving<'_> {
             check_in: kept.check_in.clone(),
             verbose: kept.verbose,
         };
-        serde_json::to_vec(&paused)
-            .is_ok_and(|json| std::fs::write(self.dir.join(Paused::FILE), json).is_ok())
+        let file = self.dir.join(Paused::FILE);
+        let part = file.with_extension("part");
+        serde_json::to_vec(&paused).is_ok_and(|json| {
+            std::fs::write(&part, json).is_ok() && std::fs::rename(&part, &file).is_ok()
+        })
     }
 
     /// The batch left for `dibs batch --follow`, and what its steps said as they let go of their
@@ -725,7 +750,7 @@ impl Driving<'_> {
                 _ => {}
             }
         }
-        if !self.paused
+        if !self.checked
             && let Some(exit) = self.lost
         {
             eprintln!(
@@ -759,17 +784,14 @@ impl Driving<'_> {
     /// Each step is its own process group, so the signal reaches the dibs call under it and that
     /// call's death reaches the machine, which stops the job and releases its lock. A job a step
     /// let go of outlives its follower, so it is stopped on its machine first.
-    fn stop_running(&self) {
-        let checked_in = self.states.iter().filter_map(|s| match s {
-            State::CheckedIn { hint, .. } => Some(hint),
+    fn stop_running(&mut self) {
+        let checked_in = self.states.iter().enumerate().filter_map(|(i, s)| match s {
+            State::CheckedIn { hint, .. } => Some((i, hint)),
             _ => None,
         });
-        for hint in self
-            .following
-            .values()
-            .map(|(hint, _)| hint)
-            .chain(checked_in)
-        {
+        let following = self.following.iter().map(|(&i, (hint, _))| (i, hint));
+        let mut unstopped = Vec::new();
+        for (i, hint) in following.chain(checked_in) {
             let Some(kill) = &hint.kill else { continue };
             let stopped = Itself::command()
                 .args(kill)
@@ -783,8 +805,10 @@ impl Driving<'_> {
                     "dibs: {} did not stop the job a step let go of; it may still run",
                     Hint::line(kill)
                 );
+                unstopped.push(i);
             }
         }
+        self.unstopped.extend(unstopped);
         for &pid in self.running.values() {
             // SAFETY: signals the step's process group, which its guard leads.
             unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };

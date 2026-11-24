@@ -35,9 +35,13 @@ impl Hint {
                 .then(|| rest.split(' ').next())
                 .flatten()
         });
+        let same_batch = match (hint.follow.as_slice(), hint.kill.as_deref()) {
+            ([batch, _, id], Some([.., kill])) if batch == "batch" => kill == id,
+            _ => true,
+        };
         match hint.job() {
             Some(job) if checked != Some(job) => None,
-            _ => Some(hint),
+            _ => same_batch.then_some(hint),
         }
     }
 

@@ -93,19 +93,11 @@ impl MachineCall<'_> {
     }
 }
 
-/// Whether a follow's exit is its job's: one that never reached the job, unreachable, refused,
-/// checked in again or killed itself, says nothing of how the job ended.
+/// Whether a follow that passed on no trailer still heard its job end: a job killed by a signal
+/// or its cap ends with no trailer, while a follow that never reached the job, found no such job
+/// or checked in again exits below these.
 pub fn reached_its_job(exit: i32) -> bool {
-    exit >= 0
-        && ![
-            Exit::Refused,
-            Exit::Unreachable,
-            Exit::NoLock,
-            Exit::NoRunner,
-            Exit::CheckedIn,
-        ]
-        .iter()
-        .any(|e| e.status() == exit)
+    exit >= Exit::Overran.status()
 }
 
 /// A job's log and files as this computer keeps them, fetched from its machine the first time

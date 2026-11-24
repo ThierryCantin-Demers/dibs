@@ -41,6 +41,12 @@ impl RunLog {
         Ok(writeln!(f, "{}", run.to_line()).map_err(FileError::at(path))?)
     }
 
+    /// Whether a run already recorded names `job`, as a follower cut off after recording leaves.
+    pub fn names_job(&self, job: &str) -> bool {
+        let needle = format!("\"job\":\"{job}\"");
+        std::fs::read_to_string(&self.path).is_ok_and(|runs| runs.contains(&needle))
+    }
+
     /// Records a batch driven on its machine wrote there, one JSON line each.
     pub fn append_lines(&self, lines: &str) -> Result<(), RecordsError> {
         let path = &self.path;
