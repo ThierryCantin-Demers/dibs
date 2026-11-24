@@ -1,4 +1,7 @@
-use crate::{Alias, Label, Mode, wire::Tree};
+use crate::{
+    Alias, Label, Mode,
+    wire::{Bundle, Tree},
+};
 use serde::{Deserialize, Serialize};
 
 /// One call, as the runner is asked to make it.
@@ -74,6 +77,13 @@ pub struct Request {
     /// Seconds the job runs, frozen and parked time not counted, before its call lets go of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_in: Option<u64>,
+    /// The caller's id for this attempt at the work, which the machine admits once: a request
+    /// naming one it has seen is told how that one went, and never runs again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
+    /// An executable kept after the build, or checked before the command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<Bundle>,
 }
 
 /// A machine taken back by its owners.

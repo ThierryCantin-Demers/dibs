@@ -13,7 +13,9 @@ mod lines;
 pub mod lockfile;
 mod mode;
 mod moment;
+pub mod orchestrator;
 mod run;
+mod sha256;
 mod span;
 pub mod status;
 pub mod wire;
@@ -29,4 +31,5 @@ pub use lines::{
 pub use mode::{Lock, Mode};
 pub use moment::Moment;
 pub use run::{ArmRecord, Outcome, Pair, Pairs, ProcedureStep, RunRecord, RunVerb, StepRecord};
+pub use sha256::Sha256;
 pub use span::Span;

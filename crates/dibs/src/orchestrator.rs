@@ -1,0 +1,613 @@
+//! `dibs orch`: work handed to the orchestrator, which keeps it alive after this computer goes.
+//! It is reached over ssh as `orchestrator.toml` names it, and speaks the versioned API in
+//! `dibs_format::orchestrator`.
+
+use crate::{
+    caller::Caller,
+    execution::{Carried, Repo},
+    git::Git,
+    recipe::Checkouts,
+};
+use dibs_format::{
+    Exit, Hex as _, Moment,
+    orchestrator::{
+        API_COMMAND, Ask, Call, Detail, NamedCall, Reply, STAGE_PREFIX, Seal, SplitCall,
+        Submission, Summary, Upload, VERSION, Work,
+    },
+};
+use std::{
+    collections::BTreeMap,
+    io::{BufRead as _, BufReader, Write as _},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
+
+/// The word `dibs` takes these verbs under.
+pub const WORD: &str = "orch";
+
+/// Seconds a follow waits before it checks in, unless `DIBS_CHECK_IN` says.
+const CHECK_IN: u64 = 1800;
+/// Times a call is made again with the same key when ssh lost it.
+const RETRIES: usize = 3;
+/// What ssh exits with when it lost the connection or never had one.
+const SSH_FAILED: i32 = 255;
+
+const USAGE: &str = "usage:
+  dibs orch bench <repo>@local <recipe> [--<value> <v>]... [--no-follow]
+                                   a split recipe: built on the compile pool, measured on the GPU pool
+  dibs orch run --on <machine> [--bench --device <card>] [--label <l>] [--max <s>] [--no-follow] <command>
+                                   a call on one machine, kept alive by the orchestrator
+  dibs orch list [--all]           your submissions, or everyone's
+  dibs orch status <id>            how each step went
+  dibs orch out <id> [<step>] [--job]
+                                   what each step said; --job reads the job's whole log
+  dibs orch follow <id>            waits for it to end, or checks in after 30 minutes
+  dibs orch kill <id>              stops it
+  dibs orch machines               the orchestrator's machines and pools";
+
+pub fn serve(words: &[String]) -> i32 {
+    let orchestrator = match Orchestrator::configured() {
+        Ok(o) => o,
+        Err(why) => {
+            eprintln!("dibs: {why}");
+            return Exit::Refused.status();
+        }
+    };
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let follow = !words.contains(&"--no-follow");
+    let words: Vec<&str> = words.into_iter().filter(|w| *w != "--no-follow").collect();
+    let result = match words.as_slice() {
+        ["bench", target, recipe, values @ ..] => split(target, recipe, values)
+            .and_then(|(work, upload)| orchestrator.submit(work, Some(upload), follow)),
+        ["run", rest @ ..] => named(rest).and_then(|work| orchestrator.submit(work, None, follow)),
+        ["list"] => orchestrator.list(false),
+        ["list", "--all"] => orchestrator.list(true),
+        ["status", id] => orchestrator.status(id),
+        ["out", id] => orchestrator.out(id, None, false),
+        ["out", id, "--job"] => orchestrator.out(id, None, true),
+        ["out", id, step] => orchestrator.out(id, Some(step), false),
+        ["out", id, step, "--job"] => orchestrator.out(id, Some(step), true),
+        ["follow", id] => orchestrator.follow(id),
+        ["kill", id] => orchestrator.ask(Call::Kill { id: id.to_string() }, &mut Shown::default()),
+        ["machines"] => orchestrator.ask(Call::Inventory, &mut Shown::default()),
+        [] | ["-h"] | ["--help"] | ["help"] => {
+            println!("{USAGE}");
+            return 0;
+        }
+        _ => Err(format!("dibs orch takes:\n{USAGE}")),
+    };
+    result.unwrap_or_else(|why| {
+        eprintln!("dibs: {why}");
+        Exit::Refused.status()
+    })
+}
+
+fn split(target: &str, recipe: &str, values: &[&str]) -> Result<(Work, Upload), String> {
+    let Some(repo) = target.strip_suffix("@local") else {
+        return Err(format!(
+            "{target}: a split through the orchestrator is built from your working tree, as <repo>@local"
+        ));
+    };
+    let mut given = BTreeMap::new();
+    let mut words = values.iter();
+    while let Some(word) = words.next() {
+        let Some(name) = word.strip_prefix("--") else {
+            return Err(format!("{word}: a recipe's values are --<name> <value>"));
+        };
+        let (name, value) = match name.split_once('=') {
+            Some((name, value)) => (name.to_string(), value.to_string()),
+            None => (
+                name.to_string(),
+                words
+                    .next()
+                    .ok_or_else(|| format!("--{name} needs a value"))?
+                    .to_string(),
+            ),
+        };
+        given.insert(name, value);
+    }
+    let dir = Checkouts::here()
+        .and_then(|c| c.find(repo))
+        .map_err(|e| e.to_string())?;
+    let name = Repo(&dir).identity();
+    let work = Work::Split(SplitCall {
+        repo: name.clone(),
+        recipe: recipe.to_string(),
+        values: given,
+    });
+    let upload = Upload {
+        stage: String::new(),
+        repo: name,
+        head: String::new(),
+        digest: String::new(),
+        files: 0,
+    };
+    Ok((work, Sending { dir }.prepared(upload)?))
+}
+
+fn named(words: &[&str]) -> Result<Work, String> {
+    let mut call = NamedCall {
+        on: String::new(),
+        bench: false,
+        device: None,
+        label: String::new(),
+        command: String::new(),
+        max: None,
+    };
+    let mut words = words.iter();
+    let mut command = Vec::new();
+    while let Some(word) = words.next() {
+        if !command.is_empty() {
+            command.push(word.to_string());
+            continue;
+        }
+        let mut value = |flag: &str| {
+            words
+                .next()
+                .map(|v| v.to_string())
+                .ok_or_else(|| format!("{flag} needs a value"))
+        };
+        match *word {
+            "--on" => call.on = value("--on")?,
+            "--bench" => call.bench = true,
+            "--device" => call.device = Some(value("--device")?),
+            "--label" => call.label = value("--label")?,
+            "--max" => {
+                call.max = Some(
+                    value("--max")?
+                        .parse()
+                        .map_err(|_| "--max takes seconds".to_string())?,
+                )
+            }
+            "--" => {
+                command.extend(words.by_ref().map(|w| w.to_string()));
+                break;
+            }
+            flag if flag.starts_with("--") => {
+                return Err(format!("dibs orch run takes no {flag}"));
+            }
+            word => command.push(word.to_string()),
+        }
+    }
+    if call.on.is_empty() {
+        return Err("dibs orch run names its machine with --on".into());
+    }
+    if command.is_empty() {
+        return Err("dibs orch run needs a command".into());
+    }
+    call.command = command.join(" ");
+    if call.label.is_empty() {
+        call.label = std::env::current_dir()
+            .ok()
+            .and_then(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "orch".into());
+    }
+    Ok(Work::Call(call))
+}
+
+/// A working tree as it is sent: its files by its ignore rules and what it carries past them,
+/// then its git directory.
+struct Sending {
+    dir: PathBuf,
+}
+
+impl Sending {
+    fn files(&self) -> Result<Vec<String>, String> {
+        let listed = Git(&self.dir)
+            .run(&["ls-files", "-co", "--exclude-standard", "-z"])
+            .map_err(|e| e.to_string())?;
+        let carried = Carried::of(&self.dir)
+            .files(&self.dir)
+            .map_err(|e| e.to_string())?;
+        let mut files: Vec<String> = listed
+            .split('\0')
+            .map(str::to_string)
+            .chain(carried)
+            .filter(|f| {
+                !f.is_empty()
+                    && std::fs::symlink_metadata(self.dir.join(f))
+                        .is_ok_and(|m| m.is_file() || m.file_type().is_symlink())
+            })
+            .collect();
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
+
+    /// The upload's seal and head, computed before anything is sent: what the orchestrator must
+    /// find when it arrives.
+    fn prepared(&self, mut upload: Upload) -> Result<Upload, String> {
+        let files = self.files()?;
+        let (digest, count) = Seal::of(&self.dir, files.iter().map(String::as_str))
+            .map_err(|e| format!("{} could not be read to be sent: {e}", self.dir.display()))?;
+        upload.digest = digest;
+        upload.files = count;
+        upload.head = Git(&self.dir)
+            .run(&["rev-parse", "HEAD"])
+            .map_err(|e| e.to_string())?
+            .trim()
+            .to_string();
+        Ok(upload)
+    }
+}
+
+/// Where the orchestrator is: `DIBS_ORCHESTRATOR`, else `orchestrator.toml` beside the
+/// inventory, `ssh = "<destination>"` and optionally `ssh_config = "<file>"`.
+pub struct Orchestrator {
+    ssh: String,
+    config: Option<PathBuf>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Configured {
+    ssh: String,
+    ssh_config: Option<String>,
+}
+
+impl Orchestrator {
+    fn configured() -> Result<Orchestrator, String> {
+        if let Some(ssh) = std::env::var("DIBS_ORCHESTRATOR")
+            .ok()
+            .filter(|s| !s.is_empty())
+        {
+            return Ok(Orchestrator { ssh, config: None });
+        }
+        let path = crate::paths::Paths::from_env()
+            .inventory()
+            .and_then(|i| i.parent().map(|d| d.join("orchestrator.toml")))
+            .ok_or("no config directory to find orchestrator.toml in")?;
+        let text = std::fs::read_to_string(&path).map_err(|_| {
+            format!(
+                "no orchestrator is set up here: {} names it, as ssh = \"<account>@<host>\"",
+                path.display()
+            )
+        })?;
+        let configured: Configured =
+            toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        Ok(Orchestrator {
+            ssh: configured.ssh,
+            config: configured.ssh_config.map(|c| match c.strip_prefix("~/") {
+                Some(rest) => home.join(rest),
+                None => PathBuf::from(c),
+            }),
+        })
+    }
+
+    /// ssh's own words, before its destination.
+    fn ssh_options(&self) -> Vec<String> {
+        let mut options = Vec::new();
+        if let Some(config) = &self.config {
+            options.extend(["-F".to_string(), config.display().to_string()]);
+        }
+        options.extend(["-o".into(), "BatchMode=yes".into()]);
+        options
+    }
+
+    /// One API call: the ask on ssh's stdin, each reply as it comes. The exit `End` gives, or
+    /// ssh's own when it ended without one.
+    fn ask(&self, call: Call, shown: &mut Shown) -> Result<i32, String> {
+        let mut ssh = Command::new("ssh");
+        ssh.args(self.ssh_options())
+            .arg(&self.ssh)
+            .arg(API_COMMAND)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        let mut child = ssh
+            .spawn()
+            .map_err(|e| format!("ssh could not start: {e}"))?;
+        let ask = Ask { v: VERSION, call };
+        if let Some(mut stdin) = child.stdin.take() {
+            let mut line = serde_json::to_vec(&ask).map_err(|e| e.to_string())?;
+            line.push(b'\n');
+            let _ = stdin.write_all(&line);
+        }
+        let mut exit = None;
+        if let Some(out) = child.stdout.take() {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                match serde_json::from_str::<Reply>(&line) {
+                    Ok(Reply::End { exit: code }) => exit = Some(code),
+                    Ok(reply) => shown.show(reply),
+                    Err(_) => eprintln!("{line}"),
+                }
+            }
+        }
+        let status = child.wait().map_err(|e| e.to_string())?;
+        Ok(exit.unwrap_or_else(|| Exit::shell_status(status)))
+    }
+
+    /// An ask made again with the same submission, so a lost connection never stores it twice.
+    fn ask_again(&self, call: &Call, shown: &mut Shown) -> Result<i32, String> {
+        let mut code = SSH_FAILED;
+        for _ in 0..RETRIES {
+            code = self.ask(call.clone(), shown)?;
+            if code != SSH_FAILED || shown.accepted.is_some() {
+                break;
+            }
+            eprintln!("dibs: lost the orchestrator at {}; asking again", self.ssh);
+        }
+        Ok(code)
+    }
+
+    fn submit(&self, work: Work, upload: Option<Upload>, follow: bool) -> Result<i32, String> {
+        let key = key();
+        let agent = Caller::from_env().name;
+        let upload = match upload {
+            Some(mut upload) => {
+                upload.stage = key.clone();
+                if let Some(code) = self.send(&upload)? {
+                    return Ok(code);
+                }
+                Some(upload)
+            }
+            None => None,
+        };
+        let call = Call::Submit(Box::new(Submission {
+            key,
+            agent,
+            work,
+            upload,
+        }));
+        let mut shown = Shown::default();
+        let code = self.ask_again(&call, &mut shown)?;
+        let Some(id) = shown.accepted.clone() else {
+            if code == SSH_FAILED {
+                eprintln!(
+                    "dibs: the orchestrator at {} could not be reached, so nothing was submitted",
+                    self.ssh
+                );
+                return Ok(Exit::Unreachable.status());
+            }
+            return Ok(code);
+        };
+        if !follow {
+            println!("{id}");
+            return Ok(0);
+        }
+        self.follow(&id)
+    }
+
+    /// The tree, then its git directory, into the coworker's stage on the orchestrator, each
+    /// against the copy the last upload of this repo left there. Some exit when one failed.
+    fn send(&self, upload: &Upload) -> Result<Option<i32>, String> {
+        let dir = Checkouts::here()
+            .and_then(|c| c.find(&upload.repo))
+            .map_err(|e| e.to_string())?;
+        let sending = Sending { dir: dir.clone() };
+        let files = sending.files()?;
+        let list = std::env::temp_dir().join(format!("dibs-orch-{}.files", upload.stage));
+        std::fs::write(&list, files.join("\0")).map_err(|e| e.to_string())?;
+        let rsh = std::iter::once("ssh".to_string())
+            .chain(self.ssh_options())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let stage = format!("{}:{STAGE_PREFIX}{}/", self.ssh, upload.stage);
+        eprintln!(
+            "dibs: sending {} ({} files and its git directory) to the orchestrator",
+            upload.repo, upload.files
+        );
+        let tree = [
+            "-rlp".to_string(),
+            "--checksum".into(),
+            "--partial".into(),
+            "--from0".into(),
+            format!("--files-from={}", list.display()),
+            format!("--copy-dest=../../last/{}", upload.repo),
+            format!("{}/", dir.display()),
+            stage.clone(),
+        ];
+        let sent = rsync(&rsh, &tree);
+        let _ = std::fs::remove_file(&list);
+        if sent != 0 {
+            eprintln!(
+                "dibs: {}'s files could not be sent to the orchestrator",
+                upload.repo
+            );
+            return Ok(Some(sent));
+        }
+        let common = Git(&dir)
+            .run(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
+            .map_err(|e| e.to_string())?;
+        let own = Git(&dir)
+            .run(&["rev-parse", "--absolute-git-dir"])
+            .map_err(|e| e.to_string())?;
+        let (common, own) = (PathBuf::from(common.trim()), PathBuf::from(own.trim()));
+        let git = format!("{stage}.git/");
+        let git_dir = [
+            "-rlp".to_string(),
+            "--checksum".into(),
+            "--partial".into(),
+            format!("--copy-dest=../../../last/{}/.git", upload.repo),
+            format!("{}/", common.display()),
+            git.clone(),
+        ];
+        let mut sent = rsync(&rsh, &git_dir);
+        if sent == 0 && own != common {
+            let head: [&Path; 2] = [&own.join("HEAD"), &own.join("index")];
+            let mut worktree = vec!["-lp".to_string()];
+            worktree.extend(head.iter().map(|p| p.display().to_string()));
+            worktree.push(git);
+            sent = rsync(&rsh, &worktree);
+        }
+        if sent != 0 {
+            eprintln!(
+                "dibs: {}'s git directory could not be sent to the orchestrator",
+                upload.repo
+            );
+            return Ok(Some(sent));
+        }
+        Ok(None)
+    }
+
+    fn list(&self, all: bool) -> Result<i32, String> {
+        self.ask(Call::List { all }, &mut Shown::default())
+    }
+
+    fn status(&self, id: &str) -> Result<i32, String> {
+        self.ask(Call::Status { id: id.into() }, &mut Shown::default())
+    }
+
+    fn out(&self, id: &str, step: Option<&str>, job: bool) -> Result<i32, String> {
+        self.ask(
+            Call::Out {
+                id: id.into(),
+                step: step.map(String::from),
+                job,
+            },
+            &mut Shown::default(),
+        )
+    }
+
+    fn follow(&self, id: &str) -> Result<i32, String> {
+        let check_in = std::env::var("DIBS_CHECK_IN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(CHECK_IN);
+        let code = self.ask(
+            Call::Follow {
+                id: id.into(),
+                check_in,
+            },
+            &mut Shown::default(),
+        )?;
+        if code == SSH_FAILED {
+            eprintln!(
+                "dibs: lost the orchestrator while following {id}, which carries on there.\n  dibs orch follow {id}  follows it again"
+            );
+            return Ok(Exit::Unreachable.status());
+        }
+        Ok(code)
+    }
+}
+
+fn rsync(rsh: &str, args: &[String]) -> i32 {
+    Command::new("rsync")
+        .arg("-e")
+        .arg(rsh)
+        .args(args)
+        .stdin(Stdio::null())
+        .status()
+        .map(Exit::shell_status)
+        .unwrap_or(Exit::Failed.status())
+}
+
+/// A submission's key: when it was made here, and randomness, so a retry is the one submission.
+fn key() -> String {
+    let mut bytes = [0u8; 6];
+    if let Ok(mut random) = std::fs::File::open("/dev/urandom") {
+        use std::io::Read as _;
+        let _ = random.read_exact(&mut bytes);
+    }
+    format!("k{}-{}", Moment::now().compact(), bytes[..].hex())
+}
+
+/// What the orchestrator's replies are shown as.
+#[derive(Default)]
+struct Shown {
+    accepted: Option<String>,
+}
+
+impl Shown {
+    fn show(&mut self, reply: Reply) {
+        match reply {
+            Reply::Accepted { id, duplicate } => {
+                eprintln!(
+                    "dibs: submission {id} {} by the orchestrator: it carries on whether or not this call does",
+                    match duplicate {
+                        true => "was already accepted",
+                        false => "accepted",
+                    }
+                );
+                self.accepted = Some(id);
+            }
+            Reply::Submissions(list) => {
+                for summary in list {
+                    println!("{}", line(&summary));
+                }
+            }
+            Reply::Status(detail) => print!("{}", status(&detail)),
+            Reply::Inventory { machines, pools } => {
+                for (pool, members) in pools {
+                    println!("pool {pool}: {}", members.join(" "));
+                }
+                println!();
+                print!("{machines}");
+            }
+            Reply::Text { err: true, text } => eprint!("{text}"),
+            Reply::Text { err: false, text } => print!("{text}"),
+            Reply::Trailer { step, trailer } => eprintln!("{step}: {trailer}"),
+            Reply::Admitted { step, admitted } => eprintln!("{step}: {admitted:?}"),
+            Reply::End { .. } => {}
+        }
+    }
+}
+
+fn line(summary: &Summary) -> String {
+    format!(
+        "{}  {:<11}  {:<6}  {}  {}  {}",
+        summary.id,
+        summary.state.as_str(),
+        summary
+            .exit
+            .map(|e| format!("exit {e}"))
+            .unwrap_or_default(),
+        Moment::at(summary.created).minute(),
+        summary.coworker,
+        summary.what
+    )
+}
+
+fn status(detail: &Detail) -> String {
+    let mut text = format!("{}\n", line(&detail.summary));
+    if let Some(note) = &detail.note {
+        text.push_str(&format!("  {note}\n"));
+    }
+    for step in &detail.steps {
+        text.push_str(&format!(
+            "  {:<8} {:<11} {:<18} {}\n",
+            step.name,
+            step.state.as_str(),
+            step.machine.as_deref().unwrap_or("orchestrator"),
+            match (&step.trailer, &step.note) {
+                (Some(trailer), _) => trailer.to_string(),
+                (None, Some(note)) => note.clone(),
+                (None, None) => String::new(),
+            }
+        ));
+        if let (Some(_), Some(note)) = (&step.trailer, &step.note) {
+            text.push_str(&format!("           {note}\n"));
+        }
+    }
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_named_call_reads_its_flags_and_keeps_its_command_whole() {
+        let Work::Call(call) = named(&[
+            "--on", "m", "--bench", "--device", "gpu:x", "--label", "l", "echo", "--on",
+        ])
+        .unwrap() else {
+            panic!("a call");
+        };
+        assert_eq!(
+            (
+                call.on.as_str(),
+                call.bench,
+                call.device.as_deref(),
+                call.label.as_str()
+            ),
+            ("m", true, Some("gpu:x"), "l")
+        );
+        assert_eq!(call.command, "echo --on");
+        assert!(named(&["echo"]).is_err(), "names no machine");
+        assert!(named(&["--on", "m"]).is_err(), "runs nothing");
+    }
+}

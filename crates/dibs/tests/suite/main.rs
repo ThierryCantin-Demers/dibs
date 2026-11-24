@@ -4,6 +4,7 @@
 mod harness;
 
 mod ahead;
+mod attempts;
 mod baselines;
 mod batch;
 mod cards;

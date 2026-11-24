@@ -1,6 +1,6 @@
 use dibs_format::{
     Exit,
-    wire::{CheckedIn, Frame, Record},
+    wire::{Admitted, CheckedIn, Frame, Record},
 };
 use std::{
     fs::File,
@@ -94,14 +94,18 @@ impl Sink {
             (Kind::Frames, record) => {
                 self.frame(Frame::Record(record));
             }
-            (Kind::Plain, Record::Trailer(trailer)) => self.say(&format!("{trailer}\n")),
+            (Kind::Plain, Record::Trailer(trailer))
+            | (Kind::Plain, Record::Admitted(Admitted::Ended(trailer))) => {
+                self.say(&format!("{trailer}\n"))
+            }
             (
                 Kind::Plain,
                 Record::Holding(_)
                 | Record::Transferring
                 | Record::Prepared(_)
                 | Record::Stepped(_)
-                | Record::CheckedIn(_),
+                | Record::CheckedIn(_)
+                | Record::Admitted(Admitted::Running { .. } | Admitted::Lost { .. }),
             ) => {}
         }
     }

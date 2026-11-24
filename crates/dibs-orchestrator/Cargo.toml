@@ -1,0 +1,18 @@
+[package]
+name = "dibs-orchestrator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The service that keeps dibs work alive across machines and outlives the laptop that sent it"
+
+[dependencies]
+dibs-format.workspace = true
+libc.workspace = true
+rusqlite = { version = "0.43", features = ["bundled", "backup"] }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

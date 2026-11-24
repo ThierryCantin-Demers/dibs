@@ -461,6 +461,15 @@ impl<'a> LockedCall<'a> {
                 Origin::Recipe(job) if !job.last => None,
                 _ => values.check_in,
             },
+            // A recipe's jobs before its last lay its tree out, which a second attempt does again.
+            attempt: match self.origin {
+                Origin::Recipe(job) if !job.last => None,
+                _ => values.attempt.clone(),
+            },
+            bundle: match self.origin {
+                Origin::Recipe(job) if !job.last => None,
+                _ => values.bundle.clone(),
+            },
             ..values
         }
     }
@@ -526,6 +535,10 @@ impl Request<'_> {
                 Some(seconds) => Some(seconds),
                 None => Some(DEFAULT_CHECK_IN),
             },
+            attempt: set(ATTEMPT).filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
+            bundle: set(BUNDLE_SPEC)
+                .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench))
+                .and_then(|spec| serde_json::from_str(&spec).ok()),
         }
     }
 
@@ -566,6 +579,15 @@ pub const CHECK_IN: &str = "DIBS_CHECK_IN";
 /// `--low-priority`, carried to every request a call and its children send, a batch's steps
 /// included.
 pub const LOW_PRIORITY: &str = "DIBS_LOW_PRIORITY";
+
+/// The caller's id for a call's job, which the machine admits once: an orchestrator's attempt.
+pub const ATTEMPT: &str = "DIBS_ATTEMPT";
+
+/// A JSON `Bundle` the call's job keeps after its build or checks before its command.
+pub const BUNDLE_SPEC: &str = "DIBS_BUNDLE_SPEC";
+
+/// A file each trailer the call hears is appended to, a JSON line each, for a driver to read.
+pub const TRAILERS: &str = "DIBS_TRAILERS";
 
 /// How long a call may hold the lock when `--max` does not say.
 fn default_max(mode: Mode) -> u64 {

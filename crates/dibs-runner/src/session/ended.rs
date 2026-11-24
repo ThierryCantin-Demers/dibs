@@ -1,4 +1,5 @@
 use crate::{
+    attempt,
     job::{Digest, LogRead, Repeat},
     session::run::{Hosted, Serving},
 };
@@ -50,6 +51,25 @@ impl<'a> Ended<'a> {
             user: call.user.clone(),
         };
         let _ = fs::write(tally.job_dir.join("meta"), meta.to_string());
+        if call.request.attempt.is_some() {
+            attempt::keep_trailer(tally.job_dir, &self.trailer());
+        }
+    }
+
+    fn trailer(&self) -> Trailer {
+        let call = self.at.call;
+        let tally = &self.tally;
+        Trailer {
+            job: tally.job.clone(),
+            mode: call.mode(),
+            label: call.label().clone(),
+            queued: tally.waited,
+            ran: tally.ran,
+            exit: tally.status,
+            by: tally.by,
+            built: tally.read.built,
+            tests: tally.read.tests,
+        }
     }
 
     /// The digest, then the trailer and what follows it: the same shape every time, on stderr,
@@ -79,17 +99,7 @@ impl<'a> Ended<'a> {
             );
         }
         let built = tally.read.built;
-        sink.record(Record::Trailer(Trailer {
-            job: tally.job.clone(),
-            mode: call.mode(),
-            label: call.label().clone(),
-            queued: tally.waited,
-            ran: tally.ran,
-            exit: tally.status,
-            by: tally.by,
-            built,
-            tests: tally.read.tests,
-        }));
+        sink.record(Record::Trailer(self.trailer()));
         let mut after = String::new();
         if !call.request.watch.hold {
             after.push_str(&format!(

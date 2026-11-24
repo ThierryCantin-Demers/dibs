@@ -1,12 +1,14 @@
 //! What a client and its runner say to each other: `docs/design/protocol.md`.
 
+mod bundle;
 mod frame;
 mod record;
 mod request;
 mod tree;
 
+pub use bundle::{Bundle, BundleCheck, BundleMake, BundleManifest};
 pub use frame::{Frame, FrameError, Unframer};
-pub use record::{Built, CheckedIn, Picked, Record, Trailer};
+pub use record::{Admitted, Built, CheckedIn, Picked, Record, Trailer};
 pub use request::{Card, Close, MaxFrom, Request, Service, Watch};
 pub use tree::{
     At, GitDb, GitDbs, Nest, Packages, Place, Prepare, Prepared, Revision, Seeded, Shared, Source,

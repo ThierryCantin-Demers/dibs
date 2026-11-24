@@ -13,7 +13,7 @@ use crate::{
 };
 use dibs_format::{
     Exit, Span,
-    wire::{CheckedIn, Frame, Picked, Prepared, Record, Stepped, Trailer, Unframer},
+    wire::{Admitted, CheckedIn, Frame, Picked, Prepared, Record, Stepped, Trailer, Unframer},
 };
 use std::{
     fs::File,
@@ -140,6 +140,7 @@ pub enum Heard {
     Stepped(Stepped),
     Trailer(Trailer),
     CheckedIn(CheckedIn),
+    Admitted(Admitted),
     Exit(i32),
     Broken(String),
 }
@@ -216,6 +217,9 @@ impl Served<'_> {
             provision.left_to_build(delivery);
             return Ok(code);
         }
+        if let Some(code) = self.unprovisioned(delivery) {
+            return Ok(code);
+        }
         let queueing = match self.values.takes_no_lock() {
             true => Queueing::GivesUp,
             false => Queueing::Waits,
@@ -243,6 +247,20 @@ impl Served<'_> {
             }
             Installed::Unreached => Ok(SSH_FAILED),
         }
+    }
+
+    /// Where `DIBS_NO_PROVISION=1` says runners are installed by hand, the call ends 72 rather
+    /// than build one: a build reads and writes on the machine before it holds the lock.
+    fn unprovisioned(&self, delivery: &mut Delivery) -> Option<i32> {
+        if std::env::var("DIBS_NO_PROVISION").ok().as_deref() != Some("1") {
+            return None;
+        }
+        delivery.say(&format!(
+            "dibs: the machine has no runner for this dibs ({}), and DIBS_NO_PROVISION=1 forbids building one here.\n  \
+             Install it in a maintenance window: dibs --check <machine>.\n",
+            Runner::HASH
+        ));
+        Some(i32::from(Exit::NoRunner.code()))
     }
 
     /// A call whose runner cannot be built yet, made of the runner already there when it can
@@ -366,6 +384,9 @@ impl Served<'_> {
                     live: self.live,
                 };
                 let delivery = &mut Delivery::Inherit;
+                if let Some(code) = self.unprovisioned(delivery) {
+                    return Ok(code);
+                }
                 let installed = match provision.through_newest(Queueing::Waits, delivery)? {
                     Installed::NoneThere if self.session.leased => provision.first(delivery)?,
                     installed => installed,
@@ -557,17 +578,44 @@ impl Served<'_> {
                         });
                     }
                 }
-                Heard::Prepared(prepared) => delivery.prepared(&prepared),
-                Heard::Stepped(stepped) => delivery.stepped(&stepped),
+                Heard::Prepared(prepared) => {
+                    Noted::record(&Record::Prepared(prepared.clone()));
+                    delivery.prepared(&prepared);
+                }
+                Heard::Stepped(stepped) => {
+                    Noted::record(&Record::Stepped(stepped.clone()));
+                    delivery.stepped(&stepped);
+                }
                 Heard::CheckedIn(c) => {
+                    Noted::record(&Record::CheckedIn(c.clone()));
                     self.session.said.checked_in(&c.job);
                     delivery.checked_in(&c);
                     checked = Some(c);
                 }
                 Heard::Trailer(trailer) => {
+                    Noted::record(&Record::Trailer(trailer.clone()));
                     self.session.said.ended(&trailer);
                     let line = format!("{trailer}\n");
                     delivery.give(Stream::Err, line.as_bytes(), &mut buffers);
+                }
+                Heard::Admitted(admitted) => {
+                    Noted::record(&Record::Admitted(admitted.clone()));
+                    let said = match &admitted {
+                        Admitted::Ended(trailer) => {
+                            self.session.said.ended(trailer);
+                            format!(
+                                "dibs: this attempt ran before as job {}, and is not run again. How it ended:\n{trailer}\n",
+                                trailer.job
+                            )
+                        }
+                        Admitted::Running { job, pid } => format!(
+                            "dibs: this attempt runs already as job {job}, under runner {pid}, and is not started again\n"
+                        ),
+                        Admitted::Lost { job, .. } => format!(
+                            "dibs: this attempt was admitted before as job {job}, whose runner is gone without saying how it ended\n"
+                        ),
+                    };
+                    delivery.give(Stream::Err, said.as_bytes(), &mut buffers);
                 }
                 Heard::Exit(code) => {
                     self.session.said.exited();
@@ -631,6 +679,24 @@ impl Served<'_> {
             Span(checked.every),
             checked.pid
         )
+    }
+}
+
+/// The records a call hears, appended to the file `DIBS_TRAILERS` names, for whatever drives it.
+struct Noted;
+
+impl Noted {
+    fn record(record: &Record) {
+        let Some(path) = std::env::var_os(crate::call::TRAILERS).filter(|p| !p.is_empty()) else {
+            return;
+        };
+        let Ok(mut line) = serde_json::to_vec(record) else {
+            return;
+        };
+        line.push(b'\n');
+        if let Ok(mut file) = File::options().create(true).append(true).open(path) {
+            let _ = file.write_all(&line);
+        }
     }
 }
 
@@ -797,6 +863,7 @@ fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
                 Frame::Record(Record::Prepared(prepared)) => Heard::Prepared(prepared),
                 Frame::Record(Record::Stepped(stepped)) => Heard::Stepped(stepped),
                 Frame::Record(Record::CheckedIn(checked)) => Heard::CheckedIn(checked),
+                Frame::Record(Record::Admitted(admitted)) => Heard::Admitted(admitted),
                 Frame::Exit(code) => Heard::Exit(code),
                 Frame::Request(_)
                 | Frame::Beat

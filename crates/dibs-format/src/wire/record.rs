@@ -22,6 +22,32 @@ pub enum Record {
     Stepped(Stepped),
     /// The job ran past its check-in and goes on without the call, which ends 80.
     CheckedIn(CheckedIn),
+    /// The request named an attempt the machine had already admitted, so nothing ran.
+    Admitted(Admitted),
+}
+
+/// How an attempt admitted before has gone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Admitted {
+    /// It ended, as this trailer says.
+    Ended(Trailer),
+    /// Its job still runs, under this runner.
+    Running { job: JobId, pid: u32 },
+    /// Its runner is gone without a report. `started` once it held the lock, after which how
+    /// it went cannot be known; before, it never ran.
+    Lost { job: JobId, started: bool },
+}
+
+impl Admitted {
+    /// The call's exit: the trailer's, or what says nothing ran this time.
+    pub fn status(&self) -> i32 {
+        match self {
+            Admitted::Ended(trailer) => trailer.exit,
+            Admitted::Running { .. } => crate::Exit::Busy.status(),
+            Admitted::Lost { .. } => crate::Exit::Failed.status(),
+        }
+    }
 }
 
 /// What a caller needs to follow or stop a job its call let go of.

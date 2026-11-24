@@ -22,6 +22,8 @@ pub struct Environment {
     copies: BTreeMap<String, String>,
     /// Where the command starts, when not where the runner did.
     dir: Option<PathBuf>,
+    /// What the request asks set besides, by name.
+    given: BTreeMap<String, String>,
     /// Descriptors held for as long as the job's process group lives.
     held: Vec<RawFd>,
 }
@@ -62,6 +64,7 @@ impl Environment {
             ports: BTreeMap::new(),
             copies: BTreeMap::new(),
             dir: None,
+            given: BTreeMap::new(),
             held: Vec::new(),
         })
     }
@@ -96,7 +99,22 @@ impl Environment {
         );
     }
 
+    /// A variable the request asks for, under whatever name it gives.
+    pub fn give(&mut self, name: String, value: String) {
+        self.given.insert(name, value);
+    }
+
+    /// Where the command starts, when not where the runner did.
+    pub fn dir(&self) -> Option<&Path> {
+        self.dir.as_deref()
+    }
+
     pub fn apply(&self, command: &mut Command) {
+        // A driver's own, which a call made from inside the job must not take for its own.
+        for name in ["DIBS_ATTEMPT", "DIBS_BUNDLE_SPEC", "DIBS_TRAILERS"] {
+            command.env_remove(name);
+        }
+        command.envs(&self.given);
         command.envs(&self.vars);
         command.envs(&self.ports);
         command.envs(&self.copies);

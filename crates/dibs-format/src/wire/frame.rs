@@ -198,6 +198,8 @@ mod tests {
             urgent: None,
             tree: None,
             check_in: None,
+            attempt: None,
+            bundle: None,
         }
     }
 

@@ -1,5 +1,7 @@
 use crate::{
     ahead::{Frozen, Preemption, Watch},
+    attempt::{Attempts, Receipt},
+    bundle::Bundles,
     call::{Journal, ONE_LINE, Received},
     channel::{Caller, Channel},
     clock::{Deadline, Moment, Span},
@@ -33,7 +35,7 @@ use crate::{
 use dibs_format::{
     By, Event, Exit, HistoryLine, JobId, Mode,
     status::Ahead,
-    wire::{MaxFrom, Record},
+    wire::{Bundle, MaxFrom, Record},
 };
 use std::{
     fs::{self, File},
@@ -105,6 +107,8 @@ struct Arrived {
     order: u128,
     job: JobId,
     held: Option<HoldFifo>,
+    /// The attempt this job is, held for as long as this runner serves it.
+    _receipt: Option<Receipt>,
 }
 
 /// How waiting for another call's urgent job ended.
@@ -393,6 +397,27 @@ impl<'a> Run<'a> {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_nanos());
         let job = job_id(start, pid);
+        let receipt = match &request.attempt {
+            Some(id) => match Attempts::under(&self.at.machine.scratch).admit(
+                id,
+                &job,
+                &self.at.machine.jobs(),
+            ) {
+                Ok(Ok(receipt)) => Some(receipt),
+                Ok(Err(admitted)) => {
+                    let status = admitted.status();
+                    self.at.sink.record(Record::Admitted(admitted));
+                    return Err(status);
+                }
+                Err(e) => {
+                    self.at.sink.say(&format!(
+                        "dibs: attempt {id} could not be admitted, so nothing ran: {e}\n"
+                    ));
+                    return Err(Exit::Refused.status());
+                }
+            },
+            None => None,
+        };
         let held = match request.watch.hold {
             true => match HoldFifo::make(self.at.dir, pid) {
                 Ok(held) => Some(held),
@@ -461,6 +486,7 @@ impl<'a> Run<'a> {
             order,
             job,
             held,
+            _receipt: receipt,
         })
     }
 
@@ -1557,6 +1583,27 @@ impl<'a> Run<'a> {
                 Begins::Runs(started) => running = Some(started),
             }
         }
+        match &request.bundle {
+            Some(Bundle::Check(check)) => {
+                match Bundles::under(&self.at.machine.scratch).check(check) {
+                    Ok(dir) => environment.set("DIBS_BUNDLE", dir.display().to_string()),
+                    Err(why) => {
+                        drop(state);
+                        say(&format!("dibs: {why}, so the command did not run.\n"));
+                        begun.touch_log();
+                        hosted.laid = Some(By::Dibs);
+                        hosted.status = Exit::TargetRebuilt.status();
+                        return hosted;
+                    }
+                }
+            }
+            Some(Bundle::Make(make)) => {
+                for (name, value) in &make.env {
+                    environment.give(name.clone(), value.clone());
+                }
+            }
+            None => {}
+        }
         if !hosted.ports.complete() {
             self.at.sink.say(&format!(
                 "dibs: no free port in {} on {}, so the command did not run.\n",
@@ -1797,6 +1844,27 @@ impl<'a> Run<'a> {
             && layout.step_ends(step, stepping, &mut hosted.status, hosted.overran, running)
         {
             hosted.laid = Some(By::Dibs);
+        }
+        if hosted.status == 0
+            && let Some(Bundle::Make(make)) = &request.bundle
+        {
+            let made = Bundles::under(&self.at.machine.scratch).make(
+                make,
+                &environment,
+                &arrived.job,
+                &self.at.machine.host,
+            );
+            match made {
+                Ok(manifest) => say(&format!(
+                    "dibs: kept {} as bundle {}, sha256 {}\n",
+                    manifest.exe, make.into, manifest.digest
+                )),
+                Err(why) => {
+                    say(&format!("dibs: no bundle was kept: {why}\n"));
+                    hosted.status = Exit::Setup.status();
+                    hosted.laid = Some(By::Dibs);
+                }
+            }
         }
         hosted
     }

@@ -175,6 +175,8 @@ pub fn build(hash: &str, built: Built) -> i32 {
         urgent: None,
         tree: None,
         check_in: None,
+        attempt: None,
+        bundle: None,
     };
     let code = Visit::new(request, sink)
         .with_temporary(vec![source.clone(), archive.clone()])

@@ -11,6 +11,7 @@ use dibs::{
     hook::{SshHook, UrgentHook},
     inventory::Inventory,
     machine::{Client, Runner},
+    orchestrator,
     paths::FileError,
     recipe::{self, Checkouts, Manifest},
     records::{Complaints, FrictionLog, RecordsError, RunLog, measurement_of, with_values},
@@ -51,6 +52,11 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         [word, rest @ ..] if word == batch::Detached::WORD => {
             return Ok(ExitCode::from(
                 batch::Detached::serve(rest).rem_euclid(256) as u8
+            ));
+        }
+        [word, rest @ ..] if word == orchestrator::WORD => {
+            return Ok(ExitCode::from(
+                orchestrator::serve(rest).rem_euclid(256) as u8
             ));
         }
         [word] if word == Client::SAYS_HASH => {

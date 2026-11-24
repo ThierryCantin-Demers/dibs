@@ -4,6 +4,8 @@
 //! how.
 
 mod ahead;
+mod attempt;
+mod bundle;
 mod call;
 mod channel;
 mod clock;

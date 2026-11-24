@@ -13,6 +13,7 @@ pub mod hook;
 pub mod inventory;
 pub mod itself;
 pub mod machine;
+pub mod orchestrator;
 pub mod paths;
 pub mod placement;
 pub mod recipe;

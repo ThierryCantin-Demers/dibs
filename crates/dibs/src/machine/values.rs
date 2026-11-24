@@ -50,6 +50,10 @@ pub struct CallValues {
     pub tree: Option<wire::Tree>,
     /// Seconds a job runs before its call lets go of it, None never.
     pub check_in: Option<u64>,
+    /// `DIBS_ATTEMPT`: the machine admits this call's job once.
+    pub attempt: Option<String>,
+    /// `DIBS_BUNDLE_SPEC`: an executable the job keeps, or checks before it runs.
+    pub bundle: Option<wire::Bundle>,
 }
 
 /// How the runner learns its caller is gone.
@@ -167,6 +171,8 @@ impl CallValues {
             check_in: self
                 .check_in
                 .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
+            attempt: self.attempt.clone(),
+            bundle: self.bundle.clone(),
         }
     }
 }

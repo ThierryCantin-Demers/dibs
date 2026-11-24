@@ -122,6 +122,8 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         urgent: None,
         tree: None,
         check_in: None,
+        attempt: None,
+        bundle: None,
     }
 }
 
