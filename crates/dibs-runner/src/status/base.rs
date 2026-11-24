@@ -276,7 +276,9 @@ impl Look<'_> {
                         .dir
                         .busy_besides(record.pid)
                         .map(|busy| format!("{} from {}", busy.label, busy.agent)),
-                    quiet_for: quiet.map(|(since, _)| now.saturating_sub(since)),
+                    quiet_for: quiet
+                        .and_then(|(since, _)| since)
+                        .map(|since| now.saturating_sub(since)),
                     settle: quiet.map_or(self.settings.idle_settle, |(_, settle)| settle),
                     stopped: self.dir.stopped(record.pid).map(|(ran, at, by)| Stopped {
                         ran,

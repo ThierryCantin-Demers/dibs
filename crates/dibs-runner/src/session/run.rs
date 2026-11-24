@@ -716,6 +716,7 @@ impl<'a> Run<'a> {
         let settle = Duration::from_secs(self.at.settings.idle_settle);
         let mut told = said.is_some();
         let mut quiet: Option<Instant> = None;
+        self.at.dir.mark_quiet(pid, None, settle.as_secs());
         loop {
             if self.cancelled() {
                 return Idled::Cancelled;
@@ -723,7 +724,7 @@ impl<'a> Run<'a> {
             match self.at.dir.busy_besides(pid) {
                 Some(busy) => {
                     if quiet.take().is_some() {
-                        self.at.dir.mark_quiet(pid, None);
+                        self.at.dir.mark_quiet(pid, None, settle.as_secs());
                     }
                     if !told {
                         self.at.sink.say(&format!(
@@ -737,11 +738,11 @@ impl<'a> Run<'a> {
                     let since = *quiet.get_or_insert_with(|| {
                         self.at
                             .dir
-                            .mark_quiet(pid, Some((Moment::epoch_now(), settle.as_secs())));
+                            .mark_quiet(pid, Some(Moment::epoch_now()), settle.as_secs());
                         Instant::now()
                     });
                     if since.elapsed() >= settle {
-                        self.at.dir.mark_quiet(pid, None);
+                        self.at.dir.clear_quiet(pid);
                         return Idled::Idle;
                     }
                 }

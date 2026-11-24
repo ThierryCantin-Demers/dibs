@@ -600,22 +600,22 @@ impl LockDir {
         self.file("passing", pid).exists()
     }
 
-    /// `quiet.<pid>`: since when a `--low-priority` job waiting here has seen nothing else, and
-    /// the settle time it waits for, which is its own call's.
-    pub fn mark_quiet(&self, pid: u32, quiet: Option<(u64, u64)>) {
-        let _ = match quiet {
-            Some((since, settle)) => {
-                fs::write(self.file("quiet", pid), format!("{since}\t{settle}\n"))
-            }
-            None => fs::remove_file(self.file("quiet", pid)),
-        };
+    /// `quiet.<pid>`: the settle time a `--low-priority` job waiting here waits for, which is its
+    /// own call's, and since when it has seen nothing else, once it has.
+    pub fn mark_quiet(&self, pid: u32, since: Option<u64>, settle: u64) {
+        let since = since.map_or("-".to_string(), |s| s.to_string());
+        let _ = fs::write(self.file("quiet", pid), format!("{since}\t{settle}\n"));
+    }
+
+    pub fn clear_quiet(&self, pid: u32) {
+        let _ = fs::remove_file(self.file("quiet", pid));
     }
 
     /// The `(since, settle)` of `mark_quiet`.
-    pub fn quiet(&self, pid: u32) -> Option<(u64, u64)> {
+    pub fn quiet(&self, pid: u32) -> Option<(Option<u64>, u64)> {
         let said = fs::read_to_string(self.file("quiet", pid)).ok()?;
         let (since, settle) = said.trim().split_once('\t')?;
-        Some((since.parse().ok()?, settle.parse().ok()?))
+        Some((since.parse().ok(), settle.parse().ok()?))
     }
 
     /// `stopped.<pid>`: a `--low-priority` job parked after it ran, for how long, when, and for
