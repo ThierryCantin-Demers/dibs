@@ -102,6 +102,15 @@ It fast-forwards the clone `dibs` was built from, lists the commits that arrived
 reinstall goes where the running `dibs` is installed, so a trial under its own prefix updates
 itself and not the one on PATH. It then pulls your recipes, when they are a git clone.
 
+You need not remember to. At most once an hour, a call asks the clone's upstream and the
+recipes' for their heads, beside its own work and never waiting for the answer, and the next
+call of each session says once on stderr when either is ahead of this computer:
+
+    dibs: a newer dibs is out (dibs 538e270 here, 8c26f1f upstream). Run dibs --update between calls, never in the middle of a batch.
+
+A computer ahead of its upstream, with commits not pushed yet, is told nothing. `DIBS_UPDATE_CHECK=0`
+turns the check off.
+
 A new `dibs` usually brings a new runner. The first call it makes to each machine builds that
 runner there, once, as a shared job, and says so before the call goes on.
 

@@ -18,7 +18,7 @@ pub struct Paths {
 }
 
 impl Paths {
-    const VARS: [&'static str; 15] = [
+    const VARS: [&'static str; 16] = [
         "HOME",
         "DIBS_CLIENT_DIR",
         "XDG_STATE_HOME",
@@ -28,6 +28,7 @@ impl Paths {
         "DIBS_FRICTION",
         "DIBS_SERIES",
         "DIBS_SEEN",
+        "DIBS_UPSTREAM",
         "DIBS_KEPT",
         "DIBS_ROUTE_DOWN",
         "DIBS_MACHINES",
@@ -74,6 +75,11 @@ impl Paths {
     /// When each session last saw which commit of dibs, for the change notice.
     pub fn seen(&self) -> Option<PathBuf> {
         self.overridden("DIBS_SEEN", self.state("seen"))
+    }
+
+    /// What the clone's and the recipes' upstreams last said their head was, and when.
+    pub fn upstream(&self) -> Option<PathBuf> {
+        self.overridden("DIBS_UPSTREAM", self.cache("upstream"))
     }
 
     /// Job logs already read, kept here so they answer once the machine is gone.

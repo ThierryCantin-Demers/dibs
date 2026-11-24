@@ -204,6 +204,8 @@ impl Sandbox {
             ("DIBS_LOG", at("log")),
             ("DIBS_SERIES", at("series")),
             ("DIBS_SEEN", at("seen")),
+            // The binary's clone is the real one, whose upstream is on the network.
+            ("DIBS_UPDATE_CHECK", "0".into()),
             ("DIBS_MACHINE_SETTINGS", at("etc/runner.toml")),
             ("DIBS_SCRATCH", at("scratch")),
             ("CLAUDE_CODE_HOST_SESSION_ID", "local_suite".into()),

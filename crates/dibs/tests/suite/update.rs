@@ -6,7 +6,7 @@ use crate::harness::*;
 use crate::snapshot::*;
 use dibs::{
     caller::Caller,
-    update::{ChangeNotice, Update},
+    update::{ChangeNotice, Update, Upstream},
 };
 use std::{
     fs, iter,
@@ -360,4 +360,62 @@ fn a_dibs_still_linked_into_the_clone_says_how_to_install_and_runs_nothing() {
         out.all()
     );
     assert!(!s.exists("ran"), "and runs nothing itself");
+}
+
+fn upstream(s: &Sandbox, installed: &str) -> Upstream {
+    Upstream {
+        cache: s.path("upstream"),
+        seen: s.path("seen"),
+        clone: s.path("update/clone"),
+        installed: Some(installed.into()),
+        recipes: Some(s.path("update/recipes")),
+    }
+}
+
+#[test]
+fn a_session_is_told_once_that_its_upstream_is_newer() {
+    let s = Sandbox::new();
+    clones(&s);
+    let here = s.git("update/clone", &["rev-parse", "--short", "HEAD"]);
+    let up = upstream(&s, &here);
+    assert_eq!(
+        up.notice(&session("u")),
+        None,
+        "nothing is said before an ask"
+    );
+    up.ask(0);
+    let told = up.notice(&session("u")).unwrap_or_default();
+    assert_eq!(
+        told.lines_matching("a newer dibs and newer recipes are out .*Run dibs --update"),
+        1,
+        "a clone and recipes behind their upstreams are named, with what to run: {told}"
+    );
+    assert_eq!(up.notice(&session("u")), None, "once per session");
+    assert!(
+        up.notice(&session("v")).is_some(),
+        "and once for each other session"
+    );
+    commit(&s, "update/origin", "three");
+    up.ask(0);
+    assert!(
+        up.notice(&session("u")).is_some(),
+        "a later head is told again"
+    );
+}
+
+#[test]
+fn a_computer_at_or_ahead_of_its_upstream_is_told_nothing() {
+    let s = Sandbox::new();
+    clones(&s);
+    s.git("update/clone", &["pull", "-q", "--ff-only"]);
+    s.git("update/recipes", &["pull", "-q", "--ff-only"]);
+    commit(&s, "update/clone", "local");
+    let here = s.git("update/clone", &["rev-parse", "--short", "HEAD"]);
+    let up = upstream(&s, &here);
+    up.ask(0);
+    assert_eq!(
+        up.notice(&session("u")),
+        None,
+        "an unpushed commit here is no reason to update"
+    );
 }

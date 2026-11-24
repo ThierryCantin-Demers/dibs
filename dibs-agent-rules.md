@@ -327,6 +327,8 @@ spoiled without it.
 - The first call after dibs has changed says so on stderr, once per session, with the commits that
   arrived. Flags and output you remember may be wrong from then on: read `dibs --help`. The first
   call it makes to each machine also builds dibs's runner there, once, as a shared job.
+- **When dibs says a newer dibs or newer recipes are out, run `dibs --update`** before your next
+  dibs call, never while a batch or job of yours is still running.
 - Exits 69, 70, 71 and 72 are for telling the person you work for, never for working around:
   - **69** unreachable: off, asleep, its network needs a login, or its lease ended. Do what does
     not need the machine, and do not retry in a loop. When it says the machine answered and is

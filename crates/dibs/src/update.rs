@@ -1,4 +1,5 @@
-//! `dibs --update`, and the change notice: a session is told once when dibs changed under it.
+//! `dibs --update`, and the two notices: a session is told once when dibs changed under it, and
+//! once when its upstream has a newer dibs or newer recipes than this computer runs.
 
 use crate::{caller::Caller, git::Git, paths::Paths};
 use dibs_format::{Exit, Span};
@@ -12,6 +13,18 @@ use std::{
 /// A stamp untouched this long belongs to a session that is gone.
 const STAMP_LIFETIME: Duration = Duration::from_secs(31 * Span::DAY.0);
 const LISTED: usize = 10;
+/// How long an upstream's answer stands before a call asks again.
+const ASKED_EVERY: Duration = Duration::from_secs(3600);
+/// How soon a call asks again when the last ask did not finish, as when its call was short.
+const ASKED_AGAIN_AFTER: Duration = Duration::from_secs(300);
+/// `0` turns the upstream check off, for a computer that should never reach the network for it.
+pub const UPDATE_CHECK: &str = "DIBS_UPDATE_CHECK";
+
+/// Both notices, told to a session at most once each.
+pub fn tell_once(caller: &Caller) {
+    ChangeNotice::tell_once(caller);
+    Upstream::tell_once(caller);
+}
 
 /// What this binary was built from, as its build script stamped it.
 pub struct Build;
@@ -300,4 +313,192 @@ impl ChangeNotice {
         ));
         text
     }
+}
+
+/// What the upstreams of the clone and of the recipes say their heads are, against what runs
+/// here. It is asked at most once an hour, beside a call and never waited for, so a slow or absent
+/// network costs a call nothing and the notice comes a call later.
+pub struct Upstream {
+    /// Where the last answer is kept, with when it was asked.
+    pub cache: PathBuf,
+    /// Where each session's last notice is kept, beside the change notice's stamps.
+    pub seen: PathBuf,
+    pub clone: PathBuf,
+    /// The commit the running build was made from.
+    pub installed: Option<String>,
+    pub recipes: Option<PathBuf>,
+}
+
+/// What the upstreams said, as kept in the cache.
+#[derive(Default, PartialEq, Debug)]
+struct Heads {
+    asked: u64,
+    dibs: Option<String>,
+    recipes: Option<String>,
+}
+
+impl Heads {
+    fn read(path: &Path) -> Heads {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let mut heads = Heads::default();
+        for line in text.lines() {
+            match line.split_once(' ') {
+                Some(("asked", at)) => heads.asked = at.parse().unwrap_or(0),
+                Some(("dibs", head)) => heads.dibs = Some(head.to_string()),
+                Some(("recipes", head)) => heads.recipes = Some(head.to_string()),
+                _ => {}
+            }
+        }
+        heads
+    }
+
+    /// Written whole and renamed into place, so a call that ends mid-write leaves the old answer.
+    fn write(&self, path: &Path) {
+        let mut text = format!("asked {}\n", self.asked);
+        for (name, head) in [("dibs", &self.dibs), ("recipes", &self.recipes)] {
+            if let Some(head) = head {
+                text.push_str(&format!("{name} {head}\n"));
+            }
+        }
+        let Some(dir) = path.parent() else { return };
+        let partial = dir.join(format!(".upstream.{}", std::process::id()));
+        if std::fs::create_dir_all(dir).is_ok() && std::fs::write(&partial, text).is_ok() {
+            let _ = std::fs::rename(&partial, path);
+        }
+    }
+}
+
+fn epoch_now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+impl Upstream {
+    /// Tells a session once about a newer upstream, from the last answer, and asks again
+    /// beside the call when that answer is old.
+    pub fn tell_once(caller: &Caller) {
+        if std::env::var(UPDATE_CHECK).is_ok_and(|v| v == "0") {
+            return;
+        }
+        let paths = Paths::from_env();
+        let (Some(cache), Some(seen)) = (paths.upstream(), paths.seen()) else {
+            return;
+        };
+        let upstream = Upstream {
+            cache,
+            seen,
+            clone: Build::clone_dir().to_path_buf(),
+            installed: Build::COMMIT.map(str::to_string),
+            recipes: paths.recipes(),
+        };
+        if let Some(text) = upstream.notice(caller) {
+            eprint!("{text}");
+        }
+        if upstream.due(epoch_now()) {
+            std::thread::spawn(move || upstream.ask(epoch_now()));
+        }
+    }
+
+    /// Whether the last answer is old enough to ask again. Marks the ask as begun, so the calls
+    /// of the next few minutes leave it to this one.
+    fn due(&self, now: u64) -> bool {
+        let mut heads = Heads::read(&self.cache);
+        if now.saturating_sub(heads.asked) < ASKED_EVERY.as_secs() {
+            return false;
+        }
+        heads.asked = now.saturating_sub(ASKED_EVERY.as_secs() - ASKED_AGAIN_AFTER.as_secs());
+        heads.write(&self.cache);
+        true
+    }
+
+    /// Asks both upstreams for their heads and keeps the answer.
+    pub fn ask(&self, now: u64) {
+        let heads = Heads {
+            asked: now,
+            dibs: head_upstream(&self.clone),
+            recipes: self.recipes.as_deref().and_then(head_upstream),
+        };
+        heads.write(&self.cache);
+    }
+
+    /// What to tell `caller`, the first time the last answer names something newer.
+    pub fn notice(&self, caller: &Caller) -> Option<String> {
+        let heads = Heads::read(&self.cache);
+        let dibs = heads.dibs.filter(|head| {
+            self.installed
+                .as_deref()
+                .is_some_and(|at| newer(&self.clone, head, at))
+        });
+        let recipes = heads.recipes.filter(|head| {
+            self.recipes
+                .as_deref()
+                .is_some_and(|dir| newer(dir, head, "HEAD"))
+        });
+        if dibs.is_none() && recipes.is_none() {
+            return None;
+        }
+        let told = format!(
+            "{} {}\n",
+            dibs.as_deref().unwrap_or("-"),
+            recipes.as_deref().unwrap_or("-")
+        );
+        let stamp = self.seen.join(format!("{}.upstream", caller.file_name()));
+        if std::fs::read_to_string(&stamp).is_ok_and(|was| was == told) {
+            return None;
+        }
+        if std::fs::create_dir_all(&self.seen).is_ok() {
+            let _ = std::fs::write(&stamp, &told);
+        }
+        let what = match (&dibs, &recipes) {
+            (Some(_), Some(_)) => "a newer dibs and newer recipes are",
+            (Some(_), None) => "a newer dibs is",
+            _ => "newer recipes are",
+        };
+        let short = |head: &str| head.chars().take(7).collect::<String>();
+        let mut text = format!("dibs: {what} out");
+        if let Some(head) = &dibs {
+            text.push_str(&format!(
+                " (dibs {} here, {} upstream)",
+                self.installed.as_deref().map(short).unwrap_or_default(),
+                short(head)
+            ));
+        }
+        text.push_str(". Run dibs --update between calls, never in the middle of a batch.\n");
+        Some(text)
+    }
+}
+
+/// The head of the branch `dir` tracks, as its remote says it is now.
+fn head_upstream(dir: &Path) -> Option<String> {
+    let tracked = git(
+        dir,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )?;
+    let (remote, branch) = tracked.split_once('/')?;
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["ls-remote", "--heads", remote, branch])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o ConnectTimeout=10",
+        )
+        .output()
+        .ok()
+        .filter(|out| out.status.success())?;
+    let wanted = format!("refs/heads/{branch}");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| {
+            let (head, name) = line.split_once('\t')?;
+            (name == wanted).then(|| head.to_string())
+        })
+}
+
+/// Whether `head` holds work `at` lacks. A head this clone has never fetched is newer; one `at`
+/// already contains, as when this computer is ahead of its upstream, is not.
+fn newer(dir: &Path, head: &str, at: &str) -> bool {
+    !git_ok(dir, &["merge-base", "--is-ancestor", head, at])
 }

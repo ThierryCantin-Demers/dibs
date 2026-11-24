@@ -15,7 +15,7 @@ use dibs::{
     paths::FileError,
     recipe::{self, Checkouts, Manifest},
     records::{Complaints, FrictionLog, RecordsError, RunLog, measurement_of, with_values},
-    update::{Build, ChangeNotice},
+    update::{self, Build},
 };
 use dibs_format::{BatchId, FrictionNote, Moment};
 use std::{path::Path, process::ExitCode};
@@ -107,7 +107,7 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
                 urgent(why);
             }
             let caller = Caller::from_env();
-            ChangeNotice::tell_once(&caller);
+            update::tell_once(&caller);
             run(call, &caller)
         }
         Invocation::Call(call) => {
@@ -122,7 +122,7 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             }
             let caller = Caller::from_env();
             if call.mode != Mode::Update {
-                ChangeNotice::tell_once(&caller);
+                update::tell_once(&caller);
             }
             if let Mode::Follow(job) = &call.mode
                 && let Some(run) = Unfinished::of(job)
@@ -257,7 +257,7 @@ fn run(args: RecipeCall, caller: &Caller) -> Result<ExitCode, RunError> {
 /// `dibs --friction '<line>'`, kept on this computer for `dibs gaps`.
 fn friction(text: &str) -> Result<ExitCode, RunError> {
     let caller = Caller::from_env();
-    ChangeNotice::tell_once(&caller);
+    update::tell_once(&caller);
     let note = FrictionNote::new(
         text,
         &caller.name,
