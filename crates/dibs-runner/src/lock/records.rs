@@ -578,8 +578,8 @@ impl LockDir {
 
     /// `idle.<pid>`: a job that runs only while nothing else here does, which another such job
     /// does not count as work.
-    /// `pressing.<pid>`: a shared job marked urgent, which goes around the queue's gate and parks
-    /// nothing, so it takes no `urgent.<pid>`.
+    /// `pressing.<pid>`: a job asked to be urgent, from its arrival. It parks nothing: a benchmark
+    /// parks the shared jobs only once it holds `urgent.<pid>`, the machine's one urgent claim.
     pub fn mark_pressing(&self, pid: u32, why: &str) {
         let _ = fs::write(self.file("pressing", pid), why.replace('\n', " "));
     }

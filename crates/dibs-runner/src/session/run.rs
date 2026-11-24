@@ -480,7 +480,8 @@ impl<'a> Run<'a> {
         if self.waits_idle() {
             self.at.dir.mark_idle(pid, self.idle());
         }
-        if let (Mode::Shared, Some(why)) = (request.mode, &request.urgent) {
+        // Before any wait, a closed machine's included, so the queue shows it from the start.
+        if let Some(why) = &request.urgent {
             self.at.dir.mark_pressing(pid, why);
         }
         self.at

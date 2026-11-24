@@ -144,14 +144,16 @@ impl Text<'_> {
             .as_ref()
             .map(|job| format!("  {}job {job}{}", p.dim, p.off))
             .unwrap_or_default();
-        let ahead = match (&holder.ahead, holder.low_priority, holder.mode) {
-            (Some(_), _, _) => format!("  {}preemptible{}", p.dim, p.off),
-            (None, true, _) => format!("  {}low priority{}", p.dim, p.off),
-            (None, false, Mode::Shared) if holder.urgent.is_some() => {
-                format!("  {}urgent{}", p.warn, p.off)
-            }
-            (None, false, _) => String::new(),
-        };
+        let mut ahead = String::new();
+        if holder.ahead.is_some() {
+            ahead += &format!("  {}preemptible{}", p.dim, p.off);
+        }
+        if holder.low_priority {
+            ahead += &format!("  {}low priority{}", p.dim, p.off);
+        }
+        if let (Mode::Shared, Some(why)) = (holder.mode, &holder.urgent) {
+            ahead += &format!("  {}urgent: {why}{}", p.warn, p.off);
+        }
         let cap = holder
             .killed_at
             .map(|at| format!(", {}cap {}{}", p.dim, Span(at), p.off))

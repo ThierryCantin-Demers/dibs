@@ -91,8 +91,8 @@ impl Item {
             (None, Some(Priority::Low), Mode::Rsh) => "Low priority: it waited for an idle \
                 machine, and a copy is never parked, so it finishes once begun. "
                 .into(),
-            (None, Some(Priority::Low), _) => "Low priority: parked as soon as another job \
-                comes, to run again from the start once the machine is idle. "
+            (None, Some(Priority::Low), _) => "Low priority: parked as soon as a job that is not \
+                low priority comes, to run again from the start once the machine is idle. "
                 .into(),
             _ => String::new(),
         };
@@ -337,7 +337,8 @@ impl Verdict {
         let (note, long) = match (q.low_priority, q.eta) {
             (true, _) => (
                 "low priority: waits for an idle machine".to_string(),
-                "Low priority: it starts only once nothing else runs or waits on the machine."
+                "Low priority: it starts only once nothing but other low-priority work runs or \
+                 waits on the machine."
                     .to_string(),
             ),
             (false, Some(e)) => (

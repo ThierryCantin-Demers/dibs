@@ -171,7 +171,10 @@ fn a_shared_job_marked_urgent_goes_around_a_queued_benchmark() {
         .lines()
         .find(|line| line.contains("  look  "))
         .unwrap_or_else(|| panic!("{status}"));
-    assert!(line.contains("  urgent"), "it says it is urgent: {status}");
+    assert!(
+        line.contains("  urgent: a look before the review"),
+        "it says why it is urgent: {status}"
+    );
     assert_eq!(
         status.lines_with("URGENT:") + status.lines_with("parked for"),
         0,
