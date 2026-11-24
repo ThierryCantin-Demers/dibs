@@ -29,6 +29,11 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let home = Home::from_env();
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    // Held shared by everything that uses the store, so a restore never replaces it under one.
+    let _gate = match words.first() {
+        Some(&"restore") | None => None,
+        Some(_) => home.gate().ok().filter(|g| g.lock_shared().is_ok()),
+    };
     let code = match words.as_slice() {
         ["serve", coworker] => serve::serve(&home, coworker),
         ["worker", id] if home::component(id) => worker::run(&home, id),
@@ -144,57 +149,65 @@ fn restore(home: &Home, from: &Path) -> i32 {
         eprintln!("dibs-orchestrator: {} is no store: {e}", from.display());
         return Exit::Refused.status();
     }
-    // A live worker keeps writing to the store it opened, which the restore sets aside.
-    let driven: Vec<String> = std::fs::read_dir(home.subs())
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok()?.file_name().into_string().ok())
-        .filter(|id| worker::driven(home, id))
-        .collect();
-    if !driven.is_empty() {
-        eprintln!(
-            "dibs-orchestrator: workers still drive {}; stop them first (systemctl --user stop 'dibs-orch-*'), then restore",
-            driven.join(", ")
-        );
-        return Exit::Refused.status();
-    }
-    let store = home.store();
-    if store.exists() {
-        let aside = store.with_extension(format!(
-            "before-restore.{}",
-            dibs_format::Moment::epoch_now()
-        ));
-        if let Err(e) = std::fs::rename(&store, &aside) {
+    let gate = match home.gate().map(|f| (f.try_lock(), f)) {
+        Ok((Ok(()), gate)) => gate,
+        Ok((Err(_), _)) => {
             eprintln!(
-                "dibs-orchestrator: {} could not be set aside: {e}",
-                store.display()
+                "dibs-orchestrator: workers or calls still use the store; stop them first (systemctl --user stop 'dibs-orch-*'), then restore"
+            );
+            return Exit::Refused.status();
+        }
+        Err(e) => {
+            eprintln!("dibs-orchestrator: the store's gate: {e}");
+            return Exit::Failed.status();
+        }
+    };
+    let store = home.store();
+    // Made whole beside the store before anything is moved, so a failed copy leaves it as it was.
+    let restoring = store.with_extension("restoring");
+    let epoch = std::fs::copy(from, &restoring)
+        .map_err(|e| e.to_string())
+        .and_then(|_| {
+            Store::open(&restoring)
+                .and_then(|s| s.bump_epoch())
+                .map_err(|e| e.to_string())
+        });
+    let epoch = match epoch {
+        Ok(epoch) => epoch,
+        Err(e) => {
+            let _ = std::fs::remove_file(&restoring);
+            eprintln!(
+                "dibs-orchestrator: {} could not be restored: {e}",
+                from.display()
             );
             return Exit::Failed.status();
         }
-        println!("the store before the restore is {}", aside.display());
-    }
-    for suffix in ["db-wal", "db-shm"] {
-        let _ = std::fs::remove_file(store.with_extension(suffix));
-    }
-    if let Some(dir) = store.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Err(e) = std::fs::copy(from, &store) {
-        eprintln!(
-            "dibs-orchestrator: {} could not be restored: {e}",
-            from.display()
+    };
+    if store.exists() {
+        let aside = format!("before-restore.{}", dibs_format::Moment::epoch_now());
+        for (suffix, kept) in [("db", ""), ("db-wal", "-wal"), ("db-shm", "-shm")] {
+            let from = store.with_extension(suffix);
+            if from.exists()
+                && let Err(e) =
+                    std::fs::rename(&from, store.with_extension(format!("{aside}{kept}")))
+            {
+                eprintln!(
+                    "dibs-orchestrator: {} could not be set aside: {e}",
+                    from.display()
+                );
+                return Exit::Failed.status();
+            }
+        }
+        println!(
+            "the store before the restore is {}",
+            store.with_extension(&aside).display()
         );
+    }
+    if let Err(e) = std::fs::rename(&restoring, &store) {
+        eprintln!("dibs-orchestrator: the restored store could not be put in place: {e}");
         return Exit::Failed.status();
     }
-    let epoch = match open(home).and_then(|s| {
-        s.bump_epoch().map_err(|e| {
-            eprintln!("dibs-orchestrator: {e}");
-            Exit::Failed.status()
-        })
-    }) {
-        Ok(epoch) => epoch,
-        Err(code) => return code,
-    };
     println!("restored {} as epoch {epoch}", from.display());
+    drop(gate);
     resume(home)
 }

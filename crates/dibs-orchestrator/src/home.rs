@@ -35,6 +35,16 @@ impl Home {
         self.state.join("store.db")
     }
 
+    /// Locked shared by every process using the store, and exclusively by a restore.
+    pub fn gate(&self) -> std::io::Result<std::fs::File> {
+        std::fs::create_dir_all(&self.state)?;
+        std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.state.join("store.gate"))
+    }
+
     /// A coworker's uploads, each under `stage/<key>`, and the copy the next is sent against.
     pub fn staging(&self, coworker: &str) -> PathBuf {
         self.state.join("staging").join(coworker)

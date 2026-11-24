@@ -2,7 +2,7 @@
 //! the values it takes, and the steps a submission of it is planned as.
 
 use crate::{inventory::Inventory, settings::Settings, store::Planned};
-use dibs_format::orchestrator::SplitCall;
+use dibs_format::{orchestrator::SplitCall, wire::BundleMake};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -109,7 +109,10 @@ impl Resolved {
             .map(|w| shell_word(w))
             .collect::<Vec<_>>()
             .join(" ");
-        let build = format!("cargo {cargo}");
+        let build = format!(
+            "cargo {cargo} --message-format=json-render-diagnostics > \"${}\"",
+            BundleMake::REPORT
+        );
         match &self.check {
             Some(check) => format!("{{ {check} ; }} && {build}"),
             None => build,
@@ -314,7 +317,7 @@ command = "$DIBS_BUNDLE/app"
         assert_eq!(resolved.gpu, "box-b");
         assert_eq!(
             resolved.build_command(),
-            "{ test -e src ; } && cargo build --release -p app --example app --features cuda"
+            "{ test -e src ; } && cargo build --release -p app --example app --features cuda --message-format=json-render-diagnostics > \"$DIBS_CARGO_REPORT\""
         );
         assert_eq!(resolved.env["EPOCHS"], "1");
         assert_eq!(

@@ -35,7 +35,7 @@ use crate::{
 use dibs_format::{
     By, Event, Exit, HistoryLine, JobId, Mode,
     status::Ahead,
-    wire::{Bundle, MaxFrom, Record},
+    wire::{Bundle, BundleMake, MaxFrom, Record},
 };
 use std::{
     fs::{self, File},
@@ -1600,6 +1600,12 @@ impl<'a> Run<'a> {
                 for (name, value) in &make.env {
                     environment.give(name.clone(), value.clone());
                 }
+                let bundles = Bundles::under(&self.at.machine.scratch);
+                let report = bundles.report(&arrived.job);
+                if let Some(dir) = report.parent() {
+                    let _ = fs::create_dir_all(dir);
+                }
+                environment.give(BundleMake::REPORT.into(), report.display().to_string());
             }
             None => {}
         }

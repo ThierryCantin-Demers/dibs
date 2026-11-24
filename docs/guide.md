@@ -582,7 +582,8 @@ names it, `ssh = "<account>@<host>"` and optionally `ssh_config = "<file>"`.
 
 The call says the submission's id once it is accepted, then follows it, checking in after 30
 minutes as a job does. A call cut off before it heard back sends again under the same key, so the
-work is never submitted twice. `dibs orch follow <id>`, `status <id>`, `out <id> [<step>] [--job]`,
+work is never submitted twice; one that never heard back at all says its key, and the same command
+with `--key <key>` asks after that submission rather than making another. `dibs orch follow <id>`, `status <id>`, `out <id> [<step>] [--job]`,
 `list [--all]` and `kill <id>` find it again from anywhere, and `dibs orch machines` lists what
 the orchestrator can reach. `docs/design/orchestrator.md` is how it is built.
 

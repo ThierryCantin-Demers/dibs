@@ -14,8 +14,8 @@ pub enum Bundle {
 /// What a build keeps, and from which of cargo's artifacts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleMake {
-    /// The `cargo build` arguments the step's command built with, which cargo is asked again
-    /// with `--message-format=json` to name what it made.
+    /// The `cargo build` arguments the step's command built with, as the manifest records them.
+    /// The command writes cargo's JSON report of that build to `$DIBS_CARGO_REPORT`.
     pub cargo: Vec<String>,
     pub package: String,
     /// Cargo's target kind: `bin` or `example`.
@@ -23,13 +23,17 @@ pub struct BundleMake {
     pub name: String,
     /// The directory under `bundles` it is kept in.
     pub into: String,
-    /// Set for the step's command and for cargo's report alike, `RUSTFLAGS` above all: a
-    /// report asked with other flags would build something else.
+    /// Set for the step's command, `RUSTFLAGS` above all.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     /// What the caller binds the bundle to besides what the machine reads, recorded as given.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub inputs: BTreeMap<String, String>,
+}
+
+impl BundleMake {
+    /// Where the step's command writes cargo's `--message-format=json` report of its build.
+    pub const REPORT: &'static str = "DIBS_CARGO_REPORT";
 }
 
 /// The bundle a command runs, by the directory under `bundles` and the executable's digest.

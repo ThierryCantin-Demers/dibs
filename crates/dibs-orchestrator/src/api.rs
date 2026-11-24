@@ -245,6 +245,12 @@ impl Api<'_> {
                 upload.files, upload.digest
             )));
         }
+        let git = stage.join(".git");
+        Upload::own_git(&git).map_err(|e| {
+            refused(format!(
+                "the staged repo's git directory cannot be taken over: {e}"
+            ))
+        })?;
         let head = std::process::Command::new("git")
             .args(["rev-parse", "HEAD"])
             .current_dir(&stage)
@@ -414,15 +420,15 @@ impl Api<'_> {
                 ));
             }
             None => {
-                self.store
-                    .finish(
-                        id,
-                        State::Cancelled,
-                        Some(Exit::Cancelled.status()),
-                        Some("cancelled before its worker ran"),
+                // A worker started now asks after any attempt left open, and stops its job,
+                // before it records the kill.
+                spawn::worker(self.home, id).map_err(|why| {
+                    (
+                        format!("submission {id} is marked killed, but {why}"),
+                        Exit::Failed.status(),
                     )
-                    .map_err(failed)?;
-                say(format!("dibs: submission {id} is cancelled\n"));
+                })?;
+                say(format!("dibs: submission {id} is being stopped\n"));
             }
         }
         Ok(0)
@@ -434,5 +440,87 @@ impl Api<'_> {
             pools: self.store.pools().map_err(failed)?,
         });
         Ok(0)
+    }
+}
+
+/// A sent repo's git directory, made safe to run git in under the orchestrator's account.
+struct Upload;
+
+impl Upload {
+    /// What of a sent config is kept: how to read the repo and where it came from. Anything
+    /// else in it, or in its hooks, could run a program of the sender's choosing here.
+    const KEPT: &str =
+        r"^(core\.repositoryformatversion|core\.bare|extensions\..*|remote\.origin\.url)$";
+
+    fn own_git(git: &std::path::Path) -> std::io::Result<()> {
+        let config = git.join("config");
+        let kept = std::process::Command::new("git")
+            .arg("config")
+            .arg("--file")
+            .arg(&config)
+            .args(["--null", "--get-regexp", Upload::KEPT])
+            .output()?;
+        let owned = git.join("config.owned");
+        let _ = std::fs::remove_file(&owned);
+        std::fs::write(&owned, "")?;
+        for entry in String::from_utf8_lossy(&kept.stdout)
+            .split('\0')
+            .filter(|e| !e.is_empty())
+        {
+            let Some((key, value)) = entry.split_once('\n') else {
+                continue;
+            };
+            let set = std::process::Command::new("git")
+                .arg("config")
+                .arg("--file")
+                .arg(&owned)
+                .args([key, value])
+                .status()?;
+            if !set.success() {
+                return Err(std::io::Error::other(format!("{key} could not be kept")));
+            }
+        }
+        std::fs::rename(&owned, &config)?;
+        for gone in ["hooks", "objects/info/alternates", "commondir"] {
+            let path = git.join(gone);
+            let _ = std::fs::remove_dir_all(&path).or_else(|_| std::fs::remove_file(&path));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn a_sent_git_directory_keeps_how_to_read_it_and_nothing_that_runs() {
+        let dir = std::env::temp_dir().join(format!("dibs-orch-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&dir)
+                    .status()
+                    .unwrap()
+                    .success()
+            )
+        };
+        git(&["init", "-q"]);
+        git(&["config", "core.fsmonitor", "touch ran"]);
+        git(&["config", "remote.origin.url", "https://example.com/app.git"]);
+        std::fs::write(dir.join(".git/hooks/post-checkout"), "touch ran").unwrap();
+        Upload::own_git(&dir.join(".git")).unwrap();
+        let config = std::fs::read_to_string(dir.join(".git/config")).unwrap();
+        assert!(!config.contains("fsmonitor"), "{config}");
+        assert!(config.contains("https://example.com/app.git"), "{config}");
+        assert!(config.contains("repositoryformatversion"), "{config}");
+        assert!(!dir.join(".git/hooks").exists());
+        git(&["status", "--short"]);
+        assert!(!dir.join("ran").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

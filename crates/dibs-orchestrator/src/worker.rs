@@ -43,6 +43,8 @@ fn still_running() -> Duration {
 const ATTEMPTS: i64 = 3;
 /// How long a worker waits before asking again about an attempt whose call heard nothing back.
 const UNHEARD: Duration = Duration::from_secs(5);
+/// How long a worker waits before asking again a machine it could not reach.
+const UNREACHABLE: Duration = Duration::from_secs(60);
 
 pub fn lock_path(home: &Home, id: &str) -> PathBuf {
     home.submission(id).join("worker.lock")
@@ -172,6 +174,16 @@ impl Ended {
         }
     }
 
+    fn killed(trailer: Option<Trailer>, note: &str) -> Ended {
+        Ended {
+            state: State::Cancelled,
+            exit: Exit::Cancelled.status(),
+            trailer,
+            note: Some(note.into()),
+            attempt: None,
+        }
+    }
+
     fn of(self, attempt: &str, heard: &str) -> Ended {
         Ended {
             attempt: Some((attempt.to_string(), heard.to_string())),
@@ -208,7 +220,13 @@ impl Worker<'_> {
             if step.state.ended() {
                 return self.finish(step.state, Exit::Failed.status(), None);
             }
-            if self.store.cancelled(self.id).unwrap_or(false) {
+            let open = self
+                .store
+                .last_attempt(self.id, step.n)
+                .ok()
+                .flatten()
+                .is_some_and(|a| a.open);
+            if self.store.cancelled(self.id).unwrap_or(false) && !open {
                 return self.cancelled(step);
             }
             if STOP.load(Ordering::SeqCst) {
@@ -251,6 +269,15 @@ impl Worker<'_> {
         self.finish(State::Done, last.exit, None)
     }
 
+    /// Leave when told to stop without being killed, as at a shutdown: what was cut short is
+    /// done again by the next worker.
+    fn leaving(&self) -> Result<(), Leave> {
+        match STOP.load(Ordering::SeqCst) && !self.store.cancelled(self.id).unwrap_or(false) {
+            true => Err(Leave),
+            false => Ok(()),
+        }
+    }
+
     fn cancelled(&self, step: &Step) -> i32 {
         let _ = self.store.settle(
             self.id,
@@ -283,7 +310,7 @@ impl Worker<'_> {
         match (&self.submission.work, step.name.as_str(), self.resolved) {
             (Work::Call(call), "call", _) => self.call(step, call),
             (Work::Split(_), "build", Some(split)) => self.build(step, split),
-            (Work::Split(_), "relay", Some(split)) => Ok(self.relay(step, split)),
+            (Work::Split(_), "relay", Some(split)) => self.relay(step, split),
             (Work::Split(_), "stage", Some(split)) => self.stage(step, split),
             (Work::Split(_), "measure", Some(split)) => self.measure(step, split),
             _ => Ok(Ended::failed(
@@ -401,7 +428,7 @@ impl Worker<'_> {
 
     /// The bundle from the compile machine into the store, checked and attested, then on to the
     /// GPU machine.
-    fn relay(&self, step: &Step, split: &Resolved) -> Ended {
+    fn relay(&self, step: &Step, split: &Resolved) -> Result<Ended, Leave> {
         let log = step_log(self.home, self.id, step.n, &step.name);
         let fetched = self.home.submission(self.id).join("bundle");
         let _ = fs::remove_dir_all(&fetched);
@@ -420,10 +447,11 @@ impl Worker<'_> {
             None,
         );
         if code != 0 {
-            return Ended::failed(
+            self.leaving()?;
+            return Ok(Ended::failed(
                 code,
                 format!("the bundle could not be fetched from {}", split.compile),
-            );
+            ));
         }
         let manifest: BundleManifest = match fs::read(fetched.join(BundleManifest::FILE))
             .ok()
@@ -431,27 +459,30 @@ impl Worker<'_> {
         {
             Some(m) => m,
             None => {
-                return Ended::failed(Exit::Setup.status(), "the bundle came without a manifest");
+                return Ok(Ended::failed(
+                    Exit::Setup.status(),
+                    "the bundle came without a manifest",
+                ));
             }
         };
         let digest = Sha256::hex_of_file(&fetched.join(&manifest.exe)).unwrap_or_default();
         if digest != manifest.digest {
-            return Ended::failed(
+            return Ok(Ended::failed(
                 Exit::TargetRebuilt.status(),
                 format!(
                     "the bundle's {} is {digest}, not the {} its manifest names",
                     manifest.exe, manifest.digest
                 ),
-            );
+            ));
         }
         let built = self.trailer_of("build").and_then(|t| t.built);
         let inputs = self.inputs(&manifest);
         let attested = self.store.attested(&digest, &inputs).unwrap_or(false);
         if built == Some(Built::Nothing) && !attested {
-            return Ended::failed(
+            return Ok(Ended::failed(
                 Exit::TargetRebuilt.status(),
                 "the build compiled nothing, and no earlier build of these exact inputs attests the executable it left",
-            );
+            ));
         }
         let producer = self
             .trailer_of("build")
@@ -469,10 +500,10 @@ impl Worker<'_> {
                 let _ = fs::create_dir_all(parent);
             }
             if let Err(e) = fs::rename(&fetched, &kept) {
-                return Ended::failed(
+                return Ok(Ended::failed(
                     Exit::Failed.status(),
                     format!("the bundle could not be kept: {e}"),
-                );
+                ));
             }
         }
         let _ = fs::write(self.home.submission(self.id).join("digest"), &digest);
@@ -490,12 +521,13 @@ impl Worker<'_> {
             None,
         );
         if code != 0 {
-            return Ended::failed(
+            self.leaving()?;
+            return Ok(Ended::failed(
                 code,
                 format!("the bundle could not be sent to {}", split.gpu),
-            );
+            ));
         }
-        Ended::done(None, Some(format!("bundle {digest}")))
+        Ok(Ended::done(None, Some(format!("bundle {digest}"))))
     }
 
     /// What a bundle is bound to: the tree sent, the lockfile, the toolchain, the flags and the
@@ -627,8 +659,15 @@ impl Worker<'_> {
         };
         let mut unheard = 0;
         loop {
+            let killed = self.store.cancelled(self.id).unwrap_or(false);
+            if STOP.load(Ordering::SeqCst) && !killed {
+                return Err(Leave);
+            }
             let attempt = match self.store.last_attempt(self.id, step.n).ok().flatten() {
                 Some(open) if open.open => open,
+                // Killed: an attempt still open is followed until its job is seen to end, and
+                // no new one is made.
+                _ if killed => return Ok(Ended::killed(None, "killed with dibs orch kill")),
                 Some(ended) if ended.k >= ATTEMPTS => {
                     return Ok(Ended::failed(
                         Exit::Failed.status(),
@@ -663,7 +702,8 @@ impl Worker<'_> {
             if let Some(bundle) = &bundle {
                 env.push(("DIBS_BUNDLE_SPEC", bundle.clone()));
             }
-            let code = self.dibs_logged(&log, args, &env, cwd);
+            // Once killed, a call only asks after the attempt, and is not itself cut short.
+            let code = self.dibs_call(&log, args, &env, cwd, !killed);
             let heard = last_record(&records);
             let said = heard
                 .as_ref()
@@ -675,17 +715,42 @@ impl Worker<'_> {
             let again = || {
                 let _ = self.store.attempt_ended(&attempt.id, &said);
             };
-            if STOP.load(Ordering::SeqCst) {
-                if !self.store.cancelled(self.id).unwrap_or(false) {
-                    return Err(Leave);
+            let killed = self.store.cancelled(self.id).unwrap_or(false);
+            if STOP.load(Ordering::SeqCst) && !killed {
+                return Err(Leave);
+            }
+            if killed {
+                match &heard {
+                    Some(Record::Admitted(Admitted::Running { job, pid })) => {
+                        // Its call belongs to a worker before this one, so the job is stopped on
+                        // its machine; the attempt stays open until it is seen to end.
+                        let _ = append(&log, &format!("stopping job {job} of an earlier worker\n"));
+                        self.dibs_call(
+                            &log,
+                            &[
+                                "--on".into(),
+                                machine.into(),
+                                "--kill".into(),
+                                pid.to_string(),
+                            ],
+                            &[],
+                            None,
+                            false,
+                        );
+                        std::thread::sleep(still_running());
+                        continue;
+                    }
+                    None if code == Exit::Unreachable.status() => {
+                        std::thread::sleep(UNREACHABLE);
+                        continue;
+                    }
+                    _ => {
+                        return close(Ended::killed(
+                            trailer_in(heard.as_ref()),
+                            "killed with dibs orch kill",
+                        ));
+                    }
                 }
-                return close(Ended {
-                    state: State::Cancelled,
-                    exit: Exit::Cancelled.status(),
-                    trailer: trailer_in(heard.as_ref()),
-                    note: Some("killed with dibs orch kill".into()),
-                    attempt: None,
-                });
             }
             match heard {
                 Some(Record::Trailer(trailer))
@@ -714,7 +779,7 @@ impl Worker<'_> {
                         }
                     }
                 }
-                Some(Record::Admitted(Admitted::Running { job, pid })) => {
+                Some(Record::Admitted(Admitted::Running { job, .. })) => {
                     let _ = append(
                         &log,
                         &format!(
@@ -722,38 +787,8 @@ impl Worker<'_> {
                             still_running().as_secs()
                         ),
                     );
-                    if pause(still_running()) {
-                        continue;
-                    }
-                    if !self.store.cancelled(self.id).unwrap_or(false) {
-                        return Err(Leave);
-                    }
-                    // Its call belongs to the worker before this one, so the job is stopped on
-                    // its machine rather than through a call this worker holds.
-                    let stopped = self.dibs_call(
-                        &log,
-                        &[
-                            "--on".into(),
-                            machine.into(),
-                            "--kill".into(),
-                            pid.to_string(),
-                        ],
-                        &[],
-                        None,
-                        false,
-                    );
-                    return close(Ended {
-                        state: State::Cancelled,
-                        exit: Exit::Cancelled.status(),
-                        trailer: None,
-                        note: Some(match stopped {
-                            0 => format!("killed, and job {job} of an earlier worker stopped"),
-                            code => format!(
-                                "killed, but job {job} of an earlier worker could not be stopped (exit {code}): it may still run"
-                            ),
-                        }),
-                        attempt: None,
-                    });
+                    // Told to stop, the next pass stops the job if it was a kill, or leaves.
+                    pause(still_running());
                 }
                 Some(Record::Admitted(Admitted::Lost { started: false, .. })) => again(),
                 Some(Record::Admitted(Admitted::Lost { job, .. })) => match kind {
@@ -770,17 +805,23 @@ impl Worker<'_> {
                         });
                     }
                 },
+                // Unreachable, the runner may have kept how the attempt ended: it is asked again
+                // under the same id, which runs nothing twice, for as long as the machine is away.
+                None if code == Exit::Unreachable.status() => {
+                    let _ = append(
+                        &log,
+                        &format!(
+                            "{machine} is unreachable; asking again in {}s\n",
+                            UNREACHABLE.as_secs()
+                        ),
+                    );
+                    pause(UNREACHABLE);
+                }
                 Some(_) | None => {
-                    // The runner may have kept how it ended and lost the way back: ask again
-                    // under the same id, which runs nothing twice.
                     unheard += 1;
                     if unheard < ATTEMPTS {
-                        if pause(UNHEARD) {
-                            continue;
-                        }
-                        if !self.store.cancelled(self.id).unwrap_or(false) {
-                            return Err(Leave);
-                        }
+                        pause(UNHEARD);
+                        continue;
                     }
                     return close(Ended::failed(
                         code,

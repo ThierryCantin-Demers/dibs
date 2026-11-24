@@ -33,9 +33,9 @@ const RETRIES: usize = 3;
 const SSH_FAILED: i32 = 255;
 
 const USAGE: &str = "usage:
-  dibs orch bench <repo>@local <recipe> [--<value> <v>]... [--no-follow]
+  dibs orch bench <repo>@local <recipe> [--<value> <v>]... [--no-follow] [--key <key>]
                                    a split recipe: built on the compile pool, measured on the GPU pool
-  dibs orch run --on <machine> [--bench --device <card>] [--label <l>] [--max <s>] [--no-follow] <command>
+  dibs orch run --on <machine> [--bench --device <card>] [--label <l>] [--max <s>] [--no-follow] [--key <key>] <command>
                                    a call on one machine, kept alive by the orchestrator
   dibs orch list [--all]           your submissions, or everyone's
   dibs orch status <id>            how each step went
@@ -54,12 +54,35 @@ pub fn serve(words: &[String]) -> i32 {
         }
     };
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
-    let follow = !words.contains(&"--no-follow");
-    let words: Vec<&str> = words.into_iter().filter(|w| *w != "--no-follow").collect();
-    let result = match words.as_slice() {
+    if let ["run", rest @ ..] = words.as_slice() {
+        return named(rest)
+            .and_then(|(work, sent)| orchestrator.submit(work, None, sent))
+            .unwrap_or_else(|why| {
+                eprintln!("dibs: {why}");
+                Exit::Refused.status()
+            });
+    }
+    let mut follow = true;
+    let mut key = None;
+    let mut given = Vec::new();
+    let mut words = words.into_iter();
+    while let Some(word) = words.next() {
+        match word {
+            "--no-follow" => follow = false,
+            "--key" => match words.next() {
+                Some(k) => key = Some(k.to_string()),
+                None => {
+                    eprintln!("dibs: --key needs the key a submission was sent under");
+                    return Exit::Refused.status();
+                }
+            },
+            word => given.push(word),
+        }
+    }
+    let sent = Sent { key, follow };
+    let result = match given.as_slice() {
         ["bench", target, recipe, values @ ..] => split(target, recipe, values)
-            .and_then(|(work, upload)| orchestrator.submit(work, Some(upload), follow)),
-        ["run", rest @ ..] => named(rest).and_then(|work| orchestrator.submit(work, None, follow)),
+            .and_then(|(work, upload)| orchestrator.submit(work, Some(upload), sent)),
         ["list"] => orchestrator.list(false),
         ["list", "--all"] => orchestrator.list(true),
         ["status", id] => orchestrator.status(id),
@@ -82,7 +105,14 @@ pub fn serve(words: &[String]) -> i32 {
     })
 }
 
-fn split(target: &str, recipe: &str, values: &[&str]) -> Result<(Work, Upload), String> {
+/// How a submission is sent: under the key given, so one sent before is asked after rather than
+/// sent again, or a new one; then followed, or not.
+struct Sent {
+    key: Option<String>,
+    follow: bool,
+}
+
+fn split(target: &str, recipe: &str, values: &[&str]) -> Result<(Work, (Upload, PathBuf)), String> {
     let Some(repo) = target.strip_suffix("@local") else {
         return Err(format!(
             "{target}: a split through the orchestrator is built from your working tree, as <repo>@local"
@@ -122,10 +152,11 @@ fn split(target: &str, recipe: &str, values: &[&str]) -> Result<(Work, Upload), 
         digest: String::new(),
         files: 0,
     };
-    Ok((work, Sending { dir }.prepared(upload)?))
+    let upload = Sending { dir: dir.clone() }.prepared(upload)?;
+    Ok((work, (upload, dir)))
 }
 
-fn named(words: &[&str]) -> Result<Work, String> {
+fn named(words: &[&str]) -> Result<(Work, Sent), String> {
     let mut call = NamedCall {
         on: String::new(),
         bench: false,
@@ -133,6 +164,10 @@ fn named(words: &[&str]) -> Result<Work, String> {
         label: String::new(),
         command: String::new(),
         max: None,
+    };
+    let mut sent = Sent {
+        key: None,
+        follow: true,
     };
     let mut words = words.iter();
     let mut command = Vec::new();
@@ -150,6 +185,8 @@ fn named(words: &[&str]) -> Result<Work, String> {
         match *word {
             "--on" => call.on = value("--on")?,
             "--bench" => call.bench = true,
+            "--no-follow" => sent.follow = false,
+            "--key" => sent.key = Some(value("--key")?),
             "--device" => call.device = Some(value("--device")?),
             "--label" => call.label = value("--label")?,
             "--max" => {
@@ -182,7 +219,7 @@ fn named(words: &[&str]) -> Result<Work, String> {
             .and_then(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "orch".into());
     }
-    Ok(Work::Call(call))
+    Ok((Work::Call(call), sent))
 }
 
 /// A working tree as it is sent: its files by its ignore rules and what it carries past them,
@@ -333,13 +370,18 @@ impl Orchestrator {
         Ok(code)
     }
 
-    fn submit(&self, work: Work, upload: Option<Upload>, follow: bool) -> Result<i32, String> {
-        let key = key();
+    fn submit(
+        &self,
+        work: Work,
+        upload: Option<(Upload, PathBuf)>,
+        sent: Sent,
+    ) -> Result<i32, String> {
+        let key = sent.key.unwrap_or_else(key);
         let agent = Caller::from_env().name;
         let upload = match upload {
-            Some(mut upload) => {
+            Some((mut upload, dir)) => {
                 upload.stage = key.clone();
-                if let Some(code) = self.send(&upload)? {
+                if let Some(code) = self.send(&upload, &dir)? {
                     return Ok(code);
                 }
                 Some(upload)
@@ -347,7 +389,7 @@ impl Orchestrator {
             None => None,
         };
         let call = Call::Submit(Box::new(Submission {
-            key,
+            key: key.clone(),
             agent,
             work,
             upload,
@@ -357,14 +399,15 @@ impl Orchestrator {
         let Some(id) = shown.accepted.clone() else {
             if code == SSH_FAILED {
                 eprintln!(
-                    "dibs: the orchestrator at {} could not be reached, so nothing was submitted",
+                    "dibs: the orchestrator at {} never said whether it took the submission, and may have.\n  \
+                     The same command with --key {key} asks again, and is that submission if it was taken.",
                     self.ssh
                 );
                 return Ok(Exit::Unreachable.status());
             }
             return Ok(code);
         };
-        if !follow {
+        if !sent.follow {
             println!("{id}");
             return Ok(0);
         }
@@ -373,10 +416,8 @@ impl Orchestrator {
 
     /// The tree, then its git directory, into the coworker's stage on the orchestrator, each
     /// against the copy the last upload of this repo left there. Some exit when one failed.
-    fn send(&self, upload: &Upload) -> Result<Option<i32>, String> {
-        let dir = Checkouts::here()
-            .and_then(|c| c.find(&upload.repo))
-            .map_err(|e| e.to_string())?;
+    fn send(&self, upload: &Upload, dir: &Path) -> Result<Option<i32>, String> {
+        let dir = dir.to_path_buf();
         let sending = Sending { dir: dir.clone() };
         let files = sending.files()?;
         let list = std::env::temp_dir().join(format!("dibs-orch-{}.files", upload.stage));
@@ -591,7 +632,7 @@ mod tests {
 
     #[test]
     fn a_named_call_reads_its_flags_and_keeps_its_command_whole() {
-        let Work::Call(call) = named(&[
+        let (Work::Call(call), _) = named(&[
             "--on", "m", "--bench", "--device", "gpu:x", "--label", "l", "echo", "--on",
         ])
         .unwrap() else {
@@ -607,10 +648,13 @@ mod tests {
             ("m", true, Some("gpu:x"), "l")
         );
         assert_eq!(call.command, "echo --on ");
-        let Work::Call(call) = named(&["--on", "m", "test", "a b", "=", "a b"]).unwrap() else {
+        let (Work::Call(call), sent) =
+            named(&["--on", "m", "--key", "k1", "test", "a b", "=", "a b"]).unwrap()
+        else {
             panic!("a call");
         };
         assert_eq!(call.command, r"test a\ b = a\ b ");
+        assert_eq!(sent.key.as_deref(), Some("k1"));
         assert!(named(&["echo"]).is_err(), "names no machine");
         assert!(named(&["--on", "m"]).is_err(), "runs nothing");
     }

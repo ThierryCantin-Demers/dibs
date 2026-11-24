@@ -68,8 +68,13 @@ impl Bundles {
         }
     }
 
-    /// Asks cargo again, in the job's tree and environment, what the build made, and keeps the
-    /// one executable its report names for the package and target.
+    /// Where job `job`'s command writes cargo's report of its build.
+    pub fn report(&self, job: &JobId) -> PathBuf {
+        self.dir.join(format!(".report-{job}"))
+    }
+
+    /// Keeps the one executable the build's own report names for the package and target: the
+    /// report the step's command wrote, so nothing is built or asked after the job.
     pub fn make(
         &self,
         make: &BundleMake,
@@ -78,23 +83,15 @@ impl Bundles {
         host: &str,
     ) -> Result<BundleManifest, String> {
         let into = self.named(&make.into)?;
-        let mut cargo = Command::new("cargo");
-        cargo
-            .args(&make.cargo)
-            .arg("--message-format=json-render-diagnostics")
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped());
-        environment.apply(&mut cargo);
-        let out = cargo
-            .output()
-            .map_err(|e| format!("cargo could not be asked what it built: {e}"))?;
-        if !out.status.success() {
-            return Err(format!(
-                "cargo's report of the build failed:\n{}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
-        }
-        let exe = Report(&String::from_utf8_lossy(&out.stdout)).executable(make)?;
+        let path = self.report(job);
+        let report = fs::read_to_string(&path).map_err(|e| {
+            format!(
+                "the build left no cargo report at ${} ({e}): its command writes cargo's --message-format=json there",
+                BundleMake::REPORT
+            )
+        });
+        let _ = fs::remove_file(&path);
+        let exe = Report(&report?).executable(make)?;
         let tree = environment.dir().map(Path::to_path_buf).unwrap_or_default();
         let mut rustc = Command::new("rustc");
         rustc.arg("-vV").stdin(Stdio::null()).stderr(Stdio::null());

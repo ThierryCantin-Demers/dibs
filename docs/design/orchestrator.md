@@ -15,7 +15,9 @@ forced command reads `SSH_ORIGINAL_COMMAND` and allows two things:
   `End` with the exit. The API is versioned (`dibs_format::orchestrator::VERSION`); a version it
   does not speak is refused, not guessed at.
 - `rsync --server` writing into `staging/<coworker>/stage/<key>/`, with a short list of options
-  and no symlinked component on the way. This is how `@local` trees arrive.
+  and no symlinked component on the way. This is how `@local` trees arrive. Before git runs in
+  one, its config is replaced by the service's own, keeping only how to read the repo and its
+  origin, and its hooks are removed, so nothing sent runs a program here.
 
 ## Durable state
 
@@ -60,9 +62,10 @@ its machine with `dibs --kill`.
 
 A split recipe builds on the compile pool and measures on the GPU pool, as four steps:
 
-1. **build**: `dibs shell <repo>@local` on a compile machine, with the profile's `RUSTFLAGS`. The
-   runner takes the executable cargo reports, copies it into `$DIBS_SCRATCH/bundles/<name>` with
-   a manifest (digest, toolchain, lockfile, flags, tree, job).
+1. **build**: `dibs shell <repo>@local` on a compile machine, with the profile's `RUSTFLAGS`,
+   writing cargo's JSON report of the build to `$DIBS_CARGO_REPORT`. The runner takes the one
+   executable that report names, copies it into `$DIBS_SCRATCH/bundles/<name>` with a manifest
+   (digest, toolchain, lockfile, flags, tree, job), and builds nothing after the job.
 2. **relay**: the bundle comes back to the orchestrator, is checked against its manifest, kept by
    digest and attested against its inputs, then sent to the GPU machine. A build that compiled
    nothing is accepted only when an earlier build of the same inputs attests what it left.
@@ -94,7 +97,8 @@ command = "MNIST_ARTIFACT_DIR=$TMPDIR/mnist-$DIBS_SUBMISSION $DIBS_BUNDLE/mnist"
 ## Backup and restore
 
 `dibs-orchestrator backup <file>` copies the store consistently while it is in use.
-`dibs-orchestrator restore <file>` is refused while any worker still runs, since a worker keeps
-writing to the store it opened. It reads the backup without changing it, sets the current store
-aside, puts the backup in its place under a new epoch and resumes: each attempt the backup left open is asked about under its own id,
+`dibs-orchestrator restore <file>` is refused while any worker or call still uses the store,
+since each keeps writing to the store it opened: they hold `store.gate` shared, and the restore
+holds it alone. It reads the backup without changing it, copies it beside the store
+under a new epoch, then sets the current store aside, puts the copy in its place and resumes: each attempt the backup left open is asked about under its own id,
 so work that finished after the backup is learned from its runner rather than run again.
