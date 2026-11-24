@@ -591,6 +591,7 @@ impl LockDir {
     pub fn idle_holding(&self, pid: u32) -> bool {
         self.records(Kind::Holder).iter().any(|r| {
             r.pid != pid
+                && r.mode != dibs_format::Mode::Rsh
                 && fs::read_to_string(self.file("idle", r.pid)).is_ok_and(|s| s != IDLE_WAITS)
                 && RecordFile(&self.file("holder", r.pid)).alive()
         })
