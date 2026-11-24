@@ -632,13 +632,18 @@ impl Worker<'_> {
         let Some(check) = self.check() else {
             return Ok(Ended::failed(Exit::Setup.status(), "no bundle was relayed"));
         };
+        let digest = self.digest().unwrap_or_default();
+        let links = match is_static(&self.home.bundle(&digest).join(&split.name)) {
+            true => "echo 'static: links nothing'; ".to_string(),
+            false => "if LC_ALL=C ldd \"$e\" > \"$TMPDIR/ldd.$$\" 2>&1; then cat \"$TMPDIR/ldd.$$\"; \
+                 if grep -q 'not found' \"$TMPDIR/ldd.$$\"; then echo 'dibs: this machine lacks what the bundle links' >&2; rm -f \"$TMPDIR/ldd.$$\"; exit 3; fi; \
+                 else cat \"$TMPDIR/ldd.$$\" >&2; echo 'dibs: ldd could not read what the bundle links' >&2; rm -f \"$TMPDIR/ldd.$$\"; exit 3; fi; \
+                 rm -f \"$TMPDIR/ldd.$$\"; "
+                .to_string(),
+        };
         let command = format!(
             "e=\"$DIBS_BUNDLE/{}\"; test -x \"$e\" || {{ echo \"dibs: the bundle has no executable $e\" >&2; exit 3; }}; \
-             if ldd \"$e\" > \"$TMPDIR/ldd.$$\" 2>&1; then cat \"$TMPDIR/ldd.$$\"; \
-             if grep -q 'not found' \"$TMPDIR/ldd.$$\"; then echo 'dibs: this machine lacks what the bundle links' >&2; rm -f \"$TMPDIR/ldd.$$\"; exit 3; fi; \
-             elif grep -q 'not a dynamic executable' \"$TMPDIR/ldd.$$\"; then echo 'static: links nothing'; \
-             else cat \"$TMPDIR/ldd.$$\" >&2; echo 'dibs: ldd could not read what the bundle links' >&2; rm -f \"$TMPDIR/ldd.$$\"; exit 3; fi; \
-             rm -f \"$TMPDIR/ldd.$$\"; ldd --version 2>&1 | head -n 1; \
+             {links}ldd --version 2>&1 | head -n 1; \
              nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null || true",
             split.name
         );
@@ -960,6 +965,8 @@ impl Worker<'_> {
         let mut command = dibs();
         command
             .args(args)
+            // The split's profile alone says whether it builds in an image.
+            .env_remove("DIBS_IMAGE")
             .envs(env.iter().map(|(k, v)| (*k, v.as_str())))
             .env("DIBS_NO_PROVISION", "1")
             .env("DIBS_CHECK_IN", "off")
@@ -1078,5 +1085,64 @@ fn listen_for_stop() {
     for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
         // SAFETY: the handler only stores to an atomic.
         unsafe { libc::signal(signal, stop as *const () as libc::sighandler_t) };
+    }
+}
+
+/// An ELF with no program interpreter loads nothing, so ldd has nothing to check, and its exit
+/// for one differs between versions.
+fn is_static(exe: &Path) -> bool {
+    const PT_INTERP: u32 = 3;
+    let Ok(elf) = fs::read(exe) else {
+        return false;
+    };
+    let at = |o: usize, n: usize| elf.get(o..o + n);
+    let u = |o: usize, n: usize| {
+        at(o, n).map(|b| b.iter().rev().fold(0u64, |v, &x| (v << 8) | u64::from(x)))
+    };
+    // 64-bit little-endian only, the one kind of executable a split builds.
+    if at(0, 6) != Some(b"\x7fELF\x02\x01".as_slice()) {
+        return false;
+    }
+    let (Some(off), Some(size), Some(count)) = (u(0x20, 8), u(0x36, 2), u(0x38, 2)) else {
+        return false;
+    };
+    (0..count).all(|i| {
+        let header = off as usize + (i * size) as usize;
+        u(header, 4).is_some_and(|kind| kind != u64::from(PT_INTERP))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn elf(kinds: &[u32]) -> Vec<u8> {
+        let mut b = vec![0u8; 64];
+        b[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        b[0x20..0x28].copy_from_slice(&64u64.to_le_bytes());
+        b[0x36..0x38].copy_from_slice(&56u16.to_le_bytes());
+        b[0x38..0x3a].copy_from_slice(&(kinds.len() as u16).to_le_bytes());
+        for kind in kinds {
+            let mut header = vec![0u8; 56];
+            header[..4].copy_from_slice(&kind.to_le_bytes());
+            b.extend(header);
+        }
+        b
+    }
+
+    #[test]
+    fn only_an_executable_without_an_interpreter_is_static() {
+        let dir = std::env::temp_dir().join(format!("dibs-elf.{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        for (name, bytes, expected) in [
+            ("static", elf(&[1, 1]), true),
+            ("dynamic", elf(&[6, 3, 1]), false),
+            ("script", b"#!/bin/sh\n".to_vec(), false),
+        ] {
+            fs::write(dir.join(name), bytes).unwrap();
+            assert_eq!(is_static(&dir.join(name)), expected, "{name}");
+        }
+        assert!(!is_static(&dir.join("absent")));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

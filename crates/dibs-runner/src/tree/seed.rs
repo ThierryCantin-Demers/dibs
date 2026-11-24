@@ -69,7 +69,6 @@ impl Siblings<'_> {
         let targets = self.scratch.join("target");
         let local = format!("{}-local-", self.repo);
         let arm = format!("{}-arm", self.repo);
-        let imaged = format!("{}-img", self.repo);
         let image = self
             .of
             .file_name()
@@ -79,10 +78,8 @@ impl Siblings<'_> {
                 d.flatten()
                     .filter(|e| {
                         let name = e.file_name().to_string_lossy().into_owned();
-                        (name == self.repo
-                            || name.starts_with(&local)
-                            || name.starts_with(&arm)
-                            || name.starts_with(&imaged))
+                        let base = Image::untagged(&name);
+                        (base == self.repo || base.starts_with(&local) || base.starts_with(&arm))
                             && Image::tag_of(&name) == image.as_deref()
                     })
                     .filter_map(|e| {
@@ -314,7 +311,7 @@ impl<'a> Seed<'a> {
     /// The sibling's sources copied, when it is a local tree's and this tree's own are new or
     /// being replaced: a fetched tree has its own.
     fn sources(&self, from: &str, existing: Existing) -> Option<PathBuf> {
-        let key = from.strip_prefix(&format!("{}-local-", self.tree.repo))?;
+        let key = Image::untagged(from).strip_prefix(&format!("{}-local-", self.tree.repo))?;
         let sources = self
             .tree
             .scratch

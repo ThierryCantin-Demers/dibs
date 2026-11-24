@@ -16,6 +16,8 @@ const TAG: usize = 12;
 const IMAGES: &str = "images";
 const USED: &str = ".dibs-used";
 const LOCK_POLL: Duration = Duration::from_millis(200);
+/// What resolving a name needs from the host.
+const NETWORK: [&str; 2] = ["/etc/resolv.conf", "/etc/hosts"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
@@ -27,6 +29,9 @@ impl Image {
     /// `<ref>@sha256:<digest>`: a tag alone could name other files tomorrow.
     pub fn parse(text: &str) -> Result<Image, String> {
         text.rsplit_once("@sha256:")
+            .filter(|(name, _)| {
+                !name.is_empty() && !name.contains(|c: char| c.is_whitespace() || c == '@')
+            })
             .map(|(_, digest)| digest)
             .filter(|digest| Image::hex(digest, DIGEST))
             .map(|digest| Image {
@@ -62,9 +67,35 @@ impl Image {
         Image::hex(&name[at + 4..], TAG).then_some(&name[at..])
     }
 
+    /// A target's name without the image tag it ends with.
+    pub fn untagged(name: &str) -> &str {
+        Image::tag_of(name).map_or(name, |tag| &name[..name.len() - tag.len()])
+    }
+
     fn hex(text: &str, len: usize) -> bool {
         text.len() == len && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
     }
+}
+
+/// Why an image is not ready to build in.
+#[derive(Debug)]
+pub struct Unready {
+    pub why: String,
+    /// The job's cap ran out preparing it.
+    pub overran: bool,
+}
+
+impl From<String> for Unready {
+    fn from(why: String) -> Unready {
+        Unready {
+            why,
+            overran: false,
+        }
+    }
+}
+
+fn overran(why: String) -> Unready {
+    Unready { why, overran: true }
 }
 
 /// The images unpacked on this machine, under its scratch.
@@ -76,7 +107,7 @@ pub struct Images<'a> {
 impl Images<'_> {
     /// The image's root filesystem, fetched and unpacked the first time this machine needs it,
     /// within the job's cap and stopped with it.
-    pub fn root(&self, image: &Image, commands: &Commands) -> Result<PathBuf, String> {
+    pub fn root(&self, image: &Image, commands: &Commands) -> Result<PathBuf, Unready> {
         let dir = self.scratch.join(IMAGES);
         let done = dir.join(&image.digest);
         let failed = |e: io::Error| format!("dibs: the image's directory {}: {e}\n", dir.display());
@@ -90,12 +121,12 @@ impl Images<'_> {
                     thread::sleep(LOCK_POLL)
                 }
                 Err(TryLockError::WouldBlock) => {
-                    return Err(
+                    return Err(overran(
                         "dibs: the job's cap ran out waiting for another job unpacking its image\n"
                             .into(),
-                    );
+                    ));
                 }
-                Err(TryLockError::Error(e)) => return Err(failed(e)),
+                Err(TryLockError::Error(e)) => return Err(failed(e).into()),
             }
         }
         if !done.join("rootfs").is_dir() {
@@ -111,15 +142,19 @@ impl Images<'_> {
         dir: &Path,
         done: &Path,
         commands: &Commands,
-    ) -> Result<(), String> {
-        let part = dir.join(format!(
-            ".part-{}-{}",
-            std::process::id(),
-            &image.digest[..TAG]
-        ));
+    ) -> Result<(), Unready> {
+        let suffix = format!("-{}", &image.digest[..TAG]);
+        // Under the image's lock, any part of it left by a job stopped mid-unpack is abandoned.
+        for left in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = left.file_name().to_string_lossy().into_owned();
+            if name.starts_with(".part-") && name.ends_with(&suffix) {
+                remove(commands, &left.path())?;
+            }
+        }
+        let part = dir.join(format!(".part-{}{suffix}", std::process::id()));
         let unpacked = self.unpack_into(image, &part, done, commands);
-        let _ = remove(&part);
-        unpacked
+        let removed = remove(commands, &part);
+        unpacked.and(removed)
     }
 
     fn unpack_into(
@@ -128,8 +163,7 @@ impl Images<'_> {
         part: &Path,
         done: &Path,
         commands: &Commands,
-    ) -> Result<(), String> {
-        let _ = remove(part);
+    ) -> Result<(), Unready> {
         fs::create_dir_all(part).map_err(|e| format!("dibs: {}: {e}\n", part.display()))?;
         let layout = format!("{}:image", part.join("oci").display());
         tool(
@@ -155,22 +189,21 @@ impl Images<'_> {
             ],
         )?;
         let rootfs = bundle.join("rootfs");
-        let prepared = self.mounts(&rootfs).and_then(|()| Account::add(&rootfs));
-        prepared.map_err(|e| format!("dibs: the image's root filesystem: {e}\n"))?;
-        fs::rename(&bundle, done).map_err(|e| format!("dibs: {}: {e}\n", done.display()))
-    }
-
-    /// The root is bound read-only, so what is bound over it needs its mount point made now.
-    fn mounts(&self, rootfs: &Path) -> io::Result<()> {
-        for dir in [self.home, self.scratch] {
-            fs::create_dir_all(rootfs.join(dir.strip_prefix("/").unwrap_or(dir)))?;
-        }
-        Ok(())
+        Account::add(&rootfs).map_err(|e| format!("dibs: the image's root filesystem: {e}\n"))?;
+        Ok(fs::rename(&bundle, done).map_err(|e| format!("dibs: {}: {e}\n", done.display()))?)
     }
 
     /// The sandbox a command runs in: the image's root, this account's home and the machine's
     /// scratch at their own paths, so every cache dibs keeps is where the command expects it.
-    pub fn sandbox(&self, rootfs: PathBuf) -> Sandbox {
+    pub fn sandbox(&self, rootfs: PathBuf) -> Result<Sandbox, Unready> {
+        let sandbox = self.layout(rootfs);
+        sandbox
+            .mount_points()
+            .map_err(|e| format!("dibs: the image's root filesystem: {e}\n"))?;
+        Ok(sandbox)
+    }
+
+    fn layout(&self, rootfs: PathBuf) -> Sandbox {
         let mut binds = vec![self.home.to_path_buf()];
         if !self.scratch.starts_with(self.home) {
             binds.push(self.scratch.to_path_buf());
@@ -218,15 +251,31 @@ impl Account {
                 false => line.to_string(),
             };
             let path = rootfs.join("etc").join(file);
-            let mut text = fs::read_to_string(&path).unwrap_or_default();
-            if !text.ends_with('\n') && !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&line);
-            text.push('\n');
-            fs::write(&path, text)?;
+            let image = fs::read_to_string(&path).unwrap_or_default();
+            fs::write(&path, Account::replace(&image, &line))?;
         }
         Ok(())
+    }
+
+    /// The image's entries, less any with the account's name or id, which lookups by id would
+    /// otherwise find first, then the account's.
+    fn replace(image: &str, line: &str) -> String {
+        let fields = |l: &str| {
+            let mut f = l.split(':');
+            (f.next().map(str::to_string), f.nth(1).map(str::to_string))
+        };
+        let (name, id) = fields(line);
+        let mut text: String = image
+            .lines()
+            .filter(|l| {
+                let (n, i) = fields(l);
+                n != name && i != id
+            })
+            .flat_map(|l| [l, "\n"])
+            .collect();
+        text.push_str(line);
+        text.push('\n');
+        text
     }
 }
 
@@ -241,6 +290,22 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
+    /// The root is bound read-only, so what is bound over it needs its mount point made first.
+    fn mount_points(&self) -> io::Result<()> {
+        let inside = |p: &Path| self.rootfs.join(p.strip_prefix("/").unwrap_or(p));
+        for dir in &self.binds {
+            fs::create_dir_all(inside(dir))?;
+        }
+        for file in NETWORK.iter().map(Path::new).filter(|f| f.exists()) {
+            let point = inside(file);
+            if fs::symlink_metadata(&point).is_err() {
+                fs::create_dir_all(point.parent().unwrap_or(&self.rootfs))?;
+                File::create(point)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn command(&self, command: &str) -> Command {
         let mut bwrap = Command::new("bwrap");
         bwrap.args(self.arguments(command));
@@ -261,7 +326,7 @@ impl Sandbox {
             "--tmpfs".into(),
             "/tmp".into(),
         ];
-        for file in ["/etc/resolv.conf", "/etc/hosts"] {
+        for file in NETWORK {
             if Path::new(file).exists() {
                 args.extend(["--ro-bind".into(), file.into(), file.into()]);
             }
@@ -279,17 +344,18 @@ impl Sandbox {
     }
 }
 
-fn tool(commands: &Commands, name: &str, args: &[&str]) -> Result<(), String> {
+fn tool(commands: &Commands, name: &str, args: &[&str]) -> Result<(), Unready> {
     let mut command = Command::new(name);
     command.args(args);
     let output = commands.output(command).map_err(|e| match e.kind() {
         io::ErrorKind::TimedOut => {
-            format!("dibs: the job's cap ran out while {name} prepared its image\n")
+            overran(format!("dibs: the job's cap ran out while {name} prepared its image\n"))
         }
         io::ErrorKind::NotFound => format!(
             "dibs: building in an image needs skopeo, umoci and bwrap on this machine, and {name} is not installed\n"
-        ),
-        _ => format!("dibs: {name} could not start: {e}\n"),
+        )
+        .into(),
+        _ => format!("dibs: {name} could not start: {e}\n").into(),
     })?;
     match output.status.success() {
         true => Ok(()),
@@ -298,21 +364,20 @@ fn tool(commands: &Commands, name: &str, args: &[&str]) -> Result<(), String> {
             args.first().unwrap_or(&""),
             output.status,
             String::from_utf8_lossy(&output.stderr)
-        )),
+        )
+        .into()),
     }
 }
 
-/// Removes an unpacked tree, whose directories an image may have left read-only.
-fn remove(path: &Path) -> io::Result<()> {
-    if !path.exists() {
+/// Removes an unpacked tree, whose directories an image may have left read-only, within the
+/// job's cap; one left behind is removed by the next unpack of its image.
+fn remove(commands: &Commands, path: &Path) -> Result<(), Unready> {
+    if fs::symlink_metadata(path).is_err() {
         return Ok(());
     }
-    let _ = Command::new("chmod")
-        .arg("-R")
-        .arg("u+w")
-        .arg(path)
-        .status();
-    fs::remove_dir_all(path)
+    let path = path.display().to_string();
+    tool(commands, "chmod", &["-R", "u+w", &path])?;
+    tool(commands, "rm", &["-rf", &path])
 }
 
 #[cfg(test)]
@@ -326,6 +391,7 @@ mod tests {
         let image = Image::parse(&format!("docker.io/library/buildpack-deps@sha256:{DIGEST}"));
         assert_eq!(image.unwrap().tag(), "-img0123456789ab");
         assert!(Image::parse("docker.io/library/buildpack-deps:noble").is_err());
+        assert!(Image::parse(&format!("@sha256:{DIGEST}")).is_err());
         assert!(Image::parse("x@sha256:0123").is_err());
         assert!(Image::parse(&format!("x@sha256:{}", DIGEST.to_uppercase())).is_err());
     }
@@ -351,6 +417,21 @@ mod tests {
         );
         assert_eq!(Image::tag_of("burn-local-k1"), None);
         assert_eq!(Image::tag_of("burn-imgfoo"), None);
+        assert_eq!(
+            Image::untagged("burn-local-k1-img0123456789ab"),
+            "burn-local-k1"
+        );
+        assert_eq!(Image::untagged("burn-imgfoo"), "burn-imgfoo");
+    }
+
+    #[test]
+    fn the_account_replaces_an_image_entry_with_its_id() {
+        let image = "root:x:0:0::/root:/bin/bash\nubuntu:x:1000:1000::/home/ubuntu:/bin/bash\n";
+        let ours = "dibs:x:1000:1000::/home/dibs:/bin/bash";
+        assert_eq!(
+            Account::replace(image, ours),
+            format!("root:x:0:0::/root:/bin/bash\n{ours}\n")
+        );
     }
 
     #[test]
@@ -360,7 +441,7 @@ mod tests {
             home: Path::new("/home/dibs"),
         };
         let args = images
-            .sandbox(PathBuf::from("/data/dibs/images/d/rootfs"))
+            .layout(PathBuf::from("/data/dibs/images/d/rootfs"))
             .arguments("cargo build");
         let joined = args.join(" ");
         assert!(joined.starts_with("--ro-bind /data/dibs/images/d/rootfs / "));
@@ -371,7 +452,7 @@ mod tests {
             scratch: Path::new("/home/dibs/.cache/dibs"),
             home: Path::new("/home/dibs"),
         };
-        let args = inside.sandbox(PathBuf::from("/r")).arguments("true");
+        let args = inside.layout(PathBuf::from("/r")).arguments("true");
         assert_eq!(args.iter().filter(|a| *a == "--bind").count(), 1);
     }
 
@@ -388,8 +469,10 @@ mod tests {
             scratch: &scratch,
             home: &home,
         };
+        let rootfs = root.join("rootfs");
         let joined = images
-            .sandbox(PathBuf::from("/r"))
+            .sandbox(rootfs.clone())
+            .unwrap()
             .arguments("true")
             .join(" ");
         let real = fs::canonicalize(disk.join("target"))
@@ -405,6 +488,10 @@ mod tests {
             joined.contains(&format!("--ro-bind {sealed} {sealed} --")),
             "after every writable bind: {joined}"
         );
+        assert!(rootfs.join(real.trim_start_matches('/')).is_dir());
+        if Path::new("/etc/hosts").exists() {
+            assert!(rootfs.join("etc/hosts").is_file());
+        }
         let _ = fs::remove_dir_all(&root);
     }
 }

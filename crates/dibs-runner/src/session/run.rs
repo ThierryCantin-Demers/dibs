@@ -7,7 +7,7 @@ use crate::{
     clock::{Deadline, Moment, Span},
     closed::{self, Shutter},
     history::{History, Key, Scope},
-    image::{Image, Images, Sandbox},
+    image::{Image, Images, Sandbox, Unready},
     job::{
         Cap, Environment, Guard, HoldFifo, Job, JobEnd, LogRead, Output, Ports, Readied, Readiness,
         Services, Start,
@@ -1618,12 +1618,16 @@ impl<'a> Run<'a> {
                 state = self.at.stopper.state();
                 match sandbox {
                     Ok(sandbox) => Some(sandbox),
-                    Err(why) => {
+                    Err(unready) => {
                         drop(state);
-                        self.at.sink.say(&why);
+                        self.at.sink.say(&unready.why);
                         begun.touch_log();
                         hosted.laid = Some(By::Dibs);
-                        hosted.status = Exit::Setup.status();
+                        hosted.overran = unready.overran;
+                        hosted.status = match unready.overran {
+                            true => Exit::Overran.status(),
+                            false => Exit::Setup.status(),
+                        };
                         return hosted;
                     }
                 }
@@ -2080,7 +2084,7 @@ impl<'a> Run<'a> {
         image: &Image,
         environment: &Environment,
         deadline: Deadline,
-    ) -> Result<Sandbox, String> {
+    ) -> Result<Sandbox, Unready> {
         let home = home();
         let images = Images {
             scratch: &self.at.machine.scratch,
@@ -2093,7 +2097,7 @@ impl<'a> Run<'a> {
         };
         let commands = Commands::new(environment, &running, &unstopped, deadline);
         let rootfs = images.root(image, &commands)?;
-        Ok(images.sandbox(rootfs))
+        images.sandbox(rootfs)
     }
 
     /// What the command started outside its group, as `setsid` does, which the group's own sweep

@@ -553,11 +553,22 @@ fn a_tree_built_in_an_image_is_seeded_only_from_targets_of_that_image() {
         "a native target links another C library"
     );
     m.sibling("demo-local-other-img0123456789ab", &[]);
+    m.sibling("demo-imgproc", &[]);
     let p = m.prepared(&local("next", &[]));
-    assert!(
-        p.seeded.unwrap().from.ends_with("-img0123456789ab"),
-        "seeded from a target of the same image"
+    let seeded = p.seeded.unwrap();
+    assert_eq!(
+        (seeded.from.as_str(), seeded.sources),
+        ("demo-local-new-img0123456789ab", true),
+        "the newest target of the same image, with the sources it was built from"
     );
+}
+
+#[test]
+fn a_repo_named_like_an_imaged_target_is_not_a_sibling() {
+    let m = Machine::new();
+    m.sibling("demo-imgproc", &[]);
+    let p = m.prepared(&local("new", &[]));
+    assert!(p.seeded.is_none(), "{:?}", p.seeded.map(|s| s.from));
 }
 
 // As on a machine whose target directories alone were moved to a filesystem that shares blocks:
