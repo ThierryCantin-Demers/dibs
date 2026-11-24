@@ -227,9 +227,12 @@ impl View {
                 ui.horizontal(|ui| {
                     let frozen = it.holding && it.slot == "FROZEN";
                     let slot = match (it.holding, frozen || it.alarm) {
-                        (true, true) => RichText::new(it.slot.to_lowercase())
-                            .color(ui.visuals().warn_fg_color)
-                            .strong(),
+                        (true, true) => RichText::new(match frozen {
+                            true => "frozen",
+                            false => "holding",
+                        })
+                        .color(ui.visuals().warn_fg_color)
+                        .strong(),
                         (true, false) => RichText::new("running").color(green(ui)).strong(),
                         (false, _) => RichText::new(format!(
                             "#{} in queue",
