@@ -26,7 +26,7 @@ const MACHINE_WIDTH: usize = 15;
 const LABEL_WIDTH: usize = 18;
 const DEVICE_WIDTH: usize = 16;
 const AGENT_WIDTH: usize = 20;
-const WHAT_WIDTH: usize = 9;
+const WHAT_WIDTH: usize = 11;
 const MODE_WIDTH: usize = 6;
 const TIME_WIDTH: usize = 7;
 const CORES_WIDTH: usize = 7;
@@ -338,7 +338,9 @@ fn job_row(it: &Item, selected: bool, w: &Widths) -> Row<'static> {
         } else {
             Color::White
         }),
-        (false, _) => base.fg(Color::Cyan),
+        (false, Some(Priority::Urgent)) => base.fg(Color::Red),
+        (false, Some(Priority::Low)) => base.patch(DIM),
+        (false, None) => base.fg(Color::Cyan),
     };
     let mut cells = vec![Span::styled(if selected { "▸" } else { " " }, base.fg(hue))];
     if w.multi {

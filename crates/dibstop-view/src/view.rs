@@ -231,8 +231,11 @@ impl View {
                             .color(ui.visuals().warn_fg_color)
                             .strong(),
                         (true, false) => RichText::new("running").color(green(ui)).strong(),
-                        (false, _) => RichText::new(it.slot.replace("queued ", "#") + " in queue")
-                            .color(Color32::from_rgb(80, 180, 200)),
+                        (false, _) => RichText::new(format!(
+                            "#{} in queue",
+                            it.slot.rsplit(' ').next().unwrap_or_default()
+                        ))
+                        .color(Color32::from_rgb(80, 180, 200)),
                     };
                     ui.label(slot);
                     match it.priority {

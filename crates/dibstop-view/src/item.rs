@@ -133,7 +133,11 @@ impl Item {
             machine: machine.to_string(),
             device: q.device.clone(),
             holding: false,
-            slot: format!("queued {}", q.position),
+            slot: match Priority::of(q.urgent.is_some(), q.low_priority) {
+                Some(Priority::Urgent) => format!("urgent {}", q.position),
+                Some(Priority::Low) => format!("low prio {}", q.position),
+                None => format!("queued {}", q.position),
+            },
             mode: q.mode,
             pid: q.pid,
             job: None,
@@ -496,8 +500,8 @@ mod tests {
             [
                 ("URGENT", Some(Priority::Urgent)),
                 ("LOW PRIO", Some(Priority::Low)),
-                ("queued 1", Some(Priority::Urgent)),
-                ("queued 2", Some(Priority::Low)),
+                ("urgent 1", Some(Priority::Urgent)),
+                ("low prio 2", Some(Priority::Low)),
             ]
         );
         assert_eq!(v[2].note, "urgent: release, no telling when");
