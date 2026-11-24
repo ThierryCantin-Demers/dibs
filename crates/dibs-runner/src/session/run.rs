@@ -6,7 +6,7 @@ use crate::{
     closed::{self, Shutter},
     history::{History, Key, Scope},
     job::{
-        Cap, Environment, Guard, HoldFifo, Job, LogRead, Output, Ports, Readied, Readiness,
+        Cap, Environment, Guard, HoldFifo, Job, JobEnd, LogRead, Output, Ports, Readied, Readiness,
         Services, Start,
     },
     kill::DESCRIBED,
@@ -441,7 +441,7 @@ impl<'a> Run<'a> {
             let _ = fs::write(self.at.dir.file("user", pid), format!("{user}\n"));
         }
         if self.waits_idle() {
-            self.at.dir.mark_idle(pid);
+            self.at.dir.mark_idle(pid, self.idle());
         }
         self.at
             .dir
@@ -653,12 +653,17 @@ impl<'a> Run<'a> {
         request.when_idle && request.urgent.is_none() && request.ports.is_empty() && self.parkable()
     }
 
-    /// A `--when-idle` call that waits for an idle machine to start: a parkable job, and the
-    /// transfer that sends a recipe's tree, which is short and is never parked once it runs.
+    /// A `--when-idle` call that waits for an idle machine to start: a parkable job, and what
+    /// cannot run again from the start, as the transfer that sends a recipe's tree or a job
+    /// holding a port, which is not parked once it runs.
     fn waits_idle(&self) -> bool {
         let request = &self.at.call.request;
-        self.idle()
-            || (request.when_idle && request.urgent.is_none() && self.at.call.mode() == Mode::Rsh)
+        let waits = match self.at.call.mode() {
+            Mode::Rsh => true,
+            Mode::Shared => !request.watch.hold && request.services.is_empty(),
+            _ => false,
+        };
+        request.when_idle && request.urgent.is_none() && waits
     }
 
     /// Waits until no other job has held or waited here for the machine's settle time, saying
@@ -1624,9 +1629,8 @@ impl<'a> Run<'a> {
                     if let Some(rw) = &idle_rw {
                         // Its build's mark let go of while it is parked, so a build into the
                         // target meanwhile clears what this one left half made.
-                        let yields = parked || self.at.dir.busy_besides(pid).is_some();
                         let marked =
-                            yields && running.as_mut().is_some_and(|r| r.mark.take().is_some());
+                            parked && running.as_mut().is_some_and(|r| r.mark.take().is_some());
                         let until = (runs == 0).then(|| self.wait_until(arrived)).flatten();
                         let since = Instant::now();
                         let (held, yielded) =
@@ -1640,8 +1644,22 @@ impl<'a> Run<'a> {
                             unlocked = true;
                             break status;
                         }
-                        if marked && let Some(running) = running.as_mut() {
-                            running.mark = stepping.as_ref().and_then(Stepping::building);
+                        if let Some(running) = running.as_mut() {
+                            // Before its first run, its mark is taken again after what was built
+                            // meanwhile, which a stop of this build must not take for its own.
+                            if runs == 0
+                                && yielded == Yielded::Waited
+                                && let Some(mark) = running.mark.take()
+                            {
+                                mark.ended(JobEnd {
+                                    status: 0,
+                                    capped: false,
+                                });
+                                running.mark = stepping.as_ref().and_then(Stepping::building);
+                            }
+                            if marked {
+                                running.mark = stepping.as_ref().and_then(Stepping::building);
+                            }
                         }
                         // Another tree may have built into the target while it was parked.
                         if yielded == Yielded::Waited

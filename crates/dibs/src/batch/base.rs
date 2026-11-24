@@ -391,7 +391,8 @@ fn drive(
         following: HashMap::new(),
         said_from: HashMap::new(),
         check_in: kept.check_in.clone(),
-        when_idle: kept.when_idle,
+        // A follow given the flag itself runs the rest of the steps so too.
+        when_idle: kept.when_idle || std::env::var(WHEN_IDLE).is_ok_and(|v| v == "1"),
         tx,
         rx,
     };
@@ -728,7 +729,7 @@ impl Driving<'_> {
             cwd: kept.cwd.clone(),
             on: kept.on.clone(),
             check_in: kept.check_in.clone(),
-            when_idle: kept.when_idle,
+            when_idle: self.when_idle,
             verbose: kept.verbose,
         };
         let file = self.dir.join(Paused::FILE);

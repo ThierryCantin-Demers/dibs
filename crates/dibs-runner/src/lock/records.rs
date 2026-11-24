@@ -18,6 +18,8 @@ pub const GUARD_WAIT: Duration = Duration::from_secs(5);
 const SAME_PROCESS_SLACK: u64 = 2;
 /// A batch's cancellation refuses its later steps here for a day.
 const CANCELLED_FOR: Duration = Duration::from_secs(Span::DAY.0);
+/// What `idle.<pid>` holds for a job parked for others, rather than one that only waits for none.
+const IDLE_PARKS: &str = "parks";
 
 /// The lock directory: the lock files, and the records that say who holds and who waits.
 #[derive(Debug, Clone)]
@@ -575,8 +577,9 @@ impl LockDir {
 
     /// `idle.<pid>`: a job that runs only while nothing else here does, which another such job
     /// does not count as work.
-    pub fn mark_idle(&self, pid: u32) {
-        let _ = fs::write(self.file("idle", pid), "");
+    pub fn mark_idle(&self, pid: u32, parks: bool) {
+        let said = if parks { IDLE_PARKS } else { "" };
+        let _ = fs::write(self.file("idle", pid), said);
     }
 
     pub fn idle_only(&self, pid: u32) -> bool {
@@ -587,8 +590,7 @@ impl LockDir {
     pub fn idle_holding(&self, pid: u32) -> bool {
         self.records(Kind::Holder).iter().any(|r| {
             r.pid != pid
-                && r.mode != dibs_format::Mode::Rsh
-                && self.idle_only(r.pid)
+                && fs::read_to_string(self.file("idle", r.pid)).is_ok_and(|s| s == IDLE_PARKS)
                 && RecordFile(&self.file("holder", r.pid)).alive()
         })
     }
