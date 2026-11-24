@@ -11,7 +11,7 @@ use crate::{
 };
 use dibs_format::{
     By, Exit, Sha256,
-    orchestrator::{NamedCall, State, Submission, Work},
+    orchestrator::{NamedCall, Seal, State, Submission, Work},
     wire::{Admitted, Built, Bundle, BundleCheck, BundleMake, BundleManifest, Record, Trailer},
 };
 use std::{
@@ -218,7 +218,11 @@ impl Worker<'_> {
                 continue;
             }
             if step.state.ended() {
-                return self.finish(step.state, Exit::Failed.status(), None);
+                let exit = step.exit.unwrap_or(match step.state {
+                    State::Cancelled => Exit::Cancelled.status(),
+                    _ => Exit::Failed.status(),
+                });
+                return self.finish(step.state, exit, None);
             }
             let open = self
                 .store
@@ -344,26 +348,36 @@ impl Worker<'_> {
     fn root(&self, split: &Resolved) -> Result<PathBuf, String> {
         let root = self.home.submission(self.id).join("root");
         let tree = root.join(&split.repo);
-        if tree.is_dir() {
-            return Ok(root);
-        }
         let upload = self
             .submission
             .upload
             .as_ref()
             .ok_or("the submission sent no tree")?;
-        let staging = self.home.staging(self.coworker);
-        let stage = staging.join("stage").join(&upload.stage);
-        fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-        fs::rename(&stage, &tree)
-            .map_err(|e| format!("the sent tree {} cannot be taken: {e}", stage.display()))?;
-        // What the next upload of this repo is sent against, so only what changed travels.
-        let last = staging.join("last").join(&split.repo);
-        let _ = fs::remove_dir_all(&last);
-        if let Some(parent) = last.parent() {
-            let _ = fs::create_dir_all(parent);
+        if !tree.is_dir() {
+            let staging = self.home.staging(self.coworker);
+            let stage = staging.join("stage").join(&upload.stage);
+            fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+            fs::rename(&stage, &tree)
+                .map_err(|e| format!("the sent tree {} cannot be taken: {e}", stage.display()))?;
+            // What the next upload of this repo is sent against, so only what changed travels.
+            let last = staging.join("last").join(&split.repo);
+            let _ = fs::remove_dir_all(&last);
+            if let Some(parent) = last.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = Command::new("cp").arg("-al").arg(&tree).arg(&last).status();
         }
-        let _ = Command::new("cp").arg("-al").arg(&tree).arg(&last).status();
+        // The stage can be sent to again under the same key until it is taken, so what was
+        // taken is checked here, not only when the submission was accepted.
+        let listed = Seal::listed(&tree).map_err(|e| e.to_string())?;
+        let (digest, files) =
+            Seal::of(&tree, listed.iter().map(String::as_str)).map_err(|e| e.to_string())?;
+        if digest != upload.digest || files != upload.files {
+            return Err(format!(
+                "the tree taken is not the one accepted ({files} files sealed {digest:.12}, accepted {} sealed {:.12})",
+                upload.files, upload.digest
+            ));
+        }
         Ok(root)
     }
 
@@ -702,6 +716,9 @@ impl Worker<'_> {
             if let Some(bundle) = &bundle {
                 env.push(("DIBS_BUNDLE_SPEC", bundle.clone()));
             }
+            if killed {
+                env.push(("DIBS_ATTEMPT_LOOKUP", "1".into()));
+            }
             // Once killed, a call only asks after the attempt, and is not itself cut short.
             let code = self.dibs_call(&log, args, &env, cwd, !killed);
             let heard = last_record(&records);
@@ -740,8 +757,16 @@ impl Worker<'_> {
                         std::thread::sleep(still_running());
                         continue;
                     }
-                    None if code == Exit::Unreachable.status() => {
-                        std::thread::sleep(UNREACHABLE);
+                    // Until the machine answers, nobody knows whether the job still runs.
+                    None => {
+                        let _ = append(
+                            &log,
+                            &format!("{machine} did not answer (exit {code}); asking again\n"),
+                        );
+                        std::thread::sleep(match away(code) {
+                            true => UNREACHABLE,
+                            false => UNHEARD,
+                        });
                         continue;
                     }
                     _ => {
@@ -805,13 +830,13 @@ impl Worker<'_> {
                         });
                     }
                 },
-                // Unreachable, the runner may have kept how the attempt ended: it is asked again
+                // Away, the runner may have kept how the attempt ended: it is asked again
                 // under the same id, which runs nothing twice, for as long as the machine is away.
-                None if code == Exit::Unreachable.status() => {
+                None if away(code) => {
                     let _ = append(
                         &log,
                         &format!(
-                            "{machine} is unreachable; asking again in {}s\n",
+                            "{machine} cannot take the call now (exit {code}); asking again in {}s\n",
                             UNREACHABLE.as_secs()
                         ),
                     );
@@ -918,6 +943,19 @@ impl Worker<'_> {
             std::thread::sleep(TICK);
         }
     }
+}
+
+/// Exits that say the machine could not take the call at all, for now: unreachable, full, its
+/// lock directory unwritable, or no runner of this version yet.
+fn away(code: i32) -> bool {
+    [
+        Exit::Unreachable,
+        Exit::NoRoom,
+        Exit::NoLock,
+        Exit::NoRunner,
+    ]
+    .iter()
+    .any(|e| e.status() == code)
 }
 
 fn trailer_in(record: Option<&Record>) -> Option<Trailer> {

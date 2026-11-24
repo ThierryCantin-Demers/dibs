@@ -67,11 +67,19 @@ impl Attempts {
         }
     }
 
-    /// The job of attempt `id` holds the machine's lock now: from here it may have run.
-    pub fn started(&self, id: &str) {
-        if let Ok(id) = Attempts::checked(id) {
-            let _ = File::create(self.dir.join(id).join(STARTED));
+    /// How attempt `id` went, without admitting it: `Never` when it was not admitted here.
+    pub fn look(&self, id: &str) -> io::Result<Admitted> {
+        let attempt = self.dir.join(Attempts::checked(id)?);
+        match attempt.join(RECEIPT).exists() {
+            true => Attempts::seen(&attempt),
+            false => Ok(Admitted::Never),
         }
+    }
+
+    /// The job of attempt `id` holds the machine's lock now: from here it may have run, so it
+    /// does not run unless this is kept.
+    pub fn started(&self, id: &str) -> io::Result<()> {
+        File::create(self.dir.join(Attempts::checked(id)?).join(STARTED)).map(drop)
     }
 
     /// How attempt `id` ended, kept before its caller is told.
@@ -170,7 +178,7 @@ mod tests {
             },
             "gone before it held the lock, it never ran"
         );
-        attempts.started("sub-1.build.1");
+        attempts.started("sub-1.build.1").unwrap();
         assert!(matches!(
             attempts.admit("sub-1.build.1", &job).unwrap(),
             Err(Admitted::Lost { started: true, .. })

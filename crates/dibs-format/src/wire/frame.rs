@@ -199,6 +199,7 @@ mod tests {
             tree: None,
             check_in: None,
             attempt: None,
+            lookup: false,
             bundle: None,
         }
     }

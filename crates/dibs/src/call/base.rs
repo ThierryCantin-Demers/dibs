@@ -536,6 +536,7 @@ impl Request<'_> {
                 None => Some(DEFAULT_CHECK_IN),
             },
             attempt: set(ATTEMPT).filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
+            lookup: set(ATTEMPT_LOOKUP).is_some_and(|v| v == "1"),
             bundle: set(BUNDLE_SPEC)
                 .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench))
                 .and_then(|spec| serde_json::from_str(&spec).ok()),
@@ -582,6 +583,9 @@ pub const LOW_PRIORITY: &str = "DIBS_LOW_PRIORITY";
 
 /// The caller's id for a call's job, which the machine admits once: an orchestrator's attempt.
 pub const ATTEMPT: &str = "DIBS_ATTEMPT";
+
+/// `1`: the call only asks how its attempt went, and the machine never starts it.
+pub const ATTEMPT_LOOKUP: &str = "DIBS_ATTEMPT_LOOKUP";
 
 /// A JSON `Bundle` the call's job keeps after its build or checks before its command.
 pub const BUNDLE_SPEC: &str = "DIBS_BUNDLE_SPEC";

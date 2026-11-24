@@ -449,8 +449,7 @@ struct Upload;
 impl Upload {
     /// What of a sent config is kept: how to read the repo and where it came from. Anything
     /// else in it, or in its hooks, could run a program of the sender's choosing here.
-    const KEPT: &str =
-        r"^(core\.repositoryformatversion|core\.bare|extensions\..*|remote\.origin\.url)$";
+    const KEPT: &str = r"^(core\.repositoryformatversion|core\.bare|extensions\.(objectformat|refstorage)|remote\.origin\.url)$";
 
     fn own_git(git: &std::path::Path) -> std::io::Result<()> {
         let config = git.join("config");
@@ -481,7 +480,12 @@ impl Upload {
             }
         }
         std::fs::rename(&owned, &config)?;
-        for gone in ["hooks", "objects/info/alternates", "commondir"] {
+        for gone in [
+            "hooks",
+            "objects/info/alternates",
+            "commondir",
+            "config.worktree",
+        ] {
             let path = git.join(gone);
             let _ = std::fs::remove_dir_all(&path).or_else(|_| std::fs::remove_file(&path));
         }
@@ -511,6 +515,12 @@ mod tests {
         };
         git(&["init", "-q"]);
         git(&["config", "core.fsmonitor", "touch ran"]);
+        git(&["config", "extensions.worktreeConfig", "true"]);
+        std::fs::write(
+            dir.join(".git/config.worktree"),
+            "[core]\n\tfsmonitor = touch ran\n",
+        )
+        .unwrap();
         git(&["config", "remote.origin.url", "https://example.com/app.git"]);
         std::fs::write(dir.join(".git/hooks/post-checkout"), "touch ran").unwrap();
         Upload::own_git(&dir.join(".git")).unwrap();

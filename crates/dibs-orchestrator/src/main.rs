@@ -32,7 +32,13 @@ fn main() -> ExitCode {
     // Held shared by everything that uses the store, so a restore never replaces it under one.
     let _gate = match words.first() {
         Some(&"restore") | None => None,
-        Some(_) => home.gate().ok().filter(|g| g.lock_shared().is_ok()),
+        Some(_) => match home.gate().and_then(|g| g.lock_shared().map(|()| g)) {
+            Ok(gate) => Some(gate),
+            Err(e) => {
+                eprintln!("dibs-orchestrator: the store's gate cannot be held: {e}");
+                return ExitCode::from(Exit::Failed.code());
+            }
+        },
     };
     let code = match words.as_slice() {
         ["serve", coworker] => serve::serve(&home, coworker),
@@ -165,13 +171,11 @@ fn restore(home: &Home, from: &Path) -> i32 {
     let store = home.store();
     // Made whole beside the store before anything is moved, so a failed copy leaves it as it was.
     let restoring = store.with_extension("restoring");
-    let epoch = std::fs::copy(from, &restoring)
-        .map_err(|e| e.to_string())
-        .and_then(|_| {
-            Store::open(&restoring)
-                .and_then(|s| s.bump_epoch())
-                .map_err(|e| e.to_string())
-        });
+    let _ = std::fs::remove_file(&restoring);
+    let epoch = Store::snapshot(from, &restoring)
+        .and_then(|()| Store::open(&restoring))
+        .and_then(|s| s.bump_epoch())
+        .map_err(|e| e.to_string());
     let epoch = match epoch {
         Ok(epoch) => epoch,
         Err(e) => {
@@ -208,6 +212,10 @@ fn restore(home: &Home, from: &Path) -> i32 {
         return Exit::Failed.status();
     }
     println!("restored {} as epoch {epoch}", from.display());
-    drop(gate);
+    // Held on, shared, so the resume uses the store as every other process does.
+    if let Err(e) = gate.lock_shared() {
+        eprintln!("dibs-orchestrator: the store's gate: {e}");
+        return Exit::Failed.status();
+    }
     resume(home)
 }

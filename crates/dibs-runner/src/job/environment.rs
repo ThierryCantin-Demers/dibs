@@ -111,7 +111,12 @@ impl Environment {
 
     pub fn apply(&self, command: &mut Command) {
         // A driver's own, which a call made from inside the job must not take for its own.
-        for name in ["DIBS_ATTEMPT", "DIBS_BUNDLE_SPEC", "DIBS_TRAILERS"] {
+        for name in [
+            "DIBS_ATTEMPT",
+            "DIBS_ATTEMPT_LOOKUP",
+            "DIBS_BUNDLE_SPEC",
+            "DIBS_TRAILERS",
+        ] {
             command.env_remove(name);
         }
         command.envs(&self.given);

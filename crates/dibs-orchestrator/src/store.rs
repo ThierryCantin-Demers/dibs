@@ -38,6 +38,8 @@ pub struct Step {
     pub n: i64,
     pub name: String,
     pub state: State,
+    /// What the trailer of its job said, once it has one.
+    pub exit: Option<i32>,
 }
 
 /// The last attempt launched at a step.
@@ -123,11 +125,20 @@ impl Store {
     /// The epoch of the store at `path`, read without creating or changing anything: an error
     /// when it is no store of this orchestrator's.
     pub fn inspect(path: &Path) -> rusqlite::Result<i64> {
+        Store::read_only(path)?.epoch()
+    }
+
+    /// A copy of the store at `from` as SQLite reads it, what its log holds included, at `to`.
+    pub fn snapshot(from: &Path, to: &Path) -> rusqlite::Result<()> {
+        Store::read_only(from)?.backup(to)
+    }
+
+    fn read_only(path: &Path) -> rusqlite::Result<Store> {
         let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         db.query_row("SELECT count(*) FROM submissions", [], |r| {
             r.get::<_, i64>(0)
         })?;
-        Store { db }.epoch()
+        Ok(Store { db })
     }
 
     pub fn epoch(&self) -> rusqlite::Result<i64> {
@@ -315,15 +326,19 @@ impl Store {
     }
 
     pub fn steps(&self, id: &str) -> rusqlite::Result<Vec<Step>> {
-        let mut statement = self
-            .db
-            .prepare("SELECT n, name, state FROM steps WHERE submission = ?1 ORDER BY n")?;
+        let mut statement = self.db.prepare(
+            "SELECT n, name, state, trailer FROM steps WHERE submission = ?1 ORDER BY n",
+        )?;
         statement
             .query_map(params![id], |r| {
+                let trailer: Option<String> = r.get(3)?;
                 Ok(Step {
                     n: r.get(0)?,
                     name: r.get(1)?,
                     state: state(&r.get::<_, String>(2)?),
+                    exit: trailer
+                        .and_then(|t| serde_json::from_str::<Trailer>(&t).ok())
+                        .map(|t| t.exit),
                 })
             })?
             .collect()

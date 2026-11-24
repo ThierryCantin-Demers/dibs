@@ -52,6 +52,7 @@ pub struct CallValues {
     pub check_in: Option<u64>,
     /// `DIBS_ATTEMPT`: the machine admits this call's job once.
     pub attempt: Option<String>,
+    pub lookup: bool,
     /// `DIBS_BUNDLE_SPEC`: an executable the job keeps, or checks before it runs.
     pub bundle: Option<wire::Bundle>,
 }
@@ -172,6 +173,7 @@ impl CallValues {
                 .check_in
                 .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
             attempt: self.attempt.clone(),
+            lookup: self.lookup,
             bundle: self.bundle.clone(),
         }
     }

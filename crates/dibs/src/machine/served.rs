@@ -611,6 +611,9 @@ impl Served<'_> {
                         Admitted::Running { job, pid } => format!(
                             "dibs: this attempt runs already as job {job}, under runner {pid}, and is not started again\n"
                         ),
+                        Admitted::Never => {
+                            "dibs: this attempt was never admitted here, and asked after only, is not started\n".to_string()
+                        }
                         Admitted::Lost { job, .. } => format!(
                             "dibs: this attempt was admitted before as job {job}, whose runner is gone without saying how it ended\n"
                         ),

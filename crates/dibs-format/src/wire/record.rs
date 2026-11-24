@@ -37,6 +37,8 @@ pub enum Admitted {
     /// Its runner is gone without a report. `started` once it held the lock, after which how
     /// it went cannot be known; before, it never ran.
     Lost { job: JobId, started: bool },
+    /// Asked after only, and never admitted here.
+    Never,
 }
 
 impl Admitted {
@@ -45,7 +47,7 @@ impl Admitted {
         match self {
             Admitted::Ended(trailer) => trailer.exit,
             Admitted::Running { .. } => crate::Exit::Busy.status(),
-            Admitted::Lost { .. } => crate::Exit::Failed.status(),
+            Admitted::Lost { .. } | Admitted::Never => crate::Exit::Failed.status(),
         }
     }
 }

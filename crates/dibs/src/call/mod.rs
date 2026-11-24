@@ -18,7 +18,8 @@ mod sync;
 mod watched;
 
 pub use base::{
-    ATTEMPT, BUNDLE_SPEC, CHECK_IN, CallError, LOW_PRIORITY, LockedCall, Ran, TRAILERS,
+    ATTEMPT, ATTEMPT_LOOKUP, BUNDLE_SPEC, CHECK_IN, CallError, LOW_PRIORITY, LockedCall, Ran,
+    TRAILERS,
 };
 pub use dispatch::Dispatch;
 pub use feed::{Fed, StatusFeed};

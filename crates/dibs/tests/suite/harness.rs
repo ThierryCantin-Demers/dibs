@@ -123,6 +123,7 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         tree: None,
         check_in: None,
         attempt: None,
+        lookup: false,
         bundle: None,
     }
 }

@@ -23,9 +23,11 @@ const WITHIN: Duration = Duration::from_secs(60);
 
 const FAKE_DIBS: &str = r#"#!/bin/sh
 F="$FAKE"
+if [ "$3" = --kill ]; then kill "$4"; exit 0; fi
 echo "$DIBS_ATTEMPT $*" >> "$F/calls"
 a="$F/attempts/$DIBS_ATTEMPT"
 say() { printf '%s\n' "$1" >> "$DIBS_TRAILERS"; }
+if [ "$DIBS_ATTEMPT_LOOKUP" = 1 ] && [ ! -d "$a" ]; then say '{"admitted":"never"}'; exit 1; fi
 if ! mkdir "$a" 2>/dev/null; then
   if [ -f "$a/ended" ]; then say "{\"admitted\":{\"ended\":$(cat "$a/ended")}}"; exit "$(cat "$a/exit")"; fi
   if [ -f "$a/pid" ] && kill -0 "$(cat "$a/pid")" 2>/dev/null; then
@@ -354,4 +356,47 @@ fn a_measurement_whose_runner_vanished_is_not_measured_again() {
     assert_eq!(state, State::Unknown, "{}", sandbox.log(&id));
     assert_ne!(exit, 0);
     assert_eq!(sandbox.ran(), 1);
+}
+
+#[test]
+fn a_kill_stops_the_job_its_worker_runs() {
+    let sandbox = Sandbox::new("kill");
+    sandbox.hold_jobs();
+    let (id, _) = sandbox.submit("k", false);
+    sandbox.reached();
+    let (_, exit) = sandbox.ask(Call::Kill { id: id.clone() });
+    assert_eq!(exit, 0);
+    assert_eq!(
+        sandbox.follow(&id).0,
+        State::Cancelled,
+        "{}",
+        sandbox.log(&id)
+    );
+    assert_eq!(sandbox.ran(), 1);
+}
+
+#[test]
+fn a_kill_after_its_worker_died_stops_the_job_that_worker_left_running() {
+    let sandbox = Sandbox::new("kill-recovered");
+    sandbox.hold_jobs();
+    let (id, _) = sandbox.submit("k", true);
+    sandbox.reached();
+    sandbox.kill_worker();
+    let (_, exit) = sandbox.ask(Call::Kill { id: id.clone() });
+    assert_eq!(exit, 0);
+    assert_eq!(
+        sandbox.follow(&id).0,
+        State::Cancelled,
+        "{}",
+        sandbox.log(&id)
+    );
+    assert_eq!(sandbox.ran(), 1, "the measurement is never started again");
+    let held = fs::read_dir(sandbox.fake().join("attempts"))
+        .unwrap()
+        .filter_map(|a| fs::read_to_string(a.ok()?.path().join("pid")).ok())
+        .filter_map(|pid| pid.trim().parse::<i32>().ok())
+        // SAFETY: signal 0 only asks whether the process lives.
+        .filter(|pid| unsafe { libc::kill(*pid, 0) } == 0)
+        .count();
+    assert_eq!(held, 0, "the job the dead worker left is stopped");
 }

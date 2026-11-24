@@ -105,7 +105,9 @@ impl Sink {
                 | Record::Prepared(_)
                 | Record::Stepped(_)
                 | Record::CheckedIn(_)
-                | Record::Admitted(Admitted::Running { .. } | Admitted::Lost { .. }),
+                | Record::Admitted(
+                    Admitted::Running { .. } | Admitted::Lost { .. } | Admitted::Never,
+                ),
             ) => {}
         }
     }

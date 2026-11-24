@@ -55,8 +55,10 @@ The store closes an attempt only in the transaction that records its step's outc
 the next attempt after one that says to. A worker that finds an attempt open, because the worker
 before it died or a call heard nothing back, asks again under the same id instead of starting a
 new one. Builds, transfers and checks run again after a `lost`; a measurement never does, and its
-step ends `unknown`. A kill that finds the job still run by an earlier worker's call stops it on
-its machine with `dibs --kill`.
+step ends `unknown`. A killed submission's worker only asks after its open attempt
+(`DIBS_ATTEMPT_LOOKUP=1`, which the runner answers without ever admitting it), stops a job an
+earlier worker's call still runs with `dibs --kill`, and records the kill once the job is seen to
+end.
 
 ## Splits
 

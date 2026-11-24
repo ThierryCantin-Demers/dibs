@@ -176,6 +176,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
         tree: None,
         check_in: None,
         attempt: None,
+        lookup: false,
         bundle: None,
     };
     let code = Visit::new(request, sink)

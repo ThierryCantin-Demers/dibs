@@ -81,6 +81,9 @@ pub struct Request {
     /// naming one it has seen is told how that one went, and never runs again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<String>,
+    /// Only asks how the attempt went, and never admits it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lookup: bool,
     /// An executable kept after the build, or checked before the command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle: Option<Bundle>,

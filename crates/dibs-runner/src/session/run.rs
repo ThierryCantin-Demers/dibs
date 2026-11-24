@@ -397,6 +397,22 @@ impl<'a> Run<'a> {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_nanos());
         let job = job_id(start, pid);
+        if let Some(id) = request.attempt.as_ref().filter(|_| request.lookup) {
+            let looked = Attempts::under(&self.at.machine.scratch).look(id);
+            return Err(match looked {
+                Ok(admitted) => {
+                    let status = admitted.status();
+                    self.at.sink.record(Record::Admitted(admitted));
+                    status
+                }
+                Err(e) => {
+                    self.at
+                        .sink
+                        .say(&format!("dibs: attempt {id} could not be looked up: {e}\n"));
+                    Exit::Refused.status()
+                }
+            });
+        }
         let receipt = match &request.attempt {
             Some(id) => match Attempts::under(&self.at.machine.scratch).admit(id, &job) {
                 Ok(Ok(receipt)) => Some(receipt),
@@ -1444,8 +1460,14 @@ impl<'a> Run<'a> {
             environment.set("DIBS_STATE", Host::machine_state());
         }
         let transfer = mode == Mode::Rsh;
-        if let Some(id) = &self.at.call.request.attempt {
-            Attempts::under(&self.at.machine.scratch).started(id);
+        if let Some(id) = &self.at.call.request.attempt
+            && let Err(e) = Attempts::under(&self.at.machine.scratch).started(id)
+        {
+            self.at.sink.say(&format!(
+                "dibs: attempt {id} could not be marked started, so it did not run: {e}\n"
+            ));
+            self.abandon(job, state);
+            return Err(Exit::Setup.status());
         }
         let dir = self.at.machine.jobs().join(job.as_str());
         let kept = match transfer {
