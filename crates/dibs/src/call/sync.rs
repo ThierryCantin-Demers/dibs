@@ -103,11 +103,10 @@ impl Sync<'_> {
             label: Some(self.label()),
             ..self.machine.call.clone()
         };
-        LockedCall::shared(&command).made_by(self.origin).run_into(
-            &call,
-            self.machine.caller,
-            output,
-        )
+        LockedCall::shared(&command)
+            .copy()
+            .made_by(self.origin)
+            .run_into(&call, self.machine.caller, output)
     }
 
     /// rsync runs here and reaches the machine through `dibs __rsh`, which takes the lock.

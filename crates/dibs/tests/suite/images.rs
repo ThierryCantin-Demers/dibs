@@ -98,6 +98,24 @@ fn a_command_with_no_tree_is_not_built_in_an_image() {
 }
 
 #[test]
+fn a_copy_on_this_machine_is_never_built_in_an_image() {
+    let s = Sandbox::new();
+    fakes(&s);
+    s.write("syncsrc/f.txt", "carried\n");
+    let (src, dst) = (
+        format!("{}/", s.p("syncsrc")),
+        format!(":{}/", s.p("syncdst")),
+    );
+    let out = s
+        .dibs(["--sync", "-rlpgo", &src, &dst])
+        .env("DIBS_IMAGE", IMAGE)
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(s.read("syncdst/f.txt"), "carried\n");
+    assert!(calls(&s, "skopeo").is_empty());
+}
+
+#[test]
 fn a_measurement_runs_natively_whatever_image_its_build_used() {
     let s = Sandbox::new();
     fakes(&s);

@@ -227,6 +227,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         anyway: args.anyway,
         new_series: args.new_series,
         fresh: Pairs::default(),
+        image: None,
         state: Pairs::default(),
         params: BTreeMap::new(),
         procedure,

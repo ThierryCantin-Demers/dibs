@@ -80,7 +80,11 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         tree_stamps,
     } = resolved;
     let (name, rec) = (name.as_str(), &rec);
-    let image = std::env::var(IMAGE).ok().filter(|i| !i.is_empty());
+    // By digest alone: a tag beside it names the same image.
+    let image = std::env::var(IMAGE)
+        .ok()
+        .and_then(|i| i.rsplit_once('@').map(|(_, digest)| digest.to_string()))
+        .filter(|digest| !digest.is_empty());
     let fingerprint = rec.fingerprint_in(image.as_deref());
     let patched: Option<std::collections::BTreeSet<String>> = (!pins.is_empty()).then(|| {
         pins.iter()
@@ -579,13 +583,9 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     .iter()
                     .map(|(k, v)| format!("export {k}={}; ", Expanding(v)))
                     .collect();
-                let image = image
-                    .as_deref()
-                    .map(|i| format!("export {IMAGE}={i}; "))
-                    .unwrap_or_default();
                 ProcedureStep {
                     lock: st.lock,
-                    run: format!("{image}{exports}{}", st.run),
+                    run: format!("{exports}{}", st.run),
                 }
             })
             .collect(),
@@ -624,6 +624,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         anyway: args.anyway,
         new_series: args.new_series,
         fresh: Vec::from_iter(fresh_values(rec, &trees[0].token)).into(),
+        image: image.clone(),
         state,
         outcome: Some(Outcome::of_steps(&steps)),
         steps,
@@ -1034,6 +1035,7 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
         anyway: false,
         new_series: false,
         fresh: Pairs::default(),
+        image: None,
         state: Pairs::default(),
         params: BTreeMap::new(),
         procedure: vec![ProcedureStep {

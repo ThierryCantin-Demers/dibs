@@ -229,6 +229,9 @@ pub struct RunRecord {
     /// The value each of the recipe's `fresh` variables had in this run.
     #[serde(default, skip_serializing_if = "Pairs::is_empty")]
     pub fresh: Pairs,
+    /// The image the run's builds ran in, by digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
     /// What the machine read of itself as the measurement took the lock.
     #[serde(default, skip_serializing_if = "Pairs::is_empty")]
     pub state: Pairs,

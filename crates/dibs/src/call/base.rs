@@ -38,6 +38,8 @@ pub struct LockedCall<'a> {
     ready_within: u32,
     preempt: bool,
     origin: Origin<'a>,
+    /// A copy, which builds nothing, so runs in no image.
+    copy: bool,
 }
 
 /// How a call ended, and the trailer of the last job it ran, when it ran one.
@@ -82,6 +84,7 @@ impl<'a> LockedCall<'a> {
             ready_within: run.ready_within,
             preempt: run.preempt,
             origin: Origin::Words,
+            copy: false,
         }
     }
 
@@ -107,7 +110,12 @@ impl<'a> LockedCall<'a> {
             ready_within: Run::default().ready_within,
             preempt: false,
             origin: Origin::Words,
+            copy: false,
         }
+    }
+
+    pub fn copy(self) -> LockedCall<'a> {
+        LockedCall { copy: true, ..self }
     }
 
     fn bench(&self) -> bool {
@@ -434,7 +442,16 @@ impl<'a> LockedCall<'a> {
             caller,
         }
         .values(label, card, self.command.shell_string());
+        let tree = match self.origin {
+            Origin::Recipe(job) => job.tree.clone(),
+            Origin::Words => None,
+        };
         CallValues {
+            // A copy that lays out a tree names the target the image builds in.
+            image: values
+                .image
+                .clone()
+                .filter(|_| !self.copy || tree.is_some()),
             ready_within: self.ready_within,
             preempt: self.preempt,
             ports: self.ports.to_vec(),
@@ -452,10 +469,7 @@ impl<'a> LockedCall<'a> {
                 }) => Some(Fingerprint(fingerprint).sent()),
                 _ => None,
             },
-            tree: match self.origin {
-                Origin::Recipe(job) => job.tree.clone(),
-                Origin::Words => None,
-            },
+            tree,
             // A recipe's jobs before its last have more after them, which the call must run.
             check_in: match self.origin {
                 Origin::Recipe(job) if !job.last => None,

@@ -232,10 +232,20 @@ impl Images<'_> {
             })
             .unwrap_or_default();
         binds.extend(moved);
+        let mut sealed = vec![scratch.join(IMAGES)];
+        // Jobs name scratch by the link, so its target is bound there too.
+        let aliases = match scratch != self.scratch && !self.scratch.starts_with(self.home) {
+            true => {
+                sealed.push(self.scratch.join(IMAGES));
+                vec![(scratch, self.scratch.to_path_buf())]
+            }
+            false => Vec::new(),
+        };
         Sandbox {
             rootfs,
             binds,
-            sealed: vec![scratch.join(IMAGES)],
+            aliases,
+            sealed,
         }
     }
 }
@@ -301,6 +311,8 @@ impl Account {
 pub struct Sandbox {
     rootfs: PathBuf,
     binds: Vec<PathBuf>,
+    /// A bound directory again, at the path of a link to it: (directory, link).
+    aliases: Vec<(PathBuf, PathBuf)>,
     /// Bound read-only over the binds: the unpacked images every build shares.
     sealed: Vec<PathBuf>,
 }
@@ -308,19 +320,23 @@ pub struct Sandbox {
 impl Sandbox {
     /// The root is bound read-only, so what is bound over it needs its mount point made first.
     fn mount_points(&self) -> io::Result<()> {
-        for dir in self.binds.iter().chain(&self.sealed) {
+        let links = self.aliases.iter().map(|(_, link)| link);
+        for dir in self.binds.iter().chain(links).chain(&self.sealed) {
             within(&self.rootfs, dir)?;
         }
         for file in NETWORK.iter().map(Path::new).filter(|f| f.exists()) {
             let dir = within(&self.rootfs, file.parent().unwrap_or(Path::new("/")))?;
             let point = dir.join(file.file_name().unwrap_or_default());
-            match fs::symlink_metadata(&point) {
-                Ok(m) if m.file_type().is_symlink() => {
-                    fs::remove_file(&point)?;
-                    File::create(&point)?;
+            if fs::symlink_metadata(&point).is_ok_and(|m| m.file_type().is_symlink()) {
+                match fs::remove_file(&point) {
+                    Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+                    _ => {}
                 }
-                Ok(_) => {}
-                Err(_) => drop(File::create(&point)?),
+            }
+            // Made new, so never through a link; another job may have made it first.
+            match File::options().write(true).create_new(true).open(&point) {
+                Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
+                _ => {}
             }
         }
         Ok(())
@@ -354,6 +370,13 @@ impl Sandbox {
         for dir in &self.binds {
             let dir = dir.display().to_string();
             args.extend(["--bind".into(), dir.clone(), dir]);
+        }
+        for (dir, link) in &self.aliases {
+            args.extend([
+                "--bind".into(),
+                dir.display().to_string(),
+                link.display().to_string(),
+            ]);
         }
         for dir in self.sealed.iter().filter(|d| d.is_dir()) {
             let dir = dir.display().to_string();
@@ -406,7 +429,11 @@ fn within(rootfs: &Path, path: &Path) -> io::Result<PathBuf> {
                 )));
             }
             Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => fs::create_dir(&at)?,
+            // Another job preparing the same image may make it first.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => match fs::create_dir(&at) {
+                Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
+                _ => {}
+            },
             Err(e) => return Err(e),
         }
     }
@@ -535,6 +562,28 @@ mod tests {
             "after every writable bind: {joined}"
         );
         assert!(rootfs.join(real.trim_start_matches('/')).is_dir());
+        let linked = root.join("linked");
+        std::os::unix::fs::symlink(&scratch, &linked).unwrap();
+        let through = Images {
+            scratch: &linked,
+            home: &home,
+        }
+        .sandbox(rootfs.clone())
+        .unwrap()
+        .arguments("true")
+        .join(" ");
+        let (at, real_scratch) = (
+            linked.display().to_string(),
+            fs::canonicalize(&scratch).unwrap().display().to_string(),
+        );
+        assert!(
+            through.contains(&format!("--bind {real_scratch} {at} ")),
+            "jobs name scratch by its link: {through}"
+        );
+        assert!(
+            through.contains(&format!("--ro-bind {at}/images {at}/images")),
+            "{through}"
+        );
         if Path::new("/etc/hosts").exists() {
             assert!(rootfs.join("etc/hosts").is_file());
         }
