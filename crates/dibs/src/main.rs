@@ -54,6 +54,10 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
                 batch::Detached::serve(rest).rem_euclid(256) as u8
             ));
         }
+        [word] if word == update::Upstream::WORD => {
+            update::Upstream::serve();
+            return Ok(ExitCode::SUCCESS);
+        }
         [word, rest @ ..] if word == orchestrator::WORD => {
             return Ok(ExitCode::from(
                 orchestrator::serve(rest).rem_euclid(256) as u8

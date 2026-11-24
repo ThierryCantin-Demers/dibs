@@ -422,3 +422,25 @@ fn a_computer_at_or_ahead_of_its_upstream_is_told_nothing() {
         "an unpushed commit here is no reason to update"
     );
 }
+
+#[test]
+fn a_head_asked_for_one_checkout_is_never_told_to_another() {
+    let s = Sandbox::new();
+    clones(&s);
+    let here = s.git("update/clone", &["rev-parse", "--short", "HEAD"]);
+    upstream(&s, &here).ask(0);
+    s.git(
+        ".",
+        &["clone", "-q", "update/rorigin", "update/other-recipes"],
+    );
+    let other = Upstream {
+        recipes: Some(s.path("update/other-recipes")),
+        installed: None,
+        ..upstream(&s, &here)
+    };
+    assert_eq!(
+        other.notice(&session("u")),
+        None,
+        "a current checkout is told nothing from another checkout's answer"
+    );
+}

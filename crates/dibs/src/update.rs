@@ -366,12 +366,12 @@ pub struct Upstream {
     pub recipes: Option<PathBuf>,
 }
 
-/// What the upstreams said, as kept in the cache.
+/// What the upstreams said, as kept in the cache: each head with the checkout it was asked for,
+/// since a head means nothing to another checkout.
 #[derive(Default, PartialEq, Debug)]
 struct Heads {
     asked: u64,
-    dibs: Option<String>,
-    recipes: Option<String>,
+    heads: Vec<(PathBuf, String)>,
 }
 
 impl Heads {
@@ -381,21 +381,30 @@ impl Heads {
         for line in text.lines() {
             match line.split_once(' ') {
                 Some(("asked", at)) => heads.asked = at.parse().unwrap_or(0),
-                Some(("dibs", head)) => heads.dibs = Some(head.to_string()),
-                Some(("recipes", head)) => heads.recipes = Some(head.to_string()),
+                Some(("head", rest)) => {
+                    if let Some((head, dir)) = rest.split_once(' ') {
+                        heads.heads.push((PathBuf::from(dir), head.to_string()));
+                    }
+                }
                 _ => {}
             }
         }
         heads
     }
 
+    /// The head last asked for `dir`.
+    fn of(&self, dir: &Path) -> Option<&str> {
+        self.heads
+            .iter()
+            .find(|(at, _)| at == dir)
+            .map(|(_, head)| head.as_str())
+    }
+
     /// Written whole and renamed into place, so a call that ends mid-write leaves the old answer.
     fn write(&self, path: &Path) {
         let mut text = format!("asked {}\n", self.asked);
-        for (name, head) in [("dibs", &self.dibs), ("recipes", &self.recipes)] {
-            if let Some(head) = head {
-                text.push_str(&format!("{name} {head}\n"));
-            }
+        for (dir, head) in &self.heads {
+            text.push_str(&format!("head {head} {}\n", dir.display()));
         }
         let Some(dir) = path.parent() else { return };
         let partial = dir.join(format!(".upstream.{}", std::process::id()));
@@ -432,8 +441,35 @@ impl Upstream {
         if let Some(text) = upstream.notice(caller) {
             eprint!("{text}");
         }
-        if upstream.due(epoch_now()) {
-            std::thread::spawn(move || upstream.ask(epoch_now()));
+        if upstream.due(epoch_now())
+            && let Ok(exe) = std::env::current_exe()
+        {
+            // A process of its own, so a call that ends first does not end the ask with it, and
+            // with no stream of the caller's, so nothing waits on it.
+            let _ = Command::new(exe)
+                .arg(Upstream::WORD)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    }
+
+    /// The word a call starts its ask under.
+    pub const WORD: &str = "__ask-upstream";
+
+    /// The ask a call started, which keeps its answer and ends.
+    pub fn serve() {
+        let paths = Paths::from_env();
+        if let Some(cache) = paths.upstream() {
+            Upstream {
+                cache,
+                seen: PathBuf::new(),
+                clone: Build::clone_dir().to_path_buf(),
+                installed: None,
+                recipes: paths.recipes(),
+            }
+            .ask(epoch_now());
         }
     }
 
@@ -451,27 +487,29 @@ impl Upstream {
 
     /// Asks both upstreams for their heads and keeps the answer.
     pub fn ask(&self, now: u64) {
-        let heads = Heads {
-            asked: now,
-            dibs: head_upstream(&self.clone),
-            recipes: self.recipes.as_deref().and_then(head_upstream),
-        };
-        heads.write(&self.cache);
+        let heads = std::iter::once(self.clone.as_path())
+            .chain(self.recipes.as_deref())
+            .filter_map(|dir| Some((dir.to_path_buf(), head_upstream(dir)?)))
+            .collect();
+        Heads { asked: now, heads }.write(&self.cache);
     }
 
     /// What to tell `caller`, the first time the last answer names something newer.
     pub fn notice(&self, caller: &Caller) -> Option<String> {
         let heads = Heads::read(&self.cache);
-        let dibs = heads.dibs.filter(|head| {
-            self.installed
-                .as_deref()
-                .is_some_and(|at| newer(&self.clone, head, at))
-        });
-        let recipes = heads.recipes.filter(|head| {
-            self.recipes
-                .as_deref()
-                .is_some_and(|dir| newer(dir, head, "HEAD"))
-        });
+        let dibs = heads
+            .of(&self.clone)
+            .filter(|head| {
+                self.installed
+                    .as_deref()
+                    .is_some_and(|at| newer(&self.clone, head, at))
+            })
+            .map(str::to_string);
+        let recipes = self
+            .recipes
+            .as_deref()
+            .and_then(|dir| heads.of(dir).filter(|head| newer(dir, head, "HEAD")))
+            .map(str::to_string);
         if dibs.is_none() && recipes.is_none() {
             return None;
         }
@@ -513,18 +551,23 @@ fn head_upstream(dir: &Path) -> Option<String> {
         &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
     )?;
     let (remote, branch) = tracked.split_once('/')?;
-    let out = Command::new("git")
-        .arg("-C")
+    let mut ls = Command::new("git");
+    ls.arg("-C")
         .arg(dir)
         .args(["ls-remote", "--heads", remote, branch])
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env(
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+        .env("GIT_HTTP_LOW_SPEED_TIME", "10");
+    // An ssh command the repository or the person set is how its remote is reached at all.
+    let configured = std::env::var_os("GIT_SSH_COMMAND").is_some()
+        || git(dir, &["config", "core.sshCommand"]).is_some();
+    if !configured {
+        ls.env(
             "GIT_SSH_COMMAND",
             "ssh -o BatchMode=yes -o ConnectTimeout=10",
-        )
-        .output()
-        .ok()
-        .filter(|out| out.status.success())?;
+        );
+    }
+    let out = ls.output().ok().filter(|out| out.status.success())?;
     let wanted = format!("refs/heads/{branch}");
     String::from_utf8_lossy(&out.stdout)
         .lines()
