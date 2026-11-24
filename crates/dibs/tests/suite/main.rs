@@ -17,6 +17,7 @@ mod detach;
 mod hold;
 mod hook;
 mod identity;
+mod images;
 mod lock;
 mod low_priority;
 mod machines;

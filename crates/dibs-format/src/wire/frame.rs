@@ -200,6 +200,7 @@ mod tests {
             check_in: None,
             attempt: None,
             lookup: false,
+            image: None,
             bundle: None,
         }
     }

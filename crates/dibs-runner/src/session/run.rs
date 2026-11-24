@@ -7,6 +7,7 @@ use crate::{
     clock::{Deadline, Moment, Span},
     closed::{self, Shutter},
     history::{History, Key, Scope},
+    image::{Image, Images, Sandbox},
     job::{
         Cap, Environment, Guard, HoldFifo, Job, JobEnd, LogRead, Output, Ports, Readied, Readiness,
         Services, Start,
@@ -26,7 +27,7 @@ use crate::{
         ended::{Ended, Tally},
         laid::{Begins, Laid, Layout},
     },
-    settings::Settings,
+    settings::{Settings, home},
     sink::Sink,
     status::Look,
     stop::{Stage, State, Stopper},
@@ -1592,6 +1593,29 @@ impl<'a> Run<'a> {
             }
         }
         let say = |text: &str| output.tell(self.at.sink, text);
+        let sandbox = match request
+            .image
+            .as_deref()
+            .filter(|_| request.mode == Mode::Shared)
+        {
+            None => None,
+            Some(image) => {
+                drop(state);
+                let sandbox = self.sandbox(image);
+                state = self.at.stopper.state();
+                match sandbox {
+                    Ok(sandbox) => Some(sandbox),
+                    Err(why) => {
+                        drop(state);
+                        self.at.sink.say(&why);
+                        begun.touch_log();
+                        hosted.laid = Some(By::Dibs);
+                        hosted.status = Exit::Setup.status();
+                        return hosted;
+                    }
+                }
+            }
+        };
         let step = request.tree.as_ref().and_then(|t| t.step.as_ref());
         let job_dir = begun.log.as_ref().map(|_| begun.dir.as_path());
         let stepping = spot.as_ref().map(|spot| Stepping::new(spot, job_dir, &say));
@@ -1801,7 +1825,14 @@ impl<'a> Run<'a> {
                     }
                     runs += 1;
                     let mark = running.as_ref().and_then(|r| r.mark.as_ref());
-                    let work = match Job::spawn(command, &environment, output, self.at.sink, mark) {
+                    let work = match Job::spawn(
+                        command,
+                        &environment,
+                        output,
+                        self.at.sink,
+                        mark,
+                        sandbox.as_ref(),
+                    ) {
                         Ok(work) => work,
                         Err(e) => {
                             drop(state);
@@ -2028,6 +2059,18 @@ impl<'a> Run<'a> {
             self.overran(end.max);
         }
         status
+    }
+
+    /// The image a build runs in, unpacked on this machine.
+    fn sandbox(&self, image: &str) -> Result<Sandbox, String> {
+        let image = Image::parse(image)?;
+        let home = home();
+        let images = Images {
+            scratch: &self.at.machine.scratch,
+            home: &home,
+        };
+        let rootfs = images.root(&image)?;
+        Ok(images.sandbox(rootfs))
     }
 
     /// What the command started outside its group, as `setsid` does, which the group's own sweep

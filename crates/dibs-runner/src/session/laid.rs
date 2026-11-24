@@ -1,5 +1,6 @@
 use crate::{
     clock::Deadline,
+    image::Image,
     job::{Environment, JobEnd, Output},
     platform::{Host, Platform as _},
     session::run::Serving,
@@ -78,6 +79,14 @@ impl<'a> Layout<'a> {
         let cargo_home = var("CARGO_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".cargo"));
+        let tag = self
+            .at
+            .call
+            .request
+            .image
+            .as_deref()
+            .and_then(|image| Image::parse(image).ok())
+            .map(|image| image.tag());
         let config = TreeConfig {
             scratch: &self.at.machine.scratch,
             home: &home,
@@ -86,6 +95,7 @@ impl<'a> Layout<'a> {
             seed_wait: Duration::from_secs(self.at.settings.seed_wait),
             reflinks: self.at.settings.reflinks,
             sweep_budget: Duration::from_secs(self.at.settings.sweep_budget),
+            image: tag.as_deref(),
         };
         let commands = Commands::new(environment, &running, &unstopped, deadline);
         let prepared = Trees::new(config, commands, &say).prepare(prepare);

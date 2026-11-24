@@ -73,6 +73,8 @@ pub struct Resolved {
     pub cargo: Vec<String>,
     pub rustflags: String,
     pub profile: String,
+    #[serde(default)]
+    pub image: Option<String>,
     pub env: BTreeMap<String, String>,
     pub command: String,
     pub values: BTreeMap<String, String>,
@@ -196,6 +198,7 @@ pub fn resolve(
             .collect(),
         rustflags: settings.profile.rustflags.clone(),
         profile: settings.profile.name.clone(),
+        image: settings.profile.image.clone(),
         env: split
             .run
             .env

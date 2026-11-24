@@ -55,6 +55,8 @@ pub struct CallValues {
     pub lookup: bool,
     /// `DIBS_BUNDLE_SPEC`: an executable the job keeps, or checks before it runs.
     pub bundle: Option<wire::Bundle>,
+    /// `DIBS_IMAGE`: the image a shared job builds in.
+    pub image: Option<String>,
 }
 
 /// How the runner learns its caller is gone.
@@ -175,6 +177,7 @@ impl CallValues {
             attempt: self.attempt.clone(),
             lookup: self.lookup,
             bundle: self.bundle.clone(),
+            image: self.image.clone(),
         }
     }
 }

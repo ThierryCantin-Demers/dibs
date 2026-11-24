@@ -40,7 +40,14 @@ impl<'a> Peek<'a> {
             frozen: None,
         });
         let mut state = at.stopper.state();
-        let job = match Job::spawn(&request.command, environment, Output::Caller, at.sink, None) {
+        let job = match Job::spawn(
+            &request.command,
+            environment,
+            Output::Caller,
+            at.sink,
+            None,
+            None,
+        ) {
             Ok(job) => job,
             Err(e) => {
                 at.sink.say(&format!("dibs: bash could not start: {e}\n"));

@@ -439,6 +439,7 @@ impl Worker<'_> {
             env: BTreeMap::from([("RUSTFLAGS".to_string(), split.rustflags.clone())]),
             inputs: BTreeMap::from([
                 ("profile".to_string(), split.profile.clone()),
+                ("image".to_string(), split.image.clone().unwrap_or_default()),
                 ("submission".to_string(), self.id.to_string()),
             ]),
         });
@@ -455,10 +456,13 @@ impl Worker<'_> {
             "--".into(),
             split.build_command(),
         ];
-        let env = [
+        let mut env = vec![
             ("DIBS_ROOT", root.display().to_string()),
             ("DIBS_SENT_FROM", sent_from.display().to_string()),
         ];
+        if let Some(image) = &split.image {
+            env.push(("DIBS_IMAGE", image.clone()));
+        }
         let cwd = root.join(&split.repo);
         self.attempted(
             step,
@@ -589,6 +593,7 @@ impl Worker<'_> {
             "kind": manifest.kind,
             "name": manifest.name,
             "profile": manifest.inputs.get("profile"),
+            "image": manifest.inputs.get("image"),
         });
         Sha256::hex(bound.to_string().as_bytes())
     }
@@ -620,7 +625,8 @@ impl Worker<'_> {
         let command = format!(
             "e=\"$DIBS_BUNDLE/{}\"; test -x \"$e\" || {{ echo \"dibs: the bundle has no executable $e\" >&2; exit 3; }}; \
              if ldd \"$e\" > \"$TMPDIR/ldd.$$\" 2>&1; then cat \"$TMPDIR/ldd.$$\"; \
-             if grep -q 'not found' \"$TMPDIR/ldd.$$\"; then echo 'dibs: this machine lacks what the bundle links' >&2; rm -f \"$TMPDIR/ldd.$$\"; exit 3; fi; fi; \
+             if grep -q 'not found' \"$TMPDIR/ldd.$$\"; then echo 'dibs: this machine lacks what the bundle links' >&2; rm -f \"$TMPDIR/ldd.$$\"; exit 3; fi; \
+             else cat \"$TMPDIR/ldd.$$\" >&2; echo 'dibs: ldd could not read what the bundle links' >&2; rm -f \"$TMPDIR/ldd.$$\"; exit 3; fi; \
              rm -f \"$TMPDIR/ldd.$$\"; ldd --version 2>&1 | head -n 1; \
              nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null || true",
             split.name

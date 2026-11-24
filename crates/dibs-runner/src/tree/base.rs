@@ -44,6 +44,8 @@ pub struct TreeConfig<'a> {
     pub reflinks: Reflinks,
     /// How long a prepare's sweep spends removing caches.
     pub sweep_budget: Duration,
+    /// What ends the name of a target built in an image: its builds link another C library.
+    pub image: Option<&'a str>,
 }
 
 /// What names a sent tree, ahead of its key.
@@ -326,6 +328,7 @@ impl<'a> Trees<'a> {
         if slot > 0 {
             suffix += &format!("-arm{slot}");
         }
+        suffix += self.config.image.unwrap_or_default();
         let target = self
             .config
             .scratch
@@ -512,11 +515,10 @@ impl<'a> Trees<'a> {
             .as_ref()
             .map(|n| format!("-{}", n.name))
             .unwrap_or_default();
-        let target = self
-            .config
-            .scratch
-            .join("target")
-            .join(format!("{repo}-local-{target_key}{nest}"));
+        let target = self.config.scratch.join("target").join(format!(
+            "{repo}-local-{target_key}{nest}{}",
+            self.config.image.unwrap_or_default()
+        ));
         let trees = self.repo_turn(repo)?;
         self.made(worktree.parent().unwrap_or(self.config.scratch))?;
         self.revive(prepare, &worktree);

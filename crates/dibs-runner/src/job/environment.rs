@@ -115,6 +115,7 @@ impl Environment {
             "DIBS_ATTEMPT",
             "DIBS_ATTEMPT_LOOKUP",
             "DIBS_BUNDLE_SPEC",
+            "DIBS_IMAGE",
             "DIBS_TRAILERS",
         ] {
             command.env_remove(name);

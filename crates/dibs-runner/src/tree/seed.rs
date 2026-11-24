@@ -1,3 +1,4 @@
+use crate::image::Image;
 use crate::tree::{
     base::{LOCAL, Stamp},
     builds::{Builds, FileLock},
@@ -68,12 +69,21 @@ impl Siblings<'_> {
         let targets = self.scratch.join("target");
         let local = format!("{}-local-", self.repo);
         let arm = format!("{}-arm", self.repo);
+        let imaged = format!("{}-img", self.repo);
+        let image = self
+            .of
+            .file_name()
+            .and_then(|n| Image::tag_of(&n.to_string_lossy()).map(str::to_string));
         let mut found: Vec<(SystemTime, PathBuf)> = fs::read_dir(&targets)
             .map(|d| {
                 d.flatten()
                     .filter(|e| {
                         let name = e.file_name().to_string_lossy().into_owned();
-                        name == self.repo || name.starts_with(&local) || name.starts_with(&arm)
+                        (name == self.repo
+                            || name.starts_with(&local)
+                            || name.starts_with(&arm)
+                            || name.starts_with(&imaged))
+                            && Image::tag_of(&name) == image.as_deref()
                     })
                     .filter_map(|e| {
                         let used = fs::metadata(e.path().join(".dibs-used")).ok()?;

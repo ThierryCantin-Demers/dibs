@@ -1,6 +1,6 @@
 # Build images: a binary that runs where it was not built
 
-Status: proposed, not built.
+Status: built for shared jobs and the orchestrator; recipe and flag syntax to come.
 
 ## The problem
 
@@ -81,20 +81,19 @@ with the descriptors and environment it was given:
 
 ```
 bwrap --ro-bind <rootfs> / --dev /dev --unshare-pid --proc /proc --tmpfs /tmp \
-  --ro-bind /etc/resolv.conf /etc/resolv.conf --ro-bind <passwd> /etc/passwd \
-  --bind <worktree> <worktree> --bind <target> <target> --bind $TMPDIR $TMPDIR \
-  --bind <CARGO_HOME> <CARGO_HOME> --ro-bind <RUSTUP_HOME> <RUSTUP_HOME> \
-  [--ro-bind <repo clone> <repo clone>] --chdir <worktree> -- bash -c '<command>'
+  --ro-bind /etc/resolv.conf /etc/resolv.conf --ro-bind /etc/hosts /etc/hosts \
+  --bind <home> <home> [--bind <scratch> <scratch>] -- bash -c '<command>'
 ```
 
+- The account's home and the machine's scratch are bound whole, at their own paths. Everything
+  dibs keeps lives under them: worktrees, targets, `TMPDIR`, `CARGO_HOME`, `RUSTUP_HOME` and the
+  clones fetched trees are worktrees of. Binding the two leaves nothing to forget.
 - `--unshare-pid` is what lets an unprivileged `bwrap` mount `/proc` at all. The host still sees
   every process inside, so idle detection and the escape sweep read them as now.
 - The root is read-only, with a private `/tmp`, so one build cannot change the copy of the image
-  every build shares.
-- `resolv.conf`, a `passwd` entry for the account, and the image's `ca-certificates` are what cargo
-  needs to fetch, over https or ssh.
-- A fetched tree is a git worktree of the machine's clone, so the clone is mounted too, for build
-  scripts that run `git`.
+  every build shares. Mount points for home and scratch are made when the image is unpacked.
+- `resolv.conf`, `hosts`, the account added to the image's `passwd` and `group` when it is
+  unpacked, and the image's `ca-certificates` are what cargo needs to fetch, over https or ssh.
 - `bash -c`, as every job runs now: an image's `sh` may be dash.
 - `--die-with-parent` is not needed: the tether already stops the group when the runner dies.
 
@@ -118,23 +117,29 @@ The job's environment is built on the host, and bubblewrap passes it as it is, s
 
 An image is named `<ref>@sha256:<digest>`; a tag alone is refused, since only a digest pins it.
 It is fetched with `skopeo copy` and unpacked with `umoci unpack --rootless` into
-`$DIBS_SCRATCH/images/<digest>/`, once per machine, as shared work when the job is prepared. That
+`$DIBS_SCRATCH/images/<digest>/`, once per machine, under a lock of its own, by the first job
+that needs it. That
 needs no `/etc/subuid` range, which an admin would have to grant, and keeps images where scratch
 accounting sees them; podman's own store, under `~/.local/share/containers`, would be invisible to
-it. `dibs --gc` learns `images/`, by last use like target directories, and makes an unpacked tree
-writable before removing it.
+it. Each use touches the image's `.dibs-used`. `dibs --gc` does not yet account for `images/`: it
+should, by last use like target directories, making an unpacked tree writable before removing it.
 
-The image itself is a Dockerfile kept with the profile: the floor's distribution (Ubuntu 24.04 for
-glibc 2.39) with `build-essential`, `pkg-config`, `git`, `ca-certificates` and any `-dev` library a
-build needs. It is built once, published, and referred to by digest.
+The image can be a public one: `buildpack-deps:noble` is Ubuntu 24.04, glibc 2.39, with gcc,
+`pkg-config`, git, `ca-certificates` and the common `-dev` libraries. One with more is a Dockerfile
+on top of it, built once, published, and referred to by digest.
 
 ## Naming an image
 
-- A recipe step takes `image = "<ref>@sha256:<digest>"`.
-- `dibs run --image <ref@digest>` for a one-off.
-- The orchestrator's profile names one image for every split build, beside its `rustflags`, and
-  the bundle's attested inputs include its digest. The `rustc -vV` recorded with a bundle stays
-  right, since the toolchain is the host's.
+`DIBS_IMAGE=<ref>@sha256:<digest>` in a call's environment names it, as `DIBS_ATTEMPT` names an
+attempt, so every job a recipe or a batch makes carries it. A shared call runs in the image; a
+measurement runs natively what was built there, since the image has neither the machine's GPU
+devices nor its driver, and a tree laid out by a measurement still gets the image's target.
+
+The orchestrator's profile names one image for every split build, beside its `rustflags`, and
+the bundle's attested inputs include it. The `rustc -vV` recorded with a bundle stays right, since
+the toolchain is the host's.
+
+A recipe step's `image` key and a `--image` flag are still to come.
 
 ## The stage check
 
@@ -152,7 +157,5 @@ a binary with a library or version not found there, which covers both. It must a
 ## Open questions
 
 1. A machine-wide default image, or only a recipe and a profile naming one.
-2. Where the profile's Dockerfile lives and where its image is published, so every build machine
-   can fetch it.
-3. How an imaged build's cargo configuration is given, when the host's names tools that cannot run
+2. How an imaged build's cargo configuration is given, when the host's names tools that cannot run
    inside.

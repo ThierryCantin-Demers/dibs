@@ -11,6 +11,7 @@ mod channel;
 mod clock;
 mod closed;
 mod history;
+mod image;
 mod itself;
 mod job;
 mod kept;

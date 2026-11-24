@@ -64,7 +64,8 @@ end.
 
 A split recipe builds on the compile pool and measures on the GPU pool, as four steps:
 
-1. **build**: `dibs shell <repo>@local` on a compile machine, with the profile's `RUSTFLAGS`,
+1. **build**: `dibs shell <repo>@local` on a compile machine, with the profile's `RUSTFLAGS`, in the
+   profile's image when it names one (`docs/design/build-images.md`),
    writing cargo's JSON report of the build to `$DIBS_CARGO_REPORT`. The runner takes the one
    executable that report names, copies it into `$DIBS_SCRATCH/bundles/<name>` with a manifest
    (digest, toolchain, lockfile, flags, tree, job), and builds nothing after the job.

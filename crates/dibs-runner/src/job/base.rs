@@ -1,5 +1,6 @@
 use crate::{
     ahead::Frozen,
+    image::Sandbox,
     job::{environment::Environment, tether::Tether},
     sink::Sink,
     stop::Signals,
@@ -96,12 +97,17 @@ impl Job {
         output: Output,
         sink: &Sink,
         mark: Option<&BuildMark>,
+        sandbox: Option<&Sandbox>,
     ) -> io::Result<Job> {
-        let mut bash = Command::new("bash");
-        bash.arg("-c")
-            .arg(command)
-            .stdin(Stdio::null())
-            .process_group(0);
+        let mut bash = match sandbox {
+            Some(sandbox) => sandbox.command(command),
+            None => {
+                let mut bash = Command::new("bash");
+                bash.arg("-c").arg(command);
+                bash
+            }
+        };
+        bash.stdin(Stdio::null()).process_group(0);
         Signals::unblocked(&mut bash);
         environment.apply(&mut bash);
         if let Some(mark) = mark {

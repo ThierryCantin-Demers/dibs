@@ -34,6 +34,7 @@ pub struct Machine {
     pub root: PathBuf,
     reflinks: Reflinks,
     pub seed_wait: Duration,
+    pub image: Option<String>,
     environment: Environment,
     deadline: Deadline,
     unstopped: Box<Guard>,
@@ -56,6 +57,7 @@ impl Machine {
             root,
             reflinks: Reflinks::Copies,
             seed_wait: Duration::from_secs(900),
+            image: None,
             environment: Environment::default(),
             deadline: Deadline::default(),
             unstopped: Box::new(|act| act()),
@@ -121,6 +123,7 @@ impl Machine {
             seed_wait: self.seed_wait,
             reflinks: self.reflinks,
             sweep_budget: Duration::from_secs(60),
+            image: self.image.as_deref(),
         };
         let commands = Commands::new(&self.environment, &|_| {}, &*self.unstopped, self.deadline);
         let trees = Trees::new(config, commands, &say);
@@ -531,6 +534,30 @@ fn a_new_tree_starts_from_its_repos_latest_target_with_its_sources() {
     );
     assert!(Path::new(&p.worktree).join("theirs.rs").exists());
     assert!(old.join("debug/deps/libdemo-local-old.rlib").exists());
+}
+
+#[test]
+fn a_tree_built_in_an_image_is_seeded_only_from_targets_of_that_image() {
+    let mut m = Machine::new();
+    m.sibling("demo-local-old", &[]);
+    m.sources("old", "theirs.rs");
+    m.image = Some("-img0123456789ab".into());
+    let p = m.prepared(&local("new", &[]));
+    assert!(
+        p.target.ends_with("target/demo-local-new-img0123456789ab"),
+        "{}",
+        p.target
+    );
+    assert!(
+        p.seeded.is_none(),
+        "a native target links another C library"
+    );
+    m.sibling("demo-local-other-img0123456789ab", &[]);
+    let p = m.prepared(&local("next", &[]));
+    assert!(
+        p.seeded.unwrap().from.ends_with("-img0123456789ab"),
+        "seeded from a target of the same image"
+    );
 }
 
 // As on a machine whose target directories alone were moved to a filesystem that shares blocks:

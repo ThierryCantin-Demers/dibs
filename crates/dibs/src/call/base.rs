@@ -537,6 +537,7 @@ impl Request<'_> {
             },
             attempt: set(ATTEMPT).filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
             lookup: set(ATTEMPT_LOOKUP).is_some_and(|v| v == "1"),
+            image: set(IMAGE).filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
             bundle: set(BUNDLE_SPEC)
                 .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench))
                 .and_then(|spec| serde_json::from_str(&spec).ok()),
@@ -589,6 +590,11 @@ pub const ATTEMPT_LOOKUP: &str = "DIBS_ATTEMPT_LOOKUP";
 
 /// A JSON `Bundle` the call's job keeps after its build or checks before its command.
 pub const BUNDLE_SPEC: &str = "DIBS_BUNDLE_SPEC";
+
+/// `<ref>@sha256:<digest>`: the image the call's builds link against. A shared job runs in it; a
+/// measurement runs natively what was built there, since the image has neither the machine's
+/// GPU devices nor its driver.
+pub const IMAGE: &str = "DIBS_IMAGE";
 
 /// A file each trailer the call hears is appended to, a JSON line each, for a driver to read.
 pub const TRAILERS: &str = "DIBS_TRAILERS";

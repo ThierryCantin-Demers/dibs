@@ -21,6 +21,9 @@ pub struct Settings {
 pub struct Profile {
     pub name: String,
     pub rustflags: String,
+    /// `<ref>@sha256:<digest>`: the image every split builds in, whose glibc is the oldest any
+    /// binary built here may need. None builds on the compile machine's own.
+    pub image: Option<String>,
 }
 
 impl Default for Settings {
@@ -38,6 +41,7 @@ impl Default for Profile {
         Profile {
             name: "linux-x86-64-v2".into(),
             rustflags: "-C target-cpu=x86-64-v2".into(),
+            image: None,
         }
     }
 }

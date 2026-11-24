@@ -87,6 +87,10 @@ pub struct Request {
     /// An executable kept after the build, or checked before the command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle: Option<Bundle>,
+    /// `<ref>@sha256:<digest>`: the tree builds into a target of that image's own, and a shared
+    /// job runs in the image's root filesystem, linking its C library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 /// A machine taken back by its owners.

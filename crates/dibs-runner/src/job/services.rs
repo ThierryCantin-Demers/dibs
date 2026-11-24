@@ -109,6 +109,7 @@ impl Services {
                     Output::Log(&log),
                     start.sink,
                     None,
+                    None,
                 )
                 .ok()
                 .map(|job| {
@@ -352,6 +353,7 @@ impl Readiness<'_> {
                 self.environment,
                 Output::Log(Path::new("/dev/null")),
                 self.sink,
+                None,
                 None,
             );
             return probe.is_ok_and(|probe| {
