@@ -1,0 +1,21 @@
+{
+  "description": "A reminder at session start that shared machines go through dibs, and the opt-in hooks DIBS_AGENT_HOOKS names",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/opted.sh\" ssh" },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/opted.sh\" urgent" }
+        ]
+      }
+    ]
+  }
+}

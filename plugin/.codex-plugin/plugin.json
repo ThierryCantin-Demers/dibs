@@ -1,0 +1,16 @@
+{
+  "name": "dibs",
+  "version": "0.1.0",
+  "description": "How agents use shared machines through dibs: the rules as a skill.",
+  "author": { "name": "dibs" },
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "dibs",
+    "shortDescription": "Shared machines through dibs",
+    "longDescription": "The rules an agent follows to build, test and measure on machines shared through dibs: its locks, batches, recipes, cards and exit codes.",
+    "developerName": "dibs",
+    "category": "Coding",
+    "capabilities": []
+  }
+}

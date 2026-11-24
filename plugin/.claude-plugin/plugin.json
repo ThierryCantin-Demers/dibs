@@ -1,0 +1,6 @@
+{
+  "name": "dibs",
+  "description": "How agents use shared machines through dibs: the rules as a skill, a short reminder at session start, and opt-in hooks that refuse an ssh around the lock and ask before --urgent.",
+  "author": { "name": "dibs" },
+  "license": "Apache-2.0"
+}

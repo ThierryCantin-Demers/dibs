@@ -67,10 +67,11 @@ and git for trees sent there. What differs between operating systems is behind o
     dibstop                                    # the same, live
 
 `dibs --help` is the full surface. `dibs-agent-rules.md` is the rules your agents follow, and is
-the shortest useful description of how to use this well. Load it from your clone rather than
-copying it, so a `dibs --update` updates the rules too: a line `@~/<clone>/dibs-agent-rules.md`
-in `~/.claude/CLAUDE.md` imports it, and an `AGENTS.md`, which has no imports, can have it
-included when that file is generated.
+the shortest useful description of how to use this well. The `dibs` plugin this repository
+carries gives them to Claude Code and Codex as a skill; the README says how to install it.
+Without it, load the file from your clone rather than copying it, so a `dibs --update` updates
+the rules too: a line `@~/<clone>/dibs-agent-rules.md` in `~/.claude/CLAUDE.md` imports it, and
+an `AGENTS.md`, which has no imports, can have it included when that file is generated.
 
 `dibstop [interval]` redraws every 10 seconds unless told otherwise, and `?` lists its keys. It
 keeps no state of its own: its feed is the watch `dibs --watch --json` runs, one connection per
@@ -1083,10 +1084,10 @@ the agent the dibs call to use instead, when a command would reach a machine in 
 with ssh, sftp, scp or rsync. A commit message that names a machine passes, and so does an rsync
 through dibs's own transport. It knows a machine only by the names the inventory gives it, so an
 alias in `~/.ssh/config` or an address gets through, and with no inventory everything does.
-`docs/design/protocol.md` says exactly what it reads. The README has the lines for
-`~/.claude/settings.json`; wiring it is yours to do.
+`docs/design/protocol.md` says exactly what it reads. The plugin runs it when `DIBS_AGENT_HOOKS`
+names `ssh`; without the plugin, wiring it is yours to do.
 
-`dibs hook urgent`, wired the same way, answers "ask" for a command that makes a dibs call
+`dibs hook urgent`, which the plugin runs when `DIBS_AGENT_HOOKS` names `urgent`, answers "ask" for a command that makes a dibs call
 `--urgent` or sets `DIBS_URGENT`, so Claude Code shows the person the exact command and runs it
 only on their yes. It reads the whole text, heredocs included, since a batch's steps arrive in
 one; a batch file written earlier is beyond it.

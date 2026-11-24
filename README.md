@@ -86,32 +86,33 @@ dibs ships no recipes. You describe a repo's builds and benchmarks in
 
 ## Giving it to your agents
 
-Load [`dibs-agent-rules.md`](dibs-agent-rules.md) into your agents' instructions from your clone,
-so an update updates the rules too. In Claude Code, a line `@~/<clone>/dibs-agent-rules.md` in
-`~/.claude/CLAUDE.md` does it.
+This repository is a plugin marketplace for Claude Code and Codex. Its `dibs` plugin holds the
+rules your agents follow as a skill, loaded when they use dibs, and in Claude Code a short
+reminder at the start of every session that shared machines go through dibs.
 
-The rules tell an agent never to ssh a machine; `dibs hook ssh` makes it so. It is a Claude Code
-PreToolUse hook: it reads the tool call on stdin and refuses, with exit 2 and the dibs call to
-use instead, an ssh, scp, sftp or rsync aimed at any name your inventory gives a machine. An
-rsync through dibs's own transport passes, and with no inventory everything does. To wire it, add to `~/.claude/settings.json`:
+    claude plugin marketplace add ThierryCantin-Demers/dibs
+    claude plugin install dibs@dibs
+
+    codex plugin marketplace add ThierryCantin-Demers/dibs
+    codex plugin add dibs@dibs
+
+`dibs --update` refreshes the Claude Code plugin along with dibs.
+
+In Claude Code the plugin also carries two hooks, off until you name them in `DIBS_AGENT_HOOKS`,
+in your shell or in the `env` of `~/.claude/settings.json`:
 
 ```json
-{
-  "hooks": {
-    "PreToolUse": [
-      { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "dibs hook ssh" },
-        { "type": "command", "command": "dibs hook urgent" }
-      ] }
-    ]
-  }
-}
+{ "env": { "DIBS_AGENT_HOOKS": "ssh,urgent" } }
 ```
 
-`dibs hook urgent` asks you before an agent's call that is `--urgent`, which stops everyone's shared
-jobs on the machine until it ends.
+`ssh` refuses an agent's ssh, scp, sftp or rsync aimed at any name your inventory gives a machine,
+and shows it the dibs call to use instead. An rsync through dibs's own transport passes. `urgent`
+asks you before an agent's call that is `--urgent`, which stops everyone's shared jobs on the
+machine until it ends.
 
-A hook that stops an agent sleeping under the lock is still yours to write.
+Without the plugin, load [`dibs-agent-rules.md`](dibs-agent-rules.md) into your agents'
+instructions from your clone, as `@~/<clone>/dibs-agent-rules.md` in `~/.claude/CLAUDE.md`, and
+wire `dibs hook ssh` and `dibs hook urgent` as PreToolUse hooks on Bash yourself.
 
 ## Learn more
 
@@ -133,7 +134,7 @@ A hook that stops an agent sleeping under the lock is still yours to write.
 | `crates/dibs-machines/` | `dibs-machines`, a desktop window on what each machine has against what it should. |
 | `docs/guide.md` | the detailed guide. |
 | `docs/design/` | the design records: architecture, protocol, decisions, and history. |
-| `dibs-agent-rules.md` | the rules your agents follow. |
+| `plugin/` | the agent plugin: the rules your agents follow, as the `dibs` skill, and its hooks. `dibs-agent-rules.md` links to the rules. |
 | `crates/dibs/tests/suite/` | dibs end to end, each test in a sandbox of its own. Never touches a real machine. |
 | `crates/dibs/tests/live/` | the few things only a real machine can show. Runs only when asked for by name. |
 | `.github/workflows/ci.yml` | formatting, clippy, the tests on Linux and macOS, the window's build, and a scan for private names whose patterns live in the `PRIVATE_STRINGS` secret. |

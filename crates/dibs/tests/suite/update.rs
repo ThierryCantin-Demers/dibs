@@ -72,6 +72,7 @@ fn update(s: &Sandbox, installed: &str, recipes: &str, caller: &str) -> Output {
         notice: Some(notice(s, "seen")),
         caller: session(caller),
         prefix: None,
+        plugin: false,
     }
     .run_into(&mut out, &mut err);
     Output {
@@ -156,6 +157,7 @@ fn an_update_outside_a_clone_is_refused() {
         notice: None,
         caller: session("u"),
         prefix: None,
+        plugin: false,
     }
     .run_into(&mut out, &mut err);
     assert_eq!(code, 2, "a build from no clone has nothing to pull");
@@ -199,6 +201,7 @@ fn a_session_is_told_once_when_dibs_changed_under_it() {
         notice: Some(notice(&s, "seen-v")),
         caller: session("v1"),
         prefix: None,
+        plugin: false,
     }
     .run_into(&mut out, &mut err);
     assert_eq!(

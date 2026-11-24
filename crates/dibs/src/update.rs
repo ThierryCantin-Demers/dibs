@@ -71,6 +71,8 @@ pub struct Update {
     /// Where the running build is installed, so install.sh replaces it rather than one
     /// elsewhere on PATH: a trial install updates the trial.
     pub prefix: Option<PathBuf>,
+    /// Whether to refresh the agent plugin where Claude Code has it installed.
+    pub plugin: bool,
 }
 
 impl Update {
@@ -83,6 +85,7 @@ impl Update {
             notice: paths.seen().map(ChangeNotice::of_this_build),
             caller: Caller::from_env(),
             prefix: Update::installed_under(),
+            plugin: true,
         }
     }
 
@@ -147,6 +150,9 @@ impl Update {
             }
         }
         self.pull_recipes(out, err)?;
+        if self.plugin {
+            refresh_plugin(out);
+        }
         if let Some(notice) = &self.notice {
             notice.record(&self.caller, &after);
         }
@@ -186,6 +192,37 @@ impl Update {
         .tell(out);
         Ok(())
     }
+}
+
+/// The plugin's rules are a copy Claude Code keeps, so they follow an update only when it is told
+/// to fetch them. A computer without Claude Code, or without the plugin, has nothing to refresh.
+fn refresh_plugin(out: &mut impl Write) {
+    const PLUGIN: &str = "dibs@dibs";
+    let claude = |args: &[&str]| {
+        Command::new("claude")
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+    };
+    let installed = claude(&["plugin", "list"])
+        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).contains(PLUGIN));
+    if !installed {
+        return;
+    }
+    let refreshed = claude(&["plugin", "marketplace", "update", "dibs"]).is_some()
+        && claude(&["plugin", "update", PLUGIN]).is_some();
+    let _ = match refreshed {
+        true => writeln!(
+            out,
+            "plugin {PLUGIN} refreshed; sessions started from now on read it"
+        ),
+        false => writeln!(
+            out,
+            "plugin {PLUGIN} could not be refreshed:  claude plugin update {PLUGIN}"
+        ),
+    };
 }
 
 /// One clone's pull, as the update reports it.

@@ -1,0 +1,12 @@
+{
+  "name": "dibs",
+  "description": "dibs for coding agents: its rules as a skill, and its hooks.",
+  "owner": { "name": "dibs" },
+  "plugins": [
+    {
+      "name": "dibs",
+      "source": "./plugin",
+      "description": "How agents use shared machines through dibs: the rules as a skill, a short reminder at session start, and opt-in hooks that refuse an ssh around the lock and ask before --urgent."
+    }
+  ]
+}
