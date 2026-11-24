@@ -67,12 +67,15 @@ fn a_shared_job_runs_in_its_image_unpacked_once() {
         "{}",
         bwrap[0]
     );
-    let passwd = fs::read_to_string(rootfs.join("etc/passwd")).unwrap();
-    let ours = passwd
-        .lines()
-        .filter(|l| l.split(':').nth(2) == Some(uid().as_str()))
-        .count();
-    assert_eq!(ours, 1, "the account is known inside: {passwd}");
+    // Images are Linux's alone, and macOS keeps its accounts out of /etc/passwd.
+    if cfg!(target_os = "linux") {
+        let passwd = fs::read_to_string(rootfs.join("etc/passwd")).unwrap();
+        let ours = passwd
+            .lines()
+            .filter(|l| l.split(':').nth(2) == Some(uid().as_str()))
+            .count();
+        assert_eq!(ours, 1, "the account is known inside: {passwd}");
+    }
     let targets: Vec<String> = fs::read_dir(s.path("scratch/target"))
         .unwrap()
         .flatten()
