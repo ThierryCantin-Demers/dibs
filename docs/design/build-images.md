@@ -142,9 +142,10 @@ attempt, so every job a recipe or a batch makes carries it. A shared call runs i
 measurement runs natively what was built there, since the image has neither the machine's GPU
 devices nor its driver, and a tree laid out by a measurement still gets the image's target. The
 transfer of a sent tree carries it, since that is where the tree's target is chosen, and so does a
-detached batch's driver. A name without a digest is refused for every mode, and so is a shared
-call with no tree dibs lays out, whose cargo would build in whatever target the command names,
-natively built objects included. A recipe's record carries the image, and its fingerprint differs
+detached batch's driver. A name without a digest is refused for every mode but a sync that lays
+out no tree, which copies files and ignores the image. A shared call with no tree dibs lays out is
+refused too, since its cargo would build in whatever target the command names, natively built
+objects included. A recipe's record carries the image, and its fingerprint differs
 from the same recipe built natively.
 
 The orchestrator's profile names one image for every split build, beside its `rustflags`, and

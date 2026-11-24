@@ -239,13 +239,14 @@ impl Images<'_> {
             })
             .unwrap_or_default();
         binds.extend(moved);
+        // Sealed by both names, since either may be reachable through a bind.
         let mut sealed = vec![scratch.join(IMAGES)];
+        if scratch != self.scratch {
+            sealed.push(self.scratch.join(IMAGES));
+        }
         // Jobs name scratch by the link, so its target is bound there too.
         let aliases = match scratch != self.scratch && !self.scratch.starts_with(self.home) {
-            true => {
-                sealed.push(self.scratch.join(IMAGES));
-                vec![(scratch, self.scratch.to_path_buf())]
-            }
+            true => vec![(scratch, self.scratch.to_path_buf())],
             false => Vec::new(),
         };
         Sandbox {
@@ -614,6 +615,11 @@ mod tests {
         assert!(
             through.contains(&format!("--ro-bind {at}/images {at}/images")),
             "{through}"
+        );
+        let real_images = format!("{real_scratch}/images");
+        assert!(
+            through.contains(&format!("--ro-bind {real_images} {real_images}")),
+            "sealed by its real name too: {through}"
         );
         if Path::new("/etc/hosts").exists() {
             assert!(rootfs.join("etc/hosts").is_file());
