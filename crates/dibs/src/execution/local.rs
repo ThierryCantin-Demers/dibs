@@ -465,18 +465,28 @@ impl Checkout {
         why: Option<&'static str>,
     ) -> Result<Checkout, CheckoutError> {
         std::fs::create_dir_all(root).map_err(FileError::at(root))?;
+        let free = |n: u32| {
+            let path = root.join(format!("{n}.lock"));
+            let taken = std::fs::File::create(&path)
+                .map_err(std::fs::TryLockError::Error)
+                .and_then(|f| f.try_lock().map(|()| f));
+            match taken {
+                Ok(f) => Some(Ok((n.to_string(), f))),
+                Err(std::fs::TryLockError::WouldBlock) => None,
+                Err(std::fs::TryLockError::Error(e)) => Some(Err(FileError::new(&path, e))),
+            }
+        };
+        // The slot that last sent this commit first: its target is the one that built it, which
+        // a measurement in a call of its own, after the build's, has to find.
+        let holds = |n: &u32| {
+            std::fs::read_to_string(root.join(n.to_string()).join(".git/HEAD"))
+                .is_ok_and(|head| head.trim() == sha)
+        };
         let (slot, lock) = (0u32..)
-            .find_map(|n| {
-                let path = root.join(format!("{n}.lock"));
-                let taken = std::fs::File::create(&path)
-                    .map_err(std::fs::TryLockError::Error)
-                    .and_then(|f| f.try_lock().map(|()| f));
-                match taken {
-                    Ok(f) => Some(Ok((n.to_string(), f))),
-                    Err(std::fs::TryLockError::WouldBlock) => None,
-                    Err(std::fs::TryLockError::Error(e)) => Some(Err(FileError::new(&path, e))),
-                }
-            })
+            .map_while(|n| root.join(n.to_string()).is_dir().then_some(n))
+            .filter(holds)
+            .find_map(free)
+            .or_else(|| (0u32..).find_map(free))
             .expect("an unbounded range")?;
         let checkout = root.join(&slot);
         if !Checkout::borrows_from(&checkout, dir) {
@@ -867,7 +877,7 @@ mod tests {
         };
         let a = Checkout::under(&root, &repo, "repo", &one, None).unwrap();
         let b = Checkout::under(&root, &repo, "repo", &two, None).unwrap();
-        assert_eq!((at(&a), at(&b)), (one, two.clone()));
+        assert_eq!((at(&a), at(&b)), (one.clone(), two.clone()));
         assert_ne!(a.dir, b.dir, "the first is held until it is sent");
         let c = Checkout::under(&root, &repo, "repo", &two, None).unwrap();
         assert!(c.dir != a.dir && c.dir != b.dir, "nor is the second");
@@ -875,6 +885,15 @@ mod tests {
             c.key, b.key,
             "a commit's tree on the machine is the same whichever checkout sent it"
         );
+        let (a_dir, b_dir) = (a.dir.clone(), b.dir.clone());
+        drop((a, b, c));
+        let two_again = Checkout::under(&root, &repo, "repo", &two, None).unwrap();
+        assert_eq!(
+            two_again.dir, b_dir,
+            "a commit goes back to the first free slot that last sent it, whose target built it"
+        );
+        let one_again = Checkout::under(&root, &repo, "repo", &one, None).unwrap();
+        assert_eq!(one_again.dir, a_dir);
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
