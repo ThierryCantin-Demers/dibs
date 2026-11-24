@@ -151,3 +151,8 @@ A hook that stops an agent sleeping under the lock is still yours to write.
 
     # A real, idle machine: takes its lock and kills its own jobs there, so it is named twice.
     DIBS_LIVE_MACHINE=<machine> DIBS_LIVE_CONFIRM=<machine> cargo test --test live
+
+## License
+
+dibs is licensed under the [Apache License 2.0](LICENSE). Whoever redistributes it, changed or
+not, keeps the license and the [NOTICE](NOTICE) with it and says what they changed.

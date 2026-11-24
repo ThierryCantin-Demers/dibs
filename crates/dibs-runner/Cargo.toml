@@ -3,6 +3,7 @@ name = "dibs-runner"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 description = "The machine half of dibs: takes the lock and runs the job"
 
 [dependencies]

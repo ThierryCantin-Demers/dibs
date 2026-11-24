@@ -3,6 +3,7 @@ name = "dibs-format"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 description = "What dibs writes and reads: ids, exits, records and the lines machines keep"
 
 [dependencies]

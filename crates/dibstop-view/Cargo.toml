@@ -3,6 +3,7 @@ name = "dibstop-view"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 description = "What dibstop shows, whatever draws it: its jobs, its actions, and an egui view of them"
 
 [features]
