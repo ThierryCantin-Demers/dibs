@@ -62,7 +62,7 @@ spoiled without it.
   A job `dibs status` shows as frozen is waiting its turn, not stuck.
 - **Long work that should be in nobody's way**, such as a track that runs for hours, takes
   `--low-priority`: it starts only once nothing else runs or waits on the machine, and is parked as
-  soon as another job comes, a transfer aside, to run again from the start once the machine is idle
+  soon as another job comes, a `--sync` aside, to run again from the start once the machine is idle
   again. It may
   wait or rerun for hours, so it is no use for work needed by a time, and it is never a
   measurement.

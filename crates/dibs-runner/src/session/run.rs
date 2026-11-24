@@ -315,7 +315,7 @@ impl<'a> Run<'a> {
             drop(acquired);
             drop(guard);
         };
-        if !self.waits_idle() && self.at.call.mode() != Mode::Rsh {
+        if !self.waits_idle() && !self.passes() {
             self.after_idle_parked();
         }
         // The machine as well as the cards: while the group winds down, shared work must not start.
@@ -484,6 +484,9 @@ impl<'a> Run<'a> {
         // Before any wait, a closed machine's included, so the queue shows it from the start.
         if let (Mode::Shared | Mode::Bench, Some(why)) = (request.mode, &request.urgent) {
             self.at.dir.mark_pressing(pid, why);
+        }
+        if self.passes() {
+            self.at.dir.mark_passing(pid);
         }
         self.at
             .dir
@@ -732,7 +735,9 @@ impl<'a> Run<'a> {
                 }
                 None => {
                     let since = *quiet.get_or_insert_with(|| {
-                        self.at.dir.mark_quiet(pid, Some(Moment::epoch_now()));
+                        self.at
+                            .dir
+                            .mark_quiet(pid, Some((Moment::epoch_now(), settle.as_secs())));
                         Instant::now()
                     });
                     if since.elapsed() >= settle {
@@ -774,19 +779,6 @@ impl<'a> Run<'a> {
         let mut state = state;
         state.set_stage(Stage::Parked);
         drop(state);
-        if parked {
-            let now = Moment::epoch_now();
-            let began = self
-                .at
-                .dir
-                .records(Kind::Holder)
-                .into_iter()
-                .find(|r| r.pid == pid)
-                .map_or(now, |r| r.start);
-            self.at
-                .dir
-                .mark_stopped(pid, Some((now.saturating_sub(began), now, &busy)));
-        }
         let waiting = self.at.call.lock_record(arrived.start, &arrived.job);
         self.at.dir.write(Kind::Waiting, &waiting);
         let _ = fs::remove_file(self.at.dir.file("holder", pid));
@@ -837,6 +829,12 @@ impl<'a> Run<'a> {
         let mut state = self.at.stopper.state();
         state.set_stage(was);
         (state, yielded)
+    }
+
+    /// A copy that lays out no tree: no job runs from it, so a `--low-priority` job is not parked
+    /// for it, and it does not wait for one to stop.
+    fn passes(&self) -> bool {
+        self.at.call.mode() == Mode::Rsh && self.at.call.request.tree.is_none()
     }
 
     /// Lets a `--low-priority` job running here stop first, which it does once it sees this one:

@@ -590,20 +590,32 @@ impl LockDir {
             .or_else(|| fs::read_to_string(self.file("pressing", pid)).ok())
     }
 
-    /// `quiet.<pid>`: since when a `--low-priority` job waiting here has seen nothing else.
-    pub fn mark_quiet(&self, pid: u32, since: Option<u64>) {
-        let _ = match since {
-            Some(since) => fs::write(self.file("quiet", pid), format!("{since}\n")),
+    /// `passing.<pid>`: a copy that lays out no tree, which no job runs from, so a
+    /// `--low-priority` job neither waits for it nor is parked for it.
+    pub fn mark_passing(&self, pid: u32) {
+        let _ = fs::write(self.file("passing", pid), "");
+    }
+
+    pub fn passing(&self, pid: u32) -> bool {
+        self.file("passing", pid).exists()
+    }
+
+    /// `quiet.<pid>`: since when a `--low-priority` job waiting here has seen nothing else, and
+    /// the settle time it waits for, which is its own call's.
+    pub fn mark_quiet(&self, pid: u32, quiet: Option<(u64, u64)>) {
+        let _ = match quiet {
+            Some((since, settle)) => {
+                fs::write(self.file("quiet", pid), format!("{since}\t{settle}\n"))
+            }
             None => fs::remove_file(self.file("quiet", pid)),
         };
     }
 
-    pub fn quiet_since(&self, pid: u32) -> Option<u64> {
-        fs::read_to_string(self.file("quiet", pid))
-            .ok()?
-            .trim()
-            .parse()
-            .ok()
+    /// The `(since, settle)` of `mark_quiet`.
+    pub fn quiet(&self, pid: u32) -> Option<(u64, u64)> {
+        let said = fs::read_to_string(self.file("quiet", pid)).ok()?;
+        let (since, settle) = said.trim().split_once('\t')?;
+        Some((since.parse().ok()?, settle.parse().ok()?))
     }
 
     /// `stopped.<pid>`: a `--low-priority` job parked after it ran, for how long, when, and for
@@ -651,13 +663,11 @@ impl LockDir {
     }
 
     /// Another job that holds or waits here, which a job run only while none does makes way for.
-    /// A transfer is not one: it is short and leaves the cards alone, and parking a job for it
-    /// would throw away all the job has run.
     pub fn busy_besides(&self, pid: u32) -> Option<LockRecord> {
         [Kind::Holder, Kind::Waiting].into_iter().find_map(|kind| {
             self.records(kind).into_iter().find(|r| {
                 r.pid != pid
-                    && r.mode != dibs_format::Mode::Rsh
+                    && !self.passing(r.pid)
                     && !self.idle_only(r.pid)
                     && RecordFile(&self.file(kind.prefix(), r.pid)).alive()
             })
@@ -689,6 +699,7 @@ impl LockDir {
             "urgent",
             "parked",
             "pressing",
+            "passing",
             "quiet",
             "stopped",
             "idle",
@@ -777,6 +788,7 @@ impl LockDir {
             "urgent",
             "parked",
             "pressing",
+            "passing",
             "quiet",
             "stopped",
             "idle",

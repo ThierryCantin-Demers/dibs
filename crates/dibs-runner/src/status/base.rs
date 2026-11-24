@@ -269,21 +269,21 @@ impl Look<'_> {
             eta: starts,
             low_priority,
             urgent: self.dir.urgent_why(record.pid),
-            idle_wait: low_priority.then(|| IdleWait {
-                behind: self
-                    .dir
-                    .busy_besides(record.pid)
-                    .map(|busy| format!("{} from {}", busy.label, busy.agent)),
-                quiet_for: self
-                    .dir
-                    .quiet_since(record.pid)
-                    .map(|s| now.saturating_sub(s)),
-                settle: self.settings.idle_settle,
-                stopped: self.dir.stopped(record.pid).map(|(ran, at, by)| Stopped {
-                    ran,
-                    ago: now.saturating_sub(at),
-                    by,
-                }),
+            idle_wait: low_priority.then(|| {
+                let quiet = self.dir.quiet(record.pid);
+                IdleWait {
+                    behind: self
+                        .dir
+                        .busy_besides(record.pid)
+                        .map(|busy| format!("{} from {}", busy.label, busy.agent)),
+                    quiet_for: quiet.map(|(since, _)| now.saturating_sub(since)),
+                    settle: quiet.map_or(self.settings.idle_settle, |(_, settle)| settle),
+                    stopped: self.dir.stopped(record.pid).map(|(ran, at, by)| Stopped {
+                        ran,
+                        ago: now.saturating_sub(at),
+                        by,
+                    }),
+                }
             }),
             batch: self.batch(record.pid, left, tail),
         }

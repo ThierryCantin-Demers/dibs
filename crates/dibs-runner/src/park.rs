@@ -3,7 +3,8 @@
 
 use crate::{
     ahead::Frozen,
-    lock::LockDir,
+    clock::Moment,
+    lock::{Kind, LockDir},
     platform::{Descendants as _, Host, Platform as _},
     stop::{Stage, Stopper},
 };
@@ -39,7 +40,15 @@ impl Parking {
         let stopped = Arc::clone(&stop);
         let thread = thread::spawn(move || {
             while !stopped.load(Ordering::Relaxed) {
-                if dir.urgent_besides(pid).is_some() || (idle && dir.busy_besides(pid).is_some()) {
+                let urgent = dir
+                    .urgent_besides(pid)
+                    .map(|u| format!("the urgent job {} from {}", u.job, u.agent));
+                let cause = urgent.or_else(|| {
+                    idle.then(|| dir.busy_besides(pid))
+                        .flatten()
+                        .map(|busy| format!("{} from {}", busy.label, busy.agent))
+                });
+                if let Some(cause) = cause {
                     let mut state = stopper.state();
                     let Stage::Running(job) = state.stage else {
                         return false;
@@ -51,6 +60,15 @@ impl Parking {
                     match frozen.now() {
                         true => kill_frozen(job),
                         false => Host::reap(&[job]),
+                    }
+                    if idle {
+                        let now = Moment::epoch_now();
+                        let began = dir
+                            .records(Kind::Holder)
+                            .into_iter()
+                            .find(|r| r.pid == pid)
+                            .map_or(now, |r| r.start);
+                        dir.mark_stopped(pid, Some((now.saturating_sub(began), now, &cause)));
                     }
                     state.set_stage(Stage::Parked);
                     return true;

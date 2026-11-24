@@ -48,6 +48,12 @@ fn a_low_priority_job_waits_for_an_idle_machine_and_is_parked_for_a_benchmark() 
         s.read("order") == "busy\nlong\nmeasure\n"
     });
     assert_eq!(s.holders(), 1, "the benchmark has the machine alone");
+    let status = s.status();
+    assert_eq!(
+        status.lines_with("until measure from"),
+        1,
+        "it says what it ran before it was parked, and for which job: {status}"
+    );
     measure.open();
     assert_eq!(s.wait(m), 0);
     s.until_records("the parked job to run again", || {
@@ -61,12 +67,12 @@ fn a_low_priority_job_waits_for_an_idle_machine_and_is_parked_for_a_benchmark() 
 }
 
 #[test]
-fn a_transfer_does_not_keep_a_low_priority_job_waiting() {
+fn a_sync_does_not_keep_a_low_priority_job_waiting() {
     let mut s = Sandbox::new();
     let (sending, run) = (s.gate("sending"), s.gate("run"));
     s.write(
         "request",
-        &request_frame(Mode::Rsh, "send", &sending.hold()),
+        &request_frame(Mode::Rsh, "sync", &sending.hold()),
     );
     let send = s.spawn(s.sh(&format!(
         "dibs __runner serve {RUNNER_HASH} < {} > /dev/null",
@@ -79,7 +85,7 @@ fn a_transfer_does_not_keep_a_low_priority_job_waiting() {
         "long",
         &format!("echo long >> {order}; {}", run.hold()),
     ));
-    s.until_records("it to start beside the transfer", || {
+    s.until_records("it to start beside the sync", || {
         s.read("order") == "long\n"
     });
     sending.open();
