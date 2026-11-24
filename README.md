@@ -154,5 +154,4 @@ A hook that stops an agent sleeping under the lock is still yours to write.
 
 ## License
 
-dibs is licensed under the [Apache License 2.0](LICENSE). Whoever redistributes it, changed or
-not, keeps the license and the [NOTICE](NOTICE) with it and says what they changed.
+dibs is licensed under the [Apache License 2.0](LICENSE), with its copyright in [NOTICE](NOTICE).

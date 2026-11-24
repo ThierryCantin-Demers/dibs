@@ -114,9 +114,11 @@ impl SourceTree {
     };
 
     const KEPT_LOCK: &str = "source.lock";
+    const LICENSED: [&str; 2] = ["LICENSE", "NOTICE"];
 
     fn watched(&self) -> Vec<String> {
         let mut watched = vec!["Cargo.lock".to_string(), self.provision.to_string()];
+        watched.extend(SourceTree::LICENSED.iter().map(|f| f.to_string()));
         for member in self.crates {
             for path in member.files.iter().chain(member.walked) {
                 watched.push(format!("{}/{path}", member.dir));
@@ -153,6 +155,11 @@ impl SourceTree {
             bytes: read(&provision.join(from)),
         })
         .collect();
+        // The license goes wherever the source does.
+        files.extend(SourceTree::LICENSED.iter().map(|file| TreeFile {
+            path: file.to_string(),
+            bytes: read(&clone.join(file)),
+        }));
         let kept = clone.join(SourceTree::KEPT_LOCK);
         let lock = match kept.is_file() {
             true => read(&kept),
