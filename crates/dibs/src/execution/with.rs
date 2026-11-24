@@ -10,7 +10,7 @@ use super::{
     trees::{Announce, TreeSpec, new_token, preparing_title},
 };
 use crate::{
-    call::{BatchStep, Destination, LockedCall, Origin, Ran, RecipeJob},
+    call::{BatchStep, Destination, LockedCall, Origin, Ran, RecipeJob, image_digest},
     caller::Caller,
     cli::{
         Call, CliError, Command as ShellCommand, Mode, PortName, RecipeCall, Run, RunLock, Service,
@@ -204,6 +204,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         false => Lock::Shared,
     };
     let procedure = svc.procedure(command, lock);
+    let image = image_digest();
     let mut record = RunRecord {
         when: Moment::epoch_now(),
         verb: RunVerb::With,
@@ -211,7 +212,10 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         repo: repo_name.clone(),
         variant: Repo(&dir).variant(&repo_name),
         recipe: name.to_string(),
-        fingerprint: recipe::Service::fingerprint(&procedure, args.there),
+        fingerprint: recipe::in_image(
+            recipe::Service::fingerprint(&procedure, args.there),
+            image.as_deref(),
+        ),
         isolation: "machine".into(),
         backend: BACKEND.into(),
         machine: backend.machine.clone(),
@@ -227,7 +231,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         anyway: args.anyway,
         new_series: args.new_series,
         fresh: Pairs::default(),
-        image: None,
+        image,
         state: Pairs::default(),
         params: BTreeMap::new(),
         procedure,

@@ -607,6 +607,13 @@ pub const ATTEMPT_LOOKUP: &str = "DIBS_ATTEMPT_LOOKUP";
 /// A JSON `Bundle` the call's job keeps after its build or checks before its command.
 pub const BUNDLE_SPEC: &str = "DIBS_BUNDLE_SPEC";
 
+/// The digest of the image this call's builds run in, alone: a tag beside it names the same one.
+pub fn image_digest() -> Option<String> {
+    set(IMAGE)
+        .and_then(|i| i.rsplit_once('@').map(|(_, digest)| digest.to_string()))
+        .filter(|digest| !digest.is_empty())
+}
+
 /// `<ref>@sha256:<digest>`: the image the call's builds link against. A shared job runs in it; a
 /// measurement runs natively what was built there, since the image has neither the machine's
 /// GPU devices nor its driver.

@@ -110,6 +110,19 @@ pub struct Recipe {
     pub steps: Vec<Step>,
 }
 
+/// A procedure's fingerprint, made its own when what it builds ran in an image.
+pub fn in_image(fingerprint: String, image: Option<&str>) -> String {
+    match image {
+        None => fingerprint,
+        Some(image) => {
+            let mut h = Sha256::new();
+            h.update(fingerprint.as_bytes());
+            h.update(image.as_bytes());
+            format!("{:x}", h.finalize())[..16].to_string()
+        }
+    }
+}
+
 impl Recipe {
     /// The value of every parameter for one invocation: what was asked for, checked against
     /// what is declared, over the defaults.
@@ -191,15 +204,7 @@ impl Recipe {
     /// Built in an image, a recipe is other work than built natively: its binary links another
     /// C library.
     pub fn fingerprint_in(&self, image: Option<&str>) -> String {
-        match image {
-            None => self.fingerprint(),
-            Some(image) => {
-                let mut h = Sha256::new();
-                h.update(self.fingerprint().as_bytes());
-                h.update(image.as_bytes());
-                format!("{:x}", h.finalize())[..16].to_string()
-            }
-        }
+        in_image(self.fingerprint(), image)
     }
 
     /// The two ways a recipe invalidates its own measurement, refused before anything is paid

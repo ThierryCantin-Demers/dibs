@@ -12,7 +12,7 @@ use super::{
     unfinished::Unfinished,
 };
 use crate::{
-    call::{BatchStep, Destination, IMAGE, RecipeJob},
+    call::{BatchStep, Destination, RecipeJob, image_digest},
     cli::{Call, Expanding, RecipeCall, ShellWord},
     recipe::{self, Checkouts, Lock, Manifest, NotTaken, Resolved},
     records::{Affinity, RunLog},
@@ -80,11 +80,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         tree_stamps,
     } = resolved;
     let (name, rec) = (name.as_str(), &rec);
-    // By digest alone: a tag beside it names the same image.
-    let image = std::env::var(IMAGE)
-        .ok()
-        .and_then(|i| i.rsplit_once('@').map(|(_, digest)| digest.to_string()))
-        .filter(|digest| !digest.is_empty());
+    let image = image_digest();
     let fingerprint = rec.fingerprint_in(image.as_deref());
     let patched: Option<std::collections::BTreeSet<String>> = (!pins.is_empty()).then(|| {
         pins.iter()

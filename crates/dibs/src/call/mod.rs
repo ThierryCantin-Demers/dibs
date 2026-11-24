@@ -19,7 +19,7 @@ mod watched;
 
 pub use base::{
     ATTEMPT, ATTEMPT_LOOKUP, BUNDLE_SPEC, CHECK_IN, CallError, IMAGE, LOW_PRIORITY, LockedCall,
-    Ran, TRAILERS,
+    Ran, TRAILERS, image_digest,
 };
 pub use dispatch::Dispatch;
 pub use feed::{Fed, StatusFeed};

@@ -112,7 +112,14 @@ pub struct Images<'a> {
 impl Images<'_> {
     /// The image's root filesystem, fetched and unpacked the first time this machine needs it,
     /// within the job's cap and stopped with it.
-    pub fn root(&self, image: &Image, commands: &Commands) -> Result<PathBuf, Unready> {
+    /// The sandbox a build runs in, its mount points made under the image's lock, since every
+    /// build of the image makes them in the same root.
+    pub fn prepare(&self, image: &Image, commands: &Commands) -> Result<Sandbox, Unready> {
+        let (rootfs, _lock) = self.root(image, commands)?;
+        self.sandbox(rootfs)
+    }
+
+    fn root(&self, image: &Image, commands: &Commands) -> Result<(PathBuf, File), Unready> {
         let dir = self.scratch.join(IMAGES);
         let done = dir.join(&image.digest);
         let failed = |e: io::Error| format!("dibs: the image's directory {}: {e}\n", dir.display());
@@ -146,7 +153,7 @@ impl Images<'_> {
             self.unpack(image, &dir, &done, commands)?;
         }
         let _ = File::create(done.join(USED));
-        Ok(done.join("rootfs"))
+        Ok((done.join("rootfs"), lock))
     }
 
     fn unpack(
@@ -206,7 +213,7 @@ impl Images<'_> {
 
     /// The sandbox a command runs in: the image's root, this account's home and the machine's
     /// scratch at their own paths, so every cache dibs keeps is where the command expects it.
-    pub fn sandbox(&self, rootfs: PathBuf) -> Result<Sandbox, Unready> {
+    fn sandbox(&self, rootfs: PathBuf) -> Result<Sandbox, Unready> {
         let sandbox = self.layout(rootfs);
         sandbox
             .mount_points()
@@ -321,8 +328,13 @@ impl Sandbox {
     /// The root is bound read-only, so what is bound over it needs its mount point made first.
     fn mount_points(&self) -> io::Result<()> {
         let links = self.aliases.iter().map(|(_, link)| link);
+        let mut made: Vec<&Path> = Vec::new();
         for dir in self.binds.iter().chain(links).chain(&self.sealed) {
-            within(&self.rootfs, dir)?;
+            // What an earlier bind covers comes from the host, so the image's is never seen.
+            if !made.iter().any(|m| dir.starts_with(m)) {
+                within(&self.rootfs, dir)?;
+                made.push(dir);
+            }
         }
         for file in NETWORK.iter().map(Path::new).filter(|f| f.exists()) {
             let dir = within(&self.rootfs, file.parent().unwrap_or(Path::new("/")))?;
@@ -494,6 +506,25 @@ mod tests {
             "burn-local-k1"
         );
         assert_eq!(Image::untagged("burn-imgfoo"), "burn-imgfoo");
+    }
+
+    #[test]
+    fn a_path_an_earlier_bind_covers_needs_no_mount_point_in_the_image() {
+        let root = std::env::temp_dir().join(format!("dibs-image-under.{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let scratch = home.join(".cache/dibs");
+        fs::create_dir_all(scratch.join(IMAGES)).unwrap();
+        let rootfs = root.join("rootfs");
+        let cache = rootfs.join(home.join(".cache").strip_prefix("/").unwrap());
+        fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/nowhere", &cache).unwrap();
+        let images = Images {
+            scratch: &scratch,
+            home: &home,
+        };
+        assert!(images.sandbox(rootfs).is_ok());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -13,7 +13,7 @@ mod tests;
 
 #[cfg(test)]
 pub use base::Isolation;
-pub use base::{Recipe, Step};
+pub use base::{Recipe, Step, in_image};
 pub use dibs_format::Lock;
 pub use error::{Flaw, ManifestError, NotTaken, ParamError, RecipeError, RepoError, ShellWords};
 pub use labels::run_label;

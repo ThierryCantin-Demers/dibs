@@ -2135,8 +2135,7 @@ impl<'a> Run<'a> {
             act();
         };
         let commands = Commands::new(environment, &running, &unstopped, deadline);
-        let rootfs = images.root(image, &commands)?;
-        images.sandbox(rootfs)
+        images.prepare(image, &commands)
     }
 
     /// What the command started outside its group, as `setsid` does, which the group's own sweep

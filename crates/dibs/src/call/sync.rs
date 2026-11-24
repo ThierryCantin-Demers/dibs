@@ -431,7 +431,7 @@ impl Rsh {
             return Ok(i32::from(Exit::Refused.code()));
         }
         machine.somewhere(&target)?;
-        let values = CallValues {
+        let mut values = CallValues {
             fingerprint: self.fingerprint.as_deref().map(|f| Fingerprint(f).sent()),
             tree,
             ..machine.values(
@@ -444,6 +444,10 @@ impl Rsh {
                 &target,
             )?
         };
+        // As a copy here: only a transfer that lays out a tree names the image's target.
+        if values.tree.is_none() {
+            values.image = None;
+        }
         let status = session.transfer(&values, Liveness::from_env(), self.prepared.as_deref())?;
         Ok(session.exit(status, &target))
     }
