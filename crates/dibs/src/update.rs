@@ -353,7 +353,7 @@ impl ChangeNotice {
 }
 
 /// What the upstreams of the clone and of the recipes say their heads are, against what runs
-/// here. It is asked at most once an hour, beside a call and never waited for, so a slow or absent
+/// here. It is asked about once an hour, beside a call and never waited for, so a slow or absent
 /// network costs a call nothing and the notice comes a call later.
 pub struct Upstream {
     /// Where the last answer is kept, with when it was asked.
@@ -569,6 +569,7 @@ impl Tracked {
     /// What the cache files this upstream's head under: the same checkout pulling from another
     /// branch or remote asks anew.
     fn key(&self, dir: &Path) -> String {
+        let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
         format!("{} {} {}", self.remote, self.merge, dir.display())
     }
 

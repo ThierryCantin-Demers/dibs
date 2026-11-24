@@ -103,7 +103,7 @@ It fast-forwards the clone `dibs` was built from, lists the commits that arrived
 reinstall goes where the running `dibs` is installed, so a trial under its own prefix updates
 itself and not the one on PATH. It then pulls your recipes, when they are a git clone.
 
-You need not remember to. At most once an hour, a call asks the clone's upstream and the
+You need not remember to. About once an hour, a call asks the clone's upstream and the
 recipes' for their heads, beside its own work and never waiting for the answer, and the next
 call of each session says once on stderr when either is ahead of this computer:
 
