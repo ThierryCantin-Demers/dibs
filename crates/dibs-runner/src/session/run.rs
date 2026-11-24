@@ -650,20 +650,15 @@ impl<'a> Run<'a> {
     /// comes; urgent, it parks others instead.
     fn idle(&self) -> bool {
         let request = &self.at.call.request;
-        request.when_idle && request.urgent.is_none() && request.ports.is_empty() && self.parkable()
+        request.when_idle && request.urgent.is_none() && self.parkable()
     }
 
-    /// A `--when-idle` call that waits for an idle machine to start: a parkable job, and what
-    /// cannot run again from the start, as the transfer that sends a recipe's tree or a job
-    /// holding a port, which is not parked once it runs.
+    /// A `--when-idle` call that waits for an idle machine to start: a parkable job, and the
+    /// transfer that sends a recipe's tree, which is short and is never parked once it runs.
     fn waits_idle(&self) -> bool {
         let request = &self.at.call.request;
-        let waits = match self.at.call.mode() {
-            Mode::Rsh => true,
-            Mode::Shared => !request.watch.hold && request.services.is_empty(),
-            _ => false,
-        };
-        request.when_idle && request.urgent.is_none() && waits
+        self.idle()
+            || (request.when_idle && request.urgent.is_none() && self.at.call.mode() == Mode::Rsh)
     }
 
     /// Waits until no other job has held or waited here for the machine's settle time, saying
@@ -1642,6 +1637,15 @@ impl<'a> Run<'a> {
                             drop(state);
                             hosted.laid = Some(By::Dibs);
                             unlocked = true;
+                            // Never run, its build left nothing half made.
+                            if runs == 0
+                                && let Some(mark) = running.as_mut().and_then(|r| r.mark.take())
+                            {
+                                mark.ended(JobEnd {
+                                    status: 0,
+                                    capped: false,
+                                });
+                            }
                             break status;
                         }
                         if let Some(running) = running.as_mut() {

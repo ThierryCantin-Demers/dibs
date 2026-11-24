@@ -1012,7 +1012,8 @@ caller is told each time and sees one run, the last. A peek never counts, nor do
 
 Parking repeats what the job had done, so it suits work that runs well at night or between bursts,
 not work that must finish by a time. It is shared work that can run again: a benchmark,
-`--urgent`, `--preemptible`, `--hold`, `--with` and `--port` are refused with it. On a recipe or a
+`--urgent`, `--preemptible`, `--hold`, `--with` and `--port` are refused with it, though a
+batch's `--port` step it reaches keeps its port while parked. On a recipe or a
 batch, the flag reaches every step, and a detached batch carries it to its machine; a batch's
 benchmarks run as usual. Check-ins and `--max` count only the time it runs, each run apart, and
 so do its trailer and its label's history. A recipe's tree is laid out before its command can be
