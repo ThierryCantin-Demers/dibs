@@ -59,11 +59,7 @@ pub struct Request {
     pub when_open: bool,
     /// `--low-priority`: a shared job that starts only once nothing else runs or waits on the
     /// machine, and is stopped, to run again from the start, as soon as another job comes.
-    #[serde(
-        default,
-        alias = "when_idle",
-        skip_serializing_if = "std::ops::Not::not"
-    )]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub low_priority: bool,
     /// A status that reads the machine's CPU, memory and cards as well.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

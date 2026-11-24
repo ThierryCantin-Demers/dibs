@@ -283,7 +283,7 @@ impl RecipeCall {
                 }
                 "--anyway" => call.anyway = true,
                 "--when-open" => call.when_open = true,
-                "--low-priority" | "--when-idle" => call.low_priority = true,
+                "--low-priority" => call.low_priority = true,
                 "--there" => call.there = true,
                 "--json" => call.json = true,
                 "--all" => call.all = true,

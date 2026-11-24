@@ -53,7 +53,7 @@ struct Paused {
     #[serde(default)]
     check_in: Option<String>,
     /// `--low-priority`, which the steps a follow starts keep.
-    #[serde(default, alias = "when_idle")]
+    #[serde(default)]
     low_priority: bool,
     verbose: bool,
     states: Vec<State>,
