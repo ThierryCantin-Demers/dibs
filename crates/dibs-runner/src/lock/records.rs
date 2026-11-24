@@ -590,6 +590,45 @@ impl LockDir {
             .or_else(|| fs::read_to_string(self.file("pressing", pid)).ok())
     }
 
+    /// `quiet.<pid>`: since when a `--low-priority` job waiting here has seen nothing else.
+    pub fn mark_quiet(&self, pid: u32, since: Option<u64>) {
+        let _ = match since {
+            Some(since) => fs::write(self.file("quiet", pid), format!("{since}\n")),
+            None => fs::remove_file(self.file("quiet", pid)),
+        };
+    }
+
+    pub fn quiet_since(&self, pid: u32) -> Option<u64> {
+        fs::read_to_string(self.file("quiet", pid))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
+    /// `stopped.<pid>`: a `--low-priority` job parked after it ran, for how long, when, and for
+    /// which job, which status says until it runs again.
+    pub fn mark_stopped(&self, pid: u32, stopped: Option<(u64, u64, &str)>) {
+        let _ = match stopped {
+            Some((ran, at, by)) => fs::write(
+                self.file("stopped", pid),
+                format!("{ran}\t{at}\t{}\n", by.replace(['\t', '\n'], " ")),
+            ),
+            None => fs::remove_file(self.file("stopped", pid)),
+        };
+    }
+
+    /// The `(ran, at, by)` of `mark_stopped`.
+    pub fn stopped(&self, pid: u32) -> Option<(u64, u64, String)> {
+        let said = fs::read_to_string(self.file("stopped", pid)).ok()?;
+        let mut fields = said.trim_end_matches('\n').splitn(3, '\t');
+        Some((
+            fields.next()?.parse().ok()?,
+            fields.next()?.parse().ok()?,
+            fields.next()?.to_string(),
+        ))
+    }
+
     /// `idle.<pid>`: a job that runs only while nothing else here does, which another such job
     /// does not count as work.
     pub fn mark_idle(&self, pid: u32, parks: bool) {
@@ -612,10 +651,13 @@ impl LockDir {
     }
 
     /// Another job that holds or waits here, which a job run only while none does makes way for.
+    /// A transfer is not one: it is short and leaves the cards alone, and parking a job for it
+    /// would throw away all the job has run.
     pub fn busy_besides(&self, pid: u32) -> Option<LockRecord> {
         [Kind::Holder, Kind::Waiting].into_iter().find_map(|kind| {
             self.records(kind).into_iter().find(|r| {
                 r.pid != pid
+                    && r.mode != dibs_format::Mode::Rsh
                     && !self.idle_only(r.pid)
                     && RecordFile(&self.file(kind.prefix(), r.pid)).alive()
             })
@@ -647,6 +689,8 @@ impl LockDir {
             "urgent",
             "parked",
             "pressing",
+            "quiet",
+            "stopped",
             "idle",
             "card",
             "cohort",
@@ -733,6 +777,8 @@ impl LockDir {
             "urgent",
             "parked",
             "pressing",
+            "quiet",
+            "stopped",
             "idle",
             "card",
             "cohort",

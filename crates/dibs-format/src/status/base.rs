@@ -217,7 +217,56 @@ pub struct Waiter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub urgent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_wait: Option<IdleWait>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<BatchShown>,
+}
+
+/// Where a `--low-priority` job's wait for an idle machine stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdleWait {
+    /// The job it waits behind, as `<label> from <agent>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behind: Option<String>,
+    /// How long nothing else has run or waited here, of the `settle` it needs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiet_for: Option<u64>,
+    pub settle: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped: Option<Stopped>,
+}
+
+/// A `--low-priority` job parked after it ran, to run again from the start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stopped {
+    pub ran: u64,
+    pub ago: u64,
+    /// The job it was parked for, as `<label> from <agent>`.
+    pub by: String,
+}
+
+impl IdleWait {
+    /// What it waits for, and what it ran before it was parked.
+    pub fn said(wait: Option<&IdleWait>) -> String {
+        let mut said = "waits for an idle machine".to_string();
+        let Some(w) = wait else { return said };
+        match (&w.behind, w.quiet_for) {
+            (Some(behind), _) => said += &format!(", behind {behind}"),
+            (None, Some(quiet)) => {
+                said += &format!(", quiet {} of {}", Span(quiet), Span(w.settle))
+            }
+            (None, None) => {}
+        }
+        if let Some(s) = &w.stopped {
+            said += &format!(
+                "; ran {} until {} came {} ago, and runs again from the start",
+                Span(s.ran),
+                s.by,
+                Span(s.ago)
+            );
+        }
+        said
+    }
 }
 
 /// What a holder's history says it takes, and where that leaves it.

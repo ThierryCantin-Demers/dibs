@@ -1043,11 +1043,13 @@ beside it; updating the runners closes that.
 `--low-priority` is for long shared work that should never be in anyone's way, such as a track that
 runs for hours. It starts only once nothing else runs or waits on the machine, and has had nothing
 for `idle_settle` seconds, two minutes by default, so a batch's next step or an agent's next call
-does not find it just started. As soon as another job holds or waits there, a build, a test, a
-transfer or a benchmark, the `--low-priority` job is parked: its command is stopped, it lets go of
-the lock, and it runs again from the start, in the same tree, once the machine is idle again. Its
-caller is told each time and sees one run, the last. A peek never counts, nor does another
-`--low-priority` job, so several run side by side.
+does not find it just started. As soon as another job holds or waits there, a build, a test or a
+benchmark, the `--low-priority` job is parked: its command is stopped, it lets go of the lock, and
+it runs again from the start, in the same tree, once the machine is idle again. Its caller is told
+each time and sees one run, the last. A peek never counts, nor does a transfer, which is short and
+leaves the cards alone, nor another `--low-priority` job, so several run side by side. While it
+waits, `dibs status` says which job it waits behind, or how long the machine has been quiet of the
+two minutes, and how long it ran before it was last parked.
 
 Parking repeats what the job had done, so it suits work that runs well at night or between bursts,
 not work that must finish by a time. It is shared work that can run again: a benchmark,

@@ -1,4 +1,5 @@
 use crate::harness::*;
+use dibs_format::Mode;
 
 fn idle(s: &Sandbox, label: &str, command: &str) -> Call {
     s.dibs(["--low-priority", "--label", label, command])
@@ -28,9 +29,9 @@ fn a_low_priority_job_waits_for_an_idle_machine_and_is_parked_for_a_benchmark() 
     assert_eq!(s.read("order"), "busy\n", "it waits while another job runs");
     let status = s.status();
     assert_eq!(
-        status.lines_with("waits for an idle machine"),
+        status.lines_with("waits for an idle machine, behind busy from"),
         1,
-        "{status}"
+        "it names the job it waits behind: {status}"
     );
     busy.open();
     assert_eq!(s.wait(b), 0);
@@ -56,6 +57,36 @@ fn a_low_priority_job_waits_for_an_idle_machine_and_is_parked_for_a_benchmark() 
     assert_eq!(s.wait(i), 0, "its caller sees one run that succeeded");
     let told = s.read("i-err");
     assert_eq!(told.lines_with("parked for measure"), 1, "{told}");
+    s.gone();
+}
+
+#[test]
+fn a_transfer_does_not_keep_a_low_priority_job_waiting() {
+    let mut s = Sandbox::new();
+    let (sending, run) = (s.gate("sending"), s.gate("run"));
+    s.write(
+        "request",
+        &request_frame(Mode::Rsh, "send", &sending.hold()),
+    );
+    let send = s.spawn(s.sh(&format!(
+        "dibs __runner serve {RUNNER_HASH} < {} > /dev/null",
+        s.p("request")
+    )));
+    s.held(1);
+    let order = s.p("order");
+    let i = s.spawn(idle(
+        &s,
+        "long",
+        &format!("echo long >> {order}; {}", run.hold()),
+    ));
+    s.until_records("it to start beside the transfer", || {
+        s.read("order") == "long\n"
+    });
+    sending.open();
+    s.wait(send);
+    run.open();
+    assert_eq!(s.wait(i), 0);
+    assert_eq!(s.read("order"), "long\n", "it ran once, never parked");
     s.gone();
 }
 

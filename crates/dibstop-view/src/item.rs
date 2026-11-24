@@ -2,7 +2,7 @@
 
 use dibs_format::{
     Alias, JobId, Label, Mode, Span,
-    status::{Ahead, BatchShown, Holder, IdleKind, Scope, Shown, Status, Waiter},
+    status::{Ahead, BatchShown, Holder, IdleKind, IdleWait, Scope, Shown, Status, Waiter},
 };
 
 #[derive(Clone)]
@@ -336,10 +336,12 @@ impl Verdict {
     fn of_queued(q: &Waiter) -> Verdict {
         let (note, long) = match (q.low_priority, q.eta) {
             (true, _) => (
-                "low priority: waits for an idle machine".to_string(),
-                "Low priority: it starts only once nothing but other low-priority work runs or \
-                 waits on the machine."
-                    .to_string(),
+                format!("low priority: {}", IdleWait::said(q.idle_wait.as_ref())),
+                format!(
+                    "Low priority: it starts only once nothing but other low-priority work or a \
+                     transfer runs or waits on the machine. It {}.",
+                    IdleWait::said(q.idle_wait.as_ref())
+                ),
             ),
             (false, Some(e)) => (
                 format!("starts in ~{}", Span(e)),

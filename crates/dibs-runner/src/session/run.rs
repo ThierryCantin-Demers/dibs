@@ -315,7 +315,7 @@ impl<'a> Run<'a> {
             drop(acquired);
             drop(guard);
         };
-        if !self.waits_idle() {
+        if !self.waits_idle() && self.at.call.mode() != Mode::Rsh {
             self.after_idle_parked();
         }
         // The machine as well as the cards: while the group winds down, shared work must not start.
@@ -719,7 +719,9 @@ impl<'a> Run<'a> {
             }
             match self.at.dir.busy_besides(pid) {
                 Some(busy) => {
-                    quiet = None;
+                    if quiet.take().is_some() {
+                        self.at.dir.mark_quiet(pid, None);
+                    }
                     if !told {
                         self.at.sink.say(&format!(
                             "dibs: --low-priority, so it waits until nothing else runs or waits here: {} from {} is there.\n",
@@ -728,10 +730,16 @@ impl<'a> Run<'a> {
                         told = true;
                     }
                 }
-                None if quiet.get_or_insert_with(Instant::now).elapsed() >= settle => {
-                    return Idled::Idle;
+                None => {
+                    let since = *quiet.get_or_insert_with(|| {
+                        self.at.dir.mark_quiet(pid, Some(Moment::epoch_now()));
+                        Instant::now()
+                    });
+                    if since.elapsed() >= settle {
+                        self.at.dir.mark_quiet(pid, None);
+                        return Idled::Idle;
+                    }
                 }
-                None => {}
             }
             if until.is_some_and(|until| Instant::now() >= until) {
                 let wait = self.at.call.request.wait.unwrap_or_default();
@@ -766,6 +774,19 @@ impl<'a> Run<'a> {
         let mut state = state;
         state.set_stage(Stage::Parked);
         drop(state);
+        if parked {
+            let now = Moment::epoch_now();
+            let began = self
+                .at
+                .dir
+                .records(Kind::Holder)
+                .into_iter()
+                .find(|r| r.pid == pid)
+                .map_or(now, |r| r.start);
+            self.at
+                .dir
+                .mark_stopped(pid, Some((now.saturating_sub(began), now, &busy)));
+        }
         let waiting = self.at.call.lock_record(arrived.start, &arrived.job);
         self.at.dir.write(Kind::Waiting, &waiting);
         let _ = fs::remove_file(self.at.dir.file("holder", pid));
@@ -808,6 +829,7 @@ impl<'a> Run<'a> {
             }
         };
         if yielded == Yielded::Waited {
+            self.at.dir.mark_stopped(pid, None);
             self.at
                 .sink
                 .say("dibs: the machine is idle again, so it runs from the start.\n");

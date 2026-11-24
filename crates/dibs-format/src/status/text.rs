@@ -1,8 +1,8 @@
 use crate::{
     Alias, Mode, Span,
     status::base::{
-        Ahead, BatchShown, Holder, IdleKind, LockState, Remaining, Scope, Service, Shown, Silent,
-        Status, Waiter,
+        Ahead, BatchShown, Holder, IdleKind, IdleWait, LockState, Remaining, Scope, Service, Shown,
+        Silent, Status, Waiter,
     },
 };
 use std::fmt::{self, Write as _};
@@ -305,7 +305,12 @@ impl Text<'_> {
             cmd: &waiter.cmd,
         };
         let when = match (waiter.eta, waiter.low_priority) {
-            (_, true) => format!("   {}[waits for an idle machine]{}", p.dim, p.off),
+            (_, true) => format!(
+                "   {}[{}]{}",
+                p.dim,
+                IdleWait::said(waiter.idle_wait.as_ref()),
+                p.off
+            ),
             (Some(0), _) => format!("   {}[starts as soon as the lock frees]{}", p.dim, p.off),
             (Some(eta), _) => format!("   {}[~{} until it starts]{}", p.dim, Span(eta), p.off),
             (None, _) => String::new(),

@@ -16,8 +16,8 @@ use crate::{
 use dibs_format::{
     JobId, JobMeta, LockRecord, Mode,
     status::{
-        Ahead, BatchShown, Holder, Leftover, Listing, LockState, Orphan, Remaining, Scene, Service,
-        Shown, Silent, Status, Text, Waiter,
+        Ahead, BatchShown, Holder, IdleWait, Leftover, Listing, LockState, Orphan, Remaining,
+        Scene, Service, Shown, Silent, Status, Stopped, Text, Waiter,
     },
 };
 use std::{
@@ -269,6 +269,22 @@ impl Look<'_> {
             eta: starts,
             low_priority,
             urgent: self.dir.urgent_why(record.pid),
+            idle_wait: low_priority.then(|| IdleWait {
+                behind: self
+                    .dir
+                    .busy_besides(record.pid)
+                    .map(|busy| format!("{} from {}", busy.label, busy.agent)),
+                quiet_for: self
+                    .dir
+                    .quiet_since(record.pid)
+                    .map(|s| now.saturating_sub(s)),
+                settle: self.settings.idle_settle,
+                stopped: self.dir.stopped(record.pid).map(|(ran, at, by)| Stopped {
+                    ran,
+                    ago: now.saturating_sub(at),
+                    by,
+                }),
+            }),
             batch: self.batch(record.pid, left, tail),
         }
     }
