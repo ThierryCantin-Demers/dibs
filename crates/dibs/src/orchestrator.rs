@@ -175,7 +175,7 @@ fn named(words: &[&str]) -> Result<Work, String> {
     if command.is_empty() {
         return Err("dibs orch run needs a command".into());
     }
-    call.command = command.join(" ");
+    call.command = crate::cli::Command(command).shell_string();
     if call.label.is_empty() {
         call.label = std::env::current_dir()
             .ok()
@@ -606,7 +606,11 @@ mod tests {
             ),
             ("m", true, Some("gpu:x"), "l")
         );
-        assert_eq!(call.command, "echo --on");
+        assert_eq!(call.command, "echo --on ");
+        let Work::Call(call) = named(&["--on", "m", "test", "a b", "=", "a b"]).unwrap() else {
+            panic!("a call");
+        };
+        assert_eq!(call.command, r"test a\ b = a\ b ");
         assert!(named(&["echo"]).is_err(), "names no machine");
         assert!(named(&["--on", "m"]).is_err(), "runs nothing");
     }

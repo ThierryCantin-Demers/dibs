@@ -38,16 +38,23 @@ is what runs after the service account's manager starts, after a crash, and afte
 ## Attempts are admitted once
 
 A step's call carries `DIBS_ATTEMPT=<submission>.<step>.<k>`. The runner admits an attempt id
-once: the first call creates `$DIBS_SCRATCH/attempts/<id>` and runs the job; any later call with
-that id runs nothing and says how the first went, `Record::Admitted`:
+once: the first call publishes `$DIBS_SCRATCH/attempts/<id>/`, its receipt already locked and
+naming the job, and runs the job; any later call with that id runs nothing and says how the first
+went, `Record::Admitted`:
 
-- `ended`, with the trailer the runner kept beside the job before reporting it;
+- `ended`, with the trailer the runner kept in the attempt's directory before reporting it;
 - `running`, while the job still holds its receipt's lock;
 - `lost`, when its runner went without a trailer, `started` once the job held the machine's lock.
 
-A worker that finds an attempt open in the store, because the worker before it died, asks again
-under the same id instead of starting a new one. Builds, transfers and checks run again after a
-`lost`; a measurement never does, and its step ends `unknown`.
+The attempt's directory is not swept with the job's log, so it answers for as long as it is
+asked.
+
+The store closes an attempt only in the transaction that records its step's outcome, or to make
+the next attempt after one that says to. A worker that finds an attempt open, because the worker
+before it died or a call heard nothing back, asks again under the same id instead of starting a
+new one. Builds, transfers and checks run again after a `lost`; a measurement never does, and its
+step ends `unknown`. A kill that finds the job still run by an earlier worker's call stops it on
+its machine with `dibs --kill`.
 
 ## Splits
 
@@ -87,6 +94,7 @@ command = "MNIST_ARTIFACT_DIR=$TMPDIR/mnist-$DIBS_SUBMISSION $DIBS_BUNDLE/mnist"
 ## Backup and restore
 
 `dibs-orchestrator backup <file>` copies the store consistently while it is in use.
-`dibs-orchestrator restore <file>` sets the current store aside, puts the backup in its place
-under a new epoch and resumes: each attempt the backup left open is asked about under its own id,
+`dibs-orchestrator restore <file>` is refused while any worker still runs, since a worker keeps
+writing to the store it opened. It reads the backup without changing it, sets the current store
+aside, puts the backup in its place under a new epoch and resumes: each attempt the backup left open is asked about under its own id,
 so work that finished after the backup is learned from its runner rather than run again.

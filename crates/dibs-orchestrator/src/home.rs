@@ -41,7 +41,11 @@ impl Home {
     }
 
     pub fn submission(&self, id: &str) -> PathBuf {
-        self.state.join("subs").join(id)
+        self.subs().join(id)
+    }
+
+    pub fn subs(&self) -> PathBuf {
+        self.state.join("subs")
     }
 
     /// Bundles relayed from a compile machine, by digest.

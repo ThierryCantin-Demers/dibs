@@ -149,6 +149,17 @@ impl Api<'_> {
         let (what, plan, resolved) = match &submission.work {
             Work::Call(call) => self.plan_call(call, &inventory)?,
             Work::Split(call) => {
+                if !component(&call.repo)
+                    || submission
+                        .upload
+                        .as_ref()
+                        .is_some_and(|u| u.repo != call.repo)
+                {
+                    return Err(refused(format!(
+                        "{:?} is no repo name, or not the repo the upload sent",
+                        call.repo
+                    )));
+                }
                 let settings = Settings::load(&self.home.settings()).map_err(refused)?;
                 let pools = self.store.pools().map_err(failed)?;
                 let text = std::fs::read_to_string(self.home.splits(&call.repo)).ok();

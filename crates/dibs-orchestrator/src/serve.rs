@@ -86,7 +86,8 @@ impl Upload {
         if *dot != "." {
             return Err(format!("{dot:?} where rsync's server takes `.`"));
         }
-        for option in options {
+        let mut options = options.iter();
+        while let Some(option) = options.next() {
             let short = option.len() > 1
                 && option.starts_with('-')
                 && !option.starts_with("--")
@@ -99,7 +100,10 @@ impl Upload {
                 || Upload::LONG.contains(option)
                 || option
                     .strip_prefix("--copy-dest=")
-                    .is_some_and(Upload::last_copy);
+                    .is_some_and(Upload::last_copy)
+                // rsync hands its server the path as a word of its own.
+                || (*option == "--copy-dest"
+                    && options.next().is_some_and(|path| Upload::last_copy(path)));
             if !allowed {
                 return Err(format!("rsync's {option} is not taken here"));
             }
@@ -165,6 +169,14 @@ mod tests {
         assert!(!ok(&["-l", ".", "stage/../../x"]));
         assert!(!ok(&["-l", ".", "subs/x/"]));
         assert!(!ok(&["-l", ".", "stage/.k/"]));
+        assert!(ok(&[
+            "-lpre.iLsfxCIvu",
+            "--copy-dest",
+            "../../last/burn",
+            ".",
+            "stage/k1/"
+        ]));
+        assert!(!ok(&["--copy-dest", "/etc", ".", "stage/k/"]));
         assert!(!ok(&["--copy-dest=/etc", ".", "stage/k/"]));
         assert!(!ok(&["--copy-dest=../../last/../x", ".", "stage/k/"]));
         assert!(!ok(&["-l", "--rsync-path=sh", ".", "stage/k/"]));

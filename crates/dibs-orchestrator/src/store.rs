@@ -6,7 +6,7 @@ use dibs_format::{
     orchestrator::{Detail, State, StepState, Submission, Summary},
     wire::Trailer,
 };
-use rusqlite::{Connection, OptionalExtension as _, params};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
 pub struct Store {
@@ -113,6 +113,23 @@ impl Store {
         Ok(Store { db })
     }
 
+    /// A write transaction taken before anything is read, so what it reads is still so when it
+    /// writes: a deferred one reading first fails, rather than waits, when another writer
+    /// committed in between.
+    fn immediate(&self) -> rusqlite::Result<Transaction<'_>> {
+        Transaction::new_unchecked(&self.db, TransactionBehavior::Immediate)
+    }
+
+    /// The epoch of the store at `path`, read without creating or changing anything: an error
+    /// when it is no store of this orchestrator's.
+    pub fn inspect(path: &Path) -> rusqlite::Result<i64> {
+        let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        db.query_row("SELECT count(*) FROM submissions", [], |r| {
+            r.get::<_, i64>(0)
+        })?;
+        Store { db }.epoch()
+    }
+
     pub fn epoch(&self) -> rusqlite::Result<i64> {
         Ok(self
             .db
@@ -180,7 +197,7 @@ impl Store {
         plan: &[Planned],
         resolved: Option<&str>,
     ) -> rusqlite::Result<(String, bool)> {
-        let tx = self.db.unchecked_transaction()?;
+        let tx = self.immediate()?;
         let seen: Option<String> = tx
             .query_row(
                 "SELECT id FROM submissions WHERE coworker = ?1 AND key = ?2",
@@ -314,7 +331,7 @@ impl Store {
 
     /// Takes the submission for this worker: a new generation, which fences any worker before.
     pub fn claim(&self, id: &str, pid: u32) -> rusqlite::Result<Fence> {
-        let tx = self.db.unchecked_transaction()?;
+        let tx = self.immediate()?;
         let epoch = epoch_in(&tx)?;
         tx.execute(
             "UPDATE submissions SET generation = generation + 1, worker = ?2, updated = ?3,
@@ -339,7 +356,7 @@ impl Store {
         attempt: &Attempt,
         machine: &str,
     ) -> rusqlite::Result<Result<(), Fenced>> {
-        let tx = self.db.unchecked_transaction()?;
+        let tx = self.immediate()?;
         let generation: i64 = tx.query_row(
             "SELECT generation FROM submissions WHERE id = ?1",
             params![id],
@@ -380,15 +397,6 @@ impl Store {
         Ok(())
     }
 
-    /// An attempt asked about and found still running: open again, so it is asked about again.
-    pub fn reopen(&self, attempt: &str) -> rusqlite::Result<()> {
-        self.db.execute(
-            "UPDATE attempts SET ended = NULL WHERE id = ?1",
-            params![attempt],
-        )?;
-        Ok(())
-    }
-
     pub fn last_attempt(&self, id: &str, step: i64) -> rusqlite::Result<Option<Attempt>> {
         self.db
             .query_row(
@@ -406,21 +414,31 @@ impl Store {
             .optional()
     }
 
-    pub fn set_step(
+    /// The step's outcome, and the attempt it came from closed with what was heard of it, as
+    /// one: an attempt is never closed while its step still waits on it.
+    pub fn settle(
         &self,
         id: &str,
         step: i64,
+        attempt: Option<(&str, &str)>,
         state: State,
         trailer: Option<&Trailer>,
         note: Option<&str>,
     ) -> rusqlite::Result<()> {
         let trailer = trailer.and_then(|t| serde_json::to_string(t).ok());
-        self.db.execute(
+        let tx = self.immediate()?;
+        if let Some((attempt, heard)) = attempt {
+            tx.execute(
+                "UPDATE attempts SET ended = ?2, record = ?3 WHERE id = ?1",
+                params![attempt, Moment::epoch_now() as i64, heard],
+            )?;
+        }
+        tx.execute(
             "UPDATE steps SET state = ?3, trailer = COALESCE(?4, trailer), note = COALESCE(?5, note)
              WHERE submission = ?1 AND n = ?2",
             params![id, step, state.as_str(), trailer, note],
         )?;
-        Ok(())
+        tx.commit()
     }
 
     pub fn finish(

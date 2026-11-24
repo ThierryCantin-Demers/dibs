@@ -279,6 +279,7 @@ fn a_submission_sent_twice_under_one_key_is_one_submission() {
     assert_eq!(sandbox.ran(), 1);
     let (other, duplicate) = sandbox.submit("k2", false);
     assert!(!duplicate && other != id);
+    assert_eq!(sandbox.follow(&other), (State::Done, 0));
 }
 
 #[test]
@@ -318,6 +319,13 @@ fn a_restored_store_asks_how_its_open_attempts_went_rather_than_running_them_aga
         "{}",
         sandbox.log(&id)
     );
+    let missing = sandbox.root.join("no-such-backup.db");
+    let refused = sandbox
+        .command(&["restore", missing.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "a missing backup is no store");
+    assert!(!missing.exists(), "nor is it made one");
     let out = sandbox.orchestrator(&["restore", backup.to_str().unwrap()]);
     assert!(
         String::from_utf8_lossy(&out.stdout).contains(&format!("{id}: resumed")),

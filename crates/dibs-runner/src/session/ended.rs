@@ -1,5 +1,5 @@
 use crate::{
-    attempt,
+    attempt::Attempts,
     job::{Digest, LogRead, Repeat},
     session::run::{Hosted, Serving},
 };
@@ -51,8 +51,8 @@ impl<'a> Ended<'a> {
             user: call.user.clone(),
         };
         let _ = fs::write(tally.job_dir.join("meta"), meta.to_string());
-        if call.request.attempt.is_some() {
-            attempt::keep_trailer(tally.job_dir, &self.trailer());
+        if let Some(id) = &call.request.attempt {
+            Attempts::under(&self.at.machine.scratch).ended(id, &self.trailer());
         }
     }
 

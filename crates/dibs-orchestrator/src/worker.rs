@@ -41,6 +41,8 @@ fn still_running() -> Duration {
 }
 /// Attempts at one idempotent step before it is failed.
 const ATTEMPTS: i64 = 3;
+/// How long a worker waits before asking again about an attempt whose call heard nothing back.
+const UNHEARD: Duration = Duration::from_secs(5);
 
 pub fn lock_path(home: &Home, id: &str) -> PathBuf {
     home.submission(id).join("worker.lock")
@@ -140,12 +142,13 @@ struct Worker<'a> {
     fence: Fence,
 }
 
-/// How a step ended.
+/// How a step ended, and the attempt it closes with: id and what was heard of it.
 struct Ended {
     state: State,
     exit: i32,
     trailer: Option<Trailer>,
     note: Option<String>,
+    attempt: Option<(String, String)>,
 }
 
 impl Ended {
@@ -155,6 +158,7 @@ impl Ended {
             exit: 0,
             trailer,
             note,
+            attempt: None,
         }
     }
 
@@ -164,6 +168,14 @@ impl Ended {
             exit,
             trailer: None,
             note: Some(note.into()),
+            attempt: None,
+        }
+    }
+
+    fn of(self, attempt: &str, heard: &str) -> Ended {
+        Ended {
+            attempt: Some((attempt.to_string(), heard.to_string())),
+            ..self
         }
     }
 }
@@ -212,13 +224,25 @@ impl Worker<'_> {
                     return 0;
                 }
             };
-            let _ = self.store.set_step(
+            let settled = self.store.settle(
                 self.id,
                 step.n,
+                ended
+                    .attempt
+                    .as_ref()
+                    .map(|(id, heard)| (id.as_str(), heard.as_str())),
                 ended.state,
                 ended.trailer.as_ref(),
                 ended.note.as_deref(),
             );
+            if let Err(e) = settled {
+                // Left as it was, so the next worker asks about the attempt again.
+                eprintln!(
+                    "dibs-orchestrator: {}'s step {} could not be recorded: {e}",
+                    self.id, step.name
+                );
+                return Exit::Failed.status();
+            }
             if ended.state != State::Done {
                 return self.finish(ended.state, ended.exit, ended.note.as_deref());
             }
@@ -228,9 +252,14 @@ impl Worker<'_> {
     }
 
     fn cancelled(&self, step: &Step) -> i32 {
-        let _ = self
-            .store
-            .set_step(self.id, step.n, State::Cancelled, None, Some("killed"));
+        let _ = self.store.settle(
+            self.id,
+            step.n,
+            None,
+            State::Cancelled,
+            None,
+            Some("killed"),
+        );
         self.finish(
             State::Cancelled,
             Exit::Cancelled.status(),
@@ -380,9 +409,9 @@ impl Worker<'_> {
         let code = self.dibs_logged(
             &log,
             &[
-                "--sync".into(),
                 "--on".into(),
                 split.compile.clone(),
+                "--sync".into(),
                 "-a".into(),
                 from,
                 format!("{}/", fetched.display()),
@@ -450,9 +479,9 @@ impl Worker<'_> {
         let code = self.dibs_logged(
             &log,
             &[
-                "--sync".into(),
                 "--on".into(),
                 split.gpu.clone(),
+                "--sync".into(),
                 "-a".into(),
                 format!("{}/", kept.display()),
                 format!(":$DIBS_SCRATCH/{}/{digest}/", BundleManifest::DIR),
@@ -596,6 +625,7 @@ impl Worker<'_> {
             ),
             None => (None, None),
         };
+        let mut unheard = 0;
         loop {
             let attempt = match self.store.last_attempt(self.id, step.n).ok().flatten() {
                 Some(open) if open.open => open,
@@ -626,6 +656,7 @@ impl Worker<'_> {
                 .submission(self.id)
                 .join("steps")
                 .join(format!("{}.{}.records", step.n, attempt.k));
+            let _ = fs::remove_file(&records);
             let mut env: Vec<(&str, String)> = env.to_vec();
             env.push(("DIBS_ATTEMPT", attempt.id.clone()));
             env.push(("DIBS_TRAILERS", records.display().to_string()));
@@ -634,22 +665,26 @@ impl Worker<'_> {
             }
             let code = self.dibs_logged(&log, args, &env, cwd);
             let heard = last_record(&records);
-            let _ = self.store.attempt_ended(
-                &attempt.id,
-                &heard
-                    .as_ref()
-                    .and_then(|r| serde_json::to_string(r).ok())
-                    .unwrap_or_else(|| format!("{{\"exit\":{code}}}")),
-            );
+            let said = heard
+                .as_ref()
+                .and_then(|r| serde_json::to_string(r).ok())
+                .unwrap_or_else(|| format!("{{\"exit\":{code}}}"));
+            // The attempt is closed only with the step's outcome, or to make another: one left
+            // open by a crash is asked about again under its own id, never run under a new one.
+            let close = |ended: Ended| Ok(ended.of(&attempt.id, &said));
+            let again = || {
+                let _ = self.store.attempt_ended(&attempt.id, &said);
+            };
             if STOP.load(Ordering::SeqCst) {
                 if !self.store.cancelled(self.id).unwrap_or(false) {
                     return Err(Leave);
                 }
-                return Ok(Ended {
+                return close(Ended {
                     state: State::Cancelled,
                     exit: Exit::Cancelled.status(),
                     trailer: trailer_in(heard.as_ref()),
                     note: Some("killed with dibs orch kill".into()),
+                    attempt: None,
                 });
             }
             match heard {
@@ -657,27 +692,29 @@ impl Worker<'_> {
                 | Some(Record::Admitted(Admitted::Ended(trailer))) => {
                     let gone = trailer.by == By::Dibs && [129, 130, 143].contains(&trailer.exit);
                     match (trailer.exit, gone, kind) {
-                        (0, _, _) => return Ok(Ended::done(Some(trailer), None)),
-                        (_, true, Kind::Again) => continue,
+                        (0, _, _) => return close(Ended::done(Some(trailer), None)),
+                        (_, true, Kind::Again) => again(),
                         (exit, true, Kind::Once) => {
-                            return Ok(Ended {
+                            return close(Ended {
                                 state: State::Interrupted,
                                 exit,
                                 trailer: Some(trailer),
                                 note: Some("the measurement was stopped when its caller went, and is not run again".into()),
+                                attempt: None,
                             });
                         }
                         (exit, false, _) => {
-                            return Ok(Ended {
+                            return close(Ended {
                                 state: State::Failed,
                                 exit,
                                 trailer: Some(trailer),
                                 note: None,
+                                attempt: None,
                             });
                         }
                     }
                 }
-                Some(Record::Admitted(Admitted::Running { job, .. })) => {
+                Some(Record::Admitted(Admitted::Running { job, pid })) => {
                     let _ = append(
                         &log,
                         &format!(
@@ -685,41 +722,71 @@ impl Worker<'_> {
                             still_running().as_secs()
                         ),
                     );
-                    // Still the open attempt, so the next pass asks about the same one.
-                    let _ = self.store.reopen(&attempt.id);
                     if pause(still_running()) {
                         continue;
                     }
-                    return match self.store.cancelled(self.id).unwrap_or(false) {
-                        true => Ok(Ended {
-                            state: State::Cancelled,
-                            exit: Exit::Cancelled.status(),
-                            trailer: None,
-                            note: Some(format!(
-                                "killed while job {job} of an earlier worker still ran"
-                            )),
+                    if !self.store.cancelled(self.id).unwrap_or(false) {
+                        return Err(Leave);
+                    }
+                    // Its call belongs to the worker before this one, so the job is stopped on
+                    // its machine rather than through a call this worker holds.
+                    let stopped = self.dibs_call(
+                        &log,
+                        &[
+                            "--on".into(),
+                            machine.into(),
+                            "--kill".into(),
+                            pid.to_string(),
+                        ],
+                        &[],
+                        None,
+                        false,
+                    );
+                    return close(Ended {
+                        state: State::Cancelled,
+                        exit: Exit::Cancelled.status(),
+                        trailer: None,
+                        note: Some(match stopped {
+                            0 => format!("killed, and job {job} of an earlier worker stopped"),
+                            code => format!(
+                                "killed, but job {job} of an earlier worker could not be stopped (exit {code}): it may still run"
+                            ),
                         }),
-                        false => Err(Leave),
-                    };
+                        attempt: None,
+                    });
                 }
-                Some(Record::Admitted(Admitted::Lost { started: false, .. })) => continue,
+                Some(Record::Admitted(Admitted::Lost { started: false, .. })) => again(),
                 Some(Record::Admitted(Admitted::Lost { job, .. })) => match kind {
-                    Kind::Again => continue,
+                    Kind::Again => again(),
                     Kind::Once => {
-                        return Ok(Ended {
+                        return close(Ended {
                             state: State::Unknown,
                             exit: Exit::Failed.status(),
                             trailer: None,
                             note: Some(format!(
                                 "job {job} ran, and its runner went without saying how: not run again"
                             )),
+                            attempt: None,
                         });
                     }
                 },
-                Some(Record::CheckedIn(_)) | Some(_) | None => {
-                    return Ok(Ended::failed(
+                Some(_) | None => {
+                    // The runner may have kept how it ended and lost the way back: ask again
+                    // under the same id, which runs nothing twice.
+                    unheard += 1;
+                    if unheard < ATTEMPTS {
+                        if pause(UNHEARD) {
+                            continue;
+                        }
+                        if !self.store.cancelled(self.id).unwrap_or(false) {
+                            return Err(Leave);
+                        }
+                    }
+                    return close(Ended::failed(
                         code,
-                        format!("dibs exited {code} without a trailer from {machine}"),
+                        format!(
+                            "dibs exited {code} without a trailer from {machine}, {unheard} times"
+                        ),
                     ));
                 }
             }
@@ -741,6 +808,18 @@ impl Worker<'_> {
         args: &[String],
         env: &[(&str, String)],
         cwd: Option<&Path>,
+    ) -> i32 {
+        self.dibs_call(log, args, env, cwd, true)
+    }
+
+    /// A `stoppable` call is stopped when this worker is told to stop.
+    fn dibs_call(
+        &self,
+        log: &Path,
+        args: &[String],
+        env: &[(&str, String)],
+        cwd: Option<&Path>,
+        stoppable: bool,
     ) -> i32 {
         let shown: Vec<String> = args.iter().map(|a| shell_word(a)).collect();
         let _ = append(log, &format!("$ dibs {}\n", shown.join(" ")));
@@ -790,7 +869,7 @@ impl Worker<'_> {
                 Ok(None) => {}
                 Err(_) => return Exit::Failed.status(),
             }
-            if STOP.load(Ordering::SeqCst) && !stopped {
+            if stoppable && STOP.load(Ordering::SeqCst) && !stopped {
                 stopped = true;
                 // SAFETY: kill only sends a signal, to the group this worker made.
                 unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGTERM) };

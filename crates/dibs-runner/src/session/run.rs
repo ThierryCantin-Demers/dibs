@@ -398,11 +398,7 @@ impl<'a> Run<'a> {
             .map_or(0, |since| since.as_nanos());
         let job = job_id(start, pid);
         let receipt = match &request.attempt {
-            Some(id) => match Attempts::under(&self.at.machine.scratch).admit(
-                id,
-                &job,
-                &self.at.machine.jobs(),
-            ) {
+            Some(id) => match Attempts::under(&self.at.machine.scratch).admit(id, &job) {
                 Ok(Ok(receipt)) => Some(receipt),
                 Ok(Err(admitted)) => {
                     let status = admitted.status();
@@ -1448,6 +1444,9 @@ impl<'a> Run<'a> {
             environment.set("DIBS_STATE", Host::machine_state());
         }
         let transfer = mode == Mode::Rsh;
+        if let Some(id) = &self.at.call.request.attempt {
+            Attempts::under(&self.at.machine.scratch).started(id);
+        }
         let dir = self.at.machine.jobs().join(job.as_str());
         let kept = match transfer {
             true => Ok(()),

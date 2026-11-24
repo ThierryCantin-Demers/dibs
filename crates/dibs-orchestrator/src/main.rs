@@ -140,8 +140,22 @@ fn backup(home: &Home, to: &Path) -> i32 {
 /// still lives launches nothing more; then every unfinished submission resumes, asking each
 /// machine how the attempts the backup left open went.
 fn restore(home: &Home, from: &Path) -> i32 {
-    if let Err(e) = Store::open(from).and_then(|s| s.epoch()) {
+    if let Err(e) = Store::inspect(from) {
         eprintln!("dibs-orchestrator: {} is no store: {e}", from.display());
+        return Exit::Refused.status();
+    }
+    // A live worker keeps writing to the store it opened, which the restore sets aside.
+    let driven: Vec<String> = std::fs::read_dir(home.subs())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|id| worker::driven(home, id))
+        .collect();
+    if !driven.is_empty() {
+        eprintln!(
+            "dibs-orchestrator: workers still drive {}; stop them first (systemctl --user stop 'dibs-orch-*'), then restore",
+            driven.join(", ")
+        );
         return Exit::Refused.status();
     }
     let store = home.store();
