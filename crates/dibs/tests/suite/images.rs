@@ -99,3 +99,22 @@ fn an_image_named_without_its_digest_runs_nothing() {
     );
     assert!(calls(&s, "skopeo").is_empty());
 }
+
+#[test]
+#[ignore = "fetches a real image and needs skopeo, umoci and bwrap"]
+fn a_real_image_gives_its_own_glibc_and_cannot_be_changed() {
+    let s = Sandbox::new();
+    let image = "docker.io/library/buildpack-deps:noble@sha256:924bf5a2e44d8ad64669df739cc3a7d331dfb0a5b41815f0ca71a4819a503e8a";
+    let out = s
+        .dibs([
+            "--label",
+            "imaged",
+            "ldd --version | head -1; id -un; touch $DIBS_SCRATCH/images/x || echo sealed",
+        ])
+        .env("DIBS_IMAGE", image)
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(out.stdout.lines_with("2.39"), 1, "{}", out.all());
+    assert_eq!(out.stdout.lines_with("sealed"), 1, "{}", out.all());
+    assert_eq!(out.stdout.lines_with("I have no name"), 0, "{}", out.all());
+}

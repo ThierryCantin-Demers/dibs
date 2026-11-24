@@ -40,6 +40,17 @@ impl Image {
             })
     }
 
+    /// What a registry is asked for: the name and digest, without the tag a reader keeps it by,
+    /// since skopeo refuses a reference with both.
+    fn pinned(&self) -> String {
+        let (name, _) = self.reference.rsplit_once('@').unwrap_or_default();
+        let repository = match name.rfind(':') {
+            Some(colon) if !name[colon..].contains('/') => &name[..colon],
+            _ => name,
+        };
+        format!("{repository}@sha256:{}", self.digest)
+    }
+
     /// Ends the name of every target built in this image, so no other build shares or seeds it.
     pub fn tag(&self) -> String {
         format!("-img{}", &self.digest[..TAG])
@@ -127,7 +138,7 @@ impl Images<'_> {
             &[
                 "copy",
                 "--quiet",
-                &format!("docker://{}", image.reference),
+                &format!("docker://{}", image.pinned()),
                 &format!("oci:{layout}"),
             ],
         )?;
@@ -317,6 +328,19 @@ mod tests {
         assert!(Image::parse("docker.io/library/buildpack-deps:noble").is_err());
         assert!(Image::parse("x@sha256:0123").is_err());
         assert!(Image::parse(&format!("x@sha256:{}", DIGEST.to_uppercase())).is_err());
+    }
+
+    #[test]
+    fn a_registry_is_asked_for_the_digest_without_the_tag() {
+        let digest = "0".repeat(super::DIGEST);
+        for (named, asked) in [
+            ("docker.io/library/b:noble", "docker.io/library/b"),
+            ("localhost:5000/b:noble", "localhost:5000/b"),
+            ("localhost:5000/b", "localhost:5000/b"),
+        ] {
+            let image = Image::parse(&format!("{named}@sha256:{digest}")).unwrap();
+            assert_eq!(image.pinned(), format!("{asked}@sha256:{digest}"));
+        }
     }
 
     #[test]
