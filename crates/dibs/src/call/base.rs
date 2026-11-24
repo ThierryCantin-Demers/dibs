@@ -563,6 +563,10 @@ const DEFAULT_CHECK_IN: u64 = 1800;
 /// flag of their own for it, and `off` in the steps of a driver nobody waits on.
 pub const CHECK_IN: &str = "DIBS_CHECK_IN";
 
+/// `--when-idle`, carried to every request a call and its children send, a batch's steps
+/// included.
+pub const WHEN_IDLE: &str = "DIBS_WHEN_IDLE";
+
 /// How long a call may hold the lock when `--max` does not say.
 fn default_max(mode: Mode) -> u64 {
     match mode {

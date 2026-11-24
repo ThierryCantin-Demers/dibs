@@ -16,6 +16,7 @@ mod detach;
 mod hold;
 mod hook;
 mod identity;
+mod idle;
 mod lock;
 mod machines;
 mod output;

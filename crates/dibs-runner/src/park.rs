@@ -1,4 +1,5 @@
-//! Shared jobs stopped while another call's urgent job has the machine, and run again after it.
+//! Shared jobs stopped while another call's urgent job has the machine, or, for one run only on
+//! an idle machine, while any other job is there, and run again after.
 
 use crate::{
     ahead::Frozen,
@@ -18,7 +19,8 @@ use std::{
 /// How often a running job looks for an urgent job, and a parked one for its end.
 pub const POLL: Duration = Duration::from_millis(100);
 
-/// Stops the job's tree once another call's urgent job claims the machine.
+/// Stops the job's tree once another call's urgent job claims the machine, or, for a job run only
+/// while the machine is idle, once any other job holds or waits there.
 pub struct Parking {
     stop: Arc<AtomicBool>,
     thread: JoinHandle<bool>,
@@ -26,12 +28,18 @@ pub struct Parking {
 
 impl Parking {
     /// `pid` is the runner's, which its records are named by.
-    pub fn start(dir: LockDir, pid: u32, stopper: Arc<Stopper>, frozen: Arc<Frozen>) -> Parking {
+    pub fn start(
+        dir: LockDir,
+        pid: u32,
+        idle: bool,
+        stopper: Arc<Stopper>,
+        frozen: Arc<Frozen>,
+    ) -> Parking {
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
         let thread = thread::spawn(move || {
             while !stopped.load(Ordering::Relaxed) {
-                if dir.urgent_besides(pid).is_some() {
+                if dir.urgent_besides(pid).is_some() || (idle && dir.busy_besides(pid).is_some()) {
                     let mut state = stopper.state();
                     let Stage::Running(job) = state.stage else {
                         return false;

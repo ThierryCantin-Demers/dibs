@@ -45,10 +45,11 @@ enum Whose {
 }
 
 impl Key {
-    const ALL: [Key; 25] = [
+    const ALL: [Key; 26] = [
         Key::of_setter("bypass", Setter::Machine),
         Key::of_setter("quick", Setter::Machine),
         Key::of_setter("patience", Setter::Machine),
+        Key::of_setter("idle_settle", Setter::Machine),
         Key::of_setter("machine_series", Setter::Machine),
         Key::of_setter("benchmarks", Setter::Machine),
         Key::of_setter("peek_warn", Setter::Account),
@@ -262,6 +263,9 @@ pub struct Settings {
     pub bypass: bool,
     /// Seconds a queued benchmark lets quick jobs go around it.
     pub patience: u64,
+    /// Seconds the machine must have had no other job before a `--when-idle` one starts, so a
+    /// batch's next step or an agent's next call finds it not yet started rather than to park.
+    pub idle_settle: u64,
     /// Seconds a job's own history must say it takes, at most, to go around.
     pub quick: u64,
     /// Seconds after which a peek is said to have cost something.
@@ -333,6 +337,7 @@ impl Settings {
             card_benchmarks: setting("DIBS_BENCHMARKS").is_some_and(|v| v == "card"),
             bypass: setting("DIBS_BYPASS").is_none_or(|v| v == "1"),
             patience: number("DIBS_PATIENCE", 60),
+            idle_settle: number("DIBS_IDLE_SETTLE", 120),
             quick: number("DIBS_QUICK", 10),
             peek_warn: number("DIBS_PEEK_WARN", 3),
             digest_head: number("DIBS_DIGEST_HEAD", 20) as usize,

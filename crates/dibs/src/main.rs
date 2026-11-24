@@ -2,7 +2,7 @@
 
 use dibs::{
     batch,
-    call::{Dispatch, Guard, MachineCall, Rsh},
+    call::{self, Dispatch, Guard, MachineCall, Rsh},
     caller::Caller,
     cli::{Call, Help, Hook, Invocation, Mode, RecipeCall, RecipeVerb},
     completion::Shell,
@@ -94,6 +94,9 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             if call.when_open {
                 wait_for_open();
             }
+            if call.when_idle {
+                when_idle();
+            }
             if let Some(why) = &call.urgent {
                 urgent(why);
             }
@@ -104,6 +107,9 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         Invocation::Call(call) => {
             if call.when_open {
                 wait_for_open();
+            }
+            if call.when_idle {
+                when_idle();
             }
             if let Some(why) = &call.urgent {
                 urgent(why);
@@ -296,6 +302,12 @@ fn completions(words: &[String]) -> ExitCode {
 fn urgent(why: &str) {
     // SAFETY: set while only the main thread runs, before anything reads the environment.
     unsafe { std::env::set_var("DIBS_URGENT", why) };
+}
+
+/// `--when-idle`, carried in the environment as `--when-open` is.
+fn when_idle() {
+    // SAFETY: set while only the main thread runs, before anything reads the environment.
+    unsafe { std::env::set_var(call::WHEN_IDLE, "1") };
 }
 
 /// `--when-open`, carried in the environment to every request this call and its children send.

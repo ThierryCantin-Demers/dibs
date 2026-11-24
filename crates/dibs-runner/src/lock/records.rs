@@ -573,6 +573,27 @@ impl LockDir {
         files
     }
 
+    /// `idle.<pid>`: a job that runs only while nothing else here does, which another such job
+    /// does not count as work.
+    pub fn mark_idle(&self, pid: u32) {
+        let _ = fs::write(self.file("idle", pid), "");
+    }
+
+    pub fn idle_only(&self, pid: u32) -> bool {
+        self.file("idle", pid).exists()
+    }
+
+    /// Another job that holds or waits here, which a job run only while none does makes way for.
+    pub fn busy_besides(&self, pid: u32) -> Option<LockRecord> {
+        [Kind::Holder, Kind::Waiting].into_iter().find_map(|kind| {
+            self.records(kind).into_iter().find(|r| {
+                r.pid != pid
+                    && !self.idle_only(r.pid)
+                    && RecordFile(&self.file(kind.prefix(), r.pid)).alive()
+            })
+        })
+    }
+
     /// The batch's later steps are refused here.
     pub fn cancelled(&self, batch: &str) -> bool {
         self.path.join(format!("cancelled.{batch}")).exists()
@@ -597,6 +618,7 @@ impl LockDir {
             "deadline",
             "urgent",
             "parked",
+            "idle",
             "card",
             "cohort",
             "arrived",
@@ -681,6 +703,7 @@ impl LockDir {
             "deadline",
             "urgent",
             "parked",
+            "idle",
             "card",
             "cohort",
             "arrived",

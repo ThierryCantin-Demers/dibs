@@ -240,6 +240,8 @@
 1|                      machine, or DIBS_HOST without one, needs neither.
 1|   --wait <seconds>   give up rather than queue past this
 1|   --when-open        queue on a machine its owners closed, until it opens, rather than exit 79
+1|   --when-idle        shared work that starts only once nothing else runs or waits there, and is
+1|                      stopped, to run again from the start, as soon as another job comes
 1|   --urgent '<why>'   a benchmark that has the machine to itself: the shared jobs running there
 1|                      are stopped and run again from the start once it ends, a running
 1|                      benchmark is waited for, and it goes before the queue. One per machine.

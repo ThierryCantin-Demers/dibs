@@ -205,6 +205,9 @@ pub struct Waiter {
     /// Seconds until it should start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eta: Option<u64>,
+    /// `--when-idle`: it starts only once nothing else runs or waits, so it has no place in line.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub when_idle: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<BatchShown>,
 }

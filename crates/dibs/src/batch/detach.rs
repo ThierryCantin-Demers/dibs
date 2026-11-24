@@ -8,7 +8,7 @@ use super::{
     parse::{BatchError, Step, parse, split_words},
 };
 use crate::{
-    call::{CallError, Driver, MachineCall, Origin, Output, Sender, Series, Sync},
+    call::{CallError, Driver, MachineCall, Origin, Output, Sender, Series, Sync, WHEN_IDLE},
     caller::Caller,
     cli::{Call, Invocation, Mode, RecipeCall, RecipeVerb},
     execution::{Carried, KeptStores, Repo, SentFrom, private},
@@ -528,6 +528,12 @@ impl<'a> Detach<'a> {
                 std::env::var("DIBS_URGENT")
                     .ok()
                     .map(|why| ("DIBS_URGENT", why)),
+            )
+            .chain(
+                std::env::var(WHEN_IDLE)
+                    .ok()
+                    .filter(|v| v == "1")
+                    .map(|v| (WHEN_IDLE, v)),
             )
             .map(|(k, v)| (k.to_string(), v))
             .collect(),

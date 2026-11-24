@@ -862,6 +862,7 @@ benchmarks.
 
 ```toml
 patience = 60          # seconds a queued benchmark lets quick jobs go around it
+idle_settle = 120      # seconds with no other job before a --when-idle one starts
 quick = 10             # what a job's own history must say it takes, at most, to go around
 bypass = true          # whether quick jobs, and transfers during a shared block, go around
 machine_series = false # see below
@@ -997,6 +998,23 @@ Parking repeats whatever a job had done, so it is a person's call to make: an ag
 `--urgent` only on its person's yes to that one call, which `dibs hook urgent` asks for. A runner
 older than the flag knows nothing of it, so a shared job it starts during an urgent one runs
 beside it; updating the runners closes that.
+
+## Work that waits for an idle machine
+
+`--when-idle` is for long shared work that should never be in anyone's way, such as a track that
+runs for hours. It starts only once nothing else runs or waits on the machine, and has had nothing
+for `idle_settle` seconds, two minutes by default, so a batch's next step or an agent's next call
+does not find it just started. As soon as another job holds or waits there, a build, a test, a
+transfer or a benchmark, the `--when-idle` job is parked: its command is stopped, it lets go of
+the lock, and it runs again from the start, in the same tree, once the machine is idle again. Its
+caller is told each time and sees one run, the last. A peek never counts, nor does another
+`--when-idle` job, so several run side by side.
+
+Parking repeats what the job had done, so it suits work that runs well at night or between bursts,
+not work that must finish by a time. It is shared work that can run again: a benchmark,
+`--urgent`, `--preemptible`, `--hold`, `--with` and `--port` are refused with it. On a recipe or a
+batch, the flag reaches every step, and a detached batch carries it to its machine; a batch's
+benchmarks run as usual. Check-ins and `--max` count only the time it runs, each run apart.
 
 ## The two halves
 

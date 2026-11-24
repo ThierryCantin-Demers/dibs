@@ -315,6 +315,7 @@ impl Parser {
                     at += 1;
                 }
                 "--when-open" => self.call.when_open = true,
+                "--when-idle" => self.call.when_idle = true,
                 "--urgent" => {
                     self.call.urgent = Some(need_some("--urgent")?);
                     at += 1;
@@ -682,6 +683,12 @@ impl Parser {
             return Err(CliError::new(
                 "dibs: --preemptible is for a shared job that only compiles, which a benchmark freezes while it runs.\n  \
                  A benchmark, a peek, --hold, --with and --port cannot be frozen.",
+            ));
+        }
+        if self.call.when_idle && (!freezable || self.preempt || self.call.urgent.is_some()) {
+            return Err(CliError::new(
+                "dibs: --when-idle is for a shared job that can be stopped and run again from the start.\n  \
+                 A benchmark, a peek, --urgent, --preemptible, --hold, --with and --port cannot be.",
             ));
         }
         if self.hold && !locks {

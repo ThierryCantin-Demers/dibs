@@ -198,7 +198,9 @@ impl Look<'_> {
                 silent_line: last_line(Path::new(file)),
             });
         let left = estimate.and_then(|e| e.remaining(elapsed));
+        // A job run only on an idle machine is parked for whoever comes, so it frees it at once.
         match left {
+            _ if self.dir.idle_only(pid) => {}
             Some(left) => free.at = free.at.max(left),
             None => free.known = false,
         }
@@ -240,7 +242,11 @@ impl Look<'_> {
         eta: &mut Eta,
     ) -> Waiter {
         let estimate = self.estimate(record, None);
-        let starts = eta.next(record.mode, estimate);
+        let when_idle = self.dir.idle_only(record.pid);
+        let starts = match when_idle {
+            true => None,
+            false => eta.next(record.mode, estimate),
+        };
         let left = starts.and_then(|at| {
             estimate
                 .filter(|e| e.scope == Scope::This)
@@ -260,6 +266,7 @@ impl Look<'_> {
             arrived: record.start,
             waiting: now.saturating_sub(record.start),
             eta: starts,
+            when_idle,
             batch: self.batch(record.pid, left, tail),
         }
     }

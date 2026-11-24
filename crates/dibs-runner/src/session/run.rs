@@ -52,6 +52,8 @@ const AHEAD_POLL: Duration = Duration::from_millis(100);
 /// How often a benchmark tries `rw` again while it waits for the jobs that hold it, which is
 /// how it learns that only preemptible ones it may freeze are left.
 const BENCH_POLL: Duration = Duration::from_millis(50);
+/// How often a `--when-idle` job looks for other jobs while it waits for none.
+const IDLE_POLL: Duration = Duration::from_millis(500);
 
 /// How often a card benchmark kept from the gate looks whether a window opened for it to join.
 const JOIN_RECHECK: Duration = Duration::from_secs(1);
@@ -122,6 +124,20 @@ impl Yielded {
             Yielded::Cancelled => Some(Exit::Cancelled.status()),
         }
     }
+}
+
+/// What stops a running job before its end, to run on or again later: a benchmark that freezes
+/// it, and, for a `--when-idle` job, its own handle on `rw`, let go of while it is parked.
+struct Stops {
+    frozen: Arc<Frozen>,
+    idle_rw: Option<File>,
+}
+
+/// How waiting for an idle machine ended.
+enum Idled {
+    Idle,
+    GaveUp,
+    Cancelled,
 }
 
 /// How waiting for the lock ended.
@@ -235,6 +251,21 @@ impl<'a> Run<'a> {
             if let Err(code) = self.until_open(&arrived) {
                 return code;
             }
+            if self.idle() {
+                match self.until_idle(self.wait_until(&arrived), None) {
+                    Idled::Idle => {}
+                    Idled::Cancelled => {
+                        let mut state = self.at.stopper.state();
+                        self.abandon(&arrived.job, &mut state);
+                        return Exit::Cancelled.status();
+                    }
+                    Idled::GaveUp => {
+                        let mut state = self.at.stopper.state();
+                        self.abandon(&arrived.job, &mut state);
+                        return Exit::Busy.status();
+                    }
+                }
+            }
             let acquired = match (preempts, self.urgent(), self.card_claim()) {
                 (_, Some(why), Some(Takes::Cards(pcis))) => {
                     match self.join_now(&arrived, &pcis, why) {
@@ -317,7 +348,13 @@ impl<'a> Run<'a> {
                     Arc::clone(&frozen),
                 )
             });
-        let hosted = self.host(state, &arrived, &begun, environment, max, frozen);
+        let idle_rw = self
+            .idle()
+            .then(|| acquired.lock.handles().ok())
+            .flatten()
+            .map(|(_, rw)| rw);
+        let stops = Stops { frozen, idle_rw };
+        let hosted = self.host(state, &arrived, &begun, environment, max, stops);
         if let Some(check_in) = check_in {
             check_in.end();
         }
@@ -391,6 +428,9 @@ impl<'a> Run<'a> {
         }
         if let Some(user) = &self.at.call.user {
             let _ = fs::write(self.at.dir.file("user", pid), format!("{user}\n"));
+        }
+        if self.idle() {
+            self.at.dir.mark_idle(pid);
         }
         self.at
             .dir
@@ -590,6 +630,105 @@ impl<'a> Run<'a> {
             std::thread::sleep(park::POLL);
         };
         self.at.dir.unpark(pid);
+        let mut state = self.at.stopper.state();
+        state.set_stage(was);
+        (state, yielded)
+    }
+
+    /// A shared job run only while nothing else here runs or waits, and parked for anything that
+    /// comes; urgent, it parks others instead.
+    fn idle(&self) -> bool {
+        let request = &self.at.call.request;
+        request.when_idle && request.urgent.is_none() && !request.preempt && self.parkable()
+    }
+
+    /// Waits until no other job has held or waited here for the machine's settle time, saying
+    /// once what it waits for; `said` is what it said when it was parked, so it says no more.
+    fn until_idle(&self, until: Option<Instant>, said: Option<&str>) -> Idled {
+        let pid = self.at.call.pid;
+        let settle = Duration::from_secs(self.at.settings.idle_settle);
+        let mut told = said.is_some();
+        let mut quiet: Option<Instant> = None;
+        loop {
+            if self.cancelled() {
+                return Idled::Cancelled;
+            }
+            match self.at.dir.busy_besides(pid) {
+                Some(busy) => {
+                    quiet = None;
+                    if !told {
+                        self.at.sink.say(&format!(
+                            "dibs: --when-idle, so it waits until nothing else runs or waits here: {} from {} is there.\n",
+                            busy.label, busy.agent
+                        ));
+                        told = true;
+                    }
+                }
+                None if quiet.get_or_insert_with(Instant::now).elapsed() >= settle => {
+                    return Idled::Idle;
+                }
+                None => {}
+            }
+            if until.is_some_and(|until| Instant::now() >= until) {
+                let wait = self.at.call.request.wait.unwrap_or_default();
+                self.at.sink.say(&format!(
+                    "dibs: still busy after {wait}s, gave up: --when-idle waits for an idle machine.\n"
+                ));
+                return Idled::GaveUp;
+            }
+            std::thread::sleep(IDLE_POLL);
+        }
+    }
+
+    /// Parked, or about to start, while another job holds or waits here: lets go of `rw`, waits
+    /// until the machine has been idle a while, and takes `rw` again, waiting as before if that
+    /// fails. Its record says it waits meanwhile, which is what status and a benchmark read.
+    fn yield_while_busy(
+        &self,
+        state: MutexGuard<'a, State>,
+        rw: &File,
+        arrived: &Arrived,
+    ) -> (MutexGuard<'a, State>, Yielded) {
+        let pid = self.at.call.pid;
+        let Some(busy) = self.at.dir.busy_besides(pid) else {
+            return (state, Yielded::Free);
+        };
+        let was = state.stage;
+        let mut state = state;
+        state.set_stage(Stage::Parked);
+        drop(state);
+        self.at.dir.write(
+            Kind::Waiting,
+            &self.at.call.lock_record(arrived.start, &arrived.job),
+        );
+        let _ = fs::remove_file(self.at.dir.file("holder", pid));
+        let _ = rw.unlock();
+        self.at.dir.set_deadline(pid, None);
+        let said = format!(
+            "dibs: parked for {} from {}, since --when-idle makes way for any other job. It runs again from the start once the machine is idle.\n",
+            busy.label, busy.agent
+        );
+        self.at.sink.say(&said);
+        let yielded = loop {
+            match self.until_idle(None, Some(&said)) {
+                Idled::Idle => {}
+                Idled::Cancelled => break Yielded::Cancelled,
+                Idled::GaveUp => break Yielded::GaveUp,
+            }
+            if matches!(Lock::try_hold(rw, Hold::Shared), Ok(true)) {
+                if self.at.dir.busy_besides(pid).is_none() {
+                    break Yielded::Waited;
+                }
+                let _ = rw.unlock();
+            }
+        };
+        if yielded == Yielded::Waited {
+            let record = self.at.call.lock_record(Moment::epoch_now(), &arrived.job);
+            self.at.dir.hold(&record);
+            self.at
+                .sink
+                .say("dibs: the machine is idle again, so it runs from the start.\n");
+        }
         let mut state = self.at.stopper.state();
         state.set_stage(was);
         (state, yielded)
@@ -1276,8 +1415,9 @@ impl<'a> Run<'a> {
         begun: &Begun,
         mut environment: Environment,
         max: u64,
-        frozen: Arc<Frozen>,
+        stops: Stops,
     ) -> Hosted {
+        let Stops { frozen, idle_rw } = stops;
         let request = &self.at.call.request;
         let pid = self.at.call.pid;
         let output = match (&begun.log, request.stream) {
@@ -1422,6 +1562,16 @@ impl<'a> Run<'a> {
                     // Servers already started are never left running beside the urgent job, which
                     // waits for this one instead.
                     let left = deadline.left();
+                    if let Some(rw) = &idle_rw {
+                        let (held, yielded) = self.yield_while_busy(state, rw, arrived);
+                        state = held;
+                        if let Some(status) = yielded.status() {
+                            drop(state);
+                            hosted.laid = Some(By::Dibs);
+                            break status;
+                        }
+                        waited |= yielded == Yielded::Waited;
+                    }
                     if hosted.services.is_none() {
                         let until = (runs == 0).then(|| self.wait_until(arrived)).flatten();
                         let (held, yielded) = self.yield_to_urgent(state, until);
@@ -1497,6 +1647,7 @@ impl<'a> Run<'a> {
                         Parking::start(
                             self.at.dir.clone(),
                             pid,
+                            idle_rw.is_some(),
                             Arc::clone(self.at.stopper),
                             Arc::clone(&frozen),
                         )

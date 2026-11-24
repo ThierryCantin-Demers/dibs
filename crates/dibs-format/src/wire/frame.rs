@@ -194,6 +194,7 @@ mod tests {
             new_series: false,
             preempt: false,
             when_open: false,
+            when_idle: false,
             urgent: None,
             tree: None,
             check_in: None,
