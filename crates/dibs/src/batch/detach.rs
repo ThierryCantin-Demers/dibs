@@ -8,7 +8,9 @@ use super::{
     parse::{BatchError, Step, parse, split_words},
 };
 use crate::{
-    call::{CallError, Driver, LOW_PRIORITY, MachineCall, Origin, Output, Sender, Series, Sync},
+    call::{
+        CallError, Driver, IMAGE, LOW_PRIORITY, MachineCall, Origin, Output, Sender, Series, Sync,
+    },
     caller::Caller,
     cli::{Call, Invocation, Mode, RecipeCall, RecipeVerb},
     execution::{Carried, KeptStores, Repo, SentFrom, private},
@@ -529,6 +531,7 @@ impl<'a> Detach<'a> {
                     .ok()
                     .map(|why| ("DIBS_URGENT", why)),
             )
+            .chain(std::env::var(IMAGE).ok().map(|image| (IMAGE, image)))
             .chain(
                 std::env::var(LOW_PRIORITY)
                     .ok()

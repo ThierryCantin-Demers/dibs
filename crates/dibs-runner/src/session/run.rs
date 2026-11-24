@@ -31,7 +31,7 @@ use crate::{
     sink::Sink,
     status::Look,
     stop::{Stage, State, Stopper},
-    tree::{Copier, KeptCopy, Mark, Stepping},
+    tree::{Commands, Copier, KeptCopy, Mark, Stepping},
 };
 use dibs_format::{
     By, Event, Exit, HistoryLine, JobId, Mode,
@@ -1568,6 +1568,19 @@ impl<'a> Run<'a> {
             overran: false,
             idled: Duration::ZERO,
         };
+        // Checked before the tree is laid out, since the image names the target it builds in.
+        let image = match request.image.as_deref().map(Image::parse) {
+            None => None,
+            Some(Ok(image)) => Some(image),
+            Some(Err(why)) => {
+                drop(state);
+                self.at.sink.say(&why);
+                begun.touch_log();
+                hosted.laid = Some(By::Dibs);
+                hosted.status = Exit::Setup.status();
+                return hosted;
+            }
+        };
         let layout = Layout::new(self.at, output);
         let mut spot = None;
         // Held to the end of the job: a transfer's lock on the tree it copies into.
@@ -1593,15 +1606,15 @@ impl<'a> Run<'a> {
             }
         }
         let say = |text: &str| output.tell(self.at.sink, text);
-        let sandbox = match request
-            .image
-            .as_deref()
-            .filter(|_| request.mode == Mode::Shared)
-        {
+        // A hold's command only waits on a fifo in the lock directory, which no image binds.
+        let built_in = image
+            .as_ref()
+            .filter(|_| request.mode == Mode::Shared && !request.watch.hold);
+        let sandbox = match built_in {
             None => None,
             Some(image) => {
                 drop(state);
-                let sandbox = self.sandbox(image);
+                let sandbox = self.sandbox(image, &environment, deadline);
                 state = self.at.stopper.state();
                 match sandbox {
                     Ok(sandbox) => Some(sandbox),
@@ -2061,15 +2074,25 @@ impl<'a> Run<'a> {
         status
     }
 
-    /// The image a build runs in, unpacked on this machine.
-    fn sandbox(&self, image: &str) -> Result<Sandbox, String> {
-        let image = Image::parse(image)?;
+    /// The image a build runs in, unpacked on this machine within the job's cap.
+    fn sandbox(
+        &self,
+        image: &Image,
+        environment: &Environment,
+        deadline: Deadline,
+    ) -> Result<Sandbox, String> {
         let home = home();
         let images = Images {
             scratch: &self.at.machine.scratch,
             home: &home,
         };
-        let rootfs = images.root(&image)?;
+        let running = |pid| self.at.stopper.state().set_stage(Stage::Preparing(pid));
+        let unstopped = |act: &mut dyn FnMut()| {
+            let _state = self.at.stopper.state();
+            act();
+        };
+        let commands = Commands::new(environment, &running, &unstopped, deadline);
+        let rootfs = images.root(image, &commands)?;
         Ok(images.sandbox(rootfs))
     }
 

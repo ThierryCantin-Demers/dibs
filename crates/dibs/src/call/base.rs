@@ -537,7 +537,9 @@ impl Request<'_> {
             },
             attempt: set(ATTEMPT).filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
             lookup: set(ATTEMPT_LOOKUP).is_some_and(|v| v == "1"),
-            image: set(IMAGE).filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
+            // A sent tree's transfer lays it out, so it names the target the image builds in.
+            image: set(IMAGE)
+                .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench | Mode::Rsh)),
             bundle: set(BUNDLE_SPEC)
                 .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench))
                 .and_then(|spec| serde_json::from_str(&spec).ok()),

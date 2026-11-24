@@ -90,12 +90,16 @@ bwrap --ro-bind <rootfs> / --dev /dev --unshare-pid --proc /proc --tmpfs /tmp \
   clones fetched trees are worktrees of. Binding the two leaves nothing to forget.
 - `--unshare-pid` is what lets an unprivileged `bwrap` mount `/proc` at all. The host still sees
   every process inside, so idle detection and the escape sweep read them as now.
-- The root is read-only, with a private `/tmp`, so one build cannot change the copy of the image
-  every build shares. Mount points for home and scratch are made when the image is unpacked.
+- The root is read-only, with a private `/tmp`, and `$DIBS_SCRATCH/images` is bound read-only over
+  the scratch bind, so one build cannot change the copy of an image every build shares. Mount
+  points for home and scratch are made when the image is unpacked.
+- A directory of scratch that is a link to another disk is bound at its real path too, so the
+  link resolves inside.
 - `resolv.conf`, `hosts`, the account added to the image's `passwd` and `group` when it is
   unpacked, and the image's `ca-certificates` are what cargo needs to fetch, over https or ssh.
 - `bash -c`, as every job runs now: an image's `sh` may be dash.
 - `--die-with-parent` is not needed: the tether already stops the group when the runner dies.
+- A `--hold` job runs on the host: its command only waits on a fifo in the lock directory.
 
 **podman does not.** `podman run` hands the container to `conmon`, which is no descendant of the
 job; it cannot pass `SIGSTOP` or `SIGKILL` on, so a frozen split build would go on compiling beside
@@ -118,7 +122,7 @@ The job's environment is built on the host, and bubblewrap passes it as it is, s
 An image is named `<ref>@sha256:<digest>`; a tag alone is refused, since only a digest pins it.
 It is fetched with `skopeo copy` and unpacked with `umoci unpack --rootless` into
 `$DIBS_SCRATCH/images/<digest>/`, once per machine, under a lock of its own, by the first job
-that needs it. That
+that needs it, within that job's cap and stopped with it. That
 needs no `/etc/subuid` range, which an admin would have to grant, and keeps images where scratch
 accounting sees them; podman's own store, under `~/.local/share/containers`, would be invisible to
 it. Each use touches the image's `.dibs-used`. `dibs --gc` does not yet account for `images/`: it
@@ -133,10 +137,12 @@ on top of it, built once, published, and referred to by digest.
 `DIBS_IMAGE=<ref>@sha256:<digest>` in a call's environment names it, as `DIBS_ATTEMPT` names an
 attempt, so every job a recipe or a batch makes carries it. A shared call runs in the image; a
 measurement runs natively what was built there, since the image has neither the machine's GPU
-devices nor its driver, and a tree laid out by a measurement still gets the image's target.
+devices nor its driver, and a tree laid out by a measurement still gets the image's target. The
+transfer of a sent tree carries it, since that is where the tree's target is chosen, and so does a
+detached batch's driver. A name without a digest is refused for every mode.
 
 The orchestrator's profile names one image for every split build, beside its `rustflags`, and
-the bundle's attested inputs include it. The `rustc -vV` recorded with a bundle stays right, since
+the bundle's attested inputs include it; a native build attests what it did before. The `rustc -vV` recorded with a bundle stays right, since
 the toolchain is the host's.
 
 A recipe step's `image` key and a `--image` flag are still to come.
@@ -145,8 +151,8 @@ A recipe step's `image` key and a `--image` flag are still to come.
 
 The floor is more than glibc: `libstdc++` and the libraries `-sys` crates link, such as `libssl`,
 come from the image's distribution too. The stage check runs `ldd` on the GPU machine and refuses
-a binary with a library or version not found there, which covers both. It must also refuse when
-`ldd` itself fails, which it now lets through; and nothing static checks what a binary opens with
+a binary with a library or version not found there, which covers both. It also refuses when
+`ldd` itself fails, unless it says the binary is static. Nothing checks what a binary opens with
 `dlopen`.
 
 ## Not covered

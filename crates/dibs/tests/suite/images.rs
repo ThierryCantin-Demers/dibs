@@ -75,6 +75,11 @@ fn a_measurement_runs_natively_whatever_image_its_build_used() {
     assert_eq!(out.code, 0, "{}", out.all());
     assert!(calls(&s, "bwrap").is_empty());
     assert!(calls(&s, "skopeo").is_empty());
+    let measured = s
+        .dibs(["--bench", "--label", "imaged", "echo measured"])
+        .env("DIBS_IMAGE", "registry.example/floor:latest")
+        .run();
+    assert_eq!(measured.code, 3, "{}", measured.all());
 }
 
 #[test]

@@ -439,9 +439,16 @@ impl Worker<'_> {
             env: BTreeMap::from([("RUSTFLAGS".to_string(), split.rustflags.clone())]),
             inputs: BTreeMap::from([
                 ("profile".to_string(), split.profile.clone()),
-                ("image".to_string(), split.image.clone().unwrap_or_default()),
                 ("submission".to_string(), self.id.to_string()),
-            ]),
+            ])
+            .into_iter()
+            .chain(
+                split
+                    .image
+                    .clone()
+                    .map(|image| ("image".to_string(), image)),
+            )
+            .collect(),
         });
         let args = vec![
             "shell".to_string(),
@@ -582,7 +589,7 @@ impl Worker<'_> {
     /// target, so two builds of the same inputs attest each other.
     fn inputs(&self, manifest: &BundleManifest) -> String {
         let upload = self.submission.upload.as_ref();
-        let bound = serde_json::json!({
+        let mut bound = serde_json::json!({
             "head": upload.map(|u| u.head.clone()),
             "tree": upload.map(|u| u.digest.clone()),
             "lockfile": manifest.lockfile,
@@ -593,8 +600,11 @@ impl Worker<'_> {
             "kind": manifest.kind,
             "name": manifest.name,
             "profile": manifest.inputs.get("profile"),
-            "image": manifest.inputs.get("image"),
         });
+        // Only when there is one, so what a native build attested before still matches.
+        if let Some(image) = manifest.inputs.get("image") {
+            bound["image"] = serde_json::json!(image);
+        }
         Sha256::hex(bound.to_string().as_bytes())
     }
 
@@ -626,6 +636,7 @@ impl Worker<'_> {
             "e=\"$DIBS_BUNDLE/{}\"; test -x \"$e\" || {{ echo \"dibs: the bundle has no executable $e\" >&2; exit 3; }}; \
              if ldd \"$e\" > \"$TMPDIR/ldd.$$\" 2>&1; then cat \"$TMPDIR/ldd.$$\"; \
              if grep -q 'not found' \"$TMPDIR/ldd.$$\"; then echo 'dibs: this machine lacks what the bundle links' >&2; rm -f \"$TMPDIR/ldd.$$\"; exit 3; fi; \
+             elif grep -q 'not a dynamic executable' \"$TMPDIR/ldd.$$\"; then echo 'static: links nothing'; \
              else cat \"$TMPDIR/ldd.$$\" >&2; echo 'dibs: ldd could not read what the bundle links' >&2; rm -f \"$TMPDIR/ldd.$$\"; exit 3; fi; \
              rm -f \"$TMPDIR/ldd.$$\"; ldd --version 2>&1 | head -n 1; \
              nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null || true",

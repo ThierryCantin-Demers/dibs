@@ -1,17 +1,21 @@
 //! A build run inside an image: an older distribution's root filesystem, pinned by digest, so
 //! what the build links is that distribution's C library and not the machine's.
 
+use crate::tree::Commands;
 use std::{
-    fs::{self, File},
+    fs::{self, File, TryLockError},
     io,
     path::{Path, PathBuf},
     process::Command,
+    thread,
+    time::Duration,
 };
 
 const DIGEST: usize = 64;
 const TAG: usize = 12;
 const IMAGES: &str = "images";
 const USED: &str = ".dibs-used";
+const LOCK_POLL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
@@ -59,37 +63,66 @@ pub struct Images<'a> {
 }
 
 impl Images<'_> {
-    /// The image's root filesystem, fetched and unpacked the first time this machine needs it.
-    pub fn root(&self, image: &Image) -> Result<PathBuf, String> {
+    /// The image's root filesystem, fetched and unpacked the first time this machine needs it,
+    /// within the job's cap and stopped with it.
+    pub fn root(&self, image: &Image, commands: &Commands) -> Result<PathBuf, String> {
         let dir = self.scratch.join(IMAGES);
         let done = dir.join(&image.digest);
         let failed = |e: io::Error| format!("dibs: the image's directory {}: {e}\n", dir.display());
         fs::create_dir_all(&dir).map_err(failed)?;
         let lock = File::create(dir.join(format!(".{}.lock", image.digest))).map_err(failed)?;
-        lock.lock().map_err(failed)?;
+        // Another job may be unpacking it; waited for only as long as this job may run.
+        loop {
+            match lock.try_lock() {
+                Ok(()) => break,
+                Err(TryLockError::WouldBlock) if !commands.deadline().passed() => {
+                    thread::sleep(LOCK_POLL)
+                }
+                Err(TryLockError::WouldBlock) => {
+                    return Err(
+                        "dibs: the job's cap ran out waiting for another job unpacking its image\n"
+                            .into(),
+                    );
+                }
+                Err(TryLockError::Error(e)) => return Err(failed(e)),
+            }
+        }
         if !done.join("rootfs").is_dir() {
-            self.unpack(image, &dir, &done)?;
+            self.unpack(image, &dir, &done, commands)?;
         }
         let _ = File::create(done.join(USED));
         Ok(done.join("rootfs"))
     }
 
-    fn unpack(&self, image: &Image, dir: &Path, done: &Path) -> Result<(), String> {
+    fn unpack(
+        &self,
+        image: &Image,
+        dir: &Path,
+        done: &Path,
+        commands: &Commands,
+    ) -> Result<(), String> {
         let part = dir.join(format!(
             ".part-{}-{}",
             std::process::id(),
             &image.digest[..TAG]
         ));
-        let unpacked = self.unpack_into(image, &part, done);
+        let unpacked = self.unpack_into(image, &part, done, commands);
         let _ = remove(&part);
         unpacked
     }
 
-    fn unpack_into(&self, image: &Image, part: &Path, done: &Path) -> Result<(), String> {
+    fn unpack_into(
+        &self,
+        image: &Image,
+        part: &Path,
+        done: &Path,
+        commands: &Commands,
+    ) -> Result<(), String> {
         let _ = remove(part);
         fs::create_dir_all(part).map_err(|e| format!("dibs: {}: {e}\n", part.display()))?;
         let layout = format!("{}:image", part.join("oci").display());
         tool(
+            commands,
             "skopeo",
             &[
                 "copy",
@@ -100,6 +133,7 @@ impl Images<'_> {
         )?;
         let bundle = part.join("bundle");
         tool(
+            commands,
             "umoci",
             &[
                 "unpack",
@@ -130,7 +164,22 @@ impl Images<'_> {
         if !self.scratch.starts_with(self.home) {
             binds.push(self.scratch.to_path_buf());
         }
-        Sandbox { rootfs, binds }
+        // A part of scratch moved to another disk is a link here, which must resolve inside.
+        let moved: Vec<PathBuf> = fs::read_dir(self.scratch)
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_symlink()))
+                    .filter_map(|e| fs::canonicalize(e.path()).ok())
+                    .filter(|real| real.is_dir() && !binds.iter().any(|b| real.starts_with(b)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        binds.extend(moved);
+        Sandbox {
+            rootfs,
+            binds,
+            sealed: vec![self.scratch.join(IMAGES)],
+        }
     }
 }
 
@@ -176,6 +225,8 @@ impl Account {
 pub struct Sandbox {
     rootfs: PathBuf,
     binds: Vec<PathBuf>,
+    /// Bound read-only over the binds: the unpacked images every build shares.
+    sealed: Vec<PathBuf>,
 }
 
 impl Sandbox {
@@ -208,13 +259,22 @@ impl Sandbox {
             let dir = dir.display().to_string();
             args.extend(["--bind".into(), dir.clone(), dir]);
         }
+        for dir in self.sealed.iter().filter(|d| d.is_dir()) {
+            let dir = dir.display().to_string();
+            args.extend(["--ro-bind".into(), dir.clone(), dir]);
+        }
         args.extend(["--".into(), "bash".into(), "-c".into(), command.into()]);
         args
     }
 }
 
-fn tool(name: &str, args: &[&str]) -> Result<(), String> {
-    let output = Command::new(name).args(args).output().map_err(|e| match e.kind() {
+fn tool(commands: &Commands, name: &str, args: &[&str]) -> Result<(), String> {
+    let mut command = Command::new(name);
+    command.args(args);
+    let output = commands.output(command).map_err(|e| match e.kind() {
+        io::ErrorKind::TimedOut => {
+            format!("dibs: the job's cap ran out while {name} prepared its image\n")
+        }
         io::ErrorKind::NotFound => format!(
             "dibs: building in an image needs skopeo, umoci and bwrap on this machine, and {name} is not installed\n"
         ),
@@ -289,5 +349,38 @@ mod tests {
         };
         let args = inside.sandbox(PathBuf::from("/r")).arguments("true");
         assert_eq!(args.iter().filter(|a| *a == "--bind").count(), 1);
+    }
+
+    #[test]
+    fn a_sandbox_cannot_change_an_image_and_reaches_scratch_moved_elsewhere() {
+        let root = std::env::temp_dir().join(format!("dibs-image.{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (scratch, disk) = (root.join("scratch"), root.join("disk"));
+        fs::create_dir_all(scratch.join(IMAGES)).unwrap();
+        fs::create_dir_all(disk.join("target")).unwrap();
+        std::os::unix::fs::symlink(disk.join("target"), scratch.join("target")).unwrap();
+        let home = root.join("home");
+        let images = Images {
+            scratch: &scratch,
+            home: &home,
+        };
+        let joined = images
+            .sandbox(PathBuf::from("/r"))
+            .arguments("true")
+            .join(" ");
+        let real = fs::canonicalize(disk.join("target"))
+            .unwrap()
+            .display()
+            .to_string();
+        assert!(
+            joined.contains(&format!("--bind {real} {real}")),
+            "{joined}"
+        );
+        let sealed = scratch.join(IMAGES).display().to_string();
+        assert!(
+            joined.contains(&format!("--ro-bind {sealed} {sealed} --")),
+            "after every writable bind: {joined}"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }
