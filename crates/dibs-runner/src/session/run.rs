@@ -202,8 +202,8 @@ pub struct Hosted {
     pub laid: Option<By>,
     /// The cap stopped the call, rather than its command ending 124 itself.
     pub overran: bool,
-    /// Seconds a `--when-idle` job spent parked without the lock, which it did not run.
-    pub idled: u64,
+    /// What a `--when-idle` job spent parked without the lock, which it did not run.
+    pub idled: Duration,
 }
 
 impl Hosted {
@@ -259,7 +259,7 @@ impl<'a> Run<'a> {
             if let Err(code) = self.until_open(&arrived) {
                 return code;
             }
-            if self.idle() {
+            if self.waits_idle() {
                 match self.until_idle(self.wait_until(&arrived), None) {
                     Idled::Idle => {}
                     Idled::Cancelled => {
@@ -310,7 +310,7 @@ impl<'a> Run<'a> {
             drop(acquired);
             drop(guard);
         };
-        if !self.idle() {
+        if !self.waits_idle() {
             self.after_idle_parked();
         }
         // The machine as well as the cards: while the group winds down, shared work must not start.
@@ -440,7 +440,7 @@ impl<'a> Run<'a> {
         if let Some(user) = &self.at.call.user {
             let _ = fs::write(self.at.dir.file("user", pid), format!("{user}\n"));
         }
-        if self.idle() {
+        if self.waits_idle() {
             self.at.dir.mark_idle(pid);
         }
         self.at
@@ -653,6 +653,14 @@ impl<'a> Run<'a> {
         request.when_idle && request.urgent.is_none() && self.parkable()
     }
 
+    /// A `--when-idle` call that waits for an idle machine to start: a parkable job, and the
+    /// transfer that sends a recipe's tree, which is short and is never parked once it runs.
+    fn waits_idle(&self) -> bool {
+        let request = &self.at.call.request;
+        self.idle()
+            || (request.when_idle && request.urgent.is_none() && self.at.call.mode() == Mode::Rsh)
+    }
+
     /// Waits until no other job has held or waited here for the machine's settle time, saying
     /// once what it waits for; `said` is what it said when it was parked, so it says no more.
     fn until_idle(&self, until: Option<Instant>, said: Option<&str>) -> Idled {
@@ -713,10 +721,8 @@ impl<'a> Run<'a> {
         let mut state = state;
         state.set_stage(Stage::Parked);
         drop(state);
-        self.at.dir.write(
-            Kind::Waiting,
-            &self.at.call.lock_record(arrived.start, &arrived.job),
-        );
+        let waiting = self.at.call.lock_record(arrived.start, &arrived.job);
+        self.at.dir.write(Kind::Waiting, &waiting);
         let _ = fs::remove_file(self.at.dir.file("holder", pid));
         let _ = rw.unlock();
         self.at.dir.set_deadline(pid, None);
@@ -742,17 +748,21 @@ impl<'a> Run<'a> {
                 continue;
             }
             if matches!(Lock::try_hold(rw, Hold::Shared), Ok(true)) {
+                // Holding before it looks, as at its first admission: a job or a closing that
+                // comes meanwhile sees it, and it sees them.
+                let record = self.at.call.lock_record(Moment::epoch_now(), &arrived.job);
+                self.at.dir.hold(&record);
                 if self.at.dir.busy_besides(pid).is_none()
                     && (Shutter { dir: self.at.dir }).shut().is_none()
                 {
                     break Yielded::Waited;
                 }
+                self.at.dir.write(Kind::Waiting, &waiting);
+                let _ = fs::remove_file(self.at.dir.file("holder", pid));
                 let _ = rw.unlock();
             }
         };
         if yielded == Yielded::Waited {
-            let record = self.at.call.lock_record(Moment::epoch_now(), &arrived.job);
-            self.at.dir.hold(&record);
             self.at
                 .sink
                 .say("dibs: the machine is idle again, so it runs from the start.\n");
@@ -916,9 +926,13 @@ impl<'a> Run<'a> {
             asking: pid,
         };
         let shown = || look.text(&look.status(request.verbose), request.tty);
-        let deadline = request
-            .wait
-            .map(|wait| Instant::now() + Duration::from_secs(wait));
+        // Waiting for an idle machine has already spent some of it.
+        let deadline = match self.waits_idle() {
+            true => self.wait_until(arrived),
+            false => request
+                .wait
+                .map(|wait| Instant::now() + Duration::from_secs(wait)),
+        };
         let block = lock.free(Hold::Shared) && !lock.free(Hold::Exclusive);
         let urgent = request.urgent.is_some() && self.at.call.mode() == Mode::Shared;
         let passed = match urgent || queue.may_bypass(self.at.settings, block) {
@@ -1464,7 +1478,10 @@ impl<'a> Run<'a> {
             (Some(log), false) => Output::Log(log),
             (None, _) => Output::Caller,
         };
-        let (held, yielded) = self.yield_to_urgent(state, self.wait_until(arrived));
+        let (held, yielded) = match idle_rw {
+            Some(_) => (state, Yielded::Free),
+            None => self.yield_to_urgent(state, self.wait_until(arrived)),
+        };
         state = held;
         if let Some(status) = yielded.status() {
             drop(state);
@@ -1479,7 +1496,7 @@ impl<'a> Run<'a> {
                 failed: false,
                 laid: Some(By::Dibs),
                 overran: false,
-                idled: 0,
+                idled: Duration::ZERO,
             };
         }
         let mut deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
@@ -1495,7 +1512,7 @@ impl<'a> Run<'a> {
             failed: false,
             laid: None,
             overran: false,
-            idled: 0,
+            idled: Duration::ZERO,
         };
         let layout = Layout::new(self.at, output);
         let mut spot = None;
@@ -1608,7 +1625,7 @@ impl<'a> Run<'a> {
                         let since = Instant::now();
                         let (held, yielded) =
                             self.yield_while_busy(state, rw, arrived, until, parked);
-                        hosted.idled += since.elapsed().as_secs();
+                        hosted.idled += since.elapsed();
                         parked = false;
                         state = held;
                         if let Some(status) = yielded.status() {
@@ -1618,7 +1635,7 @@ impl<'a> Run<'a> {
                         }
                         waited |= yielded == Yielded::Waited;
                     }
-                    if hosted.services.is_none() {
+                    if hosted.services.is_none() && idle_rw.is_none() {
                         let until = (runs == 0).then(|| self.wait_until(arrived)).flatten();
                         let (held, yielded) = self.yield_to_urgent(state, until);
                         state = held;
@@ -1661,6 +1678,13 @@ impl<'a> Run<'a> {
                             && running.mark.take().is_some()
                         {
                             running.mark = stepping.as_ref().and_then(Stepping::building);
+                        }
+                        // Another tree may have built into the target while it was parked.
+                        if idle_rw.is_some()
+                            && let (Some(step), Some(stepping)) = (step, &stepping)
+                            && step.claim
+                        {
+                            stepping.claim();
                         }
                     }
                     runs += 1;
@@ -1792,7 +1816,7 @@ impl<'a> Run<'a> {
         };
         let ran = Moment::epoch_now()
             .saturating_sub(end.acquired.at)
-            .saturating_sub(end.hosted.idled);
+            .saturating_sub(end.hosted.idled.as_secs());
         {
             let mut state = self.at.stopper.state();
             state.set_stage(Stage::Finishing);

@@ -586,7 +586,10 @@ impl LockDir {
     /// A job run only while nothing else here runs that still holds, besides `pid`.
     pub fn idle_holding(&self, pid: u32) -> bool {
         self.records(Kind::Holder).iter().any(|r| {
-            r.pid != pid && self.idle_only(r.pid) && RecordFile(&self.file("holder", r.pid)).alive()
+            r.pid != pid
+                && r.mode != dibs_format::Mode::Rsh
+                && self.idle_only(r.pid)
+                && RecordFile(&self.file("holder", r.pid)).alive()
         })
     }
 
