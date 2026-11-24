@@ -156,6 +156,9 @@ pub struct Holder {
     /// The urgent job it runs nothing for until that ends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parked: Option<JobId>,
+    /// `--low-priority`: parked, to run again from the start, as soon as another job comes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub low_priority: bool,
     #[serde(skip)]
     pub services: Vec<Service>,
 }
@@ -208,6 +211,9 @@ pub struct Waiter {
     /// `--low-priority`: it starts only once nothing else runs or waits, so it has no place in line.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub low_priority: bool,
+    /// Why it is urgent: once it holds the lock, the shared jobs are parked for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub urgent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<BatchShown>,
 }

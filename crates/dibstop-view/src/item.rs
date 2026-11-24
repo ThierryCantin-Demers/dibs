@@ -32,6 +32,24 @@ pub struct Item {
     pub alarm: bool,
     pub output: Option<String>,
     pub batch: Option<BatchShown>,
+    pub priority: Option<Priority>,
+}
+
+/// A job asked to go ahead of the others, or to give way to all of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Priority {
+    Urgent,
+    Low,
+}
+
+impl Priority {
+    fn of(urgent: bool, low: bool) -> Option<Priority> {
+        match (urgent, low) {
+            (true, _) => Some(Priority::Urgent),
+            (false, true) => Some(Priority::Low),
+            (false, false) => None,
+        }
+    }
 }
 
 impl Item {
@@ -59,13 +77,32 @@ impl Item {
     }
 
     fn holding(machine: &str, h: &Holder) -> Item {
-        let Verdict { note, long, alarm } = Verdict::of_holder(h);
+        let Verdict {
+            note,
+            mut long,
+            alarm,
+        } = Verdict::of_holder(h);
+        let priority = Priority::of(h.urgent.is_some(), h.low_priority);
+        match (&h.urgent, priority) {
+            (Some(why), _) => {
+                long = format!("Urgent: {why}. The shared jobs are parked for it. {long}")
+            }
+            (None, Some(Priority::Low)) => {
+                long = format!(
+                    "Low priority: parked as soon as another job comes, to run again from the \
+                     start once the machine is idle. {long}"
+                )
+            }
+            _ => {}
+        }
         Item {
             machine: machine.to_string(),
             device: h.device.clone(),
             holding: true,
-            slot: match h.ahead {
-                Some(Ahead::Paused(_)) => "FROZEN".into(),
+            slot: match (&h.ahead, priority) {
+                (Some(Ahead::Paused(_)), _) => "FROZEN".into(),
+                (_, Some(Priority::Urgent)) => "URGENT".into(),
+                (_, Some(Priority::Low)) => "LOW PRIO".into(),
                 _ => "HOLDING".into(),
             },
             mode: h.mode,
@@ -84,6 +121,7 @@ impl Item {
             alarm,
             output: h.output.clone(),
             batch: h.batch.clone(),
+            priority,
         }
     }
 
@@ -110,6 +148,7 @@ impl Item {
             alarm,
             output: None, // it has no processes yet, so nothing to write with
             batch: q.batch.clone(),
+            priority: Priority::of(q.urgent.is_some(), q.low_priority),
         }
     }
 }
@@ -289,15 +328,27 @@ impl Verdict {
     }
 
     fn of_queued(q: &Waiter) -> Verdict {
-        let (note, long) = match q.eta {
-            Some(e) => (
+        let (note, long) = match (&q.urgent, q.eta) {
+            (Some(why), _) => (
+                format!("urgent: {why}"),
+                format!(
+                    "Urgent: {why}. Once it holds the lock, the shared jobs are parked for it and \
+                     run again from the start after it."
+                ),
+            ),
+            _ if q.low_priority => (
+                "low priority: waits for an idle machine".into(),
+                "Low priority: it starts only once nothing else runs or waits on the machine."
+                    .into(),
+            ),
+            (None, Some(e)) => (
                 format!("starts in ~{}", Span(e)),
                 format!(
                     "Waiting for the lock. Nothing ahead of it is expected to take more than {}.",
                     Span(e)
                 ),
             ),
-            None => (
+            (None, None) => (
                 "no telling when".into(),
                 "Waiting for the lock. Something ahead of it is already past its usual \
                  duration, so there is no honest estimate of when this one starts."
@@ -416,6 +467,32 @@ mod tests {
         );
         let running = status(&holder("b", r#","ahead":"running""#), "");
         assert_eq!(Item::all("m", &running)[0].slot, "HOLDING");
+    }
+
+    #[test]
+    fn a_job_says_whether_it_is_urgent_or_low_priority() {
+        let s = status(
+            &format!(
+                "{},{}",
+                holder("u", r#","urgent":"demo at 3""#),
+                holder("l", r#","low_priority":true"#)
+            ),
+            r#"{"position":1,"mode":"bench","pid":8,"label":"q","agent":"x","device":"-","cmd":"c","arrived":0,"waiting":1,"urgent":"release"},
+               {"position":2,"mode":"shared","pid":9,"label":"r","agent":"x","device":"-","cmd":"c","arrived":0,"waiting":1,"low_priority":true}"#,
+        );
+        let v = Item::all("m", &s);
+        let seen: Vec<_> = v.iter().map(|it| (it.slot.as_str(), it.priority)).collect();
+        assert_eq!(
+            seen,
+            [
+                ("URGENT", Some(Priority::Urgent)),
+                ("LOW PRIO", Some(Priority::Low)),
+                ("queued 1", Some(Priority::Urgent)),
+                ("queued 2", Some(Priority::Low)),
+            ]
+        );
+        assert_eq!(v[2].note, "urgent: release");
+        assert_eq!(v[3].note, "low priority: waits for an idle machine");
     }
 
     #[test]

@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     app::{App, Overlay, PendingKill},
-    item::{Item, Progress as _},
+    item::{Item, Priority, Progress as _},
     text::{agent_hue, cores, fit, plain},
 };
 use dibs_format::{Mode, Span as DibsSpan, status::LockState};
@@ -330,13 +330,15 @@ fn job_row(it: &Item, selected: bool, w: &Widths) -> Row<'static> {
         true => Style::new().bg(SELECTED_BG).add_modifier(Modifier::BOLD),
         false => Style::new(),
     };
-    let slot_style = match it.holding {
-        true => base.fg(if it.alarm {
+    let slot_style = match (it.holding, it.priority) {
+        (true, Some(Priority::Urgent)) => base.fg(Color::Red).add_modifier(Modifier::BOLD),
+        (true, Some(Priority::Low)) => base.patch(DIM),
+        (true, None) => base.fg(if it.alarm {
             Color::Yellow
         } else {
             Color::White
         }),
-        false => base.fg(Color::Cyan),
+        (false, _) => base.fg(Color::Cyan),
     };
     let mut cells = vec![Span::styled(if selected { "▸" } else { " " }, base.fg(hue))];
     if w.multi {

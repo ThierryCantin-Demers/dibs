@@ -144,9 +144,10 @@ impl Text<'_> {
             .as_ref()
             .map(|job| format!("  {}job {job}{}", p.dim, p.off))
             .unwrap_or_default();
-        let ahead = match holder.ahead {
-            Some(_) => format!("  {}preemptible{}", p.dim, p.off),
-            None => String::new(),
+        let ahead = match (&holder.ahead, holder.low_priority) {
+            (Some(_), _) => format!("  {}preemptible{}", p.dim, p.off),
+            (None, true) => format!("  {}low priority{}", p.dim, p.off),
+            (None, false) => String::new(),
         };
         let cap = holder
             .killed_at
@@ -294,11 +295,12 @@ impl Text<'_> {
             device: waiter.device.as_ref(),
             cmd: &waiter.cmd,
         };
-        let when = match waiter.eta {
+        let when = match (&waiter.urgent, waiter.eta) {
+            (Some(why), _) => format!("   {}[URGENT: {why}]{}", p.warn, p.off),
             _ if waiter.low_priority => format!("   {}[waits for an idle machine]{}", p.dim, p.off),
-            Some(0) => format!("   {}[starts as soon as the lock frees]{}", p.dim, p.off),
-            Some(eta) => format!("   {}[~{} until it starts]{}", p.dim, Span(eta), p.off),
-            None => String::new(),
+            (None, Some(0)) => format!("   {}[starts as soon as the lock frees]{}", p.dim, p.off),
+            (None, Some(eta)) => format!("   {}[~{} until it starts]{}", p.dim, Span(eta), p.off),
+            (None, None) => String::new(),
         };
         let _ = writeln!(
             out,
@@ -628,6 +630,7 @@ mod tests {
             ahead: None,
             urgent: None,
             parked: None,
+            low_priority: false,
             services: Vec::new(),
         });
         let said = text(&held);
@@ -642,6 +645,13 @@ mod tests {
             text(&held)
         );
         held.holders[0].killed_at = None;
+        held.holders[0].low_priority = true;
+        assert!(
+            text(&held).contains("pid 42  job 20261001120000-42  low priority   [no history"),
+            "{}",
+            text(&held)
+        );
+        held.holders[0].low_priority = false;
         held.holders[0].prepare = Some("copying a-target's target to start this tree from".into());
         assert!(
             text(&held).contains("pid 42  job 20261001120000-42   [preparing its tree, before the command: copying a-target's target to start this tree from]"),

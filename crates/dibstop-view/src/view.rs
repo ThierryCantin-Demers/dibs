@@ -6,7 +6,7 @@ use dibs_format::{Label, Mode, Span, status::Status};
 use egui::{Color32, Key, RichText, Ui};
 
 use crate::action::Action;
-use crate::item::{Item, Progress as _};
+use crate::item::{Item, Priority, Progress as _};
 use crate::text::{Tone, agent_hue, cores, plain, state_words};
 
 /// One machine, as the caller last heard of it.
@@ -225,7 +225,7 @@ impl View {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    let frozen = it.holding && it.slot != "HOLDING";
+                    let frozen = it.holding && it.slot == "FROZEN";
                     let slot = match (it.holding, frozen || it.alarm) {
                         (true, true) => RichText::new(it.slot.to_lowercase())
                             .color(ui.visuals().warn_fg_color)
@@ -235,6 +235,19 @@ impl View {
                             .color(Color32::from_rgb(80, 180, 200)),
                     };
                     ui.label(slot);
+                    match it.priority {
+                        Some(Priority::Urgent) => {
+                            ui.label(
+                                RichText::new("urgent")
+                                    .color(ui.visuals().error_fg_color)
+                                    .strong(),
+                            );
+                        }
+                        Some(Priority::Low) => {
+                            ui.weak("low priority");
+                        }
+                        None => {}
+                    }
                     ui.label(RichText::new(it.mode.to_string()).color(mode).strong());
                     if multi {
                         ui.weak(&it.machine);
