@@ -480,6 +480,9 @@ impl<'a> Run<'a> {
         }
         if self.waits_idle() {
             self.at.dir.mark_idle(pid, self.idle());
+            self.at
+                .dir
+                .mark_quiet(pid, None, self.at.settings.idle_settle);
         }
         // Before any wait, a closed machine's included, so the queue shows it from the start.
         if let (Mode::Shared | Mode::Bench, Some(why)) = (request.mode, &request.urgent) {
