@@ -7,7 +7,7 @@ use crate::{
     home::Home,
     spawn::{self, DRIVEN, DRIVING},
     split::{Resolved, shell_word},
-    store::{Attempt, Fence, Step, Store},
+    store::{Attempt, Fence, Settled, Step, Store},
 };
 use dibs_format::{
     By, Exit, Sha256,
@@ -253,9 +253,12 @@ impl Worker<'_> {
                     .attempt
                     .as_ref()
                     .map(|(id, heard)| (id.as_str(), heard.as_str())),
-                ended.state,
-                ended.trailer.as_ref(),
-                ended.note.as_deref(),
+                Settled {
+                    state: ended.state,
+                    exit: outcome(ended.state, ended.exit),
+                    trailer: ended.trailer.as_ref(),
+                    note: ended.note.as_deref(),
+                },
             );
             if let Err(e) = settled {
                 // Left as it was, so the next worker asks about the attempt again.
@@ -287,9 +290,12 @@ impl Worker<'_> {
             self.id,
             step.n,
             None,
-            State::Cancelled,
-            None,
-            Some("killed"),
+            Settled {
+                state: State::Cancelled,
+                exit: Exit::Cancelled.status(),
+                trailer: None,
+                note: Some("killed"),
+            },
         );
         self.finish(
             State::Cancelled,
@@ -299,11 +305,7 @@ impl Worker<'_> {
     }
 
     fn finish(&self, state: State, exit: i32, note: Option<&str>) -> i32 {
-        let exit = match state {
-            State::Done => 0,
-            _ if exit == 0 => Exit::Failed.status(),
-            _ => exit,
-        };
+        let exit = outcome(state, exit);
         if let Err(e) = self.store.finish(self.id, state, Some(exit), note) {
             eprintln!("dibs-orchestrator: {} could not be recorded: {e}", self.id);
         }
@@ -368,7 +370,23 @@ impl Worker<'_> {
             let _ = Command::new("cp").arg("-al").arg(&tree).arg(&last).status();
         }
         // The stage can be sent to again under the same key until it is taken, so what was
-        // taken is checked here, not only when the submission was accepted.
+        // taken is checked here, its git directory made the service's own again first.
+        crate::api::own_git(&tree.join(".git"))
+            .map_err(|e| format!("the taken repo's git directory cannot be taken over: {e}"))?;
+        let head = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&tree)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        if head.as_deref() != Some(upload.head.as_str()) {
+            return Err(format!(
+                "the taken repo's HEAD is {}, not the accepted {}",
+                head.as_deref().unwrap_or("unreadable"),
+                upload.head
+            ));
+        }
         let listed = Seal::listed(&tree).map_err(|e| e.to_string())?;
         let (digest, files) =
             Seal::of(&tree, listed.iter().map(String::as_str)).map_err(|e| e.to_string())?;
@@ -942,6 +960,15 @@ impl Worker<'_> {
             }
             std::thread::sleep(TICK);
         }
+    }
+}
+
+/// The exit a submission or step that ended in `state` reports: never 0 unless it is done.
+fn outcome(state: State, exit: i32) -> i32 {
+    match state {
+        State::Done => 0,
+        _ if exit == 0 => Exit::Failed.status(),
+        _ => exit,
     }
 }
 

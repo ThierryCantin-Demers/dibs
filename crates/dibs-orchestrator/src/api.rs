@@ -444,6 +444,10 @@ impl Api<'_> {
 }
 
 /// A sent repo's git directory, made safe to run git in under the orchestrator's account.
+pub fn own_git(git: &std::path::Path) -> std::io::Result<()> {
+    Upload::own_git(git)
+}
+
 struct Upload;
 
 impl Upload {

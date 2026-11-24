@@ -13,6 +13,14 @@ pub struct Store {
     db: Connection,
 }
 
+/// How a step ended, as `settle` records it.
+pub struct Settled<'a> {
+    pub state: State,
+    pub exit: i32,
+    pub trailer: Option<&'a Trailer>,
+    pub note: Option<&'a str>,
+}
+
 /// What a worker holds a submission by: the store's epoch, which a restore moves on, and the
 /// submission's generation, which each new worker moves on. An attempt is launched only while
 /// both are still the worker's.
@@ -38,7 +46,7 @@ pub struct Step {
     pub n: i64,
     pub name: String,
     pub state: State,
-    /// What the trailer of its job said, once it has one.
+    /// What it ended with, once it has.
     pub exit: Option<i32>,
 }
 
@@ -80,6 +88,7 @@ CREATE TABLE IF NOT EXISTS steps (
     state TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     trailer TEXT,
+    exit INTEGER,
     note TEXT,
     PRIMARY KEY (submission, n));
 CREATE TABLE IF NOT EXISTS attempts (
@@ -326,19 +335,16 @@ impl Store {
     }
 
     pub fn steps(&self, id: &str) -> rusqlite::Result<Vec<Step>> {
-        let mut statement = self.db.prepare(
-            "SELECT n, name, state, trailer FROM steps WHERE submission = ?1 ORDER BY n",
-        )?;
+        let mut statement = self
+            .db
+            .prepare("SELECT n, name, state, exit FROM steps WHERE submission = ?1 ORDER BY n")?;
         statement
             .query_map(params![id], |r| {
-                let trailer: Option<String> = r.get(3)?;
                 Ok(Step {
                     n: r.get(0)?,
                     name: r.get(1)?,
                     state: state(&r.get::<_, String>(2)?),
-                    exit: trailer
-                        .and_then(|t| serde_json::from_str::<Trailer>(&t).ok())
-                        .map(|t| t.exit),
+                    exit: r.get(3)?,
                 })
             })?
             .collect()
@@ -436,10 +442,14 @@ impl Store {
         id: &str,
         step: i64,
         attempt: Option<(&str, &str)>,
-        state: State,
-        trailer: Option<&Trailer>,
-        note: Option<&str>,
+        settled: Settled,
     ) -> rusqlite::Result<()> {
+        let Settled {
+            state,
+            exit,
+            trailer,
+            note,
+        } = settled;
         let trailer = trailer.and_then(|t| serde_json::to_string(t).ok());
         let tx = self.immediate()?;
         if let Some((attempt, heard)) = attempt {
@@ -449,9 +459,9 @@ impl Store {
             )?;
         }
         tx.execute(
-            "UPDATE steps SET state = ?3, trailer = COALESCE(?4, trailer), note = COALESCE(?5, note)
-             WHERE submission = ?1 AND n = ?2",
-            params![id, step, state.as_str(), trailer, note],
+            "UPDATE steps SET state = ?3, trailer = COALESCE(?4, trailer), note = COALESCE(?5, note),
+             exit = ?6 WHERE submission = ?1 AND n = ?2",
+            params![id, step, state.as_str(), trailer, note, exit],
         )?;
         tx.commit()
     }

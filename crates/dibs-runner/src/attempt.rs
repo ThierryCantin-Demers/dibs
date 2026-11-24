@@ -42,9 +42,24 @@ impl Attempts {
     /// The attempt admitted for `job`, or how the attempt admitted before has gone. An id that
     /// is not one path component is refused.
     pub fn admit(&self, id: &str, job: &JobId) -> io::Result<Result<Receipt, Admitted>> {
+        self.publish(id, Some(job))
+    }
+
+    /// How attempt `id` went, without admitting it. One never admitted here is closed instead,
+    /// so a request for it still on its way finds it ended and never runs: `Never`.
+    pub fn look(&self, id: &str) -> io::Result<Admitted> {
+        match self.publish(id, None)? {
+            Ok(_) => Ok(Admitted::Never),
+            Err(admitted) => Ok(admitted),
+        }
+    }
+
+    /// Publishes attempt `id`'s directory whole by a rename, so whoever finds it finds its
+    /// receipt already locked and naming its job; with no job, a closed one that nothing holds.
+    /// Or how the one there went.
+    fn publish(&self, id: &str, job: Option<&JobId>) -> io::Result<Result<Receipt, Admitted>> {
         let attempt = self.dir.join(Attempts::checked(id)?);
         fs::create_dir_all(&self.dir)?;
-        // Published whole by a rename, so whoever finds it finds its job named and locked.
         let part = self
             .dir
             .join(format!(".part-{}-{}", std::process::id(), id));
@@ -52,27 +67,25 @@ impl Attempts {
         fs::create_dir(&part)?;
         let mut file = File::create(part.join(RECEIPT))?;
         file.lock()?;
-        file.write_all(format!("{job}\n").as_bytes())?;
-        match fs::rename(&part, &attempt) {
+        if let Some(job) = job {
+            file.write_all(format!("{job}\n").as_bytes())?;
+        }
+        let published = fs::rename(&part, &attempt);
+        if published.is_err() {
+            let _ = fs::remove_dir_all(&part);
+        }
+        match published {
             Ok(()) => Ok(Ok(Receipt { _held: file })),
-            Err(_) if attempt.join(RECEIPT).exists() => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::AlreadyExists | io::ErrorKind::DirectoryNotEmpty
+                ) =>
+            {
                 drop(file);
-                let _ = fs::remove_dir_all(&part);
                 Ok(Err(Attempts::seen(&attempt)?))
             }
-            Err(e) => {
-                let _ = fs::remove_dir_all(&part);
-                Err(e)
-            }
-        }
-    }
-
-    /// How attempt `id` went, without admitting it: `Never` when it was not admitted here.
-    pub fn look(&self, id: &str) -> io::Result<Admitted> {
-        let attempt = self.dir.join(Attempts::checked(id)?);
-        match attempt.join(RECEIPT).exists() {
-            true => Attempts::seen(&attempt),
-            false => Ok(Admitted::Never),
+            Err(e) => Err(e),
         }
     }
 
@@ -116,7 +129,11 @@ impl Attempts {
     fn seen(dir: &Path) -> io::Result<Admitted> {
         let receipt = dir.join(RECEIPT);
         let file = File::open(&receipt)?;
-        let job = JobId::new(fs::read_to_string(&receipt)?.trim());
+        let named = fs::read_to_string(&receipt)?;
+        if named.trim().is_empty() {
+            return Ok(Admitted::Never);
+        }
+        let job = JobId::new(named.trim());
         if let Err(fs::TryLockError::WouldBlock) = file.try_lock_shared() {
             let pid = Attempts::holder(&job);
             return Ok(Admitted::Running { job, pid });
@@ -198,6 +215,21 @@ mod tests {
         assert_eq!(
             attempts.admit("sub-1.build.1", &job).unwrap().unwrap_err(),
             Admitted::Ended(trailer)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_attempt_asked_after_before_it_arrives_never_runs() {
+        let dir = scratch("looked");
+        let attempts = Attempts::under(&dir);
+        assert_eq!(attempts.look("sub-1.measure.1").unwrap(), Admitted::Never);
+        assert_eq!(
+            attempts
+                .admit("sub-1.measure.1", &JobId::new("1-2"))
+                .unwrap()
+                .unwrap_err(),
+            Admitted::Never
         );
         let _ = fs::remove_dir_all(&dir);
     }

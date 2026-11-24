@@ -191,6 +191,7 @@ impl Visit {
             self.call.mode(),
             Mode::Shared | Mode::Bench | Mode::Rsh | Mode::Gc
         ) && !self.call.request.when_open
+            && !self.call.request.lookup
             && let Some(closure) = (Shutter { dir: &dir }).shut()
         {
             self.sink.say(&format!(
