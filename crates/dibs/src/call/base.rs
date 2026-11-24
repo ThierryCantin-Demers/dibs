@@ -536,7 +536,8 @@ impl Request<'_> {
                 None => Some(DEFAULT_CHECK_IN),
             },
             attempt: set(ATTEMPT).filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
-            lookup: set(ATTEMPT_LOOKUP).is_some_and(|v| v == "1"),
+            lookup: set(ATTEMPT_LOOKUP).is_some_and(|v| v == "1")
+                && matches!(self.mode, Mode::Shared | Mode::Bench),
             bundle: set(BUNDLE_SPEC)
                 .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench))
                 .and_then(|spec| serde_json::from_str(&spec).ok()),

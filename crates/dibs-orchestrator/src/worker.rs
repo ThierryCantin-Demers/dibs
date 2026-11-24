@@ -276,6 +276,11 @@ impl Worker<'_> {
         self.finish(State::Done, last.exit, None)
     }
 
+    /// Killed, a step only asks after the attempt it left, before reading anything it would run.
+    fn killed(&self) -> bool {
+        self.store.cancelled(self.id).unwrap_or(false)
+    }
+
     /// Leave when told to stop without being killed, as at a shutdown: what was cut short is
     /// done again by the next worker.
     fn leaving(&self) -> Result<(), Leave> {
@@ -404,6 +409,9 @@ impl Worker<'_> {
     }
 
     fn build(&self, step: &Step, split: &Resolved) -> Result<Ended, Leave> {
+        if self.killed() {
+            return self.attempted(step, &split.compile, &[], &[], None, Kind::Again);
+        }
         let root = match self.root(split) {
             Ok(root) => root,
             Err(why) => return Ok(Ended::failed(Exit::Setup.status(), why)),
@@ -603,6 +611,9 @@ impl Worker<'_> {
 
     /// Shared, on the card: the bundle is there unchanged, and the machine has what it links.
     fn stage(&self, step: &Step, split: &Resolved) -> Result<Ended, Leave> {
+        if self.killed() {
+            return self.attempted(step, &split.gpu, &[], &[], None, Kind::Again);
+        }
         let Some(check) = self.check() else {
             return Ok(Ended::failed(Exit::Setup.status(), "no bundle was relayed"));
         };
@@ -635,6 +646,9 @@ impl Worker<'_> {
     }
 
     fn measure(&self, step: &Step, split: &Resolved) -> Result<Ended, Leave> {
+        if self.killed() {
+            return self.attempted(step, &split.gpu, &[], &[], None, Kind::Once);
+        }
         let Some(check) = self.check() else {
             return Ok(Ended::failed(Exit::Setup.status(), "no bundle was relayed"));
         };

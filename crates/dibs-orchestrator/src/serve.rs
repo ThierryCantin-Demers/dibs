@@ -64,7 +64,7 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
     }
     let key = dest
         .strip_prefix(STAGE_PREFIX)
-        .and_then(|rest| rest.split('/').next())
+        .and_then(|rest| rest.split('/').find(|p| !p.is_empty()))
         .unwrap_or_default();
     let held = match home.stage_lock(coworker, key) {
         Ok(held) => held,
