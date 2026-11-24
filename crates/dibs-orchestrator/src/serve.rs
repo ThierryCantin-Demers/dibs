@@ -10,7 +10,7 @@ use dibs_format::{
     Exit,
     orchestrator::{API_COMMAND, STAGE_PREFIX},
 };
-use std::os::unix::process::CommandExt as _;
+use std::os::unix::{io::AsRawFd as _, process::CommandExt as _};
 
 pub fn serve(home: &Home, coworker: &str) -> i32 {
     if !component(coworker) {
@@ -62,6 +62,20 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
             return Exit::Refused.status();
         }
     }
+    let key = dest
+        .strip_prefix(STAGE_PREFIX)
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or_default();
+    let held = match home.stage_lock(coworker, key) {
+        Ok(held) => held,
+        Err(e) => {
+            eprintln!("dibs-orchestrator: the stage's lock: {e}");
+            return Exit::Failed.status();
+        }
+    };
+    // Kept open across the exec, so rsync holds the stage until it exits.
+    // SAFETY: clears close-on-exec on a descriptor this process owns.
+    unsafe { libc::fcntl(held.as_raw_fd(), libc::F_SETFD, 0) };
     let error = std::process::Command::new("rsync")
         .arg("--server")
         .args(args)

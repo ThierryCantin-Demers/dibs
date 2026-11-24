@@ -359,6 +359,10 @@ impl Worker<'_> {
             let staging = self.home.staging(self.coworker);
             let stage = staging.join("stage").join(&upload.stage);
             fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+            let _held = self
+                .home
+                .stage_lock(self.coworker, &upload.stage)
+                .map_err(|e| format!("the stage's lock: {e}"))?;
             fs::rename(&stage, &tree)
                 .map_err(|e| format!("the sent tree {} cannot be taken: {e}", stage.display()))?;
             // What the next upload of this repo is sent against, so only what changed travels.
@@ -737,8 +741,20 @@ impl Worker<'_> {
             if killed {
                 env.push(("DIBS_ATTEMPT_LOOKUP", "1".into()));
             }
-            // Once killed, a call only asks after the attempt, and is not itself cut short.
-            let code = self.dibs_call(&log, args, &env, cwd, !killed);
+            // Once killed, a plain call only asks after the attempt, which the machine answers
+            // before anything else, and is not itself cut short.
+            let lookup = [
+                "run".to_string(),
+                "--on".into(),
+                machine.into(),
+                "--label".into(),
+                "orchestrator-lookup".into(),
+                "true".into(),
+            ];
+            let code = match killed {
+                true => self.dibs_call(&log, &lookup, &env, None, false),
+                false => self.dibs_call(&log, args, &env, cwd, true),
+            };
             let heard = last_record(&records);
             let said = heard
                 .as_ref()

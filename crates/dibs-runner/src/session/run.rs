@@ -397,6 +397,12 @@ impl<'a> Run<'a> {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_nanos());
         let job = job_id(start, pid);
+        if request.lookup && request.attempt.is_none() {
+            self.at
+                .sink
+                .say("dibs: a lookup names the attempt it asks after, so nothing ran\n");
+            return Err(Exit::Refused.status());
+        }
         if let Some(id) = request.attempt.as_ref().filter(|_| request.lookup) {
             let looked = Attempts::under(&self.at.machine.scratch).look(id);
             return Err(match looked {

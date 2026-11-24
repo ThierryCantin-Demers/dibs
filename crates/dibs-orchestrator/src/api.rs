@@ -235,6 +235,10 @@ impl Api<'_> {
             .staging(self.coworker)
             .join(STAGE_PREFIX)
             .join(&upload.stage);
+        let _held = self
+            .home
+            .stage_lock(self.coworker, &upload.stage)
+            .map_err(|e| refused(format!("the stage's lock: {e}")))?;
         let listed = Seal::listed(&stage)
             .map_err(|e| refused(format!("nothing was staged under {}: {e}", upload.stage)))?;
         let (digest, files) = Seal::of(&stage, listed.iter().map(String::as_str))

@@ -84,3 +84,34 @@ fn an_attempt_id_that_names_a_path_is_refused() {
     assert_ne!(out.code, 0, "{}", out.all());
     assert!(!s.path("escape").exists());
 }
+
+#[test]
+fn a_lookup_runs_nothing_and_closes_an_attempt_it_never_saw() {
+    let s = Sandbox::new();
+    let call = |attempt: Option<&str>| {
+        let call = s
+            .dibs(["--label", "attempted", r#"echo ran >> "$DIBS_SCRATCH/ran""#])
+            .env("DIBS_ATTEMPT_LOOKUP", "1");
+        match attempt {
+            Some(id) => call.env("DIBS_ATTEMPT", id),
+            None => call.env_remove("DIBS_ATTEMPT"),
+        }
+        .run()
+    };
+    let unnamed = call(None);
+    assert_ne!(unnamed.code, 0, "{}", unnamed.all());
+    let looked = call(Some("sub.2.1"));
+    assert_eq!(looked.code, 1, "{}", looked.all());
+    assert_eq!(
+        looked.stderr.lines_with("never admitted"),
+        1,
+        "{}",
+        looked.all()
+    );
+    let late = s
+        .dibs(["--label", "attempted", r#"echo ran >> "$DIBS_SCRATCH/ran""#])
+        .env("DIBS_ATTEMPT", "sub.2.1")
+        .run();
+    assert_ne!(late.code, 0, "{}", late.all());
+    assert_eq!(ran(&s), 0);
+}

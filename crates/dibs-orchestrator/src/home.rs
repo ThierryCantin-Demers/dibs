@@ -50,6 +50,20 @@ impl Home {
         self.state.join("staging").join(coworker)
     }
 
+    /// Held by an upload into stage `key` for as long as it writes, and by whoever reads or
+    /// takes that stage, so neither sees it half sent.
+    pub fn stage_lock(&self, coworker: &str, key: &str) -> std::io::Result<std::fs::File> {
+        let dir = self.staging(coworker).join("locks");
+        std::fs::create_dir_all(&dir)?;
+        let file = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(format!("{key}.lock")))?;
+        file.lock()?;
+        Ok(file)
+    }
+
     pub fn submission(&self, id: &str) -> PathBuf {
         self.subs().join(id)
     }
