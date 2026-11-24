@@ -154,17 +154,31 @@ fn a_shared_job_marked_urgent_goes_around_a_queued_benchmark() {
     let b = s.spawn(s.dibs(["--bench", "--label", "measure", &measure.hold()]));
     s.queued(1);
     s.gate_taken();
-    let quick = s
-        .dibs([
+    let look = s.gate("look");
+    let quick = s.spawn(
+        s.dibs([
             "--urgent",
             "a look before the review",
             "--label",
             "look",
-            "echo looked",
+            &look.hold(),
         ])
-        .run();
-    assert_eq!(quick.code, 0, "{}", quick.all());
-    assert!(quick.stdout.contains("looked"));
+        .streams_to(&s.path("look-out"), &s.path("look-err")),
+    );
+    s.held(2);
+    let status = s.status();
+    let line = status
+        .lines()
+        .find(|line| line.contains("  look  "))
+        .unwrap_or_else(|| panic!("{status}"));
+    assert!(line.contains("  urgent"), "it says it is urgent: {status}");
+    assert_eq!(
+        status.lines_with("URGENT:") + status.lines_with("parked for"),
+        0,
+        "a shared urgent job parks nothing and claims no machine: {status}"
+    );
+    look.open();
+    assert_eq!(s.wait(quick), 0, "{}", s.read("look-err"));
     block.open();
     s.wait(a);
     measure.open();

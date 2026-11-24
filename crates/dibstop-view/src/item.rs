@@ -83,18 +83,20 @@ impl Item {
             alarm,
         } = Verdict::of_holder(h);
         let priority = Priority::of(h.urgent.is_some(), h.low_priority);
-        match (&h.urgent, priority) {
-            (Some(why), _) => {
-                long = format!("Urgent: {why}. The shared jobs are parked for it. {long}")
+        let said = match (&h.urgent, priority, h.mode) {
+            (Some(why), _, Mode::Shared) => {
+                format!("Urgent: {why}. It went around the queued benchmarks. ")
             }
-            (None, Some(Priority::Low)) => {
-                long = format!(
-                    "Low priority: parked as soon as another job comes, to run again from the \
-                     start once the machine is idle. {long}"
-                )
-            }
-            _ => {}
-        }
+            (Some(why), _, _) => format!("Urgent: {why}. The shared jobs are parked for it. "),
+            (None, Some(Priority::Low), Mode::Rsh) => "Low priority: it waited for an idle \
+                machine, and a copy is never parked, so it finishes once begun. "
+                .into(),
+            (None, Some(Priority::Low), _) => "Low priority: parked as soon as another job \
+                comes, to run again from the start once the machine is idle. "
+                .into(),
+            _ => String::new(),
+        };
+        long.insert_str(0, &said);
         Item {
             machine: machine.to_string(),
             device: h.device.clone(),
@@ -328,36 +330,43 @@ impl Verdict {
     }
 
     fn of_queued(q: &Waiter) -> Verdict {
-        let (note, long) = match (&q.urgent, q.eta) {
-            (Some(why), _) => (
-                format!("urgent: {why}"),
-                format!(
-                    "Urgent: {why}. Once it holds the lock, the shared jobs are parked for it and \
-                     run again from the start after it."
-                ),
-            ),
-            _ if q.low_priority => (
-                "low priority: waits for an idle machine".into(),
+        let (note, long) = match (q.low_priority, q.eta) {
+            (true, _) => (
+                "low priority: waits for an idle machine".to_string(),
                 "Low priority: it starts only once nothing else runs or waits on the machine."
-                    .into(),
+                    .to_string(),
             ),
-            (None, Some(e)) => (
+            (false, Some(e)) => (
                 format!("starts in ~{}", Span(e)),
                 format!(
                     "Waiting for the lock. Nothing ahead of it is expected to take more than {}.",
                     Span(e)
                 ),
             ),
-            (None, None) => (
+            (false, None) => (
                 "no telling when".into(),
                 "Waiting for the lock. Something ahead of it is already past its usual \
                  duration, so there is no honest estimate of when this one starts."
                     .into(),
             ),
         };
+        let Some(why) = &q.urgent else {
+            return Verdict {
+                note,
+                long,
+                alarm: false,
+            };
+        };
+        let does = match q.mode {
+            Mode::Shared => "It goes around the queued benchmarks.",
+            _ => {
+                "Once it holds the lock, the shared jobs are parked for it and run again from \
+                  the start after it."
+            }
+        };
         Verdict {
-            note,
-            long,
+            note: format!("urgent: {why}, {note}"),
+            long: format!("Urgent: {why}. {does} {long}"),
             alarm: false,
         }
     }
@@ -491,7 +500,7 @@ mod tests {
                 ("queued 2", Some(Priority::Low)),
             ]
         );
-        assert_eq!(v[2].note, "urgent: release");
+        assert_eq!(v[2].note, "urgent: release, no telling when");
         assert_eq!(v[3].note, "low priority: waits for an idle machine");
     }
 

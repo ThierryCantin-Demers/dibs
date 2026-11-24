@@ -150,7 +150,8 @@ pub struct Holder {
     /// Preemptible: a benchmark queued before it freezes it while it runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ahead: Option<Ahead>,
-    /// Why it is urgent: it has the machine to itself, the shared jobs parked.
+    /// Why it is urgent: a benchmark has the machine to itself, the shared jobs parked; a shared
+    /// job only went around the queued benchmarks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub urgent: Option<String>,
     /// The urgent job it runs nothing for until that ends.
@@ -211,7 +212,8 @@ pub struct Waiter {
     /// `--low-priority`: it starts only once nothing else runs or waits, so it has no place in line.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub low_priority: bool,
-    /// Why it is urgent: once it holds the lock, the shared jobs are parked for it.
+    /// Why it is urgent: a benchmark parks the shared jobs once it holds the lock; a shared job
+    /// goes around the queued benchmarks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub urgent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

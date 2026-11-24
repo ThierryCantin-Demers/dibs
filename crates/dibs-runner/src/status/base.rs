@@ -227,7 +227,7 @@ impl Look<'_> {
             batch: self.batch(pid, left, tail),
             prepare,
             ahead: self.dir.ahead_of(pid),
-            urgent: self.dir.urgent_of(pid).map(|u| u.why),
+            urgent: self.dir.urgent_why(pid),
             parked: self.dir.parked_for(pid),
             low_priority: self.dir.idle_only(pid),
             services: self.services(pid),
@@ -268,7 +268,7 @@ impl Look<'_> {
             waiting: now.saturating_sub(record.start),
             eta: starts,
             low_priority,
-            urgent: self.dir.urgent_of(record.pid).map(|u| u.why),
+            urgent: self.dir.urgent_why(record.pid),
             batch: self.batch(record.pid, left, tail),
         }
     }

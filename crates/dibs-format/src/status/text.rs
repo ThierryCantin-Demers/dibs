@@ -144,10 +144,13 @@ impl Text<'_> {
             .as_ref()
             .map(|job| format!("  {}job {job}{}", p.dim, p.off))
             .unwrap_or_default();
-        let ahead = match (&holder.ahead, holder.low_priority) {
-            (Some(_), _) => format!("  {}preemptible{}", p.dim, p.off),
-            (None, true) => format!("  {}low priority{}", p.dim, p.off),
-            (None, false) => String::new(),
+        let ahead = match (&holder.ahead, holder.low_priority, holder.mode) {
+            (Some(_), _, _) => format!("  {}preemptible{}", p.dim, p.off),
+            (None, true, _) => format!("  {}low priority{}", p.dim, p.off),
+            (None, false, Mode::Shared) if holder.urgent.is_some() => {
+                format!("  {}urgent{}", p.warn, p.off)
+            }
+            (None, false, _) => String::new(),
         };
         let cap = holder
             .killed_at
@@ -172,7 +175,11 @@ impl Text<'_> {
             "    {}stop it with: dibs --kill {}{}",
             p.warn, holder.pid, p.off
         );
-        let waits = match (&holder.urgent, &holder.parked) {
+        let urgent = holder
+            .urgent
+            .as_ref()
+            .filter(|_| holder.mode != Mode::Shared);
+        let waits = match (urgent, &holder.parked) {
             (Some(why), _) => Some(format!("{}[URGENT: {why}]{}", p.warn, p.off)),
             (None, Some(urgent)) => Some(format!(
                 "{}[parked for the urgent job {urgent}, and runs again from the start after it]{}",
@@ -295,12 +302,15 @@ impl Text<'_> {
             device: waiter.device.as_ref(),
             cmd: &waiter.cmd,
         };
-        let when = match (&waiter.urgent, waiter.eta) {
-            (Some(why), _) => format!("   {}[URGENT: {why}]{}", p.warn, p.off),
-            _ if waiter.low_priority => format!("   {}[waits for an idle machine]{}", p.dim, p.off),
-            (None, Some(0)) => format!("   {}[starts as soon as the lock frees]{}", p.dim, p.off),
-            (None, Some(eta)) => format!("   {}[~{} until it starts]{}", p.dim, Span(eta), p.off),
-            (None, None) => String::new(),
+        let when = match (waiter.eta, waiter.low_priority) {
+            (_, true) => format!("   {}[waits for an idle machine]{}", p.dim, p.off),
+            (Some(0), _) => format!("   {}[starts as soon as the lock frees]{}", p.dim, p.off),
+            (Some(eta), _) => format!("   {}[~{} until it starts]{}", p.dim, Span(eta), p.off),
+            (None, _) => String::new(),
+        };
+        let when = match &waiter.urgent {
+            Some(why) => format!("   {}[URGENT: {why}]{}{when}", p.warn, p.off),
+            None => when,
         };
         let _ = writeln!(
             out,

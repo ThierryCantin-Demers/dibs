@@ -578,6 +578,20 @@ impl LockDir {
 
     /// `idle.<pid>`: a job that runs only while nothing else here does, which another such job
     /// does not count as work.
+    /// `pressing.<pid>`: a shared job marked urgent, which goes around the queue's gate and parks
+    /// nothing, so it takes no `urgent.<pid>`.
+    pub fn mark_pressing(&self, pid: u32, why: &str) {
+        let _ = fs::write(self.file("pressing", pid), why.replace('\n', " "));
+    }
+
+    /// Why the job is urgent, a benchmark that parks the shared jobs or a shared job that only
+    /// goes around the gate.
+    pub fn urgent_why(&self, pid: u32) -> Option<String> {
+        self.urgent_of(pid)
+            .map(|u| u.why)
+            .or_else(|| fs::read_to_string(self.file("pressing", pid)).ok())
+    }
+
     pub fn mark_idle(&self, pid: u32, parks: bool) {
         let said = if parks { "" } else { IDLE_WAITS };
         let _ = fs::write(self.file("idle", pid), said);
@@ -632,6 +646,7 @@ impl LockDir {
             "deadline",
             "urgent",
             "parked",
+            "pressing",
             "idle",
             "card",
             "cohort",
@@ -717,6 +732,7 @@ impl LockDir {
             "deadline",
             "urgent",
             "parked",
+            "pressing",
             "idle",
             "card",
             "cohort",

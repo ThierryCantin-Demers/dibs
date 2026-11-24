@@ -480,6 +480,9 @@ impl<'a> Run<'a> {
         if self.waits_idle() {
             self.at.dir.mark_idle(pid, self.idle());
         }
+        if let (Mode::Shared, Some(why)) = (request.mode, &request.urgent) {
+            self.at.dir.mark_pressing(pid, why);
+        }
         self.at
             .dir
             .write(Kind::Waiting, &self.at.call.lock_record(start, &job));
