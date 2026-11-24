@@ -54,6 +54,9 @@ const AHEAD_POLL: Duration = Duration::from_millis(100);
 const BENCH_POLL: Duration = Duration::from_millis(50);
 /// How often a `--when-idle` job looks for other jobs while it waits for none.
 const IDLE_POLL: Duration = Duration::from_millis(500);
+/// How long a job waits for a `--when-idle` one to stop, past which it is taken to be laying out
+/// its tree, which it is not parked during.
+const IDLE_STOP: Duration = Duration::from_secs(60);
 
 /// How often a card benchmark kept from the gate looks whether a window opened for it to join.
 const JOIN_RECHECK: Duration = Duration::from_secs(1);
@@ -113,6 +116,8 @@ enum Yielded {
     Waited,
     GaveUp,
     Cancelled,
+    /// Its machine closed while it was parked without the lock.
+    Closed,
 }
 
 impl Yielded {
@@ -122,6 +127,7 @@ impl Yielded {
             Yielded::Free | Yielded::Waited => None,
             Yielded::GaveUp => Some(Exit::Busy.status()),
             Yielded::Cancelled => Some(Exit::Cancelled.status()),
+            Yielded::Closed => Some(Exit::Closed.status()),
         }
     }
 }
@@ -196,6 +202,8 @@ pub struct Hosted {
     pub laid: Option<By>,
     /// The cap stopped the call, rather than its command ending 124 itself.
     pub overran: bool,
+    /// Seconds a `--when-idle` job spent parked without the lock, which it did not run.
+    pub idled: u64,
 }
 
 impl Hosted {
@@ -302,6 +310,9 @@ impl<'a> Run<'a> {
             drop(acquired);
             drop(guard);
         };
+        if !self.idle() {
+            self.after_idle_parked();
+        }
         // The machine as well as the cards: while the group winds down, shared work must not start.
         if let Some(cards) = &acquired.cards {
             cards
@@ -639,7 +650,7 @@ impl<'a> Run<'a> {
     /// comes; urgent, it parks others instead.
     fn idle(&self) -> bool {
         let request = &self.at.call.request;
-        request.when_idle && request.urgent.is_none() && !request.preempt && self.parkable()
+        request.when_idle && request.urgent.is_none() && self.parkable()
     }
 
     /// Waits until no other job has held or waited here for the machine's settle time, saying
@@ -688,10 +699,15 @@ impl<'a> Run<'a> {
         state: MutexGuard<'a, State>,
         rw: &File,
         arrived: &Arrived,
+        until: Option<Instant>,
+        parked: bool,
     ) -> (MutexGuard<'a, State>, Yielded) {
         let pid = self.at.call.pid;
-        let Some(busy) = self.at.dir.busy_besides(pid) else {
-            return (state, Yielded::Free);
+        // Parked for a job that has already gone, it still waits the machine's settle time.
+        let busy = match (self.at.dir.busy_besides(pid), parked) {
+            (Some(busy), _) => format!("{} from {}", busy.label, busy.agent),
+            (None, true) => "a job that has since ended".to_string(),
+            (None, false) => return (state, Yielded::Free),
         };
         let was = state.stage;
         let mut state = state;
@@ -705,18 +721,30 @@ impl<'a> Run<'a> {
         let _ = rw.unlock();
         self.at.dir.set_deadline(pid, None);
         let said = format!(
-            "dibs: parked for {} from {}, since --when-idle makes way for any other job. It runs again from the start once the machine is idle.\n",
-            busy.label, busy.agent
+            "dibs: parked for {busy}, since --when-idle makes way for any other job. It runs again from the start once the machine is idle.\n"
         );
         self.at.sink.say(&said);
         let yielded = loop {
-            match self.until_idle(None, Some(&said)) {
+            match self.until_idle(until, Some(&said)) {
                 Idled::Idle => {}
                 Idled::Cancelled => break Yielded::Cancelled,
                 Idled::GaveUp => break Yielded::GaveUp,
             }
+            if let Some(closure) = (Shutter { dir: self.at.dir }).shut() {
+                if !self.at.call.request.when_open {
+                    self.at.sink.say(&format!(
+                        "{}  It closed while this call was parked, which leaves the queue.\n",
+                        closed::said(&closure)
+                    ));
+                    break Yielded::Closed;
+                }
+                std::thread::sleep(closed::POLL);
+                continue;
+            }
             if matches!(Lock::try_hold(rw, Hold::Shared), Ok(true)) {
-                if self.at.dir.busy_besides(pid).is_none() {
+                if self.at.dir.busy_besides(pid).is_none()
+                    && (Shutter { dir: self.at.dir }).shut().is_none()
+                {
                     break Yielded::Waited;
                 }
                 let _ = rw.unlock();
@@ -732,6 +760,15 @@ impl<'a> Run<'a> {
         let mut state = self.at.stopper.state();
         state.set_stage(was);
         (state, yielded)
+    }
+
+    /// Lets a `--when-idle` job running here stop first, which it does once it sees this one: until
+    /// then its command may still hold memory or a card this job needs.
+    fn after_idle_parked(&self) {
+        let until = Instant::now() + IDLE_STOP;
+        while self.at.dir.idle_holding(self.at.call.pid) && Instant::now() < until {
+            std::thread::sleep(park::POLL);
+        }
     }
 
     /// The call is a step of a batch cancelled since it arrived.
@@ -756,6 +793,7 @@ impl<'a> Run<'a> {
     fn preempts(&self) -> bool {
         let request = &self.at.call.request;
         request.preempt
+            && !self.idle()
             && self.at.call.mode() == Mode::Shared
             && !request.watch.hold
             && request.services.is_empty()
@@ -1441,6 +1479,7 @@ impl<'a> Run<'a> {
                 failed: false,
                 laid: Some(By::Dibs),
                 overran: false,
+                idled: 0,
             };
         }
         let mut deadline = Deadline::after((max > 0).then(|| Duration::from_secs(max)));
@@ -1456,6 +1495,7 @@ impl<'a> Run<'a> {
             failed: false,
             laid: None,
             overran: false,
+            idled: 0,
         };
         let layout = Layout::new(self.at, output);
         let mut spot = None;
@@ -1556,6 +1596,7 @@ impl<'a> Run<'a> {
                 let command = arrived.held.as_ref().map(HoldFifo::command);
                 let command = command.as_deref().unwrap_or(&self.at.call.work);
                 let parkable = self.parkable();
+                let mut parked = false;
                 let mut runs = 0;
                 let mut waited = false;
                 loop {
@@ -1563,7 +1604,12 @@ impl<'a> Run<'a> {
                     // waits for this one instead.
                     let left = deadline.left();
                     if let Some(rw) = &idle_rw {
-                        let (held, yielded) = self.yield_while_busy(state, rw, arrived);
+                        let until = (runs == 0).then(|| self.wait_until(arrived)).flatten();
+                        let since = Instant::now();
+                        let (held, yielded) =
+                            self.yield_while_busy(state, rw, arrived, until, parked);
+                        hosted.idled += since.elapsed().as_secs();
+                        parked = false;
                         state = held;
                         if let Some(status) = yielded.status() {
                             drop(state);
@@ -1653,7 +1699,8 @@ impl<'a> Run<'a> {
                         )
                     });
                     let status = self.work(work, cap, arrived.held.is_some(), &mut hosted);
-                    if !parking.is_some_and(Parking::end) {
+                    parked = parking.is_some_and(Parking::end);
+                    if !parked {
                         break status;
                     }
                     self.sweep_escaped(&arrived.job);
@@ -1743,7 +1790,9 @@ impl<'a> Run<'a> {
         } else {
             end.hosted.status
         };
-        let ran = Moment::epoch_now().saturating_sub(end.acquired.at);
+        let ran = Moment::epoch_now()
+            .saturating_sub(end.acquired.at)
+            .saturating_sub(end.hosted.idled);
         {
             let mut state = self.at.stopper.state();
             state.set_stage(Stage::Finishing);
@@ -1799,7 +1848,7 @@ impl<'a> Run<'a> {
                 &HistoryLine {
                     mode,
                     label: self.at.call.label().clone(),
-                    seconds: Moment::epoch_now().saturating_sub(end.acquired.at),
+                    seconds: ran,
                     agent: Some(self.at.call.agent.clone()),
                     fingerprint: request.fingerprint.clone(),
                 },

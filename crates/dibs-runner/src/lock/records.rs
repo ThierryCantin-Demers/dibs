@@ -583,6 +583,13 @@ impl LockDir {
         self.file("idle", pid).exists()
     }
 
+    /// A job run only while nothing else here runs that still holds, besides `pid`.
+    pub fn idle_holding(&self, pid: u32) -> bool {
+        self.records(Kind::Holder).iter().any(|r| {
+            r.pid != pid && self.idle_only(r.pid) && RecordFile(&self.file("holder", r.pid)).alive()
+        })
+    }
+
     /// Another job that holds or waits here, which a job run only while none does makes way for.
     pub fn busy_besides(&self, pid: u32) -> Option<LockRecord> {
         [Kind::Holder, Kind::Waiting].into_iter().find_map(|kind| {

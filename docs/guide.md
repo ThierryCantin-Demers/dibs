@@ -1014,7 +1014,10 @@ Parking repeats what the job had done, so it suits work that runs well at night 
 not work that must finish by a time. It is shared work that can run again: a benchmark,
 `--urgent`, `--preemptible`, `--hold`, `--with` and `--port` are refused with it. On a recipe or a
 batch, the flag reaches every step, and a detached batch carries it to its machine; a batch's
-benchmarks run as usual. Check-ins and `--max` count only the time it runs, each run apart.
+benchmarks run as usual. Check-ins and `--max` count only the time it runs, each run apart, and
+so do its trailer and its label's history. A recipe's tree is laid out before its command can be
+parked, so a job that comes during that waits for it, or for a minute at most, as it would for any
+shared job's prepare.
 
 ## The two halves
 
