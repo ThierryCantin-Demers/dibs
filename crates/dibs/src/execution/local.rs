@@ -477,7 +477,6 @@ impl Checkout {
             }
         };
         let (slot, lock) = Checkout::holding(root, sha)
-            .into_iter()
             .find_map(free)
             .or_else(|| (0u32..).find_map(free))
             .expect("an unbounded range")?;
@@ -507,14 +506,13 @@ impl Checkout {
 
     /// The slots whose checkout holds `sha`, tried first: the target of one that sent it is the
     /// one that built it, which a measurement in a call of its own, after the build's, has to find.
-    fn holding(root: &Path, sha: &str) -> Vec<u32> {
+    fn holding<'p>(root: &'p Path, sha: &'p str) -> impl Iterator<Item = u32> + 'p {
         (0u32..)
-            .map_while(|n| root.join(n.to_string()).is_dir().then_some(n))
-            .filter(|n| {
+            .map_while(move |n| root.join(n.to_string()).is_dir().then_some(n))
+            .filter(move |n| {
                 std::fs::read_to_string(root.join(n.to_string()).join(".git/HEAD"))
                     .is_ok_and(|head| head.trim() == sha)
             })
-            .collect()
     }
 
     /// Whether `checkout` borrows its objects from `dir`'s repo. One cloned from a repo that has
@@ -890,13 +888,24 @@ mod tests {
             c.key, b.key,
             "a commit's tree on the machine is the same whichever checkout sent it"
         );
+        // Laid out by hand and never locked: a lock let go of may still be held a moment by a
+        // child another test forked, which would send the call to a fresh slot instead.
+        let idle = scratch.join("sent/idle");
+        std::fs::create_dir_all(&idle).unwrap();
+        for (slot, sha) in [("0", &one), ("1", &two)] {
+            let from = repo.to_str().unwrap();
+            Git(&idle)
+                .run(&["clone", "-q", "--shared", "--no-checkout", from, slot])
+                .unwrap();
+            Git(&idle.join(slot))
+                .run(&["checkout", "-q", "--detach", sha])
+                .unwrap();
+        }
+        let again = Checkout::under(&idle, &repo, "repo", &two, None).unwrap();
         assert_eq!(
-            (
-                Checkout::holding(&root, &one),
-                Checkout::holding(&root, &two)
-            ),
-            (vec![0], vec![1, 2]),
-            "a commit goes back first to a slot that last sent it, whose target built it"
+            again.dir,
+            idle.join("1"),
+            "a commit goes back to a free slot that last sent it, whose target built it"
         );
         let _ = std::fs::remove_dir_all(&scratch);
     }
