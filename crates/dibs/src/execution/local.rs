@@ -892,7 +892,7 @@ mod tests {
         // child another test forked, which would send the call to a fresh slot instead.
         let idle = scratch.join("sent/idle");
         std::fs::create_dir_all(&idle).unwrap();
-        for (slot, sha) in [("0", &one), ("1", &two)] {
+        for (slot, sha) in [("0", &one), ("1", &two), ("2", &two)] {
             let from = repo.to_str().unwrap();
             Git(&idle)
                 .run(&["clone", "-q", "--shared", "--no-checkout", from, slot])
@@ -905,7 +905,7 @@ mod tests {
         assert_eq!(
             again.dir,
             idle.join("1"),
-            "a commit goes back to a free slot that last sent it, whose target built it"
+            "a commit goes back to the first free slot that last sent it, whose target built it"
         );
         let _ = std::fs::remove_dir_all(&scratch);
     }
