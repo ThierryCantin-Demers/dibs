@@ -126,7 +126,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let clones = Clones::on(backend.machine.clone());
     let mut arms = Arm::look_up(&sides, &dir, &repo_name, &clones)?;
     let mut pins = Pinned::all(args, &repo_name, &dir, &arms, &clones)?;
-    let mut arm = arms.remove(0);
+    let arm = arms.remove(0);
     let local = arm.fetch.is_none().then(|| arm.local(&dir)).transpose()?;
     if args.dry_run {
         println!("label       {label}");
@@ -273,9 +273,6 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
                 ..setup
             };
             let reported = l.send(&from, &backend, &send, &mut |p| p.announce());
-            if let Some(c) = &mut arm.checkout {
-                c.lock = None;
-            }
             if reported.prepared.is_none() || reported.outcome.status != 0 {
                 return Err(RunError::Call {
                     exit: reported.outcome.status,

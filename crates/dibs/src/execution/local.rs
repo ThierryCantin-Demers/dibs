@@ -425,8 +425,9 @@ impl SentFrom {
 /// A few checkouts per repo, each a clone that borrows this checkout's objects, so nothing is
 /// copied but files and no worktree is registered in the checkout. Its machine tree is keyed by
 /// the commit rather than by the path, so two commits never build in one tree, and its target by
-/// the slot, so they share a build cache as a fetched arm's commits do. Each is locked until it
-/// has been sent, which is why a comparison of two such commits takes two.
+/// the slot, so they share a build cache as a fetched arm's commits do. Each is locked until its
+/// call ends, since its target is in use until then, which is why two calls at once, or a
+/// comparison of two such commits, take two.
 pub struct Checkout {
     pub dir: PathBuf,
     pub sha: String,

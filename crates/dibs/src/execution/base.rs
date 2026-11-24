@@ -304,7 +304,9 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         });
     }
 
-    let mut checkout_locks: Vec<Option<std::fs::File>> = arms
+    // Held until the call ends: the machine builds every commit sent from a slot in one target,
+    // so another call taking the slot meanwhile would rebuild it under this one's command.
+    let _slots: Vec<Option<std::fs::File>> = arms
         .iter_mut()
         .map(|a| a.checkout.as_mut().and_then(|c| c.lock.take()))
         .collect();
@@ -366,7 +368,6 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     prepared,
                     ..
                 } = local.send(arms[a].dir(&dir), &backend, &send, &mut announce);
-                checkout_locks[a] = None;
                 let Some(prepared) = prepared else {
                     return Err(RunError::Call {
                         exit: out.status,
