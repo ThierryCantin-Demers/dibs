@@ -87,6 +87,15 @@ impl Visit {
     /// Runs the call to its end; the caller's channel, where it has one, is watched while it is
     /// queued and runs.
     pub fn serve(&self, caller: Caller, signals: Signals) -> i32 {
+        if self.call.request.lookup
+            && (self.call.request.attempt.is_none()
+                || !matches!(self.call.mode(), Mode::Shared | Mode::Bench))
+        {
+            self.sink.say(
+                "dibs: a lookup is a run or a benchmark naming the attempt it asks after, so nothing ran\n",
+            );
+            return Exit::Refused.status();
+        }
         if self.call.mode() != Mode::Check {
             for refused in &self.settings.refused {
                 self.sink.say(&format!("dibs: {refused}\n"));
@@ -186,15 +195,6 @@ impl Visit {
             );
             Journal { path: &machine.log }.write(&line);
             return Exit::Cancelled.status();
-        }
-        if self.call.request.lookup
-            && (self.call.request.attempt.is_none()
-                || !matches!(self.call.mode(), Mode::Shared | Mode::Bench))
-        {
-            self.sink.say(
-                "dibs: a lookup is a run or a benchmark naming the attempt it asks after, so nothing ran\n",
-            );
-            return Exit::Refused.status();
         }
         if matches!(
             self.call.mode(),

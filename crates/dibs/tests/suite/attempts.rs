@@ -115,3 +115,15 @@ fn a_lookup_runs_nothing_and_closes_an_attempt_it_never_saw() {
     assert_ne!(late.code, 0, "{}", late.all());
     assert_eq!(ran(&s), 0);
 }
+
+#[test]
+fn a_lookup_that_is_not_a_run_does_nothing() {
+    let s = Sandbox::new();
+    let gc = s
+        .dibs(["--gc"])
+        .env("DIBS_ATTEMPT_LOOKUP", "1")
+        .env("DIBS_ATTEMPT", "sub.3.1")
+        .run();
+    assert_ne!(gc.code, 0, "{}", gc.all());
+    assert_eq!(gc.stderr.lines_with("so nothing ran"), 1, "{}", gc.all());
+}
