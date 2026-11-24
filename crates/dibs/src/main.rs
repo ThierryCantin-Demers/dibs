@@ -94,8 +94,8 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             if call.when_open {
                 wait_for_open();
             }
-            if call.when_idle {
-                when_idle();
+            if call.low_priority {
+                low_priority();
             }
             if let Some(why) = &call.urgent {
                 urgent(why);
@@ -108,8 +108,8 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             if call.when_open {
                 wait_for_open();
             }
-            if call.when_idle {
-                when_idle();
+            if call.low_priority {
+                low_priority();
             }
             if let Some(why) = &call.urgent {
                 urgent(why);
@@ -304,10 +304,10 @@ fn urgent(why: &str) {
     unsafe { std::env::set_var("DIBS_URGENT", why) };
 }
 
-/// `--when-idle`, carried in the environment as `--when-open` is.
-fn when_idle() {
+/// `--low-priority`, carried in the environment as `--when-open` is.
+fn low_priority() {
     // SAFETY: set while only the main thread runs, before anything reads the environment.
-    unsafe { std::env::set_var(call::WHEN_IDLE, "1") };
+    unsafe { std::env::set_var(call::LOW_PRIORITY, "1") };
 }
 
 /// `--when-open`, carried in the environment to every request this call and its children send.

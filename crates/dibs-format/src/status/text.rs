@@ -295,7 +295,7 @@ impl Text<'_> {
             cmd: &waiter.cmd,
         };
         let when = match waiter.eta {
-            _ if waiter.when_idle => format!("   {}[waits for an idle machine]{}", p.dim, p.off),
+            _ if waiter.low_priority => format!("   {}[waits for an idle machine]{}", p.dim, p.off),
             Some(0) => format!("   {}[starts as soon as the lock frees]{}", p.dim, p.off),
             Some(eta) => format!("   {}[~{} until it starts]{}", p.dim, Span(eta), p.off),
             None => String::new(),

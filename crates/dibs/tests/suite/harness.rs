@@ -118,7 +118,7 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         new_series: false,
         preempt: false,
         when_open: false,
-        when_idle: false,
+        low_priority: false,
         urgent: None,
         tree: None,
         check_in: None,

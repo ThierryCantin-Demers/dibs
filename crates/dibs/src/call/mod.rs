@@ -17,7 +17,7 @@ mod status;
 mod sync;
 mod watched;
 
-pub use base::{CHECK_IN, CallError, LockedCall, Ran, WHEN_IDLE};
+pub use base::{CHECK_IN, CallError, LOW_PRIORITY, LockedCall, Ran};
 pub use dispatch::Dispatch;
 pub use feed::{Fed, StatusFeed};
 pub use hold::Guard;

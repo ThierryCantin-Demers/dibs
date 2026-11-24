@@ -152,8 +152,8 @@ pub struct RecipeCall {
     pub when_open: bool,
     /// `--urgent`, and why.
     pub urgent: Option<String>,
-    /// `--when-idle`: the shared jobs run only while nothing else does.
-    pub when_idle: bool,
+    /// `--low-priority`: the shared jobs run only while nothing else does.
+    pub low_priority: bool,
     /// Measure even when another tree built into the target after this one did.
     pub anyway: bool,
     /// with only: the command runs on the machine, in the tree, rather than here.
@@ -213,7 +213,7 @@ impl RecipeCall {
             max: None,
             when_open: false,
             urgent: None,
-            when_idle: false,
+            low_priority: false,
             anyway: false,
             there: false,
             json: false,
@@ -283,7 +283,7 @@ impl RecipeCall {
                 }
                 "--anyway" => call.anyway = true,
                 "--when-open" => call.when_open = true,
-                "--when-idle" => call.when_idle = true,
+                "--low-priority" => call.low_priority = true,
                 "--there" => call.there = true,
                 "--json" => call.json = true,
                 "--all" => call.all = true,
@@ -334,9 +334,9 @@ impl RecipeCall {
             return Err(refused("needs a repo".into()));
         }
         let measures = call.bench || matches!(verb, RecipeVerb::Bench | RecipeVerb::With);
-        if call.when_idle && (measures || call.preempt || call.urgent.is_some()) {
+        if call.low_priority && (measures || call.preempt || call.urgent.is_some()) {
             return Err(refused(
-                "--when-idle is for shared work that can be stopped and run again from the start: not a benchmark, a with, --preemptible or --urgent".into(),
+                "--low-priority is for shared work that can be stopped and run again from the start: not a benchmark, a with, --preemptible or --urgent".into(),
             ));
         }
         if call.preempt && call.bench {

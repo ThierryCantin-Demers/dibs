@@ -517,7 +517,7 @@ fn recipe(verb: RecipeVerb, repo: &str) -> RecipeCall {
         preempt: false,
         max: None,
         when_open: false,
-        when_idle: false,
+        low_priority: false,
         urgent: None,
         anyway: false,
         there: false,

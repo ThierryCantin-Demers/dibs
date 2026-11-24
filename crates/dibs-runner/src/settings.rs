@@ -263,7 +263,7 @@ pub struct Settings {
     pub bypass: bool,
     /// Seconds a queued benchmark lets quick jobs go around it.
     pub patience: u64,
-    /// Seconds the machine must have had no other job before a `--when-idle` one starts, so a
+    /// Seconds the machine must have had no other job before a `--low-priority` one starts, so a
     /// batch's next step or an agent's next call finds it not yet started rather than to park.
     pub idle_settle: u64,
     /// Seconds a job's own history must say it takes, at most, to go around.

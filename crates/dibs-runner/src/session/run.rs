@@ -52,9 +52,9 @@ const AHEAD_POLL: Duration = Duration::from_millis(100);
 /// How often a benchmark tries `rw` again while it waits for the jobs that hold it, which is
 /// how it learns that only preemptible ones it may freeze are left.
 const BENCH_POLL: Duration = Duration::from_millis(50);
-/// How often a `--when-idle` job looks for other jobs while it waits for none.
+/// How often a `--low-priority` job looks for other jobs while it waits for none.
 const IDLE_POLL: Duration = Duration::from_millis(500);
-/// How long a job waits for a `--when-idle` one to stop, past which it is taken to be laying out
+/// How long a job waits for a `--low-priority` one to stop, past which it is taken to be laying out
 /// its tree, which it is not parked during.
 const IDLE_STOP: Duration = Duration::from_secs(60);
 
@@ -133,7 +133,7 @@ impl Yielded {
 }
 
 /// What stops a running job before its end, to run on or again later: a benchmark that freezes
-/// it, and, for a `--when-idle` job, its own handle on `rw`, let go of while it is parked.
+/// it, and, for a `--low-priority` job, its own handle on `rw`, let go of while it is parked.
 struct Stops {
     frozen: Arc<Frozen>,
     idle_rw: Option<File>,
@@ -202,7 +202,7 @@ pub struct Hosted {
     pub laid: Option<By>,
     /// The cap stopped the call, rather than its command ending 124 itself.
     pub overran: bool,
-    /// What a `--when-idle` job spent parked without the lock, which it did not run.
+    /// What a `--low-priority` job spent parked without the lock, which it did not run.
     pub idled: Duration,
 }
 
@@ -650,15 +650,17 @@ impl<'a> Run<'a> {
     /// comes; urgent, it parks others instead.
     fn idle(&self) -> bool {
         let request = &self.at.call.request;
-        request.when_idle && request.urgent.is_none() && self.parkable()
+        request.low_priority && request.urgent.is_none() && self.parkable()
     }
 
-    /// A `--when-idle` call that waits for an idle machine to start: a parkable job, and the
+    /// A `--low-priority` call that waits for an idle machine to start: a parkable job, and the
     /// transfer that sends a recipe's tree, which is short and is never parked once it runs.
     fn waits_idle(&self) -> bool {
         let request = &self.at.call.request;
         self.idle()
-            || (request.when_idle && request.urgent.is_none() && self.at.call.mode() == Mode::Rsh)
+            || (request.low_priority
+                && request.urgent.is_none()
+                && self.at.call.mode() == Mode::Rsh)
     }
 
     /// Waits until no other job has held or waited here for the machine's settle time, saying
@@ -677,7 +679,7 @@ impl<'a> Run<'a> {
                     quiet = None;
                     if !told {
                         self.at.sink.say(&format!(
-                            "dibs: --when-idle, so it waits until nothing else runs or waits here: {} from {} is there.\n",
+                            "dibs: --low-priority, so it waits until nothing else runs or waits here: {} from {} is there.\n",
                             busy.label, busy.agent
                         ));
                         told = true;
@@ -691,7 +693,7 @@ impl<'a> Run<'a> {
             if until.is_some_and(|until| Instant::now() >= until) {
                 let wait = self.at.call.request.wait.unwrap_or_default();
                 self.at.sink.say(&format!(
-                    "dibs: still busy after {wait}s, gave up: --when-idle waits for an idle machine.\n"
+                    "dibs: still busy after {wait}s, gave up: --low-priority waits for an idle machine.\n"
                 ));
                 return Idled::GaveUp;
             }
@@ -727,7 +729,7 @@ impl<'a> Run<'a> {
         let _ = rw.unlock();
         self.at.dir.set_deadline(pid, None);
         let said = format!(
-            "dibs: parked for {busy}, since --when-idle makes way for any other job. It runs again from the start once the machine is idle.\n"
+            "dibs: parked for {busy}, since --low-priority makes way for any other job. It runs again from the start once the machine is idle.\n"
         );
         self.at.sink.say(&said);
         let yielded = loop {
@@ -772,8 +774,8 @@ impl<'a> Run<'a> {
         (state, yielded)
     }
 
-    /// Lets a `--when-idle` job running here stop first, which it does once it sees this one: until
-    /// then its command may still hold memory or a card this job needs.
+    /// Lets a `--low-priority` job running here stop first, which it does once it sees this one:
+    /// until then its command may still hold memory or a card this job needs.
     fn after_idle_parked(&self) {
         let until = Instant::now() + IDLE_STOP;
         while self.at.dir.idle_holding(self.at.call.pid) && Instant::now() < until {

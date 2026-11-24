@@ -40,8 +40,8 @@ pub struct Call {
     pub when_open: bool,
     /// `--urgent`, and why: a benchmark that parks the shared jobs running and has the machine.
     pub urgent: Option<String>,
-    /// `--when-idle`: runs only while nothing else does, and makes way for anything that comes.
-    pub when_idle: bool,
+    /// `--low-priority`: runs only while nothing else does, and makes way for anything that comes.
+    pub low_priority: bool,
     pub max: Option<u64>,
     /// `--check-in`: seconds a job runs before its call lets go of it; 0 never does.
     pub check_in: Option<u64>,

@@ -2,7 +2,7 @@
 //! moment the driver is gone, however the driver went.
 
 use crate::{
-    call::{BatchStep, CHECK_IN, Starter, WHEN_IDLE, Watched},
+    call::{BatchStep, CHECK_IN, LOW_PRIORITY, Starter, Watched},
     itself::Itself,
 };
 use dibs_format::{Exit, MachineName};
@@ -17,7 +17,7 @@ pub struct StepGuard;
 /// What the batch was started with that every step it starts keeps, a follow's included.
 pub struct Carried<'a> {
     pub check_in: Option<&'a str>,
-    pub when_idle: bool,
+    pub low_priority: bool,
 }
 
 impl StepGuard {
@@ -41,9 +41,9 @@ impl StepGuard {
             Some(time) => guard.env(CHECK_IN, time),
             None => guard.env_remove(CHECK_IN),
         };
-        match carried.when_idle {
-            true => guard.env(WHEN_IDLE, "1"),
-            false => guard.env_remove(WHEN_IDLE),
+        match carried.low_priority {
+            true => guard.env(LOW_PRIORITY, "1"),
+            false => guard.env_remove(LOW_PRIORITY),
         };
         guard
             .args([StepGuard::WORD, line])

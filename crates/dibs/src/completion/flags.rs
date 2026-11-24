@@ -181,7 +181,7 @@ pub const CALL: &[Flag] = &[
         "queue on a closed machine until it opens",
     ),
     Flag::new(
-        &["--when-idle"],
+        &["--low-priority"],
         Value::No,
         "run only while nothing else does, parked for any other job",
     ),
@@ -301,7 +301,7 @@ pub const RECIPE: &[Flag] = &[
         "queue on a closed machine until it opens",
     ),
     Flag::new(
-        &["--when-idle"],
+        &["--low-priority"],
         Value::No,
         "run only while nothing else does, parked for any other job",
     ),

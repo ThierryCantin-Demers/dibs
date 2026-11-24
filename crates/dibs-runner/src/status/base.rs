@@ -242,8 +242,8 @@ impl Look<'_> {
         eta: &mut Eta,
     ) -> Waiter {
         let estimate = self.estimate(record, None);
-        let when_idle = self.dir.idle_only(record.pid);
-        let starts = match when_idle {
+        let low_priority = self.dir.idle_only(record.pid);
+        let starts = match low_priority {
             true => None,
             false => eta.next(record.mode, estimate),
         };
@@ -266,7 +266,7 @@ impl Look<'_> {
             arrived: record.start,
             waiting: now.saturating_sub(record.start),
             eta: starts,
-            when_idle,
+            low_priority,
             batch: self.batch(record.pid, left, tail),
         }
     }

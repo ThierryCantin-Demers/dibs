@@ -148,7 +148,7 @@ impl CallValues {
             // From the environment, which `--when-open` sets, so a batch's steps and a sync's
             // transfer carry it too.
             when_open: std::env::var("DIBS_WHEN_OPEN").is_ok_and(|v| v == "1"),
-            when_idle: std::env::var(crate::call::WHEN_IDLE).is_ok_and(|v| v == "1"),
+            low_priority: std::env::var(crate::call::LOW_PRIORITY).is_ok_and(|v| v == "1"),
             urgent: std::env::var("DIBS_URGENT")
                 .ok()
                 .filter(|why| !why.is_empty()),
