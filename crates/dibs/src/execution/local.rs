@@ -476,15 +476,8 @@ impl Checkout {
                 Err(std::fs::TryLockError::Error(e)) => Some(Err(FileError::new(&path, e))),
             }
         };
-        // The slot that last sent this commit first: its target is the one that built it, which
-        // a measurement in a call of its own, after the build's, has to find.
-        let holds = |n: &u32| {
-            std::fs::read_to_string(root.join(n.to_string()).join(".git/HEAD"))
-                .is_ok_and(|head| head.trim() == sha)
-        };
-        let (slot, lock) = (0u32..)
-            .map_while(|n| root.join(n.to_string()).is_dir().then_some(n))
-            .filter(holds)
+        let (slot, lock) = Checkout::holding(root, sha)
+            .into_iter()
             .find_map(free)
             .or_else(|| (0u32..).find_map(free))
             .expect("an unbounded range")?;
@@ -510,6 +503,18 @@ impl Checkout {
             lock: Some(lock),
             why,
         })
+    }
+
+    /// The slots whose checkout holds `sha`, tried first: the target of one that sent it is the
+    /// one that built it, which a measurement in a call of its own, after the build's, has to find.
+    fn holding(root: &Path, sha: &str) -> Vec<u32> {
+        (0u32..)
+            .map_while(|n| root.join(n.to_string()).is_dir().then_some(n))
+            .filter(|n| {
+                std::fs::read_to_string(root.join(n.to_string()).join(".git/HEAD"))
+                    .is_ok_and(|head| head.trim() == sha)
+            })
+            .collect()
     }
 
     /// Whether `checkout` borrows its objects from `dir`'s repo. One cloned from a repo that has
@@ -885,15 +890,14 @@ mod tests {
             c.key, b.key,
             "a commit's tree on the machine is the same whichever checkout sent it"
         );
-        let (a_dir, b_dir) = (a.dir.clone(), b.dir.clone());
-        drop((a, b, c));
-        let two_again = Checkout::under(&root, &repo, "repo", &two, None).unwrap();
         assert_eq!(
-            two_again.dir, b_dir,
-            "a commit goes back to the first free slot that last sent it, whose target built it"
+            (
+                Checkout::holding(&root, &one),
+                Checkout::holding(&root, &two)
+            ),
+            (vec![0], vec![1, 2]),
+            "a commit goes back first to a slot that last sent it, whose target built it"
         );
-        let one_again = Checkout::under(&root, &repo, "repo", &one, None).unwrap();
-        assert_eq!(one_again.dir, a_dir);
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
