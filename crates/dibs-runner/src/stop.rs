@@ -142,7 +142,7 @@ impl Stopper {
             let mut state = self.state();
             if !matches!(
                 state.stage,
-                Stage::Preparing(_) | Stage::Starting | Stage::Running(_) | Stage::Parked
+                Stage::Starting | Stage::Running(_) | Stage::Parked
             ) || !self.sink.framed()
             {
                 return false;

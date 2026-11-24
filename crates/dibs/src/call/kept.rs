@@ -93,6 +93,21 @@ impl MachineCall<'_> {
     }
 }
 
+/// Whether a follow's exit is its job's: one that never reached the job, unreachable, refused,
+/// checked in again or killed itself, says nothing of how the job ended.
+pub fn reached_its_job(exit: i32) -> bool {
+    exit >= 0
+        && ![
+            Exit::Refused,
+            Exit::Unreachable,
+            Exit::NoLock,
+            Exit::NoRunner,
+            Exit::CheckedIn,
+        ]
+        .iter()
+        .any(|e| e.status() == exit)
+}
+
 /// A job's log and files as this computer keeps them, fetched from its machine the first time
 /// they are asked for, so they can be read after the machine is gone.
 struct KeptJob<'a> {

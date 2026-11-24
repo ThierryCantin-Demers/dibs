@@ -564,8 +564,8 @@ status` shows its steps as any batch's.
 An agent hears of its job only when the call that started it exits, so a job that hangs holds
 the machine until a person notices. Once a job has run 30 minutes, its call lets go of it and
 exits 80: the job goes on, and the call prints how long it has run, the end of its log and of
-each `--with` server's, and how to follow or stop it. Only running counts: not the queue, and not
-time frozen behind a benchmark or parked behind an urgent one. Nothing is judged from CPU or
+each `--with` server's, and how to follow or stop it. Only running counts: not the queue, not
+laying out a recipe's tree, and not time frozen behind a benchmark or parked behind an urgent one. Nothing is judged from CPU or
 output, which a stuck job can show either way; the agent knows what its job should be doing.
 
 `dibs --on <machine> --follow <job>` waits on it again. It ends with the job, passing on its

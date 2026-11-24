@@ -7,7 +7,7 @@ use super::{
     kept::KeptStores,
 };
 use crate::{
-    call::{MachineCall, Output},
+    call::{MachineCall, Output, reached_its_job},
     caller::Caller,
     cli::Call,
     paths::Paths,
@@ -17,7 +17,7 @@ use dibs_format::{JobId, Moment, Outcome, RunRecord, wire::Prepared};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    fs,
+    fs::{self, File},
     path::{Path, PathBuf},
 };
 
@@ -59,48 +59,39 @@ impl Unfinished {
         }
     }
 
-    /// Follows the job to its end, then finishes the run kept at `path`: whoever claims it by a
-    /// rename does, so two followers record it once.
+    /// Follows the job to its end, then finishes the run kept at `path`.
     pub fn follow(path: &Path, job: &JobId, call: &Call, caller: &Caller) -> Result<i32, RunError> {
         let machine = MachineCall::new(call, caller)?;
         let mut on_prepared = |_: &Prepared| {};
         let mut reader = Reader::new(&mut on_prepared);
         let exit = Jobs::exit(machine.follow_into(job, &mut Output::Listening(&mut reader)));
         let reported = reader.reported(exit);
-        // Only the job's own trailer says it ended: a follow that never reached it leaves the
-        // run for the next.
-        let ended = reported
-            .outcome
-            .trailer
-            .as_ref()
-            .is_some_and(|t| t.job == job.as_str());
+        // Only how the job itself ended finishes the run: a follow that never reached it, or
+        // checked in again, leaves the run for the next.
+        let ended = match &reported.outcome.trailer {
+            Some(trailer) => trailer.job == job.as_str(),
+            None => reached_its_job(exit),
+        };
         if reported.outcome.checked_in.is_some() || !ended {
             return Ok(exit);
         }
-        let claimed = path.with_extension(std::process::id().to_string());
-        if fs::rename(path, &claimed).is_err() {
-            return Ok(exit);
-        }
-        let unfinished = fs::read(&claimed)
+        // Held while the run is finished, and the run removed only once it is recorded, so a
+        // follower cut off halfway leaves it to the next and two never record it twice.
+        let claim = File::create(path.with_extension("claim"))
             .ok()
-            .and_then(|json| serde_json::from_slice::<Unfinished>(&json).ok());
-        let Some(unfinished) = unfinished else {
-            let _ = fs::remove_file(&claimed);
-            eprintln!(
-                "dibs: the run job {job} ended could not be read back, so it is not recorded"
-            );
+            .filter(|claim| claim.try_lock().is_ok());
+        let Some(_claim) = claim else {
             return Ok(exit);
         };
-        match unfinished.finish(reported) {
-            Ok(()) => {
-                let _ = fs::remove_file(&claimed);
-                Ok(exit)
-            }
-            Err(e) => {
-                let _ = fs::rename(&claimed, path);
-                Err(e)
-            }
-        }
+        let Some(unfinished) = fs::read(path)
+            .ok()
+            .and_then(|json| serde_json::from_slice::<Unfinished>(&json).ok())
+        else {
+            return Ok(exit);
+        };
+        unfinished.finish(reported)?;
+        let _ = fs::remove_file(path);
+        Ok(exit)
     }
 
     fn finish(self, reported: Reported) -> Result<(), RunError> {
@@ -113,10 +104,17 @@ impl Unfinished {
             return Ok(());
         };
         let stepped = reported.stepped.as_ref();
+        // Without a trailer, as for a job that was killed, its time is the call's and the
+        // follow's.
+        let seconds = match reported.outcome.trailer {
+            Some(_) => reported.outcome.seconds,
+            None => last.seconds + reported.outcome.seconds,
+        };
         *last = dibs_format::StepRecord {
             arm: last.arm.take(),
             rep: last.rep,
             artifacts: stepped.and_then(|s| s.artifacts),
+            seconds,
             ..reported.outcome.step_record(last.lock)
         };
         if let Some(state) = stepped

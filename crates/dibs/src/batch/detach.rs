@@ -3,6 +3,7 @@
 
 use super::{
     base::{Options, driven_here, machine_of, resume, state_dir},
+    check_in::is_batch,
     detached::{Detached, Followed, Instructions},
     parse::{BatchError, Step, parse, split_words},
 };
@@ -430,6 +431,9 @@ pub fn detach(text: &str, opts: &Options) -> Result<i32, BatchError> {
 /// Follows a batch detached from here to its summary, which it prints at once if it has ended,
 /// or follows one driven here: run on from where a step's check-in paused it, or its summary.
 pub fn follow(id: &BatchId) -> Result<i32, BatchError> {
+    if !is_batch(id.as_str()) {
+        return Err(DetachError::NotDetached(id.clone()).into());
+    }
     let dir = state_dir().join(id.as_str());
     if driven_here(&dir) {
         return resume(id);

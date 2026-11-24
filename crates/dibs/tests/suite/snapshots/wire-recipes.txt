@@ -32,6 +32,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     agent_id: local_suite
     batch: null
     card: null
+    check_in: 1800
     command: export SAMPLES=3; echo ran cuda samples=$SAMPLES
     fingerprint: de78f4497d16258e
     json: false
@@ -265,6 +266,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
     card.pci: "0000:01:00.0"
     card.runtimes: ["cuda","vulkan"]
     card.twins: 1
+    check_in: 1800
     command: export SAMPLES=10; echo ran cuda samples=$SAMPLES
     fingerprint: 70e532912455d091
     json: false
@@ -327,6 +329,7 @@ call 2: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | 1	2
       | samples-2: app/build/p	shared	app_build_p	1
     card: null
+    check_in: 1800
     command: export SAMPLES=1; echo ran cuda samples=$SAMPLES
     fingerprint: 83480f9a8587b084
     json: false
@@ -385,6 +388,7 @@ call 4: ssh -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAli
       | <batch>	samples-2: app/build/p
       | 2	2
     card: null
+    check_in: 1800
     command: export SAMPLES=2; echo ran cuda samples=$SAMPLES
     fingerprint: eb8f9d64e6207555
     json: false

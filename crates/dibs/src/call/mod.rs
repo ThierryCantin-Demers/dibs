@@ -21,6 +21,7 @@ pub use base::{CHECK_IN, CallError, LockedCall, Ran};
 pub use dispatch::Dispatch;
 pub use feed::{Fed, StatusFeed};
 pub use hold::Guard;
+pub use kept::reached_its_job;
 pub use kill::{Driver, DriverClaim, Sender};
 pub use local::Destination;
 pub use machine::{Asked, Bound, MachineCall};

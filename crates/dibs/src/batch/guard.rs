@@ -2,7 +2,7 @@
 //! moment the driver is gone, however the driver went.
 
 use crate::{
-    call::{BatchStep, Starter, Watched},
+    call::{BatchStep, CHECK_IN, Starter, Watched},
     itself::Itself,
 };
 use dibs_format::{Exit, MachineName};
@@ -20,11 +20,20 @@ impl StepGuard {
 
     /// The driver's side: the guard of `line` started, leading a process group of its own, so a
     /// cancellation stops the step whole and a Ctrl-C at the driver's terminal reaches none of it.
-    pub fn spawn(line: &str, batch: &BatchStep, on: Option<&MachineName>) -> io::Result<Watched> {
+    pub fn spawn(
+        line: &str,
+        batch: &BatchStep,
+        on: Option<&MachineName>,
+        check_in: Option<&str>,
+    ) -> io::Result<Watched> {
         let mut guard = Itself::command();
         if let Some(on) = on {
             guard.env("DIBS_ON", on.as_str());
         }
+        match check_in {
+            Some(time) => guard.env(CHECK_IN, time),
+            None => guard.env_remove(CHECK_IN),
+        };
         guard
             .args([StepGuard::WORD, line])
             .envs(batch.vars())

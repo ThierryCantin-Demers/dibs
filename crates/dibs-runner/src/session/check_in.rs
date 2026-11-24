@@ -1,7 +1,11 @@
 //! A job's call lets go of it once it has run as long as `--check-in` gives it, so the agent that
 //! started it hears of it, while the job goes on; `dibs --follow` hears each check-in after.
 
-use crate::{ahead::Frozen, kept::tail, stop::Stopper};
+use crate::{
+    ahead::Frozen,
+    kept::tail,
+    stop::{Stage, Stopper},
+};
 use dibs_format::{JobId, Span, wire::CheckedIn};
 use std::{
     fs::{self, File},
@@ -88,7 +92,7 @@ pub struct CheckIn {
 
 impl CheckIn {
     /// Counts the job's running time a second at a time, less the time frozen and parked in it as
-    /// their own clocks measured them.
+    /// their own clocks measured them, and the time its tree was laid out.
     pub fn start(every: Duration, job: Job, stopper: Arc<Stopper>, frozen: Arc<Frozen>) -> Self {
         let (end, ended) = mpsc::channel();
         let thread = thread::spawn(move || {
@@ -101,10 +105,17 @@ impl CheckIn {
             while let Err(RecvTimeoutError::Timeout) = ended.recv_timeout(TICK) {
                 let now = Instant::now();
                 let frozen_now = frozen.total();
-                let parked = stopper.state().parked();
+                let (parked, preparing) = {
+                    let state = stopper.state();
+                    (state.parked(), matches!(state.stage, Stage::Preparing(_)))
+                };
                 let idle =
                     frozen_now.saturating_sub(was_frozen) + parked.saturating_sub(was_parked);
-                ran += (now - last).saturating_sub(idle);
+                // A tree being laid out is not the job running, and is let go of before its
+                // caller hears where it was laid.
+                if !preparing {
+                    ran += (now - last).saturating_sub(idle);
+                }
                 (last, was_frozen, was_parked) = (now, frozen_now, parked);
                 if ran >= every * (n + 1) {
                     n += 1;

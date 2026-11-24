@@ -24,10 +24,21 @@ impl Hint {
                     .then(|| words.iter().map(|w| w.to_string()).collect())
             })
         };
-        Some(Hint {
+        let hint = Hint {
             follow: call("  waits for ", follows)?,
             kill: call("  stops ", kills),
-        })
+        };
+        // A job's follow names the job the runner's check-in did.
+        let checked = said.lines().rev().find_map(|line| {
+            let rest = line.split("dibs: job ").nth(1)?;
+            rest.contains("and still runs")
+                .then(|| rest.split(' ').next())
+                .flatten()
+        });
+        match hint.job() {
+            Some(job) if checked != Some(job) => None,
+            _ => Some(hint),
+        }
     }
 
     /// The job its follow waits on, when it is one job rather than a batch.
@@ -68,7 +79,7 @@ fn is_job(word: &str) -> bool {
 }
 
 /// `<digits>-<digits>-<digits>`.
-fn is_batch(word: &str) -> bool {
+pub fn is_batch(word: &str) -> bool {
     numbers(word) == Some(3)
 }
 

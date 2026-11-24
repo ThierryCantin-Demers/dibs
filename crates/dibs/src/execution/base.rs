@@ -336,13 +336,9 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         if failed.is_some() {
             break;
         }
-        // A comparison or reps sums its jobs up once all have ended, which a follower does not,
-        // and a job that lays its tree out first is let go of before it says where.
+        // A comparison or reps sums its jobs up once all have ended, which a follower does not.
         let env = RecipeJob {
-            last: k + 1 == pins.len() + jobs.len()
-                && !compared
-                && args.reps == 1
-                && matches!(job, Job::Step { setup: false, .. }),
+            last: k + 1 == pins.len() + jobs.len() && !compared && args.reps == 1,
             ..env_of(k)
         };
         let setup = JobRequest {
