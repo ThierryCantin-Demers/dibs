@@ -5,6 +5,7 @@
   "author": { "name": "dibs" },
   "license": "Apache-2.0",
   "skills": "./skills/",
+  "hooks": [],
   "interface": {
     "displayName": "dibs",
     "shortDescription": "Shared machines through dibs",

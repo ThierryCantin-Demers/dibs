@@ -444,3 +444,29 @@ fn a_head_asked_for_one_checkout_is_never_told_to_another() {
         "a current checkout is told nothing from another checkout's answer"
     );
 }
+
+#[test]
+fn a_checkout_moved_to_another_branch_is_not_told_the_old_branch_s_head() {
+    let s = Sandbox::new();
+    clones(&s);
+    s.git("update/clone", &["pull", "-q", "--ff-only"]);
+    let here = s.git("update/clone", &["rev-parse", "--short", "HEAD"]);
+    let up = Upstream {
+        recipes: None,
+        ..upstream(&s, &here)
+    };
+    up.ask(0);
+    commit(&s, "update/origin", "three");
+    up.ask(0);
+    s.git("update/origin", &["branch", "side", "HEAD~1"]);
+    s.git("update/clone", &["fetch", "-q"]);
+    s.git(
+        "update/clone",
+        &["switch", "-q", "-c", "side", "--track", "origin/side"],
+    );
+    assert_eq!(
+        up.notice(&session("u")),
+        None,
+        "the cached head of main says nothing about side"
+    );
+}

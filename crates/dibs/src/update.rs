@@ -371,7 +371,8 @@ pub struct Upstream {
 #[derive(Default, PartialEq, Debug)]
 struct Heads {
     asked: u64,
-    heads: Vec<(PathBuf, String)>,
+    /// Each upstream, as `Tracked::key` names it, and its head.
+    heads: Vec<(String, String)>,
 }
 
 impl Heads {
@@ -382,8 +383,8 @@ impl Heads {
             match line.split_once(' ') {
                 Some(("asked", at)) => heads.asked = at.parse().unwrap_or(0),
                 Some(("head", rest)) => {
-                    if let Some((head, dir)) = rest.split_once(' ') {
-                        heads.heads.push((PathBuf::from(dir), head.to_string()));
+                    if let Some((head, key)) = rest.split_once(' ') {
+                        heads.heads.push((key.to_string(), head.to_string()));
                     }
                 }
                 _ => {}
@@ -392,25 +393,28 @@ impl Heads {
         heads
     }
 
-    /// The head last asked for `dir`.
+    /// The head last asked for the upstream `dir` tracks now.
     fn of(&self, dir: &Path) -> Option<&str> {
+        let key = Tracked::of(dir)?.key(dir);
         self.heads
             .iter()
-            .find(|(at, _)| at == dir)
+            .find(|(at, _)| *at == key)
             .map(|(_, head)| head.as_str())
     }
 
     /// Written whole and renamed into place, so a call that ends mid-write leaves the old answer.
-    fn write(&self, path: &Path) {
+    fn write(&self, path: &Path) -> bool {
         let mut text = format!("asked {}\n", self.asked);
-        for (dir, head) in &self.heads {
-            text.push_str(&format!("head {head} {}\n", dir.display()));
+        for (key, head) in &self.heads {
+            text.push_str(&format!("head {head} {key}\n"));
         }
-        let Some(dir) = path.parent() else { return };
+        let Some(dir) = path.parent() else {
+            return false;
+        };
         let partial = dir.join(format!(".upstream.{}", std::process::id()));
-        if std::fs::create_dir_all(dir).is_ok() && std::fs::write(&partial, text).is_ok() {
-            let _ = std::fs::rename(&partial, path);
-        }
+        std::fs::create_dir_all(dir).is_ok()
+            && std::fs::write(&partial, text).is_ok()
+            && std::fs::rename(&partial, path).is_ok()
     }
 }
 
@@ -481,15 +485,19 @@ impl Upstream {
             return false;
         }
         heads.asked = now.saturating_sub(ASKED_EVERY.as_secs() - ASKED_AGAIN_AFTER.as_secs());
-        heads.write(&self.cache);
-        true
+        // A cache that cannot keep the ask could not keep its answer either, so every call
+        // would ask again.
+        heads.write(&self.cache)
     }
 
     /// Asks both upstreams for their heads and keeps the answer.
     pub fn ask(&self, now: u64) {
         let heads = std::iter::once(self.clone.as_path())
             .chain(self.recipes.as_deref())
-            .filter_map(|dir| Some((dir.to_path_buf(), head_upstream(dir)?)))
+            .filter_map(|dir| {
+                let tracked = Tracked::of(dir)?;
+                Some((tracked.key(dir), tracked.head(dir)?))
+            })
             .collect();
         Heads { asked: now, heads }.write(&self.cache);
     }
@@ -544,41 +552,68 @@ impl Upstream {
     }
 }
 
-/// The head of the branch `dir` tracks, as its remote says it is now.
-fn head_upstream(dir: &Path) -> Option<String> {
-    let tracked = git(
-        dir,
-        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-    )?;
-    let (remote, branch) = tracked.split_once('/')?;
-    let mut ls = Command::new("git");
-    ls.arg("-C")
-        .arg(dir)
-        .args(["ls-remote", "--heads", remote, branch])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
-        .env("GIT_HTTP_LOW_SPEED_TIME", "10");
-    // An ssh command the repository or the person set is how its remote is reached at all.
-    let configured = std::env::var_os("GIT_SSH_COMMAND").is_some()
-        || git(dir, &["config", "core.sshCommand"]).is_some();
-    if !configured {
-        ls.env(
-            "GIT_SSH_COMMAND",
-            "ssh -o BatchMode=yes -o ConnectTimeout=10",
-        );
+/// The remote and the ref on it that a checkout's branch pulls from, as its config says.
+struct Tracked {
+    remote: String,
+    merge: String,
+}
+
+impl Tracked {
+    fn of(dir: &Path) -> Option<Tracked> {
+        let branch = git(dir, &["symbolic-ref", "--short", "-q", "HEAD"])?;
+        let remote = git(dir, &["config", &format!("branch.{branch}.remote")])?;
+        let merge = git(dir, &["config", &format!("branch.{branch}.merge")])?;
+        (remote != ".").then_some(Tracked { remote, merge })
     }
-    let out = ls.output().ok().filter(|out| out.status.success())?;
-    let wanted = format!("refs/heads/{branch}");
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .find_map(|line| {
-            let (head, name) = line.split_once('\t')?;
-            (name == wanted).then(|| head.to_string())
-        })
+
+    /// What the cache files this upstream's head under: the same checkout pulling from another
+    /// branch or remote asks anew.
+    fn key(&self, dir: &Path) -> String {
+        format!("{} {} {}", self.remote, self.merge, dir.display())
+    }
+
+    /// The head of the tracked ref, as the remote says it is now.
+    fn head(&self, dir: &Path) -> Option<String> {
+        let mut ls = Command::new("git");
+        ls.arg("-C")
+            .arg(dir)
+            .args(["ls-remote", &self.remote, &self.merge])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+            .env("GIT_HTTP_LOW_SPEED_TIME", "10");
+        // An ssh the repository or the person set is how its remote is reached at all.
+        let configured = ["GIT_SSH_COMMAND", "GIT_SSH"]
+            .iter()
+            .any(|var| std::env::var_os(var).is_some())
+            || git(dir, &["config", "core.sshCommand"]).is_some();
+        if !configured {
+            ls.env(
+                "GIT_SSH_COMMAND",
+                "ssh -o BatchMode=yes -o ConnectTimeout=10",
+            );
+        }
+        let out = ls.output().ok().filter(|out| out.status.success())?;
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find_map(|line| {
+                let (head, name) = line.split_once('\t')?;
+                (name == self.merge).then(|| head.to_string())
+            })
+    }
 }
 
 /// Whether `head` holds work `at` lacks. A head this clone has never fetched is newer; one `at`
 /// already contains, as when this computer is ahead of its upstream, is not.
 fn newer(dir: &Path, head: &str, at: &str) -> bool {
-    !git_ok(dir, &["merge-base", "--is-ancestor", head, at])
+    // A partial clone would otherwise fetch a missing head here, before the call's own work.
+    let contained = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["merge-base", "--is-ancestor", head, at])
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    !contained
 }
