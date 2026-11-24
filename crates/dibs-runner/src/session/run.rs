@@ -650,7 +650,7 @@ impl<'a> Run<'a> {
     /// comes; urgent, it parks others instead.
     fn idle(&self) -> bool {
         let request = &self.at.call.request;
-        request.when_idle && request.urgent.is_none() && self.parkable()
+        request.when_idle && request.urgent.is_none() && request.ports.is_empty() && self.parkable()
     }
 
     /// A `--when-idle` call that waits for an idle machine to start: a parkable job, and the
@@ -1598,6 +1598,7 @@ impl<'a> Run<'a> {
             hosted.services = Some(services);
             state = self.at.stopper.state();
         }
+        let mut unlocked = false;
         let status = match (hosted.failed, hosted.overran) {
             (true, _) => {
                 drop(state);
@@ -1621,6 +1622,11 @@ impl<'a> Run<'a> {
                     // waits for this one instead.
                     let left = deadline.left();
                     if let Some(rw) = &idle_rw {
+                        // Its build's mark let go of while it is parked, so a build into the
+                        // target meanwhile clears what this one left half made.
+                        let yields = parked || self.at.dir.busy_besides(pid).is_some();
+                        let marked =
+                            yields && running.as_mut().is_some_and(|r| r.mark.take().is_some());
                         let until = (runs == 0).then(|| self.wait_until(arrived)).flatten();
                         let since = Instant::now();
                         let (held, yielded) =
@@ -1631,7 +1637,18 @@ impl<'a> Run<'a> {
                         if let Some(status) = yielded.status() {
                             drop(state);
                             hosted.laid = Some(By::Dibs);
+                            unlocked = true;
                             break status;
+                        }
+                        if marked && let Some(running) = running.as_mut() {
+                            running.mark = stepping.as_ref().and_then(Stepping::building);
+                        }
+                        // Another tree may have built into the target while it was parked.
+                        if yielded == Yielded::Waited
+                            && let (Some(step), Some(stepping)) = (step, &stepping)
+                            && step.claim
+                        {
+                            stepping.claim();
                         }
                         waited |= yielded == Yielded::Waited;
                     }
@@ -1672,19 +1689,12 @@ impl<'a> Run<'a> {
                         self.show_deadline(deadline);
                     }
                     waited = false;
-                    if runs > 0 {
+                    if runs > 0 && idle_rw.is_none() {
                         // A build stopped partway leaves crates rustc would reuse half made.
                         if let Some(running) = running.as_mut()
                             && running.mark.take().is_some()
                         {
                             running.mark = stepping.as_ref().and_then(Stepping::building);
-                        }
-                        // Another tree may have built into the target while it was parked.
-                        if idle_rw.is_some()
-                            && let (Some(step), Some(stepping)) = (step, &stepping)
-                            && step.claim
-                        {
-                            stepping.claim();
                         }
                     }
                     runs += 1;
@@ -1743,6 +1753,11 @@ impl<'a> Run<'a> {
         }
         if begun.log.is_some() {
             self.sweep_escaped(&arrived.job);
+        }
+        // Parked without the lock, it ends doing nothing beside whoever has the machine now.
+        if unlocked {
+            hosted.status = status;
+            return hosted;
         }
         let copier = Copier::new(self.at.settings.reflinks);
         for copy in environment.copied() {

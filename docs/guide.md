@@ -1017,7 +1017,8 @@ batch, the flag reaches every step, and a detached batch carries it to its machi
 benchmarks run as usual. Check-ins and `--max` count only the time it runs, each run apart, and
 so do its trailer and its label's history. A recipe's tree is laid out before its command can be
 parked, so a job that comes during that waits for it, or for a minute at most, as it would for any
-shared job's prepare.
+shared job's prepare. The copy that sends an `@local` tree also waits for an idle machine, but once
+it runs it finishes, since a copy stopped partway would have to start over from this computer.
 
 ## The two halves
 

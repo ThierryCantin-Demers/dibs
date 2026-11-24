@@ -2,7 +2,7 @@
 //! moment the driver is gone, however the driver went.
 
 use crate::{
-    call::{BatchStep, CHECK_IN, Starter, Watched},
+    call::{BatchStep, CHECK_IN, Starter, WHEN_IDLE, Watched},
     itself::Itself,
 };
 use dibs_format::{Exit, MachineName};
@@ -14,6 +14,12 @@ use std::{
 
 pub struct StepGuard;
 
+/// What the batch was started with that every step it starts keeps, a follow's included.
+pub struct Carried<'a> {
+    pub check_in: Option<&'a str>,
+    pub when_idle: bool,
+}
+
 impl StepGuard {
     /// The word a step's guard is started with, outside the grammar.
     pub const WORD: &str = "__step-guard";
@@ -24,16 +30,20 @@ impl StepGuard {
         line: &str,
         batch: &BatchStep,
         on: Option<&MachineName>,
-        check_in: Option<&str>,
+        carried: Carried,
     ) -> io::Result<Watched> {
         let mut guard = Itself::command();
         match on {
             Some(on) => guard.env("DIBS_ON", on.as_str()),
             None => guard.env_remove("DIBS_ON"),
         };
-        match check_in {
+        match carried.check_in {
             Some(time) => guard.env(CHECK_IN, time),
             None => guard.env_remove(CHECK_IN),
+        };
+        match carried.when_idle {
+            true => guard.env(WHEN_IDLE, "1"),
+            false => guard.env_remove(WHEN_IDLE),
         };
         guard
             .args([StepGuard::WORD, line])

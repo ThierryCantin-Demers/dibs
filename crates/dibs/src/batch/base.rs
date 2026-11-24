@@ -1,11 +1,13 @@
 use super::{
     check_in::Hint,
-    guard::StepGuard,
+    guard::{Carried, StepGuard},
     parse::{BatchError, Step, StepKind, parse},
     plan::Batch,
 };
 use crate::{
-    call::{BatchStep, CHECK_IN, Destination, Driver, MachineCall, Pending, reached_its_job},
+    call::{
+        BatchStep, CHECK_IN, Destination, Driver, MachineCall, Pending, WHEN_IDLE, reached_its_job,
+    },
     caller::Caller,
     cli::Call,
     execution::Job,
@@ -49,6 +51,9 @@ struct Paused {
     /// `DIBS_CHECK_IN` as the batch was started with, for the steps a follow starts.
     #[serde(default)]
     check_in: Option<String>,
+    /// `--when-idle`, which the steps a follow starts keep.
+    #[serde(default)]
+    when_idle: bool,
     verbose: bool,
     states: Vec<State>,
     /// How long the batch had run, its pauses not counted.
@@ -280,6 +285,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         cwd: std::env::current_dir().unwrap_or_default(),
         on,
         check_in: std::env::var(CHECK_IN).ok(),
+        when_idle: std::env::var(WHEN_IDLE).is_ok_and(|v| v == "1"),
         verbose: opts.verbose,
         states: Vec::new(),
         seconds: 0,
@@ -385,6 +391,7 @@ fn drive(
         following: HashMap::new(),
         said_from: HashMap::new(),
         check_in: kept.check_in.clone(),
+        when_idle: kept.when_idle,
         tx,
         rx,
     };
@@ -490,6 +497,7 @@ struct Driving<'a> {
     said_from: HashMap<usize, u64>,
     /// `DIBS_CHECK_IN` for every step, as the batch was started with.
     check_in: Option<String>,
+    when_idle: bool,
     tx: mpsc::Sender<StepEnded>,
     rx: mpsc::Receiver<StepEnded>,
 }
@@ -584,7 +592,11 @@ impl Driving<'_> {
             let tx = self.tx.clone();
             let verbose = self.opts.verbose;
             let t = Instant::now();
-            match StepGuard::spawn(line, &batch, self.on.as_ref(), self.check_in.as_deref()) {
+            let carried = Carried {
+                check_in: self.check_in.as_deref(),
+                when_idle: self.when_idle,
+            };
+            match StepGuard::spawn(line, &batch, self.on.as_ref(), carried) {
                 Ok(mut guarded) => {
                     self.running.insert(i, guarded.id());
                     std::thread::spawn(move || {
@@ -716,6 +728,7 @@ impl Driving<'_> {
             cwd: kept.cwd.clone(),
             on: kept.on.clone(),
             check_in: kept.check_in.clone(),
+            when_idle: kept.when_idle,
             verbose: kept.verbose,
         };
         let file = self.dir.join(Paused::FILE);
