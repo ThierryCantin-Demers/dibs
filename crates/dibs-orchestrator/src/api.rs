@@ -290,13 +290,19 @@ impl Api<'_> {
         }
     }
 
+    fn ended(&self, id: &str) -> bool {
+        self.store
+            .summary(id)
+            .is_ok_and(|s| s.is_some_and(|s| s.state.ended()))
+    }
+
     /// Its worker, started now unless one already holds it: whether one was.
     fn started(&self, id: &str) -> Result<bool, (String, i32)> {
         let summary = self.store.summary(id).map_err(failed)?;
         if summary.is_some_and(|s| s.state.ended()) || worker::driven(self.home, id) {
             return Ok(false);
         }
-        spawn::worker(self.home, id).map(|()| true).map_err(|why| {
+        spawn::worker(self.home, id, || self.ended(id)).map_err(|why| {
             (
                 format!("submission {id} is stored, but {why}"),
                 Exit::Failed.status(),
@@ -455,7 +461,7 @@ impl Api<'_> {
             None => {
                 // A worker started now asks after any attempt left open, and stops its job,
                 // before it records the kill.
-                spawn::worker(self.home, id).map_err(|why| {
+                spawn::worker(self.home, id, || self.ended(id)).map_err(|why| {
                     (
                         format!("submission {id} is marked killed, but {why}"),
                         Exit::Failed.status(),

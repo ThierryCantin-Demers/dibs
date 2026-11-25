@@ -84,8 +84,14 @@ fn resume(home: &Home) -> i32 {
             println!("{id}: driven already");
             continue;
         }
-        match spawn::worker(home, &id) {
-            Ok(()) => println!("{id}: resumed"),
+        let ended = || {
+            store
+                .summary(&id)
+                .is_ok_and(|s| s.is_some_and(|s| s.state.ended()))
+        };
+        match spawn::worker(home, &id, ended) {
+            Ok(true) => println!("{id}: resumed"),
+            Ok(false) => println!("{id}: driven already"),
             Err(why) => {
                 eprintln!("{id}: {why}");
                 code = Exit::Failed.status();

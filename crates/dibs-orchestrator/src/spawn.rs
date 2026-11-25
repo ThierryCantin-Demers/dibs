@@ -40,17 +40,15 @@ pub fn started_fifo(home: &Home, id: &str) -> PathBuf {
     home.submission(id).join("started")
 }
 
-/// Starts the worker of `id` and waits for it to hold the submission, or to find another
-/// worker holding it. Err says why it did not start.
-pub fn worker(home: &Home, id: &str) -> Result<(), String> {
+/// Starts the worker of `id`, unless it has `ended` or another worker holds it, and waits for
+/// the new one to hold the submission. Ok says whether this call started it; Err says why it
+/// did not start.
+pub fn worker(home: &Home, id: &str, ended: impl Fn() -> bool) -> Result<bool, String> {
     let dir = home.submission(id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    // Two starters at once would share one fifo, and one would wait out a reply the other read.
-    let _starting = File::create(dir.join("starting.lock"))
-        .and_then(|f| f.lock().map(|()| f))
-        .map_err(|e| format!("{}: {e}", dir.join("starting.lock").display()))?;
-    if crate::worker::driven(home, id) {
-        return Ok(());
+    let _starting = starting(&dir)?;
+    if ended() || crate::worker::driven(home, id) {
+        return Ok(false);
     }
     let fifo = started_fifo(home, id);
     let _ = std::fs::remove_file(&fifo);
@@ -68,7 +66,8 @@ pub fn worker(home: &Home, id: &str) -> Result<(), String> {
     }
     launch(id, &dir)?;
     match said.recv_timeout(STARTED_WITHIN) {
-        Ok(line) if [DRIVING, DRIVEN].contains(&line.trim()) => Ok(()),
+        Ok(line) if line.trim() == DRIVING => Ok(true),
+        Ok(line) if line.trim() == DRIVEN => Ok(false),
         Ok(line) => Err(format!(
             "its worker ended before it held the submission{}; see {}",
             match line.trim() {
@@ -89,6 +88,28 @@ pub fn worker(home: &Home, id: &str) -> Result<(), String> {
                 dir.join("worker.log").display()
             ))
         }
+    }
+}
+
+/// Held by one start at a time: two at once would share one fifo, and one would wait out a
+/// reply the other read.
+fn starting(dir: &Path) -> Result<File, String> {
+    let path = dir.join("starting.lock");
+    let file = File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let waiter = file
+        .try_clone()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let (took, taken) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = took.send(waiter.lock());
+    });
+    match taken.recv_timeout(STARTED_WITHIN) {
+        Ok(Ok(())) => Ok(file),
+        Ok(Err(e)) => Err(format!("{}: {e}", path.display())),
+        Err(_) => Err(format!(
+            "another start held it for {}s",
+            STARTED_WITHIN.as_secs()
+        )),
     }
 }
 
