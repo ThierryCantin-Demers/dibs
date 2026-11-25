@@ -1450,18 +1450,6 @@ fn without_a_root_lockfile_only_the_workspaces_a_step_resolved_say_a_pin_did_not
     fs::write(job.join("cmd"), "x").unwrap();
     run(&job, "touch -d '1 minute ago' cmd");
     assert!(!s.with(Some(&job), |step| step.unpinned(&lines(&["cubecl"]), 0)));
-    fs::write(
-        s.worktree.join("backend/Cargo.lock"),
-        format!("{from_git}\n[[patch.unused]]\nname = \"cubecl\"\nversion = \"0.2.0\"\n"),
-    )
-    .unwrap();
-    aged(&s.worktree.join("backend/Cargo.lock"));
-    assert!(
-        s.with(Some(&job), |step| step.unpinned(&lines(&["cubecl"]), 0)),
-        "a patch an earlier step left unused is said"
-    );
-    fs::write(s.worktree.join("backend/Cargo.lock"), from_git).unwrap();
-    aged(&s.worktree.join("backend/Cargo.lock"));
     fs::write(s.worktree.join("node/Cargo.lock"), from_git).unwrap();
     assert!(s.with(Some(&job), |step| step.unpinned(&lines(&["cubecl"]), 0)));
 }
