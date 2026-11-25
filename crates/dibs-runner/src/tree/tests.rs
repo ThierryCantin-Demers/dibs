@@ -1436,6 +1436,25 @@ fn a_build_that_still_takes_a_pinned_crate_from_git_is_said() {
 }
 
 #[test]
+fn without_a_root_lockfile_only_the_workspaces_a_step_resolved_say_a_pin_did_not_take() {
+    let s = Stepped::new(None);
+    let job = s.machine.p("scratch/jobs/j1");
+    fs::create_dir_all(&job).unwrap();
+    let from_git = "[[package]]\nname = \"cubecl\"\nversion = \"0.1.0\"\nsource = \"git+https://example.invalid/cubecl?rev=a#a\"\n";
+    for ws in ["node", "backend"] {
+        fs::create_dir_all(s.worktree.join(ws)).unwrap();
+        fs::write(s.worktree.join(ws).join("Cargo.lock"), from_git).unwrap();
+    }
+    aged(&s.worktree.join("backend/Cargo.lock"));
+    aged(&s.worktree.join("node/Cargo.lock"));
+    fs::write(job.join("cmd"), "x").unwrap();
+    run(&job, "touch -d '1 minute ago' cmd");
+    assert!(!s.with(Some(&job), |step| step.unpinned(&lines(&["cubecl"]), 0)));
+    fs::write(s.worktree.join("node/Cargo.lock"), from_git).unwrap();
+    assert!(s.with(Some(&job), |step| step.unpinned(&lines(&["cubecl"]), 0)));
+}
+
+#[test]
 fn a_sweep_collects_replaced_runners_and_dead_builds_but_never_beside_a_build() {
     let m = Machine::new();
     let runners = m.p("home/.cache/dibs/runner");

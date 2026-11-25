@@ -451,6 +451,9 @@ impl Pinned {
                 relocked: Vec::new(),
             });
         }
+        if pins.is_empty() {
+            return Ok(pins);
+        }
         let workspaces: Vec<(&Arm, String, String)> = arms
             .iter()
             .flat_map(|a| {

@@ -246,16 +246,30 @@ impl<'a> Stepping<'a> {
     /// the dependency's requirement does not accept.
     /// A failed step whose lockfile cargo did not write never resolved, so its lockfile is still
     /// the one sent and says nothing about the pin.
+    /// In a tree with no root lockfile, only the workspaces the step resolved say anything: a
+    /// sibling's lockfile it never touched still names where it took the crate from.
     pub fn unpinned(&self, names: &[String], status: i32) -> bool {
-        let lock = self.worktree.join("Cargo.lock");
-        let written = fs::metadata(&lock).and_then(|m| m.modified()).ok();
-        let resolved = status == 0 || self.started().zip(written).is_some_and(|(s, w)| w > s);
-        if !resolved {
-            return false;
-        }
-        let text = fs::read_to_string(lock).unwrap_or_default();
-        let left: Vec<String> = Package::all(&text)
-            .into_iter()
+        let written = |lock: &Path| fs::metadata(lock).and_then(|m| m.modified()).ok();
+        let since = |lock: &Path| {
+            self.started()
+                .zip(written(lock))
+                .is_some_and(|(s, w)| w > s)
+        };
+        let root = self.worktree.join("Cargo.lock");
+        let locks: Vec<PathBuf> = if root.exists() {
+            (status == 0 || since(&root))
+                .then_some(root)
+                .into_iter()
+                .collect()
+        } else {
+            let mut found = Vec::new();
+            nested_lockfiles(&self.worktree, &mut found);
+            found.retain(|lock| since(lock));
+            found
+        };
+        let left: Vec<String> = locks
+            .iter()
+            .flat_map(|lock| Package::all(&fs::read_to_string(lock).unwrap_or_default()))
             .filter(|p| names.contains(&p.name))
             .filter_map(|p| {
                 let version = p.version.map(|v| format!(" {v}")).unwrap_or_default();
@@ -278,6 +292,25 @@ impl<'a> Stepping<'a> {
         fs::metadata(self.job_dir?.join(STARTED))
             .and_then(|m| m.modified())
             .ok()
+    }
+}
+
+/// The lockfiles below `dir`, hidden directories and build outputs aside.
+fn nested_lockfiles(dir: &Path, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || name == "target" || name == "node_modules" {
+            continue;
+        }
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => nested_lockfiles(&entry.path(), found),
+            Ok(kind) if kind.is_file() && name == "Cargo.lock" => found.push(entry.path()),
+            _ => {}
+        }
     }
 }
 
