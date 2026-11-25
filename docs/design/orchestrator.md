@@ -35,7 +35,8 @@ launches is checked against the epoch and that generation first, so a worker tha
 or one from before a restore, launches nothing more.
 
 `dibs-orchestrator resume` starts a worker for each unfinished submission that nothing holds. It
-is what runs after the service account's manager starts, after a crash, and after a restore.
+is what runs after the service account's manager starts, after a crash, and after a restore. A
+follow, a kill or a submission sent again does the same for its own submission.
 
 ## Attempts are admitted once
 

@@ -19,7 +19,7 @@ use std::{
     fs::File,
     io::{BufRead as _, Write as _},
     sync::mpsc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub fn serve(home: &Home, coworker: &str) -> i32 {
@@ -88,6 +88,21 @@ pub fn send(reply: &Reply) {
         let _ = out.write_all(&line);
         let _ = out.flush();
     }
+}
+
+/// Whether the submission's worker let go of it before `deadline`.
+fn worker_let_go(home: &Home, id: &str, deadline: Instant) -> bool {
+    let lock = worker::lock_path(home, id);
+    let (done, waited) = mpsc::channel();
+    std::thread::spawn(move || {
+        if let Ok(file) = File::open(&lock) {
+            let _ = file.lock_shared();
+        }
+        let _ = done.send(());
+    });
+    waited
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .is_ok()
 }
 
 fn say(text: impl Into<String>) {
@@ -272,13 +287,13 @@ impl Api<'_> {
         }
     }
 
-    /// Its worker, started now unless one already holds it.
-    fn started(&self, id: &str) -> Result<(), (String, i32)> {
+    /// Its worker, started now unless one already holds it: whether one was.
+    fn started(&self, id: &str) -> Result<bool, (String, i32)> {
         let summary = self.store.summary(id).map_err(failed)?;
         if summary.is_some_and(|s| s.state.ended()) || worker::driven(self.home, id) {
-            return Ok(());
+            return Ok(false);
         }
-        spawn::worker(self.home, id).map_err(|why| {
+        spawn::worker(self.home, id).map(|()| true).map_err(|why| {
             (
                 format!("submission {id} is stored, but {why}"),
                 Exit::Failed.status(),
@@ -353,32 +368,43 @@ impl Api<'_> {
     }
 
     /// Waits for the worker to let go of the submission, or for `check_in` seconds, then says
-    /// how each step went.
+    /// how each step went. One no worker drives is given one, once per call, so a crashed or
+    /// stopped worker is never mistaken for an ending.
     fn follow(&self, id: &str, check_in: u64) -> Answer {
         if self.store.summary(id).map_err(failed)?.is_none() {
             return Err(refused(format!("no submission {id}")));
         }
-        let lock = worker::lock_path(self.home, id);
-        let (done, waited) = mpsc::channel();
-        std::thread::spawn(move || {
-            if let Ok(file) = File::open(&lock) {
-                let _ = file.lock_shared();
-            }
-            let _ = done.send(());
-        });
         let within = Duration::from_secs(check_in.max(1));
-        if waited.recv_timeout(within).is_err() {
+        let deadline = Instant::now() + within;
+        let mut revived = false;
+        let detail = loop {
+            if !revived && self.started(id)? {
+                revived = true;
+                say(format!(
+                    "dibs: no worker drove submission {id}, so a new one carries it on from where it stopped\n"
+                ));
+            }
+            if !worker_let_go(self.home, id, deadline) {
+                say(format!(
+                    "dibs: submission {id} still runs after {}s, and goes on without this call.\n  dibs orch follow {id}  follows it again\n  dibs orch kill {id}  stops it\n",
+                    within.as_secs()
+                ));
+                return Ok(Exit::CheckedIn.status());
+            }
+            let detail = self
+                .store
+                .detail(id)
+                .map_err(failed)?
+                .ok_or_else(|| refused(format!("no submission {id}")))?;
+            if detail.summary.state.ended() || revived {
+                break detail;
+            }
+        };
+        if !detail.summary.state.ended() {
             say(format!(
-                "dibs: submission {id} still runs after {}s, and goes on without this call.\n  dibs orch follow {id}  follows it again\n  dibs orch kill {id}  stops it\n",
-                within.as_secs()
+                "dibs: submission {id} has not ended, but its worker let go again; whoever runs the orchestrator resumes it\n"
             ));
-            return Ok(Exit::CheckedIn.status());
         }
-        let detail = self
-            .store
-            .detail(id)
-            .map_err(failed)?
-            .ok_or_else(|| refused(format!("no submission {id}")))?;
         for step in &detail.steps {
             if let Some(trailer) = &step.trailer {
                 send(&Reply::Trailer {

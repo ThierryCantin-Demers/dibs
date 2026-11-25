@@ -307,6 +307,23 @@ fn a_worker_killed_mid_step_is_carried_on_without_running_the_job_twice() {
 }
 
 #[test]
+fn following_a_submission_whose_worker_died_carries_it_on() {
+    let sandbox = Sandbox::new("follow-revives");
+    sandbox.hold_jobs();
+    let (id, _) = sandbox.submit("k", false);
+    sandbox.reached();
+    sandbox.kill_worker();
+    sandbox.open_gate();
+    assert_eq!(
+        sandbox.follow(&id),
+        (State::Done, 0),
+        "{}",
+        sandbox.log(&id)
+    );
+    assert_eq!(sandbox.ran(), 1, "{}", sandbox.log(&id));
+}
+
+#[test]
 fn a_restored_store_asks_how_its_open_attempts_went_rather_than_running_them_again() {
     let sandbox = Sandbox::new("restore");
     sandbox.hold_jobs();
