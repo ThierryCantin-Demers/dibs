@@ -28,9 +28,10 @@ fi
 
 mkdir -p "$BIN"
 STAGE=$(mktemp -d "$PREFIX/.dibs-install.XXXXXX")
+NEW=
+trap 'rm -rf "$STAGE" ${NEW:+"$NEW"}' EXIT
 # Its own name, since several agents may update at once and a shared one is moved from under them.
 NEW=$(mktemp "$BIN/.dibs.new.XXXXXX")
-trap 'rm -rf "$STAGE" "$NEW"' EXIT
 COMMIT=$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)
 cargo install --quiet --locked --path "$HERE/crates/dibs" --root "$STAGE" --force
 # Renamed over dibs in one step, so a symlink to the bash dibs, or a dibs running now, is never
