@@ -1998,8 +1998,10 @@ impl<'a> Run<'a> {
                 .sink
                 .record(Record::Holding(hosted.ports.picked.clone()));
         }
-        let end = work.wait(cap);
-        self.at.stopper.state().swept = true;
+        let stopper = Arc::clone(self.at.stopper);
+        let end = work
+            .when_swept(move || stopper.state().swept = true)
+            .wait(cap);
         hosted.overran = end.capped;
         let status = end.status;
         let ended = guard

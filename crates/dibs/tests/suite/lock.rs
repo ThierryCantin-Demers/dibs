@@ -836,7 +836,11 @@ fn a_signal_while_a_job_sweeps_what_it_left_keeps_the_lock_until_that_is_gone() 
     let left: u32 = s.read("left.pid").trim().parse().unwrap();
     let main: i32 = s.records("holder")[0][1].parse().unwrap();
     unsafe { libc::kill(main, libc::SIGTERM) };
-    s.wait(caller);
+    assert_eq!(
+        s.wait(caller),
+        143,
+        "the runner was stopped, not left to end"
+    );
     assert!(
         ended(&left.to_string()),
         "the child that ignored TERM is gone before the lock is"

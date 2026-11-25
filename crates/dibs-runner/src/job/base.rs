@@ -88,6 +88,7 @@ pub struct Job {
     relays: Vec<JoinHandle<()>>,
     /// None only where its sweeper could not be started.
     tether: Option<Tether>,
+    swept: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl Job {
@@ -184,7 +185,14 @@ impl Job {
             exited,
             relays,
             tether,
+            swept: None,
         }
+    }
+
+    /// Runs `then` once its group is gone, before its output is taken as finished.
+    pub fn when_swept(mut self, then: impl FnOnce() + Send + 'static) -> Job {
+        self.swept = Some(Box::new(then));
+        self
     }
 
     /// Waits for the job, stopping its group when it overruns the cap, and says how it ended.
@@ -262,6 +270,9 @@ impl Job {
     fn end(self) {
         if let Some(tether) = self.tether {
             tether.sweep();
+        }
+        if let Some(swept) = self.swept {
+            swept();
         }
         for relay in self.relays {
             let _ = relay.join();
