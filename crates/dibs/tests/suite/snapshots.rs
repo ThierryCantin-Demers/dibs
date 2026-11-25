@@ -1285,7 +1285,7 @@ fn unreachable_with(s: &Sandbox, says: &str, tailscale: &str, accepts: &str) -> 
     s.write_exec(
         "fails/ssh",
         &format!(
-            "#!/bin/bash\nfor a; do [ \"$a\" = -v ] && [ -n \"{accepts}\" ] && echo 'debug1: Server accepts key: /keys/id_ed25519 ED25519 SHA256:x explicit' >&2; done\nprintf '%s\\n' '{says}' >&2\nexit 255\n"
+            "#!/bin/bash\nfor a; do [ \"$a\" = -v ] && [ -n \"{accepts}\" ] && echo 'debug1: Server accepts key: /keys/id_ed25519 ED25519 SHA256:x explicit' >&2; done\ncase '{says}' in INFO\\ *) [[ \" $* \" == *LogLevel=ERROR* ]] || printf '%s\\n' '{says}' | sed 's/^INFO //' >&2;; *) printf '%s\\n' '{says}' >&2;; esac\nexit 255\n"
         ),
     );
     s.write_exec(
@@ -1382,6 +1382,12 @@ fn unreachable() {
         (
             "a timeout, with the peer up",
             timed_out,
+            "100.64.0.2   box-a   someone@   linux   -",
+            "",
+        ),
+        (
+            "a refusal sent as a banner, which only ssh's own level shows",
+            "INFO tailscale: tailnet policy does not permit you to SSH to this node",
             "100.64.0.2   box-a   someone@   linux   -",
             "",
         ),

@@ -110,6 +110,13 @@
 2|   ssh said: ssh: connect to host box-a port 22: Connection timed out
 2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
 
+== dibs --on box-a --status  (a refusal sent as a banner, which only ssh's own level shows)
+-> exit 69
+2| dibs: cannot reach 'dibs@box-a' over ssh.
+2|   Tailscale SSH answered on its port 22 and the tailnet's policy refused this login,
+2|   so it is up and no key of yours would help: the policy has to allow this source.
+2|   Do not retry in a loop. Tell the user, and do the work that does not need the machine.
+
 == dibs --on box-a --status  (a timeout, and not a peer)
 -> exit 69
 2| ssh: connect to host box-a port 22: Connection timed out

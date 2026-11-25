@@ -9,6 +9,9 @@ use std::{
     time::Duration,
 };
 
+/// How much of what ssh said is shown when none of it names a cause dibs knows.
+const SAID_LINES: usize = 3;
+
 /// Why ssh could not reach a machine.
 pub struct Unreachable<'a> {
     pub target: &'a Target,
@@ -24,11 +27,11 @@ impl Unreachable<'_> {
         let why = match self.said.trim().is_empty() {
             false => self.said.trim_end().to_string(),
             true => bounded(
+                // At ssh's own level, a refusal a server sends as a banner, as Tailscale SSH does,
+                // reaches us; the call that failed ran at ERROR, which hides it.
                 Ssh::to(&self.target.dial).args([
                     "-o",
                     "BatchMode=yes",
-                    "-o",
-                    "LogLevel=ERROR",
                     "-o",
                     &format!("ConnectTimeout={timeout}"),
                     host,
@@ -81,6 +84,13 @@ impl Unreachable<'_> {
                     "  Record the key by connecting once by hand:  {}",
                     self.target.dial.typed(host)
                 ),
+            ])
+        } else if said("tailnet policy does not permit") {
+            Some(vec![
+                "  Tailscale SSH answered on its port 22 and the tailnet's policy refused this login,"
+                    .into(),
+                "  so it is up and no key of yours would help: the policy has to allow this source."
+                    .into(),
             ])
         } else if let Some(methods) = Unreachable::prompted(&why) {
             let opened = match self.target.dial.config {
@@ -152,8 +162,12 @@ impl Unreachable<'_> {
             }),
             None => {
                 text.push_str(&self.tailscale());
-                if let Some(first) = why.lines().next().filter(|_| !why.is_empty()) {
-                    let _ = writeln!(text, "  ssh said: {first}");
+                for line in why
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .take(SAID_LINES)
+                {
+                    let _ = writeln!(text, "  ssh said: {line}");
                 }
             }
         }
