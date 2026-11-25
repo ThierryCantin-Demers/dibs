@@ -35,6 +35,14 @@ impl Tools {
         Tools { dirs }
     }
 
+    /// Exactly the directories a job's PATH holds, where a job's own tools are looked up.
+    pub fn on_a_jobs_path() -> Tools {
+        let path = crate::job::Environment::path();
+        Tools {
+            dirs: std::env::split_paths(&path).collect(),
+        }
+    }
+
     pub fn find(&self, program: &str) -> Option<PathBuf> {
         self.dirs
             .iter()

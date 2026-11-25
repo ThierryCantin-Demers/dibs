@@ -1,5 +1,6 @@
 use crate::{
     clock::{Moment, Span},
+    image::{Cached, IMAGES},
     platform::{Host, Platform as _},
     tree::{
         base::LOCAL,
@@ -26,7 +27,9 @@ const TEMPORARY: [&str; 2] = [".seed.", ".old."];
 /// What a sweep writes in a cache it found unmarked; a prepare's marker is empty.
 const DATED: &str = "swept\n";
 /// What dibs makes under scratch; everything else there a job named itself.
-pub const DIBS_OWN: [&str; 7] = ["ws", "target", "jobs", "tmp", "out", "runner", "run"];
+pub const DIBS_OWN: [&str; 8] = [
+    "ws", "target", "jobs", "tmp", "out", "runner", "run", IMAGES,
+];
 
 /// What a sweep walks, in the order it walks it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,28 +42,32 @@ pub enum Swept {
     /// Under `out`, where a person keeps what a job made.
     Results,
     Runners,
+    /// Root filesystems unpacked for builds that name an image.
+    Images,
     /// What a job named under scratch itself, beside what dibs makes there.
     Named,
 }
 
 impl Swept {
     /// What `dibs --gc` sweeps.
-    pub const ALL: [Swept; 7] = [
+    pub const ALL: [Swept; 8] = [
         Swept::Trees,
         Swept::Caches,
         Swept::Jobs,
         Swept::Leftovers,
         Swept::Results,
         Swept::Runners,
+        Swept::Images,
         Swept::Named,
     ];
     /// What a prepare sweeps: results go only when a person asks, with `dibs --gc`.
-    pub const BY_PREPARE: [Swept; 5] = [
+    pub const BY_PREPARE: [Swept; 6] = [
         Swept::Trees,
         Swept::Caches,
         Swept::Jobs,
         Swept::Leftovers,
         Swept::Runners,
+        Swept::Images,
     ];
 
     /// The section as the sweep's timing names it.
@@ -72,6 +79,7 @@ impl Swept {
             Swept::Leftovers => "leftovers",
             Swept::Results => "results",
             Swept::Runners => "runners",
+            Swept::Images => "images",
             Swept::Named => "named by jobs",
         }
     }
@@ -206,6 +214,12 @@ impl<'a> Sweep<'a> {
             Swept::Leftovers => under("tmp"),
             Swept::Results => under("out"),
             Swept::Runners => Runners::in_home(self.home).dir().entries(),
+            // Only what dibs made there: anything else is somebody's, and is never swept.
+            Swept::Images => under(IMAGES)
+                .into_iter()
+                .filter(|path| path.is_dir())
+                .filter(|path| Cached::is_image(path) || Cached::left_by(path).is_some())
+                .collect(),
             Swept::Named => self
                 .scratch
                 .entries()
@@ -244,6 +258,13 @@ impl<'a> Sweep<'a> {
                 })
                 .collect(),
             Swept::Runners => return Runners::in_home(self.home).judged(&self.clocks, now),
+            Swept::Images => entries
+                .map(|image| {
+                    let used = image.used(now);
+                    let fate = self.image(&image, used, now);
+                    Verdict::of(image, fate, used)
+                })
+                .collect(),
             Swept::Named => entries
                 .map(|path| {
                     let (fate, written) = self.named(&path, now);
@@ -295,6 +316,25 @@ impl<'a> Sweep<'a> {
             // Listed, never removed: a tool a job only reads, such as a shim on its PATH, is never
             // written, so its newest write says nothing of whether anybody still uses it.
             Swept::Named => {}
+            Swept::Images if self.dry => {}
+            Swept::Images => {
+                for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
+                    if self.removal.spent() {
+                        break;
+                    }
+                    let doomed = match Cached::left_by(&verdict.path) {
+                        Some(_) => Some(verdict.path.clone()),
+                        None => self.set_image_aside(verdict, now),
+                    };
+                    let Some(doomed) = doomed else {
+                        continue;
+                    };
+                    Cached::writable(&doomed);
+                    let went = doomed.removed_by(self.removal.until());
+                    verdict.removed = self.removal.removed(&doomed, went);
+                    gone(&verdict.path);
+                }
+            }
             Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners if self.dry => {}
             Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners => {
                 for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
@@ -444,6 +484,39 @@ impl<'a> Sweep<'a> {
         match used.past(now, &self.clocks, self.clocks.target_keep_days) {
             true => Fate::Past,
             false => Fate::Kept,
+        }
+    }
+
+    /// A past image judged again under its locks, where no job can start using it, and renamed
+    /// aside if it is still past; its verdict says why not otherwise.
+    fn set_image_aside(&self, verdict: &mut Verdict, now: u64) -> Option<PathBuf> {
+        let Some(_unused) = Cached::unused(&verdict.path) else {
+            verdict.fate = Fate::Held;
+            return None;
+        };
+        verdict.used = verdict.path.used(now);
+        if !self.clocks.past(now, verdict.used, self.clocks.keep_days) {
+            verdict.fate = Fate::Kept;
+            return None;
+        }
+        Cached::set_aside(&verdict.path)
+    }
+
+    /// An unpacked image by its last use, kept while a job unpacks it or runs in it; an unpack
+    /// or a removal whose process is gone was abandoned.
+    fn image(&self, path: &Path, used: u64, now: u64) -> Fate {
+        if let Some(pid) = Cached::left_by(path) {
+            return match Host::exists(pid) {
+                true => Fate::Preparing,
+                false => Fate::Past,
+            };
+        }
+        if !self.clocks.past(now, used, self.clocks.keep_days) {
+            return Fate::Kept;
+        }
+        match Cached::unused(path) {
+            Some(_) => Fate::Past,
+            None => Fate::Held,
         }
     }
 

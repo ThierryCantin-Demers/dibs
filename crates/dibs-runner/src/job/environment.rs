@@ -71,7 +71,7 @@ impl Environment {
 
     /// A command over ssh runs in a shell that reads no profile, so a toolchain installed the
     /// ordinary way is not on its path, nor are the platform's tools that come first.
-    fn path() -> String {
+    pub fn path() -> String {
         let toolchains: Vec<PathBuf> = [home().join(".cargo/bin"), "/usr/local/cuda/bin".into()]
             .into_iter()
             .filter(|dir| dir.is_dir())

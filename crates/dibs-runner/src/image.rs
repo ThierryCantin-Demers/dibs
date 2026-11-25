@@ -13,7 +13,7 @@ use std::{
 
 const DIGEST: usize = 64;
 const TAG: usize = 12;
-const IMAGES: &str = "images";
+pub const IMAGES: &str = "images";
 const USED: &str = ".dibs-used";
 const LOCK_POLL: Duration = Duration::from_millis(200);
 /// What resolving a name needs from the host.
@@ -114,9 +114,16 @@ impl Images<'_> {
     /// within the job's cap and stopped with it.
     /// The sandbox a build runs in, its mount points made under the image's lock, since every
     /// build of the image makes them in the same root.
-    pub fn prepare(&self, image: &Image, commands: &Commands) -> Result<Sandbox, Unready> {
+    pub fn prepare(&self, image: &Image, commands: &Commands) -> Result<InImage, Unready> {
         let (rootfs, _lock) = self.root(image, commands)?;
-        self.sandbox(rootfs)
+        let dir = self.scratch.join(IMAGES);
+        let in_use = File::create(Cached::lock(&dir, &image.digest, "use"))
+            .and_then(|f| f.lock_shared().map(|()| f))
+            .map_err(|e| format!("dibs: the image's directory {}: {e}\n", dir.display()))?;
+        Ok(InImage {
+            sandbox: self.sandbox(rootfs)?,
+            _in_use: in_use,
+        })
     }
 
     fn root(&self, image: &Image, commands: &Commands) -> Result<(PathBuf, File), Unready> {
@@ -124,7 +131,7 @@ impl Images<'_> {
         let done = dir.join(&image.digest);
         let failed = |e: io::Error| format!("dibs: the image's directory {}: {e}\n", dir.display());
         fs::create_dir_all(&dir).map_err(failed)?;
-        let lock = File::create(dir.join(format!(".{}.lock", image.digest))).map_err(failed)?;
+        let lock = File::create(Cached::lock(&dir, &image.digest, "lock")).map_err(failed)?;
         // Another job may be unpacking it; waited for only as long as this job may run.
         loop {
             match lock.try_lock() {
@@ -141,11 +148,12 @@ impl Images<'_> {
                 Err(TryLockError::Error(e)) => return Err(failed(e).into()),
             }
         }
-        // Under the image's lock, any part of it left by a job stopped mid-unpack is abandoned.
+        // Under the image's lock, what a job stopped mid-unpack, or a sweep stopped mid-removal,
+        // left of it is abandoned.
         let suffix = format!("-{}", &image.digest[..TAG]);
         for left in fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = left.file_name().to_string_lossy().into_owned();
-            if name.starts_with(".part-") && name.ends_with(&suffix) {
+            if Cached::LEFT.iter().any(|left| name.starts_with(left)) && name.ends_with(&suffix) {
                 remove(commands, &left.path())?;
             }
         }
@@ -255,6 +263,78 @@ impl Images<'_> {
             aliases,
             sealed,
         }
+    }
+}
+
+/// A build's sandbox, with the image it runs in kept from a sweep for as long as it lives.
+pub struct InImage {
+    pub sandbox: Sandbox,
+    _in_use: File,
+}
+
+/// An image unpacked under scratch, as a sweep finds it.
+pub struct Cached;
+
+impl Cached {
+    /// Beside the images rather than in one, so it outlives the image it guards.
+    fn lock(dir: &Path, digest: &str, what: &str) -> PathBuf {
+        dir.join(format!(".{digest}.{what}"))
+    }
+
+    /// Its unpack lock and every job's use of it, held by the sweep while it removes it: None
+    /// while a job unpacks it or runs in it.
+    pub fn unused(image: &Path) -> Option<[File; 2]> {
+        let dir = image.parent()?;
+        let digest = image.file_name()?.to_str()?;
+        let take = |what| {
+            File::create(Cached::lock(dir, digest, what))
+                .ok()
+                .filter(|f| f.try_lock().is_ok())
+        };
+        Some([take("lock")?, take("use")?])
+    }
+
+    /// What an unpack works in, and what a sweep moves an image to before removing it.
+    const LEFT: [&str; 2] = [".part-", ".gone-"];
+
+    /// An unpacked image's own directory, named by its digest alone.
+    pub fn is_image(path: &Path) -> bool {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| Image::hex(n, DIGEST))
+    }
+
+    /// An unpack's or a removal's own directory, by the process that made it.
+    pub fn left_by(path: &Path) -> Option<u32> {
+        let name = path.file_name()?.to_str()?;
+        let rest = Cached::LEFT
+            .iter()
+            .find_map(|left| name.strip_prefix(left))?;
+        let (pid, tag) = rest.split_once('-')?;
+        Image::hex(tag, TAG).then(|| pid.parse().ok()).flatten()
+    }
+
+    /// Renamed out of its digest's name under its locks, so a build never takes what a removal
+    /// stopped partway left of it for an unpacked image.
+    pub fn set_aside(image: &Path) -> Option<PathBuf> {
+        let digest = image.file_name()?.to_str()?;
+        let aside = image.with_file_name(format!(
+            ".gone-{}-{}",
+            std::process::id(),
+            digest.get(..TAG)?
+        ));
+        fs::rename(image, &aside).ok().map(|()| aside)
+    }
+
+    /// Its directories made writable, since an image's root filesystem holds ones its owner
+    /// cannot write into.
+    pub fn writable(path: &Path) {
+        let _ = Command::new("chmod")
+            .args(["-R", "u+w"])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 }
 

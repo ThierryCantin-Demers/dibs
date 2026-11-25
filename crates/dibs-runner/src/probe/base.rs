@@ -57,6 +57,30 @@ impl Report {
 }
 
 impl Probe<'_> {
+    /// What building in an image takes, found as a job finds it: bwrap to run in one, and skopeo
+    /// and umoci only to fetch one this machine has not unpacked yet.
+    fn image_tools(report: &mut Report) {
+        let tools = Tools::on_a_jobs_path();
+        let missing = |names: &[&'static str]| -> Vec<&'static str> {
+            names
+                .iter()
+                .copied()
+                .filter(|name| tools.find(name).is_none())
+                .collect()
+        };
+        let (run, fetch) = (missing(&["bwrap"]), missing(&["skopeo", "umoci"]));
+        match (run.is_empty(), fetch.is_empty()) {
+            (true, true) => {
+                report.ok("skopeo, umoci and bwrap, so a job can build in a pinned image")
+            }
+            (false, _) => report.warn("no bwrap, so a job that names an image is refused here"),
+            (true, false) => report.warn(&format!(
+                "no {}, so a job is refused an image this machine has not unpacked yet",
+                fetch.join(" or ")
+            )),
+        }
+    }
+
     /// Prints the report; 1 when something blocks the machine from being used.
     pub fn serve(&self, sink: &Sink) -> i32 {
         let facts = Tools::here().facts();
@@ -79,6 +103,9 @@ impl Probe<'_> {
                 report.bad("no rsync 3, so a tree sent from another computer cannot arrive");
                 report.note("openrsync, which macOS ships as rsync, takes too few of its options.");
             }
+        }
+        if cfg!(target_os = "linux") {
+            Probe::image_tools(&mut report);
         }
         report
             .ok("the CPU of reaped children is counted, so idle detection sees a job's whole tree");

@@ -269,6 +269,7 @@ impl SweepReport {
                     self.bulk("results kept under out", &section, &sizes, now, &mut tally)
                 }
                 Swept::Runners => self.runners(&section, &sizes, &mut tally),
+                Swept::Images => self.images(&section, &sizes, now, &mut tally),
                 Swept::Named => self.named(&section, &sizes, now, &mut tally),
             };
             took.push((kind, section_began.elapsed()));
@@ -469,6 +470,32 @@ impl SweepReport {
         rows.out(&format!(
             "  runners in {}, replaced ones {}",
             dir.display(),
+            self.removed_after(self.clocks.keep_days, " unused")
+        ))
+    }
+
+    fn images(&self, section: &Section, sizes: &Sizes, now: u64, tally: &mut Totals) -> String {
+        let mut rows = Rows::default();
+        for verdict in &section.verdicts {
+            let kib = sizes.of(&verdict.path);
+            let state = match verdict.fate {
+                Fate::Held => "   in use",
+                Fate::Preparing => "   being unpacked or removed",
+                _ => self.verdict(verdict),
+            };
+            rows.push(Row {
+                kib,
+                past: self.count(verdict, kib, tally),
+                line: format!(
+                    "    {:<40} {:>7}  used {}{state}",
+                    self.shown(&verdict.path),
+                    Kib(kib),
+                    SweepReport::ago(now, verdict.used),
+                ),
+            });
+        }
+        rows.out(&format!(
+            "  images, {}",
             self.removed_after(self.clocks.keep_days, " unused")
         ))
     }

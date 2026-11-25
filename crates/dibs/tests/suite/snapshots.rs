@@ -995,7 +995,7 @@ fn check() {
         "bin/nvidia-smi",
         "#!/bin/sh\necho 'NVIDIA GeForce RTX 4090, 00000000:7F:00.0, 24564, 8.9'\n",
     );
-    for tool in ["rocm-smi", "rocminfo"] {
+    for tool in ["rocm-smi", "rocminfo", "skopeo", "umoci", "bwrap"] {
         s.write_exec(&format!("bin/{tool}"), "#!/bin/sh\nexit 1\n");
     }
     s.write_exec("bin/lspci", "#!/bin/sh\necho '7f:00.0 VGA compatible controller [0300]: NVIDIA Corporation AD102 [GeForce RTX 4090] [10de:2684] (rev a1)'\n");

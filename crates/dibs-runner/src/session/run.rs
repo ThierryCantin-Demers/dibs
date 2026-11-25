@@ -7,7 +7,7 @@ use crate::{
     clock::{Deadline, Moment, Span},
     closed::{self, Shutter},
     history::{History, Key, Scope},
-    image::{Image, Images, Sandbox, Unready},
+    image::{Image, Images, InImage, Unready},
     job::{
         Cap, Environment, Guard, HoldFifo, Job, JobEnd, LogRead, Output, Ports, Readied, Readiness,
         Services, Start,
@@ -1887,7 +1887,7 @@ impl<'a> Run<'a> {
                         output,
                         self.at.sink,
                         mark,
-                        sandbox.as_ref(),
+                        sandbox.as_ref().map(|i| &i.sandbox),
                     ) {
                         Ok(work) => work,
                         Err(e) => {
@@ -2126,7 +2126,7 @@ impl<'a> Run<'a> {
         image: &Image,
         environment: &Environment,
         deadline: Deadline,
-    ) -> Result<Sandbox, Unready> {
+    ) -> Result<InImage, Unready> {
         let home = home();
         let images = Images {
             scratch: &self.at.machine.scratch,
