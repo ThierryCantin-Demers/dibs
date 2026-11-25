@@ -195,10 +195,16 @@ fn gc_removes_an_image_nobody_used_lately_unless_a_job_runs_in_it() {
     assert!(s.exists(&image('b')), "unless a job runs in it: {out}");
     assert_eq!(out.lines_matching(r"images/b+ .* in use"), 1, "{out}");
     assert!(s.exists(&image('c')), "and one used today stays: {out}");
+    assert_eq!(
+        out.lines_matching(r"images/a+ .* not an image"),
+        0,
+        "what went is not taken for a job's: {out}"
+    );
 
     s.write("scratch/images/photos/cat.jpg", "x");
     let named = format!("scratch/images/{}/notes", "e".repeat(64));
     s.write(&named, "x");
+    s.write("scratch/images/.cache/archive", "x");
     let stopped = format!("scratch/images/.gone-{}-{}", u32::MAX, "d".repeat(12));
     s.write(&format!("{stopped}/rootfs/x"), "x");
     let out = s.dibs(["--gc", "--all"]).run().all();
@@ -208,8 +214,8 @@ fn gc_removes_an_image_nobody_used_lately_unless_a_job_runs_in_it() {
     );
     assert!(s.exists(&named), "even named like an image: {out}");
     assert_eq!(
-        out.lines_matching(r"images/photos .* not an image, never removed"),
-        1,
+        out.lines_matching(r"images/(photos|\.cache|e+) .* not an image, never removed"),
+        3,
         "and is shown: {out}"
     );
     assert!(
@@ -261,6 +267,8 @@ fn the_flag_names_an_image_over_the_recipes_own() {
         .run();
     assert_eq!(out.code, 0, "{}", out.all());
     assert_eq!(calls(&s, "bwrap").len(), 3, "a shell takes the flag too");
+    let out = s.dibs(["build", &at, "b", "--image", ""]).run();
+    assert_eq!(out.code, 2, "an empty one is refused: {}", out.all());
 }
 
 #[test]

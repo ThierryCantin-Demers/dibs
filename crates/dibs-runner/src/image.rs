@@ -317,6 +317,17 @@ impl Cached {
             && (path.join("rootfs").is_dir() || path.join(USED).is_file())
     }
 
+    /// A lock dibs keeps beside an image, `.<digest>.lock` or `.<digest>.use`.
+    pub fn is_lock(path: &Path) -> bool {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        name.strip_prefix('.')
+            .and_then(|n| n.strip_suffix(".lock").or_else(|| n.strip_suffix(".use")))
+            .is_some_and(|digest| Image::hex(digest, DIGEST))
+    }
+
     /// An image, or what an unpack or a removal of one left: everything dibs made there.
     pub fn made(path: &Path) -> bool {
         Cached::is_image(path) || Cached::left_by(path).is_some()

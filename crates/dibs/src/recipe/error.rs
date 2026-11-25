@@ -142,6 +142,8 @@ pub enum Flaw {
     Fresh(String),
     /// An image named without its digest.
     Image(String),
+    /// A parameter `--image` would never reach, since dibs takes that flag itself.
+    ImageParam,
     Artifact(String),
     /// A relative `target/` path, which the build never writes.
     Target(String),
@@ -348,6 +350,10 @@ impl Flaw {
             Flaw::Fresh(v) => write!(
                 f,
                 "recipe '{recipe}': fresh lists variables to give each run its own value, and '{v}' is not a variable name"
+            ),
+            Flaw::ImageParam => write!(
+                f,
+                "recipe '{recipe}': a parameter cannot be named image, since --image names the image its builds run in; rename it"
             ),
             Flaw::Image(i) => write!(
                 f,

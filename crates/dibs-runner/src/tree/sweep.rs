@@ -214,16 +214,10 @@ impl<'a> Sweep<'a> {
             Swept::Leftovers => under("tmp"),
             Swept::Results => under("out"),
             Swept::Runners => Runners::in_home(self.home).dir().entries(),
-            // What dibs made there, and what a job put there, shown but never swept; the hidden
-            // rest are dibs's locks.
+            // What dibs made there, and what a job put there, shown but never swept.
             Swept::Images => under(IMAGES)
                 .into_iter()
-                .filter(|path| {
-                    Cached::made(path)
-                        || path
-                            .file_name()
-                            .is_some_and(|n| !n.as_encoded_bytes().starts_with(b"."))
-                })
+                .filter(|path| !Cached::is_lock(path))
                 .collect(),
             Swept::Named => self
                 .scratch

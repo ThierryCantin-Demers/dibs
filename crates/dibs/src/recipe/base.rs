@@ -249,6 +249,9 @@ impl Recipe {
         if let Some(image) = self.image.as_ref().filter(|i| !pinned(i)) {
             return Err(unsound(Flaw::Image(image.clone())));
         }
+        if self.params.contains_key("image") {
+            return Err(unsound(Flaw::ImageParam));
+        }
         // Expanded unquoted on the machine so that * and ** match, which leaves no room for
         // anything the shell would read as more than a path.
         let pattern = |a: &str| {

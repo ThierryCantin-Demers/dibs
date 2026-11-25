@@ -287,7 +287,14 @@ impl RecipeCall {
                 "--anyway" => call.anyway = true,
                 "--when-open" => call.when_open = true,
                 "--low-priority" => call.low_priority = true,
-                "--image" => call.image = Some(value("--image needs <ref>@sha256:<digest>")?),
+                "--image" => {
+                    call.image = Some(
+                        value("--image needs <ref>@sha256:<digest>")
+                            .ok()
+                            .filter(|image| !image.is_empty())
+                            .ok_or(refused("--image needs <ref>@sha256:<digest>".into()))?,
+                    )
+                }
                 "--there" => call.there = true,
                 "--json" => call.json = true,
                 "--all" => call.all = true,

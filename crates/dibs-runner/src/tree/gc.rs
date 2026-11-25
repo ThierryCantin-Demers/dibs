@@ -480,7 +480,7 @@ impl SweepReport {
         for verdict in &section.verdicts {
             let kib = sizes.of(&verdict.path);
             let state = match verdict.fate {
-                _ if !Cached::made(&verdict.path) => "   not an image, never removed",
+                Fate::Kept if !Cached::made(&verdict.path) => "   not an image, never removed",
                 Fate::Held => "   in use",
                 Fate::Preparing => "   being unpacked or removed",
                 _ => self.verdict(verdict),

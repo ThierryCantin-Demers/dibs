@@ -398,7 +398,11 @@ fn drive(
         check_in: kept.check_in.clone(),
         // A follow given the flag itself runs the rest of the steps so too.
         low_priority: kept.low_priority || std::env::var(LOW_PRIORITY).is_ok_and(|v| v == "1"),
-        image: kept.image.clone(),
+        // A batch started before its image was kept takes the follow's.
+        image: kept
+            .image
+            .clone()
+            .or_else(|| std::env::var(IMAGE).ok().filter(|image| !image.is_empty())),
         tx,
         rx,
     };

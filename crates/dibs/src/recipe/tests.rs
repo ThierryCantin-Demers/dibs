@@ -104,6 +104,17 @@ fn a_recipes_image_is_pinned_by_its_digest() {
     };
     let pinned = format!("docker.io/library/buildpack-deps@sha256:{}", "0".repeat(64));
     assert!(recipe(&pinned).check("r").is_ok());
+    let taken = parse(
+        "[bench.r]\n[bench.r.params.image]\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n",
+    );
+    assert!(
+        taken
+            .check("r")
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be named image"),
+        "a parameter --image would never reach"
+    );
     for bad in [
         "docker.io/library/buildpack-deps:noble".to_string(),
         format!("@sha256:{}", "0".repeat(64)),
