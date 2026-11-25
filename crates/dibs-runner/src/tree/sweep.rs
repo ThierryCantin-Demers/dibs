@@ -329,8 +329,7 @@ impl<'a> Sweep<'a> {
                     let Some(doomed) = doomed else {
                         continue;
                     };
-                    Cached::writable(&doomed);
-                    let went = doomed.removed_by(self.removal.until());
+                    let went = Cached::removed_by(&doomed, self.removal.until());
                     verdict.removed = self.removal.removed(&doomed, went);
                     gone(&verdict.path);
                 }

@@ -107,6 +107,7 @@ fn a_recipes_image_is_pinned_by_its_digest() {
     for bad in [
         "docker.io/library/buildpack-deps:noble".to_string(),
         format!("@sha256:{}", "0".repeat(64)),
+        format!(":noble@sha256:{}", "0".repeat(64)),
         format!("docker.io/x@sha256:{}", "A".repeat(64)),
     ] {
         assert!(

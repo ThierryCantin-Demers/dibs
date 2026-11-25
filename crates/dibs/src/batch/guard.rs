@@ -2,7 +2,7 @@
 //! moment the driver is gone, however the driver went.
 
 use crate::{
-    call::{BatchStep, CHECK_IN, LOW_PRIORITY, Starter, Watched},
+    call::{BatchStep, CHECK_IN, IMAGE, LOW_PRIORITY, Starter, Watched},
     itself::Itself,
 };
 use dibs_format::{Exit, MachineName};
@@ -18,6 +18,7 @@ pub struct StepGuard;
 pub struct Carried<'a> {
     pub check_in: Option<&'a str>,
     pub low_priority: bool,
+    pub image: Option<&'a str>,
 }
 
 impl StepGuard {
@@ -44,6 +45,10 @@ impl StepGuard {
         match carried.low_priority {
             true => guard.env(LOW_PRIORITY, "1"),
             false => guard.env_remove(LOW_PRIORITY),
+        };
+        match carried.image {
+            Some(image) => guard.env(IMAGE, image),
+            None => guard.env_remove(IMAGE),
         };
         guard
             .args([StepGuard::WORD, line])

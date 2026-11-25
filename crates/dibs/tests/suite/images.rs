@@ -197,6 +197,8 @@ fn gc_removes_an_image_nobody_used_lately_unless_a_job_runs_in_it() {
     assert!(s.exists(&image('c')), "and one used today stays: {out}");
 
     s.write("scratch/images/photos/cat.jpg", "x");
+    let named = format!("scratch/images/{}/notes", "e".repeat(64));
+    s.write(&named, "x");
     let stopped = format!("scratch/images/.gone-{}-{}", u32::MAX, "d".repeat(12));
     s.write(&format!("{stopped}/rootfs/x"), "x");
     let out = s.dibs(["--gc", "--all"]).run().all();
@@ -204,6 +206,7 @@ fn gc_removes_an_image_nobody_used_lately_unless_a_job_runs_in_it() {
         s.exists("scratch/images/photos/cat.jpg"),
         "what dibs did not make there stays: {out}"
     );
+    assert!(s.exists(&named), "even named like an image: {out}");
     assert!(
         !s.exists(&stopped),
         "a removal stopped partway is finished: {out}"
@@ -253,6 +256,58 @@ fn the_flag_names_an_image_over_the_recipes_own() {
         .run();
     assert_eq!(out.code, 0, "{}", out.all());
     assert_eq!(calls(&s, "bwrap").len(), 3, "a shell takes the flag too");
+}
+
+#[test]
+fn a_swept_recipe_runs_in_its_image() {
+    let s = Sandbox::new();
+    fakes(&s);
+    let app = app(&s);
+    recipes(
+        &s,
+        &format!(
+            "[build.b]\nimage = \"{IMAGE}\"\n[build.b.params.size]\n[[build.b.step]]\nlock = \"shared\"\nrun = \"echo {{size}}\"\n"
+        ),
+    );
+    let out = s
+        .dibs(["build", &format!("{app}@local"), "b", "--sweep", "size=32"])
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(calls(&s, "bwrap").len(), 1, "{}", out.all());
+}
+
+#[test]
+fn a_batch_followed_after_a_check_in_keeps_its_image() {
+    let mut s = Sandbox::new();
+    fakes(&s);
+    let app = app(&s);
+    let (up, hold) = (s.gate("up"), s.gate("hold"));
+    s.write(
+        "b",
+        &format!(
+            "[long] dibs shell {app}@local --reason test -- '{}; {}'\n\
+             [next] dibs shell {app}@local --reason test -- 'echo next'\n",
+            up.signal(),
+            hold.hold()
+        ),
+    );
+    let paused = s
+        .dibs(["batch", &s.p("b")])
+        .env("DIBS_IMAGE", IMAGE)
+        .env("DIBS_CHECK_IN", "1s")
+        .run();
+    assert_eq!(paused.code, 80, "{}", paused.all());
+    let id = capture(&paused.stderr, r"batch ([0-9-]+) checked in")
+        .unwrap_or_else(|| panic!("no check-in: {}", paused.all()));
+    up.reached();
+    let follow = s.spawn(s.dibs(["batch", "--follow", &id]));
+    hold.open();
+    assert_eq!(s.wait(follow), 0);
+    assert_eq!(
+        calls(&s, "bwrap").len(),
+        2,
+        "the step a follow starts runs in it too"
+    );
 }
 
 #[test]

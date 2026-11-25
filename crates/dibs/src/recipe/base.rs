@@ -116,14 +116,7 @@ pub struct Recipe {
 /// `<ref>@sha256:<digest>`, as the machine takes an image: a tag alone could name other files
 /// tomorrow.
 fn pinned(image: &str) -> bool {
-    image.rsplit_once("@sha256:").is_some_and(|(name, digest)| {
-        !name.is_empty()
-            && !name.contains(|c: char| c.is_whitespace() || c == '@')
-            && digest.len() == 64
-            && digest
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    })
+    dibs_runner::Image::parse(image).is_ok()
 }
 
 /// A procedure's fingerprint, made its own when what it builds ran in an image.

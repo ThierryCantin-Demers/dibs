@@ -1,14 +1,18 @@
 //! A build run inside an image: an older distribution's root filesystem, pinned by digest, so
 //! what the build links is that distribution's C library and not the machine's.
 
-use crate::tree::Commands;
+use crate::{
+    platform::{Host, Platform as _},
+    tree::Commands,
+};
 use std::{
     fs::{self, File, TryLockError},
     io,
+    os::unix::fs::PermissionsExt as _,
     path::{Component, Path, PathBuf},
     process::Command,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const DIGEST: usize = 64;
@@ -153,8 +157,15 @@ impl Images<'_> {
         let suffix = format!("-{}", &image.digest[..TAG]);
         for left in fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = left.file_name().to_string_lossy().into_owned();
-            if Cached::LEFT.iter().any(|left| name.starts_with(left)) && name.ends_with(&suffix) {
-                remove(commands, &left.path())?;
+            let path = left.path();
+            let owner = Cached::left_by(&path).filter(|_| name.ends_with(&suffix));
+            // A live owner is still removing it; a dead one's may be finished by a sweep at the
+            // same time, so failing here would refuse a build over what it never needed.
+            if owner.is_some_and(|pid| !Host::exists(pid))
+                && let Err(e) = remove(commands, &path)
+                && e.overran
+            {
+                return Err(e);
             }
         }
         if !done.join("rootfs").is_dir() {
@@ -297,11 +308,13 @@ impl Cached {
     /// What an unpack works in, and what a sweep moves an image to before removing it.
     const LEFT: [&str; 2] = [".part-", ".gone-"];
 
-    /// An unpacked image's own directory, named by its digest alone.
+    /// An unpacked image's own directory, named by its digest alone and holding what an unpack
+    /// leaves.
     pub fn is_image(path: &Path) -> bool {
         path.file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|n| Image::hex(n, DIGEST))
+            && (path.join("rootfs").is_dir() || path.join(USED).is_file())
     }
 
     /// An unpack's or a removal's own directory, by the process that made it.
@@ -314,6 +327,32 @@ impl Cached {
         Image::hex(tag, TAG).then(|| pid.parse().ok()).flatten()
     }
 
+    /// Removed unless `until` passes first, each directory made writable on the way down, since
+    /// an image's root filesystem holds ones its owner cannot write into.
+    pub fn removed_by(path: &Path, until: Option<Instant>) -> bool {
+        if until.is_some_and(|until| Instant::now() >= until) {
+            return false;
+        }
+        let Ok(meta) = fs::symlink_metadata(path) else {
+            return true;
+        };
+        if !meta.is_dir() {
+            return fs::remove_file(path).is_ok();
+        }
+        let mode = meta.permissions().mode();
+        if mode & 0o700 != 0o700 {
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o700));
+        }
+        let entries: Vec<PathBuf> = fs::read_dir(path)
+            .map(|d| d.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default();
+        let mut all = true;
+        for entry in entries {
+            all &= Cached::removed_by(&entry, until);
+        }
+        all && fs::remove_dir(path).is_ok()
+    }
+
     /// Renamed out of its digest's name under its locks, so a build never takes what a removal
     /// stopped partway left of it for an unpacked image.
     pub fn set_aside(image: &Path) -> Option<PathBuf> {
@@ -324,17 +363,6 @@ impl Cached {
             digest.get(..TAG)?
         ));
         fs::rename(image, &aside).ok().map(|()| aside)
-    }
-
-    /// Its directories made writable, since an image's root filesystem holds ones its owner
-    /// cannot write into.
-    pub fn writable(path: &Path) {
-        let _ = Command::new("chmod")
-            .args(["-R", "u+w"])
-            .arg(path)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
     }
 }
 

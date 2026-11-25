@@ -34,6 +34,7 @@ mod stop;
 mod tree;
 mod views;
 
+pub use image::Image;
 pub use machine::short_hostname;
 pub use provision::{BUILD_MAX, Source};
 pub use tree::Clocks;

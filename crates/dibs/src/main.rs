@@ -343,7 +343,14 @@ fn recipe_image(call: &RecipeCall) -> Option<String> {
     if !runs || std::env::var_os(call::IMAGE).is_some() {
         return None;
     }
-    recipe::Resolved::of(call).ok()?.rec.image
+    // A recipe names one image whatever its values, so any point of a sweep says which.
+    let mut probe = call.clone();
+    for sweep in std::mem::take(&mut probe.sweep) {
+        if let Some(value) = sweep.values.into_iter().next() {
+            probe.params.insert(sweep.name, value);
+        }
+    }
+    recipe::Resolved::of(&probe).ok()?.rec.image
 }
 
 /// `--when-open`, carried in the environment to every request this call and its children send.

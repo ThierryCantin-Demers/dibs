@@ -381,12 +381,13 @@ impl Worker<'_> {
             }
             let _ = fs::remove_dir_all(&next);
             let copied = Command::new("cp").arg("-al").arg(&tree).arg(&next).status();
-            if copied.is_ok_and(|s| s.success()) {
-                // An upload may make an empty one meanwhile, which a rename replaces whole.
+            // An upload may make an empty one meanwhile, which a rename replaces whole.
+            let placed = copied.is_ok_and(|s| s.success()) && {
                 let _ = fs::remove_dir_all(&last);
-                if fs::rename(&next, &last).is_err() {
-                    let _ = fs::remove_dir_all(&next);
-                }
+                fs::rename(&next, &last).is_ok()
+            };
+            if !placed {
+                let _ = fs::remove_dir_all(&next);
             }
         }
         // The stage can be sent to again under the same key until it is taken, so what was

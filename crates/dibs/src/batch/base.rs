@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     call::{
-        BatchStep, CHECK_IN, Destination, Driver, LOW_PRIORITY, MachineCall, Pending,
+        BatchStep, CHECK_IN, Destination, Driver, IMAGE, LOW_PRIORITY, MachineCall, Pending,
         reached_its_job,
     },
     caller::Caller,
@@ -55,6 +55,9 @@ struct Paused {
     /// `--low-priority`, which the steps a follow starts keep.
     #[serde(default)]
     low_priority: bool,
+    /// `DIBS_IMAGE` as the batch was started with, for the steps a follow starts.
+    #[serde(default)]
+    image: Option<String>,
     verbose: bool,
     states: Vec<State>,
     /// How long the batch had run, its pauses not counted.
@@ -287,6 +290,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         on,
         check_in: std::env::var(CHECK_IN).ok(),
         low_priority: std::env::var(LOW_PRIORITY).is_ok_and(|v| v == "1"),
+        image: std::env::var(IMAGE).ok(),
         verbose: opts.verbose,
         states: Vec::new(),
         seconds: 0,
@@ -394,6 +398,7 @@ fn drive(
         check_in: kept.check_in.clone(),
         // A follow given the flag itself runs the rest of the steps so too.
         low_priority: kept.low_priority || std::env::var(LOW_PRIORITY).is_ok_and(|v| v == "1"),
+        image: kept.image.clone(),
         tx,
         rx,
     };
@@ -500,6 +505,8 @@ struct Driving<'a> {
     /// `DIBS_CHECK_IN` for every step, as the batch was started with.
     check_in: Option<String>,
     low_priority: bool,
+    /// `DIBS_IMAGE` for every step, as the batch was started with.
+    image: Option<String>,
     tx: mpsc::Sender<StepEnded>,
     rx: mpsc::Receiver<StepEnded>,
 }
@@ -597,6 +604,7 @@ impl Driving<'_> {
             let carried = Carried {
                 check_in: self.check_in.as_deref(),
                 low_priority: self.low_priority,
+                image: self.image.as_deref(),
             };
             match StepGuard::spawn(line, &batch, self.on.as_ref(), carried) {
                 Ok(mut guarded) => {
@@ -731,6 +739,7 @@ impl Driving<'_> {
             on: kept.on.clone(),
             check_in: kept.check_in.clone(),
             low_priority: self.low_priority,
+            image: self.image.clone(),
             verbose: kept.verbose,
         };
         let file = self.dir.join(Paused::FILE);
