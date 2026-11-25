@@ -76,8 +76,8 @@ impl Detached {
     const RUNS: &'static str = "runs.jsonl";
     const DRIVER: &'static str = "driver.err";
     const EXIT: &'static str = "exit";
-    /// Held by the driver from before its batch starts until its exit is written, which comes
-    /// after the batch's own record is let go.
+    /// Held by the driver from before its batch starts until its exit is written and its repos
+    /// kept, which comes after the batch's own record is let go.
     const ENDING: &'static str = "ending.lock";
     /// What the driver prints once it holds the batch, which is when its start returns.
     const DRIVING: &'static str = "driving";
@@ -280,8 +280,8 @@ impl Detached {
             Exit::Refused.status()
         });
         let _ = fs::write(sent.join(Detached::EXIT), format!("{code}\n"));
-        drop(ending);
         self.keep_repos(&sent);
+        drop(ending);
         code
     }
 
