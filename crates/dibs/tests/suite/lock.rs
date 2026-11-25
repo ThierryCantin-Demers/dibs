@@ -838,7 +838,7 @@ fn a_signal_while_a_job_sweeps_what_it_left_keeps_the_lock_until_that_is_gone() 
     unsafe { libc::kill(main, libc::SIGTERM) };
     s.wait(caller);
     assert!(
-        !alive(left),
+        ended(&left.to_string()),
         "the child that ignored TERM is gone before the lock is"
     );
 }

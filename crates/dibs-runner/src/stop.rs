@@ -56,6 +56,8 @@ pub struct State {
     pub handed: bool,
     /// The caller went while being told: it is stopped after all if the telling failed.
     pub gone_while_handing: bool,
+    /// Its job's group has been swept to the end, so its id may name someone else's by now.
+    pub swept: bool,
 }
 
 impl State {
@@ -70,6 +72,9 @@ impl State {
             }
             (_, Stage::Parked) => self.parked_since = Some(Instant::now()),
             _ => {}
+        }
+        if let Stage::Running(_) = stage {
+            self.swept = false;
         }
         self.stage = stage;
     }
@@ -104,6 +109,7 @@ impl Stopper {
                 closed: false,
                 handed: false,
                 gone_while_handing: false,
+                swept: false,
             }),
             call,
             dir,
@@ -224,10 +230,13 @@ impl Stopper {
         // A job whose command has ended is still sweeping its group, and what that left, or what
         // left the group, holds the cards until it is gone: the lock goes after it, not before.
         if let Some(work) = work {
-            Group(work).sweep();
-        }
-        if let Some(job) = &state.job {
-            Host::reap(&left_by(job));
+            if !state.swept {
+                Group(work).sweep();
+            }
+            let left = state.job.as_ref().map(left_by).unwrap_or_default();
+            if !left.is_empty() {
+                Host::reap(&left);
+            }
         }
         if matches!(
             state.stage,

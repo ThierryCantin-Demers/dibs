@@ -1999,6 +1999,7 @@ impl<'a> Run<'a> {
                 .record(Record::Holding(hosted.ports.picked.clone()));
         }
         let end = work.wait(cap);
+        self.at.stopper.state().swept = true;
         hosted.overran = end.capped;
         let status = end.status;
         let ended = guard
