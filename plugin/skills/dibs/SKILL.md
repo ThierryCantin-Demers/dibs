@@ -62,10 +62,9 @@ spoiled without it.
   A job `dibs status` shows as frozen is waiting its turn, not stuck.
 - **Long work that should be in nobody's way**, such as a track that runs for hours, takes
   `--low-priority`: it starts only once nothing else runs or waits on the machine, and is parked as
-  soon as another job comes, a `--sync` aside, to run again from the start once the machine is idle
-  again. It may
-  wait or rerun for hours, so it is no use for work needed by a time, and it is never a
-  measurement.
+  soon as another job comes, a `--sync` from another computer aside, to run again from the start
+  once the machine is idle again. It may wait or rerun for hours, so it is no use for work needed
+  by a time, and it is never a measurement.
 - **Never `sleep`**, here or inside a command sent to a machine: under the exclusive lock it stalls
   everyone for its whole duration. To wait until something is ready, block on a fifo: `mkfifo f`,
   start the work, then `read -r _ < f`.

@@ -1049,9 +1049,9 @@ for `idle_settle` seconds, two minutes by default, so a batch's next step or an 
 does not find it just started. As soon as another job holds or waits there, a build, a test or a
 benchmark, the `--low-priority` job is parked: its command is stopped, it lets go of the lock, and
 it runs again from the start, in the same tree, once the machine is idle again. Its caller is told
-each time and sees one run, the last. A peek never counts, nor does a `--sync`, which lays out no
-tree a job runs from, nor another `--low-priority` job, so several run side by side. While it
-waits, `dibs status` says which job it waits behind, or how long the machine has been quiet of the
+each time and sees one run, the last. A peek never counts, nor does a `--sync` from another
+computer, which lays out no tree a job runs from, nor another `--low-priority` job, so several run
+side by side. While it waits, `dibs status` says which job it waits behind, or how long the machine has been quiet of the
 two minutes, and how long it ran before it was last parked.
 
 Parking repeats what the job had done, so it suits work that runs well at night or between bursts,
