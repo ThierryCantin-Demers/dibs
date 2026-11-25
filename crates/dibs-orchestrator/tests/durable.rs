@@ -314,13 +314,27 @@ fn following_a_submission_whose_worker_died_carries_it_on() {
     sandbox.reached();
     sandbox.kill_worker();
     sandbox.open_gate();
+    let followed = std::thread::scope(|scope| {
+        let followers: Vec<_> = (0..2)
+            .map(|_| scope.spawn(|| sandbox.follow(&id)))
+            .collect();
+        followers
+            .into_iter()
+            .map(|f| f.join().unwrap())
+            .collect::<Vec<_>>()
+    });
     assert_eq!(
-        sandbox.follow(&id),
-        (State::Done, 0),
+        followed,
+        [(State::Done, 0), (State::Done, 0)],
         "{}",
         sandbox.log(&id)
     );
     assert_eq!(sandbox.ran(), 1, "{}", sandbox.log(&id));
+    let (_, exit) = sandbox.ask(Call::Follow {
+        id: id.clone(),
+        check_in: u64::MAX,
+    });
+    assert_eq!(exit, 0, "a check-in past any deadline waits without one");
 }
 
 #[test]

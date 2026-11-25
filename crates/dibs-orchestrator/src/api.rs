@@ -90,8 +90,8 @@ pub fn send(reply: &Reply) {
     }
 }
 
-/// Whether the submission's worker let go of it before `deadline`.
-fn worker_let_go(home: &Home, id: &str, deadline: Instant) -> bool {
+/// Whether the submission's worker let go of it before `deadline`, if there is one.
+fn worker_let_go(home: &Home, id: &str, deadline: Option<Instant>) -> bool {
     let lock = worker::lock_path(home, id);
     let (done, waited) = mpsc::channel();
     std::thread::spawn(move || {
@@ -100,9 +100,12 @@ fn worker_let_go(home: &Home, id: &str, deadline: Instant) -> bool {
         }
         let _ = done.send(());
     });
-    waited
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .is_ok()
+    match deadline {
+        Some(deadline) => waited
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .is_ok(),
+        None => waited.recv().is_ok(),
+    }
 }
 
 fn say(text: impl Into<String>) {
@@ -375,7 +378,7 @@ impl Api<'_> {
             return Err(refused(format!("no submission {id}")));
         }
         let within = Duration::from_secs(check_in.max(1));
-        let deadline = Instant::now() + within;
+        let deadline = Instant::now().checked_add(within);
         let mut revived = false;
         let detail = loop {
             if !revived && self.started(id)? {

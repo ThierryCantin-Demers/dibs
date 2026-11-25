@@ -45,6 +45,13 @@ pub fn started_fifo(home: &Home, id: &str) -> PathBuf {
 pub fn worker(home: &Home, id: &str) -> Result<(), String> {
     let dir = home.submission(id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // Two starters at once would share one fifo, and one would wait out a reply the other read.
+    let _starting = File::create(dir.join("starting.lock"))
+        .and_then(|f| f.lock().map(|()| f))
+        .map_err(|e| format!("{}: {e}", dir.join("starting.lock").display()))?;
+    if crate::worker::driven(home, id) {
+        return Ok(());
+    }
     let fifo = started_fifo(home, id);
     let _ = std::fs::remove_file(&fifo);
     mkfifo(&fifo).map_err(|e| format!("{}: {e}", fifo.display()))?;
