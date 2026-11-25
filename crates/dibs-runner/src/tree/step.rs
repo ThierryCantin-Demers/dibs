@@ -246,8 +246,8 @@ impl<'a> Stepping<'a> {
     /// the dependency's requirement does not accept.
     /// A failed step whose lockfile cargo did not write never resolved, so its lockfile is still
     /// the one sent and says nothing about the pin.
-    /// In a tree with no root lockfile, only the workspaces the step resolved say anything: a
-    /// sibling's lockfile it never touched still names where it took the crate from.
+    /// In a tree with no root lockfile, only the workspaces resolved against the pin say anything:
+    /// a sibling's lockfile nobody touched still names where it took the crate from.
     pub fn unpinned(&self, names: &[String], status: i32) -> bool {
         let written = |lock: &Path| fs::metadata(lock).and_then(|m| m.modified()).ok();
         let since = |lock: &Path| {
@@ -264,7 +264,7 @@ impl<'a> Stepping<'a> {
         } else {
             let mut found = Vec::new();
             nested_lockfiles(&self.worktree, &mut found);
-            found.retain(|lock| since(lock));
+            found.retain(|lock| since(lock) || unused_patch(lock, names));
             found
         };
         let left: Vec<String> = locks
@@ -293,6 +293,23 @@ impl<'a> Stepping<'a> {
             .and_then(|m| m.modified())
             .ok()
     }
+}
+
+/// Whether a lockfile records a patch of one of `names` that cargo left unused, as it does once
+/// it has resolved against a pin it could not take, whichever step did.
+fn unused_patch(lock: &Path, names: &[String]) -> bool {
+    let text = fs::read_to_string(lock).unwrap_or_default();
+    let mut unused = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with("[[") {
+            unused = line == "[[patch.unused]]";
+        } else if let Some(name) = line.strip_prefix("name = ").filter(|_| unused) {
+            if names.iter().any(|n| *n == name.trim_matches('"')) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// The lockfiles below `dir`, hidden directories and build outputs aside.

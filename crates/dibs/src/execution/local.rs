@@ -131,13 +131,16 @@ impl Repo<'_> {
                 "-z",
                 "--",
                 "*/Cargo.lock",
+                "*/Cargo.toml",
             ]),
             Some(r) => Git(self.0).run(&["ls-tree", "-r", "--name-only", "-z", r]),
         };
         let listed = listed.unwrap_or_default();
-        listed
-            .split('\0')
+        let paths: Vec<&str> = listed.split('\0').collect();
+        paths
+            .iter()
             .filter_map(|path| path.strip_suffix("/Cargo.lock"))
+            .filter(|dir| paths.contains(&format!("{dir}/Cargo.toml").as_str()))
             .filter_map(|dir| {
                 let lock = self.root_file(&format!("{dir}/Cargo.lock"), reference)?;
                 Some((dir.to_string(), lock))
