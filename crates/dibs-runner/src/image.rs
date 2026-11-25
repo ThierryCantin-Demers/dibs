@@ -317,6 +317,11 @@ impl Cached {
             && (path.join("rootfs").is_dir() || path.join(USED).is_file())
     }
 
+    /// An image, or what an unpack or a removal of one left: everything dibs made there.
+    pub fn made(path: &Path) -> bool {
+        Cached::is_image(path) || Cached::left_by(path).is_some()
+    }
+
     /// An unpack's or a removal's own directory, by the process that made it.
     pub fn left_by(path: &Path) -> Option<u32> {
         let name = path.file_name()?.to_str()?;
@@ -343,12 +348,12 @@ impl Cached {
         if mode & 0o700 != 0o700 {
             let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o700));
         }
-        let entries: Vec<PathBuf> = fs::read_dir(path)
-            .map(|d| d.flatten().map(|e| e.path()).collect())
-            .unwrap_or_default();
         let mut all = true;
-        for entry in entries {
-            all &= Cached::removed_by(&entry, until);
+        for entry in fs::read_dir(path).into_iter().flatten().flatten() {
+            all &= Cached::removed_by(&entry.path(), until);
+            if !all && until.is_some_and(|until| Instant::now() >= until) {
+                return false;
+            }
         }
         all && fs::remove_dir(path).is_ok()
     }

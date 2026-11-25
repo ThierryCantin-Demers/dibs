@@ -214,11 +214,16 @@ impl<'a> Sweep<'a> {
             Swept::Leftovers => under("tmp"),
             Swept::Results => under("out"),
             Swept::Runners => Runners::in_home(self.home).dir().entries(),
-            // Only what dibs made there: anything else is somebody's, and is never swept.
+            // What dibs made there, and what a job put there, shown but never swept; the hidden
+            // rest are dibs's locks.
             Swept::Images => under(IMAGES)
                 .into_iter()
-                .filter(|path| path.is_dir())
-                .filter(|path| Cached::is_image(path) || Cached::left_by(path).is_some())
+                .filter(|path| {
+                    Cached::made(path)
+                        || path
+                            .file_name()
+                            .is_some_and(|n| !n.as_encoded_bytes().starts_with(b"."))
+                })
                 .collect(),
             Swept::Named => self
                 .scratch
@@ -504,6 +509,9 @@ impl<'a> Sweep<'a> {
     /// An unpacked image by its last use, kept while a job unpacks it or runs in it; an unpack
     /// or a removal whose process is gone was abandoned.
     fn image(&self, path: &Path, used: u64, now: u64) -> Fate {
+        if !Cached::made(path) {
+            return Fate::Kept;
+        }
         if let Some(pid) = Cached::left_by(path) {
             return match Host::exists(pid) {
                 true => Fate::Preparing,

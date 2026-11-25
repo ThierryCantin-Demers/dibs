@@ -98,11 +98,11 @@ fn a_swept_run_is_a_batch_of_ordinary_calls() {
     );
     assert_eq!(
         lines[0],
-        "[samples-10] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 10"
+        "[samples-10] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples=10"
     );
     assert_eq!(
         lines[1],
-        "[samples-30] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples 30"
+        "[samples-30] dibs bench app@local r --reps 2 --anyway --new-series --device gpu0 --samples=30"
     );
 }
 
@@ -157,7 +157,7 @@ fn a_swept_shell_carries_its_reason_its_lock_and_its_command_quoted() {
     let text = SweepPoints::of(&args).text();
     assert_eq!(
         text.lines().next().unwrap(),
-        "[n-1] dibs shell app@main..local --bench --max 60 --reps 2 --reason 'why not' --n 1 -- 'echo a; echo b'",
+        "[n-1] dibs shell app@main..local --bench --max 60 --reps 2 --reason 'why not' --n=1 -- 'echo a; echo b'",
         "a batch line is one dibs call, so anything the shell would read has to be quoted"
     );
 }

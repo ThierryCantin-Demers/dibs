@@ -378,8 +378,15 @@ impl Worker<'_> {
                     .join(format!(".{}.next-{}", split.repo, std::process::id()));
             if let Some(parent) = last.parent() {
                 let _ = fs::create_dir_all(parent);
+                let ours = format!(".{}.next-", split.repo);
+                for left in fs::read_dir(parent).into_iter().flatten().flatten() {
+                    let name = left.file_name().to_string_lossy().into_owned();
+                    let pid = name.strip_prefix(&ours).and_then(|pid| pid.parse().ok());
+                    if pid.is_some_and(|pid| pid == std::process::id() || !alive(pid)) {
+                        let _ = fs::remove_dir_all(left.path());
+                    }
+                }
             }
-            let _ = fs::remove_dir_all(&next);
             let copied = Command::new("cp").arg("-al").arg(&tree).arg(&next).status();
             // An upload may make an empty one meanwhile, which a rename replaces whole.
             let placed = copied.is_ok_and(|s| s.success()) && {
@@ -1122,6 +1129,13 @@ fn is_static(exe: &Path) -> bool {
         let header = off as usize + (i * size) as usize;
         u(header, 4).is_some_and(|kind| kind != u64::from(PT_INTERP))
     })
+}
+
+/// Whether `pid` names a process, even one this account may not signal.
+fn alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only asks whether the process exists.
+    let answered = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    answered == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 #[cfg(test)]

@@ -340,7 +340,7 @@ fn recipe_image(call: &RecipeCall) -> Option<String> {
         call.verb,
         RecipeVerb::Build | RecipeVerb::Test | RecipeVerb::Bench | RecipeVerb::With
     );
-    if !runs || std::env::var_os(call::IMAGE).is_some() {
+    if !runs || std::env::var(call::IMAGE).is_ok_and(|image| !image.is_empty()) {
         return None;
     }
     // A recipe names one image whatever its values, so any point of a sweep says which.

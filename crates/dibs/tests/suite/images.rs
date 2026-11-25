@@ -207,6 +207,11 @@ fn gc_removes_an_image_nobody_used_lately_unless_a_job_runs_in_it() {
         "what dibs did not make there stays: {out}"
     );
     assert!(s.exists(&named), "even named like an image: {out}");
+    assert_eq!(
+        out.lines_matching(r"images/photos .* not an image, never removed"),
+        1,
+        "and is shown: {out}"
+    );
     assert!(
         !s.exists(&stopped),
         "a removal stopped partway is finished: {out}"
@@ -274,6 +279,17 @@ fn a_swept_recipe_runs_in_its_image() {
         .run();
     assert_eq!(out.code, 0, "{}", out.all());
     assert_eq!(calls(&s, "bwrap").len(), 1, "{}", out.all());
+    let out = s
+        .dibs(["build", &format!("{app}@local"), "b", "--size", "64"])
+        .env("DIBS_IMAGE", "")
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(
+        calls(&s, "bwrap").len(),
+        2,
+        "an empty DIBS_IMAGE names none: {}",
+        out.all()
+    );
 }
 
 #[test]

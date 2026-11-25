@@ -105,8 +105,9 @@ impl<'a> SweepPoints<'a> {
             if let Some(r) = &args.reason {
                 line += &format!(" --reason {}", ShellWord(r));
             }
+            // Joined, so a value is never read as a dibs flag of the same name, such as --image.
             for (k, v) in p {
-                line += &format!(" --{k} {}", ShellWord(v));
+                line += &format!(" --{k}={}", ShellWord(v));
             }
             if let Some(c) = &args.command {
                 line += &format!(" -- {}", ShellWord(c));
