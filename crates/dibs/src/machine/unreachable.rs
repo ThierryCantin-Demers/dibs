@@ -27,11 +27,13 @@ impl Unreachable<'_> {
         let why = match self.said.trim().is_empty() {
             false => self.said.trim_end().to_string(),
             true => bounded(
-                // At ssh's own level, a refusal a server sends as a banner, as Tailscale SSH does,
-                // reaches us; the call that failed ran at ERROR, which hides it.
+                // At INFO, a refusal a server sends as a banner, as Tailscale SSH does, reaches us;
+                // ERROR, which the failed call ran at and a config may set, hides it.
                 Ssh::to(&self.target.dial).args([
                     "-o",
                     "BatchMode=yes",
+                    "-o",
+                    "LogLevel=INFO",
                     "-o",
                     &format!("ConnectTimeout={timeout}"),
                     host,

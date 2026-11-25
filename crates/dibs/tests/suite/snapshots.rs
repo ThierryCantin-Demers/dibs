@@ -1285,7 +1285,7 @@ fn unreachable_with(s: &Sandbox, says: &str, tailscale: &str, accepts: &str) -> 
     s.write_exec(
         "fails/ssh",
         &format!(
-            "#!/bin/bash\nfor a; do [ \"$a\" = -v ] && [ -n \"{accepts}\" ] && echo 'debug1: Server accepts key: /keys/id_ed25519 ED25519 SHA256:x explicit' >&2; done\ncase '{says}' in INFO\\ *) [[ \" $* \" == *LogLevel=ERROR* ]] || printf '%s\\n' '{says}' | sed 's/^INFO //' >&2;; *) printf '%s\\n' '{says}' >&2;; esac\nexit 255\n"
+            "#!/bin/bash\nfor a; do [ \"$a\" = -v ] && [ -n \"{accepts}\" ] && echo 'debug1: Server accepts key: /keys/id_ed25519 ED25519 SHA256:x explicit' >&2; done\ncase '{says}' in INFO\\ *) [[ \" $* \" == *LogLevel=INFO* ]] && printf '%s\\n' '{says}' | sed 's/^INFO //' >&2;; *) printf '%s\\n' '{says}' >&2;; esac\nexit 255\n"
         ),
     );
     s.write_exec(
