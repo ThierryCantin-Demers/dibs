@@ -49,7 +49,7 @@ impl TreeSpec<'_> {
         let fetched = self.fetched();
         let lock = Repo(self.dir).lockfile(fetched.as_deref());
         let lock = lock.as_deref().unwrap_or("");
-        let pins = GitPin::all(lock);
+        let pins = GitPin::of(&Repo(self.dir).lockfiles(fetched.as_deref()));
         let cargo = CargoHome::here();
         cargo.fetch_private(&pins, private);
         let gitdbs = cargo.dbs(&pins);

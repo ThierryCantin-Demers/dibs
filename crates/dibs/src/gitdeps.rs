@@ -27,6 +27,17 @@ pub struct GitPin {
 }
 
 impl GitPin {
+    /// Every git source in several lockfiles, once each.
+    pub fn of(locks: &[(String, String)]) -> Vec<GitPin> {
+        let mut out: Vec<GitPin> = Vec::new();
+        for pin in locks.iter().flat_map(|(_, lock)| GitPin::all(lock)) {
+            if !out.contains(&pin) {
+                out.push(pin);
+            }
+        }
+        out
+    }
+
     /// Every git source in a lockfile, once each.
     pub fn all(lock: &str) -> Vec<GitPin> {
         let mut out: Vec<GitPin> = Vec::new();

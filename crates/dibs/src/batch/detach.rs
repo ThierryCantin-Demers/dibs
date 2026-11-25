@@ -626,8 +626,7 @@ impl<'a> Detach<'a> {
     fn send_gitdbs(&self, repos: &[SentRepo]) -> Result<Option<i32>, BatchError> {
         let mut pins: Vec<GitPin> = Vec::new();
         for repo in repos {
-            let lock = Repo(&repo.dir).lockfile(None).unwrap_or_default();
-            for pin in GitPin::all(&lock) {
+            for pin in GitPin::of(&Repo(&repo.dir).lockfiles(None)) {
                 if !pins.contains(&pin) {
                     pins.push(pin);
                 }

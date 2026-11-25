@@ -451,19 +451,33 @@ impl Pinned {
                 relocked: Vec::new(),
             });
         }
-        let locks: Vec<String> = arms
+        let workspaces: Vec<(&Arm, String, String)> = arms
             .iter()
-            .filter_map(|a| Repo(a.dir(dir)).lockfile(a.fetch.as_deref()))
+            .flat_map(|a| {
+                let found = Repo(a.dir(dir)).lockfiles(a.fetch.as_deref());
+                found.into_iter().map(move |(ws, lock)| (a, ws, lock))
+            })
+            .collect();
+        let locks: Vec<String> = workspaces
+            .iter()
+            .map(|(_, _, lock)| lock.clone())
             .chain(pins.iter().filter_map(|p| p.lock.clone()))
             .collect();
-        let manifests: Vec<String> = arms
+        let roots: Vec<String> = arms
             .iter()
             .filter_map(|a| Repo(a.dir(dir)).manifest(a.fetch.as_deref()))
             .collect();
+        let manifests: Vec<String> = workspaces
+            .iter()
+            .filter(|(_, ws, _)| !ws.is_empty())
+            .filter_map(|(a, ws, _)| Repo(a.dir(dir)).workspace_manifest(ws, a.fetch.as_deref()))
+            .chain(roots.iter().cloned())
+            .collect();
+        // A path in a nested workspace's [patch] starts from that workspace, not from beside the tree.
         let configs: Vec<String> = arms
             .iter()
             .filter_map(|a| Repo(a.dir(dir)).cargo_config(a.fetch.as_deref()))
-            .chain(manifests.iter().cloned())
+            .chain(roots)
             .collect();
         let read_beside = beside(&configs);
         for p in &mut pins {

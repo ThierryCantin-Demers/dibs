@@ -2092,6 +2092,51 @@ fn a_pin_replaces_what_the_trees_own_patch_takes_from_the_pinned_repo() {
 }
 
 #[test]
+fn a_pin_reaches_a_workspace_below_a_root_with_no_lockfile() {
+    let mut s = Sandbox::new();
+    s.real_cargo();
+    pushed_lib(&s);
+    s.git(".", &["init", "-q", "mono"]);
+    s.write("mono/.gitignore", "target\n");
+    s.write(
+        "mono/node/Cargo.toml",
+        &format!("[package]\nname = \"node\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nlib = {{ git = \"file://{}\", branch = \"main\" }}\n", s.p("lib.git")),
+    );
+    s.write(
+        "mono/node/src/main.rs",
+        "fn main() { println!(\"{}\", lib::say()); }\n",
+    );
+    assert_eq!(
+        s.command("cargo", ["generate-lockfile", "-q"])
+            .dir(&s.path("mono/node"))
+            .code(),
+        0
+    );
+    s.git("mono", &["add", "-A"]);
+    s.git("mono", &["commit", "-qm", "mono"]);
+    s.write("mono/.dibs.toml", "[build.say]\n  [[build.say.step]]\n  lock = \"shared\"\n  run = \"cd node && cargo build -q && $CARGO_TARGET_DIR/debug/node\"\n");
+    s.write(
+        "lib/src/lib.rs",
+        "pub fn say() -> &'static str { \"unpushed\" }\n",
+    );
+    let out = s
+        .dibs([
+            "build",
+            &format!("{}@local", s.p("mono")),
+            "say",
+            "--pin",
+            &format!("{}@local", s.p("lib")),
+        ])
+        .run();
+    assert_eq!(
+        (out.code, out.all().lines_matching("^unpushed$")),
+        (0, 1),
+        "{}",
+        out.all()
+    );
+}
+
+#[test]
 fn a_pin_builds_against_another_trees_unpushed_changes() {
     // With a real cargo: what is checked is that cargo reads the patch dibs puts above the tree.
     let mut s = Sandbox::new();

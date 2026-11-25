@@ -117,6 +117,42 @@ impl Repo<'_> {
         self.root_file("Cargo.lock", reference)
     }
 
+    /// The lockfile of each workspace the tree builds, by the directory holding it: the root's, or
+    /// where the root has none, as in a repo of several workspaces, every one below it.
+    pub fn lockfiles(self, reference: Option<&str>) -> Vec<(String, String)> {
+        if let Some(root) = self.lockfile(reference) {
+            return vec![(String::new(), root)];
+        }
+        let listed = match reference {
+            None => Git(self.0).run(&[
+                "ls-files",
+                "-co",
+                "--exclude-standard",
+                "-z",
+                "--",
+                "*/Cargo.lock",
+            ]),
+            Some(r) => Git(self.0).run(&["ls-tree", "-r", "--name-only", "-z", r]),
+        };
+        let listed = listed.unwrap_or_default();
+        listed
+            .split('\0')
+            .filter_map(|path| path.strip_suffix("/Cargo.lock"))
+            .filter_map(|dir| {
+                let lock = self.root_file(&format!("{dir}/Cargo.lock"), reference)?;
+                Some((dir.to_string(), lock))
+            })
+            .collect()
+    }
+
+    /// The manifest of the workspace in `dir`, the root's when it is empty.
+    pub fn workspace_manifest(self, dir: &str, reference: Option<&str>) -> Option<String> {
+        match dir {
+            "" => self.manifest(reference),
+            dir => self.root_file(&format!("{dir}/Cargo.toml"), reference),
+        }
+    }
+
     /// The root manifest of the tree here, or of a ref in its history.
     pub fn manifest(self, reference: Option<&str>) -> Option<String> {
         self.root_file("Cargo.toml", reference)
