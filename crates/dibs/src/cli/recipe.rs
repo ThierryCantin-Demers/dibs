@@ -154,6 +154,8 @@ pub struct RecipeCall {
     pub urgent: Option<String>,
     /// `--low-priority`: the shared jobs run only while nothing else does.
     pub low_priority: bool,
+    /// `--image`: the `<ref>@sha256:<digest>` its builds run in, over the recipe's own.
+    pub image: Option<String>,
     /// Measure even when another tree built into the target after this one did.
     pub anyway: bool,
     /// with only: the command runs on the machine, in the tree, rather than here.
@@ -214,6 +216,7 @@ impl RecipeCall {
             when_open: false,
             urgent: None,
             low_priority: false,
+            image: None,
             anyway: false,
             there: false,
             json: false,
@@ -284,6 +287,7 @@ impl RecipeCall {
                 "--anyway" => call.anyway = true,
                 "--when-open" => call.when_open = true,
                 "--low-priority" => call.low_priority = true,
+                "--image" => call.image = Some(value("--image needs <ref>@sha256:<digest>")?),
                 "--there" => call.there = true,
                 "--json" => call.json = true,
                 "--all" => call.all = true,

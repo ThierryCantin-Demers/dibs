@@ -316,6 +316,10 @@ impl Parser {
                 }
                 "--when-open" => self.call.when_open = true,
                 "--low-priority" => self.call.low_priority = true,
+                "--image" => {
+                    self.call.image = Some(need_some("--image")?);
+                    at += 1;
+                }
                 "--urgent" => {
                     self.call.urgent = Some(need_some("--urgent")?);
                     at += 1;

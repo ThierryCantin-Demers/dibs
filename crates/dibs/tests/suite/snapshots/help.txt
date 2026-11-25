@@ -94,6 +94,9 @@
 1|                of its command, for one whose command changes in what does not matter
 1|   --anyway     measure even when another tree built into the target after this one did,
 1|                which is otherwise refused with exit 78
+1|   --image <ref>@sha256:<digest>
+1|                the builds run in that image, over the recipe's own image = key, so what
+1|                they link runs on a machine with an older C library
 1|   --dry-run    print what would run, take no lock, record nothing
 1|   --verbose    with batch, each step's output as it comes, prefixed with the step's name
 1| 
@@ -240,6 +243,9 @@
 1|                      machine, or DIBS_HOST without one, needs neither.
 1|   --wait <seconds>   give up rather than queue past this
 1|   --when-open        queue on a machine its owners closed, until it opens, rather than exit 79
+1|   --image <ref>@sha256:<digest>
+1|                      a shared job with a tree dibs lays out builds in that image, as
+1|                      DIBS_IMAGE does
 1|   --low-priority     shared work that starts only once nothing else runs or waits there, and is
 1|                      stopped, to run again from the start, as soon as another job comes
 1|   --urgent '<why>'   a benchmark that has the machine to itself: the shared jobs running there

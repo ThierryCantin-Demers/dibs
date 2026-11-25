@@ -1,6 +1,6 @@
 # Build images: a binary that runs where it was not built
 
-Status: built for shared jobs and the orchestrator; recipe and flag syntax to come.
+Status: built: shared jobs, recipes, `--image` and the orchestrator.
 
 ## The problem
 
@@ -128,8 +128,11 @@ It is fetched with `skopeo copy` and unpacked with `umoci unpack --rootless` int
 that needs it, within that job's cap and stopped with it. That
 needs no `/etc/subuid` range, which an admin would have to grant, and keeps images where scratch
 accounting sees them; podman's own store, under `~/.local/share/containers`, would be invisible to
-it. Each use touches the image's `.dibs-used`. `dibs --gc` does not yet account for `images/`: it
-should, by last use like target directories, making an unpacked tree writable before removing it.
+it. Each use touches the image's `.dibs-used`, and a job holds a shared lock on the image for as
+long as it runs. `dibs --gc`, and the sweep every prepare runs, list images by last use and remove
+one unused for the general keep, made writable first, only once its unpack lock and that use lock
+are both free; an unpack whose process is gone goes too. `dibs --check` says whether bwrap is on a
+job's PATH, without which no image runs, and skopeo and umoci, without which none is fetched.
 
 The image can be a public one: `buildpack-deps:noble` is Ubuntu 24.04, glibc 2.39, with gcc,
 `pkg-config`, git, `ca-certificates` and the common `-dev` libraries. One with more is a Dockerfile
@@ -138,7 +141,10 @@ on top of it, built once, published, and referred to by digest.
 ## Naming an image
 
 `DIBS_IMAGE=<ref>@sha256:<digest>` in a call's environment names it, as `DIBS_ATTEMPT` names an
-attempt, so every job a recipe or a batch makes carries it. A shared call runs in the image; a
+attempt, so every job a recipe or a batch makes carries it. `--image <ref>@sha256:<digest>` on a
+call or a recipe sets it, and a recipe's `image = "..."` does when neither the flag nor the
+variable chose one, the flag winning over both. A recipe's image without a digest is refused when
+it loads. A shared call runs in the image; a
 measurement runs natively what was built there, since the image has neither the machine's GPU
 devices nor its driver, and a tree laid out by a measurement still gets the image's target. The
 transfer of a sent tree carries it, since that is where the tree's target is chosen, and so does a
@@ -151,8 +157,6 @@ from the same recipe built natively.
 The orchestrator's profile names one image for every split build, beside its `rustflags`, and
 the bundle's attested inputs include it; a native build attests what it did before. The `rustc -vV` recorded with a bundle stays right, since
 the toolchain is the host's.
-
-A recipe step's `image` key and a `--image` flag are still to come.
 
 ## The stage check
 

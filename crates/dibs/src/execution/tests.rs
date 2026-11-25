@@ -421,6 +421,7 @@ fn resolved(steps: Vec<Step>) -> Resolved {
         params: BTreeMap::new(),
         fresh: Vec::new(),
         artifacts: Vec::new(),
+        image: None,
         steps,
     };
     let step_labels = rec.step_labels("app/bench/r");

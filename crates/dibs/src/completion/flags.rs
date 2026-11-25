@@ -186,6 +186,11 @@ pub const CALL: &[Flag] = &[
         "run only while nothing else does, parked for any other job",
     ),
     Flag::new(
+        &["--image"],
+        Value::Free,
+        "<ref>@sha256:<digest>: shared builds run in that image",
+    ),
+    Flag::new(
         &["--urgent"],
         Value::Free,
         "why: the machine to itself, shared jobs parked",
@@ -304,6 +309,11 @@ pub const RECIPE: &[Flag] = &[
         &["--low-priority"],
         Value::No,
         "run only while nothing else does, parked for any other job",
+    ),
+    Flag::new(
+        &["--image"],
+        Value::Free,
+        "<ref>@sha256:<digest>: shared builds run in that image",
     ),
     Flag::new(
         &["--urgent"],

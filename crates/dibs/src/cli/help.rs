@@ -37,6 +37,7 @@ impl Help {
                 "--pin",
                 "--artifacts",
                 "--anyway",
+                "--image",
                 "--new-series",
                 "--dry-run",
                 "--on <machine>",

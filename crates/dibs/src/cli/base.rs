@@ -42,6 +42,8 @@ pub struct Call {
     pub urgent: Option<String>,
     /// `--low-priority`: runs only while nothing else does, and makes way for anything that comes.
     pub low_priority: bool,
+    /// `--image`: the `<ref>@sha256:<digest>` its shared jobs build in.
+    pub image: Option<String>,
     pub max: Option<u64>,
     /// `--check-in`: seconds a job runs before its call lets go of it; 0 never does.
     pub check_in: Option<u64>,

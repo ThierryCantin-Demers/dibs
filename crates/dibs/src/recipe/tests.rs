@@ -96,6 +96,31 @@ fn a_fresh_variable_changes_the_procedure_and_has_to_be_a_variable() {
 }
 
 #[test]
+fn a_recipes_image_is_pinned_by_its_digest() {
+    let recipe = |image: &str| {
+        parse(&format!(
+            "[bench.r]\nimage = \"{image}\"\n[[bench.r.step]]\nlock = \"shared\"\nrun = \"x\"\n"
+        ))
+    };
+    let pinned = format!("docker.io/library/buildpack-deps@sha256:{}", "0".repeat(64));
+    assert!(recipe(&pinned).check("r").is_ok());
+    for bad in [
+        "docker.io/library/buildpack-deps:noble".to_string(),
+        format!("@sha256:{}", "0".repeat(64)),
+        format!("docker.io/x@sha256:{}", "A".repeat(64)),
+    ] {
+        assert!(
+            recipe(&bad)
+                .check("r")
+                .unwrap_err()
+                .to_string()
+                .contains("has to be pinned as <ref>@sha256:<digest>"),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
 fn a_relative_target_is_refused_but_a_rustup_subcommand_is_not() {
     let step = |run: &str| {
         parse(&format!(
@@ -426,6 +451,7 @@ fn recipe_of(steps: Vec<Step>) -> Recipe {
         params: BTreeMap::new(),
         fresh: Vec::new(),
         artifacts: Vec::new(),
+        image: None,
         steps,
     }
 }
@@ -439,6 +465,7 @@ fn the_fingerprint_follows_the_procedure_and_nothing_else() {
         params: BTreeMap::new(),
         fresh: Vec::new(),
         artifacts: Vec::new(),
+        image: None,
         steps: vec![step(Lock::Shared, "cargo build")],
     };
     let same = Recipe {
@@ -448,6 +475,7 @@ fn the_fingerprint_follows_the_procedure_and_nothing_else() {
         params: BTreeMap::new(),
         fresh: Vec::new(),
         artifacts: Vec::new(),
+        image: None,
         steps: vec![step(Lock::Shared, "cargo build")],
     };
     let changed_command = Recipe {
@@ -457,6 +485,7 @@ fn the_fingerprint_follows_the_procedure_and_nothing_else() {
         params: BTreeMap::new(),
         fresh: Vec::new(),
         artifacts: Vec::new(),
+        image: None,
         steps: vec![step(Lock::Shared, "cargo build --release")],
     };
     let changed_lock = Recipe {
@@ -466,6 +495,7 @@ fn the_fingerprint_follows_the_procedure_and_nothing_else() {
         params: BTreeMap::new(),
         fresh: Vec::new(),
         artifacts: Vec::new(),
+        image: None,
         steps: vec![step(Lock::Exclusive, "cargo build")],
     };
     assert_eq!(a.fingerprint(), same.fingerprint());
@@ -488,6 +518,7 @@ fn a_fingerprint_is_the_value_every_earlier_dibs_gave_it() {
         params: BTreeMap::new(),
         fresh: vec!["STORE".into()],
         artifacts: Vec::new(),
+        image: None,
         steps: vec![step(Lock::Shared, "cargo build"), measured],
     };
     assert_eq!(recipe.fingerprint(), "d4619e399e5736a4");

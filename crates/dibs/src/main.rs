@@ -110,6 +110,9 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             if let Some(why) = &call.urgent {
                 urgent(why);
             }
+            if let Some(image) = call.image.clone().or_else(|| recipe_image(&call)) {
+                image_for_builds(&image);
+            }
             let caller = Caller::from_env();
             update::tell_once(&caller);
             run(call, &caller)
@@ -123,6 +126,9 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             }
             if let Some(why) = &call.urgent {
                 urgent(why);
+            }
+            if let Some(image) = &call.image {
+                image_for_builds(image);
             }
             let caller = Caller::from_env();
             if call.mode != Mode::Update {
@@ -318,6 +324,26 @@ fn urgent(why: &str) {
 fn low_priority() {
     // SAFETY: set while only the main thread runs, before anything reads the environment.
     unsafe { std::env::set_var(call::LOW_PRIORITY, "1") };
+}
+
+/// `--image`, or the recipe's, carried in the environment as `DIBS_IMAGE` is, to every step and
+/// child call.
+fn image_for_builds(image: &str) {
+    // SAFETY: set while only the main thread runs, before anything reads the environment.
+    unsafe { std::env::set_var(call::IMAGE, image) };
+}
+
+/// The image the recipe a call runs names, unless `DIBS_IMAGE` already chose one. Nothing is
+/// refused here: the run resolves the recipe again and says what is wrong with it.
+fn recipe_image(call: &RecipeCall) -> Option<String> {
+    let runs = matches!(
+        call.verb,
+        RecipeVerb::Build | RecipeVerb::Test | RecipeVerb::Bench | RecipeVerb::With
+    );
+    if !runs || std::env::var_os(call::IMAGE).is_some() {
+        return None;
+    }
+    recipe::Resolved::of(call).ok()?.rec.image
 }
 
 /// `--when-open`, carried in the environment to every request this call and its children send.

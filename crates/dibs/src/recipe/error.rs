@@ -140,6 +140,8 @@ pub enum ParamError {
 pub enum Flaw {
     /// A `fresh` entry that is not a variable name.
     Fresh(String),
+    /// An image named without its digest.
+    Image(String),
     Artifact(String),
     /// A relative `target/` path, which the build never writes.
     Target(String),
@@ -346,6 +348,10 @@ impl Flaw {
             Flaw::Fresh(v) => write!(
                 f,
                 "recipe '{recipe}': fresh lists variables to give each run its own value, and '{v}' is not a variable name"
+            ),
+            Flaw::Image(i) => write!(
+                f,
+                "recipe '{recipe}': image '{i}' has to be pinned as <ref>@sha256:<digest>, since a tag can name other files tomorrow"
             ),
             Flaw::Artifact(a) => write!(
                 f,

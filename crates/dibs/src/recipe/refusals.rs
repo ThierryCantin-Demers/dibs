@@ -93,6 +93,7 @@ impl Resolved {
             params: BTreeMap::new(),
             fresh: Vec::new(),
             artifacts: Vec::new(),
+            image: None,
             steps: Step::of_shell(args.command.as_deref().unwrap_or_default(), args.bench),
         });
 

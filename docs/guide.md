@@ -590,13 +590,15 @@ the orchestrator can reach. `docs/design/orchestrator.md` is how it is built.
 ## Building in an image
 
 A binary built on a machine with a newer C library than the one it runs on fails to load there.
-`DIBS_IMAGE=<ref>@sha256:<digest>` in a call's environment runs its shared jobs in that image's
+`--image <ref>@sha256:<digest>` on a call or a recipe, `DIBS_IMAGE` in its environment, or
+`image = "<ref>@sha256:<digest>"` in the recipe, in that order, runs its shared jobs in that image's
 root filesystem, under bubblewrap, when dibs lays out their tree, from a recipe or
 `dibs shell <repo>@<ref>`, so what they link is the image's glibc; a measurement runs
 natively what was built. The account's home and the machine's scratch are the same paths inside,
 so build caches and the Rust toolchains are the machine's own, and the tree builds into a target
-of the image's own. The machine needs `skopeo`, `umoci` and `bwrap`, and unpacks each image once,
-under `$DIBS_SCRATCH/images/`. Only a digest names an image. `docs/design/build-images.md` is how
+of the image's own. The machine needs `skopeo`, `umoci` and `bwrap`, which `dibs --check` looks
+for, and unpacks each image once, under `$DIBS_SCRATCH/images/`, where `dibs --gc` lists it and
+removes it once unused for as long as a worktree. Only a digest names an image. `docs/design/build-images.md` is how
 it works.
 
 ## A job that runs past its check-in

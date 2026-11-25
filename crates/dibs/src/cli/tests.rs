@@ -518,6 +518,7 @@ fn recipe(verb: RecipeVerb, repo: &str) -> RecipeCall {
         max: None,
         when_open: false,
         low_priority: false,
+        image: None,
         urgent: None,
         anyway: false,
         there: false,

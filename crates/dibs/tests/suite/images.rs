@@ -1,5 +1,5 @@
 use crate::harness::*;
-use crate::recipes::app;
+use crate::recipes::{app, recipes};
 use std::fs;
 
 const IMAGE: &str = "registry.example/floor@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -168,4 +168,109 @@ fn a_real_image_gives_its_own_glibc_and_cannot_be_changed() {
     assert_eq!(out.stdout.lines_with("2.39"), 1, "{}", out.all());
     assert_eq!(out.stdout.lines_with("sealed"), 1, "{}", out.all());
     assert_eq!(out.stdout.lines_with("I have no name"), 0, "{}", out.all());
+}
+
+#[test]
+fn gc_removes_an_image_nobody_used_lately_unless_a_job_runs_in_it() {
+    let s = Sandbox::new();
+    let image = |digest: char| format!("scratch/images/{}", digest.to_string().repeat(64));
+    for digest in ['a', 'b', 'c'] {
+        s.write(&format!("{}/rootfs/usr/lib/libc.so.6", image(digest)), "x");
+        s.write(&format!("{}/.dibs-used", image(digest)), "");
+    }
+    for digest in ['a', 'b'] {
+        let used = s.p(&format!("{}/.dibs-used", image(digest)));
+        assert_eq!(s.command("touch", ["-d", "30 days ago", &used]).code(), 0);
+    }
+    let unwritable = s.p(&format!("{}/rootfs/usr/lib", image('a')));
+    assert_eq!(s.command("chmod", ["555", &unwritable]).code(), 0);
+    let held =
+        fs::File::create(s.path(&format!("scratch/images/.{}.use", "b".repeat(64)))).unwrap();
+    held.lock_shared().unwrap();
+    let out = s.dibs(["--gc"]).run().all();
+    assert!(
+        !s.exists(&image('a')),
+        "an image unused for a month goes: {out}"
+    );
+    assert!(s.exists(&image('b')), "unless a job runs in it: {out}");
+    assert_eq!(out.lines_matching(r"images/b+ .* in use"), 1, "{out}");
+    assert!(s.exists(&image('c')), "and one used today stays: {out}");
+
+    s.write("scratch/images/photos/cat.jpg", "x");
+    let stopped = format!("scratch/images/.gone-{}-{}", u32::MAX, "d".repeat(12));
+    s.write(&format!("{stopped}/rootfs/x"), "x");
+    let out = s.dibs(["--gc", "--all"]).run().all();
+    assert!(
+        s.exists("scratch/images/photos/cat.jpg"),
+        "what dibs did not make there stays: {out}"
+    );
+    assert!(
+        !s.exists(&stopped),
+        "a removal stopped partway is finished: {out}"
+    );
+    assert!(
+        s.exists(&image('b')),
+        "and one in use stays, whatever its clock: {out}"
+    );
+}
+
+#[test]
+fn the_flag_names_an_image_over_the_recipes_own() {
+    let s = Sandbox::new();
+    fakes(&s);
+    let app = app(&s);
+    let other = format!("registry.example/other@sha256:{}", "f".repeat(64));
+    recipes(
+        &s,
+        &format!(
+            "[build.b]\nimage = \"{IMAGE}\"\n[[build.b.step]]\nlock = \"shared\"\nrun = \"echo built\"\n"
+        ),
+    );
+    let at = format!("{app}@local");
+    let out = s.dibs(["build", &at, "b"]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let fetched = calls(&s, "skopeo");
+    assert_eq!(fetched.len(), 1, "the recipe's image: {fetched:?}");
+    assert!(fetched[0].contains("0123456789abcdef"), "{fetched:?}");
+    let out = s.dibs(["build", &at, "b", "--image", &other]).run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let fetched = calls(&s, "skopeo");
+    assert!(
+        fetched.last().unwrap().contains("ffffffff"),
+        "the flag's: {fetched:?}"
+    );
+    let out = s
+        .dibs([
+            "shell",
+            &at,
+            "--reason",
+            "test",
+            "--image",
+            &other,
+            "--",
+            "echo inside",
+        ])
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    assert_eq!(calls(&s, "bwrap").len(), 3, "a shell takes the flag too");
+}
+
+#[test]
+fn a_recipes_image_without_its_digest_is_refused_before_anything_runs() {
+    let s = Sandbox::new();
+    fakes(&s);
+    let app = app(&s);
+    recipes(
+        &s,
+        "[build.b]\nimage = \"registry.example/floor:latest\"\n[[build.b.step]]\nlock = \"shared\"\nrun = \"echo built\"\n",
+    );
+    let out = s.dibs(["build", &format!("{app}@local"), "b"]).run();
+    assert_ne!(out.code, 0, "{}", out.all());
+    assert_eq!(
+        out.stderr.lines_with("has to be pinned"),
+        1,
+        "{}",
+        out.all()
+    );
+    assert!(calls(&s, "skopeo").is_empty());
 }

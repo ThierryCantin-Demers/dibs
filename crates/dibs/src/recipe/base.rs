@@ -106,8 +106,24 @@ pub struct Recipe {
     /// `$CARGO_TARGET_DIR/`. Each step keeps those it wrote itself, never one an earlier run left.
     #[serde(default)]
     pub artifacts: Vec<String>,
+    /// `<ref>@sha256:<digest>`: the image its builds run in, unless the call names another.
+    #[serde(default)]
+    pub image: Option<String>,
     #[serde(default, rename = "step")]
     pub steps: Vec<Step>,
+}
+
+/// `<ref>@sha256:<digest>`, as the machine takes an image: a tag alone could name other files
+/// tomorrow.
+fn pinned(image: &str) -> bool {
+    image.rsplit_once("@sha256:").is_some_and(|(name, digest)| {
+        !name.is_empty()
+            && !name.contains(|c: char| c.is_whitespace() || c == '@')
+            && digest.len() == 64
+            && digest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
 }
 
 /// A procedure's fingerprint, made its own when what it builds ran in an image.
@@ -236,6 +252,9 @@ impl Recipe {
         };
         if let Some(v) = self.fresh.iter().find(|v| !variable(v)) {
             return Err(unsound(Flaw::Fresh(v.clone())));
+        }
+        if let Some(image) = self.image.as_ref().filter(|i| !pinned(i)) {
+            return Err(unsound(Flaw::Image(image.clone())));
         }
         // Expanded unquoted on the machine so that * and ** match, which leaves no room for
         // anything the shell would read as more than a path.
