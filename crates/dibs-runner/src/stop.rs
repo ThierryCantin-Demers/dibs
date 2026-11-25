@@ -230,7 +230,7 @@ impl Stopper {
         // A job whose command has ended is still sweeping its group, and what that left, or what
         // left the group, holds the cards until it is gone: the lock goes after it, not before.
         if let Some(work) = work {
-            if !state.swept {
+            if matches!(state.stage, Stage::Running(_)) && !state.swept {
                 Group(work).sweep();
             }
             let left = state.job.as_ref().map(left_by).unwrap_or_default();
