@@ -372,11 +372,22 @@ impl Worker<'_> {
                 .map_err(|e| format!("the sent tree {} cannot be taken: {e}", stage.display()))?;
             // What the next upload of this repo is sent against, so only what changed travels.
             let last = staging.join("last").join(&split.repo);
-            let _ = fs::remove_dir_all(&last);
+            let next =
+                staging
+                    .join("last")
+                    .join(format!(".{}.next-{}", split.repo, std::process::id()));
             if let Some(parent) = last.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            let _ = Command::new("cp").arg("-al").arg(&tree).arg(&last).status();
+            let _ = fs::remove_dir_all(&next);
+            let copied = Command::new("cp").arg("-al").arg(&tree).arg(&next).status();
+            if copied.is_ok_and(|s| s.success()) {
+                // An upload may make an empty one meanwhile, which a rename replaces whole.
+                let _ = fs::remove_dir_all(&last);
+                if fs::rename(&next, &last).is_err() {
+                    let _ = fs::remove_dir_all(&next);
+                }
+            }
         }
         // The stage can be sent to again under the same key until it is taken, so what was
         // taken is checked here, its git directory made the service's own again first.

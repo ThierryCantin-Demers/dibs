@@ -54,22 +54,37 @@ pub fn worker(home: &Home, id: &str, ended: impl Fn() -> bool) -> Result<bool, S
     let fifo = started_fifo(home, id);
     let _ = std::fs::remove_file(&fifo);
     mkfifo(&fifo).map_err(|e| format!("{}: {e}", fifo.display()))?;
-    let (told, said) = mpsc::channel();
+    let (told, heard) = mpsc::channel();
     {
         let fifo = fifo.clone();
+        let told = told.clone();
         std::thread::spawn(move || {
             let line = File::open(&fifo).ok().and_then(|f| {
                 let mut line = String::new();
                 BufReader::new(f).read_line(&mut line).ok().map(|_| line)
             });
-            let _ = told.send(line.unwrap_or_default());
+            let _ = told.send(Heard::Said(line.unwrap_or_default()));
         });
     }
-    launch(id, &dir)?;
-    match said.recv_timeout(STARTED_WITHIN) {
-        Ok(line) if line.trim() == DRIVING => Ok(true),
-        Ok(line) if line.trim() == DRIVEN => Ok(false),
-        Ok(line) => Err(format!(
+    // Unblocks the reader, which would otherwise wait on the fifo for ever.
+    let unblock = || {
+        let _ = File::options()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&fifo);
+    };
+    if let Err(why) = launch(id, &dir, told) {
+        unblock();
+        return Err(why);
+    }
+    match heard.recv_timeout(STARTED_WITHIN) {
+        Ok(Heard::Said(line)) if line.trim() == DRIVING => Ok(true),
+        Ok(Heard::Said(line)) if line.trim() == DRIVEN => Ok(false),
+        Ok(Heard::Failed(why)) => {
+            unblock();
+            Err(why)
+        }
+        Ok(Heard::Said(line)) => Err(format!(
             "its worker ended before it held the submission{}; see {}",
             match line.trim() {
                 "" => String::new(),
@@ -78,11 +93,7 @@ pub fn worker(home: &Home, id: &str, ended: impl Fn() -> bool) -> Result<bool, S
             dir.join("worker.log").display()
         )),
         Err(_) => {
-            // Unblocks the reader, which would otherwise wait on the fifo for ever.
-            let _ = File::options()
-                .write(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(&fifo);
+            unblock();
             Err(format!(
                 "its worker did not say it held the submission within {}s; see {}",
                 STARTED_WITHIN.as_secs(),
@@ -114,7 +125,15 @@ fn starting(dir: &Path) -> Result<File, String> {
     }
 }
 
-fn launch(id: &str, dir: &Path) -> Result<(), String> {
+/// What a start hears first: its worker on the fifo, or the launcher failing.
+enum Heard {
+    Said(String),
+    Failed(String),
+}
+
+/// Starts the worker. A launcher that fails says so on `told`, and one that never returns is
+/// left to the start's own wait.
+fn launch(id: &str, dir: &Path, told: mpsc::Sender<Heard>) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let log = File::options()
         .create(true)
@@ -169,15 +188,17 @@ fn launch(id: &str, dir: &Path) -> Result<(), String> {
     let mut child = command
         .spawn()
         .map_err(|e| format!("{}: {e}", command.get_program().to_string_lossy()))?;
-    if systemd {
-        let status = child.wait().map_err(|e| e.to_string())?;
-        if !status.success() {
-            return Err(format!("systemd-run failed ({status})"));
+    // Reaped by a thread, so it never lingers as a zombie while this call lives.
+    std::thread::spawn(move || {
+        let status = child.wait();
+        if systemd && !status.as_ref().is_ok_and(|s| s.success()) {
+            let why = match status {
+                Ok(status) => format!("systemd-run failed ({status})"),
+                Err(e) => format!("systemd-run: {e}"),
+            };
+            let _ = told.send(Heard::Failed(why));
         }
-    } else {
-        // Reaped by a thread, so it never lingers as a zombie while this call lives.
-        std::thread::spawn(move || child.wait());
-    }
+    });
     Ok(())
 }
 
