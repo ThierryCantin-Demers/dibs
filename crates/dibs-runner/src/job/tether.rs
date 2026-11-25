@@ -25,7 +25,7 @@ pub struct Tether {
 
 /// A process group, by the pid of its leader.
 #[derive(Debug, Clone, Copy)]
-struct Group(pub u32);
+pub struct Group(pub u32);
 
 impl Tether {
     pub const WORD: &str = "tether";
@@ -99,7 +99,7 @@ impl Tether {
 
 impl Group {
     /// TERM, then KILL for whatever outlives it, until nothing is left in it.
-    fn sweep(self) {
+    pub fn sweep(self) {
         for round in 0..TERM_ROUNDS + KILL_ROUNDS {
             let signal = match round {
                 0 => libc::SIGTERM,

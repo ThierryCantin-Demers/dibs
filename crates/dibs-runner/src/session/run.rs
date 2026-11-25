@@ -2141,13 +2141,7 @@ impl<'a> Run<'a> {
     /// What the command started outside its group, as `setsid` does, which the group's own sweep
     /// cannot reach and which would otherwise hold cards and memory past the lock.
     fn sweep_escaped(&self, job: &JobId) {
-        let me = std::process::id();
-        let left: Vec<u32> = Host::processes()
-            .iter()
-            .map(|process| process.pid)
-            .filter(|&pid| pid != me)
-            .filter(|&pid| Host::variable(pid, "DIBS_JOB").as_deref() == Some(job.as_str()))
-            .collect();
+        let left = crate::stop::left_by(job);
         if left.is_empty() {
             return;
         }

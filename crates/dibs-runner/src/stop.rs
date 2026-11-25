@@ -1,5 +1,6 @@
 use crate::{
     call::{Journal, Received},
+    job::Group,
     lock::LockDir,
     platform::{Descendants as _, Host, Platform as _},
     sink::Sink,
@@ -220,6 +221,14 @@ impl Stopper {
         if !stopped.is_empty() {
             Host::reap(&stopped);
         }
+        // A job whose command has ended is still sweeping its group, and what that left, or what
+        // left the group, holds the cards until it is gone: the lock goes after it, not before.
+        if let Some(work) = work {
+            Group(work).sweep();
+        }
+        if let Some(job) = &state.job {
+            Host::reap(&left_by(job));
+        }
         if matches!(
             state.stage,
             Stage::Queued
@@ -297,4 +306,16 @@ impl Signals {
             }
         });
     }
+}
+
+/// Every process the job started, in its group or outside it, as `setsid` starts one: each names
+/// the job in its environment.
+pub fn left_by(job: &JobId) -> Vec<u32> {
+    let me = std::process::id();
+    Host::processes()
+        .iter()
+        .map(|process| process.pid)
+        .filter(|&pid| pid != me)
+        .filter(|&pid| Host::variable(pid, "DIBS_JOB").as_deref() == Some(job.as_str()))
+        .collect()
 }

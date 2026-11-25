@@ -807,6 +807,42 @@ fn a_signal_to_the_machine_script_alone_takes_its_job_with_it() {
     );
 }
 
+/// Gone, or a zombie its runner has not reaped yet: either way its children are no longer its.
+fn ended(pid: &str) -> bool {
+    let ps = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", pid])
+        .output()
+        .unwrap();
+    let stat = String::from_utf8_lossy(&ps.stdout);
+    stat.trim().is_empty() || stat.trim().starts_with('Z')
+}
+
+#[test]
+fn a_signal_while_a_job_sweeps_what_it_left_keeps_the_lock_until_that_is_gone() {
+    let mut s = Sandbox::new();
+    let (ready, never) = (s.gate("ready"), s.gate("never"));
+    let cmd = format!(
+        "bash -c 'trap \"\" TERM; echo $$ > {}; {}; {}' & {}; echo $$ > {}",
+        s.p("left.pid"),
+        ready.signal(),
+        never.hold(),
+        ready.hold(),
+        s.p("job.pid"),
+    );
+    let caller = s.spawn(s.dibs(["--label", "term-sweeping", &cmd]));
+    until("the job's shell to end, leaving its child", || {
+        s.exists("left.pid") && s.exists("job.pid") && ended(s.read("job.pid").trim())
+    });
+    let left: u32 = s.read("left.pid").trim().parse().unwrap();
+    let main: i32 = s.records("holder")[0][1].parse().unwrap();
+    unsafe { libc::kill(main, libc::SIGTERM) };
+    s.wait(caller);
+    assert!(
+        !alive(left),
+        "the child that ignored TERM is gone before the lock is"
+    );
+}
+
 #[test]
 fn a_signal_to_a_queued_machine_script_takes_it_out_of_the_queue_at_once() {
     // Not when it would finally have been let in: nobody is waiting for it any more.
