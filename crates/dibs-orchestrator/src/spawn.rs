@@ -47,7 +47,8 @@ pub fn worker(home: &Home, id: &str, ended: impl Fn() -> bool) -> Result<bool, S
     let dir = home.submission(id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let _starting = starting(&dir)?;
-    if ended() || crate::worker::driven(home, id) {
+    // A worker records its end before it lets go, so driven goes first.
+    if crate::worker::driven(home, id) || ended() {
         return Ok(false);
     }
     let fifo = started_fifo(home, id);

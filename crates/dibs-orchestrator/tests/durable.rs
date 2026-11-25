@@ -38,7 +38,7 @@ fi
 echo $$ > "$a/pid"
 echo $PPID > "$F/worker"
 echo "$DIBS_ATTEMPT" >> "$F/ran"
-if [ -p "$F/gate" ]; then echo up > "$F/reached"; read -r _ < "$F/gate"; fi
+if [ -p "$F/gate" ]; then exec 3<>"$F/gate"; echo up > "$F/reached"; read -r _ <&3; fi
 body="{\"job\":\"1-$$\",\"mode\":\"shared\",\"label\":\"l\",\"queued\":0,\"ran\":1,\"exit\":0,\"by\":\"command\",\"built\":null}"
 echo 0 > "$a/exit"
 echo "$body" > "$a/ended.part" && mv "$a/ended.part" "$a/ended"
