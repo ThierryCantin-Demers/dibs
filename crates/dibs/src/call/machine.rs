@@ -110,7 +110,14 @@ impl<'a> MachineCall<'a> {
                 .collect(),
             _ => BTreeMap::new(),
         };
-        let values = CallValues { aliases, ..values };
+        let workspace = (asked.mode == Mode::Check)
+            .then(|| self.fleet.inventory.as_ref()?.workspace.clone())
+            .flatten();
+        let values = CallValues {
+            aliases,
+            workspace,
+            ..values
+        };
         Ok(match asked.streamed {
             true => CallValues {
                 stream: true,

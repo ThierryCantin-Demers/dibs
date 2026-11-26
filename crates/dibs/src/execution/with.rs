@@ -96,12 +96,27 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         None => svc.ready_within.unwrap_or(Run::default().ready_within),
     };
 
+    let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
     let backend = Jobs::on(match Jobs::destination(args.machine())? {
         Destination::Named(m) => Some(m),
         Destination::Unnamed => None,
-        Destination::Unchosen => return Err(Refusal::WithUnplaced.into()),
+        Destination::Unchosen => {
+            let call = Call {
+                device: args.device.as_deref().map(Alias::from),
+                new_series: args.new_series,
+                repo: Some(repo_name.clone()),
+                ..Call::default()
+            };
+            let placed = match args.bench {
+                true => Jobs::placed_bench(call, &[Label::new(label.as_str())])?,
+                false => Some(Jobs::placed(call)?),
+            };
+            match placed {
+                Some(jobs) => jobs.machine,
+                None => return Err(Refusal::WithUnplaced.into()),
+            }
+        }
     });
-    let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
     let lock = match args.bench {
         true => Lock::Exclusive,
         false => Lock::Shared,

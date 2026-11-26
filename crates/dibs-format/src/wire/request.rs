@@ -60,6 +60,9 @@ pub struct Request {
     /// Waits for a machine closed by its owners to open, rather than being refused.
     #[serde(default)]
     pub when_open: bool,
+    /// For `--check`: the path the team's inventory says every machine keeps its trees under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
     /// `--low-priority`: a shared job that starts only once nothing else runs or waits on the
     /// machine, and is stopped, to run again from the start, as soon as another job comes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

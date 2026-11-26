@@ -553,6 +553,7 @@ impl Request<'_> {
             new_series: self.call.new_series,
             metrics: self.mode == Mode::Status && self.call.metrics.is_some(),
             aliases: BTreeMap::new(),
+            workspace: None,
             preempt: false,
             tree: None,
             check_in: match self

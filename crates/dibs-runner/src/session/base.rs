@@ -168,6 +168,7 @@ impl Visit {
                     settings: &self.settings,
                     write: self.call.label().as_str() == "check-write",
                     json: self.call.request.json,
+                    workspace: self.call.request.workspace.as_deref(),
                 }
                 .serve(&self.sink);
             }

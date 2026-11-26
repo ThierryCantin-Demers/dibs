@@ -22,6 +22,8 @@ pub struct Probe<'a> {
     pub write: bool,
     /// Print the facts alone, as one line of JSON.
     pub json: bool,
+    /// The team's workspace path, which this machine's trees should be under.
+    pub workspace: Option<&'a str>,
 }
 
 /// The report as it is written, and how many things failed or want a look.
@@ -250,6 +252,20 @@ impl Probe<'_> {
                 scratch.display(),
                 available(scratch)
             ));
+        }
+        if let Some(workspace) = self.workspace {
+            let resolved = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            match resolved(scratch).starts_with(resolved(Path::new(workspace))) {
+                true => report.ok(&format!("trees under the team's workspace {workspace}")),
+                false => {
+                    report.warn(&format!(
+                        "trees under {}, not the team's workspace {workspace}",
+                        scratch.display()
+                    ));
+                    report.note("A build there and a run on another machine see different paths, so its calls");
+                    report.note("run whole on one machine. Set DIBS_SCRATCH under the workspace.");
+                }
+            }
         }
         let target = scratch.join("target");
         if !target.is_dir() || !target.writable_dir() {

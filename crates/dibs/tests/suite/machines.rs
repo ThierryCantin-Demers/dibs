@@ -76,6 +76,29 @@ fn ssh_that_breaks_off_before_the_login_is_tried_again() {
 }
 
 #[test]
+fn check_says_whether_the_trees_are_under_the_team_s_workspace() {
+    let mut s = Sandbox::new();
+    let check = |s: &mut Sandbox, workspace: &str| {
+        s.machines(&format!(
+            "workspace = \"{workspace}\"\n[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\n",
+            hostname()
+        ));
+        s.dibs(["--check"]).run().stdout
+    };
+    let under = s.p("scratch");
+    assert_eq!(
+        check(&mut s, &under).lines_with("trees under the team's workspace"),
+        1
+    );
+    let elsewhere = s.p("elsewhere");
+    assert_eq!(
+        check(&mut s, &elsewhere).lines_with("not the team's workspace"),
+        1,
+        "a machine whose trees are elsewhere is told so"
+    );
+}
+
+#[test]
 fn check_reports_what_nothing_works_without() {
     let s = Sandbox::new();
     let check = s.dibs(["--check"]).run().stdout;

@@ -707,7 +707,9 @@ stderr to show for it. So with several machines, a call that names none is one o
 - **A status shows every machine**, as `--status --all` does.
 - **Anything else is refused**, with the machines to choose from: a benchmark, a benchmark
   recipe, a `--hold`, `--with` servers, a peek, a sync, a kill of a pid, a log, a gc, a check.
-  A batch with a benchmark step that names none is refused before any step runs. `dibs out <job>`
+  A batch with a benchmark step that names none is refused before any step runs. Once the
+  inventory gives machines roles, benchmarks, benchmark recipes and `with` are placed too, as
+  [Roles](#roles) says. `dibs out <job>`
   names the machine too, which the trailer's line does for you, unless the log was already read
   and kept here.
 
@@ -747,9 +749,9 @@ follow it to. So a second machine that cannot measure earns its keep on repos th
 benchmarked, and on whatever you send it deliberately with `--on`. That is a smaller claim than
 "it splits the load", and it is the true one until artifacts can move.
 
-**Benchmarks are never routed.** A measurement's duration history keys on the machine it ran
-on, so moving one files two distributions under a single label. `--bench` goes where it is
-told.
+**Benchmarks are never routed by load.** A measurement's duration history keys on the machine
+it ran on, so moving one files two distributions under a single label. Without roles, `--bench`
+goes where it is told; with them, it goes back to its series, as below.
 
 Routing also drops a machine that has no clone of the repo under `~/prog`, because a worktree
 is prepared from one and a job sent to a machine without it queues and then fails. Dropped
@@ -763,6 +765,34 @@ shares one memory pool with the CPU. `--check --write` sets it when it finds a b
 machine is still useful for everything that is not a measurement, which is most of what runs.
 A machine someone is using for a while, a desktop during the day, is switched with
 `dibs --measure <machine> off` and back with `on`, in whichever file holds it.
+
+## Roles
+
+An entry can say what a machine is for, with `roles = ["compile"]`, `["gpu"]`, `["bench"]` or
+several. Once any machine has a role, work that names no machine goes only to a machine with
+the role it needs:
+
+- **Shared work** goes to a `compile` machine, or to a `gpu` machine with the cards its
+  `--device` names. `--device cpu` is shared work like any other.
+- **A measurement**, raw, a recipe or `with --bench`, goes to a `bench` machine that measures
+  and has its cards: the one where its label is already running or queued, so two first runs do
+  not begin two series; else the one its series is newest on, as the machines record it; else
+  the one with the fewest benchmarks ahead. A label with a series on several says so, and
+  `--new-series` skips the series but still joins a run already under way.
+- **A batch's rows** of one repo joined by `after=`, the default of waiting for the line before
+  included, are placed together on the machine their most demanding row needs, since a later one
+  may read what an earlier one left in the tree. A row with a bare `after=` that nothing of its
+  repo waits for places itself. A detached batch goes to the one machine its rows need.
+
+A machine with none of the roles a call needs is never chosen for it, and a call with nowhere to
+go is refused. `dibs --machines` lists each machine's roles.
+
+**The team's machines** come from the dibspatcher, when one is set up. Its inventory is kept
+here, refreshed by `dibs --update` and once it is a day old, and read with this computer's own:
+the team says what a machine is (its roles, cards, `measure`, `series`, `workstation`), and an
+entry here of the same name says only how to reach it (`ssh`, `ssh_config`, `port`, `hostname`).
+`dibs --measure` refuses a team machine. A top-level `workspace = "<path>"` names where every
+machine of the pools keeps its trees, and `dibs --check` says when a machine's are elsewhere.
 
 ## Machines that come and go
 

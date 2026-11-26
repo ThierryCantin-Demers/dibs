@@ -430,8 +430,9 @@ impl fmt::Display for Refusal {
             ),
             Refusal::WithCommand => f.write_str("with needs a command after --"),
             Refusal::WithUnplaced => f.write_str(
-                "with starts servers on a machine this computer then drives, so it names one: --on <machine>,\n  \
-                 or export DIBS_ON. dibs --machines lists them.",
+                "with --bench starts servers on a machine this computer then drives, and no machine of the\n  \
+                 inventory is a bench machine to place it on, so it names one: --on <machine>, or export DIBS_ON.\n  \
+                 dibs --machines lists them.",
             ),
             Refusal::There => f.write_str(
                 "--there belongs to with: it runs the command on the machine beside the repo's servers",

@@ -44,6 +44,8 @@ pub struct CallValues {
     pub metrics: bool,
     /// Each card's alias by its PCI address, for those metrics to name it by.
     pub aliases: BTreeMap<String, String>,
+    /// For `--check`, the team's workspace path.
+    pub workspace: Option<String>,
     /// `--preemptible`, or a recipe's step that only compiles.
     pub preempt: bool,
     /// The tree a recipe's job runs in.
@@ -151,6 +153,7 @@ impl CallValues {
             new_series: self.new_series,
             metrics: self.metrics,
             aliases: self.aliases.clone(),
+            workspace: self.workspace.clone(),
             preempt: self.preempt,
             // From the environment, which `--when-open` sets, so a batch's steps and a sync's
             // transfer carry it too.

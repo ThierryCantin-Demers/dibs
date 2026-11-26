@@ -23,6 +23,9 @@ pub struct Inventory {
     pub root: Option<String>,
     /// A `default =` line, no longer read: a call names its machine.
     pub default: Option<String>,
+    /// The path every machine of the pools keeps its trees under, the team's to say, which
+    /// `dibs --check` holds a machine to.
+    pub workspace: Option<String>,
     pub machines: Vec<Machine>,
     /// Machines whose lease has ended, kept apart so a call naming one is told so.
     pub ended: Vec<Machine>,
@@ -182,6 +185,7 @@ impl std::error::Error for InventoryError {}
 struct File {
     root: Option<String>,
     default: Option<String>,
+    workspace: Option<String>,
     #[serde(default)]
     machine: BTreeMap<String, Machine>,
 }
@@ -230,6 +234,7 @@ impl Inventory {
         Ok(Inventory {
             root: file.root,
             default: file.default,
+            workspace: file.workspace,
             machines,
             ended: Vec::new(),
         })
@@ -264,6 +269,7 @@ impl Inventory {
         Some(Inventory {
             root: mine.root,
             default: mine.default,
+            workspace: team.workspace.or(mine.workspace),
             machines,
             ended,
         })
