@@ -41,7 +41,8 @@ pub const DIBS_OWN: [&str; 10] = [
     Attempts::DIR,
     BundleManifest::DIR,
 ];
-/// What the client keeps beside them when scratch is its default `~/.cache/dibs`.
+/// What the client keeps beside them when scratch is its default `~/.cache/dibs`, each with the
+/// `<name>.lock` its rewrites take.
 const CLIENT_OWN: [&str; 5] = ["detached", "client", "upstream", "sent", "remotes"];
 
 /// What a sweep walks, in the order it walks it.
@@ -189,8 +190,22 @@ impl<'a> Sweep<'a> {
                 [cwd, target]
             })
             .flatten()
-            .filter_map(|p| p.canonicalize().ok())
+            .filter_map(Sweep::resolved)
             .collect()
+    }
+
+    /// The path with its nearest existing ancestor resolved: a build names its target before
+    /// making it.
+    fn resolved(path: PathBuf) -> Option<PathBuf> {
+        let mut missing = Vec::new();
+        let mut at = path.as_path();
+        loop {
+            if let Ok(real) = at.canonicalize() {
+                return Some(missing.iter().rev().fold(real, |p, c| p.join(c)));
+            }
+            missing.push(at.file_name()?.to_owned());
+            at = at.parent()?;
+        }
     }
 
     /// One that judges and removes nothing.
@@ -259,8 +274,12 @@ impl<'a> Sweep<'a> {
                     .entries()
                     .into_iter()
                     .filter(|p| {
-                        p.file_name()
-                            .is_some_and(|n| !DIBS_OWN.iter().chain(client).any(|own| n == *own))
+                        p.file_name().is_some_and(|n| {
+                            !DIBS_OWN.iter().any(|own| n == *own)
+                                && !client.iter().any(|own| {
+                                    n == *own || n.to_str() == Some(&format!("{own}.lock"))
+                                })
+                        })
                     })
                     .collect()
             }
@@ -383,7 +402,8 @@ impl<'a> Sweep<'a> {
             // Asked again just before each goes: walking its siblings gave a job time to start in it.
             Swept::Leftovers => {
                 for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
-                    if Sweep::used_in(&Sweep::working(), &verdict.path) {
+                    let dir = fs::symlink_metadata(&verdict.path).is_ok_and(|m| m.is_dir());
+                    if dir && Sweep::used_in(&Sweep::working(), &verdict.path) {
                         verdict.fate = Fate::Held;
                         continue;
                     }

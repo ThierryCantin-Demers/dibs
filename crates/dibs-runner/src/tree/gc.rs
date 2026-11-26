@@ -238,6 +238,14 @@ impl SweepReport {
             ));
             return 1;
         }
+        if let Some(mount) = SweepReport::mount_under(&path) {
+            SweepReport::say(&format!(
+                "dibs: {} is mounted inside {}; unmount it first if it should go.\n",
+                mount.display(),
+                path.display()
+            ));
+            return 1;
+        }
         // Renamed out of its name first, so a job starting during a long removal cannot enter it;
         // beside it, so the rename stays on its filesystem, and a name left behind is removable.
         let aside = self.scratch.join(format!(
@@ -266,6 +274,27 @@ impl SweepReport {
             Kib(kib)
         ));
         0
+    }
+
+    /// A directory under `path` on another filesystem than it, which removing would walk into.
+    fn mount_under(path: &Path) -> Option<PathBuf> {
+        let dev = fs::symlink_metadata(path).ok()?.dev();
+        let mut dirs = vec![path.to_path_buf()];
+        while let Some(dir) = dirs.pop() {
+            for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+                    continue;
+                };
+                if !meta.is_dir() {
+                    continue;
+                }
+                if meta.dev() != dev {
+                    return Some(entry.path());
+                }
+                dirs.push(entry.path());
+            }
+        }
+        None
     }
 
     pub fn run(&self) -> i32 {
