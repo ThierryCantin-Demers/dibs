@@ -3,7 +3,7 @@ use super::{
     error::{Refusal, RunError, Unprepared},
     jobs::{BACKEND, JobOutcome, JobRequest, Jobs, Reported},
     kept::KeptStores,
-    local::{Clones, Repo},
+    local::{Clones, Repo, SentFrom},
     pins::{Nest, PinSpec, Pinned, PinnedRepo, PinnedTree},
     refs::{Arm, Side},
     schedule::Job,
@@ -814,7 +814,7 @@ impl Pinned {
                         None => eprintln!(
                             "dibs: pinning {} from {} ({})",
                             p.repo,
-                            p.dir.display(),
+                            SentFrom::from_env().key_path(&p.dir).display(),
                             if l.dirty {
                                 "uncommitted changes included"
                             } else {

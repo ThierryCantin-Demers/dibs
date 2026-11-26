@@ -1,6 +1,6 @@
 use super::{
     error::ArmError,
-    local::{Clones, Fetched, Repo},
+    local::{Clones, Fetched, Repo, SentFrom},
 };
 use crate::{
     git::{Git, GitError},
@@ -282,7 +282,7 @@ impl Arm {
             ),
             (None, Some(l)) => format!(
                 "{repo} from {} ({})",
-                dir.display(),
+                SentFrom::from_env().key_path(dir).display(),
                 if l.dirty {
                     "uncommitted changes included"
                 } else {

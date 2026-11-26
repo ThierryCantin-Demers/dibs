@@ -126,11 +126,7 @@ impl<'a> StepStderr<'a> {
         self.0
             .lines()
             .filter_map(|l| {
-                let arm = l
-                    .strip_prefix("  ")
-                    .and_then(|l| l.split_once(": "))
-                    .filter(|(arm, _)| !arm.contains(' '))
-                    .map(|(_, tree)| tree);
+                let arm = l.strip_prefix("  ").and_then(|l| l.strip_prefix("local: "));
                 l.strip_prefix("dibs: preparing ")
                     .or_else(|| l.strip_prefix("dibs: pinning "))
                     .or(arm)

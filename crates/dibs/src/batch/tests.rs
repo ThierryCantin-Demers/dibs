@@ -463,7 +463,8 @@ fn the_trees_a_step_took_as_local_are_its_own_its_pins_and_its_arms() {
          dibs: pinning lib from /w/lib (uncommitted changes included)\n\
          dibs: pinning kit@main at 0123456789ab, as main stands here\n  \
          local: app from /w/other (clean)\n  \
-         main: app@main\n\
+         main: app@main\n  \
+         cache: restored from /cache (clean)\n\
          dibs: preparing app@main\n\
          dibs: could not prepare app from ./tree (exit 30)\n",
     );

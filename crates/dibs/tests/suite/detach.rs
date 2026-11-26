@@ -40,6 +40,15 @@ fn a_detached_batch_is_driven_on_its_machine_and_its_summary_comes_home() {
         out.all()
     );
     assert_eq!(out.stdout.lines_with("its jobs ran on box-a"), 1);
+    assert_eq!(
+        out.stdout.lines_with(&format!(
+            "@local: app from {} (uncommitted changes included)",
+            s.p("app")
+        )),
+        1,
+        "the tree is named by where it was sent from, not by its copy on the machine: {}",
+        out.all()
+    );
     assert!(
         s.read("home/.local/state/dibs/runs.jsonl")
             .contains("\"repo\":\"app\""),

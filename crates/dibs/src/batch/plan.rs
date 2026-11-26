@@ -132,8 +132,21 @@ impl Batch<'_> {
                 std::fs::read_to_string(dir.join(format!("{}.err", st.name))).unwrap_or_default()
             })
             .collect();
+        let outs: Vec<String> = steps
+            .iter()
+            .map(|st| {
+                std::fs::read_to_string(dir.join(format!("{}.out", st.name))).unwrap_or_default()
+            })
+            .collect();
+        let swept = outs
+            .iter()
+            .flat_map(|out| out.lines().filter_map(|l| l.strip_prefix("@local: ")));
         let mut trees: Vec<&str> = Vec::new();
-        for tree in errs.iter().flat_map(|err| StepStderr(err).local_trees()) {
+        for tree in errs
+            .iter()
+            .flat_map(|err| StepStderr(err).local_trees())
+            .chain(swept)
+        {
             if !trees.contains(&tree) {
                 trees.push(tree);
             }
