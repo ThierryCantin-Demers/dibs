@@ -10,7 +10,7 @@ use crate::{
     platform::{Host, Platform as _},
     settings::{Settings, home},
     tree::{
-        clocks::{Clocks, Dates as _, Fate, KEEP, Removal},
+        clocks::{Clocks, Contents as _, Dates as _, Fate, KEEP, Removal},
         copy::Reflinks,
         runners::Runners,
         spread::Spread as _,
@@ -115,7 +115,10 @@ pub struct Asked {
 impl Asked {
     pub fn parse(words: &str) -> Asked {
         // Anything but the exact shape is only looked at: `named=a b 1` must not remove `a`.
-        let shaped = (2..=3).contains(&words.split_whitespace().count());
+        let shaped = match words.split_whitespace().nth(2) {
+            None => words.split_whitespace().count() == 2,
+            Some(live) => live == "tty" && words.split_whitespace().count() == 3,
+        };
         let mut words = words.split_whitespace();
         let clock = words.next();
         Asked {
@@ -246,8 +249,15 @@ impl SweepReport {
         let done = match self.dry {
             true => "would remove",
             false if !removal.set_aside(&path, &aside) => return 1,
-            false if removal.path(&aside) => "removed",
-            false => return 1,
+            false if aside.remove_all() => "removed",
+            false => {
+                SweepReport::say(&format!(
+                    "dibs: could not remove all of {entry}; what is left is {}, which --gc --named {} removes once the cause is fixed.\n",
+                    aside.display(),
+                    aside.file_name().unwrap_or_default().to_string_lossy()
+                ));
+                return 1;
+            }
         };
         SweepReport::say(&format!(
             "{done} {} on {}: {}, written {written}\n",
@@ -943,6 +953,7 @@ mod tests {
         let asked = Asked::parse("named=build 0");
         assert_eq!((asked.named.as_deref(), asked.dry), (Some("build"), false));
         for malformed in [
+            "named=build 0 1",
             "named=build cache 1",
             "named=build cache 0",
             "named=build",

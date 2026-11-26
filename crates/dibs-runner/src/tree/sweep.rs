@@ -168,23 +168,27 @@ impl<'a> Sweep<'a> {
 
     /// A process works in it, or builds into it: what a job's step holds only by running there.
     pub fn used_now(&self, path: &Path) -> bool {
+        Sweep::used_in(self.in_use.get_or_init(Sweep::working), path)
+    }
+
+    fn used_in(working: &[PathBuf], path: &Path) -> bool {
         let Ok(path) = path.canonicalize() else {
             return false;
         };
-        self.in_use
-            .get_or_init(|| {
-                Host::processes()
-                    .iter()
-                    .flat_map(|p| {
-                        let target = Host::variable(p.pid, "CARGO_TARGET_DIR").map(PathBuf::from);
-                        [Host::cwd(p.pid), target]
-                    })
-                    .flatten()
-                    .filter_map(|p| p.canonicalize().ok())
-                    .collect()
-            })
+        working.iter().any(|used| used.starts_with(&path))
+    }
+
+    /// Where every process works and builds, as this moment has it.
+    fn working() -> Vec<PathBuf> {
+        Host::processes()
             .iter()
-            .any(|used| used.starts_with(&path))
+            .flat_map(|p| {
+                let target = Host::variable(p.pid, "CARGO_TARGET_DIR").map(PathBuf::from);
+                [Host::cwd(p.pid), target]
+            })
+            .flatten()
+            .filter_map(|p| p.canonicalize().ok())
+            .collect()
     }
 
     /// One that judges and removes nothing.
@@ -233,7 +237,9 @@ impl<'a> Sweep<'a> {
                 .filter(|path| !Cached::is_lock(path))
                 .collect(),
             Swept::Named => {
-                let client = match self.scratch == self.home.join(".cache/dibs") {
+                let default = self.home.join(".cache/dibs").canonicalize().ok();
+                let client = match self.scratch.canonicalize().ok() == default && default.is_some()
+                {
                     true => &CLIENT_OWN[..],
                     false => &[],
                 };
@@ -274,12 +280,16 @@ impl<'a> Sweep<'a> {
                     Verdict::of(path, fate, used)
                 })
                 .collect(),
-            Swept::Leftovers => entries
-                .map(|path| {
-                    let (fate, written) = self.leftover(&path, now);
-                    Verdict::of(path, fate, written)
-                })
-                .collect(),
+            Swept::Leftovers => {
+                // Read afresh: a long sweep's earlier sections took minutes to measure.
+                let working = Sweep::working();
+                entries
+                    .map(|path| {
+                        let (fate, written) = self.leftover(&path, &working, now);
+                        Verdict::of(path, fate, written)
+                    })
+                    .collect()
+            }
             Swept::Runners => return Runners::in_home(self.home).judged(&self.clocks, now),
             Swept::Images => entries
                 .map(|image| {
@@ -556,7 +566,7 @@ impl<'a> Sweep<'a> {
 
     /// An entry under `tmp`, by the last write anywhere in it, since agents work in trees there
     /// whose top directory a copy dated long ago; kept while a process works in it.
-    fn leftover(&self, path: &Path, now: u64) -> (Fate, u64) {
+    fn leftover(&self, path: &Path, working: &[PathBuf], now: u64) -> (Fate, u64) {
         let cutoff = now.saturating_sub(self.clocks.keep_days.saturating_mul(Span::DAY.0));
         let enough = match self.exact || self.clocks.all {
             true => None,
@@ -564,7 +574,7 @@ impl<'a> Sweep<'a> {
         };
         let written = path.newest(enough);
         let fate = match (
-            self.used_now(path),
+            Sweep::used_in(working, path),
             self.clocks.past(now, written, self.clocks.keep_days),
         ) {
             (true, _) => Fate::Held,
