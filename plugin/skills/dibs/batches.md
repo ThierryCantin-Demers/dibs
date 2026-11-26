@@ -24,7 +24,7 @@ How several Calls become one, and what keeps a Job running, cited as
 
 ### no-batch-across-decision: No Step depends on what an earlier Step said, unless it states that criterion and exits non-zero on it.
 
-### batch-names-machines: Every Step names its Machine with `--on`, or `DIBS_ON` exported before `dibs batch` names it for every Step, since a Batch whose Measurement names none is refused.
+### batch-names-machines: Every Measurement Step names its Machine, with `--on` or with `DIBS_ON` exported before `dibs batch` for every Step, while a shared Step naming none is placed.
 
 ## Staying alive
 

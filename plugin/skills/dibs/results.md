@@ -11,16 +11,18 @@ How what comes back is read, and what each exit asks for, cited as `dibs/results
   `by=dibs` when dibs produced the exit and the `built=` its Trailer reported.
 - **Digest:** a Job's stdout as a Call prints it: its first and last 20 lines and a count of the
   rest, the whole of it kept on the Machine for two weeks.
+- **Build Guard:** what a Recipe does about a stale binary: its build rebuilds a tree that did not
+  make the target's last build, and its Measurement exits 78 when another tree built there since;
+  a hand-written build that says `built=nothing` compiled no crate, which a shared target, a copy
+  that kept mtimes or a stale worktree leaves.
 
 ### whole-output-from-out: A Job's whole output is read with `dibs --on <machine> out <job>`, during the run or after, or inline with `--stream`, never kept by a redirect inside the command.
 
-### built-nothing-is-stale: A Measurement after `built=nothing` measured the previous binary, which a shared target, a copy that kept mtimes or a stale worktree leaves.
-
-### zero-tests-proves-nothing: A test run whose `tests=` is 0, or far below the count meant, ran a filter that matched less than meant, whatever its exit.
-
 ## Exits
 
-| Exit | Means |
+### exit-read-by-its-source: An exit means what the table below says only when the Trailer says `by=dibs` or no Job ran, and is the command's own when it says `by=command`.
+
+| Exit | Means, from dibs |
 | --- | --- |
 | 2 | refused before it ran, as for a Card no longer in the slot its alias recorded |
 | 69 | the Machine is unreachable: off, asleep, behind a login, or its lease ended |

@@ -45,7 +45,7 @@ Where work runs, on which Card, and who is there, cited as `dibs/machines::<rule
   long the Batch has left there; `--on <machine>` narrows it, and `dibs --kill <pid>` and
   `dibs --log [n]` ignore the lock, so a stuck Machine can still be freed.
 
-### duration-is-measured: How long work will take is answered by running it, never by a guess from its Status.
+### duration-is-measured: How long submitted work has left is read from its Status, and how long work not yet submitted will take is answered by running it, since a script's later Calls are invisible to dibs.
 
 ### agent-named: A runtime that is neither Claude Code nor in a herdr pane runs `export DIBS_AGENT='<the work>'` once per session, as its own statement.
 
