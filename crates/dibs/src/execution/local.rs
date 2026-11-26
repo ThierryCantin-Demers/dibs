@@ -159,7 +159,7 @@ impl Repo<'_> {
         if reference.is_none() {
             grep.push("--untracked");
         }
-        grep.extend(["-e", "rev[[:space:]]*="]);
+        grep.extend(["-e", "rev[\"']?[[:space:]]*="]);
         grep.extend(reference);
         grep.extend(["--", ":(glob)**/Cargo.toml"]);
         let listed = Git(self.0).run(&grep).unwrap_or_default();

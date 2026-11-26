@@ -78,6 +78,9 @@ impl GitPin {
         {
             tables.push(workspace.clone());
         }
+        if let Some(patches) = manifest.get("patch").and_then(|p| p.as_table()) {
+            tables.extend(patches.values().filter_map(|p| p.as_table()).cloned());
+        }
         let mut out: Vec<GitPin> = Vec::new();
         for spec in tables.iter().flat_map(|t| t.values()) {
             let (Some(url), Some(rev)) = (
@@ -318,6 +321,9 @@ sprocket = { git = "https://git.example.invalid/org/sprocket", rev = "0123456789
 
 [workspace.dependencies]
 widget-sys = { git = "https://git.example.invalid/org/widget.git", rev = "2d1aeb21c" }
+
+[patch.crates-io]
+serde = { git = "https://git.example.invalid/org/serde", "rev" = "abcdef0" }
 "#;
         let named: Vec<(String, String)> = GitPin::named(manifest)
             .into_iter()
@@ -331,6 +337,7 @@ widget-sys = { git = "https://git.example.invalid/org/widget.git", rev = "2d1aeb
                     "sprocket".to_string(),
                     "0123456789abcdef0123456789abcdef01234567".to_string()
                 ),
+                ("serde".to_string(), "abcdef0".to_string()),
             ]
         );
     }
