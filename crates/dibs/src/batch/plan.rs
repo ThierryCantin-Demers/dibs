@@ -132,20 +132,16 @@ impl Batch<'_> {
                 std::fs::read_to_string(dir.join(format!("{}.err", st.name))).unwrap_or_default()
             })
             .collect();
-        let outs: Vec<String> = steps
+        let swept: Vec<String> = steps
             .iter()
-            .map(|st| {
-                std::fs::read_to_string(dir.join(format!("{}.out", st.name))).unwrap_or_default()
-            })
+            .filter(|st| st.recipe.as_ref().is_some_and(|r| !r.sweep.is_empty()))
+            .flat_map(|st| swept_trees(&dir.join(format!("{}.out", st.name))))
             .collect();
-        let swept = outs
-            .iter()
-            .flat_map(|out| out.lines().filter_map(|l| l.strip_prefix("@local: ")));
         let mut trees: Vec<&str> = Vec::new();
         for tree in errs
             .iter()
             .flat_map(|err| StepStderr(err).local_trees())
-            .chain(swept)
+            .chain(swept.iter().map(String::as_str))
         {
             if !trees.contains(&tree) {
                 trees.push(tree);
@@ -203,6 +199,20 @@ impl Batch<'_> {
         ));
         out
     }
+}
+
+/// The trees a swept step's own batch took as `@local`, from its summary on the step's stdout,
+/// read a line at a time since a step's stdout may be any size.
+fn swept_trees(out: &Path) -> Vec<String> {
+    use std::io::BufRead as _;
+    let Ok(file) = std::fs::File::open(out) else {
+        return Vec::new();
+    };
+    std::io::BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|l| l.strip_prefix("@local: ").map(str::to_string))
+        .collect()
 }
 
 fn duration(s: u64) -> String {

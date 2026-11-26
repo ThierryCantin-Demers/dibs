@@ -429,6 +429,33 @@ fn a_step_refused_before_any_job_says_why_under_its_row() {
 }
 
 #[test]
+fn a_swept_steps_trees_come_from_its_own_summary_and_no_other_steps_stdout() {
+    let dir = std::env::temp_dir().join(format!("dibs-batch-swept.{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("s.out"),
+        "batch 2  2 steps, 1s\n@local: app from /w/app (clean)\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("h.out"), "@local: app from /cache (clean)\n").unwrap();
+    let steps =
+        parse("[s] dibs build app@local p --sweep samples=1,2\n[h] dibs run true\n").unwrap();
+    let machines = vec!["m".to_string(), "m".to_string()];
+    let done = State::Done {
+        exit: 0,
+        seconds: 1,
+    };
+    let batch = Batch {
+        steps: &steps,
+        machines: &machines,
+    };
+    let out = batch.summary("1", &[done.clone(), done], &dir, 1, None);
+    std::fs::remove_dir_all(&dir).unwrap();
+    let trees: Vec<&str> = out.lines().filter(|l| l.starts_with("@local: ")).collect();
+    assert_eq!(trees, ["@local: app from /w/app (clean)"], "{out}");
+}
+
+#[test]
 fn a_step_that_only_restates_its_exit_is_explained_by_what_dibs_said_before_it() {
     let stderr = StepStderr(
         "dibs: syncing with box once its lock is held\n\
