@@ -200,7 +200,14 @@ compiled under the exclusive lock.
 
 Paths compiled into a binary, `env!("CARGO_MANIFEST_DIR")` and `OUT_DIR` among them, name the
 compile machine's tree, so the tree and the sparse target sit at the same absolute path on both
-machines (see the open question below).
+machines.
+
+**One workspace path for the pools.** The team inventory names the path under which every
+machine in the pools keeps its trees, the same on all of them, and each machine is set up with
+it when it is provisioned. A tree's path is then the same wherever it is built or staged, and
+nothing is added around the measured process. `dibs --check` reports a machine whose trees are
+elsewhere, and placement never splits a call across such a machine: its calls run whole, as
+today.
 
 Staging runs as a shared job on the benchmark machine before the first measurement: it checks
 every digest, that every library resolves, and that glibc, the loader and the card's driver
@@ -278,10 +285,3 @@ Each ships and is tested on its own:
 4. **`with` servers** split the same way, their binaries carried like any other, for `--there`
    and for the default form whose command runs on the caller's side. There the attached caller
    drives the transfer, and its command and port forwarding stay as they are.
-
-## Open questions
-
-- **The common path.** Either every machine in the pools keeps its trees under one absolute
-  path, set when it is provisioned, or the measured step binds the compile machine's path over
-  its own in a mount namespace, as builds in an image already do. The first adds nothing to the
-  measured process; the second needs nothing from provisioning.
