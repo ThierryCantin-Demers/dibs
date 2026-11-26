@@ -8,7 +8,7 @@ use crate::{
     },
     caller::Caller,
     cli::{Call, Command, PortName, Run, RunLock, Service, check_in},
-    inventory::{Inventory, InventoryError, Machine},
+    inventory::{Inventory, InventoryError, Machine, Role},
     machine::{
         CallValues, Card, CardError, Delivery, Fleet, Here, Liveness, MaxFrom, Named, Session,
         Target, TargetEnv, TargetError,
@@ -160,11 +160,16 @@ impl<'a> LockedCall<'a> {
         }
         let reading = Reading::asked(&entry.name);
         let running = reading.as_ref().filter(|_| bench).and_then(|r| {
+            let recorded = r
+                .series_cards_of(labels)
+                .filter(|_| !call.new_series)
+                .map(str::to_string);
             labels
                 .iter()
                 .flat_map(|l| r.bench_cards_of(l.as_str()))
-                .find(|cards| Card::fits(alias, cards, entry))
                 .map(str::to_string)
+                .chain(recorded)
+                .find(|cards| Card::fits(alias, cards, entry))
         });
         if let Some(cards) = running {
             return Ok(Some(Alias::new(cards)));
@@ -407,6 +412,11 @@ impl<'a> LockedCall<'a> {
     /// The machine the call goes to, placed when it is shared work that names none.
     fn target(&self, call: &Call, env: &Environment, fleet: &Fleet) -> Result<Target, CallError> {
         let mut target = Target::resolve(call.on.as_ref(), &TargetEnv::from_env(), fleet)?;
+        match (self.bench(), self.mode == Mode::Shared) {
+            (true, _) => target.lacks(Role::Bench, fleet)?,
+            (false, true) => target.lacks(Role::of_shared(call.device.as_ref()), fleet)?,
+            _ => {}
+        }
         if self.bench()
             && !target.measurable
             && !self.hold

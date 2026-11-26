@@ -687,7 +687,7 @@ fn destination(
         })?;
         return Ok(placed.machine);
     }
-    match Jobs::destination(args.machine())? {
+    match Jobs::bench_destination(args.machine())? {
         Destination::Named(m) => Ok(Some(m)),
         Destination::Unnamed => Ok(None),
         Destination::Unchosen => {

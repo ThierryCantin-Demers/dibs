@@ -155,6 +155,7 @@ fn st(n: &str, after: &[&str]) -> Step {
         lock: StepKind::Shared,
         label: None,
         device: None,
+        new_series: false,
         recipe: None,
     }
 }

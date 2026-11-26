@@ -97,9 +97,14 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     };
 
     let label = run_label(&repo_name, "with", Some(name), args.device.as_deref());
-    let backend = Jobs::on(match Jobs::destination(args.machine())? {
+    let destination = match args.bench {
+        true => Jobs::bench_destination(args.machine())?,
+        false => Jobs::destination(args.machine())?,
+    };
+    let backend = Jobs::on(match destination {
         Destination::Named(m) => Some(m),
         Destination::Unnamed => None,
+        Destination::Unchosen if !Jobs::by_roles() => return Err(Refusal::WithUnplaced.into()),
         Destination::Unchosen => {
             let call = Call {
                 device: args.device.as_deref().map(Alias::from),

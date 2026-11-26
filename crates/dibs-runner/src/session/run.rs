@@ -232,15 +232,16 @@ impl<'a> Run<'a> {
     /// Queues, takes the lock, runs the job, and says how it went.
     pub fn serve(&self, mut environment: Environment, caller: Caller) -> i32 {
         let request = &self.at.call.request;
-        let binding =
-            (self.at.call.mode() == Mode::Bench && !request.watch.hold).then(|| Binding {
-                path: self.at.machine.history.with_file_name("cards"),
-                call: self.at.call,
-                host: &self.at.machine.host,
-            });
+        // A hold measures what runs under it, so its series is kept for placement too; only
+        // the refusal leaves holds out.
+        let binding = (self.at.call.mode() == Mode::Bench).then(|| Binding {
+            path: self.at.machine.history.with_file_name("cards"),
+            call: self.at.call,
+            host: &self.at.machine.host,
+        });
         if let Some(Err(refused)) = binding
             .as_ref()
-            .filter(|_| self.at.settings.machine_series)
+            .filter(|_| self.at.settings.machine_series && !request.watch.hold)
             .map(Binding::check)
         {
             self.at.sink.say(&refused.to_string());

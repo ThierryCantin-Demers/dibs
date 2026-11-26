@@ -6,7 +6,7 @@ use crate::{
     caller::Caller,
     cli::{Call, Command as ShellCommand, Mode, Run, RunLock},
     execution::{Refusal, RunError, build::compiles_only},
-    inventory::Inventory,
+    inventory::{Inventory, Role},
     machine::{Interrupt, Listener, Stream},
     placement::{Placement, Unplaced},
     recipe::Lock,
@@ -257,7 +257,10 @@ impl Jobs {
         };
         let caller = Caller::default();
         let machine = MachineCall::new(&call, &caller)?;
-        let placed = match machine.destination()? {
+        let placed = match machine
+            .destination_as(Role::of_shared(call.device.as_ref()))
+            .map_err(unsent)?
+        {
             Destination::Named(m) => Some(m),
             Destination::Unnamed => None,
             Destination::Unchosen => Some(Placement { machine: &machine }.pick().map_err(
@@ -270,6 +273,14 @@ impl Jobs {
             )?),
         };
         Ok(Jobs::on(placed))
+    }
+
+    /// Whether the inventory gives roles, which is what places work beyond shared calls.
+    pub fn by_roles() -> bool {
+        Inventory::here()
+            .ok()
+            .flatten()
+            .is_some_and(|i| i.has_roles())
     }
 
     /// Where a measurement naming no machine goes, by `Placement::pick_bench`; None when the
@@ -305,6 +316,19 @@ impl Jobs {
         };
         let caller = Caller::default();
         Ok(MachineCall::new(&call, &caller)?.destination()?)
+    }
+
+    /// The machine a measurement goes to with no ranking: as `destination`, refusing the only
+    /// machine when it is not a bench one.
+    pub fn bench_destination(on: Option<MachineName>) -> Result<Destination, RunError> {
+        let call = Call {
+            on,
+            ..Call::default()
+        };
+        let caller = Caller::default();
+        MachineCall::new(&call, &caller)?
+            .destination_as(Role::Bench)
+            .map_err(unsent)
     }
 
     pub fn run(&self, req: &JobRequest, command: &str) -> JobOutcome {
@@ -482,6 +506,14 @@ impl Jobs {
             stream: true,
             ..Call::default()
         }
+    }
+}
+
+/// A call nowhere could take is refused as one never sent, as placement refuses it.
+fn unsent(e: CallError) -> RunError {
+    match e {
+        CallError::Unplaced(_) => RunError::Unsent(e),
+        other => other.into(),
     }
 }
 

@@ -17,6 +17,10 @@ const FRESH_FOR: Duration = Duration::from_secs(24 * 3600);
 const RETRY_AFTER: Duration = Duration::from_secs(3600);
 const FETCHED: &str = ".fetched";
 const TRIED: &str = ".tried";
+/// The dibspatcher the copy came from: a copy from another, or with none set up, is not read.
+const FROM: &str = ".from";
+/// A copy a detached batch carried to its machine, read as it is and never fetched there.
+pub const CARRIED: &str = ".carried";
 
 pub struct Team {
     dir: Option<PathBuf>,
@@ -27,10 +31,21 @@ impl Team {
         Team { dir: paths.team() }
     }
 
-    /// The copy, when there is one that reads; one that does not is left out, never fatal, since
-    /// it is only ever written once it read.
+    /// Where the copy is kept, when it is read from the dibspatcher set up here.
+    pub fn kept(&self) -> Option<&Path> {
+        self.dir.as_deref().filter(|_| self.load().is_some())
+    }
+
+    /// The copy, when there is one that reads and came from the dibspatcher set up here; one that
+    /// does not read is left out, never fatal, since it is only ever written once it read.
     pub fn load(&self) -> Option<Inventory> {
         let dir = self.dir.as_ref()?;
+        if !dir.join(CARRIED).exists() {
+            let from = std::fs::read_to_string(dir.join(FROM)).ok()?;
+            if Some(from.trim()) != crate::dispatch::dibspatcher_ssh().as_deref() {
+                return None;
+            }
+        }
         Inventory::load(&dir.join("machines.toml")).ok().flatten()
     }
 
@@ -39,7 +54,8 @@ impl Team {
     pub fn refresh(&self) -> Option<Result<usize, String>> {
         let dir = self.dir.as_ref()?;
         let files = crate::dispatch::team_files()?;
-        let kept = files.and_then(|files| keep(dir, &files));
+        let from = crate::dispatch::dibspatcher_ssh().unwrap_or_default();
+        let kept = files.and_then(|files| keep(dir, &files, &from));
         if kept.is_err() {
             stamp(dir, TRIED);
         }
@@ -48,10 +64,12 @@ impl Team {
 
     /// Refreshes a copy a day old, saying on stderr when that fails; the old copy stays.
     pub fn refresh_if_stale(&self) {
-        let Some(dir) = &self.dir else {
+        let Some(dir) = self.dir.as_ref().filter(|d| !d.join(CARRIED).exists()) else {
             return;
         };
-        if younger(dir, FETCHED, FRESH_FOR) || younger(dir, TRIED, RETRY_AFTER) {
+        let from = std::fs::read_to_string(dir.join(FROM)).unwrap_or_default();
+        let same = Some(from.trim()) == crate::dispatch::dibspatcher_ssh().as_deref();
+        if same && (younger(dir, FETCHED, FRESH_FOR) || younger(dir, TRIED, RETRY_AFTER)) {
             return;
         }
         if let Some(Err(why)) = self.refresh() {
@@ -62,7 +80,7 @@ impl Team {
 
 /// Writes the files beside the copy, and puts them in its place only once they read as an
 /// inventory.
-fn keep(dir: &Path, files: &BTreeMap<String, String>) -> Result<usize, String> {
+fn keep(dir: &Path, files: &BTreeMap<String, String>, from: &str) -> Result<usize, String> {
     let parent = dir.parent().ok_or("the team's copy has no directory")?;
     let pid = std::process::id();
     let fresh = parent.join(format!(".team.new-{pid}"));
@@ -87,6 +105,7 @@ fn keep(dir: &Path, files: &BTreeMap<String, String>) -> Result<usize, String> {
         }
     };
     stamp(&fresh, FETCHED);
+    std::fs::write(fresh.join(FROM), from).map_err(|e| e.to_string())?;
     let old = parent.join(format!(".team.old-{pid}"));
     let _ = std::fs::rename(dir, &old);
     let placed = std::fs::rename(&fresh, dir).map_err(|e| format!("{}: {e}", dir.display()));
@@ -127,6 +146,10 @@ fn younger(dir: &Path, name: &str, than: Duration) -> bool {
 mod tests {
     use super::*;
 
+    fn fs_read(path: &Path) -> String {
+        std::fs::read_to_string(path).unwrap_or_default()
+    }
+
     #[test]
     fn only_inventory_files_are_kept() {
         assert!(kept_name("machines.toml"));
@@ -152,20 +175,20 @@ mod tests {
             "machines.toml".to_string(),
             "[machine.a]\nssh = \"a\"\nroles = [\"compile\"]\n".to_string(),
         )]);
-        assert_eq!(keep(&dir, &good), Ok(1));
+        assert_eq!(keep(&dir, &good, "dibs@a"), Ok(1));
         assert!(younger(&dir, FETCHED, FRESH_FOR));
         let bad = BTreeMap::from([("machines.toml".to_string(), "[machine.a\n".to_string())]);
-        assert!(keep(&dir, &bad).is_err());
-        let team = Team {
-            dir: Some(dir.clone()),
-        };
+        assert!(keep(&dir, &bad, "dibs@a").is_err());
         assert_eq!(
-            team.load().map(|i| i.machines.len()),
+            Inventory::load(&dir.join("machines.toml"))
+                .unwrap()
+                .map(|i| i.machines.len()),
             Some(1),
             "the copy that read is still there"
         );
+        assert_eq!(fs_read(&dir.join(FROM)), "dibs@a");
         let leaving = BTreeMap::from([("machines.d/../../x.toml".to_string(), String::new())]);
-        assert!(keep(&dir, &leaving).is_err());
+        assert!(keep(&dir, &leaving, "dibs@a").is_err());
         assert!(!root.join("x.toml").exists());
         std::fs::remove_dir_all(&root).unwrap();
     }

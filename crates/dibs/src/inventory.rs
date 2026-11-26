@@ -262,6 +262,9 @@ impl Inventory {
             }
             machines.push(machine);
         }
+        // How this computer reaches a machine whose team lease ended reaches nothing anymore.
+        mine.machines
+            .retain(|m| !team.ended.iter().any(|e| e.name == m.name));
         machines.append(&mut mine.machines);
         let mut ended = team.ended;
         ended.retain(|m| !machines.iter().any(|n| n.name == m.name));
@@ -783,6 +786,15 @@ hostname = "new"
             Inventory::with_team(None, None),
             None,
             "no team and no file is no inventory"
+        );
+        let mut lapsed = Inventory::parse("[machine.leased]\nssh = \"dibs@leased\"\n").unwrap();
+        lapsed.ended = std::mem::take(&mut lapsed.machines);
+        let reach = Inventory::parse("[machine.leased]\nssh = \"me@leased\"\n").unwrap();
+        let both = Inventory::with_team(Some(reach), Some(lapsed)).unwrap();
+        assert_eq!(
+            (both.machines.len(), both.ended.len()),
+            (0, 1),
+            "a team lease that ended stays ended, however this computer reaches it"
         );
     }
 

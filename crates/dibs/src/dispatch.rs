@@ -270,6 +270,12 @@ impl Sending {
 
 /// The team's inventory files from the dibspatcher, by their path under its config directory;
 /// None when no dibspatcher is set up here.
+/// The account the dibspatcher set up here is reached as, which a copy of its inventory is tied
+/// to.
+pub fn dibspatcher_ssh() -> Option<String> {
+    Dibspatcher::configured().ok().map(|d| d.ssh)
+}
+
 pub fn team_files() -> Option<Result<BTreeMap<String, String>, String>> {
     let dibspatcher = Dibspatcher::configured().ok()?;
     let mut shown = Shown {

@@ -25,6 +25,7 @@ use crate::{
     paths::{FileError, Paths},
     recipe::{Checkouts, Manifest, RepoError},
     records::RunLog,
+    team::{CARRIED, Team},
 };
 use dibs_format::{BatchId, Exit, MachineName};
 use std::{
@@ -92,8 +93,9 @@ impl fmt::Display for DetachError {
                 measures: false,
             } => write!(
                 f,
-                "step {step} names no machine, and none it could go to answered, so a detached batch has nowhere\n  \
-                 to be driven. Give it --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step."
+                "step {step} names no machine, and a detached batch is driven on the one machine its steps go to,\n  \
+                 which nothing placed. Give it --on <machine>, or export DIBS_ON=<machine> before the batch to cover\n  \
+                 every step."
             ),
             DetachError::Machines {
                 step,
@@ -610,6 +612,13 @@ impl<'a> Detach<'a> {
             if let Some(beside) = inventory.parent() {
                 staged.copy(&beside.join("machines.d"), "machines.d", "toml")?;
             }
+        }
+        let team = Team::at(&paths);
+        if let Some(kept) = team.kept() {
+            let into = format!("{}/machines.d", Detached::TEAM);
+            staged.copy(kept, Detached::TEAM, "toml")?;
+            staged.copy(&kept.join("machines.d"), &into, "toml")?;
+            staged.write(&format!("{}/{}", Detached::TEAM, CARRIED), b"")?;
         }
         let names: Vec<&str> = repos.iter().map(|r| r.name.as_str()).collect();
         eprintln!(

@@ -1035,7 +1035,10 @@ fn the_team_s_machines_come_from_its_copy_and_place_by_its_roles() {
             hostname()
         ),
     );
+    s.write("team/.from", "dibs@team");
+    s.write("team/.fetched", "");
     s.set("DIBS_TEAM", s.p("team"));
+    s.set("DIBS_DISPATCHER", "dibs@team");
     s.machines("[machine.builder]\nssh      = \"builder\"\n\n[machine.desk]\nssh      = \"desk\"\nhostname = \"desk\"\n");
     let listed = s.dibs(["--machines"]).run().stdout;
     assert_eq!(
@@ -1060,6 +1063,22 @@ fn the_team_s_machines_come_from_its_copy_and_place_by_its_roles() {
         ),
         (2, 1),
         "whether a team machine measures is the team's to say"
+    );
+    let written = s.dibs(["--check", "bencher", "--write"]).run();
+    assert_eq!(
+        (
+            written.code,
+            written.all().lines_with("the dibspatcher's to record")
+        ),
+        (2, 1),
+        "and so is its entry"
+    );
+    s.write("team/.tried", "");
+    s.set("DIBS_DISPATCHER", "dibs@another");
+    assert_eq!(
+        s.dibs(["--machines"]).run().stdout.lines_with("bencher"),
+        0,
+        "a copy from another dibspatcher is not read"
     );
 }
 

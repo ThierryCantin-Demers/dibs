@@ -1,7 +1,8 @@
 use crate::{
-    inventory::{Inventory, InventoryError, Machine},
+    inventory::{Inventory, InventoryError, Machine, Role},
     machine::ssh::{Dial, Ssh},
     paths::Paths,
+    placement::Unplaced,
     team::Team,
 };
 use dibs_format::{Exit, MachineName, Moment, Span};
@@ -129,7 +130,7 @@ impl Fleet {
 
     /// Whether there is an inventory file, readable or not.
     pub fn exists(&self) -> bool {
-        self.path.as_ref().is_some_and(|p| p.is_file())
+        self.path.as_ref().is_some_and(|p| p.is_file()) || self.inventory.is_some()
     }
 }
 
@@ -205,6 +206,24 @@ impl Target {
             target.go_to(fleet, only.as_str(), Named::Only)?;
         }
         Ok(target)
+    }
+
+    /// Refuses work needing `role` on the inventory's only machine when it lacks the role, as
+    /// placement among several would.
+    pub fn lacks(&self, role: Role, fleet: &Fleet) -> Result<(), Unplaced> {
+        let Some(inventory) = fleet.inventory.as_ref().filter(|i| i.has_roles()) else {
+            return Ok(());
+        };
+        let without = self.named == Named::Only
+            && self
+                .machine
+                .as_ref()
+                .and_then(|m| inventory.machine(m.as_str()))
+                .is_some_and(|m| !m.roles.contains(&role));
+        match without {
+            true => Err(Unplaced::NoRole { role }),
+            false => Ok(()),
+        }
     }
 
     pub fn go_to(&mut self, fleet: &Fleet, name: &str, named: Named) -> Result<(), TargetError> {

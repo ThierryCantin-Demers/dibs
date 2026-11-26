@@ -7,15 +7,20 @@ use super::{
     parse::{BatchError, Step, StepKind},
 };
 use crate::{
-    call::{MachineCall, Planned},
+    call::{CallError, MachineCall, Planned},
     caller::Caller,
     cli::{Call, Mode},
-    execution::Job,
+    execution::{Job, Repo},
+    git::Git,
     inventory::Inventory,
     placement::Placement,
+    recipe::Checkouts,
 };
 use dibs_format::{Alias, Label, MachineName, Mode as JobMode};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 pub struct Rows<'a> {
     pub steps: &'a [Step],
@@ -26,19 +31,24 @@ pub struct Rows<'a> {
 impl Rows<'_> {
     /// The machine of each row naming none that goes with its group, given `named`, what each
     /// row names. None for a row left to place itself as it starts, which is a shared row no row
-    /// of its repo waits for or is waited for by, and for a measurement nowhere to go.
+    /// of its repo waits for or is waited for by, for a measurement nowhere to go, and for every
+    /// row of an inventory that gives no roles, which places as it always has.
     pub fn place(&self, named: &[Option<String>]) -> Result<Vec<Option<String>>, BatchError> {
         let mut placed: Vec<Option<String>> = vec![None; self.steps.len()];
-        for group in self.groups() {
-            let chosen = group
-                .iter()
-                .find_map(|&i| named[i].clone().filter(|m| m != "?"));
+        if !by_roles() {
+            return Ok(placed);
+        }
+        let measures: Vec<bool> = self.steps.iter().map(|s| self.measures(s)).collect();
+        for group in self.groups(&measures) {
             if group.iter().all(|&i| named[i].is_some()) {
                 continue;
             }
+            let chosen = group
+                .iter()
+                .find_map(|&i| named[i].clone().filter(|m| m != "?"));
             let machine = match chosen {
                 Some(chosen) => Some(chosen),
-                None => self.demand(&group)?,
+                None => self.demand(&group, &measures)?,
             };
             for &i in &group {
                 if named[i].is_none() {
@@ -50,31 +60,60 @@ impl Rows<'_> {
     }
 
     /// The one machine of a batch detached to it, which every row must run on: the one its
-    /// rows name, or else the one its most demanding row needs.
+    /// rows name, or else, once the inventory gives roles, the one its most demanding row needs.
     pub fn one(&self) -> Result<Option<String>, BatchError> {
-        let named = self
+        let named: Vec<Option<String>> = self
             .steps
             .iter()
-            .find_map(|s| machine_of(s, self.on).filter(|m| m != "?"));
-        match named {
-            Some(named) => Ok(Some(named)),
-            None => self.demand(&(0..self.steps.len()).collect::<Vec<_>>()),
+            .map(|s| machine_of(s, self.on).filter(|m| m != "?"))
+            .collect();
+        if let Some(first) = named.iter().flatten().next() {
+            return Ok((by_roles() || named.iter().all(Option::is_some)).then(|| first.clone()));
+        }
+        if !by_roles() {
+            return Ok(None);
+        }
+        let measures: Vec<bool> = self.steps.iter().map(|s| self.measures(s)).collect();
+        let all: Vec<usize> = (0..self.steps.len()).collect();
+        Ok(self.demand(&all, &measures).ok().flatten())
+    }
+
+    /// Whether a row measures: a recipe by the locks of the jobs it resolves to, any other by
+    /// what its line says.
+    fn measures(&self, step: &Step) -> bool {
+        match step.recipe.as_ref().and_then(Job::of_batch_line) {
+            Some(jobs) => jobs.iter().any(|p| p.mode == Planned::Job(JobMode::Bench)),
+            None => step.measures(),
         }
     }
 
-    /// The repo a row works in, or None for one that is not placed with the others.
+    /// The repo a row works in, as a recipe resolves its checkout, or None for one that is not
+    /// placed with the others.
     fn repo(&self, step: &Step) -> Option<String> {
-        let here = || self.cwd.rsplit('/').next().unwrap_or_default().to_string();
-        match (&step.lock, &step.recipe) {
-            (StepKind::Peek, _) => None,
-            (_, Some(recipe)) if recipe.repo != "." => Some(recipe.repo.clone()),
-            _ => Some(here()),
+        if step.lock == StepKind::Peek {
+            return None;
         }
+        let checkout = match &step.recipe {
+            Some(recipe) => Checkouts::of(recipe)
+                .and_then(|c| c.find(&recipe.repo))
+                .ok(),
+            None => Git(Path::new(self.cwd))
+                .run(&["rev-parse", "--show-toplevel"])
+                .ok()
+                .map(|top| PathBuf::from(top.trim())),
+        };
+        Some(match checkout {
+            Some(dir) => Repo(&dir).identity(),
+            None => match &step.recipe {
+                Some(recipe) if recipe.repo != "." => recipe.repo.clone(),
+                _ => self.cwd.rsplit('/').next().unwrap_or_default().to_string(),
+            },
+        })
     }
 
     /// Rows joined by `after=` to a row of the same repo, in either direction, with a lone
     /// measurement as a group of its own since it must be placed too.
-    fn groups(&self) -> Vec<Vec<usize>> {
+    fn groups(&self, measures: &[bool]) -> Vec<Vec<usize>> {
         let index: HashMap<&str, usize> = self
             .steps
             .iter()
@@ -106,7 +145,7 @@ impl Rows<'_> {
         let mut groups: Vec<Vec<usize>> = Vec::new();
         let mut at: HashMap<usize, usize> = HashMap::new();
         for i in 0..self.steps.len() {
-            if !joined[i] && !self.steps[i].measures() {
+            if !joined[i] && !measures[i] {
                 continue;
             }
             let r = root(&mut parent, i);
@@ -119,51 +158,50 @@ impl Rows<'_> {
         groups
     }
 
-    /// The machine a group naming none goes to. A group that measures goes to a bench machine
-    /// by its measured labels, once the inventory gives roles, and is otherwise left unplaced
-    /// for the caller to refuse; any other goes where its shared work would.
-    fn demand(&self, group: &[usize]) -> Result<Option<String>, BatchError> {
+    /// The machine a group naming none goes to: a bench machine by its measured labels when any
+    /// row measures, else where its shared work would go. The machine must carry every card any
+    /// row names, since every row runs there.
+    fn demand(&self, group: &[usize], measures: &[bool]) -> Result<Option<String>, BatchError> {
         let caller = Caller::default();
         let rows: Vec<&Step> = group.iter().map(|&i| &self.steps[i]).collect();
-        let card = |measuring: bool| {
-            rows.iter()
-                .filter(|s| !measuring || s.measures())
-                .find_map(|s| s.device.clone().filter(|d| d != "cpu"))
-                .map(|d| Alias::new(&d))
-        };
-        let measures = rows.iter().any(|s| s.measures());
+        let mut cards: Vec<String> = Vec::new();
+        for card in rows
+            .iter()
+            .filter_map(|s| s.device.as_deref())
+            .flat_map(|d| d.split(','))
+            .map(str::trim)
+            .filter(|d| *d != "cpu")
+        {
+            if !cards.iter().any(|c| c == card) {
+                cards.push(card.to_string());
+            }
+        }
+        let measuring = group.iter().any(|&i| measures[i]);
         let call = Call {
             mode: Mode::Pick,
-            device: card(measures),
-            new_series: rows
+            device: (!cards.is_empty()).then(|| Alias::new(cards.join(","))),
+            new_series: rows.iter().any(|s| s.new_series),
+            // Only a recipe is placed by where its repo is cloned; a raw row is not.
+            repo: rows
                 .iter()
-                .any(|s| s.recipe.as_ref().is_some_and(|r| r.new_series)),
-            repo: rows.iter().find_map(|s| self.repo(s)),
+                .find(|s| s.recipe.is_some())
+                .and_then(|s| self.repo(s)),
             ..Call::default()
         };
         let machine = MachineCall::new(&call, &caller)?;
         let placement = Placement { machine: &machine };
-        if !measures {
-            // A shared group nowhere answers for is left to place itself, as a lone row is.
-            return Ok(placement.pick().ok().map(|m| m.to_string()));
+        if !measuring {
+            return Ok(Some(placement.pick().map_err(CallError::from)?.to_string()));
         }
-        if !machine
-            .fleet
-            .inventory
-            .as_ref()
-            .is_some_and(Inventory::has_roles)
-        {
-            return Ok(None);
-        }
-        let labels: Vec<Label> = rows
+        let labels: Vec<Label> = group
             .iter()
-            .filter(|s| s.measures())
-            .flat_map(|s| self.measured_labels(s))
+            .filter(|&&i| measures[i])
+            .flat_map(|&i| self.measured_labels(&self.steps[i]))
             .collect();
         Ok(Some(
             placement
                 .pick_bench(&labels)
-                .map_err(CallErrorOf::from)?
+                .map_err(CallError::from)?
                 .to_string(),
         ))
     }
@@ -176,9 +214,14 @@ impl Rows<'_> {
                 .filter(|p| p.mode == Planned::Job(JobMode::Bench))
                 .map(|p| p.label)
                 .collect(),
-            None => vec![step.pending(true, self.cwd).label.filed()],
+            None => vec![step.pending(true, self.cwd).label],
         }
     }
 }
 
-type CallErrorOf = crate::call::CallError;
+fn by_roles() -> bool {
+    Inventory::here()
+        .ok()
+        .flatten()
+        .is_some_and(|i| i.has_roles())
+}

@@ -26,6 +26,16 @@ impl MachineCall<'_> {
             None => self.target()?,
         };
         self.somewhere(&target)?;
+        if self.call.write
+            && let Some(name) = &target.machine
+            && self.fleet.entry(name.as_str()).is_some_and(|m| m.team)
+        {
+            eprintln!(
+                "dibs: {name} is one of the team's machines, so its entry is the dibspatcher's to record:\n  \
+                 run dibs --check --write there, where its inventory is kept."
+            );
+            return Ok(i32::from(Exit::Refused.code()));
+        }
         let provision = Provision {
             session: &Session::new(&target, &self.here),
             live: Liveness::from_env(),

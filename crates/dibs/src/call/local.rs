@@ -1,6 +1,7 @@
 use crate::{
     call::{base::CallError, machine::MachineCall},
-    inventory::{Inventory, InventoryError, Machine},
+    inventory::{Inventory, InventoryError, Machine, Role},
+    machine::Target,
 };
 use dibs_format::{Exit, MachineName};
 use std::fmt;
@@ -53,6 +54,18 @@ impl MachineCall<'_> {
     /// inventory cannot reach.
     pub fn destination(&self) -> Result<Destination, CallError> {
         let target = self.target()?;
+        self.destined(target)
+    }
+
+    /// Where work needing `role` goes: as `destination`, except that the inventory's only
+    /// machine is not one when it lacks the role.
+    pub fn destination_as(&self, role: Role) -> Result<Destination, CallError> {
+        let target = self.target()?;
+        target.lacks(role, &self.fleet)?;
+        self.destined(target)
+    }
+
+    fn destined(&self, target: Target) -> Result<Destination, CallError> {
         Ok(
             match (target.machine, target.host.is_empty() && !self.here.local) {
                 (Some(machine), _) => Destination::Named(machine),
@@ -99,7 +112,7 @@ impl MachineCall<'_> {
 
     /// `dibs --forget <machine>`: its entry and its devices, gone from the inventory.
     pub fn forget(&self, name: &MachineName) -> Result<i32, CallError> {
-        let Some(path) = self.fleet.path.as_deref().filter(|_| self.fleet.exists()) else {
+        let Some(path) = self.fleet.path.as_deref().filter(|p| p.is_file()) else {
             eprintln!("no inventory at {}", self.fleet.shown());
             return Ok(i32::from(Exit::Refused.code()));
         };

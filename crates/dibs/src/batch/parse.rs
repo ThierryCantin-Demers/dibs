@@ -183,6 +183,8 @@ pub struct Step {
     pub lock: StepKind,
     pub label: Option<String>,
     pub device: Option<String>,
+    /// `--new-series`, which placement skips a label's series for.
+    pub new_series: bool,
     /// What a recipe step asks for, so the jobs it will make can be planned.
     pub recipe: Option<RecipeCall>,
 }
@@ -415,6 +417,7 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
         lock: StepKind::Shared,
         label: None,
         device: None,
+        new_series: false,
         recipe: None,
     };
     match read {
@@ -431,6 +434,7 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
             step.on = call.on.map(|m| m.as_str().to_string());
             step.label = call.label.map(|l| l.as_str().to_string());
             step.device = call.device.map(|d| d.as_str().to_string());
+            step.new_series = call.new_series;
         }
         Invocation::Recipe(call) => {
             if call.verb == RecipeVerb::Batch {
@@ -441,6 +445,7 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
             }
             step.on = call.on.clone();
             step.device = call.device.clone();
+            step.new_series = call.new_series;
             if call.verb.runs_jobs() {
                 step.lock = StepKind::Recipe;
                 step.label = Some(recipe_label(words));

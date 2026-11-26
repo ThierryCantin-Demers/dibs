@@ -66,6 +66,7 @@ impl Detached {
     pub const ROOT: &'static str = "root";
     pub const RECIPES: &'static str = "recipes";
     pub const MACHINES: &'static str = "machines.toml";
+    pub const TEAM: &'static str = "team";
     pub const SERIES: &'static str = "series";
     pub const SENT_FROM: &'static str = "sent-from";
     /// The private git databases batches were sent, which every later batch adds to.
@@ -239,6 +240,7 @@ impl Detached {
             ("DIBS_ROOT", at(Detached::ROOT)),
             ("DIBS_RECIPES", at(Detached::RECIPES)),
             ("DIBS_MACHINES", at(Detached::MACHINES)),
+            ("DIBS_TEAM", at(Detached::TEAM)),
             ("DIBS_SERIES", at(Detached::SERIES)),
             ("DIBS_RUNS", at(Detached::RUNS)),
             (SentFrom::VAR, at(Detached::SENT_FROM)),

@@ -151,6 +151,17 @@ impl Reading {
             .max()
     }
 
+    /// The cards the newest series of any of `labels` was measured on there, as its runner
+    /// records it, whoever measured it.
+    pub fn series_cards_of(&self, labels: &[Label]) -> impl Iterator<Item = &str> {
+        let newest = self
+            .series
+            .iter()
+            .filter(|s| labels.iter().any(|l| l.filed().as_str() == s.label) && s.card != "none")
+            .max_by_key(|s| s.at);
+        newest.map(|s| s.card.as_str()).into_iter()
+    }
+
     /// Whether a benchmark of `label` runs or waits there, on any card or none.
     fn measuring(&self, label: &str) -> bool {
         self.holders
@@ -453,6 +464,8 @@ impl Placement<'_> {
     /// `--new-series` skips the series, not the run being measured.
     pub fn pick_bench(&self, labels: &[Label]) -> Result<MachineName, Unplaced> {
         let call = self.machine.call;
+        // As the runners and the series here file them.
+        let labels: &[Label] = &labels.iter().map(Label::filed).collect::<Vec<_>>();
         let Some(inventory) = self.machine.fleet.inventory.as_ref() else {
             return Err(Unplaced::NoRole { role: Role::Bench });
         };
@@ -497,14 +510,29 @@ impl Placement<'_> {
         let measured = Measured {
             labels,
             new_series: call.new_series,
-            device: call.device.as_ref(),
         };
-        let (chosen, others) =
-            measured
-                .choose(&candidates, ours, coin)
-                .ok_or_else(|| Unplaced::NoneAnswered {
-                    inventory: self.machine.fleet.shown(),
-                })?;
+        // The jobs on the cards it would be given there, which a model's name does not match.
+        let card_cost = |c: &Candidate| -> u64 {
+            let (Some(alias), Some(r), Some(entry)) = (
+                call.device.as_ref(),
+                c.reading.as_ref(),
+                self.machine.fleet.entry(c.name.as_str()),
+            ) else {
+                return 0;
+            };
+            let used = |card: &Alias| -> u64 {
+                card.as_str()
+                    .split(',')
+                    .map(|one| r.using(one.trim()))
+                    .sum()
+            };
+            Card::concrete(alias, entry, used).map_or(0, |chosen| used(&chosen))
+        };
+        let (chosen, others) = measured
+            .choose(&candidates, ours, card_cost, coin)
+            .ok_or_else(|| Unplaced::NoneAnswered {
+                inventory: self.machine.fleet.shown(),
+            })?;
         if !others.is_empty() {
             let others: Vec<&str> = others.iter().map(MachineName::as_str).collect();
             eprintln!(
@@ -524,7 +552,6 @@ impl Placement<'_> {
 struct Measured<'a> {
     labels: &'a [Label],
     new_series: bool,
-    device: Option<&'a Alias>,
 }
 
 impl Measured<'_> {
@@ -535,6 +562,7 @@ impl Measured<'_> {
         &self,
         candidates: &[Candidate],
         ours: impl Fn(&MachineName) -> bool,
+        card_cost: impl Fn(&Candidate) -> u64,
         mut coin: impl FnMut() -> bool,
     ) -> Option<(MachineName, Vec<MachineName>)> {
         let series_at = |c: &Candidate| -> Option<u64> {
@@ -570,8 +598,7 @@ impl Measured<'_> {
         let mut best: Option<(&MachineName, u64)> = None;
         for candidate in candidates {
             let score = candidate.reading.as_ref().map_or(u64::MAX / 2, |r| {
-                let card = self.device.map_or(0, |alias| r.using(alias.as_str()));
-                r.benchmarks() * 1000 + card
+                r.benchmarks() * 1000 + card_cost(candidate)
             });
             if best.is_none_or(|(_, b)| score < b || (score == b && coin())) {
                 best = Some((&candidate.name, score));
@@ -710,12 +737,11 @@ mod tests {
         let measured = |new_series| Measured {
             labels: &labels,
             new_series,
-            device: None,
         };
         let all = [old.clone(), new.clone(), busy.clone()];
         let none = |_: &MachineName| false;
         assert_eq!(
-            measured(false).choose(&all, none, || false),
+            measured(false).choose(&all, none, |_| 0, || false),
             Some((MachineName::new("new"), vec![MachineName::new("old")])),
             "the newest series, naming the other"
         );
@@ -723,13 +749,15 @@ mod tests {
         waiting.reading.as_mut().unwrap().queue = vec![bench("l")];
         assert_eq!(
             measured(true)
-                .choose(&[waiting, new.clone(), busy.clone()], none, || false)
+                .choose(&[waiting, new.clone(), busy.clone()], none, |_| 0, || false)
                 .map(|(m, _)| m),
             Some(MachineName::new("old")),
             "a first run where the label already waits joins it, --new-series or not"
         );
         assert_eq!(
-            measured(true).choose(&all, none, || false).map(|(m, _)| m),
+            measured(true)
+                .choose(&all, none, |_| 0, || false)
+                .map(|(m, _)| m),
             Some(MachineName::new("old")),
             "--new-series skips the series and takes the fewest benchmarks ahead"
         );
@@ -737,7 +765,7 @@ mod tests {
         let ours = |name: &MachineName| name.as_str() == "busy";
         assert_eq!(
             measured(false)
-                .choose(&fresh, ours, || false)
+                .choose(&fresh, ours, |_| 0, || false)
                 .map(|(m, _)| m),
             Some(MachineName::new("busy")),
             "a series only this computer kept still holds, behind any the runners keep"
