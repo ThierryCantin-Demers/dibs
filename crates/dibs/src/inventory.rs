@@ -57,6 +57,10 @@ pub struct Machine {
     /// Someone works at it, so placement prefers another.
     #[serde(default)]
     pub workstation: bool,
+    /// The work placement sends there. A machine with none takes any shared work, until some
+    /// machine in the inventory has a role.
+    #[serde(default)]
+    pub roles: Vec<Role>,
     #[serde(default, rename = "device")]
     pub devices: Vec<Device>,
 }
@@ -76,6 +80,42 @@ pub struct Device {
     pub link: Option<String>,
     #[serde(default)]
     pub runtimes: Vec<String>,
+}
+
+/// What a machine is for, as placement reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// Builds, and shared work on no card or on its CPU.
+    Compile,
+    /// Shared work on its cards.
+    Gpu,
+    /// Measurements.
+    Bench,
+}
+
+impl Role {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Compile => "compile",
+            Role::Gpu => "gpu",
+            Role::Bench => "bench",
+        }
+    }
+
+    /// The role shared work needs: a card other than the CPU makes it GPU work.
+    pub fn of_shared(device: Option<&Alias>) -> Role {
+        match device {
+            Some(device) if device.as_str().split(',').any(|one| one.trim() != "cpu") => Role::Gpu,
+            _ => Role::Compile,
+        }
+    }
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -265,6 +305,11 @@ impl Inventory {
     }
 
     /// Every machine's name, reachable or not.
+    /// Some machine has a role, so placement goes by roles.
+    pub fn has_roles(&self) -> bool {
+        self.machines.iter().any(|m| !m.roles.is_empty())
+    }
+
     pub fn names(&self) -> impl Iterator<Item = &MachineName> {
         self.machines.iter().map(|m| &m.name)
     }
@@ -620,6 +665,32 @@ hostname = "new"
             Some("box-a")
         );
         assert_eq!(inventory.machine("box-z"), None);
+    }
+
+    #[test]
+    fn a_machine_takes_roles_and_shared_work_needs_one_by_its_cards() {
+        let inventory = Inventory::parse(
+            "[machine.a]\nssh = \"a\"\nroles = [\"gpu\", \"bench\"]\n\n[machine.b]\nssh = \"b\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            inventory.machine("a").unwrap().roles,
+            [Role::Gpu, Role::Bench]
+        );
+        assert!(inventory.machine("b").unwrap().roles.is_empty());
+        assert!(inventory.has_roles());
+        assert!(!Inventory::parse(CARDS).unwrap().has_roles());
+        assert!(Inventory::parse("[machine.c]\nssh = \"c\"\nroles = [\"builds\"]\n").is_err());
+        let role = |device: Option<&str>| Role::of_shared(device.map(Alias::new).as_ref());
+        assert_eq!(
+            [
+                role(None),
+                role(Some("cpu")),
+                role(Some("gpu:card")),
+                role(Some("cpu,gpu:card"))
+            ],
+            [Role::Compile, Role::Compile, Role::Gpu, Role::Gpu]
+        );
     }
 
     #[test]

@@ -868,6 +868,64 @@ fn routing_leaves_out_the_machines_without_the_card_named() {
 }
 
 #[test]
+fn routing_sends_shared_work_to_the_machines_with_its_role() {
+    let mut s = Sandbox::new();
+    s.machines(&format!(
+        "[machine.builder]\nssh      = \"builder\"\nhostname = \"{}\"\nroles    = [\"compile\"]\n\n\
+         [[machine.builder.device]]\nkind  = \"cpu\"\nname  = \"a processor\"\n\n\
+         [machine.cards]\nssh      = \"cards\"\nhostname = \"cards\"\nroles    = [\"gpu\", \"bench\"]\n\n\
+         [[machine.cards.device]]\nalias = \"gpu:card\"\npci   = \"0000:01:00.0\"\n\n\
+         [machine.spare]\nssh      = \"spare\"\nhostname = \"spare\"\n",
+        hostname()
+    ));
+    let placed = s.dibs(["--pick", "-v"]).run();
+    assert_eq!(
+        (
+            placed.stdout.trim_end(),
+            placed.stderr.lines_with("not a compile machine")
+        ),
+        ("builder", 2),
+        "shared work with no card goes to a compile machine, and -v says why the others did not"
+    );
+    assert_eq!(
+        pick(s.dibs(["--pick", "--device", "cpu"])),
+        "builder",
+        "and so does work on a CPU"
+    );
+    assert_eq!(
+        s.dibs(["--pick", "-v", "--device", "gpu:card"])
+            .run()
+            .stderr
+            .lines_with("not a gpu machine"),
+        0,
+        "work on a card goes to a gpu machine that has it"
+    );
+    assert_eq!(
+        s.dibs(["--machines"])
+            .run()
+            .stdout
+            .lines_with("cards  gpu, bench"),
+        1,
+        "--machines shows each machine's roles"
+    );
+    s.machines(&format!(
+        "[machine.builder]\nssh      = \"builder\"\nhostname = \"{}\"\nroles    = [\"bench\"]\n",
+        hostname()
+    ));
+    let nowhere = s.dibs(["--pick"]).run();
+    assert_eq!(
+        (
+            nowhere.code,
+            nowhere
+                .all()
+                .lines_with("no machine that could take this is a compile machine")
+        ),
+        (2, 1),
+        "with roles given and none of them compile, shared work is refused rather than sent to a benchmark machine"
+    );
+}
+
+#[test]
 fn routing_prefers_the_cache_over_an_idle_machine() {
     let mut s = Sandbox::new();
     one_and_two(&mut s);

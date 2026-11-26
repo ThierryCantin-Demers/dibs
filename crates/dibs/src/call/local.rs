@@ -173,7 +173,19 @@ impl fmt::Display for Listing<'_> {
                 true => "",
                 false => "  (no measurements)",
             };
-            writeln!(f, "   {:<width$} {ssh}{note}", machine.name.as_str())?;
+            let roles = match machine.roles.is_empty() {
+                true => String::new(),
+                false => format!(
+                    "  {}",
+                    machine
+                        .roles
+                        .iter()
+                        .map(|r| r.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            writeln!(f, "   {:<width$} {ssh}{roles}{note}", machine.name.as_str())?;
             if !self.cards {
                 continue;
             }

@@ -5,6 +5,7 @@ use crate::{
     call::{Asked, Bound, MachineCall},
     caller::Caller,
     cli::Call,
+    inventory::Role,
     machine::{Card, Kept},
     render::Answered,
 };
@@ -179,6 +180,10 @@ pub enum Unplaced {
     NoCard {
         alias: Alias,
     },
+    /// The inventory gives roles, and no machine that could take the work has the one it needs.
+    NoRole {
+        role: Role,
+    },
 }
 
 impl Ranking {
@@ -299,6 +304,23 @@ impl Placement<'_> {
                 return Err(Unplaced::NoCard {
                     alias: alias.clone(),
                 });
+            }
+        }
+        if let Some(inventory) = &self.machine.fleet.inventory
+            && inventory.has_roles()
+        {
+            let role = Role::of_shared(call.device.as_ref());
+            names.retain(|name| {
+                let has = inventory
+                    .machine(name.as_str())
+                    .is_some_and(|m| m.roles.contains(&role));
+                if !has && call.verbose {
+                    eprintln!("  {:<18} not a {role} machine", name.as_str());
+                }
+                has
+            });
+            if names.is_empty() {
+                return Err(Unplaced::NoRole { role });
             }
         }
         let mut asked = Vec::new();
@@ -432,7 +454,7 @@ impl RouteDown {
 impl Unplaced {
     pub fn exit(&self) -> Exit {
         match self {
-            Unplaced::NoCard { .. } => Exit::Refused,
+            Unplaced::NoCard { .. } | Unplaced::NoRole { .. } => Exit::Refused,
             Unplaced::NoClone { .. } | Unplaced::NoneAnswered { .. } => Exit::Unreachable,
         }
     }
@@ -467,6 +489,16 @@ impl fmt::Display for Unplaced {
                 writeln!(
                     f,
                     "  dibs --machines -v lists each machine's cards by alias."
+                )
+            }
+            Unplaced::NoRole { role } => {
+                writeln!(
+                    f,
+                    "dibs: no machine that could take this is a {role} machine, so there is nowhere to place it."
+                )?;
+                writeln!(
+                    f,
+                    "  dibs --machines lists each machine's roles; --on <machine> names one."
                 )
             }
         }

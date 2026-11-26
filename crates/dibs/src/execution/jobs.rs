@@ -262,7 +262,9 @@ impl Jobs {
             Destination::Unnamed => None,
             Destination::Unchosen => Some(Placement { machine: &machine }.pick().map_err(
                 |unplaced| match unplaced {
-                    Unplaced::NoCard { .. } => RunError::Unsent(unplaced.into()),
+                    Unplaced::NoCard { .. } | Unplaced::NoRole { .. } => {
+                        RunError::Unsent(unplaced.into())
+                    }
                     _ => Refusal::Nowhere(call.repo.clone()).into(),
                 },
             )?),
