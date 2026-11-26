@@ -253,7 +253,7 @@ spoiled without it.
   the slot its alias recorded is refused with exit 2: tell the person, since
   `dibs --check <machine> --write` rewrites the inventory everyone measures by.
 
-### Recipes: use one where a repo has it
+### Recipes: use one, or write one
 
 - `dibs list <repo>` says what a repo defines, and `dibs build|test|bench <repo>@<ref> <recipe>`
   runs one. Prefer it to a hand-written command: it prepares the worktree, keeps a build cache per
@@ -315,9 +315,39 @@ spoiled without it.
   run with the machine held alone, and a server another tree has built over since is refused.
   `--there` runs the command on the machine instead, in the tree, reaching the servers at
   `127.0.0.1:$DIBS_PORT_<NAME>`: client and server on one box, with no network between them.
-- **If no recipe fits, say so where it is counted**: `dibs raw --reason '<why>'`, or `--reason` on
-  `dibs shell`. `dibs gaps` prints those, and a reason that keeps coming up is the specification
-  for the next recipe. Neither starts a server: `--with`, `--port` and `--ready` go on `dibs run`.
+- **When no recipe fits work that will run again, write one** in
+  `~/.config/dibs/recipes/<repo>.toml`. `dibs gaps` first: a reason that keeps coming up there is
+  the recipe to write. A recipe is a `[build.<name>]`, `[test.<name>]` or `[bench.<name>]` table
+  and its steps, each a `lock` and a `run`, with `env` for what the command reads:
+
+  ```toml
+  [bench.solve]
+    [bench.solve.params]
+    backend = { choices = ["cuda", "vulkan"], default = "cuda" }
+
+    [[bench.solve.step]]
+    lock = "shared"
+    run  = "cargo bench --no-run --bench solve --features {backend}"
+
+    [[bench.solve.step]]
+    lock = "exclusive"
+    run  = "cargo bench --bench solve --features {backend}"
+  ```
+
+  Build under `shared` and measure alone under `exclusive`. What varies is a `params` entry, not
+  a copy of the recipe per value; `artifacts` names the files to bring back and `fresh` an
+  autotune store's variable. Name no revision: the call supplies the code. The whole format, with
+  `[tree]` and `[service]`, is in
+  [dibs's guide](https://github.com/ThierryCantin-Demers/dibs/blob/master/docs/guide.md#where-recipes-come-from).
+- Check a new recipe before it runs: `dibs list <repo>` reads it, and `--dry-run` prints what
+  the call would send. Then run it the way any recipe runs.
+- The recipe directory is often a clone the team shares, and others edit it too. Add your recipe;
+  never change one someone else measures with, since its history is of that procedure. Leave it
+  uncommitted for the person you work for to commit and push. A `.dibs.toml` in the repo is a
+  change to that repo, made like any other.
+- **Only work no recipe would serve twice runs bare**: `dibs raw --reason '<why>'`, or `--reason`
+  on `dibs shell`, which `dibs gaps` counts. Neither starts a server: `--with`, `--port` and
+  `--ready` go on `dibs run`.
 - **Anything else that got in the way goes in `dibs --friction '<one line>'`**: a flag that is
   missing, a message that misled, a refusal you had to work around, a bug. One line, in your own
   words, at the moment it annoyed you, which is the only moment you know. It is read back by
