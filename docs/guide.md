@@ -933,7 +933,8 @@ table.
 
 `machine_series = true` has the machine hold each label's measurements to one card, whoever runs
 them, from the file `cards` beside its history; without it, each laptop holds only its own runs to
-a card. It refuses jobs, so it is off until everyone has updated.
+a card. It refuses jobs, so it is off until everyone has updated. The file is kept either way, and
+placement reads it to send a benchmark back to the machine its series is on.
 
 `benchmarks = "card"` lets benchmarks on different cards run at once. A benchmark that names its
 cards with `--device` locks those cards, all of them at once or none, and runs beside benchmarks

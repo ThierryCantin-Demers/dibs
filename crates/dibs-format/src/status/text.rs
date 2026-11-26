@@ -593,6 +593,7 @@ mod tests {
             queue: Vec::new(),
             metrics: None,
             closed: None,
+            series: Vec::new(),
             scene,
         }
     }

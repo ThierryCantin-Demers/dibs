@@ -1,6 +1,7 @@
 //! Which card each label's measurements were taken on here, kept on the machine so that every
-//! caller's runs keep to it, not only one laptop's. It refuses jobs, so it is off until the
-//! machine's `machine_series` setting turns it on.
+//! caller's runs keep to it, not only one laptop's, and placement finds the series. It is always
+//! kept; refusing a run on another card refuses jobs, so that waits for the machine's
+//! `machine_series` setting.
 
 use crate::{call::Received, clock::Moment, shared::SharedFile};
 use std::{fmt, fs, path::PathBuf};
@@ -55,6 +56,24 @@ impl<'a> Line<'a> {
     fn field(&self, at: usize) -> &'a str {
         self.fields.get(at).copied().unwrap_or_default()
     }
+}
+
+/// Every label's series in the file at `path`, for the machine's status.
+pub fn here(path: &std::path::Path) -> Vec<dibs_format::status::SeriesHere> {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    if text.lines().next() != Some(HEADER) {
+        return Vec::new();
+    }
+    text.lines()
+        .skip(1)
+        .map(Line::of)
+        .filter(|l| !l.field(0).is_empty())
+        .map(|l| dibs_format::status::SeriesHere {
+            label: l.field(0).to_string(),
+            card: l.field(1).to_string(),
+            at: l.field(3).parse().unwrap_or(0),
+        })
+        .collect()
 }
 
 impl Binding<'_> {

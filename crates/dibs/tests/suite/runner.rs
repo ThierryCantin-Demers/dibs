@@ -851,6 +851,14 @@ fn a_machine_holding_series_refuses_another_card_whoever_runs_it() {
         }
     };
     assert_eq!(run(&[], false).code, 0, "off until the machine turns it on");
+    assert_eq!(
+        fs::read_to_string(&cards)
+            .unwrap()
+            .lines_with("moved\tnone\t"),
+        1,
+        "and the series is kept either way, for placement to find"
+    );
+    fs::write(&cards, "#dibs-cards 1\nmoved\tgpu:x\tsomeone else\t1\t2\n").unwrap();
     let refused = run(&[], true);
     assert_eq!(refused.code, 2, "{}", refused.stderr);
     assert_eq!(

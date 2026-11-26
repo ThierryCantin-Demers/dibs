@@ -18,8 +18,8 @@ use crate::{
     records::{Affinity, RunLog},
 };
 use dibs_format::{
-    Alias, ArmRecord, BatchId, Exit, MachineName, Moment, Outcome, Pairs, ProcedureStep, RunRecord,
-    RunVerb, StepRecord,
+    Alias, ArmRecord, BatchId, Exit, Label, MachineName, Moment, Outcome, Pairs, ProcedureStep,
+    RunRecord, RunVerb, StepRecord,
     wire::{self, Revision},
 };
 use std::{
@@ -111,21 +111,22 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     if args.dry_run {
         // Asked what the real run asks before it builds, so a card or a series it would refuse
         // is refused here, where someone reads the device line before measuring.
-        let args =
-            match rec.steps.iter().any(|s| s.lock == Lock::Exclusive) || args.device.is_some() {
-                true => {
-                    let backend = Jobs::on(destination(rec, &repo_name, name, &args)?);
-                    let args = RecipeCall {
-                        device: concrete(&backend, rec, &step_labels, &args)?,
-                        ..args
-                    };
-                    if refused_before_building(&backend, rec, &step_labels, &args) {
-                        return Ok(ExitCode::from(Exit::Refused.code()));
-                    }
-                    args
+        let args = match rec.steps.iter().any(|s| s.lock == Lock::Exclusive)
+            || args.device.is_some()
+        {
+            true => {
+                let backend = Jobs::on(destination(rec, &repo_name, name, &args, &step_labels)?);
+                let args = RecipeCall {
+                    device: concrete(&backend, rec, &step_labels, &args)?,
+                    ..args
+                };
+                if refused_before_building(&backend, rec, &step_labels, &args) {
+                    return Ok(ExitCode::from(Exit::Refused.code()));
                 }
-                false => args,
-            };
+                args
+            }
+            false => args,
+        };
         println!("label       {label}");
         println!("recipe      {name}  ({fingerprint})");
         println!("isolation   {:?}", rec.isolation);
@@ -205,7 +206,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
 
     // A measurement's claim on the repo's build cache is the one that sticks, since it could not
     // move; a pinned call claims nothing, since the machines report the caches it leaves.
-    let backend = Jobs::on(destination(rec, &repo_name, name, &args)?);
+    let backend = Jobs::on(destination(rec, &repo_name, name, &args, &step_labels)?);
     if let Some(m) = backend.machine.as_ref().filter(|_| !args.pinned()) {
         Affinity::here().set(&repo_name, m.as_str());
     }
@@ -674,6 +675,7 @@ fn destination(
     repo_name: &str,
     name: &str,
     args: &RecipeCall,
+    step_labels: &[String],
 ) -> Result<Option<MachineName>, RunError> {
     if rec.steps.iter().all(|s| s.lock == Lock::Shared) {
         let placed = Jobs::placed(Call {
@@ -688,7 +690,21 @@ fn destination(
     match Jobs::destination(args.machine())? {
         Destination::Named(m) => Ok(Some(m)),
         Destination::Unnamed => Ok(None),
-        Destination::Unchosen => Err(Refusal::Unmeasured(name.to_string()).into()),
+        Destination::Unchosen => {
+            let measured: Vec<Label> = (0..rec.steps.len())
+                .filter(|&i| rec.steps[i].lock == Lock::Exclusive)
+                .map(|i| Label::new(step_labels[i].as_str()))
+                .collect();
+            let call = Call {
+                device: args.device.as_deref().map(Alias::from),
+                new_series: args.new_series,
+                ..Call::default()
+            };
+            match Jobs::placed_bench(call, &measured)? {
+                Some(jobs) => Ok(jobs.machine),
+                None => Err(Refusal::Unmeasured(name.to_string()).into()),
+            }
+        }
     }
 }
 

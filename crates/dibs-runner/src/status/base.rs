@@ -103,6 +103,7 @@ impl Look<'_> {
             queue,
             closed: (Shutter { dir: self.dir }).read(),
             metrics: None,
+            series: crate::series::here(&self.machine.history.with_file_name("cards")),
             scene,
         }
     }

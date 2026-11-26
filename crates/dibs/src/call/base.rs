@@ -8,7 +8,7 @@ use crate::{
     },
     caller::Caller,
     cli::{Call, Command, PortName, Run, RunLock, Service, check_in},
-    inventory::{InventoryError, Machine},
+    inventory::{Inventory, InventoryError, Machine},
     machine::{
         CallValues, Card, CardError, Delivery, Fleet, Here, Liveness, MaxFrom, Named, Session,
         Target, TargetEnv, TargetError,
@@ -427,6 +427,21 @@ impl<'a> LockedCall<'a> {
                 machine: &MachineCall::new(call, &caller)?,
             }
             .pick()?;
+            target.go_to(fleet, machine.as_str(), Named::Placed)?;
+        }
+        let measured = self.bench()
+            && !target.pinned()
+            && target.host.is_empty()
+            && !env.local
+            && !self.hold
+            && !self.recipe()
+            && fleet.inventory.as_ref().is_some_and(Inventory::has_roles);
+        if measured {
+            let caller = Caller::default();
+            let machine = Placement {
+                machine: &MachineCall::new(call, &caller)?,
+            }
+            .pick_bench(&[Request::label(call)])?;
             target.go_to(fleet, machine.as_str(), Named::Placed)?;
         }
         if target.host.is_empty() && !env.local {

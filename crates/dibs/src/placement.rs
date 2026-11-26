@@ -2,14 +2,14 @@
 //! machine holding its build cache. A stale reading costs a worse queue, never a double booking.
 
 use crate::{
-    call::{Asked, Bound, MachineCall},
+    call::{Asked, Bound, MachineCall, Series},
     caller::Caller,
     cli::Call,
     inventory::Role,
     machine::{Card, Kept},
     render::Answered,
 };
-use dibs_format::{Alias, Exit, MachineName, Mode, Moment};
+use dibs_format::{Alias, Exit, Label, MachineName, Mode, Moment, status::SeriesHere};
 use serde::Deserialize;
 use std::{
     collections::hash_map::RandomState,
@@ -55,6 +55,9 @@ pub struct Reading {
     /// Taken back by its owners, so nothing placed there would start.
     #[serde(default)]
     pub closed: Option<serde::de::IgnoredAny>,
+    /// The labels measured there, whoever measured them.
+    #[serde(default)]
+    pub series: Vec<SeriesHere>,
 }
 
 /// Who holds a machine's lock, as its status says.
@@ -137,6 +140,32 @@ impl Reading {
     /// Held exclusively, so it cannot start shared work.
     fn benchmarking(&self) -> bool {
         self.state == LockState::Bench
+    }
+
+    /// When `label` was last measured there, by anyone.
+    fn measured(&self, label: &str) -> Option<u64> {
+        self.series
+            .iter()
+            .filter(|s| s.label == label)
+            .map(|s| s.at)
+            .max()
+    }
+
+    /// Whether a benchmark of `label` runs or waits there, on any card or none.
+    fn measuring(&self, label: &str) -> bool {
+        self.holders
+            .iter()
+            .chain(&self.queue)
+            .any(|o| o.label == label && o.mode == Some(Mode::Bench))
+    }
+
+    /// Benchmarks running or waiting there.
+    fn benchmarks(&self) -> u64 {
+        self.holders
+            .iter()
+            .chain(&self.queue)
+            .filter(|o| o.mode == Some(Mode::Bench))
+            .count() as u64
     }
 }
 
@@ -286,7 +315,6 @@ impl Placement<'_> {
     /// Says what `-v` asks for on stderr as it goes.
     pub fn pick(&self) -> Result<MachineName, Unplaced> {
         let call = self.machine.call;
-        let down = RouteDown::from_env(self.machine.paths.route_down());
         let mut names = self.machine.fleet.names();
         if let Some(alias) = &call.device {
             names.retain(|name| {
@@ -323,8 +351,30 @@ impl Placement<'_> {
                 return Err(Unplaced::NoRole { role });
             }
         }
+        let candidates = self.candidates(&names);
+        let ranking = Ranking {
+            prefer: call.prefer.clone(),
+            repo: call.repo.clone(),
+            self_penalty: env_number("DIBS_SELF_PENALTY").unwrap_or(DEFAULT_SELF_PENALTY),
+        };
+        let ranked = ranking.place(&candidates, coin);
+        if call.verbose {
+            eprint!("{}", ranked.said);
+        }
+        ranked.placed.map_err(|unplaced| match unplaced {
+            Unplaced::NoneAnswered { .. } => Unplaced::NoneAnswered {
+                inventory: self.machine.fleet.shown(),
+            },
+            other => other,
+        })
+    }
+
+    /// Every named machine asked at once; those that answered, and could start the work.
+    fn candidates(&self, names: &[MachineName]) -> Vec<Candidate> {
+        let call = self.machine.call;
+        let down = RouteDown::from_env(self.machine.paths.route_down());
         let mut asked = Vec::new();
-        for name in &names {
+        for name in names {
             match down.recently(name) {
                 Some(ago) => {
                     if call.verbose {
@@ -393,21 +443,141 @@ impl Placement<'_> {
                 reading: Some(reading),
             });
         }
-        let ranking = Ranking {
-            prefer: call.prefer.clone(),
-            repo: call.repo.clone(),
-            self_penalty: env_number("DIBS_SELF_PENALTY").unwrap_or(DEFAULT_SELF_PENALTY),
+        candidates
+    }
+
+    /// Where a measurement naming no machine goes, when the inventory gives roles: a `bench`
+    /// machine that measures and has the cards it names. One where a label is being measured or
+    /// waits to be wins, so a first run's series is not begun twice; then the one it was last
+    /// measured on, by anyone; then the one with the fewest benchmarks running or waiting.
+    /// `--new-series` skips the series, not the run being measured.
+    pub fn pick_bench(&self, labels: &[Label]) -> Result<MachineName, Unplaced> {
+        let call = self.machine.call;
+        let Some(inventory) = self.machine.fleet.inventory.as_ref() else {
+            return Err(Unplaced::NoRole { role: Role::Bench });
         };
-        let ranked = ranking.place(&candidates, coin);
-        if call.verbose {
-            eprint!("{}", ranked.said);
+        let names: Vec<MachineName> = inventory
+            .machines
+            .iter()
+            .filter(|m| m.roles.contains(&Role::Bench) && m.measure)
+            .filter(|m| {
+                let carries = call
+                    .device
+                    .as_ref()
+                    .is_none_or(|alias| Card::all_on(alias, m).is_ok());
+                if !carries && call.verbose {
+                    eprintln!(
+                        "  {:<18} has no {}",
+                        m.name.as_str(),
+                        call.device.as_ref().map(Alias::as_str).unwrap_or_default()
+                    );
+                }
+                carries
+            })
+            .map(|m| m.name.clone())
+            .collect();
+        if names.is_empty() {
+            return Err(match &call.device {
+                Some(alias) => Unplaced::NoCard {
+                    alias: alias.clone(),
+                },
+                None => Unplaced::NoRole { role: Role::Bench },
+            });
         }
-        ranked.placed.map_err(|unplaced| match unplaced {
-            Unplaced::NoneAnswered { .. } => Unplaced::NoneAnswered {
-                inventory: self.machine.fleet.shown(),
-            },
-            other => other,
-        })
+        let candidates = self.candidates(&names);
+        let mine = self.machine.paths.series().map(|path| Series { path });
+        let ours = |name: &MachineName| {
+            let key = inventory
+                .machine(name.as_str())
+                .and_then(|m| m.series.clone().or(m.ssh.clone()))
+                .unwrap_or_else(|| name.to_string());
+            mine.as_ref()
+                .is_some_and(|s| labels.iter().any(|l| s.card_of(l.as_str(), &key).is_some()))
+        };
+        let measured = Measured {
+            labels,
+            new_series: call.new_series,
+            device: call.device.as_ref(),
+        };
+        let (chosen, others) =
+            measured
+                .choose(&candidates, ours, coin)
+                .ok_or_else(|| Unplaced::NoneAnswered {
+                    inventory: self.machine.fleet.shown(),
+                })?;
+        if !others.is_empty() {
+            let others: Vec<&str> = others.iter().map(MachineName::as_str).collect();
+            eprintln!(
+                "dibs: {} is measured on {chosen}, where its series is newest; it also has one on {}",
+                labels.first().map(Label::as_str).unwrap_or_default(),
+                others.join(", ")
+            );
+        }
+        if call.verbose {
+            eprintln!("  measured on {chosen}");
+        }
+        Ok(chosen)
+    }
+}
+
+/// How a measurement naming no machine chooses among the bench machines that answered.
+struct Measured<'a> {
+    labels: &'a [Label],
+    new_series: bool,
+    device: Option<&'a Alias>,
+}
+
+impl Measured<'_> {
+    /// The machine, and the others the label also has a series on. One running or queueing the
+    /// label wins, so two first runs do not begin two series; then the newest series, the
+    /// runner's before this computer's own (`ours`); then the fewest benchmarks ahead.
+    fn choose(
+        &self,
+        candidates: &[Candidate],
+        ours: impl Fn(&MachineName) -> bool,
+        mut coin: impl FnMut() -> bool,
+    ) -> Option<(MachineName, Vec<MachineName>)> {
+        let series_at = |c: &Candidate| -> Option<u64> {
+            let reading = c.reading.as_ref();
+            let running = self
+                .labels
+                .iter()
+                .any(|l| reading.is_some_and(|r| r.measuring(l.as_str())));
+            if running {
+                return Some(u64::MAX);
+            }
+            if self.new_series {
+                return None;
+            }
+            self.labels
+                .iter()
+                .filter_map(|l| reading.and_then(|r| r.measured(l.as_str())))
+                .max()
+                .or(ours(&c.name).then_some(0))
+        };
+        let series: Vec<(&MachineName, u64)> = candidates
+            .iter()
+            .filter_map(|c| series_at(c).map(|at| (&c.name, at)))
+            .collect();
+        if let Some(&(chosen, _)) = series.iter().max_by_key(|(_, at)| *at) {
+            let others = series
+                .iter()
+                .filter(|(name, _)| *name != chosen)
+                .map(|(name, _)| (*name).clone())
+                .collect();
+            return Some((chosen.clone(), others));
+        }
+        let mut best: Option<(&MachineName, u64)> = None;
+        for candidate in candidates {
+            let score = candidate.reading.as_ref().map_or(u64::MAX / 2, |r| {
+                let card = self.device.map_or(0, |alias| r.using(alias.as_str()));
+                r.benchmarks() * 1000 + card
+            });
+            if best.is_none_or(|(_, b)| score < b || (score == b && coin())) {
+                best = Some((&candidate.name, score));
+            }
+        }
+        best.map(|(name, _)| (name.clone(), Vec::new()))
     }
 }
 
@@ -518,6 +688,62 @@ fn coin() -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_measurement_goes_where_its_label_runs_then_to_its_newest_series() {
+        let bench = |label: &str| Occupant {
+            mode: Some(Mode::Bench),
+            device: None,
+            label: label.into(),
+        };
+        let series = |label: &str, at| SeriesHere {
+            label: label.into(),
+            card: "none".into(),
+            at,
+        };
+        let mut old = machine("old", LockState::Idle, 0);
+        let mut new = machine("new", LockState::Idle, 0);
+        let mut busy = machine("busy", LockState::Bench, 0);
+        old.reading.as_mut().unwrap().series = vec![series("l", 10)];
+        new.reading.as_mut().unwrap().series = vec![series("l", 20)];
+        busy.reading.as_mut().unwrap().holders = vec![bench("other"), bench("other")];
+        let labels = [Label::new("l")];
+        let measured = |new_series| Measured {
+            labels: &labels,
+            new_series,
+            device: None,
+        };
+        let all = [old.clone(), new.clone(), busy.clone()];
+        let none = |_: &MachineName| false;
+        assert_eq!(
+            measured(false).choose(&all, none, || false),
+            Some((MachineName::new("new"), vec![MachineName::new("old")])),
+            "the newest series, naming the other"
+        );
+        let mut waiting = old.clone();
+        waiting.reading.as_mut().unwrap().queue = vec![bench("l")];
+        assert_eq!(
+            measured(true)
+                .choose(&[waiting, new.clone(), busy.clone()], none, || false)
+                .map(|(m, _)| m),
+            Some(MachineName::new("old")),
+            "a first run where the label already waits joins it, --new-series or not"
+        );
+        assert_eq!(
+            measured(true).choose(&all, none, || false).map(|(m, _)| m),
+            Some(MachineName::new("old")),
+            "--new-series skips the series and takes the fewest benchmarks ahead"
+        );
+        let fresh = [machine("a", LockState::Idle, 0), busy.clone()];
+        let ours = |name: &MachineName| name.as_str() == "busy";
+        assert_eq!(
+            measured(false)
+                .choose(&fresh, ours, || false)
+                .map(|(m, _)| m),
+            Some(MachineName::new("busy")),
+            "a series only this computer kept still holds, behind any the runners keep"
+        );
+    }
+
     fn machine(name: &str, state: LockState, load: u64) -> Candidate {
         Candidate {
             name: MachineName::new(name),
@@ -530,6 +756,7 @@ mod tests {
                 caches: Some(Vec::new()),
                 clones: Some(vec!["app".into()]),
                 closed: None,
+                series: Vec::new(),
             }),
             workstation: false,
             measures: true,

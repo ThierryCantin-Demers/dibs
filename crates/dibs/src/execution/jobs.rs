@@ -272,6 +272,29 @@ impl Jobs {
         Ok(Jobs::on(placed))
     }
 
+    /// Where a measurement naming no machine goes, by `Placement::pick_bench`; None when the
+    /// inventory gives no roles, so a measurement still names its machine.
+    pub fn placed_bench(call: Call, labels: &[Label]) -> Result<Option<Jobs>, RunError> {
+        let call = Call {
+            mode: Mode::Pick,
+            ..call
+        };
+        let caller = Caller::default();
+        let machine = MachineCall::new(&call, &caller)?;
+        if !machine
+            .fleet
+            .inventory
+            .as_ref()
+            .is_some_and(Inventory::has_roles)
+        {
+            return Ok(None);
+        }
+        let placed = Placement { machine: &machine }
+            .pick_bench(labels)
+            .map_err(|unplaced| RunError::Unsent(unplaced.into()))?;
+        Ok(Some(Jobs::on(Some(placed))))
+    }
+
     /// The machine a call goes to with no ranking at all. Naming it matters even when there was
     /// no choice to make: a benchmark cannot be moved, so it is the one that decides where its
     /// repo's build cache belongs, and the record should say where it ran.

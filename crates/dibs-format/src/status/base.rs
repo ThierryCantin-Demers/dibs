@@ -25,8 +25,22 @@ pub struct Status {
     /// Only for a caller that asked for them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<super::Metrics>,
+    /// The labels measured here and the card each was measured on, so placement keeps a
+    /// series where it began whoever's call it is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub series: Vec<SeriesHere>,
     #[serde(skip)]
     pub scene: Scene,
+}
+
+/// One label's series on a machine, as its runner keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeriesHere {
+    pub label: String,
+    /// The cards, comma-separated, or `none` for a measurement that named none.
+    pub card: String,
+    /// When it was last measured, in seconds since the epoch.
+    pub at: u64,
 }
 
 impl Status {

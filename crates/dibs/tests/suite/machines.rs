@@ -926,6 +926,47 @@ fn routing_sends_shared_work_to_the_machines_with_its_role() {
 }
 
 #[test]
+fn a_measurement_naming_no_machine_goes_to_a_bench_machine() {
+    let mut s = Sandbox::new();
+    let inventory = |roles: &str| {
+        format!(
+            "[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\nroles    = [{roles}]\n\n\
+             [machine.builder]\nssh      = \"builder\"\nhostname = \"builder\"\nroles    = [\"compile\"]\n",
+            hostname()
+        )
+    };
+    s.machines(&inventory("\"bench\""));
+    let measured = s
+        .remote(s.dibs(["--bench", "-v", "--label", "placed", "echo", "measured"]))
+        .run();
+    assert_eq!(
+        (
+            measured.code,
+            measured.stdout.lines_with("measured"),
+            measured.stderr.lines_with("measured on here")
+        ),
+        (0, 1, 1),
+        "{}",
+        measured.all()
+    );
+    s.machines(&inventory("\"compile\""));
+    let refused = s
+        .remote(s.dibs(["--bench", "--label", "placed", "true"]))
+        .run();
+    assert_eq!(
+        (
+            refused.code,
+            refused
+                .all()
+                .lines_with("no machine that could take this is a bench machine")
+        ),
+        (2, 1),
+        "{}",
+        refused.all()
+    );
+}
+
+#[test]
 fn the_team_s_machines_come_from_its_copy_and_place_by_its_roles() {
     let mut s = Sandbox::new();
     s.write(
