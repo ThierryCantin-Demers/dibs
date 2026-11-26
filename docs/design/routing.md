@@ -48,7 +48,9 @@ the machine lacks sends it, and the runner records it once. A replacement machin
 predecessor's series through the inventory's `series` key, as now. Placement
 asks every `bench` machine that could take the call: one with a series of the label takes it;
 several means the most recently measured, and the call says which and where the others are; none
-means a new series on a free card of the model. `--new-series` is resolved the same way. All of
+means a new series on a free card of the model. `--new-series` ignores the old binding and takes
+a free card of the model, and the runner records the new series once a measurement succeeds, as
+it does now. All of
 this happens before any arm is built, so a direct call and a dispatched one resume the same
 series.
 
@@ -71,7 +73,9 @@ the call is planned and recorded:
    seal, it holds a lock on its target that every job writing into that target takes, so two
    refs sharing a target take turns and no build can replace an executable between cargo
    reporting it and the seal reading it. Cargo already serialises builds of one target, so this
-   costs nothing new.
+   costs nothing new. A `--low-priority` build that parks lets go of the lock with its build
+   mark, as it lets go of the target today, and its capture starts again with the build when it
+   runs again.
 4. The bundle is carried to the benchmark machine and staged there.
 5. The measurements run on the one benchmark machine and card set, in today's order. `--reps`
    reuses the staged bundles, and a sweep stays a batch of ordinary calls, whose identical
@@ -79,8 +83,10 @@ the call is planned and recorded:
 
 **Which shared steps are builds** uses the classification dibs already makes to mark a step
 preemptible (`compiles_only`, `execution/jobs.rs`): in a call that measures, a shared step that
-only compiles goes to the compile machine, and any other shared step, such as a warmup script,
-runs on the benchmark machine in recipe order, beside the measurements. A call that measures
+only compiles goes to the compile machine, and any other shared step after the last build, such
+as a warmup script, runs on the benchmark machine in recipe order, beside the measurements. A
+shared step that is not a build and comes before one may write something the build reads, a
+file an `include_str!` takes, so its call stays whole. A call that measures
 nothing is placed whole by the table above: on a GPU machine with its cards if it names any,
 `cargo test --device` among them, else on a compile machine.
 
@@ -93,7 +99,8 @@ runs the job and however often a worker retries it.
 The decision is made when the call is planned, for every arm and rep at once, never discovered
 halfway through an A/B. A call splits only when all of these hold:
 
-- every shared step it sends to the compile machine is a recognised compile-only cargo command;
+- every shared step it sends to the compile machine is a recognised compile-only cargo command,
+  and no other shared step comes before the last of them;
 - every measured step runs a cargo invocation dibs recognises in its text after values are
   bound (`cargo bench`, `cargo test`, `cargo run`, with their arguments) or an executable by its
   path under `$CARGO_TARGET_DIR`, and reads nothing else of the target;
@@ -122,7 +129,12 @@ refusal of the split, kept distinct from a command of the recipe that exits 78 i
 ## Capturing what was built
 
 A job-local `cargo` wrapper on `PATH` adds `--message-format=json-render-diagnostics` to the
-subcommands that build (`build`, `bench`, `test`, `run`, `rustc`), before any `--`. Every other
+subcommands that build (`build`, `bench`, `test`, `run`, `rustc`), before any `--`. Right after
+each invocation returns, and before the next can overwrite a path, the wrapper copies the
+executables it reported into the store by digest, so each launch plan names the digest its own
+invocation produced. Two invocations that leave different executables at one top-level path,
+`release/examples/x` built with two feature sets, cannot both sit in the sparse target: a call
+that would launch both by that path stays whole. Every other
 subcommand, `metadata` and `check` among them, passes through untouched. The JSON goes to a
 report of the job's own; the caller sees the diagnostics, the exit and any JSON it asked for,
 unchanged. Each report records the executables cargo built or found fresh, indexed by package,
@@ -131,7 +143,7 @@ target, kind, profile and features, and the `OUT_DIR` of every build script.
 The bundle holds:
 
 - every executable a report names, at its path under the target, both cargo's hashed path in
-  `deps/` and the top-level alias, so a step calling `target/release/x` finds it;
+  `deps/` and the top-level alias, so a step calling `$CARGO_TARGET_DIR/release/x` finds it;
 - the shared libraries those executables load from the target, followed through their ELF
   dependencies;
 - the whole build-script directory (`build/<package>-<hash>/`: its `out`, `output` and the rest)
@@ -141,7 +153,10 @@ The bundle holds:
   `carry = ["<glob under the target>"]`, or says `split = false`;
 - a launch plan per invocation: what `cargo bench`, `cargo test` or `cargo run` with those
   arguments would have run, in order, with its working directory, its `CARGO_*` environment and
-  its library path;
+  its library path. For `cargo bench` and `cargo test` that is the harness executables, the
+  artifacts cargo reports as built for tests (`profile.test`), selected by the invocation's
+  filters; the package's binaries built beside them for `CARGO_BIN_EXE_*` are carried as files
+  and never launched. For `cargo run` it is the one binary or example it selects;
 - a manifest binding each file's digest, path and mode to the sealed source, pins, lockfile,
   toolchain, flags and image.
 
@@ -219,11 +234,12 @@ Each ships and is tested on its own:
 
 1. **Roles.** The team inventory, roles, series read from the machines, and placement of whole
    calls by their most demanding job. Shared work leaves the benchmark machines at once. Rows of
-   a batch are placed one by one only when each carries its own tree (a recipe, `shell`, or
-   `with` naming `<repo>@<ref>`). Rows linked by `after=` where any is a raw `run` or a
-   `--sync`, which share what they wrote on the machine and nothing dibs can see, are placed
-   together on the machine their most demanding row needs, so a raw build row and the raw
-   benchmark after it stay on one machine.
+   a batch are placed one by one only when each is a recipe, which builds what it measures
+   itself. Rows linked by `after=` where any is a `run`, a `shell` or a `--sync` may share what
+   an earlier row wrote, a binary under `$CARGO_TARGET_DIR` included, and are placed together on
+   the machine their most demanding row needs, so a build row and the benchmark after it stay on
+   one machine. A detached batch stays on one machine, the one its most demanding row needs,
+   until stage 2 gives it a driver that spans machines.
 2. **Ordinary work through the dibspatcher.** Calls and batches as above, with per-job attempts
    whose results can be replayed, still one machine per call.
 3. **Splitting.** Sealed sources, the split test, capture, bundles of several executables,
