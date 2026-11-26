@@ -1,7 +1,6 @@
 == dibs --help
 -> exit 0
-1| Run commands on shared machines under a lock, so agents cannot spoil each
-1| other's measurements.
+1| Run commands on shared machines under a lock, so no one spoils a measurement.
 1| 
 1| Recipes
 1|   dibs <verb> <repo>[@<ref>] <recipe>  build, test or bench; @local: your tree
@@ -19,24 +18,27 @@
 1|   dibs --hold <cmd>                    a command here under the machine's lock
 1| Batches
 1|   dibs batch <file|->                  one call per line, one summary at the end
-1|   dibs batch --detach | --follow <id>  driven on the machine, or waited on
+1|   dibs batch --detach <file|->         driven on the machine, outliving this one
+1|   dibs batch --follow <id>             wait on a detached or paused batch
 1| Machines
-1|   dibs status | --status | --watch     who holds each machine, and the queue
-1|   dibs --machines | machines           the inventory, and each machine's state
+1|   dibs status, dibs --watch            who holds each machine, and the queue
+1|   dibs --machines, dibs machines       the inventory, and each machine's state
 1|   dibs --check <host>                  install the runner, say what is there
-1|   dibs --pick | --which                where a call would go
-1|   dibs --forget --measure --close --open    change the inventory, or close one
+1|   dibs --pick, dibs --which            where a call would go
+1|   dibs --forget <machine>              drop a machine from your inventory
+1|   dibs --measure <machine> on|off      whether a benchmark may run there
+1|   dibs --close, dibs --open            close a machine you own, or open it
 1| Jobs
-1|   dibs --out [job] | --fetch <job>     what a job wrote, and the files it kept
+1|   dibs out [job], dibs fetch <job>     what a job wrote, and the files it kept
 1|   dibs --follow <job>                  wait on a job whose call checked in
 1|   dibs --kill <pid|batch-id>           stop a job, or a whole batch
-1|   dibs --release | --gc --dry-run      a dead lock; what fills scratch
-1|   dibs --log [n] | --friction '<line>' what ran; what got in the way
+1|   dibs --release, dibs --gc --dry-run  a dead holder's lock; what fills scratch
+1|   dibs --log [n]                       what ran, and how it ended
+1|   dibs --friction '<line>'             record what got in the way
 1| Setup
 1|   dibs --update                        reinstall dibs, its recipes, its plugin
 1|   dibs completions <fish|zsh>          shell completions
-1|   dibs hook ssh | urgent               Claude Code hooks
-1| 
+1|   dibs hook ssh, dibs hook urgent      Claude Code hooks
 1| Flags  --on <machine>  --device <card>  --label <name>  --wait <s>  --max <s>
 1|        --low-priority  --urgent '<why>'  --check-in <time>  --dry-run
 1| 
@@ -46,7 +48,7 @@
 1|   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran
 1|        72 no runner there, nothing ran    75 busy    76 its batch was cancelled
 1|        77 a --with service failed    124 overran --max
-1|        78 a recipe's measurement refused: another tree built into its target since
+1|        78 a measurement refused: another tree built into its target since
 1| 
 
 == dibs --help --all
@@ -321,5 +323,5 @@
 1|   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran
 1|        72 no runner there, nothing ran    75 busy    76 its batch was cancelled
 1|        77 a --with service failed    124 overran --max
-1|        78 a recipe's measurement refused: another tree built into its target since
+1|        78 a measurement refused: another tree built into its target since
 1| 

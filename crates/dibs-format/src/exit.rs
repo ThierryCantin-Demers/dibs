@@ -125,7 +125,7 @@ impl Exit {
             Exit::Cancelled => "its batch was cancelled",
             Exit::ServiceFailed => "a --with service failed",
             Exit::TargetRebuilt => {
-                "a recipe's measurement refused: another tree built into its target since"
+                "a measurement refused: another tree built into its target since"
             }
             Exit::Closed => "the machine is closed by its owners",
             Exit::CheckedIn => "checked in: the job still runs, and --follow waits for it",

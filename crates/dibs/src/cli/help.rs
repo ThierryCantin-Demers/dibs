@@ -168,6 +168,15 @@ impl Help {
             entries: &["dibs completions"],
         },
         Topic {
+            words: &["sync"],
+            entries: &[
+                "dibs --sync",
+                "--on <machine>",
+                "--wait <seconds>",
+                "--max <seconds>",
+            ],
+        },
+        Topic {
             words: &["hook"],
             entries: &["dibs hook ssh", "dibs hook urgent"],
         },
@@ -248,29 +257,46 @@ mod tests {
 
     #[test]
     fn the_short_help_names_every_command_of_the_whole_help() {
+        // Spellings the whole help gives as one command: `dibs status` is `dibs --status`.
+        const SAME: [(&str, &str); 3] = [
+            ("--status", "status"),
+            ("--out", "out"),
+            ("--fetch", "fetch"),
+        ];
         let word = |w: &str| w.trim_matches(|c: char| ",;|[]'".contains(c)).to_string();
         let short: Vec<String> = Help::SHORT.split_whitespace().map(word).collect();
-        for line in Help::INTERFACE.lines() {
-            let Some(rest) = line.strip_prefix("  dibs ") else {
-                continue;
-            };
-            let named = word(rest.split_whitespace().next().unwrap());
-            let commands = match named.as_str() {
-                "<verb>" => vec!["build".to_string(), "test".into(), "bench".into()],
-                _ => vec![named],
-            };
-            for command in commands {
-                assert!(short.contains(&command), "{command}");
+        let shown = |command: &str| {
+            short.iter().any(|w| w == command)
+                || SAME.iter().any(|(a, b)| {
+                    (command == *a && short.iter().any(|w| w == b))
+                        || (command == *b && short.iter().any(|w| w == a))
+                })
+        };
+        for line in Help::INTERFACE.lines().filter(|l| l.starts_with("  dibs ")) {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            let named = words
+                .windows(2)
+                .filter(|pair| pair[0] == "dibs")
+                .map(|pair| word(pair[1]));
+            for named in named {
+                let commands = match named.as_str() {
+                    "<verb>" => vec!["build".to_string(), "test".into(), "bench".into()],
+                    _ => vec![named],
+                };
+                for command in commands {
+                    assert!(shown(&command), "{command}");
+                }
             }
         }
     }
 
     #[test]
     fn the_short_help_fits_an_80_column_terminal_of_50_rows() {
-        for line in Help::SHORT.lines() {
+        let short = Help::short();
+        for line in short.lines() {
             assert!(line.chars().count() <= 80, "{line}");
         }
-        assert!(Help::short().lines().count() <= 50);
+        assert!(short.lines().count() <= 50);
     }
 
     #[test]

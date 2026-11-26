@@ -491,6 +491,7 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
         (vec!["--help", "--all"], Invocation::Help(Some("all"))),
         (vec!["--all", "-h"], Invocation::Help(Some("all"))),
         (vec!["--check", "--help"], Invocation::Help(Some("all"))),
+        (vec!["--sync", "--help"], Invocation::Help(Some("sync"))),
         (vec!["status", "-h"], Invocation::Help(Some("status"))),
         (vec!["run", "--help"], Invocation::Help(Some("run"))),
         (vec!["fetch", "--help"], Invocation::Help(Some("fetch"))),

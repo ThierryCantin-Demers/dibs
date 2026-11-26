@@ -1,5 +1,4 @@
-Run commands on shared machines under a lock, so agents cannot spoil each
-other's measurements.
+Run commands on shared machines under a lock, so no one spoils a measurement.
 
 Recipes
   dibs <verb> <repo>[@<ref>] <recipe>  build, test or bench; @local: your tree
@@ -17,24 +16,27 @@ Calls
   dibs --hold <cmd>                    a command here under the machine's lock
 Batches
   dibs batch <file|->                  one call per line, one summary at the end
-  dibs batch --detach | --follow <id>  driven on the machine, or waited on
+  dibs batch --detach <file|->         driven on the machine, outliving this one
+  dibs batch --follow <id>             wait on a detached or paused batch
 Machines
-  dibs status | --status | --watch     who holds each machine, and the queue
-  dibs --machines | machines           the inventory, and each machine's state
+  dibs status, dibs --watch            who holds each machine, and the queue
+  dibs --machines, dibs machines       the inventory, and each machine's state
   dibs --check <host>                  install the runner, say what is there
-  dibs --pick | --which                where a call would go
-  dibs --forget --measure --close --open    change the inventory, or close one
+  dibs --pick, dibs --which            where a call would go
+  dibs --forget <machine>              drop a machine from your inventory
+  dibs --measure <machine> on|off      whether a benchmark may run there
+  dibs --close, dibs --open            close a machine you own, or open it
 Jobs
-  dibs --out [job] | --fetch <job>     what a job wrote, and the files it kept
+  dibs out [job], dibs fetch <job>     what a job wrote, and the files it kept
   dibs --follow <job>                  wait on a job whose call checked in
   dibs --kill <pid|batch-id>           stop a job, or a whole batch
-  dibs --release | --gc --dry-run      a dead lock; what fills scratch
-  dibs --log [n] | --friction '<line>' what ran; what got in the way
+  dibs --release, dibs --gc --dry-run  a dead holder's lock; what fills scratch
+  dibs --log [n]                       what ran, and how it ended
+  dibs --friction '<line>'             record what got in the way
 Setup
   dibs --update                        reinstall dibs, its recipes, its plugin
   dibs completions <fish|zsh>          shell completions
-  dibs hook ssh | urgent               Claude Code hooks
-
+  dibs hook ssh, dibs hook urgent      Claude Code hooks
 Flags  --on <machine>  --device <card>  --label <name>  --wait <s>  --max <s>
        --low-priority  --urgent '<why>'  --check-in <time>  --dry-run
 
