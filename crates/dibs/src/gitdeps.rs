@@ -110,7 +110,7 @@ impl GitPin {
             };
             if !out
                 .iter()
-                .any(|p| p.repo == pin.repo && p.commit == pin.commit)
+                .any(|p| same_url(&p.url, &pin.url) && p.commit == pin.commit)
             {
                 out.push(pin);
             }
@@ -349,6 +349,7 @@ serde = { git = "https://git.example.invalid/org/serde", "rev" = "abcdef0" }
 
 [build_dependencies]
 cog = { git = "https://git.example.invalid/org/cog", rev = "1111111" }
+fork = { git = "https://git.example.invalid/team/widget", rev = "2d1aeb21c" }
 
 [replace]
 "bolt:1.0.0" = { git = "https://git.example.invalid/org/bolt", rev = "2222222" }
@@ -362,6 +363,7 @@ cog = { git = "https://git.example.invalid/org/cog", rev = "1111111" }
             vec![
                 ("widget".to_string(), "2d1aeb21c".to_string()),
                 ("cog".to_string(), "1111111".to_string()),
+                ("widget".to_string(), "2d1aeb21c".to_string()),
                 (
                     "sprocket".to_string(),
                     "0123456789abcdef0123456789abcdef01234567".to_string()

@@ -155,7 +155,15 @@ impl Repo<'_> {
 
     /// Every manifest of the tree that names a git rev.
     pub fn manifests(self, reference: Option<&str>) -> Vec<String> {
-        let mut grep = vec!["grep", "-l", "-z", "-I", "-E"];
+        let mut grep = vec![
+            "grep",
+            "-l",
+            "-z",
+            "-I",
+            "-E",
+            "--no-color",
+            "--no-recurse-submodules",
+        ];
         if reference.is_none() {
             grep.push("--untracked");
         }
