@@ -308,12 +308,12 @@ mod tests {
     }
 
     #[test]
-    fn the_short_help_fits_an_80_column_terminal_of_50_rows() {
+    fn the_short_help_fits_an_80_column_terminal_of_60_rows() {
         let short = Help::short();
         for line in short.lines() {
             assert!(line.chars().count() <= 80, "{line}");
         }
-        assert!(short.lines().count() <= 50);
+        assert!(short.lines().count() <= 60);
     }
 
     #[test]

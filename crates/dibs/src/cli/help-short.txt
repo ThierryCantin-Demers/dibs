@@ -2,15 +2,19 @@ Run commands on shared machines under a lock, so no one spoils a measurement.
 
 Recipes
   dibs <verb> <repo>[@<ref>] <recipe>  build, test or bench; @local: your tree
+      --<param> <value>  --sweep <param>=<a,b>  --reps <n>  --pin <repo>@<ref>
+      --artifacts <dir>  --dry-run
   dibs list <repo>                     a repo's recipes and the values they take
-  dibs runs [label]                    what was measured, and what compares
+  dibs runs [label] [--all]            what was measured; --all adds failed runs
   dibs measurement <job|batch>         a run as one measurement, in JSON
   dibs with <repo> <service> -- <cmd>  a command against the repo's servers
   dibs shell <repo> --reason <why> -- <cmd>    a one-off in a prepared tree
+      --bench  --preemptible
   dibs raw --reason <why> -- <cmd>     a one-off with nothing prepared
   dibs gaps                            what fit no recipe, what got in the way
 Calls
   dibs run [--bench] <cmd>             shared, or alone on the machine
+      --with <name>='<cmd>'  --ready tcp:<port>  --port <name>  --stream
   dibs --peek <cmd>                    a look that takes no lock
   dibs --sync <a> <b>                  rsync, ':' marking the machine's side
   dibs --hold <cmd>                    a command here under the machine's lock
@@ -19,10 +23,10 @@ Batches
   dibs batch --detach <file|->         driven on the machine, outliving this one
   dibs batch --follow <id>             follow a detached or resume a paused one
 Machines
-  dibs status, dibs --watch            who holds each machine, and the queue
+  dibs status, dibs --watch [secs]     who holds each machine, and the queue
   dibs --machines, dibs machines       the inventory, and each machine's state
-  dibs --check [host]                  install the runner, say what is there
-  dibs --pick                          the machine a shared call would get
+  dibs --check [host] [--write]        install the runner; --write records it
+  dibs --pick [--prefer <machine>]     the machine a shared call would get
   dibs --which                         the machine a call already names
   dibs --forget <machine>              drop a machine from your inventory
   dibs --measure <machine> on|off      whether a benchmark may run there
@@ -36,10 +40,10 @@ Jobs
   dibs --friction '<line>'             record what got in the way
 Setup
   dibs --update                        reinstall dibs, its recipes, its plugin
-  dibs completions <fish|zsh>          shell completions
+  dibs completions <fish|zsh> [--install]  shell completions
   dibs hook ssh, dibs hook urgent      Claude Code hooks
 Flags  --on <machine>  --device <card>  --label <name>  --wait <s>  --max <s>
-       --low-priority  --urgent '<why>'  --check-in <time>
+       --low-priority  --urgent '<why>'  --check-in <time>  --when-open
+
 dibs <command> --help   that command's part, for one written without -- (run)
 dibs --help --all       the whole help: every command and flag
-
