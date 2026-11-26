@@ -222,6 +222,51 @@ fn a_low_priority_benchmark_waiting_for_idle_lets_a_later_one_on_its_card_go_fir
 }
 
 #[test]
+fn a_whole_machine_benchmark_waiting_for_idle_keeps_no_card_benchmark_out() {
+    let Some(mut s) = card_machine() else { return };
+    let (busy, card) = (s.gate("busy"), s.gate("card"));
+    let order = s.p("order");
+    let b = s.spawn(s.dibs([
+        "--on",
+        "here",
+        "--label",
+        "busy",
+        &format!("echo busy >> {order}; {}", busy.hold()),
+    ]));
+    s.until_records("the shared job to run", || s.read("order") == "busy\n");
+    let low = s.spawn(
+        s.dibs([
+            "--on",
+            "here",
+            "--bench",
+            "--low-priority",
+            "--label",
+            "low",
+            &format!("echo low >> {order}"),
+        ])
+        .env("DIBS_IDLE_SETTLE", "0"),
+    );
+    s.queued(1);
+    let c = s.spawn(bench(
+        &s,
+        Some("gpu:a"),
+        "card",
+        &format!("echo card >> {order}; {}", card.hold()),
+    ));
+    s.queued(2);
+    busy.open();
+    assert_eq!(s.wait(b), 0);
+    s.until_records("the card benchmark to go first", || {
+        s.read("order") == "busy\ncard\n"
+    });
+    card.open();
+    assert_eq!(s.wait(c), 0);
+    assert_eq!(s.wait(low), 0);
+    assert_eq!(s.read("order"), "busy\ncard\nlow\n");
+    s.gone();
+}
+
+#[test]
 fn a_whole_machine_benchmark_lets_card_benchmarks_join_until_the_first_of_them_ends() {
     let Some(mut s) = card_machine() else { return };
     let (first, second, whole) = (s.gate("first"), s.gate("second"), s.gate("whole"));

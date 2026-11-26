@@ -244,7 +244,7 @@ impl<'a> Run<'a> {
             self.at.sink.say(&refused.to_string());
             return Exit::Refused.status();
         }
-        let arrived = match self.arrive() {
+        let mut arrived = match self.arrive() {
             Ok(arrived) => arrived,
             Err(code) => return code,
         };
@@ -278,12 +278,8 @@ impl<'a> Run<'a> {
                         return Exit::Busy.status();
                     }
                 }
-                // Now an ordinary benchmark, which a parkable `--low-priority` job makes way for,
-                // queued from now so the quick jobs it lets around it count its patience afresh.
                 if self.at.call.mode() == Mode::Bench {
-                    let record = self.at.call.lock_record(Moment::epoch_now(), &arrived.job);
-                    self.at.dir.write(Kind::Waiting, &record);
-                    self.at.dir.unmark_idle(self.at.call.pid);
+                    self.queue_now(&mut arrived);
                 }
             }
             let acquired = match (preempts, self.urgent(), self.card_claim()) {
@@ -463,20 +459,10 @@ impl<'a> Run<'a> {
         let within = guard_wait(request.wait.map(|wait| since + Duration::from_secs(wait)));
         let window = machine.then(|| self.at.dir.join_guard(within));
         // Before the record, so nobody reads it as a benchmark of the whole machine.
-        match &claim {
-            Some(Takes::Cards(pcis)) => {
-                self.at.dir.mark_cards(pid, pcis);
-                self.at.dir.mark_arrived(pid, order);
-            }
-            Some(Takes::Machine) => {
-                self.at.dir.forget_window(pid);
-                if let Some(Ok(_)) = &window {
-                    self.at.dir.open_window(pid);
-                }
-                self.at.dir.mark_arrived(pid, order);
-            }
-            None => {}
+        if let Some(Takes::Cards(pcis)) = &claim {
+            self.at.dir.mark_cards(pid, pcis);
         }
+        self.mark_order(claim.as_ref(), order, matches!(window, Some(Ok(_))));
         // Beside the lock record rather than in it: a runner reading a record with a field it
         // does not know drops the record, and with it a holder its benchmark must not run beside.
         // Before it, so the first status to see the call sees them too.
@@ -704,6 +690,40 @@ impl<'a> Run<'a> {
         let mut state = self.at.stopper.state();
         state.set_stage(was);
         (state, yielded)
+    }
+
+    /// The order a benchmark is admitted in, and for one of the whole machine, the window of card
+    /// benchmarks that join ahead of it, opened only under the join guard.
+    fn mark_order(&self, claim: Option<&Takes>, order: u128, guarded: bool) {
+        let pid = self.at.call.pid;
+        match claim {
+            Some(Takes::Cards(_)) => self.at.dir.mark_arrived(pid, order),
+            Some(Takes::Machine) => {
+                self.at.dir.forget_window(pid);
+                if guarded {
+                    self.at.dir.open_window(pid);
+                }
+                self.at.dir.mark_arrived(pid, order);
+            }
+            None => {}
+        }
+    }
+
+    /// A `--low-priority` benchmark the idle machine lets start, queued from now as an ordinary
+    /// one, which a parkable `--low-priority` job makes way for and whose patience starts now.
+    fn queue_now(&self, arrived: &mut Arrived) {
+        let pid = self.at.call.pid;
+        arrived.order = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        let claim = self.card_claim();
+        let window = matches!(claim, Some(Takes::Machine))
+            .then(|| self.at.dir.join_guard(guard_wait(self.wait_until(arrived))));
+        self.mark_order(claim.as_ref(), arrived.order, matches!(window, Some(Ok(_))));
+        let record = self.at.call.lock_record(Moment::epoch_now(), &arrived.job);
+        self.at.dir.write(Kind::Waiting, &record);
+        self.at.dir.unmark_idle(pid);
+        drop(window);
     }
 
     /// A shared job run only while nothing else here runs or waits, and parked for anything that

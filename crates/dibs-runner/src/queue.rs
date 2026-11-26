@@ -96,6 +96,7 @@ impl Queue<'_> {
         let now = Moment::epoch_now();
         let holders = self.dir.records(Kind::Holder);
         let mut waiting = self.dir.records(Kind::Waiting);
+        waiting.retain(|w| w.pid == self.call.pid || !self.dir.idle_only(w.pid));
         waiting.sort_by_key(|w| w.start);
         let mut eta = Eta::behind(&holders, now, |h| self.estimate(h));
         let mut ahead = 0;

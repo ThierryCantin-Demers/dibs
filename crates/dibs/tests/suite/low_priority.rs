@@ -157,6 +157,52 @@ fn a_low_priority_job_is_parked_for_a_low_priority_benchmark() {
 }
 
 #[test]
+fn a_benchmark_queued_after_a_low_priority_one_goes_first_and_is_told_so() {
+    let mut s = Sandbox::new();
+    let (busy, ordinary) = (s.gate("busy"), s.gate("ordinary"));
+    let order = s.p("order");
+    let b = s.spawn(s.dibs([
+        "--label",
+        "busy",
+        &format!("echo busy >> {order}; {}", busy.hold()),
+    ]));
+    s.until_records("the shared job to start", || s.read("order") == "busy\n");
+    let low = s.spawn(
+        s.dibs([
+            "--bench",
+            "--low-priority",
+            "--label",
+            "low",
+            &format!("echo low >> {order}"),
+        ])
+        .env("DIBS_IDLE_SETTLE", "0"),
+    );
+    s.queued(1);
+    let o = s.spawn(
+        s.dibs([
+            "--bench",
+            "--label",
+            "ordinary",
+            &format!("echo ordinary >> {order}; {}", ordinary.hold()),
+        ])
+        .streams_to(&s.path("o-out"), &s.path("o-err")),
+    );
+    s.queued(2);
+    busy.open();
+    assert_eq!(s.wait(b), 0);
+    s.until_records("the ordinary benchmark to go first", || {
+        s.read("order") == "busy\nordinary\n"
+    });
+    ordinary.open();
+    assert_eq!(s.wait(o), 0);
+    assert_eq!(s.wait(low), 0);
+    assert_eq!(s.read("order"), "busy\nordinary\nlow\n");
+    let told = s.read("o-err");
+    assert_eq!(told.lines_with("queued first"), 0, "{told}");
+    s.gone();
+}
+
+#[test]
 fn a_sync_does_not_keep_a_low_priority_job_waiting() {
     let mut s = Sandbox::new();
     let (sending, run) = (s.gate("sending"), s.gate("run"));

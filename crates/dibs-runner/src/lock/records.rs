@@ -242,6 +242,7 @@ impl LockDir {
             .filter(|w| {
                 w.mode == dibs_format::Mode::Bench
                     && w.pid != pid
+                    && !self.idle_only(w.pid)
                     && self.cards_of(w.pid).is_none()
                     && RecordFile(&self.file("waiting", w.pid)).alive()
                     && self
