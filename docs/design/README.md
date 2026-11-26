@@ -12,6 +12,8 @@ What dibs is built on, and why. [The guide](../guide.md) says how to use it.
   with the measurement behind it. A superseded entry says by what.
 - [`dibspatcher.md`](dibspatcher.md): the service that makes dibs calls for coworkers and
   outlives them: its store, its workers, attempts a runner admits once, and split recipes.
+- [`routing.md`](routing.md) (proposed): each job on the machine its kind belongs on, a build
+  carried to the benchmark machine as its executables, for any recipe.
 - [`machines.md`](machines.md): what each machine should have, the check against what it has,
   and the window that shows the difference.
 
