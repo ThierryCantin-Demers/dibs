@@ -462,7 +462,11 @@ impl<'a> Run<'a> {
         if let Some(Takes::Cards(pcis)) = &claim {
             self.at.dir.mark_cards(pid, pcis);
         }
-        self.mark_order(claim.as_ref(), order, matches!(window, Some(Ok(_))));
+        // A benchmark waiting for an idle machine takes its order once it has one, since a
+        // runner that knows nothing of idle marks would otherwise wait for it.
+        if !(self.waits_idle() && request.mode == Mode::Bench) {
+            self.mark_order(claim.as_ref(), order, matches!(window, Some(Ok(_))));
+        }
         // Beside the lock record rather than in it: a runner reading a record with a field it
         // does not know drops the record, and with it a holder its benchmark must not run beside.
         // Before it, so the first status to see the call sees them too.

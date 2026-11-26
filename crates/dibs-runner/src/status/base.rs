@@ -149,12 +149,16 @@ impl Look<'_> {
     /// Where the queue stands once all of it has started, which only a batch's later steps need.
     fn tail(&self, holders: &[LockRecord], waiting: &[LockRecord], now: u64) -> Tail {
         let mut eta = Eta::behind(holders, now, |h| self.estimate(h, None));
-        for waiter in waiting {
+        let queued: Vec<&LockRecord> = waiting
+            .iter()
+            .filter(|w| !self.dir.idle_only(w.pid))
+            .collect();
+        for waiter in &queued {
             eta.next(waiter.mode, self.estimate(waiter, None));
         }
         Tail {
             eta,
-            exclusive: holders.iter().chain(waiting).any(|r| r.mode == Mode::Bench),
+            exclusive: holders.iter().chain(queued).any(|r| r.mode == Mode::Bench),
         }
     }
 
