@@ -35,9 +35,10 @@ A job that names no machine is placed by its kind:
 
 | Job | Role | Chosen by |
 | --- | --- | --- |
-| shared, no card | `compile` | the repo's cache affinity, then load |
-| shared, `--device` | `gpu` | every requested card on one machine, then load |
-| exclusive | `bench` | the label's series (machine and card), else a free card of the model |
+| shared, no card, or `--device cpu` | `compile` | the repo's cache affinity, then load |
+| shared, a GPU `--device` | `gpu` | every requested card on one machine, then load |
+| exclusive, with `--device` | `bench` | the label's series (machine and card), else a free card of the model |
+| exclusive, no `--device` | `bench` | the label's series (machine), else the least busy, the whole machine held |
 
 `--on` still names a machine, and overrides the role.
 
@@ -64,16 +65,19 @@ the call is planned and recorded:
    to a snapshot with a digest. Every machine that receives the arm gets that snapshot and
    checks its digest, so a branch that moves or a file edited meanwhile cannot put a new tree
    beside an old binary.
-2. Each arm is built on a compile machine. Arms may build on different compile machines at once
-   only when their build signatures match: the same toolchain, image digest and flags, with no
-   `target-cpu=native`. Otherwise they build one after the other on one machine, so a
-   comparison never measures a difference between compilers.
+2. Every arm of a call is built on one compile machine, as every arm is built on one machine
+   today. A build script can choose code by the CPU it runs on, so two compile machines with the
+   same toolchain, image and flags can still build different binaries from the same source, and
+   an A/B would measure the machines rather than the refs.
 3. The build job seals its bundle itself, before it ends, by copying what the bundle holds into
    an immutable store on the compile machine. For the whole job, from its first cargo call to the
    seal, it holds a lock on its target that every job writing into that target takes, so two
    refs sharing a target take turns and no build can replace an executable between cargo
    reporting it and the seal reading it. Cargo already serialises builds of one target, so this
-   costs nothing new. A `--low-priority` build that parks lets go of the lock with its build
+   costs nothing new. An executable cargo reports as fresh rather than built is sealed only when
+   an earlier seal of the same inputs on that machine attests its digest, as the pilot's relay
+   requires today; otherwise the arm cleans those packages and builds them once more, so a stale
+   file left in a shared target never passes for the new arm. A `--low-priority` build that parks lets go of the lock with its build
    mark, as it lets go of the target today, and its capture starts again with the build when it
    runs again.
 4. The bundle is carried to the benchmark machine and staged there.
@@ -84,7 +88,8 @@ the call is planned and recorded:
 **Which shared steps are builds** uses the classification dibs already makes to mark a step
 preemptible (`compiles_only`, `execution/jobs.rs`): in a call that measures, a shared step that
 only compiles goes to the compile machine, and any other shared step after the last build, such
-as a warmup script, runs on the benchmark machine in recipe order, beside the measurements. A
+as a warmup, runs on the benchmark machine in recipe order, beside the measurements, and is held
+to the same test as a measured step below. A
 shared step that is not a build and comes before one may write something the build reads, a
 file an `include_str!` takes, so its call stays whole. A call that measures
 nothing is placed whole by the table above: on a GPU machine with its cards if it names any,
@@ -101,9 +106,12 @@ halfway through an A/B. A call splits only when all of these hold:
 
 - every shared step it sends to the compile machine is a recognised compile-only cargo command,
   and no other shared step comes before the last of them;
-- every measured step runs a cargo invocation dibs recognises in its text after values are
-  bound (`cargo bench`, `cargo test`, `cargo run`, with their arguments) or an executable by its
-  path under `$CARGO_TARGET_DIR`, and reads nothing else of the target;
+- every step that runs on the benchmark machine, measured or not, runs a cargo invocation dibs
+  recognises in its text after values are bound (`cargo bench`, `cargo test`, `cargo run`, with
+  their arguments) or an executable by its path under `$CARGO_TARGET_DIR`, and reads nothing
+  else of the target;
+- a target runner cargo would launch through (`target.<triple>.runner` or its `cfg` form, in the
+  tree's cargo config or the environment) is one dibs can read, since it is replayed;
 - no step outside the builds writes into the target;
 - the flags compile for a CPU baseline, not `native`;
 - no step runs doctests.
@@ -132,9 +140,11 @@ A job-local `cargo` wrapper on `PATH` adds `--message-format=json-render-diagnos
 subcommands that build (`build`, `bench`, `test`, `run`, `rustc`), before any `--`. Right after
 each invocation returns, and before the next can overwrite a path, the wrapper copies the
 executables it reported into the store by digest, so each launch plan names the digest its own
-invocation produced. Two invocations that leave different executables at one top-level path,
-`release/examples/x` built with two feature sets, cannot both sit in the sparse target: a call
-that would launch both by that path stays whole. Every other
+invocation produced, and it records the build-script directories as they are then, by digest,
+since a later invocation with other features or environment can rewrite an `OUT_DIR` in place.
+Two launches that need different contents at one path, an executable at
+`release/examples/x` built with two feature sets or an `OUT_DIR` file rewritten between them,
+cannot both sit in the sparse target: such a call stays whole. Every other
 subcommand, `metadata` and `check` among them, passes through untouched. The JSON goes to a
 report of the job's own; the caller sees the diagnostics, the exit and any JSON it asked for,
 unchanged. Each report records the executables cargo built or found fresh, indexed by package,
@@ -167,7 +177,8 @@ sent as a delta, so scripts, configs and data in the tree are there without bein
 
 The measured step runs its own command, unchanged. Its `PATH` puts a `cargo` first that answers
 from the launch plans: `cargo bench --bench x -- args` runs the staged `x --bench args` from its
-package root with cargo's environment, as cargo would. `$CARGO_TARGET_DIR` points at the sparse
+package root with cargo's environment, through the target runner cargo would have used, as
+cargo would. `$CARGO_TARGET_DIR` points at the sparse
 target, so `$CARGO_TARGET_DIR/release/x` is the staged `x`. An invocation that matches no plan, or
 that would compile anything, is refused before running, naming the invocation. Nothing is ever
 compiled under the exclusive lock.
@@ -234,8 +245,9 @@ Each ships and is tested on its own:
 
 1. **Roles.** The team inventory, roles, series read from the machines, and placement of whole
    calls by their most demanding job. Shared work leaves the benchmark machines at once. Rows of
-   a batch are placed one by one only when each is a recipe, which builds what it measures
-   itself. Rows linked by `after=` where any is a `run`, a `shell` or a `--sync` may share what
+   a batch are placed one by one only when each is a recipe that builds what it runs: one whose
+   steps begin with a build and whose later steps use only what that build made. A recipe with
+   no build of its own, or that runs a binary an earlier row built, depends on that row. Rows linked by `after=` where any is a `run`, a `shell` or a `--sync` may share what
    an earlier row wrote, a binary under `$CARGO_TARGET_DIR` included, and are placed together on
    the machine their most demanding row needs, so a build row and the benchmark after it stay on
    one machine. A detached batch stays on one machine, the one its most demanding row needs,
