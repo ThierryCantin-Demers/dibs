@@ -28,8 +28,9 @@ pub const PREPARE_LOCK: &str = ".prepare.lock";
 const TEMPORARY: [&str; 2] = [".seed.", ".old."];
 /// What a sweep writes in a cache it found unmarked; a prepare's marker is empty.
 const DATED: &str = "swept\n";
-/// What dibs makes under scratch; everything else there a job named itself.
-pub const DIBS_OWN: [&str; 10] = [
+/// What dibs makes under scratch, and what its client keeps there when scratch is the default
+/// `~/.cache/dibs`; everything else there a job named itself.
+pub const DIBS_OWN: [&str; 15] = [
     "ws",
     "target",
     "jobs",
@@ -40,6 +41,11 @@ pub const DIBS_OWN: [&str; 10] = [
     IMAGES,
     Attempts::DIR,
     BundleManifest::DIR,
+    "detached",
+    "client",
+    "upstream",
+    "sent",
+    "remotes",
 ];
 
 /// What a sweep walks, in the order it walks it.
@@ -551,7 +557,7 @@ impl<'a> Sweep<'a> {
     /// whose top directory a copy dated long ago; kept while a process works in it.
     fn leftover(&self, path: &Path, now: u64) -> (Fate, u64) {
         let cutoff = now.saturating_sub(self.clocks.keep_days.saturating_mul(Span::DAY.0));
-        let enough = match self.clocks.all {
+        let enough = match self.exact || self.clocks.all {
             true => None,
             false => Some(cutoff),
         };

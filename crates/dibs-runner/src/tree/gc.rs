@@ -199,16 +199,20 @@ impl SweepReport {
     /// One entry the sweep lists under named by jobs and never removes, removed because a person
     /// named it: refused for one a process works in, or one its `.dibs-keep` keeps.
     fn remove_named(&self, entry: &str) -> i32 {
-        let path = self.scratch.join(entry);
         let removal = Removal::new(None, &SweepReport::say);
         let sweep = Sweep::new(&self.scratch, &self.home, self.clocks, removal);
-        if !sweep.entries(Swept::Named).contains(&path) {
+        // The listing's own path: a spelling such as `x/` would follow a symlink out of scratch.
+        let listed = sweep
+            .entries(Swept::Named)
+            .into_iter()
+            .find(|p| p.file_name() == Some(std::ffi::OsStr::new(entry)));
+        let Some(path) = listed else {
             SweepReport::say(&format!(
                 "dibs: {entry} is not under named by jobs in {}: --named removes only what --gc lists there.\n",
                 self.scratch.display()
             ));
             return 2;
-        }
+        };
         let kib = Totals::default()
             .measure(Swept::Named.named(), std::slice::from_ref(&path), |_| false)
             .sizes
@@ -229,9 +233,22 @@ impl SweepReport {
             ));
             return 1;
         }
+        // Renamed out of its name first, so a job starting during a long removal cannot enter it.
+        let aside = self.scratch.join("tmp").join(format!(
+            "{entry}.named.{}-{}",
+            std::process::id(),
+            Moment::epoch_now()
+        ));
+        let removal = Removal::new(None, &SweepReport::say);
         let done = match self.dry {
             true => "would remove",
-            false if Removal::new(None, &SweepReport::say).path(&path) => "removed",
+            false
+                if !fs::create_dir_all(self.scratch.join("tmp"))
+                    .is_ok_and(|()| removal.set_aside(&path, &aside)) =>
+            {
+                return 1;
+            }
+            false if removal.path(&aside) => "removed",
             false => return 1,
         };
         SweepReport::say(&format!(

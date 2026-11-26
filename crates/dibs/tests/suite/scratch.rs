@@ -435,6 +435,15 @@ fn gc_named_removes_the_one_entry_a_person_names() {
         "one a process works in stays: {}",
         busy.all()
     );
+    fs::create_dir_all(s.path("outside")).unwrap();
+    s.write("outside/precious", "");
+    std::os::unix::fs::symlink(s.path("outside"), s.path("gc/link")).unwrap();
+    let link = gc(&s, &["--gc", "--named", "link"]);
+    assert!(
+        link.code == 0 && !s.exists("gc/link") && s.exists("outside/precious"),
+        "a symlink goes, never what it points to: {}",
+        link.all()
+    );
     let gone = gc(&s, &["--gc", "--named", "byhand-stale"]);
     assert_eq!(gone.code, 0, "{}", gone.all());
     assert!(!s.exists("gc/byhand-stale"), "asked by name, it goes");
