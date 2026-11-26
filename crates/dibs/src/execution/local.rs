@@ -155,7 +155,7 @@ impl Repo<'_> {
 
     /// Every manifest of the tree that names a git rev.
     pub fn manifests(self, reference: Option<&str>) -> Vec<String> {
-        let mut grep = vec!["grep", "-l", "-I", "-E"];
+        let mut grep = vec!["grep", "-l", "-z", "-I", "-E"];
         if reference.is_none() {
             grep.push("--untracked");
         }
@@ -164,7 +164,8 @@ impl Repo<'_> {
         grep.extend(["--", ":(glob)**/Cargo.toml"]);
         let listed = Git(self.0).run(&grep).unwrap_or_default();
         listed
-            .lines()
+            .split('\0')
+            .filter(|path| !path.is_empty())
             .map(|path| match reference {
                 Some(r) => path.strip_prefix(&format!("{r}:")).unwrap_or(path),
                 None => path,

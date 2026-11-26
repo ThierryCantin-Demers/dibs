@@ -42,7 +42,7 @@ impl GitPin {
         {
             if !out
                 .iter()
-                .any(|p| p.repo == pin.repo && p.commit.starts_with(&pin.commit))
+                .any(|p| same_url(&p.url, &pin.url) && p.commit.starts_with(&pin.commit))
             {
                 out.push(pin);
             }
@@ -52,7 +52,13 @@ impl GitPin {
 
     /// Every git dependency a manifest names by `rev`, which may be a prefix of its commit.
     pub fn named(manifest: &str) -> Vec<GitPin> {
-        const KINDS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+        const KINDS: [&str; 5] = [
+            "dependencies",
+            "dev-dependencies",
+            "build-dependencies",
+            "dev_dependencies",
+            "build_dependencies",
+        ];
         let Ok(manifest) = manifest.parse::<toml::Table>() else {
             return Vec::new();
         };
@@ -80,6 +86,9 @@ impl GitPin {
         }
         if let Some(patches) = manifest.get("patch").and_then(|p| p.as_table()) {
             tables.extend(patches.values().filter_map(|p| p.as_table()).cloned());
+        }
+        if let Some(replace) = manifest.get("replace").and_then(|r| r.as_table()) {
+            tables.push(replace.clone());
         }
         let mut out: Vec<GitPin> = Vec::new();
         for spec in tables.iter().flat_map(|t| t.values()) {
@@ -138,6 +147,19 @@ impl GitPin {
         }
         out
     }
+}
+
+/// Two spellings of one git URL, as a lockfile and a manifest may write it.
+fn same_url(a: &str, b: &str) -> bool {
+    let bare = |url: &str| {
+        url.split('?')
+            .next()
+            .unwrap_or(url)
+            .trim_end_matches('/')
+            .trim_end_matches(".git")
+            .to_lowercase()
+    };
+    bare(a) == bare(b)
 }
 
 /// The repo a git URL names, as cargo names its cache directory.
@@ -324,6 +346,12 @@ widget-sys = { git = "https://git.example.invalid/org/widget.git", rev = "2d1aeb
 
 [patch.crates-io]
 serde = { git = "https://git.example.invalid/org/serde", "rev" = "abcdef0" }
+
+[build_dependencies]
+cog = { git = "https://git.example.invalid/org/cog", rev = "1111111" }
+
+[replace]
+"bolt:1.0.0" = { git = "https://git.example.invalid/org/bolt", rev = "2222222" }
 "#;
         let named: Vec<(String, String)> = GitPin::named(manifest)
             .into_iter()
@@ -333,18 +361,20 @@ serde = { git = "https://git.example.invalid/org/serde", "rev" = "abcdef0" }
             named,
             vec![
                 ("widget".to_string(), "2d1aeb21c".to_string()),
+                ("cog".to_string(), "1111111".to_string()),
                 (
                     "sprocket".to_string(),
                     "0123456789abcdef0123456789abcdef01234567".to_string()
                 ),
                 ("serde".to_string(), "abcdef0".to_string()),
+                ("bolt".to_string(), "2222222".to_string()),
             ]
         );
     }
 
     #[test]
     fn a_rev_its_lockfile_pins_is_not_named_twice() {
-        let manifest = "[dependencies]\nwidget = { git = \"https://git.example.invalid/org/widget\", rev = \"2d1aeb21c\" }\nwidget2 = { git = \"https://git.example.invalid/org/widget\", rev = \"aaaaaaaaa\" }\n";
+        let manifest = "[dependencies]\nwidget = { git = \"https://git.example.invalid/org/widget.git\", rev = \"2d1aeb21c\" }\nwidget2 = { git = \"https://git.example.invalid/org/widget\", rev = \"aaaaaaaaa\" }\nfork = { git = \"https://git.example.invalid/team/widget\", rev = \"2d1aeb21c\" }\n";
         let pins = GitPin::of(
             &[(String::new(), LOCK.to_string())],
             &[manifest.to_string()],
@@ -356,7 +386,12 @@ serde = { git = "https://git.example.invalid/org/serde", "rev" = "abcdef0" }
             .collect();
         assert_eq!(
             widget,
-            vec!["2d1aeb21c0ccfe271f12d1209724c6012a133134", "aaaaaaaaa"]
+            vec![
+                "2d1aeb21c0ccfe271f12d1209724c6012a133134",
+                "2d1aeb21c",
+                "aaaaaaaaa"
+            ],
+            "a fork at a commit the lockfile pins upstream is named apart"
         );
     }
 
