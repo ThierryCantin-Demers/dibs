@@ -230,7 +230,8 @@ impl Rec<'_> {
 fn idlers(s: &mut Sandbox, gate: &Gate, count: usize) -> Vec<u32> {
     let mut pids: Vec<u32> = (0..count)
         .map(|_| {
-            let call = s.command("sh", ["-c", &format!("cat {}; true", gate.path.display())]);
+            // A builtin starts no child, and dibs counts a holder's CPU from its children only.
+            let call = s.command("sh", ["-c", &format!("{}; true", gate.hold())]);
             s.spawn(call).pid
         })
         .collect();
