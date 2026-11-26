@@ -183,8 +183,10 @@ impl<'a> Sweep<'a> {
         Host::processes()
             .iter()
             .flat_map(|p| {
-                let target = Host::variable(p.pid, "CARGO_TARGET_DIR").map(PathBuf::from);
-                [Host::cwd(p.pid), target]
+                let cwd = Host::cwd(p.pid);
+                let target = Host::variable(p.pid, "CARGO_TARGET_DIR")
+                    .map(|t| cwd.clone().unwrap_or_default().join(t));
+                [cwd, target]
             })
             .flatten()
             .filter_map(|p| p.canonicalize().ok())
@@ -237,9 +239,17 @@ impl<'a> Sweep<'a> {
                 .filter(|path| !Cached::is_lock(path))
                 .collect(),
             Swept::Named => {
-                let default = self.home.join(".cache/dibs").canonicalize().ok();
-                let client = match self.scratch.canonicalize().ok() == default && default.is_some()
-                {
+                let caches = [
+                    Some(self.home.join(".cache")),
+                    std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from),
+                ];
+                let scratch = self.scratch.canonicalize().ok();
+                let is_client_cache = caches
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| c.join("dibs").canonicalize().ok())
+                    .any(|c| Some(c) == scratch);
+                let client = match is_client_cache {
                     true => &CLIENT_OWN[..],
                     false => &[],
                 };
@@ -578,6 +588,8 @@ impl<'a> Sweep<'a> {
             self.clocks.past(now, written, self.clocks.keep_days),
         ) {
             (true, _) => Fate::Held,
+            // Asked again: walking a big sibling gives a job time to start in this one.
+            (false, true) if Sweep::used_in(&Sweep::working(), path) => Fate::Held,
             (false, true) => Fate::Past,
             (false, false) => Fate::Kept,
         };
