@@ -247,9 +247,6 @@ impl<'a> Run<'a> {
             self.at.sink.say(&refused.to_string());
             return Exit::Refused.status();
         }
-        // A hold is never refused for its card, so it starts a series only where there is none
-        // to keep, or keeps to the one there.
-        let binding = binding.filter(|b| !request.watch.hold || b.check().is_ok());
         let mut arrived = match self.arrive() {
             Ok(arrived) => arrived,
             Err(code) => return code,

@@ -54,6 +54,7 @@ impl Team {
     /// is set up here; otherwise how many machines it has, or why it was not kept.
     pub fn refresh(&self) -> Option<Result<usize, String>> {
         let dir = self.dir.as_ref()?;
+        recover(dir);
         let files = crate::dispatch::team_files()?;
         let from = crate::dispatch::dibspatcher_id().unwrap_or_default();
         let kept = files.and_then(|files| keep(dir, &files, &from));
@@ -65,9 +66,13 @@ impl Team {
 
     /// Refreshes a copy a day old, saying on stderr when that fails; the old copy stays.
     pub fn refresh_if_stale(&self) {
-        let Some(dir) = self.dir.as_ref().filter(|d| !d.join(CARRIED).exists()) else {
+        let Some(dir) = self.dir.as_ref() else {
             return;
         };
+        recover(dir);
+        if dir.join(CARRIED).exists() {
+            return;
+        }
         let id = crate::dispatch::dibspatcher_id();
         let from = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
         let fresh = from(FROM).as_deref() == id.as_deref() && younger(dir, FETCHED, FRESH_FOR);

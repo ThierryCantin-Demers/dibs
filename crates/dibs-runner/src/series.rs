@@ -129,8 +129,13 @@ impl Binding<'_> {
             let mut written = format!("{HEADER}\n");
             for line in text.lines().skip(1) {
                 let fields = Line::of(line);
+                let keeps = !self.call.request.new_series;
                 match fields.field(0) == self.label() {
-                    true if !self.call.request.new_series && fields.field(1) == card => {
+                    // A hold is never refused for its card, so it never moves the series.
+                    true if keeps && self.call.request.watch.hold && fields.field(1) != card => {
+                        return None;
+                    }
+                    true if keeps && fields.field(1) == card => {
                         runs = fields.field(4).parse().unwrap_or(0);
                     }
                     true => {}

@@ -199,6 +199,8 @@ pub struct Step {
     /// A call that runs a job on a machine, which placement places; a query such as
     /// `--machines` runs here and is placed nowhere.
     pub runs: bool,
+    /// A `$` the shell leaves as it is, so placement reads no `$` in the row as a variable.
+    pub literal: bool,
     /// What a recipe step asks for, so the jobs it will make can be planned.
     pub recipe: Option<RecipeCall>,
 }
@@ -255,11 +257,12 @@ pub fn parse(text: &str) -> Result<Vec<Step>, BatchError> {
                 return Err(at(BadLine::Attribute(attr.to_string())));
             }
         }
-        let words = split_words(command).map_err(at)?;
+        let (words, literal) = split_marked(command).map_err(at)?;
         if words.first().map(String::as_str) != Some("dibs") {
             return Err(at(BadLine::NotDibs(command.to_string())));
         }
-        let s = describe(&words).map_err(at)?;
+        let mut s = describe(&words).map_err(at)?;
+        s.literal = literal;
         if overlap && s.measures() {
             return Err(at(BadLine::Overlap));
         }
@@ -340,6 +343,12 @@ fn order(steps: &[Step]) -> Result<Vec<usize>, BatchError> {
 /// so `$DIBS_BATCH` and quoting mean what they mean at a prompt. Anything that would make the
 /// line more than one dibs call is refused.
 pub fn split_words(line: &str) -> Result<Vec<String>, BadLine> {
+    split_marked(line).map(|(words, _)| words)
+}
+
+/// The words, and whether a `$` among them is quoted or escaped, so the shell leaves it as it is.
+fn split_marked(line: &str) -> Result<(Vec<String>, bool), BadLine> {
+    let mut literal = false;
     let mut words = Vec::new();
     let mut cur = String::new();
     let mut in_word = false;
@@ -355,7 +364,10 @@ pub fn split_words(line: &str) -> Result<Vec<String>, BadLine> {
                             closed = true;
                             break;
                         }
-                        x => cur.push(x),
+                        x => {
+                            literal |= x == '$';
+                            cur.push(x);
+                        }
                     }
                 }
                 if !closed {
@@ -372,7 +384,10 @@ pub fn split_words(line: &str) -> Result<Vec<String>, BadLine> {
                             break;
                         }
                         '\\' => match chars.next() {
-                            Some(x @ ('"' | '\\' | '$' | '`')) => cur.push(x),
+                            Some(x @ ('"' | '\\' | '$' | '`')) => {
+                                literal |= x == '$';
+                                cur.push(x);
+                            }
                             Some(x) => {
                                 cur.push('\\');
                                 cur.push(x);
@@ -389,6 +404,7 @@ pub fn split_words(line: &str) -> Result<Vec<String>, BadLine> {
             '\\' => {
                 in_word = true;
                 if let Some(x) = chars.next() {
+                    literal |= x == '$';
                     cur.push(x);
                 }
             }
@@ -413,7 +429,7 @@ pub fn split_words(line: &str) -> Result<Vec<String>, BadLine> {
     if in_word {
         words.push(cur);
     }
-    Ok(words)
+    Ok((words, literal))
 }
 
 /// What the driver needs to know about a step before it runs: where it goes, for ordering, and
@@ -433,6 +449,7 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
         device: None,
         new_series: false,
         runs: false,
+        literal: false,
         recipe: None,
     };
     match read {

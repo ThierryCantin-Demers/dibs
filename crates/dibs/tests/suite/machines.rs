@@ -1007,10 +1007,10 @@ fn a_batch_s_rows_of_one_repo_go_where_their_measurement_does() {
         (
             plan.lines_matching(r"build .*here"),
             plan.lines_matching(r"bench .*here"),
-            plan.lines_matching(r"lint .*here")
+            plan.lines_matching(r"lint .*builder")
         ),
-        (1, 1, 0),
-        "the build goes with the benchmark that waits for it, and a row waiting for none places itself: {plan}"
+        (1, 1, 1),
+        "the build goes with the benchmark that waits for it, and a row waiting for none to its own role: {plan}"
     );
     let ran = s.remote(s.dibs(["batch", "-v", &file])).run();
     assert_eq!(

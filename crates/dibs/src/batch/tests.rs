@@ -157,6 +157,7 @@ fn st(n: &str, after: &[&str]) -> Step {
         device: None,
         new_series: false,
         runs: true,
+        literal: false,
         recipe: None,
     }
 }

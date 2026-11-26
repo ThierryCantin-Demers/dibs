@@ -49,8 +49,11 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     // A measurement placed by role is placed now, so the refs and pins it fetches are those its
     // machine can, as if it had been named.
     let measures = resolved.rec.steps.iter().any(|s| s.lock == Lock::Exclusive);
+    let placed_by_role = measures
+        && Jobs::by_roles()
+        && matches!(Jobs::destination(args.machine()), Ok(Destination::Unchosen));
     let args = match Jobs::destination(args.machine()) {
-        Ok(Destination::Unchosen) if measures && Jobs::by_roles() => {
+        Ok(Destination::Unchosen) if placed_by_role => {
             let placed = destination(
                 &resolved.rec,
                 &resolved.repo_name,
@@ -226,7 +229,11 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
     // A measurement's claim on the repo's build cache is the one that sticks, since it could not
     // move; a pinned call claims nothing, since the machines report the caches it leaves.
     let backend = Jobs::on(destination(rec, &repo_name, name, &args, &step_labels)?);
-    if let Some(m) = backend.machine.as_ref().filter(|_| !args.pinned()) {
+    if let Some(m) = backend
+        .machine
+        .as_ref()
+        .filter(|_| placed_by_role || !args.pinned())
+    {
         Affinity::here().set(&repo_name, m.as_str());
     }
     let args = RecipeCall {

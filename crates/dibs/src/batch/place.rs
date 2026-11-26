@@ -64,7 +64,11 @@ impl Rows<'_> {
     /// The one machine of a batch detached to it, which every row must run on: the one its
     /// rows name, or else, once the inventory gives roles, the one its most demanding row needs.
     pub fn one(&self) -> Result<Option<String>, BatchError> {
-        if !by_roles() {
+        // A query such as --machines runs wherever the batch is driven, so it places nothing.
+        let running: Vec<usize> = (0..self.steps.len())
+            .filter(|&i| self.steps[i].runs)
+            .collect();
+        if !by_roles() || running.is_empty() {
             let named: Vec<Option<String>> = self
                 .steps
                 .iter()
@@ -80,14 +84,13 @@ impl Rows<'_> {
             return Ok(Some(on));
         }
         let measures: Vec<bool> = self.steps.iter().map(|s| self.measures(s)).collect();
-        let all: Vec<usize> = (0..self.steps.len()).collect();
-        self.demand(&all, &measures)
+        self.demand(&running, &measures)
     }
 
     /// A row's own --on as the shell will expand it: None when it names none, Some(None) when
     /// it cannot be read here.
     pub fn pin(&self, step: &Step) -> Option<Option<String>> {
-        step.on.as_deref().map(expanded)
+        step.on.as_deref().map(|on| word(step, on))
     }
 
     /// Row `i`'s own --on, refused when it cannot be read here.
@@ -177,7 +180,10 @@ impl Rows<'_> {
         let mut groups: Vec<Vec<usize>> = Vec::new();
         let mut at: HashMap<usize, usize> = HashMap::new();
         for i in 0..self.steps.len() {
-            if !joined[i] && !measures[i] {
+            // A lone row is placed too, so the scheduler sees the machine it shares with a
+            // placed group rather than `?`.
+            let alone = matches!(self.steps[i].lock, StepKind::Peek | StepKind::Sync);
+            if !joined[i] && !measures[i] && (!self.steps[i].runs || alone) {
                 continue;
             }
             let r = root(&mut parent, i);
@@ -196,7 +202,7 @@ impl Rows<'_> {
     fn demand(&self, group: &[usize], measures: &[bool]) -> Result<Option<String>, BatchError> {
         let caller = Caller::default();
         let rows: Vec<&Step> = group.iter().map(|&i| &self.steps[i]).collect();
-        let card = |s: &Step| s.device.as_deref().map(|d| expanded(d).map(Alias::new));
+        let card = |s: &Step| s.device.as_deref().map(|d| word(s, d).map(Alias::new));
         let mut cards: Vec<Alias> = Vec::new();
         for row in &rows {
             match card(row) {
@@ -268,7 +274,7 @@ impl Rows<'_> {
         if let Some(with) = step.recipe.as_ref().filter(|r| r.verb == RecipeVerb::With) {
             let repo = self.repo(step).unwrap_or_else(|| with.repo.clone());
             let device = match with.device.as_deref() {
-                Some(d) => Some(expanded(d)?),
+                Some(d) => Some(word(step, d)?),
                 None => None,
             };
             let label = run_label(&repo, "with", with.recipe.as_deref(), device.as_deref());
@@ -277,7 +283,7 @@ impl Rows<'_> {
         let jobs = match step.recipe.as_ref() {
             Some(r) => {
                 let device = match r.device.as_deref() {
-                    Some(d) => Some(expanded(d)?),
+                    Some(d) => Some(word(step, d)?),
                     None => None,
                 };
                 Job::of_batch_line(&RecipeCall {
@@ -296,31 +302,72 @@ impl Rows<'_> {
             ),
             None => {
                 let label = step.pending(true, self.cwd).label;
-                Some(vec![Label::new(expanded(label.as_str())?)])
+                Some(vec![Label::new(word(step, label.as_str())?)])
             }
         }
     }
 }
 
-/// A word as the step's shell will expand it, from the batch's environment, which its steps
-/// inherit. bash does the expanding, inside double quotes as a step's quoted word is; a word that
-/// would run a command or leave the quotes is not expanded, and None, as is one that expands to
-/// nothing.
-fn expanded(word: &str) -> Option<String> {
-    if !word.contains('$') {
-        return Some(word.to_string());
+/// A row's word as its shell will expand it, None when a `$` in it is quoted and not a variable.
+fn word(step: &Step, word: &str) -> Option<String> {
+    match step.literal && word.contains('$') {
+        true => None,
+        false => expanded(word),
     }
-    if word.contains(['"', '`', '\\']) || word.contains("$(") {
+}
+
+/// A word as the step's shell will expand it from the batch's environment, which its steps
+/// inherit: `$X`, `${X}`, `${X:-y}`, `${X-y}`, `${X,,}` and `${X^^}`. None for anything else, and
+/// for a word that expands to nothing; it is read here and never handed to a shell.
+fn expanded(word: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut rest = word;
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let (value, tail) = match after.strip_prefix('{') {
+            Some(braced) => {
+                let end = braced.find('}')?;
+                (parameter(&braced[..end])?, &braced[end + 1..])
+            }
+            None => {
+                let end = name_len(after);
+                if end == 0 {
+                    return None;
+                }
+                (std::env::var(&after[..end]).ok()?, &after[end..])
+            }
+        };
+        out.push_str(&value);
+        rest = tail;
+    }
+    out.push_str(rest);
+    (!out.is_empty()).then_some(out)
+}
+
+fn name_len(s: &str) -> usize {
+    s.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(s.len())
+}
+
+/// The inside of a `${...}`.
+fn parameter(inner: &str) -> Option<String> {
+    let (name, op) = inner.split_at(name_len(inner));
+    if name.is_empty() {
         return None;
     }
-    let out = std::process::Command::new("bash")
-        .args(["-c", &format!("printf %s \"{word}\"")])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    let value = String::from_utf8(out.stdout).ok()?;
-    (out.status.success() && !value.is_empty()).then_some(value)
+    let value = std::env::var(name).ok();
+    let fallback = |f: &str| (!f.contains('$')).then(|| f.to_string());
+    match op {
+        "" => value,
+        ",," => value.map(|v| v.to_lowercase()),
+        "^^" => value.map(|v| v.to_uppercase()),
+        _ => match (op.strip_prefix(":-"), op.strip_prefix('-')) {
+            (Some(f), _) => value.filter(|v| !v.is_empty()).or_else(|| fallback(f)),
+            (None, Some(f)) => value.or_else(|| fallback(f)),
+            _ => None,
+        },
+    }
 }
 
 fn unread(step: &Step, word: Option<&str>) -> BatchError {
@@ -360,6 +407,7 @@ mod tests {
             None,
             "a command is not run to plan"
         );
-        assert_eq!(expanded("${DIBS_PLACE_CARD}\"; touch x; \""), None);
+        assert_eq!(expanded("${DIBS_PLACE_CARD@P}"), None);
+        assert_eq!(expanded("${DIBS_PLACE_UNSET:-$HOME}"), None);
     }
 }

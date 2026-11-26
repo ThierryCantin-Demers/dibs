@@ -45,6 +45,11 @@ pub enum DetachError {
         step: String,
         measures: bool,
     },
+    /// A step's --on names a variable, which the machine driving the batch does not have.
+    Variable {
+        step: String,
+        word: String,
+    },
     /// Two steps go to two machines.
     Machines {
         step: String,
@@ -97,6 +102,11 @@ impl fmt::Display for DetachError {
                  which nothing placed. Give it --on <machine>, or export DIBS_ON=<machine> before the batch to cover\n  \
                  every step."
             ),
+            DetachError::Variable { step, word } => write!(
+                f,
+                "step {step} gives --on {word}, which the machine driving a detached batch cannot expand:\n  \
+                 it has none of this shell's variables. Name the machine as a word."
+            ),
             DetachError::Machines {
                 step,
                 machine,
@@ -139,6 +149,17 @@ struct Steps<'a>(&'a [Step]);
 
 impl Steps<'_> {
     fn machine(&self, on: Option<&MachineName>) -> Result<MachineName, BatchError> {
+        if let Some(step) = self
+            .0
+            .iter()
+            .find(|s| s.on.as_deref().is_some_and(|w| w.contains('$')))
+        {
+            return Err(DetachError::Variable {
+                step: step.name.clone(),
+                word: step.on.clone().unwrap_or_default(),
+            }
+            .into());
+        }
         let cwd = std::env::current_dir().unwrap_or_default();
         let one = Rows {
             steps: self.0,
