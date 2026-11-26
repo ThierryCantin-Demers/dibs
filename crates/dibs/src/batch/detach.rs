@@ -6,6 +6,7 @@ use super::{
     check_in::is_batch,
     detached::{Detached, Followed, Instructions},
     parse::{BatchError, Step, parse, split_words},
+    place::Rows,
 };
 use crate::{
     call::{
@@ -38,9 +39,10 @@ use std::{
 /// Why a batch cannot be detached, said before anything is sent.
 #[derive(Debug)]
 pub enum DetachError {
-    /// A step names no machine, and a detached batch is driven on the one machine it names.
+    /// No step names a machine, and none could be placed for the batch to be driven on.
     Unplaced {
         step: String,
+        measures: bool,
     },
     /// Two steps go to two machines.
     Machines {
@@ -76,10 +78,22 @@ pub enum DetachError {
 impl fmt::Display for DetachError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DetachError::Unplaced { step } => write!(
+            DetachError::Unplaced {
+                step,
+                measures: true,
+            } => write!(
                 f,
-                "step {step} names no machine, and a detached batch is driven on the machine it runs on.\n  \
-                 Give it --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step."
+                "step {step} measures and names no machine, and no machine of the inventory is a bench machine,\n  \
+                 so a detached batch has nowhere to be driven. Give it --on <machine>, or export DIBS_ON=<machine>\n  \
+                 before the batch to cover every step."
+            ),
+            DetachError::Unplaced {
+                step,
+                measures: false,
+            } => write!(
+                f,
+                "step {step} names no machine, and none it could go to answered, so a detached batch has nowhere\n  \
+                 to be driven. Give it --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step."
             ),
             DetachError::Machines {
                 step,
@@ -123,28 +137,32 @@ struct Steps<'a>(&'a [Step]);
 
 impl Steps<'_> {
     fn machine(&self, on: Option<&MachineName>) -> Result<MachineName, BatchError> {
-        let mut first: Option<String> = None;
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let one = Rows {
+            steps: self.0,
+            on,
+            cwd: &cwd.display().to_string(),
+        }
+        .one()?;
+        let Some(one) = one else {
+            let measuring = self.0.iter().find(|s| s.measures());
+            return Err(DetachError::Unplaced {
+                step: measuring.unwrap_or(&self.0[0]).name.clone(),
+                measures: measuring.is_some(),
+            }
+            .into());
+        };
         for step in self.0 {
-            let Some(machine) = machine_of(step, on).filter(|m| m != "?") else {
-                return Err(DetachError::Unplaced {
+            if let Some(machine) = machine_of(step, on).filter(|m| m != "?" && *m != one) {
+                return Err(DetachError::Machines {
                     step: step.name.clone(),
+                    machine,
+                    first: one,
                 }
                 .into());
-            };
-            match &first {
-                Some(other) if *other != machine => {
-                    return Err(DetachError::Machines {
-                        step: step.name.clone(),
-                        machine,
-                        first: other.clone(),
-                    }
-                    .into());
-                }
-                Some(_) => {}
-                None => first = Some(machine),
             }
         }
-        Ok(MachineName::new(first.ok_or(BatchError::NoSteps)?))
+        Ok(MachineName::new(one))
     }
 
     /// Every repo the steps name, each once, refusing a step that acts on this computer, and

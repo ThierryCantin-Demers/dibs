@@ -244,5 +244,5 @@ exit  call
 
 == DIBS_MACHINES=<root>/two.toml DIBS_LOCAL=0 dibs batch - <<< '[b] dibs --bench --label nameless true'
 -> exit 2
-2| dibs: step b measures and names no machine, and a measurement is never placed for you. Give it
-2|   --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step.
+2| dibs: step b measures and names no machine, and no machine of the inventory is a bench machine to
+2|   place it on. Give it --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step.

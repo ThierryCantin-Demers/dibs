@@ -2,6 +2,7 @@ use super::{
     check_in::Hint,
     guard::{Carried, StepGuard},
     parse::{BatchError, Step, StepKind, parse},
+    place::Rows,
     plan::Batch,
 };
 use crate::{
@@ -62,6 +63,9 @@ struct Paused {
     states: Vec<State>,
     /// How long the batch had run, its pauses not counted.
     seconds: u64,
+    /// The machine each row naming none was placed on with its group as the batch began.
+    #[serde(default)]
+    placed: Vec<Option<String>>,
 }
 
 impl Paused {
@@ -255,6 +259,18 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         .iter()
         .map(|s| machine_of(s, opts.on.as_ref()))
         .collect();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let placed = Rows {
+        steps: &steps,
+        on: opts.on.as_ref(),
+        cwd: &cwd.display().to_string(),
+    }
+    .place(&named)?;
+    let named: Vec<Option<String>> = named
+        .into_iter()
+        .zip(&placed)
+        .map(|(named, placed)| named.or_else(|| placed.clone()))
+        .collect();
     if let Some((s, _)) = steps
         .iter()
         .zip(&named)
@@ -305,7 +321,8 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         .or_else(|| std::env::var("DIBS_ON").ok().filter(|on| !on.is_empty()));
     let kept = Paused {
         text: text.to_string(),
-        cwd: std::env::current_dir().unwrap_or_default(),
+        cwd,
+        placed,
         on,
         check_in: std::env::var(CHECK_IN).ok(),
         low_priority: std::env::var(LOW_PRIORITY).is_ok_and(|v| v == "1"),
@@ -347,7 +364,12 @@ pub fn resume(id: &BatchId) -> Result<i32, BatchError> {
     };
     let machines: Vec<String> = steps
         .iter()
-        .map(|s| machine_of(s, opts.on.as_ref()).unwrap_or_else(|| "?".into()))
+        .enumerate()
+        .map(|(i, s)| {
+            machine_of(s, opts.on.as_ref())
+                .or_else(|| paused.placed.get(i).cloned().flatten())
+                .unwrap_or_else(|| "?".into())
+        })
         .collect();
     let batch = Batch {
         steps: &steps,
@@ -409,6 +431,11 @@ fn drive(
         checked: false,
         unstopped: Vec::new(),
         on: kept.on.as_deref().map(MachineName::new),
+        placed: kept
+            .placed
+            .iter()
+            .map(|m| m.as_deref().map(MachineName::new))
+            .collect(),
         lost: None,
         cancelled: None,
         running: HashMap::new(),
@@ -517,6 +544,8 @@ struct Driving<'a> {
     unstopped: Vec<usize>,
     /// The machine of every step that names none, as the batch was started with.
     on: Option<MachineName>,
+    /// The machine of each step naming none that goes with the rest of its group.
+    placed: Vec<Option<MachineName>>,
     /// The exit of a follow that never heard how its job ended, when no step checked in.
     lost: Option<i32>,
     cancelled: Option<String>,
@@ -629,7 +658,8 @@ impl Driving<'_> {
                 low_priority: self.low_priority,
                 image: self.image.as_deref(),
             };
-            match StepGuard::spawn(line, &batch, self.on.as_ref(), carried) {
+            let on = self.placed.get(i).cloned().flatten().or(self.on.clone());
+            match StepGuard::spawn(line, &batch, on.as_ref(), carried) {
                 Ok(mut guarded) => {
                     self.running.insert(i, guarded.id());
                     std::thread::spawn(move || {
@@ -764,6 +794,7 @@ impl Driving<'_> {
             low_priority: self.low_priority,
             image: self.image.clone(),
             verbose: kept.verbose,
+            placed: kept.placed.clone(),
         };
         let file = self.dir.join(Paused::FILE);
         let part = file.with_extension("part");

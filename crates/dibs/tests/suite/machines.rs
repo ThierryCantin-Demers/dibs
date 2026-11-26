@@ -967,6 +967,41 @@ fn a_measurement_naming_no_machine_goes_to_a_bench_machine() {
 }
 
 #[test]
+fn a_batch_s_rows_of_one_repo_go_where_their_measurement_does() {
+    let mut s = Sandbox::new();
+    s.machines(&format!(
+        "[machine.here]\nssh      = \"here\"\nhostname = \"{}\"\nroles    = [\"bench\"]\n\n\
+         [machine.builder]\nssh      = \"builder\"\nhostname = \"builder\"\nroles    = [\"compile\"]\n",
+        hostname()
+    ));
+    s.write(
+        "grouped",
+        "[build] dibs echo built\n[bench] dibs --bench --label grouped echo measured\n[lint after=] dibs echo linted\n",
+    );
+    let file = s.p("grouped");
+    let plan = s.remote(s.dibs(["batch", "--dry-run", &file])).run().stdout;
+    assert_eq!(
+        (
+            plan.lines_matching(r"build .*here"),
+            plan.lines_matching(r"bench .*here"),
+            plan.lines_matching(r"lint .*here")
+        ),
+        (1, 1, 0),
+        "the build goes with the benchmark that waits for it, and a row waiting for none places itself: {plan}"
+    );
+    let ran = s.remote(s.dibs(["batch", "-v", &file])).run();
+    assert_eq!(
+        (
+            ran.all().lines_with("built"),
+            ran.all().lines_with("measured")
+        ),
+        (1, 1),
+        "{}",
+        ran.all()
+    );
+}
+
+#[test]
 fn the_team_s_machines_come_from_its_copy_and_place_by_its_roles() {
     let mut s = Sandbox::new();
     s.write(

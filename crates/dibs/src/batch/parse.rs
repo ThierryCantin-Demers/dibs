@@ -30,7 +30,7 @@ pub enum BatchError {
     Cycle {
         step: String,
     },
-    /// A measurement names no machine, and a measurement is never placed.
+    /// A measurement names no machine, and no machine has the bench role to place it on.
     Unplaced {
         step: String,
     },
@@ -79,8 +79,8 @@ impl fmt::Display for BatchError {
             }
             BatchError::Unplaced { step } => write!(
                 f,
-                "step {step} measures and names no machine, and a measurement is never placed for you. Give it\n  \
-                 --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step."
+                "step {step} measures and names no machine, and no machine of the inventory is a bench machine to\n  \
+                 place it on. Give it --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step."
             ),
             BatchError::File(e) => e.fmt(f),
             BatchError::Lost(e) => e.fmt(f),

@@ -12,6 +12,7 @@ mod detach;
 mod detached;
 mod guard;
 mod parse;
+mod place;
 mod plan;
 #[cfg(test)]
 mod tests;
