@@ -245,7 +245,8 @@ DIBS_BYPASS=0 turns it off. A benchmark can be delayed by their sum and no more.
                      a shared job with a tree dibs lays out builds in that image, as
                      DIBS_IMAGE does
   --low-priority     shared work that starts only once nothing else runs or waits there, and is
-                     stopped, to run again from the start, as soon as another job comes
+                     stopped, to run again from the start, as soon as another job comes; a
+                     benchmark waits the same way, but is never stopped once it starts
   --urgent '<why>'   a benchmark that has the machine to itself: the shared jobs running there
                      are stopped and run again from the start once it ends, a running
                      benchmark is waited for, and it goes before the queue. One per machine.

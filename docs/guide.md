@@ -1055,11 +1055,15 @@ side by side. While it waits, `dibs status` says which job it waits behind, or h
 two minutes, and how long it ran before it was last parked.
 
 Parking repeats what the job had done, so it suits work that runs well at night or between bursts,
-not work that must finish by a time. It is shared work that can run again: a benchmark,
-`--urgent`, `--preemptible`, `--hold`, `--with` and `--port` are refused with it, though a
-batch's `--port` step it reaches keeps its port while parked. On a recipe or a
-batch, the flag reaches every step, and a detached batch carries it to its machine; a batch's
-benchmarks run as usual. Check-ins and `--max` count only the time it runs, each run apart, and
+not work that must finish by a time. It is shared work that can run again: `--urgent`,
+`--preemptible`, and `--hold`, `--with` and `--port` without `--bench` are refused with it,
+though a batch's `--port` step it reaches keeps its port while parked. On a recipe or a
+batch, the flag reaches every step, and a detached batch carries it to its machine.
+
+A benchmark with `--low-priority`, a recipe's measurement among them, waits for an idle machine
+the same way, but once it starts it is an ordinary benchmark: the `--low-priority` jobs running
+make way for it, and it is never parked, since a run stopped partway would have to build and
+tune again. A recipe's build steps are still parked as other shared work is. Check-ins and `--max` count only the time it runs, each run apart, and
 so do its trailer and its label's history. A recipe's tree is laid out before its command can be
 parked, so a job that comes during that waits for it, or for a minute at most, as it would for any
 shared job's prepare. The copy that sends an `@local` tree also waits for an idle machine, but once

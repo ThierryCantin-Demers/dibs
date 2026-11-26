@@ -689,10 +689,11 @@ impl Parser {
                  A benchmark, a peek, --hold, --with and --port cannot be frozen.",
             ));
         }
-        if self.call.low_priority && (!freezable || self.preempt || self.call.urgent.is_some()) {
+        let waits = freezable || self.word == Word::Bench;
+        if self.call.low_priority && (!waits || self.preempt || self.call.urgent.is_some()) {
             return Err(CliError::new(
-                "dibs: --low-priority is for a shared job that can be stopped and run again from the start.\n  \
-                 A benchmark, a peek, --urgent, --preemptible, --hold, --with and --port cannot be.",
+                "dibs: --low-priority is for a shared job that can be stopped and run again from the start, or a benchmark that waits for an idle machine.\n  \
+                 A peek, --urgent, --preemptible, and --hold, --with and --port without --bench cannot be.",
             ));
         }
         if self.hold && !locks {

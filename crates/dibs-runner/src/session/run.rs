@@ -278,6 +278,10 @@ impl<'a> Run<'a> {
                         return Exit::Busy.status();
                     }
                 }
+                // Now an ordinary benchmark, which a parkable `--low-priority` job makes way for.
+                if self.at.call.mode() == Mode::Bench {
+                    self.at.dir.unmark_idle(self.at.call.pid);
+                }
             }
             let acquired = match (preempts, self.urgent(), self.card_claim()) {
                 (_, Some(why), Some(Takes::Cards(pcis))) => {
@@ -312,10 +316,14 @@ impl<'a> Run<'a> {
             let _ = fs::remove_file(self.at.dir.file("holder", self.at.call.pid));
             self.at.dir.leave_windows(self.at.call.pid);
             let _ = fs::remove_file(self.at.dir.file("urgent", self.at.call.pid));
+            if self.waits_idle() {
+                self.at.dir.mark_idle(self.at.call.pid, self.idle());
+            }
             drop(acquired);
             drop(guard);
         };
-        if !self.waits_idle() && !self.passes() {
+        let ordinary = !self.waits_idle() || self.at.call.mode() == Mode::Bench;
+        if ordinary && !self.passes() {
             self.after_idle_parked();
         }
         // The machine as well as the cards: while the group winds down, shared work must not start.
@@ -702,14 +710,15 @@ impl<'a> Run<'a> {
         request.low_priority && request.urgent.is_none() && self.parkable()
     }
 
-    /// A `--low-priority` call that waits for an idle machine to start: a parkable job, and the
-    /// transfer that sends a recipe's tree, which is short and is never parked once it runs.
+    /// A `--low-priority` call that waits for an idle machine to start: a parkable job, and two
+    /// that are never parked once they run: the transfer that sends a recipe's tree, which is
+    /// short, and a benchmark, whose run would be spoiled.
     fn waits_idle(&self) -> bool {
         let request = &self.at.call.request;
         self.idle()
             || (request.low_priority
                 && request.urgent.is_none()
-                && self.at.call.mode() == Mode::Rsh)
+                && matches!(self.at.call.mode(), Mode::Rsh | Mode::Bench))
     }
 
     /// Waits until no other job has held or waited here for the machine's settle time, saying

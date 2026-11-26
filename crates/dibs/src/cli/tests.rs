@@ -95,6 +95,18 @@ fn the_help_is_what_the_snapshots_hold() {
 }
 
 #[test]
+fn a_measurement_takes_low_priority() {
+    for words in [
+        &["--bench", "--low-priority", "x"][..],
+        &["--bench", "--low-priority", "--with", "s=serve", "x"],
+        &["bench", "app", "r", "--low-priority"],
+        &["with", "app", "s", "--bench", "--low-priority", "--", "x"],
+    ] {
+        assert!(parse(words).is_ok(), "dibs {}", words.join(" "));
+    }
+}
+
+#[test]
 fn a_removed_flag_is_refused_as_gone() {
     for flag in [
         "--detach",
@@ -704,6 +716,11 @@ fn refusals() -> Vec<(Vec<&'static str>, &'static str, bool)> {
         (
             vec!["--days", "", "--gc"],
             "dibs: --days needs a value.",
+            false,
+        ),
+        (
+            vec!["with", "app", "s", "--low-priority", "--", "x"],
+            "dibs: --low-priority is for shared work that can be stopped and run again from the start, or a measurement that waits for an idle machine: not a with without --bench, --preemptible or --urgent",
             false,
         ),
         (

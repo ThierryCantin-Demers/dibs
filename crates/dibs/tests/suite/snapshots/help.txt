@@ -247,7 +247,8 @@
 1|                      a shared job with a tree dibs lays out builds in that image, as
 1|                      DIBS_IMAGE does
 1|   --low-priority     shared work that starts only once nothing else runs or waits there, and is
-1|                      stopped, to run again from the start, as soon as another job comes
+1|                      stopped, to run again from the start, as soon as another job comes; a
+1|                      benchmark waits the same way, but is never stopped once it starts
 1|   --urgent '<why>'   a benchmark that has the machine to itself: the shared jobs running there
 1|                      are stopped and run again from the start once it ends, a running
 1|                      benchmark is waited for, and it goes before the queue. One per machine.

@@ -152,7 +152,8 @@ pub struct RecipeCall {
     pub when_open: bool,
     /// `--urgent`, and why.
     pub urgent: Option<String>,
-    /// `--low-priority`: the shared jobs run only while nothing else does.
+    /// `--low-priority`: the shared jobs run only while nothing else does, and the measurements
+    /// start only then.
     pub low_priority: bool,
     /// `--image`: the `<ref>@sha256:<digest>` its builds run in, over the recipe's own.
     pub image: Option<String>,
@@ -344,10 +345,10 @@ impl RecipeCall {
         if target.is_empty() && !verb.needs_no_repo() {
             return Err(refused("needs a repo".into()));
         }
-        let measures = call.bench || matches!(verb, RecipeVerb::Bench | RecipeVerb::With);
-        if call.low_priority && (measures || call.preempt || call.urgent.is_some()) {
+        let serves = verb == RecipeVerb::With && !call.bench;
+        if call.low_priority && (serves || call.preempt || call.urgent.is_some()) {
             return Err(refused(
-                "--low-priority is for shared work that can be stopped and run again from the start: not a benchmark, a with, --preemptible or --urgent".into(),
+                "--low-priority is for shared work that can be stopped and run again from the start, or a measurement that waits for an idle machine: not a with without --bench, --preemptible or --urgent".into(),
             ));
         }
         if call.preempt && call.bench {

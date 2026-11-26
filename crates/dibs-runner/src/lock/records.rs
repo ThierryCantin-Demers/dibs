@@ -648,6 +648,10 @@ impl LockDir {
         let _ = fs::write(self.file("idle", pid), said);
     }
 
+    pub fn unmark_idle(&self, pid: u32) {
+        let _ = fs::remove_file(self.file("idle", pid));
+    }
+
     pub fn idle_only(&self, pid: u32) -> bool {
         self.file("idle", pid).exists()
     }
