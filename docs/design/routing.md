@@ -49,7 +49,10 @@ the machine lacks sends it, and the runner records it once. A replacement machin
 predecessor's series through the inventory's `series` key, as now. Placement
 asks every `bench` machine that could take the call: one with a series of the label takes it;
 several means the most recently measured, and the call says which and where the others are; none
-means a new series. A new series, or `--new-series`, which ignores the old binding, resolves
+means a new series. A first run's card counts as the label's series from the moment it holds
+the card, as it does on one machine today: placement asks every candidate for labels being
+measured or queued as well as those measured, so a second caller follows the first run's
+machine and card instead of starting a second history beside it. A new series, or `--new-series`, which ignores the old binding, resolves
 the whole ordered `--device` request against each candidate machine as `Card::concrete` does
 today, so `--device twin,gpu:twin.a` keeps `twin.a` for its second entry, and the runner records the new series once a measurement succeeds, as
 it does now. All of
@@ -107,6 +110,8 @@ halfway through an A/B. Only one shape splits, the shape nearly every benchmark 
 steps are some builds, then some runs of what they built, and nothing runs before a build or
 builds after a run. Precisely, a call splits only when all of these hold:
 
+- its builds call `cargo` by name, so the capture wrapper sees them: a build that calls cargo
+  by a path (`~/.cargo/bin/cargo build`) bypasses it, and keeps the call whole;
 - its steps are a run of recognised compile-only cargo commands followed by every other step:
   no other step, shared or exclusive, comes before the last build, and no build comes after;
 - every step that runs on the benchmark machine, measured or not, runs a cargo invocation dibs
@@ -132,7 +137,8 @@ warmup, its counterpart that runs nothing (`cargo bench
 --no-run` with the same arguments, `cargo build` with the same selection for `cargo run`), which
 reports exactly the executables that invocation would launch, and compiles them on the compile
 machine if the build step had not. Once every arm is built and staged, every such invocation
-of every arm must resolve in its launch plans. If any does not, the call falls back as one before
+of every arm must resolve in its launch plans, and every executable a step on the benchmark
+machine names by its path under `$CARGO_TARGET_DIR` must be one its arm's manifest holds. If any does not, the call falls back as one before
 anything is measured: every arm builds again on the benchmark machine, as today.
 
 At run time the benchmark side still refuses anything the plan did not foresee (below), as a
@@ -146,7 +152,8 @@ subcommands that build (`build`, `bench`, `test`, `run`, `rustc`), before any `-
 each invocation returns, and before the next can overwrite a path, the wrapper copies the
 executables it reported into the store by digest, so each launch plan names the digest its own
 invocation produced, and it records the build-script directories as they are then, by digest,
-and the files a recipe's `carry` names, since a later invocation with other features or
+the shared libraries in the target those executables load, and the files a recipe's `carry`
+names, since a later invocation with other features or
 environment can rewrite an `OUT_DIR` or such a file in place.
 Two launches that need different contents at one path, an executable at
 `release/examples/x` built with two feature sets or a generated file rewritten between them,
@@ -183,7 +190,9 @@ sent as a delta, so scripts, configs and data in the tree are there without bein
 
 The measured step runs its own command, unchanged. Its `PATH` puts a `cargo` first that answers
 from the launch plans: `cargo bench --bench x -- args` runs the staged `x args --bench` from its
-package root with cargo's environment, through the target runner cargo would have used, as
+package root with cargo's environment, the variables the package's build script set with
+`cargo::rustc-env` included, which cargo also sets when it runs a binary and reports in its
+`build-script-executed` message, through the target runner cargo would have used, as
 cargo would. `$CARGO_TARGET_DIR` points at the sparse
 target, so `$CARGO_TARGET_DIR/release/x` is the staged `x`. An invocation that matches no plan, or
 that would compile anything, is refused before running, naming the invocation. Nothing is ever
@@ -255,10 +264,10 @@ Each ships and is tested on its own:
 1. **Roles.** The team inventory, roles, series read from the machines, and placement of whole
    calls by their most demanding job. Shared work leaves the benchmark machines at once. Rows of
    one repo in a batch share its tree on a machine, and any of them may leave something there a
-   later one reads, a generated file or a binary, which dibs cannot see. So rows of one repo that
-   wait on each other through `after=`, the default of waiting for the line before included,
-   are placed together on the machine their most demanding row needs. A row that waits for
-   nothing (a bare `after=`) or for rows of other repos only is placed by itself, so a clippy
+   later one reads, a generated file or a binary, which dibs cannot see. So rows of one repo connected
+   through `after=` in either direction, the default of waiting for the line before included,
+   are one group, placed together on the machine its most demanding row needs. A row is placed
+   by itself only when no row of its repo waits for it and it waits for none (a bare `after=`), so a clippy
    row marked so goes to a compile machine. A detached batch stays on one machine, the one its most demanding row needs,
    until stage 2 gives it a driver that spans machines.
 2. **Ordinary work through the dibspatcher.** Calls and batches as above, with per-job attempts
