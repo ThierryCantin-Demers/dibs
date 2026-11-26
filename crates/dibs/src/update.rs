@@ -235,17 +235,20 @@ impl Harness {
                     && self.run(&["plugin", "update", Self::PLUGIN]).is_some()
             }
             Harness::Codex => {
-                self.run(&["plugin", "marketplace", "upgrade", "dibs"])
-                    .is_some()
+                (!self.marketplace_fetched()
+                    || self
+                        .run(&["plugin", "marketplace", "upgrade", "dibs"])
+                        .is_some())
                     && self.run(&["plugin", "add", Self::PLUGIN]).is_some()
             }
         };
         let (name, retry) = match self {
             Harness::Claude => ("Claude Code", "claude plugin update dibs@dibs"),
-            Harness::Codex => (
+            Harness::Codex if self.marketplace_fetched() => (
                 "Codex",
                 "codex plugin marketplace upgrade dibs && codex plugin add dibs@dibs",
             ),
+            Harness::Codex => ("Codex", "codex plugin add dibs@dibs"),
         };
         let plugin = Self::PLUGIN;
         let _ = match refreshed {
@@ -269,6 +272,13 @@ impl Harness {
                 .strip_prefix(Self::PLUGIN)
                 .is_some_and(|rest| rest.trim_start().starts_with("installed, enabled")),
         }
+    }
+
+    /// Codex upgrades only a marketplace it cloned from git, and refuses one added from a local
+    /// checkout, which needs no upgrade to show what that checkout holds.
+    fn marketplace_fetched(self) -> bool {
+        self.run(&["plugin", "marketplace", "list", "--json"])
+            .is_none_or(|listing| from_git(&listing))
     }
 
     fn run(self, args: &[&str]) -> Option<String> {
@@ -680,9 +690,41 @@ fn newer(dir: &Path, head: &str, at: &str) -> bool {
     !contained
 }
 
+/// Whether Codex's marketplace listing says the dibs marketplace is a git clone; a listing it
+/// cannot read is taken as one, so the upgrade is still tried.
+fn from_git(listing: &str) -> bool {
+    let Ok(listing) = serde_json::from_str::<serde_json::Value>(listing) else {
+        return true;
+    };
+    let marketplaces = listing
+        .get("marketplaces")
+        .unwrap_or(&listing)
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    marketplaces
+        .iter()
+        .find(|m| m["name"] == "dibs")
+        .and_then(|m| m["marketplaceSource"]["sourceType"].as_str())
+        .is_none_or(|kind| kind == "git")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Harness;
+    use super::{Harness, from_git};
+
+    #[test]
+    fn only_a_codex_marketplace_cloned_from_git_is_upgraded() {
+        let listed = |kind: &str| {
+            format!(
+                r#"[{{"name": "other", "marketplaceSource": {{"sourceType": "local"}}}},
+                    {{"name": "dibs", "marketplaceSource": {{"sourceType": "{kind}"}}}}]"#
+            )
+        };
+        assert!(from_git(&listed("git")));
+        assert!(!from_git(&listed("local")));
+        assert!(from_git("not json"));
+    }
 
     #[test]
     fn a_codex_listing_counts_the_plugin_only_once_installed_and_enabled() {
