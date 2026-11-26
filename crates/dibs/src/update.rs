@@ -208,77 +208,58 @@ enum Harness {
     Codex,
 }
 
+type Step = &'static [&'static str];
+
+const PLUGIN: &str = "dibs@dibs";
+
 impl Harness {
     const ALL: [Harness; 2] = [Harness::Claude, Harness::Codex];
-    const PLUGIN: &str = "dibs@dibs";
 
     fn refresh(self, out: &mut impl Write) {
-        let listing: &[&str] = match self {
-            Harness::Claude => &["plugin", "list"],
-            // Scoped, since one broken marketplace fails the whole listing.
-            Harness::Codex => &["plugin", "list", "--marketplace", "dibs"],
-        };
-        let installed = self.run(listing).is_some_and(|listing| {
-            listing
-                .lines()
-                .any(|line| self.lists_installed(line.trim_start()))
-        });
-        if !installed {
+        let Some(steps) = self.steps() else {
             return;
-        }
-        // Codex copies the plugin into its cache only when it is added, so an upgraded
-        // marketplace alone leaves sessions reading the old rules.
-        let refreshed = match self {
-            Harness::Claude => {
-                self.run(&["plugin", "marketplace", "update", "dibs"])
-                    .is_some()
-                    && self.run(&["plugin", "update", Self::PLUGIN]).is_some()
-            }
-            Harness::Codex => {
-                (!self.marketplace_fetched()
-                    || self
-                        .run(&["plugin", "marketplace", "upgrade", "dibs"])
-                        .is_some())
-                    && self.run(&["plugin", "add", Self::PLUGIN]).is_some()
-            }
         };
-        let (name, retry) = match self {
-            Harness::Claude => ("Claude Code", "claude plugin update dibs@dibs"),
-            Harness::Codex if self.marketplace_fetched() => (
-                "Codex",
-                "codex plugin marketplace upgrade dibs && codex plugin add dibs@dibs",
-            ),
-            Harness::Codex => ("Codex", "codex plugin add dibs@dibs"),
+        let refreshed = steps.iter().all(|step| self.run(step).is_some());
+        let (name, program) = match self {
+            Harness::Claude => ("Claude Code", "claude"),
+            Harness::Codex => ("Codex", "codex"),
         };
-        let plugin = Self::PLUGIN;
         let _ = match refreshed {
             true => writeln!(
                 out,
-                "{name} plugin {plugin} refreshed; sessions started from now on read it"
+                "{name} plugin {PLUGIN} refreshed; sessions started from now on read it"
             ),
-            false => writeln!(
-                out,
-                "{name} plugin {plugin} could not be refreshed:  {retry}"
-            ),
+            false => {
+                let retry: Vec<String> = steps
+                    .iter()
+                    .map(|step| format!("{program} {}", step.join(" ")))
+                    .collect();
+                writeln!(
+                    out,
+                    "{name} plugin {PLUGIN} could not be refreshed:  {}",
+                    retry.join(" && ")
+                )
+            }
         };
     }
 
-    /// Codex lists every plugin its marketplaces offer, installed or not, and adding one enables
-    /// it, so a disabled plugin is left alone.
-    fn lists_installed(self, line: &str) -> bool {
+    /// The calls that refresh the plugin here, none when it is not installed.
+    fn steps(self) -> Option<Vec<Step>> {
         match self {
-            Harness::Claude => line.contains(Self::PLUGIN),
-            Harness::Codex => line
-                .strip_prefix(Self::PLUGIN)
-                .is_some_and(|rest| rest.trim_start().starts_with("installed, enabled")),
+            Harness::Claude => self
+                .run(&["plugin", "list"])
+                .filter(|listing| listing.contains(PLUGIN))
+                .map(|_| {
+                    vec![
+                        &["plugin", "marketplace", "update", "dibs"][..],
+                        &["plugin", "update", PLUGIN][..],
+                    ]
+                }),
+            // Scoped, since one broken marketplace fails the whole listing.
+            Harness::Codex => self
+                .run(&["plugin", "list", "--marketplace", "dibs", "--json"])
+                .and_then(|listing| codex_steps(&listing)),
         }
-    }
-
-    /// Codex upgrades only a marketplace it cloned from git, and refuses one added from a local
-    /// checkout, which needs no upgrade to show what that checkout holds.
-    fn marketplace_fetched(self) -> bool {
-        self.run(&["plugin", "marketplace", "list", "--json"])
-            .is_none_or(|listing| from_git(&listing))
     }
 
     fn run(self, args: &[&str]) -> Option<String> {
@@ -294,6 +275,26 @@ impl Harness {
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
     }
+}
+
+/// Codex copies the plugin into its cache only when it is added, and adding enables it, so a
+/// disabled plugin is left alone. It upgrades only a marketplace it cloned, and refuses one added
+/// from a local checkout.
+fn codex_steps(listing: &str) -> Option<Vec<Step>> {
+    let listing: serde_json::Value = serde_json::from_str(listing).ok()?;
+    let plugin = listing["installed"]
+        .as_array()?
+        .iter()
+        .find(|p| p["pluginId"] == PLUGIN)?;
+    if plugin["enabled"] != true {
+        return None;
+    }
+    let upgrade: Step = &["plugin", "marketplace", "upgrade", "dibs"];
+    let add: Step = &["plugin", "add", PLUGIN];
+    Some(match plugin["marketplaceSource"]["sourceType"] == "local" {
+        true => vec![add],
+        false => vec![upgrade, add],
+    })
 }
 
 /// One clone's pull, as the update reports it.
@@ -690,56 +691,40 @@ fn newer(dir: &Path, head: &str, at: &str) -> bool {
     !contained
 }
 
-/// Whether Codex's marketplace listing says the dibs marketplace is a git clone; a listing it
-/// cannot read is taken as one, so the upgrade is still tried.
-fn from_git(listing: &str) -> bool {
-    let Ok(listing) = serde_json::from_str::<serde_json::Value>(listing) else {
-        return true;
-    };
-    let marketplaces = listing
-        .get("marketplaces")
-        .unwrap_or(&listing)
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    marketplaces
-        .iter()
-        .find(|m| m["name"] == "dibs")
-        .and_then(|m| m["marketplaceSource"]["sourceType"].as_str())
-        .is_none_or(|kind| kind == "git")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Harness, from_git};
+    use super::codex_steps;
 
-    #[test]
-    fn only_a_codex_marketplace_cloned_from_git_is_upgraded() {
-        let listed = |kind: &str| {
-            format!(
-                r#"[{{"name": "other", "marketplaceSource": {{"sourceType": "local"}}}},
-                    {{"name": "dibs", "marketplaceSource": {{"sourceType": "{kind}"}}}}]"#
-            )
-        };
-        assert!(from_git(&listed("git")));
-        assert!(!from_git(&listed("local")));
-        assert!(from_git("not json"));
+    fn listed(enabled: bool, source: &str) -> String {
+        format!(
+            r#"{{"installed": [
+                {{"pluginId": "dibs@dibs-fork", "enabled": true, "marketplaceSource": {{"sourceType": "git"}}}},
+                {{"pluginId": "dibs@dibs", "enabled": {enabled}, "marketplaceSource": {{"sourceType": "{source}"}}}}
+            ], "available": []}}"#
+        )
     }
 
     #[test]
-    fn a_codex_listing_counts_the_plugin_only_once_installed_and_enabled() {
-        let installed = |line: &str| Harness::Codex.lists_installed(line);
-        assert!(installed(
-            "dibs@dibs  installed, enabled  0.1.0    /cache/dibs/plugin"
-        ));
-        assert!(!installed(
-            "dibs@dibs  not installed             /cache/dibs/plugin"
-        ));
-        assert!(!installed(
-            "dibs@dibs  installed, disabled  0.1.0    /cache/dibs/plugin"
-        ));
-        assert!(!installed(
-            "dibs@dibs-fork  installed, enabled  0.1.0  /cache/fork"
-        ));
+    fn codex_upgrades_a_cloned_marketplace_before_adding_the_plugin_again() {
+        let steps = codex_steps(&listed(true, "git")).unwrap();
+        assert_eq!(
+            steps.iter().map(|s| s[1]).collect::<Vec<_>>(),
+            ["marketplace", "add"]
+        );
+    }
+
+    #[test]
+    fn codex_adds_the_plugin_from_a_local_marketplace_without_upgrading_it() {
+        let steps = codex_steps(&listed(true, "local")).unwrap();
+        assert_eq!(steps.iter().map(|s| s[1]).collect::<Vec<_>>(), ["add"]);
+    }
+
+    #[test]
+    fn codex_leaves_a_disabled_or_absent_plugin_alone() {
+        assert!(codex_steps(&listed(false, "git")).is_none());
+        assert!(
+            codex_steps(r#"{"installed": [], "available": [{"pluginId": "dibs@dibs"}]}"#).is_none()
+        );
+        assert!(codex_steps("not json").is_none());
     }
 }
