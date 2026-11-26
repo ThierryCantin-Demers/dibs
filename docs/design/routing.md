@@ -26,10 +26,15 @@ What is wanted:
 ## Roles
 
 Each machine in the inventory takes one or more roles: `compile`, `gpu`, `bench`. A machine that
-measures and also runs GPU tests has both of the last two. The inventory becomes a team
-checkout that `dibs --update` refreshes, as recipes already are, so every caller and the
-dibspatcher read the same machines and roles. A personal `machines.toml` still adds machines of
-one's own, which keep working as today.
+measures and also runs GPU tests has both of the last two.
+
+**The team inventory is the dibspatcher's.** Its machines, their roles and the workspace path
+are kept on the dibspatcher's host, which already serves its machines to a caller that asks
+(`dibs dispatch machines`). Every client with a dibspatcher configured fetches it over the same
+ssh key, on `dibs --update` and when its copy is older than a day, and keeps the copy. Direct
+calls place from that copy, so they go on working while the dibspatcher is down, and every
+caller and the dibspatcher read the same machines and roles. A personal `machines.toml` still
+adds machines of one's own, which keep working as today; a machine named in both is the team's.
 
 A job that names no machine is placed by its kind:
 
