@@ -40,8 +40,10 @@ Each sits beside this file. Read the one the work needs before its first call.
 - **Exclusive Lock:** the lock one Job holds with nothing beside it, shared work included, taken by
   `dibs run --bench`.
 - **Measurement:** a Job whose time or numbers are a result.
-- **Peek:** a Job that takes no lock and runs beside a Measurement, which pays for it (`ps`,
-  `nvidia-smi`, `ls`, `tail`, `cat` of a small file, `git status`).
+- **Peek:** a Call that takes no lock and prints its command's output as it is, with no Job id
+  and no Trailer, running beside a Measurement, which pays for it
+  (`dibs --on <machine> --peek <command>`, for `ps`, `nvidia-smi`, `ls`, `tail`, `cat` of a small
+  file, `git status`).
 - **Scratch:** the directory `$DIBS_SCRATCH` names on a Machine, where `TMPDIR` points; dibs never
   removes a directory named there, removes what sits under `TMPDIR` unchanged for two weeks at the
   next Recipe's prepare, and removes `$DIBS_SCRATCH/out` only at a person's `dibs --gc`.
@@ -81,6 +83,8 @@ Each sits beside this file. Read the one the work needs before its first call.
 ### check-in-followed: Every Check-in is followed in the background with the `--follow` line it printed.
 
 ### machine-named: A Measurement, a Peek, a sync, a kill of a pid, a log and a gc name their Machine, and only shared work is placed by dibs.
+
+### agent-named: A runtime that is neither Claude Code nor in a herdr pane runs `export DIBS_AGENT='<the work>'` once per session, as its own statement, before its first Call.
 
 ### card-named: A Measurement on a Machine with more than one Card names its Cards with `--device`.
 

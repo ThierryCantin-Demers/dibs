@@ -45,10 +45,10 @@ What may run beside a Measurement and how a Job shares its Machine, cited as
   is parked when another Job comes, a Sync from another computer aside, to run again from the start
   once the Machine is idle (`--low-priority`); a Measurement that takes it is never parked once it
   runs.
-- **Urgent Measurement:** a Measurement that has its Machine to itself, stopping the shared Jobs
-  there to run them again from the start once it ends, waiting for a running Measurement, and going
-  before the queue, one per Machine (`--urgent '<why>'`); an urgent shared Job only goes around
-  the queue.
+- **Urgent Measurement:** a Measurement that goes before the queue and stops the shared Jobs on
+  its Machine, to run them again from the start once it ends, waiting only for a running
+  Measurement on its Cards, or on the Machine where benchmarks lock the whole Machine; one per
+  Machine (`--urgent '<why>'`), while an urgent shared Job only goes around the queue.
 
 ### wait-is-not-a-fault: A frozen Job and two shared Jobs beside a queued Measurement are a Preemptible Job and a Bypass, never a fault.
 

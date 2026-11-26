@@ -36,7 +36,7 @@ How several Calls become one, and what keeps a Job running, cited as
 
 ### outliving-work-is-detached: Work that must outlive this computer is a Detached Batch, every Step on its one Machine and none acting on this computer.
 
-### cut-off-followed: A Detached Batch whose Call exits 69 is followed in the background with `dibs batch --follow <id>`.
+### cut-off-followed: A Detached Batch whose Call exits 69 and says the Batch carries on is followed in the background with the `dibs batch --follow <id>` line it printed.
 
 ## Check-ins
 

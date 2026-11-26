@@ -16,7 +16,7 @@ How what comes back is read, and what each exit asks for, cited as `dibs/results
   a hand-written build that says `built=nothing` compiled no crate, which a shared target, a copy
   that kept mtimes or a stale worktree leaves.
 
-### whole-output-from-out: A Job's whole output is read with `dibs --on <machine> out <job>`, during the run or after, or inline with `--stream`, never kept by a redirect inside the command.
+### whole-output-from-out: A Job's output is read with `dibs --on <machine> out <job>`, which for a finished Job shows its tail and the path of the whole log, read for what the tail leaves out, or inline with `--stream`, never kept by a redirect inside the command.
 
 ## Exits
 

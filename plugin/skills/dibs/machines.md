@@ -47,8 +47,6 @@ Where work runs, on which Card, and who is there, cited as `dibs/machines::<rule
 
 ### duration-is-measured: How long submitted work has left is read from its Status, and how long work not yet submitted will take is answered by running it, since a script's later Calls are invisible to dibs.
 
-### agent-named: A runtime that is neither Claude Code nor in a herdr pane runs `export DIBS_AGENT='<the work>'` once per session, as its own statement.
-
 ### kill-is-own: `dibs --kill <pid>` stops only a Job of the agent's own, unless the person asked for `--anyone`.
 
 ### no-watch: No agent runs `dibs --watch`, which is for a person at a terminal and costs the Machine.
