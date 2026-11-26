@@ -388,6 +388,75 @@ fn a_git_database_the_machine_lacks_is_sent_ahead_of_the_build() {
     snapshot("trees-gitdb", t.text());
 }
 
+#[test]
+fn a_git_database_is_sent_at_the_rev_a_manifest_names_past_its_lockfile() {
+    let mut s = wired();
+    s.set("DIBS_REFLINK", "never");
+    let dir = app(&s);
+    recipes(&s, PARAMS);
+    s.git(".", &["init", "-q", "dep"]);
+    s.write("dep/src/lib.rs", "");
+    s.git("dep", &["add", "-A"]);
+    s.git("dep", &["commit", "-qm", "dep"]);
+    let locked = s.git("dep", &["rev-parse", "HEAD"]);
+    s.git(
+        ".",
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            "dep",
+            "far/git/db/dep-0123456789abcdef",
+        ],
+    );
+    s.git("dep", &["commit", "-q", "--allow-empty", "-m", "two"]);
+    let named = s.git("dep", &["rev-parse", "HEAD"]);
+    s.git(
+        ".",
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            "dep",
+            "home/.cargo/git/db/dep-0123456789abcdef",
+        ],
+    );
+    s.write(
+        "app/Cargo.lock",
+        &format!("[[package]]\nname = \"dep\"\nversion = \"1.0.0\"\nsource = \"git+https://example.invalid/dep.git#{locked}\"\n"),
+    );
+    s.write(
+        "app/Cargo.toml",
+        &format!(
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ git = \"https://example.invalid/dep.git\", rev = \"{}\" }}\n",
+            &named[..9]
+        ),
+    );
+    let tree = format!("{dir}@local");
+    let out = s
+        .dibs(["build", tree.as_str(), "p", "--on", "box-a"])
+        .env("WIRE_RUN", "1")
+        .env("WIRE_FAR_CARGO_HOME", s.p("far"))
+        .run();
+    assert_eq!(out.code, 0, "{}", out.all());
+    let db = s.path("far").join("git/db/dep-0123456789abcdef");
+    for commit in [&locked, &named] {
+        let held = s
+            .command(
+                "git",
+                [
+                    "-C",
+                    &db.display().to_string(),
+                    "cat-file",
+                    "-e",
+                    &format!("{commit}^{{commit}}"),
+                ],
+            )
+            .run();
+        assert_eq!(held.code, 0, "the machine lacks {commit}: {}", out.all());
+    }
+}
+
 // What seeding sources is for, and the rsync behaviour it rests on: after the sync, a file this
 // tree did not change keeps the sibling's time, older than the copied build, and a changed one
 // is dated after it.

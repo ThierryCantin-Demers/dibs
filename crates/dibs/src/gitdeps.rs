@@ -27,11 +27,79 @@ pub struct GitPin {
 }
 
 impl GitPin {
-    /// Every git source in several lockfiles, once each.
-    pub fn of(locks: &[(String, String)]) -> Vec<GitPin> {
+    /// Every git source in several lockfiles, once each, and every rev their manifests name that
+    /// no lockfile pins: cargo fetches that one unless its cache already holds the commit.
+    pub fn of(locks: &[(String, String)], manifests: &[String]) -> Vec<GitPin> {
         let mut out: Vec<GitPin> = Vec::new();
         for pin in locks.iter().flat_map(|(_, lock)| GitPin::all(lock)) {
             if !out.contains(&pin) {
+                out.push(pin);
+            }
+        }
+        for pin in manifests
+            .iter()
+            .flat_map(|manifest| GitPin::named(manifest))
+        {
+            if !out
+                .iter()
+                .any(|p| p.repo == pin.repo && p.commit.starts_with(&pin.commit))
+            {
+                out.push(pin);
+            }
+        }
+        out
+    }
+
+    /// Every git dependency a manifest names by `rev`, which may be a prefix of its commit.
+    pub fn named(manifest: &str) -> Vec<GitPin> {
+        const KINDS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+        let Ok(manifest) = manifest.parse::<toml::Table>() else {
+            return Vec::new();
+        };
+        let sections = |table: &toml::Table| -> Vec<toml::Table> {
+            KINDS
+                .iter()
+                .filter_map(|kind| table.get(*kind)?.as_table().cloned())
+                .collect()
+        };
+        let mut tables = sections(&manifest);
+        if let Some(targets) = manifest.get("target").and_then(|t| t.as_table()) {
+            tables.extend(
+                targets
+                    .values()
+                    .filter_map(|t| t.as_table())
+                    .flat_map(sections),
+            );
+        }
+        if let Some(workspace) = manifest
+            .get("workspace")
+            .and_then(|w| w.get("dependencies"))
+            .and_then(|d| d.as_table())
+        {
+            tables.push(workspace.clone());
+        }
+        let mut out: Vec<GitPin> = Vec::new();
+        for spec in tables.iter().flat_map(|t| t.values()) {
+            let (Some(url), Some(rev)) = (
+                spec.get("git").and_then(|g| g.as_str()),
+                spec.get("rev").and_then(|r| r.as_str()),
+            ) else {
+                continue;
+            };
+            let repo = repo_of(url);
+            let commit = rev.len() >= 7 && rev.chars().all(|c| c.is_ascii_hexdigit());
+            if repo.is_empty() || !commit {
+                continue;
+            }
+            let pin = GitPin {
+                repo,
+                url: url.to_string(),
+                commit: rev.to_lowercase(),
+            };
+            if !out
+                .iter()
+                .any(|p| p.repo == pin.repo && p.commit == pin.commit)
+            {
                 out.push(pin);
             }
         }
@@ -53,8 +121,7 @@ impl GitPin {
                 continue;
             };
             let url = url.split('?').next().unwrap_or(url);
-            let name = url.trim_end_matches('/').rsplit('/').next().unwrap_or("");
-            let name = name.trim_end_matches(".git").to_string();
+            let name = repo_of(url);
             if name.is_empty() || commit.len() < 40 {
                 continue;
             }
@@ -68,6 +135,12 @@ impl GitPin {
         }
         out
     }
+}
+
+/// The repo a git URL names, as cargo names its cache directory.
+fn repo_of(url: &str) -> String {
+    let name = url.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    name.trim_end_matches(".git").to_string()
 }
 
 /// A cargo home, whose git cache may hold the commits a machine cannot fetch.
@@ -98,15 +171,15 @@ impl CargoHome {
     /// way. One URL spelled two ways gets two directories, and the commit may be in either, so every
     /// directory holding it is offered rather than the first: the machine reads exactly one of them.
     pub fn dbs(&self, pins: &[GitPin]) -> Vec<Db> {
-        let mut out = Vec::new();
+        let mut out: Vec<Db> = Vec::new();
         for GitPin { repo, commit, .. } in pins {
             for (name, path) in self.dirs(repo) {
-                if holds(&path, commit) {
-                    out.push(Db {
-                        name,
-                        path,
-                        commit: commit.clone(),
-                    });
+                let Some(commit) = commit_in(&path, commit) else {
+                    continue;
+                };
+                let db = Db { name, path, commit };
+                if !out.contains(&db) {
+                    out.push(db);
                 }
             }
         }
@@ -120,7 +193,9 @@ impl CargoHome {
     pub fn fetch_private(&self, pins: &[GitPin], private: impl Fn(&str) -> bool) {
         for GitPin { repo, url, commit } in pins {
             let dirs = self.dirs(repo);
-            if dirs.is_empty() || dirs.iter().any(|(_, p)| holds(p, commit)) || !private(url) {
+            // Only a whole commit can be fetched by its name.
+            let held = dirs.iter().any(|(_, p)| commit_in(p, commit).is_some());
+            if dirs.is_empty() || held || commit.len() < 40 || !private(url) {
                 continue;
             }
             eprintln!("dibs: fetching {repo} at {commit:.8} here, since the machines cannot");
@@ -169,10 +244,18 @@ impl CargoHome {
     }
 }
 
-fn holds(db: &std::path::Path, commit: &str) -> bool {
-    Git(db)
-        .run(&["cat-file", "-e", &format!("{commit}^{{commit}}")])
-        .is_ok()
+/// The whole commit `rev` names in a database, which holds it.
+fn commit_in(db: &std::path::Path, rev: &str) -> Option<String> {
+    let full = Git(db)
+        .run(&[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{rev}^{{commit}}"),
+        ])
+        .ok()?;
+    let full = full.trim();
+    full.starts_with(rev).then(|| full.to_string())
 }
 
 #[cfg(test)]
@@ -216,6 +299,57 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
                     commit: "0123456789abcdef0123456789abcdef01234567".into()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn a_manifest_names_the_git_revs_of_every_dependency_table() {
+        let manifest = r#"
+[package]
+name = "app"
+
+[dependencies]
+widget = { git = "https://git.example.invalid/org/widget.git", rev = "2d1aeb21c" }
+gadget = { git = "https://git.example.invalid/org/gadget", branch = "main" }
+tagged = { git = "https://git.example.invalid/org/tagged", rev = "v1.0" }
+
+[target.'cfg(unix)'.dev-dependencies]
+sprocket = { git = "https://git.example.invalid/org/sprocket", rev = "0123456789ABCDEF0123456789abcdef01234567" }
+
+[workspace.dependencies]
+widget-sys = { git = "https://git.example.invalid/org/widget.git", rev = "2d1aeb21c" }
+"#;
+        let named: Vec<(String, String)> = GitPin::named(manifest)
+            .into_iter()
+            .map(|p| (p.repo, p.commit))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                ("widget".to_string(), "2d1aeb21c".to_string()),
+                (
+                    "sprocket".to_string(),
+                    "0123456789abcdef0123456789abcdef01234567".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rev_its_lockfile_pins_is_not_named_twice() {
+        let manifest = "[dependencies]\nwidget = { git = \"https://git.example.invalid/org/widget\", rev = \"2d1aeb21c\" }\nwidget2 = { git = \"https://git.example.invalid/org/widget\", rev = \"aaaaaaaaa\" }\n";
+        let pins = GitPin::of(
+            &[(String::new(), LOCK.to_string())],
+            &[manifest.to_string()],
+        );
+        let widget: Vec<&str> = pins
+            .iter()
+            .filter(|p| p.repo == "widget")
+            .map(|p| p.commit.as_str())
+            .collect();
+        assert_eq!(
+            widget,
+            vec!["2d1aeb21c0ccfe271f12d1209724c6012a133134", "aaaaaaaaa"]
         );
     }
 
@@ -274,6 +408,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         let dbs = cargo.dbs(&pins);
         assert_eq!(dbs.len(), 1);
         assert_eq!(dbs[0].name, "widget-0123456789abcdef");
+        assert_eq!(dbs[0].commit, commit);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_short_rev_is_offered_at_its_whole_commit() {
+        let (root, commit) = home("short");
+        let cargo = CargoHome {
+            path: root.join("cargo"),
+            carried: None,
+        };
+        let pin = GitPin {
+            repo: "widget".to_string(),
+            url: String::new(),
+            commit: commit[..9].to_string(),
+        };
+        let dbs = cargo.dbs(&[pin]);
+        assert_eq!(dbs.len(), 1);
         assert_eq!(dbs[0].commit, commit);
         let _ = std::fs::remove_dir_all(&root);
     }

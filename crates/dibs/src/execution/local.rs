@@ -153,6 +153,26 @@ impl Repo<'_> {
             .collect()
     }
 
+    /// Every manifest of the tree that names a git rev.
+    pub fn manifests(self, reference: Option<&str>) -> Vec<String> {
+        let mut grep = vec!["grep", "-l", "-I", "-E"];
+        if reference.is_none() {
+            grep.push("--untracked");
+        }
+        grep.extend(["-e", "rev[[:space:]]*="]);
+        grep.extend(reference);
+        grep.extend(["--", ":(glob)**/Cargo.toml"]);
+        let listed = Git(self.0).run(&grep).unwrap_or_default();
+        listed
+            .lines()
+            .map(|path| match reference {
+                Some(r) => path.strip_prefix(&format!("{r}:")).unwrap_or(path),
+                None => path,
+            })
+            .filter_map(|path| self.root_file(path, reference))
+            .collect()
+    }
+
     /// The manifest of the workspace in `dir`, the root's when it is empty.
     pub fn workspace_manifest(self, dir: &str, reference: Option<&str>) -> Option<String> {
         match dir {
