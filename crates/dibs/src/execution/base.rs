@@ -46,6 +46,25 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
 
     let sides = Side::list(args.reference.as_deref())?;
     let resolved = Resolved::of(&args)?;
+    // A measurement placed by role is placed now, so the refs and pins it fetches are those its
+    // machine can, as if it had been named.
+    let measures = resolved.rec.steps.iter().any(|s| s.lock == Lock::Exclusive);
+    let args = match Jobs::destination(args.machine()) {
+        Ok(Destination::Unchosen) if measures && Jobs::by_roles() => {
+            let placed = destination(
+                &resolved.rec,
+                &resolved.repo_name,
+                &resolved.name,
+                &args,
+                &resolved.step_labels,
+            )?;
+            RecipeCall {
+                on: placed.map(|m| m.to_string()),
+                ..args
+            }
+        }
+        _ => args,
+    };
     let clones = Clones::on(match Jobs::destination(args.machine()) {
         Ok(Destination::Named(machine)) => Some(machine),
         _ => None,

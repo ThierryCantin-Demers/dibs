@@ -42,7 +42,7 @@ impl Team {
         let dir = self.dir.as_ref()?;
         if !dir.join(CARRIED).exists() {
             let from = std::fs::read_to_string(dir.join(FROM)).ok()?;
-            if Some(from.trim()) != crate::dispatch::dibspatcher_ssh().as_deref() {
+            if Some(from) != crate::dispatch::dibspatcher_id() {
                 return None;
             }
         }
@@ -54,10 +54,10 @@ impl Team {
     pub fn refresh(&self) -> Option<Result<usize, String>> {
         let dir = self.dir.as_ref()?;
         let files = crate::dispatch::team_files()?;
-        let from = crate::dispatch::dibspatcher_ssh().unwrap_or_default();
+        let from = crate::dispatch::dibspatcher_id().unwrap_or_default();
         let kept = files.and_then(|files| keep(dir, &files, &from));
-        if kept.is_err() {
-            stamp(dir, TRIED);
+        if kept.is_err() && std::fs::create_dir_all(dir).is_ok() {
+            let _ = std::fs::write(dir.join(TRIED), &from);
         }
         Some(kept)
     }
@@ -67,9 +67,11 @@ impl Team {
         let Some(dir) = self.dir.as_ref().filter(|d| !d.join(CARRIED).exists()) else {
             return;
         };
-        let from = std::fs::read_to_string(dir.join(FROM)).unwrap_or_default();
-        let same = Some(from.trim()) == crate::dispatch::dibspatcher_ssh().as_deref();
-        if same && (younger(dir, FETCHED, FRESH_FOR) || younger(dir, TRIED, RETRY_AFTER)) {
+        let id = crate::dispatch::dibspatcher_id();
+        let from = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
+        let fresh = from(FROM).as_deref() == id.as_deref() && younger(dir, FETCHED, FRESH_FOR);
+        let tried = from(TRIED).as_deref() == id.as_deref() && younger(dir, TRIED, RETRY_AFTER);
+        if fresh || tried {
             return;
         }
         if let Some(Err(why)) = self.refresh() {

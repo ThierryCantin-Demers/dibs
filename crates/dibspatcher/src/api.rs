@@ -478,7 +478,7 @@ impl Api<'_> {
         send(&Reply::Inventory {
             machines: inventory.text,
             pools: self.store.pools().map_err(failed)?,
-            files: inventory.files,
+            files: Some(inventory.files),
         });
         Ok(0)
     }

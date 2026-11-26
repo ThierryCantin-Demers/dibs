@@ -146,6 +146,10 @@ impl<'a> LockedCall<'a> {
             }
             return Ok((named != *alias).then_some(named));
         }
+        // What the machine says comes first: the card a job of the label runs or waits on there,
+        // then its series as the runner keeps it, which another caller may have begun again;
+        // this computer's own record only when the machine keeps none.
+        let reading = Reading::asked(&entry.name);
         let bound = series
             .filter(|_| bench && !call.new_series)
             .into_iter()
@@ -153,12 +157,7 @@ impl<'a> LockedCall<'a> {
                 labels
                     .iter()
                     .filter_map(|l| s.card_of(l.as_str(), &target.series_key()))
-            })
-            .find(|cards| Card::fits(alias, cards, entry));
-        if let Some(cards) = bound {
-            return Ok(Some(Alias::new(cards)));
-        }
-        let reading = Reading::asked(&entry.name);
+            });
         let running = reading.as_ref().filter(|_| bench).and_then(|r| {
             let recorded = r
                 .series_cards_of(labels)
@@ -169,6 +168,11 @@ impl<'a> LockedCall<'a> {
                 .flat_map(|l| r.bench_cards_of(l.as_str()))
                 .map(str::to_string)
                 .chain(recorded)
+                .find(|cards| Card::fits(alias, cards, entry))
+        });
+        let running = running.or_else(|| {
+            bound
+                .into_iter()
                 .find(|cards| Card::fits(alias, cards, entry))
         });
         if let Some(cards) = running {

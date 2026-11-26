@@ -116,8 +116,10 @@ pub enum Reply {
         pools: BTreeMap<String, Vec<String>>,
         /// Each inventory file by its path under the config directory, `machines.toml` and
         /// `machines.d/<name>.toml`, for a client that keeps the team's machines.
-        #[serde(default)]
-        files: BTreeMap<String, String>,
+        /// None from a dibspatcher that keeps no copy for its clients; empty for a team with no
+        /// machines.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        files: Option<BTreeMap<String, String>>,
     },
     /// Text for the caller's stdout, or with `err`, its stderr.
     Text {

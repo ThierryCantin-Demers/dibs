@@ -13,10 +13,11 @@ use crate::{
     caller::Caller,
     cli::Call,
     execution::Job,
+    inventory::Role,
     itself::Itself,
     paths::{FileError, Paths},
 };
-use dibs_format::{BatchId, Exit, MachineName, Span};
+use dibs_format::{Alias, BatchId, Exit, MachineName, Span};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -215,7 +216,20 @@ pub fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String>
         ..Call::default()
     };
     let caller = Caller::default();
-    match MachineCall::new(&call, &caller).and_then(|machine| machine.destination()) {
+    let role = match (step.lock, step.measures()) {
+        (StepKind::Peek | StepKind::Sync, _) => None,
+        (_, true) => Some(Role::Bench),
+        (_, false) => Some(Role::of_shared(
+            step.device.as_deref().map(Alias::new).as_ref(),
+        )),
+    };
+    // The inventory's only machine is not one this row goes to when it lacks the row's role;
+    // the row then refuses itself as it starts.
+    let destination = MachineCall::new(&call, &caller).and_then(|machine| match role {
+        Some(role) => machine.destination_as(role),
+        None => machine.destination(),
+    });
+    match destination {
         Ok(Destination::Named(machine)) => Some(machine.to_string()),
         Ok(Destination::Unchosen) if call.on.is_none() => None,
         _ => Some(call.on.map_or_else(|| "?".into(), |on| on.to_string())),
@@ -260,12 +274,13 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
         .map(|s| machine_of(s, opts.on.as_ref()))
         .collect();
     let cwd = std::env::current_dir().unwrap_or_default();
-    let placed = Rows {
+    let shown = cwd.display().to_string();
+    let rows = Rows {
         steps: &steps,
         on: opts.on.as_ref(),
-        cwd: &cwd.display().to_string(),
-    }
-    .place(&named)?;
+        cwd: &shown,
+    };
+    let placed = rows.place(&named)?;
     let named: Vec<Option<String>> = named
         .into_iter()
         .zip(&placed)
@@ -274,7 +289,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     if let Some((s, _)) = steps
         .iter()
         .zip(&named)
-        .find(|(s, m)| m.is_none() && s.measures())
+        .find(|(s, m)| m.is_none() && rows.measures(s))
     {
         return Err(BatchError::Unplaced {
             step: s.name.clone(),

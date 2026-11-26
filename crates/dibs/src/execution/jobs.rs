@@ -318,6 +318,22 @@ impl Jobs {
         Ok(MachineCall::new(&call, &caller)?.destination()?)
     }
 
+    /// The machine shared work goes to with no ranking: as `destination`, refusing the only
+    /// machine when it lacks the role the work's `device` needs.
+    pub fn shared_destination(
+        on: Option<MachineName>,
+        device: Option<&str>,
+    ) -> Result<Destination, RunError> {
+        let call = Call {
+            on,
+            ..Call::default()
+        };
+        let caller = Caller::default();
+        MachineCall::new(&call, &caller)?
+            .destination_as(Role::of_shared(device.map(Alias::from).as_ref()))
+            .map_err(unsent)
+    }
+
     /// The machine a measurement goes to with no ranking: as `destination`, refusing the only
     /// machine when it is not a bench one.
     pub fn bench_destination(on: Option<MachineName>) -> Result<Destination, RunError> {

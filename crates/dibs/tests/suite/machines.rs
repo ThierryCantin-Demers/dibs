@@ -1035,7 +1035,7 @@ fn the_team_s_machines_come_from_its_copy_and_place_by_its_roles() {
             hostname()
         ),
     );
-    s.write("team/.from", "dibs@team");
+    s.write("team/.from", "dibs@team\t");
     s.write("team/.fetched", "");
     s.set("DIBS_TEAM", s.p("team"));
     s.set("DIBS_DISPATCHER", "dibs@team");
@@ -1073,7 +1073,7 @@ fn the_team_s_machines_come_from_its_copy_and_place_by_its_roles() {
         (2, 1),
         "and so is its entry"
     );
-    s.write("team/.tried", "");
+    s.write("team/.tried", "dibs@another\t");
     s.set("DIBS_DISPATCHER", "dibs@another");
     assert_eq!(
         s.dibs(["--machines"]).run().stdout.lines_with("bencher"),

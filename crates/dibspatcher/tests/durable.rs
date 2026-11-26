@@ -444,7 +444,10 @@ fn the_inventory_is_sent_file_by_file() {
     fs::write(s.root.join("machines.d/notes.txt"), "not an inventory").unwrap();
     let (replies, exit) = s.ask(Call::Inventory);
     assert_eq!(exit, 0);
-    let Some(Reply::Inventory { files, .. }) = replies.first() else {
+    let Some(Reply::Inventory {
+        files: Some(files), ..
+    }) = replies.first()
+    else {
         panic!("{replies:?}");
     };
     assert_eq!(

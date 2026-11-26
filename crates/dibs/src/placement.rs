@@ -5,7 +5,7 @@ use crate::{
     call::{Asked, Bound, MachineCall, Series},
     caller::Caller,
     cli::Call,
-    inventory::Role,
+    inventory::{Machine, Role},
     machine::{Card, Kept},
     render::Answered,
 };
@@ -325,8 +325,14 @@ pub struct Placement<'a> {
 impl Placement<'_> {
     /// Says what `-v` asks for on stderr as it goes.
     pub fn pick(&self) -> Result<MachineName, Unplaced> {
+        self.pick_where(|_| true)
+    }
+
+    /// As `pick`, among the machines `fits` accepts too.
+    pub fn pick_where(&self, fits: impl Fn(&Machine) -> bool) -> Result<MachineName, Unplaced> {
         let call = self.machine.call;
         let mut names = self.machine.fleet.names();
+        names.retain(|name| self.machine.fleet.entry(name.as_str()).is_none_or(&fits));
         if let Some(alias) = &call.device {
             names.retain(|name| {
                 let carries = self
@@ -463,16 +469,32 @@ impl Placement<'_> {
     /// measured on, by anyone; then the one with the fewest benchmarks running or waiting.
     /// `--new-series` skips the series, not the run being measured.
     pub fn pick_bench(&self, labels: &[Label]) -> Result<MachineName, Unplaced> {
+        let fresh = match self.machine.call.new_series {
+            true => labels.to_vec(),
+            false => Vec::new(),
+        };
+        self.pick_bench_where(labels, &fresh, |_| true)
+    }
+
+    /// As `pick_bench`, among the machines `fits` accepts too, skipping the series of the labels
+    /// in `fresh` alone.
+    pub fn pick_bench_where(
+        &self,
+        labels: &[Label],
+        fresh: &[Label],
+        fits: impl Fn(&Machine) -> bool,
+    ) -> Result<MachineName, Unplaced> {
         let call = self.machine.call;
         // As the runners and the series here file them.
         let labels: &[Label] = &labels.iter().map(Label::filed).collect::<Vec<_>>();
+        let fresh: &[Label] = &fresh.iter().map(Label::filed).collect::<Vec<_>>();
         let Some(inventory) = self.machine.fleet.inventory.as_ref() else {
             return Err(Unplaced::NoRole { role: Role::Bench });
         };
         let names: Vec<MachineName> = inventory
             .machines
             .iter()
-            .filter(|m| m.roles.contains(&Role::Bench) && m.measure)
+            .filter(|m| m.roles.contains(&Role::Bench) && m.measure && fits(m))
             .filter(|m| {
                 let carries = call
                     .device
@@ -504,13 +526,14 @@ impl Placement<'_> {
                 .machine(name.as_str())
                 .and_then(|m| m.series.clone().or(m.ssh.clone()))
                 .unwrap_or_else(|| name.to_string());
-            mine.as_ref()
-                .is_some_and(|s| labels.iter().any(|l| s.card_of(l.as_str(), &key).is_some()))
+            mine.as_ref().is_some_and(|s| {
+                labels
+                    .iter()
+                    .filter(|l| !fresh.contains(l))
+                    .any(|l| s.card_of(l.as_str(), &key).is_some())
+            })
         };
-        let measured = Measured {
-            labels,
-            new_series: call.new_series,
-        };
+        let measured = Measured { labels, fresh };
         // The jobs on the cards it would be given there, which a model's name does not match.
         let card_cost = |c: &Candidate| -> u64 {
             let (Some(alias), Some(r), Some(entry)) = (
@@ -551,7 +574,8 @@ impl Placement<'_> {
 /// How a measurement naming no machine chooses among the bench machines that answered.
 struct Measured<'a> {
     labels: &'a [Label],
-    new_series: bool,
+    /// The labels whose series are skipped, by `--new-series`.
+    fresh: &'a [Label],
 }
 
 impl Measured<'_> {
@@ -574,14 +598,15 @@ impl Measured<'_> {
             if running {
                 return Some(u64::MAX);
             }
-            if self.new_series {
-                return None;
-            }
-            self.labels
+            let kept: Vec<&Label> = self
+                .labels
                 .iter()
+                .filter(|l| !self.fresh.contains(l))
+                .collect();
+            kept.iter()
                 .filter_map(|l| reading.and_then(|r| r.measured(l.as_str())))
                 .max()
-                .or(ours(&c.name).then_some(0))
+                .or((!kept.is_empty() && ours(&c.name)).then_some(0))
         };
         let series: Vec<(&MachineName, u64)> = candidates
             .iter()
@@ -734,9 +759,9 @@ mod tests {
         new.reading.as_mut().unwrap().series = vec![series("l", 20)];
         busy.reading.as_mut().unwrap().holders = vec![bench("other"), bench("other")];
         let labels = [Label::new("l")];
-        let measured = |new_series| Measured {
+        let measured = |new_series: bool| Measured {
             labels: &labels,
-            new_series,
+            fresh: if new_series { &labels } else { &[] },
         };
         let all = [old.clone(), new.clone(), busy.clone()];
         let none = |_: &MachineName| false;

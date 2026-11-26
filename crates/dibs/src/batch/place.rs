@@ -9,12 +9,14 @@ use super::{
 use crate::{
     call::{CallError, MachineCall, Planned},
     caller::Caller,
+    cli::RecipeVerb,
     cli::{Call, Mode},
     execution::{Job, Repo},
     git::Git,
-    inventory::Inventory,
+    inventory::{Inventory, Machine},
+    machine::Card,
     placement::Placement,
-    recipe::Checkouts,
+    recipe::{Checkouts, run_label},
 };
 use dibs_format::{Alias, Label, MachineName, Mode as JobMode};
 use std::{
@@ -80,7 +82,10 @@ impl Rows<'_> {
 
     /// Whether a row measures: a recipe by the locks of the jobs it resolves to, any other by
     /// what its line says.
-    fn measures(&self, step: &Step) -> bool {
+    pub fn measures(&self, step: &Step) -> bool {
+        if let Some(with) = step.recipe.as_ref().filter(|r| r.verb == RecipeVerb::With) {
+            return with.bench;
+        }
         match step.recipe.as_ref().and_then(Job::of_batch_line) {
             Some(jobs) => jobs.iter().any(|p| p.mode == Planned::Job(JobMode::Bench)),
             None => step.measures(),
@@ -164,23 +169,25 @@ impl Rows<'_> {
     fn demand(&self, group: &[usize], measures: &[bool]) -> Result<Option<String>, BatchError> {
         let caller = Caller::default();
         let rows: Vec<&Step> = group.iter().map(|&i| &self.steps[i]).collect();
-        let mut cards: Vec<String> = Vec::new();
-        for card in rows
-            .iter()
-            .filter_map(|s| s.device.as_deref())
-            .flat_map(|d| d.split(','))
-            .map(str::trim)
-            .filter(|d| *d != "cpu")
-        {
-            if !cards.iter().any(|c| c == card) {
-                cards.push(card.to_string());
-            }
-        }
+        let card = |s: &Step| {
+            s.device
+                .as_deref()
+                .and_then(expanded)
+                .filter(|d| d != "cpu")
+                .map(Alias::new)
+        };
+        let cards: Vec<Alias> = rows.iter().filter_map(|s| card(s)).collect();
         let measuring = group.iter().any(|&i| measures[i]);
+        // The card the call is placed by is its measurement's; every other row's must be on the
+        // machine as well, each as it asks.
+        let lead = group
+            .iter()
+            .filter(|&&i| !measuring || measures[i])
+            .find_map(|&i| card(&self.steps[i]));
+        let fits = |m: &Machine| cards.iter().all(|alias| Card::all_on(alias, m).is_ok());
         let call = Call {
             mode: Mode::Pick,
-            device: (!cards.is_empty()).then(|| Alias::new(cards.join(","))),
-            new_series: rows.iter().any(|s| s.new_series),
+            device: lead,
             // Only a recipe is placed by where its repo is cloned; a raw row is not.
             repo: rows
                 .iter()
@@ -191,22 +198,42 @@ impl Rows<'_> {
         let machine = MachineCall::new(&call, &caller)?;
         let placement = Placement { machine: &machine };
         if !measuring {
-            return Ok(Some(placement.pick().map_err(CallError::from)?.to_string()));
+            return Ok(Some(
+                placement
+                    .pick_where(fits)
+                    .map_err(CallError::from)?
+                    .to_string(),
+            ));
         }
-        let labels: Vec<Label> = group
-            .iter()
-            .filter(|&&i| measures[i])
-            .flat_map(|&i| self.measured_labels(&self.steps[i]))
-            .collect();
+        let mut labels = Vec::new();
+        let mut fresh = Vec::new();
+        for &i in group.iter().filter(|&&i| measures[i]) {
+            let step = &self.steps[i];
+            let measured = self.measured_labels(step);
+            if step.new_series {
+                fresh.extend(measured.iter().cloned());
+            }
+            labels.extend(measured);
+        }
         Ok(Some(
             placement
-                .pick_bench(&labels)
+                .pick_bench_where(&labels, &fresh, fits)
                 .map_err(CallError::from)?
                 .to_string(),
         ))
     }
 
     fn measured_labels(&self, step: &Step) -> Vec<Label> {
+        if let Some(with) = step.recipe.as_ref().filter(|r| r.verb == RecipeVerb::With) {
+            let repo = self.repo(step).unwrap_or_else(|| with.repo.clone());
+            let label = run_label(
+                &repo,
+                "with",
+                with.recipe.as_deref(),
+                with.device.as_deref(),
+            );
+            return vec![Label::new(label)];
+        }
         let jobs = step.recipe.as_ref().and_then(Job::of_batch_line);
         match jobs {
             Some(jobs) => jobs
@@ -217,6 +244,37 @@ impl Rows<'_> {
             None => vec![step.pending(true, self.cwd).label],
         }
     }
+}
+
+/// A card as the step's shell will see it: `$NAME` and `${NAME}` from the batch's environment,
+/// which its steps inherit. None for anything else the shell would expand.
+fn expanded(word: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut rest = word;
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let (name, tail) = match after.strip_prefix('{') {
+            Some(braced) => {
+                let end = braced.find('}')?;
+                (&braced[..end], &braced[end + 1..])
+            }
+            None => {
+                let end = after
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(after.len());
+                (&after[..end], &after[end..])
+            }
+        };
+        if name.is_empty() {
+            return None;
+        }
+        out.push_str(&std::env::var(name).ok()?);
+        rest = tail;
+    }
+    out.push_str(rest);
+    let quoted = ['"', '\'', '`', '*', '?'];
+    (!out.contains(quoted)).then_some(out)
 }
 
 fn by_roles() -> bool {

@@ -268,14 +268,20 @@ impl Sending {
     }
 }
 
-/// The team's inventory files from the dibspatcher, by their path under its config directory;
-/// None when no dibspatcher is set up here.
-/// The account the dibspatcher set up here is reached as, which a copy of its inventory is tied
-/// to.
-pub fn dibspatcher_ssh() -> Option<String> {
-    Dibspatcher::configured().ok().map(|d| d.ssh)
+/// The dibspatcher set up here, as its account and the ssh config that reaches it, which a copy
+/// of its inventory is tied to.
+pub fn dibspatcher_id() -> Option<String> {
+    Dibspatcher::configured().ok().map(|d| {
+        let config = d
+            .config
+            .map(|c| c.display().to_string())
+            .unwrap_or_default();
+        format!("{}\t{config}", d.ssh)
+    })
 }
 
+/// The team's inventory files from the dibspatcher, by their path under its config directory;
+/// None when no dibspatcher is set up here.
 pub fn team_files() -> Option<Result<BTreeMap<String, String>, String>> {
     let dibspatcher = Dibspatcher::configured().ok()?;
     let mut shown = Shown {
@@ -283,10 +289,12 @@ pub fn team_files() -> Option<Result<BTreeMap<String, String>, String>> {
         ..Shown::default()
     };
     Some(match dibspatcher.ask(Call::Inventory, &mut shown) {
-        Ok(0) => shown
-            .files
-            .filter(|files| !files.is_empty())
-            .ok_or_else(|| format!("the dibspatcher at {} sent no inventory", dibspatcher.ssh)),
+        Ok(0) => shown.files.ok_or_else(|| {
+            format!(
+                "the dibspatcher at {} keeps no inventory for its clients; update it",
+                dibspatcher.ssh
+            )
+        }),
         Ok(code) => Err(format!(
             "the dibspatcher at {} did not answer (exit {code})",
             dibspatcher.ssh
@@ -602,7 +610,9 @@ impl Shown {
                 }
             }
             Reply::Status(detail) => print!("{}", status(&detail)),
-            Reply::Inventory { files, .. } if self.keeps_files => self.files = Some(files),
+            Reply::Inventory {
+                files: Some(files), ..
+            } if self.keeps_files => self.files = Some(files),
             Reply::Inventory {
                 machines, pools, ..
             } => {

@@ -450,6 +450,9 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
                 step.lock = StepKind::Recipe;
                 step.label = Some(recipe_label(words));
                 step.recipe = Some(call);
+            } else if call.verb == RecipeVerb::With {
+                // Its servers and command are one call, placed by its repo and its --bench.
+                step.recipe = Some(call);
             }
         }
         _ => {}

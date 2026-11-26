@@ -88,6 +88,13 @@ impl MachineCall<'_> {
             Some(port) => entry.replacen("]\n", &format!("]\nport     = {port}\n"), 1),
             None => entry,
         };
+        if self.fleet.entry(name.as_str()).is_some_and(|m| m.team) {
+            eprintln!(
+                "dibs: the machine reported itself as {name}, one of the team's machines, so its entry is the\n  \
+                 dibspatcher's to record: run dibs --check --write there, where its inventory is kept."
+            );
+            return Ok(i32::from(Exit::Refused.code()));
+        }
         let file = self
             .fleet
             .entry(name.as_str())
