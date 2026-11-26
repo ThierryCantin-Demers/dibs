@@ -1,6 +1,6 @@
-//! `dibs orch`: work handed to the orchestrator, which keeps it alive after this computer goes.
-//! It is reached over ssh as `orchestrator.toml` names it, and speaks the versioned API in
-//! `dibs_format::orchestrator`.
+//! `dibs dispatch`: work handed to the dibspatcher, which keeps it alive after this computer goes.
+//! It is reached over ssh as `dibspatcher.toml` names it, and speaks the versioned API in
+//! `dibs_format::dibspatcher`.
 
 use crate::{
     caller::Caller,
@@ -10,7 +10,7 @@ use crate::{
 };
 use dibs_format::{
     Exit, Hex as _, Moment,
-    orchestrator::{
+    dibspatcher::{
         API_COMMAND, Ask, Call, Detail, NamedCall, Reply, STAGE_PREFIX, Seal, SplitCall,
         Submission, Summary, Upload, VERSION, Work,
     },
@@ -23,7 +23,7 @@ use std::{
 };
 
 /// The word `dibs` takes these verbs under.
-pub const WORD: &str = "orch";
+pub const WORD: &str = "dispatch";
 
 /// Seconds a follow waits before it checks in, unless `DIBS_CHECK_IN` says.
 const CHECK_IN: u64 = 1800;
@@ -33,20 +33,20 @@ const RETRIES: usize = 3;
 const SSH_FAILED: i32 = 255;
 
 const USAGE: &str = "usage:
-  dibs orch bench <repo>@local <recipe> [--<value> <v>]... [--no-follow] [--key <key>]
+  dibs dispatch bench <repo>@local <recipe> [--<value> <v>]... [--no-follow] [--key <key>]
                                    a split recipe: built on the compile pool, measured on the GPU pool
-  dibs orch run --on <machine> [--bench --device <card>] [--label <l>] [--max <s>] [--no-follow] [--key <key>] <command>
-                                   a call on one machine, kept alive by the orchestrator
-  dibs orch list [--all]           your submissions, or everyone's
-  dibs orch status <id>            how each step went
-  dibs orch out <id> [<step>] [--job]
+  dibs dispatch run --on <machine> [--bench --device <card>] [--label <l>] [--max <s>] [--no-follow] [--key <key>] <command>
+                                   a call on one machine, kept alive by the dibspatcher
+  dibs dispatch list [--all]           your submissions, or everyone's
+  dibs dispatch status <id>            how each step went
+  dibs dispatch out <id> [<step>] [--job]
                                    what each step said; --job reads the job's whole log
-  dibs orch follow <id>            waits for it to end, or checks in after 30 minutes
-  dibs orch kill <id>              stops it
-  dibs orch machines               the orchestrator's machines and pools";
+  dibs dispatch follow <id>            waits for it to end, or checks in after 30 minutes
+  dibs dispatch kill <id>              stops it
+  dibs dispatch machines               the dibspatcher's machines and pools";
 
 pub fn serve(words: &[String]) -> i32 {
-    let orchestrator = match Orchestrator::configured() {
+    let dibspatcher = match Dibspatcher::configured() {
         Ok(o) => o,
         Err(why) => {
             eprintln!("dibs: {why}");
@@ -56,7 +56,7 @@ pub fn serve(words: &[String]) -> i32 {
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
     if let ["run", rest @ ..] = words.as_slice() {
         return named(rest)
-            .and_then(|(work, sent)| orchestrator.submit(work, None, sent))
+            .and_then(|(work, sent)| dibspatcher.submit(work, None, sent))
             .unwrap_or_else(|why| {
                 eprintln!("dibs: {why}");
                 Exit::Refused.status()
@@ -82,22 +82,22 @@ pub fn serve(words: &[String]) -> i32 {
     let sent = Sent { key, follow };
     let result = match given.as_slice() {
         ["bench", target, recipe, values @ ..] => split(target, recipe, values)
-            .and_then(|(work, upload)| orchestrator.submit(work, Some(upload), sent)),
-        ["list"] => orchestrator.list(false),
-        ["list", "--all"] => orchestrator.list(true),
-        ["status", id] => orchestrator.status(id),
-        ["out", id] => orchestrator.out(id, None, false),
-        ["out", id, "--job"] => orchestrator.out(id, None, true),
-        ["out", id, step] => orchestrator.out(id, Some(step), false),
-        ["out", id, step, "--job"] => orchestrator.out(id, Some(step), true),
-        ["follow", id] => orchestrator.follow(id),
-        ["kill", id] => orchestrator.ask(Call::Kill { id: id.to_string() }, &mut Shown::default()),
-        ["machines"] => orchestrator.ask(Call::Inventory, &mut Shown::default()),
+            .and_then(|(work, upload)| dibspatcher.submit(work, Some(upload), sent)),
+        ["list"] => dibspatcher.list(false),
+        ["list", "--all"] => dibspatcher.list(true),
+        ["status", id] => dibspatcher.status(id),
+        ["out", id] => dibspatcher.out(id, None, false),
+        ["out", id, "--job"] => dibspatcher.out(id, None, true),
+        ["out", id, step] => dibspatcher.out(id, Some(step), false),
+        ["out", id, step, "--job"] => dibspatcher.out(id, Some(step), true),
+        ["follow", id] => dibspatcher.follow(id),
+        ["kill", id] => dibspatcher.ask(Call::Kill { id: id.to_string() }, &mut Shown::default()),
+        ["machines"] => dibspatcher.ask(Call::Inventory, &mut Shown::default()),
         [] | ["-h"] | ["--help"] | ["help"] => {
             println!("{USAGE}");
             return 0;
         }
-        _ => Err(format!("dibs orch takes:\n{USAGE}")),
+        _ => Err(format!("dibs dispatch takes:\n{USAGE}")),
     };
     result.unwrap_or_else(|why| {
         eprintln!("dibs: {why}");
@@ -115,7 +115,7 @@ struct Sent {
 fn split(target: &str, recipe: &str, values: &[&str]) -> Result<(Work, (Upload, PathBuf)), String> {
     let Some(repo) = target.strip_suffix("@local") else {
         return Err(format!(
-            "{target}: a split through the orchestrator is built from your working tree, as <repo>@local"
+            "{target}: a split through the dibspatcher is built from your working tree, as <repo>@local"
         ));
     };
     let mut given = BTreeMap::new();
@@ -201,23 +201,23 @@ fn named(words: &[&str]) -> Result<(Work, Sent), String> {
                 break;
             }
             flag if flag.starts_with("--") => {
-                return Err(format!("dibs orch run takes no {flag}"));
+                return Err(format!("dibs dispatch run takes no {flag}"));
             }
             word => command.push(word.to_string()),
         }
     }
     if call.on.is_empty() {
-        return Err("dibs orch run names its machine with --on".into());
+        return Err("dibs dispatch run names its machine with --on".into());
     }
     if command.is_empty() {
-        return Err("dibs orch run needs a command".into());
+        return Err("dibs dispatch run needs a command".into());
     }
     call.command = crate::cli::Command(command).shell_string();
     if call.label.is_empty() {
         call.label = std::env::current_dir()
             .ok()
             .and_then(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "orch".into());
+            .unwrap_or_else(|| "dispatch".into());
     }
     Ok((Work::Call(call), sent))
 }
@@ -251,7 +251,7 @@ impl Sending {
         Ok(files)
     }
 
-    /// The upload's seal and head, computed before anything is sent: what the orchestrator must
+    /// The upload's seal and head, computed before anything is sent: what the dibspatcher must
     /// find when it arrives.
     fn prepared(&self, mut upload: Upload) -> Result<Upload, String> {
         let files = self.files()?;
@@ -268,9 +268,9 @@ impl Sending {
     }
 }
 
-/// Where the orchestrator is: `DIBS_ORCHESTRATOR`, else `orchestrator.toml` beside the
+/// Where the dibspatcher is: `DIBS_DISPATCHER`, else `dibspatcher.toml` beside the
 /// inventory, `ssh = "<destination>"` and optionally `ssh_config = "<file>"`.
-pub struct Orchestrator {
+pub struct Dibspatcher {
     ssh: String,
     config: Option<PathBuf>,
 }
@@ -282,21 +282,21 @@ struct Configured {
     ssh_config: Option<String>,
 }
 
-impl Orchestrator {
-    fn configured() -> Result<Orchestrator, String> {
-        if let Some(ssh) = std::env::var("DIBS_ORCHESTRATOR")
+impl Dibspatcher {
+    fn configured() -> Result<Dibspatcher, String> {
+        if let Some(ssh) = std::env::var("DIBS_DISPATCHER")
             .ok()
             .filter(|s| !s.is_empty())
         {
-            return Ok(Orchestrator { ssh, config: None });
+            return Ok(Dibspatcher { ssh, config: None });
         }
         let path = crate::paths::Paths::from_env()
             .inventory()
-            .and_then(|i| i.parent().map(|d| d.join("orchestrator.toml")))
-            .ok_or("no config directory to find orchestrator.toml in")?;
+            .and_then(|i| i.parent().map(|d| d.join("dibspatcher.toml")))
+            .ok_or("no config directory to find dibspatcher.toml in")?;
         let text = std::fs::read_to_string(&path).map_err(|_| {
             format!(
-                "no orchestrator is set up here: {} names it, as ssh = \"<account>@<host>\"",
+                "no dibspatcher is set up here: {} names it, as ssh = \"<account>@<host>\"",
                 path.display()
             )
         })?;
@@ -305,7 +305,7 @@ impl Orchestrator {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default();
-        Ok(Orchestrator {
+        Ok(Dibspatcher {
             ssh: configured.ssh,
             config: configured.ssh_config.map(|c| match c.strip_prefix("~/") {
                 Some(rest) => home.join(rest),
@@ -365,7 +365,7 @@ impl Orchestrator {
             if code != SSH_FAILED || shown.accepted.is_some() {
                 break;
             }
-            eprintln!("dibs: lost the orchestrator at {}; asking again", self.ssh);
+            eprintln!("dibs: lost the dibspatcher at {}; asking again", self.ssh);
         }
         Ok(code)
     }
@@ -399,7 +399,7 @@ impl Orchestrator {
         let Some(id) = shown.accepted.clone() else {
             if code == SSH_FAILED {
                 eprintln!(
-                    "dibs: the orchestrator at {} never said whether it took the submission, and may have.\n  \
+                    "dibs: the dibspatcher at {} never said whether it took the submission, and may have.\n  \
                      The same command with --key {key} asks again, and is that submission if it was taken.",
                     self.ssh
                 );
@@ -414,13 +414,13 @@ impl Orchestrator {
         self.follow(&id)
     }
 
-    /// The tree, then its git directory, into the coworker's stage on the orchestrator, each
+    /// The tree, then its git directory, into the coworker's stage on the dibspatcher, each
     /// against the copy the last upload of this repo left there. Some exit when one failed.
     fn send(&self, upload: &Upload, dir: &Path) -> Result<Option<i32>, String> {
         let dir = dir.to_path_buf();
         let sending = Sending { dir: dir.clone() };
         let files = sending.files()?;
-        let list = std::env::temp_dir().join(format!("dibs-orch-{}.files", upload.stage));
+        let list = std::env::temp_dir().join(format!("dibspatcher-{}.files", upload.stage));
         std::fs::write(&list, files.join("\0")).map_err(|e| e.to_string())?;
         let rsh = std::iter::once("ssh".to_string())
             .chain(self.ssh_options())
@@ -428,7 +428,7 @@ impl Orchestrator {
             .join(" ");
         let stage = format!("{}:{STAGE_PREFIX}{}/", self.ssh, upload.stage);
         eprintln!(
-            "dibs: sending {} ({} files and its git directory) to the orchestrator",
+            "dibs: sending {} ({} files and its git directory) to the dibspatcher",
             upload.repo, upload.files
         );
         let tree = [
@@ -445,7 +445,7 @@ impl Orchestrator {
         let _ = std::fs::remove_file(&list);
         if sent != 0 {
             eprintln!(
-                "dibs: {}'s files could not be sent to the orchestrator",
+                "dibs: {}'s files could not be sent to the dibspatcher",
                 upload.repo
             );
             return Ok(Some(sent));
@@ -476,7 +476,7 @@ impl Orchestrator {
         }
         if sent != 0 {
             eprintln!(
-                "dibs: {}'s git directory could not be sent to the orchestrator",
+                "dibs: {}'s git directory could not be sent to the dibspatcher",
                 upload.repo
             );
             return Ok(Some(sent));
@@ -517,7 +517,7 @@ impl Orchestrator {
         )?;
         if code == SSH_FAILED {
             eprintln!(
-                "dibs: lost the orchestrator while following {id}, which carries on there.\n  dibs orch follow {id}  follows it again"
+                "dibs: lost the dibspatcher while following {id}, which carries on there.\n  dibs dispatch follow {id}  follows it again"
             );
             return Ok(Exit::Unreachable.status());
         }
@@ -546,7 +546,7 @@ fn key() -> String {
     format!("k{}-{}", Moment::now().compact(), bytes[..].hex())
 }
 
-/// What the orchestrator's replies are shown as.
+/// What the dibspatcher's replies are shown as.
 #[derive(Default)]
 struct Shown {
     accepted: Option<String>,
@@ -557,7 +557,7 @@ impl Shown {
         match reply {
             Reply::Accepted { id, duplicate } => {
                 eprintln!(
-                    "dibs: submission {id} {} by the orchestrator: it carries on whether or not this call does",
+                    "dibs: submission {id} {} by the dibspatcher: it carries on whether or not this call does",
                     match duplicate {
                         true => "was already accepted",
                         false => "accepted",
@@ -612,7 +612,7 @@ fn status(detail: &Detail) -> String {
             "  {:<8} {:<11} {:<18} {}\n",
             step.name,
             step.state.as_str(),
-            step.machine.as_deref().unwrap_or("orchestrator"),
+            step.machine.as_deref().unwrap_or("dibspatcher"),
             match (&step.trailer, &step.note) {
                 (Some(trailer), _) => trailer.to_string(),
                 (None, Some(note)) => note.clone(),

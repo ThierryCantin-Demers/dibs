@@ -569,23 +569,23 @@ cut off, it exits 69 and says so; the batch carries on, and `dibs batch --follow
 summary once it has ended, or at once if it has. `dibs --kill <id>` stops it from here, and `dibs
 status` shows its steps as any batch's.
 
-## Work handed to the orchestrator
+## Work handed to the dibspatcher
 
-Where a team runs `dibs-orchestrator`, `dibs orch` hands it the work instead of driving it from
-here, so nothing this computer does afterwards can stop it. `~/.config/dibs/orchestrator.toml`
+Where a team runs `dibspatcher`, `dibs dispatch` hands it the work instead of driving it from
+here, so nothing this computer does afterwards can stop it. `~/.config/dibs/dibspatcher.toml`
 names it, `ssh = "<account>@<host>"` and optionally `ssh_config = "<file>"`.
 
-- `dibs orch bench <repo>@local <recipe> [--<value> <v>]...` sends your working tree and runs one
-  of the orchestrator's split recipes: built on its compile pool, measured on one card of its GPU
+- `dibs dispatch bench <repo>@local <recipe> [--<value> <v>]...` sends your working tree and runs one
+  of the dibspatcher's split recipes: built on its compile pool, measured on one card of its GPU
   pool.
-- `dibs orch run --on <machine> [--bench --device <card>] <command>` makes one call there.
+- `dibs dispatch run --on <machine> [--bench --device <card>] <command>` makes one call there.
 
 The call says the submission's id once it is accepted, then follows it, checking in after 30
 minutes as a job does. A call cut off before it heard back sends again under the same key, so the
 work is never submitted twice; one that never heard back at all says its key, and the same command
-with `--key <key>` asks after that submission rather than making another. `dibs orch follow <id>`, `status <id>`, `out <id> [<step>] [--job]`,
-`list [--all]` and `kill <id>` find it again from anywhere, and `dibs orch machines` lists what
-the orchestrator can reach. `docs/design/orchestrator.md` is how it is built.
+with `--key <key>` asks after that submission rather than making another. `dibs dispatch follow <id>`, `status <id>`, `out <id> [<step>] [--job]`,
+`list [--all]` and `kill <id>` find it again from anywhere, and `dibs dispatch machines` lists what
+the dibspatcher can reach. `docs/design/dibspatcher.md` is how it is built.
 
 ## Building in an image
 

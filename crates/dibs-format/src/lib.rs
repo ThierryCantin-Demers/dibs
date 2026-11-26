@@ -4,6 +4,7 @@
 //! machines write today, byte for byte, so a client and a machine on different versions agree.
 
 pub mod base64;
+pub mod dibspatcher;
 mod exit;
 pub mod fleet;
 mod friction;
@@ -13,7 +14,6 @@ mod lines;
 pub mod lockfile;
 mod mode;
 mod moment;
-pub mod orchestrator;
 mod run;
 mod sha256;
 mod span;

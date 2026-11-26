@@ -6,7 +6,7 @@
 //! `dibs` is a script here that admits each attempt once, as a runner does: asked again, it says
 //! the attempt still runs, how it ended, or that it was lost.
 
-use dibs_format::orchestrator::{
+use dibs_format::dibspatcher::{
     API_COMMAND, Ask, Call, NamedCall, Reply, State, Submission, VERSION, Work,
 };
 use std::{
@@ -53,7 +53,7 @@ struct Sandbox {
 impl Sandbox {
     fn new(name: &str) -> Sandbox {
         let root = std::env::temp_dir().join(format!(
-            "dibs-orch-{name}-{}-{}",
+            "dibspatcher-{name}-{}-{}",
             std::process::id(),
             dibs_format::Moment::epoch_now()
         ));
@@ -77,23 +77,23 @@ impl Sandbox {
     }
 
     fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_dibs-orchestrator"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_dibspatcher"));
         command
             .args(args)
-            .env("DIBS_ORCH_HOME", self.root.join("home"))
-            .env("DIBS_ORCH_DIBS", self.root.join("dibs"))
+            .env("DIBSPATCHER_HOME", self.root.join("home"))
+            .env("DIBSPATCHER_DIBS", self.root.join("dibs"))
             .env("DIBS_MACHINES", self.root.join("machines.toml"))
-            .env("DIBS_ORCH_SPAWN", "setsid")
-            .env("DIBS_ORCH_RECHECK", "1")
+            .env("DIBSPATCHER_SPAWN", "setsid")
+            .env("DIBSPATCHER_RECHECK", "1")
             .env("FAKE", self.fake());
         command
     }
 
-    fn orchestrator(&self, args: &[&str]) -> Output {
+    fn dibspatcher(&self, args: &[&str]) -> Output {
         let out = self.command(args).output().unwrap();
         assert!(
             out.status.success(),
-            "dibs-orchestrator {args:?}: {}{}",
+            "dibspatcher {args:?}: {}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
@@ -291,7 +291,7 @@ fn a_worker_killed_mid_step_is_carried_on_without_running_the_job_twice() {
     let (id, _) = sandbox.submit("k", false);
     sandbox.reached();
     sandbox.kill_worker();
-    sandbox.orchestrator(&["resume"]);
+    sandbox.dibspatcher(&["resume"]);
     sandbox.open_gate();
     assert_eq!(
         sandbox.follow(&id),
@@ -344,7 +344,7 @@ fn a_restored_store_asks_how_its_open_attempts_went_rather_than_running_them_aga
     let (id, _) = sandbox.submit("k", false);
     sandbox.reached();
     let backup = sandbox.root.join("backup.db");
-    sandbox.orchestrator(&["backup", backup.to_str().unwrap()]);
+    sandbox.dibspatcher(&["backup", backup.to_str().unwrap()]);
     sandbox.open_gate();
     assert_eq!(
         sandbox.follow(&id),
@@ -359,7 +359,7 @@ fn a_restored_store_asks_how_its_open_attempts_went_rather_than_running_them_aga
         .unwrap();
     assert!(!refused.status.success(), "a missing backup is no store");
     assert!(!missing.exists(), "nor is it made one");
-    let out = sandbox.orchestrator(&["restore", backup.to_str().unwrap()]);
+    let out = sandbox.dibspatcher(&["restore", backup.to_str().unwrap()]);
     assert!(
         String::from_utf8_lossy(&out.stdout).contains(&format!("{id}: resumed")),
         "{}",
@@ -382,7 +382,7 @@ fn a_measurement_whose_runner_vanished_is_not_measured_again() {
     sandbox.reached();
     sandbox.kill_worker();
     sandbox.kill_job();
-    sandbox.orchestrator(&["resume"]);
+    sandbox.dibspatcher(&["resume"]);
     let (state, exit) = sandbox.follow(&id);
     assert_eq!(state, State::Unknown, "{}", sandbox.log(&id));
     assert_ne!(exit, 0);

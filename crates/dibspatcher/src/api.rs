@@ -11,7 +11,7 @@ use crate::{
 };
 use dibs_format::{
     Exit,
-    orchestrator::{
+    dibspatcher::{
         Ask, Call, NamedCall, Reply, STAGE_PREFIX, Seal, State, Submission, VERSION, Work,
     },
 };
@@ -32,7 +32,7 @@ pub fn serve(home: &Home, coworker: &str) -> i32 {
         Err(e) => {
             return refuse(
                 format!(
-                    "the request cannot be read ({e}); this orchestrator speaks version {VERSION}"
+                    "the request cannot be read ({e}); this dibspatcher speaks version {VERSION}"
                 ),
                 Exit::Refused.status(),
             );
@@ -41,7 +41,7 @@ pub fn serve(home: &Home, coworker: &str) -> i32 {
     if ask.v != VERSION {
         return refuse(
             format!(
-                "this orchestrator speaks version {VERSION} of the API, not {}: update dibs",
+                "this dibspatcher speaks version {VERSION} of the API, not {}: update dibs",
                 ask.v
             ),
             Exit::Refused.status(),
@@ -128,7 +128,7 @@ type Plan = (String, Vec<Planned>, Option<String>);
 
 fn failed(e: impl std::fmt::Display) -> (String, i32) {
     (
-        format!("the orchestrator's store failed: {e}"),
+        format!("the dibspatcher's store failed: {e}"),
         Exit::Failed.status(),
     )
 }
@@ -209,13 +209,13 @@ impl Api<'_> {
     fn plan_call(&self, call: &NamedCall, inventory: &Inventory) -> Result<Plan, (String, i32)> {
         if !inventory.has(&call.on) {
             return Err(refused(format!(
-                "the orchestrator knows no machine {}",
+                "the dibspatcher knows no machine {}",
                 call.on
             )));
         }
         if call.bench && call.device.is_none() {
             return Err(refused(
-                "a measurement through the orchestrator names its card with --device",
+                "a measurement through the dibspatcher names its card with --device",
             ));
         }
         let what = format!(
@@ -395,7 +395,7 @@ impl Api<'_> {
             }
             if !worker_let_go(self.home, id, deadline) {
                 say(format!(
-                    "dibs: submission {id} still runs after {}s, and goes on without this call.\n  dibs orch follow {id}  follows it again\n  dibs orch kill {id}  stops it\n",
+                    "dibs: submission {id} still runs after {}s, and goes on without this call.\n  dibs dispatch follow {id}  follows it again\n  dibs dispatch kill {id}  stops it\n",
                     within.as_secs()
                 ));
                 return Ok(Exit::CheckedIn.status());
@@ -411,7 +411,7 @@ impl Api<'_> {
         };
         if !detail.summary.state.ended() {
             say(format!(
-                "dibs: submission {id} has not ended, but its worker let go again; whoever runs the orchestrator resumes it\n"
+                "dibs: submission {id} has not ended, but its worker let go again; whoever runs the dibspatcher resumes it\n"
             ));
         }
         for step in &detail.steps {
@@ -482,7 +482,7 @@ impl Api<'_> {
     }
 }
 
-/// A sent repo's git directory, made safe to run git in under the orchestrator's account.
+/// A sent repo's git directory, made safe to run git in under the dibspatcher's account.
 pub fn own_git(git: &std::path::Path) -> std::io::Result<()> {
     Upload::own_git(git)
 }
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn a_sent_git_directory_keeps_how_to_read_it_and_nothing_that_runs() {
-        let dir = std::env::temp_dir().join(format!("dibs-orch-git-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("dibspatcher-git-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let git = |args: &[&str]| {

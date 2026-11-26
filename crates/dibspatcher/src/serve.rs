@@ -1,4 +1,4 @@
-//! The forced command every coworker's key runs: `dibs-orchestrator serve <coworker>`. Whatever
+//! The forced command every coworker's key runs: `dibspatcher serve <coworker>`. Whatever
 //! the client asked for is in `SSH_ORIGINAL_COMMAND`, and only two things are served: the API,
 //! and an rsync into the coworker's own staging directory.
 
@@ -8,13 +8,13 @@ use crate::{
 };
 use dibs_format::{
     Exit,
-    orchestrator::{API_COMMAND, STAGE_PREFIX},
+    dibspatcher::{API_COMMAND, STAGE_PREFIX},
 };
 use std::os::unix::{io::AsRawFd as _, process::CommandExt as _};
 
 pub fn serve(home: &Home, coworker: &str) -> i32 {
     if !component(coworker) {
-        eprintln!("dibs-orchestrator: {coworker:?} names no coworker");
+        eprintln!("dibspatcher: {coworker:?} names no coworker");
         return Exit::Refused.status();
     }
     let asked = std::env::var("SSH_ORIGINAL_COMMAND").unwrap_or_default();
@@ -26,7 +26,7 @@ pub fn serve(home: &Home, coworker: &str) -> i32 {
         ["rsync", "--server", rest @ ..] => receive(home, coworker, rest),
         _ => {
             eprintln!(
-                "dibs-orchestrator: this key serves `{API_COMMAND}` and uploads to {STAGE_PREFIX}, not {asked:?}"
+                "dibspatcher: this key serves `{API_COMMAND}` and uploads to {STAGE_PREFIX}, not {asked:?}"
             );
             Exit::Refused.status()
         }
@@ -39,13 +39,13 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
     let last = match Upload::check(args) {
         Ok(last) => last,
         Err(why) => {
-            eprintln!("dibs-orchestrator: refused upload: {why}");
+            eprintln!("dibspatcher: refused upload: {why}");
             return Exit::Refused.status();
         }
     };
     let staging = home.staging(coworker);
     if let Err(e) = std::fs::create_dir_all(staging.join(STAGE_PREFIX)) {
-        eprintln!("dibs-orchestrator: {}: {e}", staging.display());
+        eprintln!("dibspatcher: {}: {e}", staging.display());
         return Exit::NoRoom.status();
     }
     // rsync warns of a missing copy to send against, as on a repo's first upload.
@@ -62,7 +62,7 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
     for part in dest.split('/') {
         walked.push(part);
         if std::fs::symlink_metadata(&walked).is_ok_and(|m| m.file_type().is_symlink()) {
-            eprintln!("dibs-orchestrator: refused upload: {dest} is a link");
+            eprintln!("dibspatcher: refused upload: {dest} is a link");
             return Exit::Refused.status();
         }
     }
@@ -73,7 +73,7 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
     let held = match home.stage_lock(coworker, key) {
         Ok(held) => held,
         Err(e) => {
-            eprintln!("dibs-orchestrator: the stage's lock: {e}");
+            eprintln!("dibspatcher: the stage's lock: {e}");
             return Exit::Failed.status();
         }
     };
@@ -85,7 +85,7 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
         .args(args)
         .current_dir(&staging)
         .exec();
-    eprintln!("dibs-orchestrator: rsync could not start: {error}");
+    eprintln!("dibspatcher: rsync could not start: {error}");
     Exit::Failed.status()
 }
 
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn a_missing_last_copy_is_made_but_never_through_a_link() {
-        let root = std::env::temp_dir().join(format!("dibs-orch-last-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("dibspatcher-last-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("last")).unwrap();
         let parts = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();

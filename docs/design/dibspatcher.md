@@ -1,18 +1,18 @@
-# The orchestrator: work that outlives every caller
+# The dibspatcher: work that outlives every caller
 
-`dibs-orchestrator` is a service on a machine that stays up. Coworkers hand it work over ssh with
-`dibs orch`, and it makes the dibs calls itself, so a laptop that sleeps, leaves or loses its
+`dibspatcher` is a service on a machine that stays up. Coworkers hand it work over ssh with
+`dibs dispatch`, and it makes the dibs calls itself, so a laptop that sleeps, leaves or loses its
 network stops nothing. It holds no lock of its own: every lock is still a runner's, taken by an
-ordinary dibs call the orchestrator makes.
+ordinary dibs call the dibspatcher makes.
 
 ## Reaching it
 
-Each coworker's key on the orchestrator's account has a forced command,
-`dibs-orchestrator serve <coworker>`. The name comes from the key, never from the request. The
+Each coworker's key on the dibspatcher's account has a forced command,
+`dibspatcher serve <coworker>`. The name comes from the key, never from the request. The
 forced command reads `SSH_ORIGINAL_COMMAND` and allows two things:
 
-- `dibs-orchestrator api`: one JSON `Ask` on stdin, JSON `Reply` lines on stdout, the last an
-  `End` with the exit. The API is versioned (`dibs_format::orchestrator::VERSION`); a version it
+- `dibspatcher api`: one JSON `Ask` on stdin, JSON `Reply` lines on stdout, the last an
+  `End` with the exit. The API is versioned (`dibs_format::dibspatcher::VERSION`); a version it
   does not speak is refused, not guessed at.
 - `rsync --server` writing into `staging/<coworker>/stage/<key>/`, with a short list of options
   and no symlinked component on the way. This is how `@local` trees arrive. Before git runs in
@@ -34,7 +34,7 @@ drives, and it claims the submission in the store, which bumps its generation. E
 launches is checked against the epoch and that generation first, so a worker that lost its claim,
 or one from before a restore, launches nothing more.
 
-`dibs-orchestrator resume` starts a worker for each unfinished submission that nothing holds. It
+`dibspatcher resume` starts a worker for each unfinished submission that nothing holds. It
 is what runs after the service account's manager starts, after a crash, and after a restore. A
 follow, a kill or a submission sent again does the same for its own submission.
 
@@ -70,7 +70,7 @@ A split recipe builds on the compile pool and measures on the GPU pool, as four 
    writing cargo's JSON report of the build to `$DIBS_CARGO_REPORT`. The runner takes the one
    executable that report names, copies it into `$DIBS_SCRATCH/bundles/<name>` with a manifest
    (digest, toolchain, lockfile, flags, tree, job), and builds nothing after the job.
-2. **relay**: the bundle comes back to the orchestrator, is checked against its manifest, kept by
+2. **relay**: the bundle comes back to the dibspatcher, is checked against its manifest, kept by
    digest and attested against its inputs, then sent to the GPU machine. A build that compiled
    nothing is accepted only when an earlier build of the same inputs attests what it left.
 3. **stage**: a shared job on the card checks the bundle's digest, that its libraries resolve, and
@@ -78,7 +78,7 @@ A split recipe builds on the compile pool and measures on the GPU pool, as four 
 4. **measure**: `--bench --device <card>`, the runner refusing the bundle (exit 78) unless its
    digest still matches, and exporting `DIBS_BUNDLE`.
 
-Split recipes live in the orchestrator's config, `splits/<repo>.toml`:
+Split recipes live in the dibspatcher's config, `splits/<repo>.toml`:
 
 ```toml
 [split.mnist-epoch]
@@ -100,8 +100,8 @@ command = "MNIST_ARTIFACT_DIR=$TMPDIR/mnist-$DIBS_SUBMISSION $DIBS_BUNDLE/mnist"
 
 ## Backup and restore
 
-`dibs-orchestrator backup <file>` copies the store consistently while it is in use.
-`dibs-orchestrator restore <file>` is refused while any worker or call still uses the store,
+`dibspatcher backup <file>` copies the store consistently while it is in use.
+`dibspatcher restore <file>` is refused while any worker or call still uses the store,
 since each keeps writing to the store it opened: they hold `store.gate` shared, and the restore
 holds it alone. It reads the backup without changing it, copies it beside the store
 under a new epoch, then sets the current store aside, puts the copy in its place and resumes: each attempt the backup left open is asked about under its own id,

@@ -1,5 +1,5 @@
 //! Starting a submission's worker so it outlives the call that started it: a systemd user unit
-//! where the account has a user manager, a session of its own otherwise. `DIBS_ORCH_SPAWN`
+//! where the account has a user manager, a session of its own otherwise. `DIBSPATCHER_SPAWN`
 //! picks one (`systemd` or `setsid`).
 
 use crate::home::Home;
@@ -26,14 +26,14 @@ pub const DRIVEN: &str = "driven";
 const PASSED: [&str; 10] = [
     "HOME",
     "PATH",
-    "DIBS_ORCH_HOME",
-    "DIBS_ORCH_DIBS",
+    "DIBSPATCHER_HOME",
+    "DIBSPATCHER_DIBS",
     "DIBS_MACHINES",
     "XDG_CONFIG_HOME",
     "XDG_STATE_HOME",
     "DIBS_LOCAL",
     "DIBS_ROOT",
-    "DIBS_ORCH_RECHECK",
+    "DIBSPATCHER_RECHECK",
 ];
 
 pub fn started_fifo(home: &Home, id: &str) -> PathBuf {
@@ -140,7 +140,7 @@ fn launch(id: &str, dir: &Path, told: mpsc::Sender<Heard>) -> Result<(), String>
         .append(true)
         .open(dir.join("worker.log"))
         .map_err(|e| e.to_string())?;
-    let systemd = match std::env::var("DIBS_ORCH_SPAWN").ok().as_deref() {
+    let systemd = match std::env::var("DIBSPATCHER_SPAWN").ok().as_deref() {
         Some("setsid") => false,
         Some("systemd") => true,
         _ => std::env::var_os("XDG_RUNTIME_DIR").is_some() && on_path("systemd-run"),
@@ -149,7 +149,7 @@ fn launch(id: &str, dir: &Path, told: mpsc::Sender<Heard>) -> Result<(), String>
         true => {
             let mut run = Command::new("systemd-run");
             run.args(["--user", "--quiet", "--collect"])
-                .arg(format!("--unit=dibs-orch-{id}-{}", std::process::id()))
+                .arg(format!("--unit=dibspatcher-{id}-{}", std::process::id()))
                 .arg("--property=KillMode=control-group");
             for name in PASSED {
                 if std::env::var_os(name).is_some() {

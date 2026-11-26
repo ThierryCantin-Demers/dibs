@@ -1,9 +1,9 @@
-//! The orchestrator's state, in SQLite: pools, submissions, their planned steps, every attempt
+//! The dibspatcher's state, in SQLite: pools, submissions, their planned steps, every attempt
 //! launched, and the bundles it has attested.
 
 use dibs_format::{
     Moment,
-    orchestrator::{Detail, State, StepState, Submission, Summary},
+    dibspatcher::{Detail, State, StepState, Submission, Summary},
     wire::Trailer,
 };
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
@@ -132,7 +132,7 @@ impl Store {
     }
 
     /// The epoch of the store at `path`, read without creating or changing anything: an error
-    /// when it is no store of this orchestrator's.
+    /// when it is no store of this dibspatcher's.
     pub fn inspect(path: &Path) -> rusqlite::Result<i64> {
         Store::read_only(path)?.epoch()
     }
@@ -592,11 +592,11 @@ fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dibs_format::orchestrator::{NamedCall, Work};
+    use dibs_format::dibspatcher::{NamedCall, Work};
 
     fn store(name: &str) -> (Store, std::path::PathBuf) {
         let dir =
-            std::env::temp_dir().join(format!("dibs-orch-store-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("dibspatcher-store-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         (Store::open(&dir.join("store.db")).unwrap(), dir)

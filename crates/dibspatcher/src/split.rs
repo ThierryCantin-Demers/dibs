@@ -2,7 +2,7 @@
 //! the values it takes, and the steps a submission of it is planned as.
 
 use crate::{inventory::Inventory, settings::Settings, store::Planned};
-use dibs_format::{orchestrator::SplitCall, wire::BundleMake};
+use dibs_format::{dibspatcher::SplitCall, wire::BundleMake};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -147,7 +147,7 @@ pub fn resolve(
 ) -> Result<Resolved, Refusal> {
     let text = text.ok_or_else(|| {
         Refusal(format!(
-            "the orchestrator has no split recipes for {}",
+            "the dibspatcher has no split recipes for {}",
             call.repo
         ))
     })?;

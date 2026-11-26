@@ -1,4 +1,4 @@
-//! Where the orchestrator keeps everything, under the account it runs as. `DIBS_ORCH_HOME` puts
+//! Where the dibspatcher keeps everything, under the account it runs as. `DIBSPATCHER_HOME` puts
 //! it all under one directory instead, for a test.
 
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ pub struct Home {
 
 impl Home {
     pub fn from_env() -> Home {
-        if let Some(root) = std::env::var_os("DIBS_ORCH_HOME").filter(|r| !r.is_empty()) {
+        if let Some(root) = std::env::var_os("DIBSPATCHER_HOME").filter(|r| !r.is_empty()) {
             let root = PathBuf::from(root);
             return Home {
                 state: root.join("state"),
@@ -26,8 +26,8 @@ impl Home {
                 .unwrap_or_else(|| home.join(under))
         };
         Home {
-            state: xdg("XDG_STATE_HOME", ".local/state").join("dibs-orchestrator"),
-            config: xdg("XDG_CONFIG_HOME", ".config").join("dibs-orchestrator"),
+            state: xdg("XDG_STATE_HOME", ".local/state").join("dibspatcher"),
+            config: xdg("XDG_CONFIG_HOME", ".config").join("dibspatcher"),
         }
     }
 
@@ -90,7 +90,7 @@ impl Home {
     }
 
     pub fn settings(&self) -> PathBuf {
-        self.config.join("orchestrator.toml")
+        self.config.join("dibspatcher.toml")
     }
 }
 

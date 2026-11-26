@@ -1,6 +1,6 @@
-//! What a `dibs` client and the orchestrator say to each other over ssh: one `Ask` line, then
+//! What a `dibs` client and the dibspatcher say to each other over ssh: one `Ask` line, then
 //! `Reply` lines until `End`. Unlike the runner's frames this is versioned, since a coworker's
-//! dibs and the orchestrator's are built from different sources.
+//! dibs and the dibspatcher's are built from different sources.
 
 use crate::wire::{Admitted, Trailer};
 use serde::{Deserialize, Serialize};
@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 /// The version of this conversation a client speaks.
 pub const VERSION: u32 = 1;
 
-/// The command a client asks the orchestrator's account to run; its forced command reads it from
+/// The command a client asks the dibspatcher's account to run; its forced command reads it from
 /// `SSH_ORIGINAL_COMMAND`.
-pub const API_COMMAND: &str = "dibs-orchestrator api";
+pub const API_COMMAND: &str = "dibspatcher api";
 
 /// Where an upload lands, under the coworker's own staging directory.
 pub const STAGE_PREFIX: &str = "stage/";
@@ -51,7 +51,7 @@ pub enum Call {
     Inventory,
 }
 
-/// Work handed to the orchestrator, acknowledged once its plan and inputs are stored.
+/// Work handed to the dibspatcher, acknowledged once its plan and inputs are stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Submission {
     /// The client's, so the same submission sent twice is stored once.
@@ -191,7 +191,7 @@ pub struct Summary {
     pub id: String,
     pub coworker: String,
     pub agent: String,
-    /// The work in one line, as `dibs orch list` shows it.
+    /// The work in one line, as `dibs dispatch list` shows it.
     pub what: String,
     pub state: State,
     /// Seconds since the epoch.
@@ -218,7 +218,7 @@ pub struct StepState {
 }
 
 /// The digest an upload is sealed by: each file's path and SHA-256, in path order, a symlink by
-/// the path it holds. The client computes it over what it sends, the orchestrator over what
+/// the path it holds. The client computes it over what it sends, the dibspatcher over what
 /// arrived, and a submission whose two differ is never accepted.
 pub struct Seal;
 

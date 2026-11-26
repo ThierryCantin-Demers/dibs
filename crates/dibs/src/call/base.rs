@@ -598,7 +598,7 @@ pub const CHECK_IN: &str = "DIBS_CHECK_IN";
 /// included.
 pub const LOW_PRIORITY: &str = "DIBS_LOW_PRIORITY";
 
-/// The caller's id for a call's job, which the machine admits once: an orchestrator's attempt.
+/// The caller's id for a call's job, which the machine admits once: a dibspatcher's attempt.
 pub const ATTEMPT: &str = "DIBS_ATTEMPT";
 
 /// `1`: the call only asks how its attempt went, and the machine never starts it.

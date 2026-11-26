@@ -1,4 +1,4 @@
-//! `orchestrator.toml`: which pools build and which measure, and the build profile every split
+//! `dibspatcher.toml`: which pools build and which measure, and the build profile every split
 //! is compiled with.
 
 use serde::Deserialize;

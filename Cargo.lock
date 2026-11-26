@@ -551,7 +551,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "dibs-orchestrator"
+name = "dibs-runner"
+version = "0.1.0"
+dependencies = [
+ "dibs-format",
+ "libc",
+ "serde_json",
+]
+
+[[package]]
+name = "dibspatcher"
 version = "0.1.0"
 dependencies = [
  "dibs-format",
@@ -560,15 +569,6 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
-]
-
-[[package]]
-name = "dibs-runner"
-version = "0.1.0"
-dependencies = [
- "dibs-format",
- "libc",
- "serde_json",
 ]
 
 [[package]]

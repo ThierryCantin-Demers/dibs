@@ -1,6 +1,6 @@
 # Build images: a binary that runs where it was not built
 
-Status: built: shared jobs, recipes, `--image` and the orchestrator.
+Status: built: shared jobs, recipes, `--image` and the dibspatcher.
 
 ## The problem
 
@@ -154,7 +154,7 @@ refused too, since its cargo would build in whatever target the command names, n
 objects included. A recipe's record carries the image, and its fingerprint differs
 from the same recipe built natively.
 
-The orchestrator's profile names one image for every split build, beside its `rustflags`, and
+The dibspatcher's profile names one image for every split build, beside its `rustflags`, and
 the bundle's attested inputs include it; a native build attests what it did before. The `rustc -vV` recorded with a bundle stays right, since
 the toolchain is the host's.
 

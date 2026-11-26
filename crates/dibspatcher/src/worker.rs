@@ -1,5 +1,5 @@
 //! A submission's worker: it holds the submission, makes each planned step's dibs calls with the
-//! orchestrator's own dibs, and records how each went. It outlives the API call that started it,
+//! dibspatcher's own dibs, and records how each went. It outlives the API call that started it,
 //! and a worker started after it (on resume, or after a restore) carries on from the last step
 //! the store records, asking the machine how an attempt it never heard back from went.
 
@@ -11,7 +11,7 @@ use crate::{
 };
 use dibs_format::{
     By, Exit, Sha256,
-    orchestrator::{NamedCall, Seal, State, Submission, Work},
+    dibspatcher::{NamedCall, Seal, State, Submission, Work},
     wire::{Admitted, Built, Bundle, BundleCheck, BundleMake, BundleManifest, Record, Trailer},
 };
 use std::{
@@ -31,9 +31,9 @@ static STOP: AtomicBool = AtomicBool::new(false);
 /// How often a worker waiting on its call looks whether it was told to stop.
 const TICK: Duration = Duration::from_millis(200);
 /// How long a worker waits before asking again about an attempt whose job still runs, unless
-/// `DIBS_ORCH_RECHECK` gives seconds.
+/// `DIBSPATCHER_RECHECK` gives seconds.
 fn still_running() -> Duration {
-    let seconds = std::env::var("DIBS_ORCH_RECHECK")
+    let seconds = std::env::var("DIBSPATCHER_RECHECK")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(30);
@@ -62,13 +62,13 @@ pub fn step_log(home: &Home, id: &str, n: i64, name: &str) -> PathBuf {
         .join(format!("{n}-{name}.log"))
 }
 
-/// The orchestrator's own dibs: `DIBS_ORCH_DIBS`, else the one beside this binary.
+/// The dibspatcher's own dibs: `DIBSPATCHER_DIBS`, else the one beside this binary.
 pub fn dibs() -> Command {
     let beside = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|d| d.join("dibs")))
         .filter(|p| p.is_file());
-    let program = std::env::var_os("DIBS_ORCH_DIBS")
+    let program = std::env::var_os("DIBSPATCHER_DIBS")
         .filter(|p| !p.is_empty())
         .map(PathBuf::from)
         .or(beside)
@@ -84,25 +84,25 @@ pub fn run(home: &Home, id: &str) -> i32 {
         Ok((Ok(()), f)) => f,
         Ok((Err(fs::TryLockError::WouldBlock), _)) => {
             spawn::tell(&fifo, DRIVEN);
-            eprintln!("dibs-orchestrator: another worker drives {id}");
+            eprintln!("dibspatcher: another worker drives {id}");
             return 0;
         }
         Ok((Err(fs::TryLockError::Error(e)), _)) | Err(e) => {
-            eprintln!("dibs-orchestrator: {id}'s lock: {e}");
+            eprintln!("dibspatcher: {id}'s lock: {e}");
             return Exit::Failed.status();
         }
     };
     let store = match Store::open(&home.store()) {
         Ok(store) => store,
         Err(e) => {
-            eprintln!("dibs-orchestrator: the store: {e}");
+            eprintln!("dibspatcher: the store: {e}");
             return Exit::Failed.status();
         }
     };
     let (coworker, submission) = match store.submission(id) {
         Ok(Some(found)) => found,
         other => {
-            eprintln!("dibs-orchestrator: no submission {id} to drive ({other:?})");
+            eprintln!("dibspatcher: no submission {id} to drive ({other:?})");
             return Exit::Refused.status();
         }
     };
@@ -110,7 +110,7 @@ pub fn run(home: &Home, id: &str) -> i32 {
     let fence = match store.claim(id, std::process::id()) {
         Ok(fence) => fence,
         Err(e) => {
-            eprintln!("dibs-orchestrator: {id} could not be claimed: {e}");
+            eprintln!("dibspatcher: {id} could not be claimed: {e}");
             return Exit::Failed.status();
         }
     };
@@ -240,7 +240,7 @@ impl Worker<'_> {
                 Ok(ended) => ended,
                 Err(Leave) => {
                     eprintln!(
-                        "dibs-orchestrator: this worker lets go of {}, for the next to carry on",
+                        "dibspatcher: this worker lets go of {}, for the next to carry on",
                         self.id
                     );
                     return 0;
@@ -263,7 +263,7 @@ impl Worker<'_> {
             if let Err(e) = settled {
                 // Left as it was, so the next worker asks about the attempt again.
                 eprintln!(
-                    "dibs-orchestrator: {}'s step {} could not be recorded: {e}",
+                    "dibspatcher: {}'s step {} could not be recorded: {e}",
                     self.id, step.name
                 );
                 return Exit::Failed.status();
@@ -305,14 +305,14 @@ impl Worker<'_> {
         self.finish(
             State::Cancelled,
             Exit::Cancelled.status(),
-            Some("killed with dibs orch kill"),
+            Some("killed with dibs dispatch kill"),
         )
     }
 
     fn finish(&self, state: State, exit: i32, note: Option<&str>) -> i32 {
         let exit = outcome(state, exit);
         if let Err(e) = self.store.finish(self.id, state, Some(exit), note) {
-            eprintln!("dibs-orchestrator: {} could not be recorded: {e}", self.id);
+            eprintln!("dibspatcher: {} could not be recorded: {e}", self.id);
         }
         exit
     }
@@ -445,7 +445,7 @@ impl Worker<'_> {
         let _ = fs::write(
             &sent_from,
             format!(
-                "{}\torchestrator/{}/{}\n",
+                "{}\tdibspatcher/{}/{}\n",
                 split.repo, self.coworker, split.repo
             ),
         );
@@ -477,7 +477,7 @@ impl Worker<'_> {
             "--label".into(),
             format!("{}-build", split.label),
             "--reason".into(),
-            "an orchestrator split's build".into(),
+            "a dibspatcher split's build".into(),
             "--preemptible".into(),
             "--".into(),
             split.build_command(),
@@ -758,7 +758,7 @@ impl Worker<'_> {
                 Some(open) if open.open => open,
                 // Killed: an attempt still open is followed until its job is seen to end, and
                 // no new one is made.
-                _ if killed => return Ok(Ended::killed(None, "killed with dibs orch kill")),
+                _ if killed => return Ok(Ended::killed(None, "killed with dibs dispatch kill")),
                 Some(ended) if ended.k >= ATTEMPTS => {
                     return Ok(Ended::failed(
                         Exit::Failed.status(),
@@ -803,7 +803,7 @@ impl Worker<'_> {
                 "--on".into(),
                 machine.into(),
                 "--label".into(),
-                "orchestrator-lookup".into(),
+                "dibspatcher-lookup".into(),
                 "true".into(),
             ];
             let code = match killed {
@@ -861,7 +861,7 @@ impl Worker<'_> {
                     _ => {
                         return close(Ended::killed(
                             trailer_in(heard.as_ref()),
-                            "killed with dibs orch kill",
+                            "killed with dibs dispatch kill",
                         ));
                     }
                 }
@@ -992,7 +992,7 @@ impl Worker<'_> {
             .env(
                 "DIBS_AGENT",
                 format!(
-                    "orchestrator {} for {}/{}",
+                    "dibspatcher {} for {}/{}",
                     self.id, self.coworker, self.submission.agent
                 ),
             )

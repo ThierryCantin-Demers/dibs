@@ -1,4 +1,4 @@
-//! The machines the orchestrator's own dibs reaches: its `machines.toml` and `machines.d`, read
+//! The machines the dibspatcher's own dibs reaches: its `machines.toml` and `machines.d`, read
 //! for the cards each has.
 
 use std::{collections::BTreeMap, path::PathBuf};
@@ -12,7 +12,7 @@ pub struct Inventory {
 }
 
 impl Inventory {
-    /// Where the orchestrator's dibs reads it: `DIBS_MACHINES`, else its config directory.
+    /// Where the dibspatcher's dibs reads it: `DIBS_MACHINES`, else its config directory.
     pub fn path() -> PathBuf {
         if let Some(path) = std::env::var_os("DIBS_MACHINES").filter(|p| !p.is_empty()) {
             return PathBuf::from(path);

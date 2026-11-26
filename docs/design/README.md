@@ -10,7 +10,7 @@ What dibs is built on, and why. [The guide](../guide.md) says how to use it.
   share on a machine, versions and provisioning, the locks and the sweep.
 - [`decisions.md`](decisions.md): what is settled, what was deferred, and what is still open, each
   with the measurement behind it. A superseded entry says by what.
-- [`orchestrator.md`](orchestrator.md): the service that makes dibs calls for coworkers and
+- [`dibspatcher.md`](dibspatcher.md): the service that makes dibs calls for coworkers and
   outlives them: its store, its workers, attempts a runner admits once, and split recipes.
 - [`machines.md`](machines.md): what each machine should have, the check against what it has,
   and the window that shows the difference.

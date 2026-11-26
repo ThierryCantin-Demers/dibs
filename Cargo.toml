@@ -7,7 +7,7 @@ members = [
     "crates/dibstop",
     "crates/dibstop-view",
     "crates/dibs-machines",
-    "crates/dibs-orchestrator",
+    "crates/dibspatcher",
 ]
 # The window builds a GUI toolkit, which most installs never ask for and every test run would.
 default-members = [
@@ -16,7 +16,7 @@ default-members = [
     "crates/dibs-runner",
     "crates/dibstop",
     "crates/dibstop-view",
-    "crates/dibs-orchestrator",
+    "crates/dibspatcher",
 ]
 
 [workspace.package]

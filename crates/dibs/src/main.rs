@@ -6,12 +6,12 @@ use dibs::{
     caller::Caller,
     cli::{Call, Help, Hook, Invocation, Mode, RecipeCall, RecipeVerb},
     completion::Shell,
+    dispatch,
     execution::{self, Refusal, RunError, Unfinished},
     fleet,
     hook::{SshHook, UrgentHook},
     inventory::Inventory,
     machine::{Client, Runner},
-    orchestrator,
     paths::FileError,
     recipe::{self, Checkouts, Manifest},
     records::{Complaints, FrictionLog, RecordsError, RunLog, measurement_of, with_values},
@@ -58,10 +58,8 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
             update::Upstream::serve();
             return Ok(ExitCode::SUCCESS);
         }
-        [word, rest @ ..] if word == orchestrator::WORD => {
-            return Ok(ExitCode::from(
-                orchestrator::serve(rest).rem_euclid(256) as u8
-            ));
+        [word, rest @ ..] if word == dispatch::WORD => {
+            return Ok(ExitCode::from(dispatch::serve(rest).rem_euclid(256) as u8));
         }
         [word] if word == Client::SAYS_HASH => {
             println!("{}", Client::HASH);
