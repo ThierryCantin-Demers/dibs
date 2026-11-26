@@ -369,6 +369,7 @@ impl LockDir {
             };
             w.mode == dibs_format::Mode::Bench
                 && w.pid != pid
+                && !self.idle_only(w.pid)
                 && (theirs, w.pid) < (order, pid)
                 && RecordFile(&self.file("waiting", w.pid)).alive()
                 && match (self.cards_of(w.pid), pcis) {

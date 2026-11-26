@@ -155,7 +155,7 @@ impl Queue<'_> {
             .dir
             .records(Kind::Waiting)
             .into_iter()
-            .filter(|w| w.mode == Mode::Bench && Host::exists(w.pid))
+            .filter(|w| w.mode == Mode::Bench && !self.dir.idle_only(w.pid) && Host::exists(w.pid))
             .map(|w| w.start)
             .collect();
         if self.call.mode() == Mode::Rsh {

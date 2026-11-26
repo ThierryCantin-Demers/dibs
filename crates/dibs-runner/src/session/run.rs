@@ -278,8 +278,11 @@ impl<'a> Run<'a> {
                         return Exit::Busy.status();
                     }
                 }
-                // Now an ordinary benchmark, which a parkable `--low-priority` job makes way for.
+                // Now an ordinary benchmark, which a parkable `--low-priority` job makes way for,
+                // queued from now so the quick jobs it lets around it count its patience afresh.
                 if self.at.call.mode() == Mode::Bench {
+                    let record = self.at.call.lock_record(Moment::epoch_now(), &arrived.job);
+                    self.at.dir.write(Kind::Waiting, &record);
                     self.at.dir.unmark_idle(self.at.call.pid);
                 }
             }
