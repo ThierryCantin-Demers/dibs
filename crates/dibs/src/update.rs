@@ -71,7 +71,7 @@ pub struct Update {
     /// Where the running build is installed, so install.sh replaces it rather than one
     /// elsewhere on PATH: a trial install updates the trial.
     pub prefix: Option<PathBuf>,
-    /// Whether to refresh the agent plugin where Claude Code has it installed.
+    /// Whether to refresh the agent plugin in each harness that has it installed.
     pub plugin: bool,
 }
 
@@ -194,35 +194,90 @@ impl Update {
     }
 }
 
-/// The plugin's rules are a copy Claude Code keeps, so they follow an update only when it is told
-/// to fetch them. A computer without Claude Code, or without the plugin, has nothing to refresh.
+/// The plugin's rules are a copy each agent harness keeps, so they follow an update only when it
+/// is told to fetch them. A harness that is absent, or lacks the plugin, has nothing to refresh.
 fn refresh_plugin(out: &mut impl Write) {
+    for harness in Harness::ALL {
+        harness.refresh(out);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Harness {
+    Claude,
+    Codex,
+}
+
+impl Harness {
+    const ALL: [Harness; 2] = [Harness::Claude, Harness::Codex];
     const PLUGIN: &str = "dibs@dibs";
-    let claude = |args: &[&str]| {
-        Command::new("claude")
+
+    fn refresh(self, out: &mut impl Write) {
+        let installed = self.run(&["plugin", "list"]).is_some_and(|listing| {
+            listing
+                .lines()
+                .any(|line| self.lists_installed(line.trim_start()))
+        });
+        if !installed {
+            return;
+        }
+        // Codex copies the plugin into its cache only when it is added, so an upgraded
+        // marketplace alone leaves sessions reading the old rules.
+        let refreshed = match self {
+            Harness::Claude => {
+                self.run(&["plugin", "marketplace", "update", "dibs"])
+                    .is_some()
+                    && self.run(&["plugin", "update", Self::PLUGIN]).is_some()
+            }
+            Harness::Codex => {
+                self.run(&["plugin", "marketplace", "upgrade", "dibs"])
+                    .is_some()
+                    && self.run(&["plugin", "add", Self::PLUGIN]).is_some()
+            }
+        };
+        let (name, retry) = match self {
+            Harness::Claude => ("Claude Code", "claude plugin update dibs@dibs"),
+            Harness::Codex => (
+                "Codex",
+                "codex plugin marketplace upgrade dibs && codex plugin add dibs@dibs",
+            ),
+        };
+        let plugin = Self::PLUGIN;
+        let _ = match refreshed {
+            true => writeln!(
+                out,
+                "{name} plugin {plugin} refreshed; sessions started from now on read it"
+            ),
+            false => writeln!(
+                out,
+                "{name} plugin {plugin} could not be refreshed:  {retry}"
+            ),
+        };
+    }
+
+    /// Codex lists every plugin its marketplaces offer, installed or not.
+    fn lists_installed(self, line: &str) -> bool {
+        match self {
+            Harness::Claude => line.contains(Self::PLUGIN),
+            Harness::Codex => line
+                .strip_prefix(Self::PLUGIN)
+                .is_some_and(|rest| rest.trim_start().starts_with("installed")),
+        }
+    }
+
+    fn run(self, args: &[&str]) -> Option<String> {
+        let program = match self {
+            Harness::Claude => "claude",
+            Harness::Codex => "codex",
+        };
+        Command::new(program)
             .args(args)
             .stdin(std::process::Stdio::null())
             .output()
             .ok()
             .filter(|o| o.status.success())
-    };
-    let installed = claude(&["plugin", "list"])
-        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).contains(PLUGIN));
-    if !installed {
-        return;
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
     }
-    let refreshed = claude(&["plugin", "marketplace", "update", "dibs"]).is_some()
-        && claude(&["plugin", "update", PLUGIN]).is_some();
-    let _ = match refreshed {
-        true => writeln!(
-            out,
-            "plugin {PLUGIN} refreshed; sessions started from now on read it"
-        ),
-        false => writeln!(
-            out,
-            "plugin {PLUGIN} could not be refreshed:  claude plugin update {PLUGIN}"
-        ),
-    };
 }
 
 /// One clone's pull, as the update reports it.
@@ -617,4 +672,23 @@ fn newer(dir: &Path, head: &str, at: &str) -> bool {
         .status()
         .is_ok_and(|s| s.success());
     !contained
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Harness;
+
+    #[test]
+    fn a_codex_listing_counts_the_plugin_only_once_installed() {
+        let installed = |line: &str| Harness::Codex.lists_installed(line);
+        assert!(installed(
+            "dibs@dibs  installed, enabled  0.1.0    /cache/dibs/plugin"
+        ));
+        assert!(!installed(
+            "dibs@dibs  not installed             /cache/dibs/plugin"
+        ));
+        assert!(!installed(
+            "dibs@dibs-fork  installed, enabled  0.1.0  /cache/fork"
+        ));
+    }
 }

@@ -96,7 +96,7 @@ reminder at the start of every session that shared machines go through dibs.
     codex plugin marketplace add ThierryCantin-Demers/dibs
     codex plugin add dibs@dibs
 
-`dibs --update` refreshes the Claude Code plugin along with dibs.
+`dibs --update` refreshes the plugin in Claude Code and Codex along with dibs.
 
 In Claude Code the plugin also carries two hooks, off until you name them in `DIBS_AGENT_HOOKS`,
 in your shell or in the `env` of `~/.claude/settings.json`:
