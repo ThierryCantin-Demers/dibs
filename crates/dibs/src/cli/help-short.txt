@@ -22,7 +22,8 @@ Machines
   dibs status, dibs --watch            who holds each machine, and the queue
   dibs --machines, dibs machines       the inventory, and each machine's state
   dibs --check [host]                  install the runner, say what is there
-  dibs --pick, dibs --which            where a call would go
+  dibs --pick                          the machine a shared call would get
+  dibs --which                         the machine a call already names
   dibs --forget <machine>              drop a machine from your inventory
   dibs --measure <machine> on|off      whether a benchmark may run there
   dibs --close, dibs --open            close a machine you own, or open it
@@ -38,8 +39,7 @@ Setup
   dibs completions <fish|zsh>          shell completions
   dibs hook ssh, dibs hook urgent      Claude Code hooks
 Flags  --on <machine>  --device <card>  --label <name>  --wait <s>  --max <s>
-       --low-priority  --urgent '<why>'  --check-in <time>  --dry-run
-
+       --low-priority  --urgent '<why>'  --check-in <time>
 dibs <command> --help   that command's part, for one written without -- (run)
 dibs --help --all       the whole help: every command and flag
 
