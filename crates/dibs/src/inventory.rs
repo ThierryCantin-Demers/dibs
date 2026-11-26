@@ -5,7 +5,7 @@
 //! Read through serde and edited through `toml_edit`, so writing one machine's entry leaves the
 //! rest of the file, comments included, as its owner wrote it.
 
-use crate::paths::Paths;
+use crate::{paths::Paths, team::Team};
 use dibs_format::{Alias, MachineName, Moment};
 use dibs_runner::shared::SharedFile;
 use serde::Deserialize;
@@ -63,6 +63,10 @@ pub struct Machine {
     pub roles: Vec<Role>,
     #[serde(default, rename = "device")]
     pub devices: Vec<Device>,
+    /// From the team's inventory, which says what the machine is; this computer's entry for it
+    /// says only how to reach it.
+    #[serde(skip)]
+    pub team: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -185,10 +189,12 @@ struct File {
 impl Inventory {
     /// This computer's, when there is a file; one that does not read is an error.
     pub fn here() -> Result<Option<Inventory>, InventoryError> {
-        match Paths::from_env().inventory() {
-            Some(path) => Inventory::load(&path),
-            None => Ok(None),
-        }
+        let paths = Paths::from_env();
+        let mine = match paths.inventory() {
+            Some(path) => Inventory::load(&path)?,
+            None => None,
+        };
+        Ok(Inventory::with_team(mine, Team::at(&paths).load()))
     }
 
     /// The machines this computer's inventory names, which are reached only through dibs.
@@ -226,6 +232,40 @@ impl Inventory {
             default: file.default,
             machines,
             ended: Vec::new(),
+        })
+    }
+
+    /// The team's machines with this computer's own. The team's entry says what a machine is;
+    /// this computer's entry for the same machine says only how to reach it. The team's
+    /// `ssh_config` names a file on the dibspatcher's host, so it is never used here.
+    pub fn with_team(mine: Option<Inventory>, team: Option<Inventory>) -> Option<Inventory> {
+        let Some(team) = team else {
+            return mine;
+        };
+        let mut mine = mine.unwrap_or_default();
+        let mut machines = Vec::new();
+        for mut machine in team.machines {
+            machine.team = true;
+            machine.ssh_config = None;
+            if let Some(at) = mine.machines.iter().position(|m| m.name == machine.name) {
+                let reach = mine.machines.remove(at);
+                machine.ssh = reach.ssh.or(machine.ssh);
+                machine.ssh_config = reach.ssh_config;
+                machine.port = reach.port.or(machine.port);
+                machine.hostname = reach.hostname.or(machine.hostname);
+                machine.source = reach.source;
+            }
+            machines.push(machine);
+        }
+        machines.append(&mut mine.machines);
+        let mut ended = team.ended;
+        ended.retain(|m| !machines.iter().any(|n| n.name == m.name));
+        ended.append(&mut mine.ended);
+        Some(Inventory {
+            root: mine.root,
+            default: mine.default,
+            machines,
+            ended,
         })
     }
 
@@ -690,6 +730,53 @@ hostname = "new"
                 role(Some("cpu,gpu:card"))
             ],
             [Role::Compile, Role::Compile, Role::Gpu, Role::Gpu]
+        );
+    }
+
+    #[test]
+    fn the_team_says_what_a_machine_is_and_this_computer_how_to_reach_it() {
+        let team = Inventory::parse(
+            "[machine.shared]\nssh = \"dibs@shared\"\nssh_config = \"~/on-the-dibspatcher\"\nroles = [\"bench\"]\nmeasure = true\n\n\
+             [machine.theirs]\nssh = \"dibs@theirs\"\nssh_config = \"~/on-the-dibspatcher\"\n",
+        )
+        .unwrap();
+        let mine = Inventory::parse(
+            "root = \"~/code\"\n[machine.shared]\nssh = \"me@shared.vpn\"\nssh_config = \"~/mine\"\nmeasure = false\nroles = [\"compile\"]\n\n\
+             [machine.desk]\nssh = \"desk\"\n",
+        )
+        .unwrap();
+        let both = Inventory::with_team(Some(mine), Some(team)).unwrap();
+        assert_eq!(names(&both), ["shared", "theirs", "desk"]);
+        let shared = both.machine("shared").unwrap();
+        assert_eq!(
+            (
+                shared.ssh.as_deref(),
+                shared.ssh_config.as_deref(),
+                shared.roles.as_slice(),
+                shared.measure,
+                shared.team
+            ),
+            (
+                Some("me@shared.vpn"),
+                Some("~/mine"),
+                &[Role::Bench][..],
+                true,
+                true
+            ),
+            "reached as this computer says, and what it is as the team says"
+        );
+        let theirs = both.machine("theirs").unwrap();
+        assert_eq!(
+            (theirs.ssh.as_deref(), theirs.ssh_config.as_deref()),
+            (Some("dibs@theirs"), None),
+            "the dibspatcher's own ssh config is no file here"
+        );
+        assert!(!both.machine("desk").unwrap().team);
+        assert_eq!(both.root.as_deref(), Some("~/code"));
+        assert_eq!(
+            Inventory::with_team(None, None),
+            None,
+            "no team and no file is no inventory"
         );
     }
 

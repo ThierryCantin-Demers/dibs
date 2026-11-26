@@ -431,3 +431,25 @@ fn a_kill_after_its_worker_died_stops_the_job_that_worker_left_running() {
         .count();
     assert_eq!(held, 0, "the job the dead worker left is stopped");
 }
+
+#[test]
+fn the_inventory_is_sent_file_by_file() {
+    let s = Sandbox::new("inventory");
+    fs::create_dir_all(s.root.join("machines.d")).unwrap();
+    fs::write(
+        s.root.join("machines.d/leased.toml"),
+        "[machine.box-b]\nssh = \"box-b\"\n",
+    )
+    .unwrap();
+    fs::write(s.root.join("machines.d/notes.txt"), "not an inventory").unwrap();
+    let (replies, exit) = s.ask(Call::Inventory);
+    assert_eq!(exit, 0);
+    let Some(Reply::Inventory { files, .. }) = replies.first() else {
+        panic!("{replies:?}");
+    };
+    assert_eq!(
+        files.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["machines.d/leased.toml", "machines.toml"]
+    );
+    assert!(files["machines.toml"].contains("[machine.box-a]"));
+}

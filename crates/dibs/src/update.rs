@@ -1,7 +1,7 @@
 //! `dibs --update`, and the two notices: a session is told once when dibs changed under it, and
 //! once when its upstream has a newer dibs or newer recipes than this computer runs.
 
-use crate::{caller::Caller, git::Git, paths::Paths};
+use crate::{caller::Caller, git::Git, paths::Paths, team::Team};
 use dibs_format::{Exit, Span};
 use std::{
     io::{self, Write},
@@ -150,6 +150,18 @@ impl Update {
             }
         }
         self.pull_recipes(out, err)?;
+        match Team::at(&Paths::from_env()).refresh() {
+            Some(Ok(count)) => {
+                let _ = writeln!(out, "the team's machines: {count}, from the dibspatcher");
+            }
+            Some(Err(why)) => {
+                let _ = writeln!(
+                    err,
+                    "dibs: the team's machines were not refreshed, and the copy here stays: {why}"
+                );
+            }
+            None => {}
+        }
         if self.plugin {
             refresh_plugin(out);
         }

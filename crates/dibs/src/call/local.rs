@@ -121,10 +121,17 @@ impl MachineCall<'_> {
 
     /// `dibs --measure <machine> on|off`, written in whichever file holds the machine.
     pub fn measure(&self, name: &MachineName, measures: bool) -> Result<i32, CallError> {
-        let Some(path) = self.fleet.entry(name.as_str()).map(|m| m.source.clone()) else {
+        let Some(entry) = self.fleet.entry(name.as_str()) else {
             eprintln!("dibs: no machine named '{name}'");
             return Ok(i32::from(Exit::Refused.code()));
         };
+        if entry.team {
+            eprintln!(
+                "dibs: {name} is one of the team's machines, so whether it measures is set in the dibspatcher's inventory."
+            );
+            return Ok(i32::from(Exit::Refused.code()));
+        }
+        let path = entry.source.clone();
         match Inventory::set_measure(&path, name, measures) {
             Ok(()) => {
                 match measures {

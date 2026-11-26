@@ -474,9 +474,11 @@ impl Api<'_> {
     }
 
     fn inventory(&self) -> Answer {
+        let inventory = Inventory::load();
         send(&Reply::Inventory {
-            machines: Inventory::load().text,
+            machines: inventory.text,
             pools: self.store.pools().map_err(failed)?,
+            files: inventory.files,
         });
         Ok(0)
     }

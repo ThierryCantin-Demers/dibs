@@ -18,7 +18,7 @@ pub struct Paths {
 }
 
 impl Paths {
-    const VARS: [&'static str; 16] = [
+    const VARS: [&'static str; 17] = [
         "HOME",
         "DIBS_CLIENT_DIR",
         "XDG_STATE_HOME",
@@ -35,6 +35,7 @@ impl Paths {
         "DIBS_RECIPES",
         "DIBS_FLEET",
         "DIBS_SCRATCH",
+        "DIBS_TEAM",
     ];
 
     pub fn from_env() -> Paths {
@@ -116,6 +117,11 @@ impl Paths {
     /// `machines.toml`, the inventory.
     pub fn inventory(&self) -> Option<PathBuf> {
         self.overridden("DIBS_MACHINES", self.config("machines.toml"))
+    }
+
+    /// The copy of the team's inventory the dibspatcher last sent.
+    pub fn team(&self) -> Option<PathBuf> {
+        self.overridden("DIBS_TEAM", self.state("team"))
     }
 
     /// Recipe files kept in local config, `<repo>.toml` each.

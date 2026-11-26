@@ -268,6 +268,27 @@ impl Sending {
     }
 }
 
+/// The team's inventory files from the dibspatcher, by their path under its config directory;
+/// None when no dibspatcher is set up here.
+pub fn team_files() -> Option<Result<BTreeMap<String, String>, String>> {
+    let dibspatcher = Dibspatcher::configured().ok()?;
+    let mut shown = Shown {
+        keeps_files: true,
+        ..Shown::default()
+    };
+    Some(match dibspatcher.ask(Call::Inventory, &mut shown) {
+        Ok(0) => shown
+            .files
+            .filter(|files| !files.is_empty())
+            .ok_or_else(|| format!("the dibspatcher at {} sent no inventory", dibspatcher.ssh)),
+        Ok(code) => Err(format!(
+            "the dibspatcher at {} did not answer (exit {code})",
+            dibspatcher.ssh
+        )),
+        Err(e) => Err(e),
+    })
+}
+
 /// Where the dibspatcher is: `DIBS_DISPATCHER`, else `dibspatcher.toml` beside the
 /// inventory, `ssh = "<destination>"` and optionally `ssh_config = "<file>"`.
 pub struct Dibspatcher {
@@ -321,6 +342,7 @@ impl Dibspatcher {
             options.extend(["-F".to_string(), config.display().to_string()]);
         }
         options.extend(["-o".into(), "BatchMode=yes".into()]);
+        options.extend(["-o".into(), "ConnectTimeout=10".into()]);
         options
     }
 
@@ -550,6 +572,9 @@ fn key() -> String {
 #[derive(Default)]
 struct Shown {
     accepted: Option<String>,
+    /// An inventory's files are kept, not printed.
+    keeps_files: bool,
+    files: Option<BTreeMap<String, String>>,
 }
 
 impl Shown {
@@ -571,7 +596,10 @@ impl Shown {
                 }
             }
             Reply::Status(detail) => print!("{}", status(&detail)),
-            Reply::Inventory { machines, pools } => {
+            Reply::Inventory { files, .. } if self.keeps_files => self.files = Some(files),
+            Reply::Inventory {
+                machines, pools, ..
+            } => {
                 for (pool, members) in pools {
                     println!("pool {pool}: {}", members.join(" "));
                 }

@@ -1,6 +1,8 @@
 use crate::{
     inventory::{Inventory, InventoryError, Machine},
     machine::ssh::{Dial, Ssh},
+    paths::Paths,
+    team::Team,
 };
 use dibs_format::{Exit, MachineName, Moment, Span};
 use std::{fmt, path::PathBuf};
@@ -81,10 +83,13 @@ pub enum TargetError {
 impl Fleet {
     /// No inventory when there is no file; a file that does not read is an error, never absent.
     pub fn load(path: Option<PathBuf>) -> Result<Fleet, InventoryError> {
-        let inventory = match path.as_deref() {
+        let mine = match path.as_deref() {
             Some(path) => Inventory::load(path)?,
             None => None,
         };
+        let team = Team::at(&Paths::from_env());
+        team.refresh_if_stale();
+        let inventory = Inventory::with_team(mine, team.load());
         Ok(Fleet { path, inventory })
     }
 

@@ -926,6 +926,45 @@ fn routing_sends_shared_work_to_the_machines_with_its_role() {
 }
 
 #[test]
+fn the_team_s_machines_come_from_its_copy_and_place_by_its_roles() {
+    let mut s = Sandbox::new();
+    s.write(
+        "team/machines.toml",
+        &format!(
+            "[machine.builder]\nssh      = \"dibs@builder\"\nhostname = \"{}\"\nroles    = [\"compile\"]\n\n\
+             [machine.bencher]\nssh      = \"dibs@bencher\"\nhostname = \"bencher\"\nroles    = [\"bench\"]\n",
+            hostname()
+        ),
+    );
+    s.set("DIBS_TEAM", s.p("team"));
+    s.machines("[machine.builder]\nssh      = \"builder\"\n\n[machine.desk]\nssh      = \"desk\"\nhostname = \"desk\"\n");
+    let listed = s.dibs(["--machines"]).run().stdout;
+    assert_eq!(
+        (
+            listed.lines_matching(r"builder +builder  compile"),
+            listed.lines_with("bencher"),
+            listed.lines_with("desk")
+        ),
+        (1, 1, 1),
+        "the team's machines and this computer's own, a shared one reached as this computer says: {listed}"
+    );
+    assert_eq!(
+        pick(s.dibs(["--pick"])),
+        "builder",
+        "shared work goes to the team's compile machine"
+    );
+    let refused = s.dibs(["--measure", "bencher", "off"]).run();
+    assert_eq!(
+        (
+            refused.code,
+            refused.all().lines_with("one of the team's machines")
+        ),
+        (2, 1),
+        "whether a team machine measures is the team's to say"
+    );
+}
+
+#[test]
 fn routing_prefers_the_cache_over_an_idle_machine() {
     let mut s = Sandbox::new();
     one_and_two(&mut s);

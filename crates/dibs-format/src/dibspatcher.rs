@@ -114,6 +114,10 @@ pub enum Reply {
     Inventory {
         machines: String,
         pools: BTreeMap<String, Vec<String>>,
+        /// Each inventory file by its path under the config directory, `machines.toml` and
+        /// `machines.d/<name>.toml`, for a client that keeps the team's machines.
+        #[serde(default)]
+        files: BTreeMap<String, String>,
     },
     /// Text for the caller's stdout, or with `err`, its stderr.
     Text {

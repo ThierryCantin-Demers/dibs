@@ -9,6 +9,8 @@ pub struct Inventory {
     cards: BTreeMap<String, Vec<String>>,
     /// The files read, as text, for a client that asks.
     pub text: String,
+    /// Each file read, by its path beside `machines.toml`.
+    pub files: BTreeMap<String, String>,
 }
 
 impl Inventory {
@@ -28,7 +30,7 @@ impl Inventory {
 
     pub fn load() -> Inventory {
         let path = Inventory::path();
-        let mut files = vec![path.clone()];
+        let mut files = vec![("machines.toml".to_string(), path.clone())];
         if let Some(beside) = path.parent() {
             let mut extra: Vec<PathBuf> = std::fs::read_dir(beside.join("machines.d"))
                 .into_iter()
@@ -38,12 +40,16 @@ impl Inventory {
                 .filter(|p| p.extension().is_some_and(|e| e == "toml"))
                 .collect();
             extra.sort();
-            files.extend(extra);
+            files.extend(extra.into_iter().filter_map(|p| {
+                let name = p.file_name()?.to_str()?.to_string();
+                Some((format!("machines.d/{name}"), p))
+            }));
         }
         let mut inventory = Inventory::default();
-        for file in files {
+        for (name, file) in files {
             if let Ok(text) = std::fs::read_to_string(file) {
                 inventory.add(&text);
+                inventory.files.insert(name, text);
             }
         }
         inventory
