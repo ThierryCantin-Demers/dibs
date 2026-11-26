@@ -154,12 +154,19 @@ impl Reading {
     /// The cards the newest series of any of `labels` was measured on there, as its runner
     /// records it, whoever measured it.
     pub fn series_cards_of(&self, labels: &[Label]) -> impl Iterator<Item = &str> {
-        let newest = self
-            .series
+        self.series_card(labels)
+            .filter(|card| *card != "none")
+            .into_iter()
+    }
+
+    /// The card the newest series of any of `labels` was measured on there, `none` for one
+    /// measured on the whole machine.
+    pub fn series_card(&self, labels: &[Label]) -> Option<&str> {
+        self.series
             .iter()
-            .filter(|s| labels.iter().any(|l| l.filed().as_str() == s.label) && s.card != "none")
-            .max_by_key(|s| s.at);
-        newest.map(|s| s.card.as_str()).into_iter()
+            .filter(|s| labels.iter().any(|l| l.filed().as_str() == s.label))
+            .max_by_key(|s| s.at)
+            .map(|s| s.card.as_str())
     }
 
     /// Whether a benchmark of `label` runs or waits there, on any card or none.

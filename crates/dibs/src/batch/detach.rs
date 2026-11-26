@@ -6,7 +6,7 @@ use super::{
     check_in::is_batch,
     detached::{Detached, Followed, Instructions},
     parse::{BatchError, Step, parse, split_words},
-    place::Rows,
+    place::{Rows, by_roles},
 };
 use crate::{
     call::{
@@ -154,8 +154,22 @@ impl Steps<'_> {
             }
             .into());
         };
+        let rows = Rows {
+            steps: self.0,
+            on,
+            cwd: &cwd.display().to_string(),
+        };
         for step in self.0 {
-            if let Some(machine) = machine_of(step, on).filter(|m| m != "?" && *m != one) {
+            // With roles a row goes where its own --on says, as the shell expands it, else where
+            // the batch's --on or DIBS_ON does, else with the rest.
+            let goes = match by_roles() {
+                true => rows
+                    .pin(step)
+                    .map(|pin| pin.unwrap_or_else(|| "?".into()))
+                    .or_else(|| rows.batch_on()),
+                false => machine_of(step, on).filter(|m| m != "?"),
+            };
+            if let Some(machine) = goes.filter(|m| *m != one) {
                 return Err(DetachError::Machines {
                     step: step.name.clone(),
                     machine,

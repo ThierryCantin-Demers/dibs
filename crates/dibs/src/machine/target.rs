@@ -214,7 +214,13 @@ impl Target {
         let Some(inventory) = fleet.inventory.as_ref().filter(|i| i.has_roles()) else {
             return Ok(());
         };
-        let without = self.named == Named::Only
+        // DIBS_HOST naming the inventory's only machine chooses it as surely as having one does.
+        let chosen = match self.named {
+            Named::Only => true,
+            Named::DibsHost => fleet.names().len() == 1,
+            _ => false,
+        };
+        let without = chosen
             && self
                 .machine
                 .as_ref()

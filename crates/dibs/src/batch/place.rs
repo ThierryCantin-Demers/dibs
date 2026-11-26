@@ -9,8 +9,8 @@ use super::{
 use crate::{
     call::{CallError, MachineCall, Planned},
     caller::Caller,
-    cli::RecipeVerb,
     cli::{Call, Mode},
+    cli::{RecipeCall, RecipeVerb},
     execution::{Job, Repo},
     git::Git,
     inventory::{Inventory, Machine},
@@ -41,8 +41,9 @@ impl Rows<'_> {
             return Ok(placed);
         }
         let measures: Vec<bool> = self.steps.iter().map(|s| self.measures(s)).collect();
+        let known = |i: usize| named[i].as_deref().is_some_and(|m| m != "?");
         for group in self.groups(&measures) {
-            if group.iter().all(|&i| named[i].is_some()) {
+            if group.iter().all(|&i| known(i)) {
                 continue;
             }
             // A row's own --on takes the group with it, read as the shell will expand it; one
@@ -55,7 +56,7 @@ impl Rows<'_> {
                 None => self.demand(&group, &measures)?,
             };
             for &i in &group {
-                if named[i].is_none() {
+                if !known(i) {
                     placed[i].clone_from(&machine);
                 }
             }
@@ -75,23 +76,28 @@ impl Rows<'_> {
             let first = named.iter().flatten().next().cloned();
             return Ok(first.filter(|_| named.iter().all(Option::is_some)));
         }
-        let batch_on = self
-            .on
-            .map(MachineName::to_string)
-            .or_else(|| std::env::var("DIBS_ON").ok().filter(|on| !on.is_empty()));
-        if let Some(on) = batch_on {
-            return Ok(Some(on));
-        }
-        if let Some(pinned) = self
-            .steps
-            .iter()
-            .find_map(|s| s.on.as_deref().map(expanded))
-        {
+        if let Some(pinned) = self.steps.iter().find_map(|s| self.pin(s)) {
             return Ok(pinned);
+        }
+        if let Some(on) = self.batch_on() {
+            return Ok(Some(on));
         }
         let measures: Vec<bool> = self.steps.iter().map(|s| self.measures(s)).collect();
         let all: Vec<usize> = (0..self.steps.len()).collect();
         self.demand(&all, &measures)
+    }
+
+    /// A row's own --on as the shell will expand it: None when it names none, Some(None) when
+    /// it cannot be read here.
+    pub fn pin(&self, step: &Step) -> Option<Option<String>> {
+        step.on.as_deref().map(expanded)
+    }
+
+    /// The machine of every row naming none of its own, from `--on` or `DIBS_ON`.
+    pub fn batch_on(&self) -> Option<String> {
+        self.on
+            .map(MachineName::to_string)
+            .or_else(|| std::env::var("DIBS_ON").ok().filter(|on| !on.is_empty()))
     }
 
     /// Whether a row measures: a recipe by the locks of the jobs it resolves to, any other by
@@ -195,10 +201,15 @@ impl Rows<'_> {
         let measuring = group.iter().any(|&i| measures[i]);
         // The card the call is placed by is its measurement's; every other row's must be on the
         // machine as well, each as it asks.
+        // Shared work needing a card goes where that card is, whichever row names it.
+        let leading = |i: &&usize| !measuring || measures[**i];
+        let named_card = |i: &usize| card(&self.steps[*i]).flatten();
         let lead = group
             .iter()
-            .filter(|&&i| !measuring || measures[i])
-            .find_map(|&i| card(&self.steps[i]).flatten());
+            .filter(leading)
+            .filter_map(named_card)
+            .find(|alias| alias.as_str() != "cpu")
+            .or_else(|| group.iter().filter(leading).find_map(named_card));
         let fits = |m: &Machine| cards.iter().all(|alias| Card::all_on(alias, m).is_ok());
         let call = Call {
             mode: Mode::Pick,
@@ -225,9 +236,9 @@ impl Rows<'_> {
         let mut kept = Vec::new();
         for &i in group.iter().filter(|&&i| measures[i]) {
             let step = &self.steps[i];
-            let Some(measured) = self.measured_labels(step) else {
-                return Ok(None);
-            };
+            // A label the step gets only as it starts is placed without its series rather than
+            // apart from the rows it reads from.
+            let measured = self.measured_labels(step).unwrap_or_default();
             match step.new_series {
                 true => fresh.extend(measured.iter().cloned()),
                 false => kept.extend(measured.iter().cloned()),
@@ -257,7 +268,19 @@ impl Rows<'_> {
             );
             return Some(vec![Label::new(expanded(&label)?)]);
         }
-        let jobs = step.recipe.as_ref().and_then(Job::of_batch_line);
+        let jobs = match step.recipe.as_ref() {
+            Some(r) => {
+                let device = match r.device.as_deref() {
+                    Some(d) => Some(expanded(d)?),
+                    None => None,
+                };
+                Job::of_batch_line(&RecipeCall {
+                    device,
+                    ..r.clone()
+                })
+            }
+            None => None,
+        };
         match jobs {
             Some(jobs) => Some(
                 jobs.into_iter()

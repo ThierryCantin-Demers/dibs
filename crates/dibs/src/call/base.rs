@@ -763,10 +763,7 @@ fn machine_keeps(target: &Target, fleet: &Fleet, label: &Label, card: &str) -> b
     target
         .entry(fleet)
         .and_then(|entry| Reading::asked(&entry.name))
-        .is_some_and(|r| {
-            r.series_cards_of(std::slice::from_ref(label))
-                .any(|c| c == card)
-        })
+        .is_some_and(|r| r.series_card(std::slice::from_ref(label)) == Some(card))
 }
 
 impl From<Unplaced> for CallError {

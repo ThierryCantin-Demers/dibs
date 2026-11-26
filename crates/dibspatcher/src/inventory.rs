@@ -33,21 +33,29 @@ impl Inventory {
     pub fn load() -> Inventory {
         let path = Inventory::path();
         let mut files = vec![("machines.toml".to_string(), path.clone())];
+        let mut inventory = Inventory::default();
         if let Some(beside) = path.parent() {
-            let mut extra: Vec<PathBuf> = std::fs::read_dir(beside.join("machines.d"))
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "toml"))
-                .collect();
+            let dir = beside.join("machines.d");
+            let mut extra: Vec<PathBuf> = Vec::new();
+            match std::fs::read_dir(&dir) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok(entry) => extra.push(entry.path()),
+                            Err(e) => inventory.unread.push(format!("{}: {e}", dir.display())),
+                        }
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => inventory.unread.push(format!("{}: {e}", dir.display())),
+            }
+            extra.retain(|p| p.extension().is_some_and(|e| e == "toml"));
             extra.sort();
             files.extend(extra.into_iter().filter_map(|p| {
                 let name = p.file_name()?.to_str()?.to_string();
                 Some((format!("machines.d/{name}"), p))
             }));
         }
-        let mut inventory = Inventory::default();
         for (name, file) in files {
             match std::fs::read_to_string(&file) {
                 Ok(text) => {
