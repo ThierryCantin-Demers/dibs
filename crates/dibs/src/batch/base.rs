@@ -119,6 +119,16 @@ impl<'a> StepStderr<'a> {
         locks
     }
 
+    /// The working trees the step's call sent, as it announced them: which tree `@local` was
+    /// is the batch's directory, and a batch run from the wrong one reads as wrong only here.
+    pub fn sent(&self) -> Vec<&'a str> {
+        self.0
+            .lines()
+            .filter_map(|l| l.strip_prefix("dibs: preparing "))
+            .filter(|l| l.contains(" from "))
+            .collect()
+    }
+
     /// What the step's call said as it let go of its job, the ways on from it left out: the
     /// batch is followed as a whole.
     pub fn check_in(&self) -> String {

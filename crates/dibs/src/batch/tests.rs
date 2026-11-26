@@ -421,6 +421,11 @@ fn a_step_refused_before_any_job_says_why_under_its_row() {
         ["      dibs: could not prepare app from ./tree (exit 30)"],
         "only the step with no job to read is explained, by the last thing dibs said: {out}"
     );
+    assert_eq!(
+        out.lines().nth(1),
+        Some("sent app from ./tree (clean)"),
+        "which tree @local was is said once, under the header: {out}"
+    );
 }
 
 #[test]
