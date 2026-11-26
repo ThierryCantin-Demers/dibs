@@ -49,8 +49,9 @@ the machine lacks sends it, and the runner records it once. A replacement machin
 predecessor's series through the inventory's `series` key, as now. Placement
 asks every `bench` machine that could take the call: one with a series of the label takes it;
 several means the most recently measured, and the call says which and where the others are; none
-means a new series on a free card of the model. `--new-series` ignores the old binding and takes
-a free card of the model, and the runner records the new series once a measurement succeeds, as
+means a new series. A new series, or `--new-series`, which ignores the old binding, resolves
+the whole ordered `--device` request against each candidate machine as `Card::concrete` does
+today, so `--device twin,gpu:twin.a` keeps `twin.a` for its second entry, and the runner records the new series once a measurement succeeds, as
 it does now. All of
 this happens before any arm is built, so a direct call and a dispatched one resume the same
 series.
@@ -102,16 +103,19 @@ runs the job and however often a worker retries it.
 ## Deciding to split, before anything runs
 
 The decision is made when the call is planned, for every arm and rep at once, never discovered
-halfway through an A/B. A call splits only when all of these hold:
+halfway through an A/B. Only one shape splits, the shape nearly every benchmark recipe has: its
+steps are some builds, then some runs of what they built, and nothing runs before a build or
+builds after a run. Precisely, a call splits only when all of these hold:
 
-- every shared step it sends to the compile machine is a recognised compile-only cargo command,
-  and no other shared step comes before the last of them;
+- its steps are a run of recognised compile-only cargo commands followed by every other step:
+  no other step, shared or exclusive, comes before the last build, and no build comes after;
 - every step that runs on the benchmark machine, measured or not, runs a cargo invocation dibs
   recognises in its text after values are bound (`cargo bench`, `cargo test`, `cargo run`, with
   their arguments) or an executable by its path under `$CARGO_TARGET_DIR`, and reads nothing
   else of the target;
-- a target runner cargo would launch through (`target.<triple>.runner` or its `cfg` form, in the
-  tree's cargo config or the environment) is one dibs can read, since it is replayed;
+- a target runner cargo would launch through (`target.<triple>.runner` or its `cfg` form) is
+  one dibs can resolve as cargo does on the benchmark machine: from the tree's directories up to
+  the root, that account's `$CARGO_HOME` and the environment. It is replayed;
 - no step outside the builds writes into the target;
 - the flags compile for a CPU baseline, not `native`;
 - no step runs doctests.
@@ -123,10 +127,11 @@ call does today, and the summary says which step kept it there and why. A recipe
 
 **Every arm's plan is checked before the first measurement.** The text test cannot see that one
 arm's `cargo run -p x` names a binary only the other arm's build makes. So each arm's build also
-runs, for every measured cargo invocation, its counterpart that runs nothing (`cargo bench
+runs, for every cargo invocation of a step that will run on the benchmark machine, measured or a
+warmup, its counterpart that runs nothing (`cargo bench
 --no-run` with the same arguments, `cargo build` with the same selection for `cargo run`), which
 reports exactly the executables that invocation would launch, and compiles them on the compile
-machine if the build step had not. Once every arm is built and staged, every measured invocation
+machine if the build step had not. Once every arm is built and staged, every such invocation
 of every arm must resolve in its launch plans. If any does not, the call falls back as one before
 anything is measured: every arm builds again on the benchmark machine, as today.
 
@@ -141,9 +146,10 @@ subcommands that build (`build`, `bench`, `test`, `run`, `rustc`), before any `-
 each invocation returns, and before the next can overwrite a path, the wrapper copies the
 executables it reported into the store by digest, so each launch plan names the digest its own
 invocation produced, and it records the build-script directories as they are then, by digest,
-since a later invocation with other features or environment can rewrite an `OUT_DIR` in place.
+and the files a recipe's `carry` names, since a later invocation with other features or
+environment can rewrite an `OUT_DIR` or such a file in place.
 Two launches that need different contents at one path, an executable at
-`release/examples/x` built with two feature sets or an `OUT_DIR` file rewritten between them,
+`release/examples/x` built with two feature sets or a generated file rewritten between them,
 cannot both sit in the sparse target: such a call stays whole. Every other
 subcommand, `metadata` and `check` among them, passes through untouched. The JSON goes to a
 report of the job's own; the caller sees the diagnostics, the exit and any JSON it asked for,
@@ -176,7 +182,7 @@ sent as a delta, so scripts, configs and data in the tree are there without bein
 ## Running it on the benchmark machine
 
 The measured step runs its own command, unchanged. Its `PATH` puts a `cargo` first that answers
-from the launch plans: `cargo bench --bench x -- args` runs the staged `x --bench args` from its
+from the launch plans: `cargo bench --bench x -- args` runs the staged `x args --bench` from its
 package root with cargo's environment, through the target runner cargo would have used, as
 cargo would. `$CARGO_TARGET_DIR` points at the sparse
 target, so `$CARGO_TARGET_DIR/release/x` is the staged `x`. An invocation that matches no plan, or
@@ -209,7 +215,10 @@ dibspatcher, asks it to push to the benchmark machine. The bytes never pass thro
 
 ## Records
 
-A run record keeps its measured machine and card. Each step record gains its machine, card,
+A run record keeps its measured machine and card, and gains the digest of the bundle it
+measured, which joins machine, device, procedure, revisions and values in what makes two runs
+repeats of the same code (`SameCode`, `records/runs.rs`): the same source built on two compile
+machines can differ, so its runs are not pooled as repeats. Each step record gains its machine, card,
 attempt and the bundle it used. `built=` is the compile job's, and the measurement reports none.
 `tests=` is the job that ran the tests. Artifacts come back from the job that wrote them. `dibs
 out` and `--fetch` find each job on its machine.
@@ -245,12 +254,12 @@ Each ships and is tested on its own:
 
 1. **Roles.** The team inventory, roles, series read from the machines, and placement of whole
    calls by their most demanding job. Shared work leaves the benchmark machines at once. Rows of
-   a batch are placed one by one only when each is a recipe that builds what it runs: one whose
-   steps begin with a build and whose later steps use only what that build made. A recipe with
-   no build of its own, or that runs a binary an earlier row built, depends on that row. Rows linked by `after=` where any is a `run`, a `shell` or a `--sync` may share what
-   an earlier row wrote, a binary under `$CARGO_TARGET_DIR` included, and are placed together on
-   the machine their most demanding row needs, so a build row and the benchmark after it stay on
-   one machine. A detached batch stays on one machine, the one its most demanding row needs,
+   one repo in a batch share its tree on a machine, and any of them may leave something there a
+   later one reads, a generated file or a binary, which dibs cannot see. So rows of one repo that
+   wait on each other through `after=`, the default of waiting for the line before included,
+   are placed together on the machine their most demanding row needs. A row that waits for
+   nothing (a bare `after=`) or for rows of other repos only is placed by itself, so a clippy
+   row marked so goes to a compile machine. A detached batch stays on one machine, the one its most demanding row needs,
    until stage 2 gives it a driver that spans machines.
 2. **Ordinary work through the dibspatcher.** Calls and batches as above, with per-job attempts
    whose results can be replayed, still one machine per call.
