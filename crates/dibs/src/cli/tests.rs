@@ -82,7 +82,8 @@ fn the_help_is_what_the_snapshots_hold() {
             .collect()
     };
     let help = include_str!("../../tests/suite/snapshots/help.txt");
-    assert_eq!(Help::text(), snapshot(help, "dibs --help"));
+    assert_eq!(Help::short(), snapshot(help, "dibs --help"));
+    assert_eq!(Help::text(), snapshot(help, "dibs --help --all"));
     let recipes = include_str!("../../tests/suite/snapshots/help-recipes.txt");
     assert_eq!(
         Help::of(Some("build")),
@@ -487,6 +488,8 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
         ),
         (vec!["-h"], Invocation::Help(None)),
         (vec!["--help"], Invocation::Help(None)),
+        (vec!["--help", "--all"], Invocation::Help(Some("all"))),
+        (vec!["--all", "-h"], Invocation::Help(Some("all"))),
         (vec!["status", "-h"], Invocation::Help(Some("status"))),
         (vec!["run", "--help"], Invocation::Help(Some("run"))),
         (vec!["fetch", "--help"], Invocation::Help(Some("fetch"))),

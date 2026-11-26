@@ -348,7 +348,13 @@ impl Parser {
                 }
                 "--new-series" => self.call.new_series = true,
                 "--stream" => self.call.stream = true,
-                "-h" | "--help" => return Ok(Invocation::Help(self.help_topic())),
+                "-h" | "--help" => {
+                    let all = words.iter().any(|w| w == "--all");
+                    return Ok(Invocation::Help(match self.help_topic() {
+                        None if all => Some("all"),
+                        topic => topic,
+                    }));
+                }
                 "--" => return self.rest(&words[at..]),
                 flag if flag.starts_with('-') => {
                     return Err(match REMOVED.iter().find(|(gone, _)| *gone == flag) {

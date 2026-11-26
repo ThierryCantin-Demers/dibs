@@ -65,7 +65,10 @@ fn transcript_of(s: &Sandbox, n: &Normal, calls: &[&[&str]]) -> String {
 fn help() {
     let s = Sandbox::new();
     let n = Normal::of(&s);
-    snapshot("help", &transcript_of(&s, &n, &[&["--help"]]));
+    snapshot(
+        "help",
+        &transcript_of(&s, &n, &[&["--help"], &["--help", "--all"]]),
+    );
     assert_eq!(
         s.dibs(["-h"]).run().stdout,
         s.dibs(["--help"]).run().stdout,

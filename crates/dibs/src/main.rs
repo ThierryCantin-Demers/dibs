@@ -84,7 +84,7 @@ fn dispatch(words: &[String]) -> Result<ExitCode, RunError> {
         Err(e) => {
             eprintln!("{e}");
             if e.with_help {
-                print!("{}", Help::text());
+                print!("{}", Help::short());
             }
             return Ok(ExitCode::from(e.exit()));
         }

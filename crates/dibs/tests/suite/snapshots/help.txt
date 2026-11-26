@@ -1,5 +1,72 @@
 == dibs --help
 -> exit 0
+1| Run a command on a shared machine under a lock, so concurrent agents cannot spoil each other's
+1| measurements.
+1| 
+1| Recipes
+1|   dibs <verb> <repo>[@<ref>] <recipe>    <verb> is build, test or bench; @local sends your tree
+1|   dibs list <repo>                       what a repo defines, and the values each recipe takes
+1|   dibs runs [label]                      what was measured, and what compares
+1|   dibs measurement <job|batch>           a run as one measurement, in JSON
+1|   dibs with <repo>[@<ref>] <service> -- <cmd>
+1|                                          a command against the repo's servers on the machine
+1|   dibs shell <repo>[@<ref>] --reason <why> -- <cmd>
+1|                                          a one-off command in a prepared tree
+1|   dibs raw --reason <why> -- <cmd>       a one-off command with nothing prepared
+1|   dibs gaps                              what fit no recipe, and what got in the way
+1| 
+1| Calls
+1|   dibs run <cmd>                         shared: builds and tests, several at once
+1|   dibs run --bench <cmd>                 exclusive: a measurement, alone on the machine
+1|   dibs --peek <cmd>                      a look that takes no lock
+1|   dibs --sync <a> <b>                    rsync with the machine, a leading ':' marking its side
+1|   dibs --hold <cmd>                      a command here while the machine's lock is held
+1| 
+1| Batches
+1|   dibs batch <file|->                    one dibs call per line, one summary at the end
+1|   dibs batch --detach <file|->           driven on the machine, so it outlives this computer
+1|   dibs batch --follow <id>               wait on a batch that paused or was detached
+1| 
+1| Machines
+1|   dibs status                            who holds each machine, and the queue with ETAs
+1|   dibs --watch                           status on a loop, for a person at a terminal
+1|   dibs --machines                        the inventory, and with -v each machine's cards
+1|   dibs machines [<machine>]              each machine against what it should have
+1|   dibs --check <host>                    install dibs's runner there, and say what it has
+1|   dibs --pick, dibs --which              where a call would go
+1|   dibs --forget, --measure, --close, --open
+1|                                          change the inventory, or close a machine you own
+1| 
+1| Jobs
+1|   dibs --out [job]                       what a job wrote
+1|   dibs --follow <job>                    wait on a job whose call checked in
+1|   dibs --fetch <job> [dir]               the files a recipe's job kept
+1|   dibs --kill <pid|batch-id>             stop a job, or a whole batch
+1|   dibs --release                         drop a lock left by processes already dead
+1|   dibs --gc --dry-run                    what fills the machine's scratch
+1|   dibs --log [n]                         what ran, and how it ended
+1|   dibs --friction '<line>'               record what got in the way
+1| 
+1| Setup
+1|   dibs --update                          pull and reinstall dibs, its recipes and its plugin
+1|   dibs completions <fish|zsh>            shell completions
+1|   dibs hook ssh, dibs hook urgent        Claude Code hooks
+1| 
+1| Common flags
+1|   --on <machine>   --device <card>   --label <name>   --wait <seconds>   --max <seconds>
+1|   --low-priority   --urgent '<why>'   --check-in <time>   --dry-run, with a recipe
+1| 
+1| dibs <command> --help   that command, and every flag it takes
+1| dibs --help --all       every command and flag, and what each does
+1| 
+1|   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran
+1|        72 no runner there, nothing ran    75 busy    76 its batch was cancelled
+1|        77 a --with service failed    124 overran --max
+1|        78 a recipe's measurement refused: another tree built into its target since
+1| 
+
+== dibs --help --all
+-> exit 0
 1| Run a command on a remote machine under a lock, so concurrent agents cannot spoil each other's
 1| measurements.
 1| 

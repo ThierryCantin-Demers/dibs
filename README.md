@@ -118,7 +118,7 @@ hooks on Bash yourself.
 ## Learn more
 
 - [`docs/guide.md`](docs/guide.md): every feature in detail, and why it behaves the way it does.
-- `dibs --help`: every flag.
+- `dibs --help`: every command, one line each; `dibs <command> --help` and `dibs --help --all`: every flag.
 - [`docs/design/`](docs/design/README.md): how it is built, and the decisions and measurements
   behind it.
 

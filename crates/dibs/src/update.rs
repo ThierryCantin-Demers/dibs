@@ -444,7 +444,9 @@ impl ChangeNotice {
                 ));
             }
         }
-        text.push_str("  Flags and output you remember may be wrong now. Read dibs --help, and\n");
+        text.push_str(
+            "  Flags and output you remember may be wrong now. Read dibs --help --all, and\n",
+        );
         text.push_str(&format!(
             "  {}/dibs-agent-rules.md for how it is meant to be used.\n",
             clone.display()

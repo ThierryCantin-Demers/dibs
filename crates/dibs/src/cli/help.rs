@@ -12,6 +12,7 @@ struct Topic {
 
 impl Help {
     const INTERFACE: &'static str = include_str!("help.txt");
+    const SHORT: &'static str = include_str!("help-short.txt");
 
     /// The exits a caller acts on, one row per line of the help.
     const EXITS: [&'static [Exit]; 4] = [
@@ -172,9 +173,18 @@ impl Help {
         },
     ];
 
-    /// `dibs --help`: the interface, then what each exit means.
+    /// `dibs --help --all`: the interface, then what each exit means.
     pub fn text() -> String {
-        let mut text = Help::INTERFACE.to_string();
+        Help::with_exits(Help::INTERFACE)
+    }
+
+    /// `dibs --help`: a line for each command, then what each exit means.
+    pub fn short() -> String {
+        Help::with_exits(Help::SHORT)
+    }
+
+    fn with_exits(interface: &str) -> String {
+        let mut text = interface.to_string();
         for (row, exits) in Help::EXITS.iter().enumerate() {
             let lead = match row {
                 0 => "  exit ",
@@ -190,12 +200,14 @@ impl Help {
         text
     }
 
-    /// What `--help` after a subcommand prints: that subcommand's part of the whole help, or
-    /// the whole help for a word that has none.
+    /// What `--help` prints: the short help alone, the whole help with `all`, and after a
+    /// subcommand that subcommand's part of the whole help, or the whole help for a word that has
+    /// none.
     pub fn of(subcommand: Option<&str>) -> String {
-        let topic =
-            subcommand.and_then(|word| Help::TOPICS.iter().find(|t| t.words.contains(&word)));
-        let Some(topic) = topic else {
+        let Some(word) = subcommand else {
+            return Help::short();
+        };
+        let Some(topic) = Help::TOPICS.iter().find(|t| t.words.contains(&word)) else {
             return Help::text();
         };
         let mut text: String = topic
@@ -233,6 +245,30 @@ mod tests {
     use super::Help;
 
     #[test]
+    fn the_short_help_names_every_command_of_the_whole_help() {
+        let word = |w: &str| {
+            w.trim_matches(|c: char| ",|[]".contains(c))
+                .trim_start_matches("--")
+                .to_string()
+        };
+        let short: Vec<String> = Help::SHORT.split_whitespace().map(word).collect();
+        for line in Help::INTERFACE.lines() {
+            let Some(rest) = line.strip_prefix("  dibs ") else {
+                continue;
+            };
+            let command = word(rest.split_whitespace().next().unwrap());
+            assert!(short.contains(&command), "{command}");
+        }
+    }
+
+    #[test]
+    fn the_short_help_fits_a_terminal() {
+        for line in Help::SHORT.lines() {
+            assert!(line.chars().count() <= 100, "{line}");
+        }
+    }
+
+    #[test]
     fn every_entry_a_subcommand_names_is_in_the_whole_help() {
         for topic in Help::TOPICS {
             for begins in topic.entries {
@@ -256,6 +292,7 @@ mod tests {
     #[test]
     fn a_word_with_no_help_of_its_own_gets_the_whole_help() {
         assert_eq!(Help::of(Some("nothing")), Help::text());
-        assert_eq!(Help::of(None), Help::text());
+        assert_eq!(Help::of(Some("all")), Help::text());
+        assert_eq!(Help::of(None), Help::short());
     }
 }

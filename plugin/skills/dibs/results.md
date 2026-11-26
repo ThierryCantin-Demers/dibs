@@ -51,6 +51,6 @@ How what comes back is read, and what each exit asks for, cited as `dibs/results
 
 ## After dibs changes
 
-### help-reread-after-change: Once a Call says dibs changed, flags and output are read from `dibs --help`, not from memory.
+### help-reread-after-change: Once a Call says dibs changed, flags and output are read from `dibs --help --all`, not from memory.
 
 ### friction-reported-too: A `dibs --friction` line also goes where the team tracks dibs reports, with the command, its exit and Trailer, the job id, and what was expected.

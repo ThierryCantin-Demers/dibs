@@ -9,7 +9,7 @@
 -> exit 0
 2| dibs changed since this session last ran it: <sha> -> <sha>
 2|   <sha> two
-2|   Flags and output you remember may be wrong now. Read dibs --help, and
+2|   Flags and output you remember may be wrong now. Read dibs --help --all, and
 2|   <root>/update/clone/dibs-agent-rules.md for how it is meant to be used.
 
 == the change notice  (after twelve more commits arrived)
@@ -26,7 +26,7 @@
 2|   <sha> more-03
 2|   <sha> more-02
 2|   and 2 more:  git -C <root>/update/clone log <sha>..<sha>
-2|   Flags and output you remember may be wrong now. Read dibs --help, and
+2|   Flags and output you remember may be wrong now. Read dibs --help --all, and
 2|   <root>/update/clone/dibs-agent-rules.md for how it is meant to be used.
 
 == dibs --update  (with nothing to pull)

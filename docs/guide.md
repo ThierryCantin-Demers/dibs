@@ -2,7 +2,7 @@
 
 The [README](../README.md) says what dibs is and how to start. This is the rest, one section per
 feature, with the reasons behind the behaviour that would otherwise look arbitrary. `dibs --help`
-lists every flag.
+lists every command, and `dibs --help --all` every flag.
 
 ## Setting it up
 
@@ -66,7 +66,7 @@ and git for trees sent there. What differs between operating systems is behind o
     dibs status                                # who holds each machine, who is queued
     dibstop                                    # the same, live
 
-`dibs --help` is the full surface. `dibs-agent-rules.md` is the rules your agents follow, and is
+`dibs --help --all` is the full surface. `dibs-agent-rules.md` is the rules your agents follow, and is
 the shortest useful description of how to use this well. The `dibs` plugin this repository
 carries gives them to Claude Code and Codex as a skill; the README says how to install it.
 Without it, load the file from your clone rather than copying it, so a `dibs --update` updates
