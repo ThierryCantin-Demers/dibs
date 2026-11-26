@@ -42,7 +42,7 @@ How a Recipe runs, compares, and is written, cited as `dibs/recipes::<rule-name>
 
 ### margin-beats-spread: A difference between Refs smaller than the spread across their Reps is no result.
 
-### autotune-is-fresh-or-shared: A Recipe whose tool keeps an autotune store in its tree names that store's variable in `fresh` when each run must tune anew, and its warmup absorbs the tuning.
+### autotune-is-fresh-or-shared: A Recipe whose tool keeps an autotune store in its tree, which successive `@local` runs reuse, names that store's variable in `fresh` when each run must tune anew, and its warmup absorbs the tuning.
 
 ## Writing a Recipe
 

@@ -110,10 +110,10 @@ and shows it the dibs call to use instead. An rsync through dibs's own transport
 asks you before an agent's call that is `--urgent`, which stops everyone's shared jobs on the
 machine until it ends.
 
-Without the plugin, load [`dibs-agent-rules.md`](dibs-agent-rules.md) into your agents'
-instructions from your clone, as `@~/<clone>/dibs-agent-rules.md` in `~/.claude/CLAUDE.md`, and
-wire `dibs hook ssh` and `dibs hook urgent` as PreToolUse hooks on Bash yourself. It is the
-skill's `SKILL.md`, whose rule files sit beside it in `plugin/skills/dibs/`.
+Without the plugin, load the skill's [`SKILL.md`](plugin/skills/dibs/SKILL.md) into your agents'
+instructions from your clone, as `@~/<clone>/plugin/skills/dibs/SKILL.md` in `~/.claude/CLAUDE.md`,
+so the rule files beside it resolve, and wire `dibs hook ssh` and `dibs hook urgent` as PreToolUse
+hooks on Bash yourself.
 
 ## Learn more
 

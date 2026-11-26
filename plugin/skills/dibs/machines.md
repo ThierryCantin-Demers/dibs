@@ -18,8 +18,9 @@ Where work runs, on which Card, and who is there, cited as `dibs/machines::<rule
 
 ## Cards
 
-- **Model Alias:** a Card alias naming a model, which takes a free Card of it (`--device aipror9700`,
-  two different ones as `--device aipror9700,aipror9700`).
+- **Model Alias:** a Card alias naming a model, which takes a free Card of it, or for a Label
+  already measured on the Machine the Card its Series used, waiting for that one when it is busy
+  (`--device aipror9700`, two different ones as `--device aipror9700,aipror9700`).
 - **Series:** the runs of one Label on one Machine, all on one Card; numbers from two Machines never
   compare.
 - **Card Benchmarks:** a Machine set to `benchmarks = "card"`, where a Measurement that names its

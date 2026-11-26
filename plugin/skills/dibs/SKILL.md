@@ -45,7 +45,7 @@ Each sits beside this file. Read the one the work needs before its first call.
   (`dibs --on <machine> --peek <command>`, for `ps`, `nvidia-smi`, `ls`, `tail`, `cat` of a small
   file, `git status`).
 - **Scratch:** the directory `$DIBS_SCRATCH` names on a Machine, where `TMPDIR` points; dibs never
-  removes a directory named there, removes what sits under `TMPDIR` unchanged for two weeks at the
+  removes a directory named there, removes what sits under `TMPDIR` unchanged for two weeks by default at the
   next Recipe's prepare, and removes `$DIBS_SCRATCH/out` only at a person's `dibs --gc`.
 - **Card:** one GPU of a Machine, named by the alias `dibs --machines -v` lists.
 - **Recipe:** a repo's named build, test or bench procedure, run by

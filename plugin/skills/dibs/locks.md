@@ -52,7 +52,7 @@ What may run beside a Measurement and how a Job shares its Machine, cited as
 
 ### wait-is-not-a-fault: A frozen Job and two shared Jobs beside a queued Measurement are a Preemptible Job and a Bypass, never a fault.
 
-### compile-only-is-preemptible: A hand-written `dibs run` or `dibs shell` that only compiles, and runs nothing it built, is marked `--preemptible`, while a Recipe's build step is marked by itself.
+### compile-only-is-preemptible: A hand-written `dibs run` or `dibs shell` that only compiles, and runs nothing it built, is marked `--preemptible`, while a Recipe's `cargo build` or `--no-run` step is marked by itself.
 
 ### long-work-is-low-priority: Long work that should be in nobody's way and that nobody needs by a time, such as a track that runs for hours, is a Low-Priority Job, and so is a Measurement that can wait for an idle Machine.
 
