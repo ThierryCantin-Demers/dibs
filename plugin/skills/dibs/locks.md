@@ -47,7 +47,8 @@ What may run beside a Measurement and how a Job shares its Machine, cited as
   runs.
 - **Urgent Measurement:** a Measurement that has its Machine to itself, stopping the shared Jobs
   there to run them again from the start once it ends, waiting for a running Measurement, and going
-  before the queue, one per Machine (`--urgent '<why>'`).
+  before the queue, one per Machine (`--urgent '<why>'`); an urgent shared Job only goes around
+  the queue.
 
 ### wait-is-not-a-fault: A frozen Job and two shared Jobs beside a queued Measurement are a Preemptible Job and a Bypass, never a fault.
 

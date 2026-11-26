@@ -1,6 +1,6 @@
 ---
 name: dibs
-description: "How an agent runs work on machines shared through dibs, named as dibs::<rule-name>: its locks, urgent and low-priority work, calls, batches and check-ins, machines and cards, recipes, and reading trailers and exit codes. Use when you make any dibs call, or run anything on a machine other than your own."
+description: "How an agent runs work on machines shared through dibs, named as dibs::<rule-name>: its locks, urgent and low-priority work, calls, batches and check-ins, machines and cards, recipes, and reading trailers and exit codes. Use when you make any dibs call, or when work needs a build or benchmarking machine, this one included when dibs lists it."
 ---
 
 # dibs
@@ -68,7 +68,7 @@ Each sits beside this file. Read the one the work needs before its first call.
 
 ### scratch-is-own: Everything a Job writes on a Machine is in a directory of the agent's own naming under Scratch, never under `/tmp`.
 
-### urgent-is-asked: A Call is `--urgent` only on the person's yes to that Call, since it stops everyone's shared Jobs on the Machine until it ends.
+### urgent-is-asked: A Call is `--urgent` only on the person's yes to that Call, since it goes before the queue, and an urgent Measurement stops everyone's shared Jobs on the Machine until it ends.
 
 ### nothing-deleted: An agent deletes nothing on a Machine and works around no permission error, and tells the person it works for.
 
@@ -119,14 +119,16 @@ Each sits beside this file. Read the one the work needs before its first call.
 1. `dibs list <repo>` says what the repo's Recipes are and the values each takes. A Recipe that
    covers the work runs as `dibs build|test|bench <repo>@<ref> <recipe> --<name> <value>`, with
    `@local` for the working tree. When none covers it, write one (`recipes.md`); work that will
-   never run again runs as `dibs shell <repo>@local --reason '<why>' -- '<command>'`.
-2. Name the Machine with `--on <machine>`, and on a Machine with several Cards the Card with
-   `--device <alias>`. Before a Recipe's Measurement worth keeping, run the same
-   `dibs bench ... --dry-run` and read which Card it would use.
+   never run again runs as `dibs shell <repo>@local --reason '<why>' -- '<command>'`, or as
+   `dibs run` when it needs a server, with `--with`, `--port` and `--ready` (`locks.md`).
+2. Name the Machine and the Card where `machine-named` and `card-named` ask for them, with
+   `--on <machine>` and `--device <alias>`. Before a Recipe's Measurement worth keeping, run the
+   same `dibs bench ... --dry-run` and read which Card it would use.
 3. Launch the Call in the background: the Bash tool's `run_in_background` in Claude Code, an
    `exec_command` that yields in Codex. When a `dibs run` cannot wait, `--wait <seconds>` makes it
-   exit 75 on a busy Machine rather than queue.
-4. When it wakes you, read the Trailer, and `results.md` for any exit but 0.
+   give up with exit 75 rather than queue past that long.
+4. When it wakes you, read a Batch's summary or a single Call's Trailer, and `results.md` for any
+   exit but 0.
 
 ## Waiting on something
 

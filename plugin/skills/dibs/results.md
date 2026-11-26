@@ -20,7 +20,7 @@ How what comes back is read, and what each exit asks for, cited as `dibs/results
 
 ## Exits
 
-### exit-read-by-its-source: An exit means what the table below says only when the Trailer says `by=dibs` or no Job ran, and is the command's own when it says `by=command`.
+### exit-read-by-its-source: An exit means what the table below says only when the Trailer says `by=dibs`, no Job ran, or a Check-in notice came, and is the command's own when it says `by=command`.
 
 | Exit | Means, from dibs |
 | --- | --- |
@@ -35,7 +35,7 @@ How what comes back is read, and what each exit asks for, cited as `dibs/results
 | 78 | a Recipe's Measurement was refused, since another tree built into its target after this one |
 | 79 | the Machine's owners closed it, which `dibs status` says with their reason |
 | 80 | a Check-in |
-| 124 | the Job overran `--max`, or twice its Label's 90th percentile without one, and was killed |
+| 124 | the Job overran its cap and was killed: `--max`, or else 1800 s for shared work and 7200 s for a Measurement, which a Label's history raises to twice its 90th percentile |
 
 ### unreachable-not-retried: A Call that exits 69 is not retried in a loop, and is tried once more after a few minutes only when it says the Machine answered.
 

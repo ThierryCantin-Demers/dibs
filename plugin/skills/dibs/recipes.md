@@ -19,7 +19,7 @@ How a Recipe runs, compares, and is written, cited as `dibs/recipes::<rule-name>
   back (`--artifacts <dir>`, `dibs --fetch <job> [dir]`).
 - **Run Record:** what `dibs runs [label]` shows of a run: when, where, each repo's commit, the
   Values, the measured step's time, the spread across Reps, and whether the Recipe changed.
-- **Shell:** a one-off `dibs shell <repo>@<ref> -- '<command>'`, taking `--bench` for a
+- **Shell:** a one-off `dibs shell <repo>@<ref> --reason '<why>' -- '<command>'`, taking `--bench` for a
   Measurement, whose `cargo bench` or `cargo test` it builds first under the Shared Lock, and
   `--max <seconds>` to run past the default cap; without a repo it runs in the tree the agent is in.
 - **Service Recipe:** a repo's declared servers, built and started on the Machine for one
