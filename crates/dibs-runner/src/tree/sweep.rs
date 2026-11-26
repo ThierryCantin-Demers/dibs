@@ -239,15 +239,17 @@ impl<'a> Sweep<'a> {
                 .filter(|path| !Cached::is_lock(path))
                 .collect(),
             Swept::Named => {
+                // Where the client keeps its cache, as its paths resolve it.
                 let caches = [
-                    Some(self.home.join(".cache")),
-                    std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from),
+                    Some(self.home.join(".cache/dibs")),
+                    std::env::var_os("XDG_CACHE_HOME").map(|c| PathBuf::from(c).join("dibs")),
+                    std::env::var_os("DIBS_CLIENT_DIR").map(|d| PathBuf::from(d).join("cache")),
                 ];
                 let scratch = self.scratch.canonicalize().ok();
                 let is_client_cache = caches
                     .into_iter()
                     .flatten()
-                    .filter_map(|c| c.join("dibs").canonicalize().ok())
+                    .filter_map(|c| c.canonicalize().ok())
                     .any(|c| Some(c) == scratch);
                 let client = match is_client_cache {
                     true => &CLIENT_OWN[..],
@@ -378,7 +380,18 @@ impl<'a> Sweep<'a> {
                 }
             }
             Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners if self.dry => {}
-            Swept::Jobs | Swept::Leftovers | Swept::Results | Swept::Runners => {
+            // Asked again just before each goes: walking its siblings gave a job time to start in it.
+            Swept::Leftovers => {
+                for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
+                    if Sweep::used_in(&Sweep::working(), &verdict.path) {
+                        verdict.fate = Fate::Held;
+                        continue;
+                    }
+                    verdict.removed = self.removal.path(&verdict.path);
+                    gone(&verdict.path);
+                }
+            }
+            Swept::Jobs | Swept::Results | Swept::Runners => {
                 for verdict in section.verdicts.iter_mut().filter(|v| v.fate == Fate::Past) {
                     verdict.removed = self.removal.path(&verdict.path);
                     gone(&verdict.path);
@@ -588,8 +601,6 @@ impl<'a> Sweep<'a> {
             self.clocks.past(now, written, self.clocks.keep_days),
         ) {
             (true, _) => Fate::Held,
-            // Asked again: walking a big sibling gives a job time to start in this one.
-            (false, true) if Sweep::used_in(&Sweep::working(), path) => Fate::Held,
             (false, true) => Fate::Past,
             (false, false) => Fate::Kept,
         };

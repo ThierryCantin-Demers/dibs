@@ -423,10 +423,16 @@ fn gc_named_removes_the_one_entry_a_person_names() {
         "sh",
         [
             "-c",
-            &format!("cd {} && {}; true", s.p("gc/busy"), gate.hold()),
+            &format!(
+                "cd {} && touch {} && {}; true",
+                s.p("gc/busy"),
+                s.p("entered"),
+                gate.hold()
+            ),
         ],
     );
     let worker = s.spawn(worker);
+    until("the worker to enter it", || s.exists("entered"));
     let busy = gc(&s, &["--gc", "--named", "busy"]);
     gate.open();
     s.wait(worker);
@@ -480,10 +486,16 @@ fn a_tree_under_tmp_goes_by_its_newest_write_and_never_while_in_use() {
         "sh",
         [
             "-c",
-            &format!("cd {} && {}; true", s.p("gc/tmp/busy"), gate.hold()),
+            &format!(
+                "cd {} && touch {} && {}; true",
+                s.p("gc/tmp/busy"),
+                s.p("entered"),
+                gate.hold()
+            ),
         ],
     );
     let worker = s.spawn(worker);
+    until("the worker to enter it", || s.exists("entered"));
     let out = s.dibs(["--gc"]).env("DIBS_SCRATCH", &g).run().all();
     gate.open();
     s.wait(worker);
