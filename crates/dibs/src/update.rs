@@ -216,14 +216,22 @@ impl Harness {
     const ALL: [Harness; 2] = [Harness::Claude, Harness::Codex];
 
     fn refresh(self, out: &mut impl Write) {
-        let Some(steps) = self.steps() else {
-            return;
-        };
-        let refreshed = steps.iter().all(|step| self.run(step).is_some());
         let (name, program) = match self {
             Harness::Claude => ("Claude Code", "claude"),
             Harness::Codex => ("Codex", "codex"),
         };
+        let steps = match self.steps() {
+            Ok(Some(steps)) => steps,
+            Ok(None) => return,
+            Err(why) => {
+                let _ = writeln!(
+                    out,
+                    "{name} plugin {PLUGIN} was not refreshed, since its plugins could not be listed: {why}"
+                );
+                return;
+            }
+        };
+        let refreshed = steps.iter().all(|step| self.run(step).is_some());
         let _ = match refreshed {
             true => writeln!(
                 out,
@@ -243,37 +251,58 @@ impl Harness {
         };
     }
 
-    /// The calls that refresh the plugin here, none when it is not installed.
-    fn steps(self) -> Option<Vec<Step>> {
-        match self {
-            Harness::Claude => self
-                .run(&["plugin", "list"])
-                .filter(|listing| listing.contains(PLUGIN))
-                .map(|_| {
+    /// The calls that refresh the plugin here, none when the harness or the plugin is absent, and
+    /// what the harness said when its listing failed.
+    fn steps(self) -> Result<Option<Vec<Step>>, String> {
+        Ok(match self {
+            Harness::Claude => self.list(&["plugin", "list"])?.and_then(|listing| {
+                listing.contains(PLUGIN).then(|| {
                     vec![
                         &["plugin", "marketplace", "update", "dibs"][..],
                         &["plugin", "update", PLUGIN][..],
                     ]
-                }),
-            // Scoped, since one broken marketplace fails the whole listing.
+                })
+            }),
+            // Scoped, since one broken marketplace fails the whole listing. A marketplace that
+            // was never added lists nothing and succeeds.
             Harness::Codex => self
-                .run(&["plugin", "list", "--marketplace", "dibs", "--json"])
+                .list(&["plugin", "list", "--marketplace", "dibs", "--json"])?
                 .and_then(|listing| codex_steps(&listing)),
+        })
+    }
+
+    /// The listing, none when the harness is not installed, or its first line of complaint.
+    fn list(self, args: &[&str]) -> Result<Option<String>, String> {
+        let Ok(listed) = self.command(args).output() else {
+            return Ok(None);
+        };
+        if !listed.status.success() {
+            let stderr = String::from_utf8_lossy(&listed.stderr);
+            let why = stderr
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("no reason given");
+            return Err(why.trim().to_string());
         }
+        Ok(Some(String::from_utf8_lossy(&listed.stdout).into_owned()))
     }
 
     fn run(self, args: &[&str]) -> Option<String> {
-        let program = match self {
-            Harness::Claude => "claude",
-            Harness::Codex => "codex",
-        };
-        Command::new(program)
-            .args(args)
-            .stdin(std::process::Stdio::null())
+        self.command(args)
             .output()
             .ok()
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+    }
+
+    fn command(self, args: &[&str]) -> Command {
+        let program = match self {
+            Harness::Claude => "claude",
+            Harness::Codex => "codex",
+        };
+        let mut command = Command::new(program);
+        command.args(args).stdin(std::process::Stdio::null());
+        command
     }
 }
 
