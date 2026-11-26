@@ -443,3 +443,48 @@ fn gc_named_removes_the_one_entry_a_person_names() {
         "and nothing else does, past its clock or not"
     );
 }
+
+#[test]
+fn a_tree_under_tmp_goes_by_its_newest_write_and_never_while_in_use() {
+    let mut s = Sandbox::new();
+    let g = scratch_to_sweep(&s);
+    for d in ["tmp/synced/src", "tmp/busy"] {
+        fs::create_dir_all(s.path(&format!("gc/{d}"))).unwrap();
+    }
+    s.write("gc/tmp/synced/src/fresh.rs", "");
+    assert_eq!(
+        s.command(
+            "touch",
+            [
+                "-d",
+                "30 days ago",
+                &s.p("gc/tmp/synced"),
+                &s.p("gc/tmp/synced/src"),
+                &s.p("gc/tmp/busy"),
+            ],
+        )
+        .code(),
+        0
+    );
+    let gate = s.gate("busy");
+    let worker = s.command(
+        "sh",
+        [
+            "-c",
+            &format!("cd {} && {}; true", s.p("gc/tmp/busy"), gate.hold()),
+        ],
+    );
+    let worker = s.spawn(worker);
+    let out = s.dibs(["--gc"]).env("DIBS_SCRATCH", &g).run().all();
+    gate.open();
+    s.wait(worker);
+    assert!(!s.exists("gc/tmp/left"), "an old leftover goes: {out}");
+    assert!(
+        s.exists("gc/tmp/synced/src/fresh.rs"),
+        "one written deep inside today stays, whatever its top's date: {out}"
+    );
+    assert!(
+        s.exists("gc/tmp/busy"),
+        "and so does one a process works in: {out}"
+    );
+}

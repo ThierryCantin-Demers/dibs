@@ -1055,11 +1055,13 @@ fn scratch_to_sweep(s: &Sandbox) -> String {
         let dated = match dir.starts_with("ws/") || dir.starts_with("target/") {
             true => {
                 s.write(&format!("gc/{dir}/.dibs-used"), "");
-                format!("gc/{dir}/.dibs-used")
+                vec![format!("gc/{dir}/.dibs-used")]
             }
-            false => format!("gc/{dir}"),
+            false => vec![format!("gc/{dir}/blob"), format!("gc/{dir}")],
         };
-        assert_eq!(s.command("touch", ["-d", when, &s.p(&dated)]).code(), 0);
+        let mut touch = vec!["-d".to_string(), when.to_string()];
+        touch.extend(dated.iter().map(|d| s.p(d)));
+        assert_eq!(s.command("touch", touch).code(), 0);
     }
     s.p("gc")
 }

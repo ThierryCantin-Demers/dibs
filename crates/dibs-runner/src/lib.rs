@@ -53,10 +53,10 @@ pub fn main(args: &[String], source: Source) -> i32 {
         [verb] if verb == job::Tether::WORD => job::Tether::serve(),
         [verb, hash] if verb == "build" => provision::build(hash, provision::Built::Runner),
         [verb, hash] if verb == "build-client" => provision::build(hash, provision::Built::Client),
-        [verb, days, dry] if verb == "gc" => {
+        [verb, days, dry] if verb == "gc" && !days.contains(char::is_whitespace) => {
             tree::Asked::parse(&format!("{days} {dry}")).report().run()
         }
-        [verb, days, dry, live] if verb == "gc" => {
+        [verb, days, dry, live] if verb == "gc" && !days.contains(char::is_whitespace) => {
             tree::Asked::parse(&format!("{days} {dry} {live}"))
                 .report()
                 .run()

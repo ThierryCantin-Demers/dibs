@@ -209,6 +209,12 @@ impl SweepReport {
             ));
             return 2;
         }
+        let kib = Totals::default()
+            .measure(Swept::Named.named(), std::slice::from_ref(&path), |_| false)
+            .sizes
+            .of(&path);
+        let written = SweepReport::ago(Moment::epoch_now(), path.newest(None));
+        // Checked after the walks above, which take minutes on a big entry.
         if path.join(KEEP).exists() {
             SweepReport::say(&format!(
                 "dibs: {} is kept by its .dibs-keep; remove that file first if it should go.\n",
@@ -223,13 +229,6 @@ impl SweepReport {
             ));
             return 1;
         }
-        let tally = Totals::default();
-        let kib = tally
-            .measure(Swept::Named.named(), std::slice::from_ref(&path), |_| false)
-            .sizes
-            .of(&path);
-        let now = Moment::epoch_now();
-        let written = SweepReport::ago(now, path.newest(None));
         let done = match self.dry {
             true => "would remove",
             false if Removal::new(None, &SweepReport::say).path(&path) => "removed",

@@ -9,10 +9,12 @@ What may run beside a Measurement and how a Job shares its Machine, cited as
 
 - **Sync:** a copy to or from a Machine under the Shared Lock, its Machine side marked by a leading
   colon, with rsync's own options passing through
-  (`dibs --sync -a ./tree ':$DIBS_SCRATCH/tmp/tree'` sends, `dibs --sync -a ':$DIBS_SCRATCH/out' ./`
+  (`dibs --sync -aO ./tree ':$DIBS_SCRATCH/tmp/tree'` sends, `dibs --sync -a ':$DIBS_SCRATCH/out' ./`
   fetches).
 
 ### copy-is-a-sync: Every copy to or from a Machine is a Sync, since a copy competes with a Measurement for memory bandwidth and writeback.
+
+### sync-dated-by-copy: A Sync into `$DIBS_SCRATCH/tmp` passes rsync's `-O`, since dibs dates a tree there by its newest write and `-a` alone gives its directories the source's old times.
 
 ### scratch-quoted: A Sync names Scratch as a quoted leading `$DIBS_SCRATCH`, the only variable it expands on the Machine.
 

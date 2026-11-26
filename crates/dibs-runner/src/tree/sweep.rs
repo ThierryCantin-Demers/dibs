@@ -1,4 +1,5 @@
 use crate::{
+    attempt::Attempts,
     clock::{Moment, Span},
     image::{Cached, IMAGES},
     platform::{Host, Platform as _},
@@ -11,6 +12,7 @@ use crate::{
         turn::Turn,
     },
 };
+use dibs_format::wire::BundleManifest;
 use std::{
     collections::BTreeMap,
     fs::{self, File},
@@ -27,8 +29,17 @@ const TEMPORARY: [&str; 2] = [".seed.", ".old."];
 /// What a sweep writes in a cache it found unmarked; a prepare's marker is empty.
 const DATED: &str = "swept\n";
 /// What dibs makes under scratch; everything else there a job named itself.
-pub const DIBS_OWN: [&str; 8] = [
-    "ws", "target", "jobs", "tmp", "out", "runner", "run", IMAGES,
+pub const DIBS_OWN: [&str; 10] = [
+    "ws",
+    "target",
+    "jobs",
+    "tmp",
+    "out",
+    "runner",
+    "run",
+    IMAGES,
+    Attempts::DIR,
+    BundleManifest::DIR,
 ];
 
 /// What a sweep walks, in the order it walks it.
@@ -249,11 +260,17 @@ impl<'a> Sweep<'a> {
                     Verdict::of(cache, fate, used)
                 })
                 .collect(),
-            Swept::Jobs | Swept::Leftovers | Swept::Results => entries
+            Swept::Jobs | Swept::Results => entries
                 .map(|path| {
                     let fate = self.bulk(&path, now);
                     let used = path.written(now);
                     Verdict::of(path, fate, used)
+                })
+                .collect(),
+            Swept::Leftovers => entries
+                .map(|path| {
+                    let (fate, written) = self.leftover(&path, now);
+                    Verdict::of(path, fate, written)
                 })
                 .collect(),
             Swept::Runners => return Runners::in_home(self.home).judged(&self.clocks, now),
@@ -528,6 +545,26 @@ impl<'a> Sweep<'a> {
             true => Fate::Past,
             false => Fate::Kept,
         }
+    }
+
+    /// An entry under `tmp`, by the last write anywhere in it, since agents work in trees there
+    /// whose top directory a copy dated long ago; kept while a process works in it.
+    fn leftover(&self, path: &Path, now: u64) -> (Fate, u64) {
+        let cutoff = now.saturating_sub(self.clocks.keep_days.saturating_mul(Span::DAY.0));
+        let enough = match self.clocks.all {
+            true => None,
+            false => Some(cutoff),
+        };
+        let written = path.newest(enough);
+        let fate = match (
+            self.used_now(path),
+            self.clocks.past(now, written, self.clocks.keep_days),
+        ) {
+            (true, _) => Fate::Held,
+            (false, true) => Fate::Past,
+            (false, false) => Fate::Kept,
+        };
+        (fate, written)
     }
 
     /// What a job named, by the last write anywhere in it: a build deep inside keeps all of it.

@@ -421,7 +421,8 @@ Every prepare, local or fetched, sweeps the machine's whole scratch, across ever
 - A worktree goes once unused for `keep_days` (14).
 - A target directory goes once unused for `target_keep_days` (5): disk is what runs out first on
   a machine, and a cache that went costs one cold build.
-- A job's directory, and an entry under `$DIBS_SCRATCH/tmp`, go once unchanged for `keep_days`.
+- A job's directory goes once unchanged for `keep_days`. So does an entry under `$DIBS_SCRATCH/tmp`,
+  dated by the newest write anywhere in it, and kept while a process works in it.
 - A runner version a later one replaced goes once unused for `keep_days`, since a client that has
   not updated builds its own again. So does what a runner build that died left, and the target
   those builds share goes once unused for `target_keep_days`.
