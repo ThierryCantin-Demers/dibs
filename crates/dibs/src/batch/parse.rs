@@ -34,6 +34,12 @@ pub enum BatchError {
     Unplaced {
         step: String,
     },
+    /// A word placement reads, that the shell expands in a way it cannot read before the step
+    /// runs: a command, or quotes inside it.
+    Unread {
+        step: String,
+        word: String,
+    },
     File(FileError),
     /// The steps' reports stopped arriving before every step ended.
     Lost(mpsc::RecvTimeoutError),
@@ -81,6 +87,11 @@ impl fmt::Display for BatchError {
                 f,
                 "step {step} measures and names no machine, and no machine of the inventory is a bench machine to\n  \
                  place it on. Give it --on <machine>, or export DIBS_ON=<machine> before the batch to cover every step."
+            ),
+            BatchError::Unread { step, word } => write!(
+                f,
+                "step {step} gives {word}, which its rows are placed by and which only its shell can expand.\n  \
+                 Name it as a word, or with $VAR or ${{VAR...}} alone, or give the step --on <machine>."
             ),
             BatchError::File(e) => e.fmt(f),
             BatchError::Lost(e) => e.fmt(f),
@@ -185,6 +196,9 @@ pub struct Step {
     pub device: Option<String>,
     /// `--new-series`, which placement skips a label's series for.
     pub new_series: bool,
+    /// A call that runs a job on a machine, which placement places; a query such as
+    /// `--machines` runs here and is placed nowhere.
+    pub runs: bool,
     /// What a recipe step asks for, so the jobs it will make can be planned.
     pub recipe: Option<RecipeCall>,
 }
@@ -418,6 +432,7 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
         label: None,
         device: None,
         new_series: false,
+        runs: false,
         recipe: None,
     };
     match read {
@@ -435,6 +450,7 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
             step.label = call.label.map(|l| l.as_str().to_string());
             step.device = call.device.map(|d| d.as_str().to_string());
             step.new_series = call.new_series;
+            step.runs = matches!(call.mode, Mode::Run(_) | Mode::Peek(_) | Mode::Sync(_));
         }
         Invocation::Recipe(call) => {
             if call.verb == RecipeVerb::Batch {
@@ -446,6 +462,7 @@ fn describe(words: &[String]) -> Result<Step, BadLine> {
             step.on = call.on.clone();
             step.device = call.device.clone();
             step.new_series = call.new_series;
+            step.runs = call.verb.runs_jobs() || call.verb == RecipeVerb::With;
             if call.verb.runs_jobs() {
                 step.lock = StepKind::Recipe;
                 step.label = Some(recipe_label(words));

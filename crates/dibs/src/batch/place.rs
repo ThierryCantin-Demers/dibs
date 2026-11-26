@@ -46,13 +46,10 @@ impl Rows<'_> {
             if group.iter().all(|&i| known(i)) {
                 continue;
             }
-            // A row's own --on takes the group with it, read as the shell will expand it; one
-            // that cannot be read leaves the group to place itself row by row.
-            let pinned = group
-                .iter()
-                .find_map(|&i| self.steps[i].on.as_deref().map(expanded));
+            // A row's own --on takes the group with it, read as the shell will expand it.
+            let pinned = group.iter().find_map(|&i| self.pinned(i).transpose());
             let machine = match pinned {
-                Some(pinned) => pinned,
+                Some(pinned) => Some(pinned?),
                 None => self.demand(&group, &measures)?,
             };
             for &i in &group {
@@ -76,8 +73,8 @@ impl Rows<'_> {
             let first = named.iter().flatten().next().cloned();
             return Ok(first.filter(|_| named.iter().all(Option::is_some)));
         }
-        if let Some(pinned) = self.steps.iter().find_map(|s| self.pin(s)) {
-            return Ok(pinned);
+        if let Some(pinned) = (0..self.steps.len()).find_map(|i| self.pinned(i).transpose()) {
+            return pinned.map(Some);
         }
         if let Some(on) = self.batch_on() {
             return Ok(Some(on));
@@ -91,6 +88,16 @@ impl Rows<'_> {
     /// it cannot be read here.
     pub fn pin(&self, step: &Step) -> Option<Option<String>> {
         step.on.as_deref().map(expanded)
+    }
+
+    /// Row `i`'s own --on, refused when it cannot be read here.
+    fn pinned(&self, i: usize) -> Result<Option<String>, BatchError> {
+        let step = &self.steps[i];
+        match self.pin(step) {
+            Some(Some(on)) => Ok(Some(on)),
+            Some(None) => Err(unread(step, step.on.as_deref())),
+            None => Ok(None),
+        }
     }
 
     /// The machine of every row naming none of its own, from `--on` or `DIBS_ON`.
@@ -115,7 +122,7 @@ impl Rows<'_> {
     /// The repo a row works in, as a recipe resolves its checkout, or None for one that is not
     /// placed with the others.
     fn repo(&self, step: &Step) -> Option<String> {
-        if step.lock == StepKind::Peek {
+        if step.lock == StepKind::Peek || !step.runs {
             return None;
         }
         let checkout = match &step.recipe {
@@ -194,7 +201,7 @@ impl Rows<'_> {
         for row in &rows {
             match card(row) {
                 Some(Some(alias)) => cards.push(alias),
-                Some(None) => return Ok(None),
+                Some(None) => return Err(unread(row, row.device.as_deref())),
                 None => {}
             }
         }
@@ -260,13 +267,12 @@ impl Rows<'_> {
     fn measured_labels(&self, step: &Step) -> Option<Vec<Label>> {
         if let Some(with) = step.recipe.as_ref().filter(|r| r.verb == RecipeVerb::With) {
             let repo = self.repo(step).unwrap_or_else(|| with.repo.clone());
-            let label = run_label(
-                &repo,
-                "with",
-                with.recipe.as_deref(),
-                with.device.as_deref(),
-            );
-            return Some(vec![Label::new(expanded(&label)?)]);
+            let device = match with.device.as_deref() {
+                Some(d) => Some(expanded(d)?),
+                None => None,
+            };
+            let label = run_label(&repo, "with", with.recipe.as_deref(), device.as_deref());
+            return Some(vec![Label::new(label)]);
         }
         let jobs = match step.recipe.as_ref() {
             Some(r) => {
@@ -296,48 +302,32 @@ impl Rows<'_> {
     }
 }
 
-/// A card as the step's shell will see it: `$NAME` and `${NAME}` from the batch's environment,
-/// which its steps inherit. None for anything else the shell would expand.
+/// A word as the step's shell will expand it, from the batch's environment, which its steps
+/// inherit. bash does the expanding, inside double quotes as a step's quoted word is; a word that
+/// would run a command or leave the quotes is not expanded, and None, as is one that expands to
+/// nothing.
 fn expanded(word: &str) -> Option<String> {
-    let mut out = String::new();
-    let mut rest = word;
-    while let Some(at) = rest.find('$') {
-        out.push_str(&rest[..at]);
-        let after = &rest[at + 1..];
-        let named = |name: &str| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        match after.strip_prefix('{') {
-            Some(braced) => {
-                let end = braced.find('}')?;
-                let inner = &braced[..end];
-                let value = match (inner.split_once(":-"), inner.split_once('-')) {
-                    (Some((name, fallback)), _) if named(name) => std::env::var(name)
-                        .ok()
-                        .filter(|v| !v.is_empty())
-                        .unwrap_or_else(|| fallback.to_string()),
-                    (None, Some((name, fallback))) if named(name) => {
-                        std::env::var(name).unwrap_or_else(|_| fallback.to_string())
-                    }
-                    _ if !inner.is_empty() && named(inner) => std::env::var(inner).ok()?,
-                    _ => return None,
-                };
-                out.push_str(&value);
-                rest = &braced[end + 1..];
-            }
-            None => {
-                let end = after
-                    .find(|c: char| !named(&c.to_string()))
-                    .unwrap_or(after.len());
-                if end == 0 {
-                    return None;
-                }
-                out.push_str(&std::env::var(&after[..end]).ok()?);
-                rest = &after[end..];
-            }
-        }
+    if !word.contains('$') {
+        return Some(word.to_string());
     }
-    out.push_str(rest);
-    let unread = ['"', '\'', '`', '*', '?', '$'];
-    (!out.contains(unread)).then_some(out)
+    if word.contains(['"', '`', '\\']) || word.contains("$(") {
+        return None;
+    }
+    let out = std::process::Command::new("bash")
+        .args(["-c", &format!("printf %s \"{word}\"")])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let value = String::from_utf8(out.stdout).ok()?;
+    (out.status.success() && !value.is_empty()).then_some(value)
+}
+
+fn unread(step: &Step, word: Option<&str>) -> BatchError {
+    BatchError::Unread {
+        step: step.name.clone(),
+        word: word.unwrap_or_default().to_string(),
+    }
 }
 
 pub(super) fn by_roles() -> bool {
@@ -354,19 +344,22 @@ mod tests {
     #[test]
     fn a_word_is_read_as_the_shell_would_expand_it() {
         // SAFETY: set once, read by this test alone.
-        unsafe { std::env::set_var("DIBS_PLACE_CARD", "gpu:x") };
-        assert_eq!(expanded("$DIBS_PLACE_CARD").as_deref(), Some("gpu:x"));
-        assert_eq!(expanded("${DIBS_PLACE_CARD}.a").as_deref(), Some("gpu:x.a"));
+        unsafe { std::env::set_var("DIBS_PLACE_CARD", "GPU:x") };
+        assert_eq!(expanded("gpu:x").as_deref(), Some("gpu:x"));
+        assert_eq!(
+            expanded("${DIBS_PLACE_CARD,,}.a").as_deref(),
+            Some("gpu:x.a")
+        );
         assert_eq!(
             expanded("${DIBS_PLACE_UNSET:-gpu:y}").as_deref(),
             Some("gpu:y")
         );
+        assert_eq!(expanded("$DIBS_PLACE_UNSET"), None, "nothing is no card");
         assert_eq!(
-            expanded("${DIBS_PLACE_UNSET-gpu:z}").as_deref(),
-            Some("gpu:z")
+            expanded("$(echo gpu:x)"),
+            None,
+            "a command is not run to plan"
         );
-        assert_eq!(expanded("$DIBS_PLACE_UNSET"), None);
-        assert_eq!(expanded("${DIBS_PLACE_CARD/x/y}"), None);
-        assert_eq!(expanded("gpu:*"), None);
+        assert_eq!(expanded("${DIBS_PLACE_CARD}\"; touch x; \""), None);
     }
 }

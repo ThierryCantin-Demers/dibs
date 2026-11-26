@@ -40,6 +40,7 @@ impl Team {
     /// does not read is left out, never fatal, since it is only ever written once it read.
     pub fn load(&self) -> Option<Inventory> {
         let dir = self.dir.as_ref()?;
+        recover(dir);
         if !dir.join(CARRIED).exists() {
             let from = std::fs::read_to_string(dir.join(FROM)).ok()?;
             if Some(from) != crate::dispatch::dibspatcher_id() {
@@ -119,6 +120,25 @@ fn keep(dir: &Path, files: &BTreeMap<String, String>, from: &str) -> Result<usiz
     placed.map(|()| count)
 }
 
+/// Puts back a copy that `keep` moved aside and did not live to replace.
+fn recover(dir: &Path) {
+    if dir.exists() {
+        return;
+    }
+    let Some(parent) = dir.parent() else {
+        return;
+    };
+    let aside = std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".team.old-"))
+        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+    if let Some(aside) = aside {
+        let _ = std::fs::rename(aside.path(), dir);
+    }
+}
+
 /// `machines.toml`, or one `machines.d/<name>.toml`: nothing that climbs out of the copy.
 fn kept_name(name: &str) -> bool {
     let plain = |file: &str| {
@@ -189,6 +209,21 @@ mod tests {
             "the copy that read is still there"
         );
         assert_eq!(fs_read(&dir.join(FROM)), "dibs@a");
+        std::fs::rename(&dir, root.join(".team.old-1")).unwrap();
+        assert_eq!(
+            Team {
+                dir: Some(dir.clone())
+            }
+            .load()
+            .map(|i| i.machines.len()),
+            None,
+            "put back, then refused for want of a dibspatcher here"
+        );
+        assert_eq!(
+            fs_read(&dir.join(FROM)),
+            "dibs@a",
+            "the copy moved aside is put back"
+        );
         let leaving = BTreeMap::from([("machines.d/../../x.toml".to_string(), String::new())]);
         assert!(keep(&dir, &leaving, "dibs@a").is_err());
         assert!(!root.join("x.toml").exists());

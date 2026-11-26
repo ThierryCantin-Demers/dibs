@@ -218,6 +218,7 @@ pub fn machine_of(step: &Step, batch_on: Option<&MachineName>) -> Option<String>
     let caller = Caller::default();
     let role = match (step.lock, step.measures()) {
         (StepKind::Peek | StepKind::Sync, _) => None,
+        _ if !step.runs => None,
         (_, true) => Some(Role::Bench),
         (_, false) => Some(Role::of_shared(
             step.device.as_deref().map(Alias::new).as_ref(),
@@ -284,7 +285,7 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     let named: Vec<Option<String>> = named
         .into_iter()
         .zip(&placed)
-        .map(|(named, placed)| named.or_else(|| placed.clone()))
+        .map(|(named, placed)| placed.clone().or(named))
         .collect();
     if let Some((s, _)) = steps
         .iter()
@@ -383,8 +384,12 @@ pub fn resume(id: &BatchId) -> Result<i32, BatchError> {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            machine_of(s, opts.on.as_ref())
-                .or_else(|| paused.placed.get(i).cloned().flatten())
+            paused
+                .placed
+                .get(i)
+                .cloned()
+                .flatten()
+                .or_else(|| machine_of(s, opts.on.as_ref()))
                 .unwrap_or_else(|| "?".into())
         })
         .collect();
