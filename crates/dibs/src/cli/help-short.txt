@@ -17,7 +17,7 @@ Calls
 Batches
   dibs batch <file|->                  one call per line, one summary at the end
   dibs batch --detach <file|->         driven on the machine, outliving this one
-  dibs batch --follow <id>             wait on a detached or paused batch
+  dibs batch --follow <id>             follow a detached or resume a paused one
 Machines
   dibs status, dibs --watch            who holds each machine, and the queue
   dibs --machines, dibs machines       the inventory, and each machine's state
@@ -40,6 +40,6 @@ Setup
 Flags  --on <machine>  --device <card>  --label <name>  --wait <s>  --max <s>
        --low-priority  --urgent '<why>'  --check-in <time>  --dry-run
 
-dibs <command> --help   that command, and every flag it takes
-dibs --help --all       every command and flag, and what each does
+dibs <command> --help   that command's part of the whole help
+dibs --help --all       the whole help: every command and flag
 
