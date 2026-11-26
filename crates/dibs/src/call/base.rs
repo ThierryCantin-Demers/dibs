@@ -333,9 +333,14 @@ impl<'a> LockedCall<'a> {
             && env.series_check
             && !call.new_series
             && let Some(series) = &series
-            && let Some(note) = series.check(&entry, &fleet, self.recipe() && !call.preflight)?
         {
-            output.say(&note);
+            match series.check(&entry, &fleet, self.recipe() && !call.preflight) {
+                Ok(Some(note)) => output.say(&note),
+                Ok(None) => {}
+                // The machine's own series moved to this card, by another caller's run.
+                Err(_) if machine_keeps(&target, &fleet, &label, &device) => {}
+                Err(moved) => return Err(moved.into()),
+            }
         }
         if call.preflight {
             return Ok(Ran {
@@ -751,6 +756,17 @@ impl From<Moved> for CallError {
     fn from(e: Moved) -> CallError {
         CallError::Moved(e)
     }
+}
+
+/// Whether the machine's runner records `label`'s series on `card`.
+fn machine_keeps(target: &Target, fleet: &Fleet, label: &Label, card: &str) -> bool {
+    target
+        .entry(fleet)
+        .and_then(|entry| Reading::asked(&entry.name))
+        .is_some_and(|r| {
+            r.series_cards_of(std::slice::from_ref(label))
+                .any(|c| c == card)
+        })
 }
 
 impl From<Unplaced> for CallError {

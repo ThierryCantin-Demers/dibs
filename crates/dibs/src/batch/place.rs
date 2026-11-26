@@ -45,11 +45,13 @@ impl Rows<'_> {
             if group.iter().all(|&i| named[i].is_some()) {
                 continue;
             }
-            let chosen = group
+            // A row's own --on takes the group with it, read as the shell will expand it; one
+            // that cannot be read leaves the group to place itself row by row.
+            let pinned = group
                 .iter()
-                .find_map(|&i| named[i].clone().filter(|m| m != "?"));
-            let machine = match chosen {
-                Some(chosen) => Some(chosen),
+                .find_map(|&i| self.steps[i].on.as_deref().map(expanded));
+            let machine = match pinned {
+                Some(pinned) => pinned,
                 None => self.demand(&group, &measures)?,
             };
             for &i in &group {
@@ -64,20 +66,32 @@ impl Rows<'_> {
     /// The one machine of a batch detached to it, which every row must run on: the one its
     /// rows name, or else, once the inventory gives roles, the one its most demanding row needs.
     pub fn one(&self) -> Result<Option<String>, BatchError> {
-        let named: Vec<Option<String>> = self
+        if !by_roles() {
+            let named: Vec<Option<String>> = self
+                .steps
+                .iter()
+                .map(|s| machine_of(s, self.on).filter(|m| m != "?"))
+                .collect();
+            let first = named.iter().flatten().next().cloned();
+            return Ok(first.filter(|_| named.iter().all(Option::is_some)));
+        }
+        let batch_on = self
+            .on
+            .map(MachineName::to_string)
+            .or_else(|| std::env::var("DIBS_ON").ok().filter(|on| !on.is_empty()));
+        if let Some(on) = batch_on {
+            return Ok(Some(on));
+        }
+        if let Some(pinned) = self
             .steps
             .iter()
-            .map(|s| machine_of(s, self.on).filter(|m| m != "?"))
-            .collect();
-        if let Some(first) = named.iter().flatten().next() {
-            return Ok((by_roles() || named.iter().all(Option::is_some)).then(|| first.clone()));
-        }
-        if !by_roles() {
-            return Ok(None);
+            .find_map(|s| s.on.as_deref().map(expanded))
+        {
+            return Ok(pinned);
         }
         let measures: Vec<bool> = self.steps.iter().map(|s| self.measures(s)).collect();
         let all: Vec<usize> = (0..self.steps.len()).collect();
-        Ok(self.demand(&all, &measures).ok().flatten())
+        self.demand(&all, &measures)
     }
 
     /// Whether a row measures: a recipe by the locks of the jobs it resolves to, any other by
@@ -169,21 +183,22 @@ impl Rows<'_> {
     fn demand(&self, group: &[usize], measures: &[bool]) -> Result<Option<String>, BatchError> {
         let caller = Caller::default();
         let rows: Vec<&Step> = group.iter().map(|&i| &self.steps[i]).collect();
-        let card = |s: &Step| {
-            s.device
-                .as_deref()
-                .and_then(expanded)
-                .filter(|d| d != "cpu")
-                .map(Alias::new)
-        };
-        let cards: Vec<Alias> = rows.iter().filter_map(|s| card(s)).collect();
+        let card = |s: &Step| s.device.as_deref().map(|d| expanded(d).map(Alias::new));
+        let mut cards: Vec<Alias> = Vec::new();
+        for row in &rows {
+            match card(row) {
+                Some(Some(alias)) => cards.push(alias),
+                Some(None) => return Ok(None),
+                None => {}
+            }
+        }
         let measuring = group.iter().any(|&i| measures[i]);
         // The card the call is placed by is its measurement's; every other row's must be on the
         // machine as well, each as it asks.
         let lead = group
             .iter()
             .filter(|&&i| !measuring || measures[i])
-            .find_map(|&i| card(&self.steps[i]));
+            .find_map(|&i| card(&self.steps[i]).flatten());
         let fits = |m: &Machine| cards.iter().all(|alias| Card::all_on(alias, m).is_ok());
         let call = Call {
             mode: Mode::Pick,
@@ -191,7 +206,7 @@ impl Rows<'_> {
             // Only a recipe is placed by where its repo is cloned; a raw row is not.
             repo: rows
                 .iter()
-                .find(|s| s.recipe.is_some())
+                .find(|s| s.recipe.as_ref().is_some_and(|r| r.verb != RecipeVerb::Raw))
                 .and_then(|s| self.repo(s)),
             ..Call::default()
         };
@@ -207,14 +222,20 @@ impl Rows<'_> {
         }
         let mut labels = Vec::new();
         let mut fresh = Vec::new();
+        let mut kept = Vec::new();
         for &i in group.iter().filter(|&&i| measures[i]) {
             let step = &self.steps[i];
-            let measured = self.measured_labels(step);
-            if step.new_series {
-                fresh.extend(measured.iter().cloned());
+            let Some(measured) = self.measured_labels(step) else {
+                return Ok(None);
+            };
+            match step.new_series {
+                true => fresh.extend(measured.iter().cloned()),
+                false => kept.extend(measured.iter().cloned()),
             }
             labels.extend(measured);
         }
+        // A label one row keeps and another starts again keeps its series until it starts again.
+        fresh.retain(|l| !kept.contains(l));
         Ok(Some(
             placement
                 .pick_bench_where(&labels, &fresh, fits)
@@ -223,7 +244,9 @@ impl Rows<'_> {
         ))
     }
 
-    fn measured_labels(&self, step: &Step) -> Vec<Label> {
+    /// The labels a measuring row will send, None when the shell expands one in a way this
+    /// cannot read.
+    fn measured_labels(&self, step: &Step) -> Option<Vec<Label>> {
         if let Some(with) = step.recipe.as_ref().filter(|r| r.verb == RecipeVerb::With) {
             let repo = self.repo(step).unwrap_or_else(|| with.repo.clone());
             let label = run_label(
@@ -232,16 +255,20 @@ impl Rows<'_> {
                 with.recipe.as_deref(),
                 with.device.as_deref(),
             );
-            return vec![Label::new(label)];
+            return Some(vec![Label::new(expanded(&label)?)]);
         }
         let jobs = step.recipe.as_ref().and_then(Job::of_batch_line);
         match jobs {
-            Some(jobs) => jobs
-                .into_iter()
-                .filter(|p| p.mode == Planned::Job(JobMode::Bench))
-                .map(|p| p.label)
-                .collect(),
-            None => vec![step.pending(true, self.cwd).label],
+            Some(jobs) => Some(
+                jobs.into_iter()
+                    .filter(|p| p.mode == Planned::Job(JobMode::Bench))
+                    .map(|p| p.label)
+                    .collect(),
+            ),
+            None => {
+                let label = step.pending(true, self.cwd).label;
+                Some(vec![Label::new(expanded(label.as_str())?)])
+            }
         }
     }
 }
@@ -254,32 +281,69 @@ fn expanded(word: &str) -> Option<String> {
     while let Some(at) = rest.find('$') {
         out.push_str(&rest[..at]);
         let after = &rest[at + 1..];
-        let (name, tail) = match after.strip_prefix('{') {
+        let named = |name: &str| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        match after.strip_prefix('{') {
             Some(braced) => {
                 let end = braced.find('}')?;
-                (&braced[..end], &braced[end + 1..])
+                let inner = &braced[..end];
+                let value = match (inner.split_once(":-"), inner.split_once('-')) {
+                    (Some((name, fallback)), _) if named(name) => std::env::var(name)
+                        .ok()
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or_else(|| fallback.to_string()),
+                    (None, Some((name, fallback))) if named(name) => {
+                        std::env::var(name).unwrap_or_else(|_| fallback.to_string())
+                    }
+                    _ if !inner.is_empty() && named(inner) => std::env::var(inner).ok()?,
+                    _ => return None,
+                };
+                out.push_str(&value);
+                rest = &braced[end + 1..];
             }
             None => {
                 let end = after
-                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .find(|c: char| !named(&c.to_string()))
                     .unwrap_or(after.len());
-                (&after[..end], &after[end..])
+                if end == 0 {
+                    return None;
+                }
+                out.push_str(&std::env::var(&after[..end]).ok()?);
+                rest = &after[end..];
             }
-        };
-        if name.is_empty() {
-            return None;
         }
-        out.push_str(&std::env::var(name).ok()?);
-        rest = tail;
     }
     out.push_str(rest);
-    let quoted = ['"', '\'', '`', '*', '?'];
-    (!out.contains(quoted)).then_some(out)
+    let unread = ['"', '\'', '`', '*', '?', '$'];
+    (!out.contains(unread)).then_some(out)
 }
 
-fn by_roles() -> bool {
+pub(super) fn by_roles() -> bool {
     Inventory::here()
         .ok()
         .flatten()
         .is_some_and(|i| i.has_roles())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expanded;
+
+    #[test]
+    fn a_word_is_read_as_the_shell_would_expand_it() {
+        // SAFETY: set once, read by this test alone.
+        unsafe { std::env::set_var("DIBS_PLACE_CARD", "gpu:x") };
+        assert_eq!(expanded("$DIBS_PLACE_CARD").as_deref(), Some("gpu:x"));
+        assert_eq!(expanded("${DIBS_PLACE_CARD}.a").as_deref(), Some("gpu:x.a"));
+        assert_eq!(
+            expanded("${DIBS_PLACE_UNSET:-gpu:y}").as_deref(),
+            Some("gpu:y")
+        );
+        assert_eq!(
+            expanded("${DIBS_PLACE_UNSET-gpu:z}").as_deref(),
+            Some("gpu:z")
+        );
+        assert_eq!(expanded("$DIBS_PLACE_UNSET"), None);
+        assert_eq!(expanded("${DIBS_PLACE_CARD/x/y}"), None);
+        assert_eq!(expanded("gpu:*"), None);
+    }
 }

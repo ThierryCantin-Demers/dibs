@@ -2,7 +2,7 @@ use super::{
     check_in::Hint,
     guard::{Carried, StepGuard},
     parse::{BatchError, Step, StepKind, parse},
-    place::Rows,
+    place::{Rows, by_roles},
     plan::Batch,
 };
 use crate::{
@@ -289,7 +289,9 @@ pub fn run(text: &str, opts: &Options) -> Result<i32, BatchError> {
     if let Some((s, _)) = steps
         .iter()
         .zip(&named)
-        .find(|(s, m)| m.is_none() && rows.measures(s))
+        // With roles a measurement left unplaced places itself as it starts; without them it
+        // is refused, as a measurement naming no machine always was.
+        .find(|(s, m)| m.is_none() && !by_roles() && s.measures())
     {
         return Err(BatchError::Unplaced {
             step: s.name.clone(),

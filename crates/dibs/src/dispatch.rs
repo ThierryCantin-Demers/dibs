@@ -272,9 +272,16 @@ impl Sending {
 /// of its inventory is tied to.
 pub fn dibspatcher_id() -> Option<String> {
     Dibspatcher::configured().ok().map(|d| {
+        // As ssh opens it from here, so two directories' relative files are two identities.
         let config = d
             .config
-            .map(|c| c.display().to_string())
+            .map(|c| {
+                std::fs::canonicalize(&c)
+                    .or_else(|_| std::path::absolute(&c))
+                    .unwrap_or(c)
+                    .display()
+                    .to_string()
+            })
             .unwrap_or_default();
         format!("{}\t{config}", d.ssh)
     })
@@ -610,9 +617,7 @@ impl Shown {
                 }
             }
             Reply::Status(detail) => print!("{}", status(&detail)),
-            Reply::Inventory {
-                files: Some(files), ..
-            } if self.keeps_files => self.files = Some(files),
+            Reply::Inventory { files, .. } if self.keeps_files => self.files = files,
             Reply::Inventory {
                 machines, pools, ..
             } => {

@@ -11,6 +11,8 @@ pub struct Inventory {
     pub text: String,
     /// Each file read, by its path beside `machines.toml`.
     pub files: BTreeMap<String, String>,
+    /// The files there that could not be read, which is not the same as their being gone.
+    pub unread: Vec<String>,
 }
 
 impl Inventory {
@@ -47,9 +49,13 @@ impl Inventory {
         }
         let mut inventory = Inventory::default();
         for (name, file) in files {
-            if let Ok(text) = std::fs::read_to_string(file) {
-                inventory.add(&text);
-                inventory.files.insert(name, text);
+            match std::fs::read_to_string(&file) {
+                Ok(text) => {
+                    inventory.add(&text);
+                    inventory.files.insert(name, text);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => inventory.unread.push(format!("{}: {e}", file.display())),
             }
         }
         inventory

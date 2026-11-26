@@ -475,6 +475,15 @@ impl Api<'_> {
 
     fn inventory(&self) -> Answer {
         let inventory = Inventory::load();
+        if !inventory.unread.is_empty() {
+            return Err((
+                format!(
+                    "the dibspatcher's inventory could not be read: {}",
+                    inventory.unread.join("; ")
+                ),
+                Exit::Failed.status(),
+            ));
+        }
         send(&Reply::Inventory {
             machines: inventory.text,
             pools: self.store.pools().map_err(failed)?,
