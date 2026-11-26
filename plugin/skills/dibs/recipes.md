@@ -8,7 +8,8 @@ How a Recipe runs, compares, and is written, cited as `dibs/recipes::<rule-name>
 
 - **Ref:** the code a Recipe runs: a branch, tag or commit, `local` for the working tree with its
   uncommitted changes, `a..b` for an A/B of b against where it left a, and `a,b,c` for refs in
-  turn; a ref the Machine cannot fetch is checked out here and sent.
+  turn; a ref the Machine cannot fetch, or a branch with commits its origin lacks, is
+  checked out here at its local tip and sent.
 - **Values:** what a Recipe's `params` declare, passed as `--<name> <value>`, refused outside their
   choices before anything is sent, and never split on commas.
 - **Sweep:** one Call over several Values (`--sweep <name>=<a,b,c>`), one Batch with one summary.

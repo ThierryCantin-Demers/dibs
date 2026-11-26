@@ -20,7 +20,7 @@ How what comes back is read, and what each exit asks for, cited as `dibs/results
 
 ## Exits
 
-### exit-read-by-its-source: An exit means what the table below says only when the Trailer says `by=dibs`, no Job ran, or a Check-in notice came, and is the command's own when it says `by=command`.
+### exit-read-by-its-source: An exit means what the table below says only when the Trailer says `by=dibs`, a Check-in notice came, or dibs printed its own refusal before anything ran, and is the command's own when the Trailer says `by=command` or the Call was a Peek.
 
 | Exit | Means, from dibs |
 | --- | --- |

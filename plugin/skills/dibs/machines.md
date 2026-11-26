@@ -46,7 +46,7 @@ Where work runs, on which Card, and who is there, cited as `dibs/machines::<rule
   long the Batch has left there; `--on <machine>` narrows it, and `dibs --kill <pid>` and
   `dibs --log [n]` ignore the lock, so a stuck Machine can still be freed.
 
-### duration-is-measured: How long submitted work has left is read from its Status, and how long work not yet submitted will take is answered by running it, since a script's later Calls are invisible to dibs.
+### duration-is-read: How long work will take is read from `dibs status`, never guessed, and the later Calls of a script not yet submitted are said to be outside its estimate.
 
 ### kill-is-own: `dibs --kill <pid>` stops only a Job of the agent's own, unless the person asked for `--anyone`.
 
