@@ -218,6 +218,8 @@ Calls: one command under the lock, and what the machines are doing.
                                nothing, --days <n> lowers every clock to n days, --all
                                removes whatever no build or prepare holds, and what dibs
                                did not put under scratch is listed but never touched.
+                               --named <entry> removes one of those, as its listing names
+                               it, unless a process works in it or a .dibs-keep keeps it.
   dibs --friction '<line>'    what got in the way: a flag that is missing, a message that
                                misled, a bug. One line, kept where the next session reads
                                it, and printed by dibs gaps beside the recipes nothing

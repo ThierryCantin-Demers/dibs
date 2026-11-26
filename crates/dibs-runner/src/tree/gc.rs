@@ -10,7 +10,7 @@ use crate::{
     platform::{Host, Platform as _},
     settings::{Settings, home},
     tree::{
-        clocks::{Clocks, Fate, KEEP, Removal},
+        clocks::{Clocks, Dates as _, Fate, KEEP, Removal},
         copy::Reflinks,
         runners::Runners,
         spread::Spread as _,
@@ -52,6 +52,8 @@ pub struct SweepReport {
     /// Only say what would go.
     dry: bool,
     live: bool,
+    /// The one entry a job named that a person asked to remove, in place of the sweep.
+    named: Option<String>,
 }
 
 /// KiB reclaimed and past their clocks.
@@ -97,13 +99,14 @@ struct Walked {
     alone: u64,
 }
 
-/// What `--gc` was asked, as the request carries it in the command's place: `<days|default|all>
-/// <0|1>`.
+/// What `--gc` was asked, as the request carries it in the command's place:
+/// `<days|default|all|named=<entry>> <0|1>`.
 pub struct Asked {
     /// None leaves the machine's own clocks.
     pub days: Option<u64>,
     /// Everything nothing holds, past every clock.
     pub all: bool,
+    pub named: Option<String>,
     pub dry: bool,
     /// The caller reads it on a terminal.
     pub live: bool,
@@ -116,6 +119,9 @@ impl Asked {
         Asked {
             days: clock.and_then(|d| d.parse().ok()),
             all: clock == Some("all"),
+            named: clock
+                .and_then(|c| c.strip_prefix("named="))
+                .map(str::to_string),
             dry: words.next() == Some("1"),
             live: words.next() == Some("tty"),
         }
@@ -130,6 +136,9 @@ impl Asked {
         if self.all {
             named.push_str(" --all");
         }
+        if let Some(entry) = &self.named {
+            named.push_str(&format!(" --named {entry}"));
+        }
         if self.dry {
             named.push_str(" --dry-run");
         }
@@ -140,10 +149,11 @@ impl Asked {
     pub fn command(&self) -> String {
         let mut words = Itself::words();
         words.push("gc".to_string());
-        words.push(match (self.all, self.days) {
-            (true, _) => "all".to_string(),
-            (false, Some(days)) => days.to_string(),
-            (false, None) => "default".to_string(),
+        words.push(match (&self.named, self.all, self.days) {
+            (Some(entry), _, _) => format!("named={entry}"),
+            (None, true, _) => "all".to_string(),
+            (None, false, Some(days)) => days.to_string(),
+            (None, false, None) => "default".to_string(),
         });
         words.push(u8::from(self.dry).to_string());
         if self.live {
@@ -180,11 +190,60 @@ impl Asked {
             reflinks: settings.reflinks,
             dry: self.dry,
             live: self.live,
+            named: self.named.clone(),
         }
     }
 }
 
 impl SweepReport {
+    /// One entry the sweep lists under named by jobs and never removes, removed because a person
+    /// named it: refused for one a process works in, or one its `.dibs-keep` keeps.
+    fn remove_named(&self, entry: &str) -> i32 {
+        let path = self.scratch.join(entry);
+        let removal = Removal::new(None, &SweepReport::say);
+        let sweep = Sweep::new(&self.scratch, &self.home, self.clocks, removal);
+        if !sweep.entries(Swept::Named).contains(&path) {
+            SweepReport::say(&format!(
+                "dibs: {entry} is not under named by jobs in {}: --named removes only what --gc lists there.\n",
+                self.scratch.display()
+            ));
+            return 2;
+        }
+        if path.join(KEEP).exists() {
+            SweepReport::say(&format!(
+                "dibs: {} is kept by its .dibs-keep; remove that file first if it should go.\n",
+                path.display()
+            ));
+            return 1;
+        }
+        if sweep.used_now(&path) {
+            SweepReport::say(&format!(
+                "dibs: a process works in {}, so it stays.\n",
+                path.display()
+            ));
+            return 1;
+        }
+        let tally = Totals::default();
+        let kib = tally
+            .measure(Swept::Named.named(), std::slice::from_ref(&path), |_| false)
+            .sizes
+            .of(&path);
+        let now = Moment::epoch_now();
+        let written = SweepReport::ago(now, path.newest(None));
+        let done = match self.dry {
+            true => "would remove",
+            false if Removal::new(None, &SweepReport::say).path(&path) => "removed",
+            false => return 1,
+        };
+        SweepReport::say(&format!(
+            "{done} {} on {}: {}, written {written}\n",
+            path.display(),
+            self.host,
+            Kib(kib)
+        ));
+        0
+    }
+
     pub fn run(&self) -> i32 {
         let scratch = &self.scratch;
         if !scratch.is_dir() {
@@ -193,6 +252,9 @@ impl SweepReport {
                 scratch.display()
             ));
             return 0;
+        }
+        if let Some(entry) = &self.named {
+            return self.remove_named(entry);
         }
         let now = Moment::epoch_now();
         let mut tally = Totals {

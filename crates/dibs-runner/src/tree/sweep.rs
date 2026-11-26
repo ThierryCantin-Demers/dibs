@@ -154,7 +154,7 @@ impl<'a> Sweep<'a> {
     }
 
     /// A process works in it, or builds into it: what a job's step holds only by running there.
-    fn used_now(&self, path: &Path) -> bool {
+    pub fn used_now(&self, path: &Path) -> bool {
         let Ok(path) = path.canonicalize() else {
             return false;
         };

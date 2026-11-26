@@ -385,3 +385,61 @@ fn a_sweep_waits_for_a_benchmark_rather_than_running_beside_it() {
     b.open();
     s.wait(bench);
 }
+
+#[test]
+fn gc_named_removes_the_one_entry_a_person_names() {
+    let mut s = Sandbox::new();
+    let g = scratch_to_sweep(&s);
+    for named in ["byhand-stale/release", "models", "busy"] {
+        fs::create_dir_all(s.path(&format!("gc/{named}"))).unwrap();
+    }
+    s.write("gc/byhand-stale/release/blob", &"x".repeat(300_000));
+    s.write("gc/models/.dibs-keep", "");
+    let gc = |s: &Sandbox, args: &[&str]| s.dibs(args.to_vec()).env("DIBS_SCRATCH", &g).run();
+    let dry = gc(&s, &["--gc", "--named", "byhand-stale", "--dry-run"]);
+    assert_eq!(dry.code, 0);
+    assert_eq!(
+        dry.all()
+            .lines_matching("would remove .*byhand-stale on .*, written "),
+        1,
+        "a dry run names it, its size and its last write: {}",
+        dry.all()
+    );
+    assert!(s.exists("gc/byhand-stale"), "and leaves it");
+    let kept = gc(&s, &["--gc", "--named", "models"]);
+    assert!(
+        kept.code == 1 && s.exists("gc/models"),
+        "a .dibs-keep keeps it: {}",
+        kept.all()
+    );
+    let own = gc(&s, &["--gc", "--named", "ws"]);
+    assert!(
+        own.code == 2 && s.exists("gc/ws/demo/fresh"),
+        "what dibs makes under scratch is not a named entry: {}",
+        own.all()
+    );
+    let gate = s.gate("busy");
+    let worker = s.command(
+        "sh",
+        [
+            "-c",
+            &format!("cd {} && {}; true", s.p("gc/busy"), gate.hold()),
+        ],
+    );
+    let worker = s.spawn(worker);
+    let busy = gc(&s, &["--gc", "--named", "busy"]);
+    gate.open();
+    s.wait(worker);
+    assert!(
+        busy.code == 1 && s.exists("gc/busy"),
+        "one a process works in stays: {}",
+        busy.all()
+    );
+    let gone = gc(&s, &["--gc", "--named", "byhand-stale"]);
+    assert_eq!(gone.code, 0, "{}", gone.all());
+    assert!(!s.exists("gc/byhand-stale"), "asked by name, it goes");
+    assert!(
+        s.exists("gc/byhand") && s.exists("gc/ws/demo/stale"),
+        "and nothing else does, past its clock or not"
+    );
+}

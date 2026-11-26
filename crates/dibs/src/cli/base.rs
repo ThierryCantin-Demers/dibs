@@ -86,6 +86,8 @@ pub enum Mode {
         /// Everything nothing holds, whatever its clock.
         all: bool,
         dry_run: bool,
+        /// One entry a job named under scratch, removed because a person named it.
+        named: Option<String>,
     },
     Out(Option<OutTarget>),
     /// `--follow <job>`: waits on a job its call let go of.

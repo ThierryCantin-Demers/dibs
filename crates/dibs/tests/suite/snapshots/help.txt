@@ -38,7 +38,9 @@
 1|   dibs out [job], dibs fetch <job>     what a job wrote, and the files it kept
 1|   dibs --follow <job>                  wait on a job whose call checked in
 1|   dibs --kill <pid|batch-id>           stop a job, or a whole batch
-1|   dibs --release, dibs --gc --dry-run  a dead holder's lock; what fills scratch
+1|   dibs --release                       drop a lock whose holder is dead
+1|   dibs --gc [--dry-run] [--days <n>]   what fills scratch, and reclaim it
+1|       --named <entry>: one entry a job named, which nothing else removes
 1|   dibs --log [n]                       what ran, and how it ended
 1|   dibs --friction '<line>'             record what got in the way
 1| Setup
@@ -278,6 +280,8 @@
 1|                                nothing, --days <n> lowers every clock to n days, --all
 1|                                removes whatever no build or prepare holds, and what dibs
 1|                                did not put under scratch is listed but never touched.
+1|                                --named <entry> removes one of those, as its listing names
+1|                                it, unless a process works in it or a .dibs-keep keeps it.
 1|   dibs --friction '<line>'    what got in the way: a flag that is missing, a message that
 1|                                misled, a bug. One line, kept where the next session reads
 1|                                it, and printed by dibs gaps beside the recipes nothing

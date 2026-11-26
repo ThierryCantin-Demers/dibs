@@ -45,9 +45,10 @@ needs before its first call.
   and no Trailer, running beside a Measurement, which pays for it
   (`dibs --on <machine> --peek <command>`, for `ps`, `nvidia-smi`, `ls`, `tail`, `cat` of a small
   file, `git status`).
-- **Scratch:** the directory `$DIBS_SCRATCH` names on a Machine, where `TMPDIR` points; dibs never
-  removes a directory named there, removes what sits under `TMPDIR` unchanged for two weeks by default at the
-  next Recipe's prepare, and removes `$DIBS_SCRATCH/out` only at a person's `dibs --gc`.
+- **Scratch:** the directory `$DIBS_SCRATCH` names on a Machine. `TMPDIR` is its `tmp`, whose
+  entries dibs removes two weeks after their last write by default; dibs removes a directory named
+  directly under Scratch only at a person's `dibs --gc --named`, and `$DIBS_SCRATCH/out` only at a
+  person's `dibs --gc`.
 - **Card:** one GPU of a Machine, named by the alias `dibs --machines -v` lists.
 - **Recipe:** a repo's named build, test or bench procedure, run by
   `dibs build|test|bench <repo>@<ref> <recipe>`.
@@ -69,11 +70,11 @@ needs before its first call.
 
 ### no-clock-wait: No command a Call sends and no tool call of an agent waits on a clock, and what waits for something blocks on a fifo.
 
-### scratch-is-own: Everything a Job writes on a Machine is in a directory of the agent's own naming under Scratch, never under `/tmp`.
+### scratch-is-own: Everything a Job writes on a Machine is in a directory of the agent's own naming under `$DIBS_SCRATCH/tmp`, never directly under Scratch, where nothing removes it, and never under `/tmp`.
 
 ### urgent-is-asked: A Call is `--urgent` only on the person's yes to that Call, since it goes before the queue, and an urgent Measurement stops everyone's shared Jobs on the Machine until it ends.
 
-### nothing-deleted: An agent deletes nothing on a Machine and works around no permission error, and tells the person it works for.
+### nothing-deleted: An agent deletes nothing on a Machine and works around no permission error, and tells the person it works for; what the person asks removed by name goes through `dibs --gc --named <entry>`, after its `--dry-run`.
 
 ## Calls
 

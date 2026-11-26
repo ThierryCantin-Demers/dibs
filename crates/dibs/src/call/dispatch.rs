@@ -23,16 +23,18 @@ struct GcSweep {
     days: Option<u32>,
     all: bool,
     dry_run: bool,
+    named: Option<String>,
     /// Its output lands on a terminal, where progress is redrawn in place.
     live: bool,
 }
 
 impl fmt::Display for GcSweep {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (self.all, self.days) {
-            (true, _) => write!(f, "all")?,
-            (false, Some(days)) => write!(f, "{days}")?,
-            (false, None) => write!(f, "default")?,
+        match (&self.named, self.all, self.days) {
+            (Some(named), _, _) => write!(f, "named={named}")?,
+            (None, true, _) => write!(f, "all")?,
+            (None, false, Some(days)) => write!(f, "{days}")?,
+            (None, false, None) => write!(f, "default")?,
         }
         write!(f, " {}", u8::from(self.dry_run))?;
         if self.live {
@@ -85,7 +87,12 @@ impl Dispatch<'_> {
                     false => "open",
                 }),
             )),
-            Words::Gc { days, all, dry_run } => machine()?.answer(Asked {
+            Words::Gc {
+                days,
+                all,
+                dry_run,
+                named,
+            } => machine()?.answer(Asked {
                 mode: Mode::Gc,
                 label: self
                     .call
@@ -96,6 +103,7 @@ impl Dispatch<'_> {
                     days: *days,
                     all: *all,
                     dry_run: *dry_run,
+                    named: named.clone(),
                     // SAFETY: isatty only reads the descriptor's state.
                     live: unsafe { libc::isatty(1) } == 1,
                 }

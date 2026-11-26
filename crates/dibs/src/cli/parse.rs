@@ -82,6 +82,7 @@ struct Parser {
     watch_every: u32,
     dry_run: bool,
     days: Option<String>,
+    named: Option<String>,
     check_host: Option<String>,
     out: Option<String>,
     follow: String,
@@ -117,6 +118,7 @@ impl Default for Parser {
             watch_every: 5,
             dry_run: false,
             days: None,
+            named: None,
             check_host: None,
             out: None,
             follow: String::new(),
@@ -229,6 +231,10 @@ impl Parser {
                 "--dry-run" => self.dry_run = true,
                 "--days" => {
                     self.days = Some(need_some("--days")?);
+                    at += 1;
+                }
+                "--named" => {
+                    self.named = Some(need_some("--named")?);
                     at += 1;
                 }
                 "--log" => {
@@ -647,10 +653,26 @@ impl Parser {
                         "dibs: --gc takes --days or --all, not both: --all goes past every clock.",
                     ));
                 }
+                if let Some(named) = &self.named {
+                    if days.is_some() || self.call.all {
+                        return Err(CliError::new(
+                            "dibs: --gc --named removes the one entry it names, so it takes no --days or --all.",
+                        ));
+                    }
+                    let one_entry = !named.is_empty()
+                        && !named.starts_with(['.', '-'])
+                        && !named.contains(|c: char| c == '/' || c.is_whitespace());
+                    if !one_entry {
+                        return Err(CliError::new(
+                            "dibs: --named takes one entry under scratch, as --gc lists it under named by jobs: no /, no space, no leading . or -.",
+                        ));
+                    }
+                }
                 Mode::Gc {
                     days,
                     all: self.call.all,
                     dry_run: self.dry_run,
+                    named: self.named.clone(),
                 }
             }
             Word::Kill => Mode::Kill {
@@ -739,6 +761,9 @@ impl Parser {
             }
             if self.days.is_some() {
                 return Err(CliError::new("dibs: --days belongs to --gc."));
+            }
+            if self.named.is_some() {
+                return Err(CliError::new("dibs: --named belongs to --gc."));
             }
         }
         let seconds = |flag: &str, value: &Option<String>| -> Result<Option<u64>, CliError> {

@@ -427,6 +427,10 @@ Every prepare, local or fetched, sweeps the machine's whole scratch, across ever
   those builds share goes once unused for `target_keep_days`.
 - An entry under `$DIBS_SCRATCH/out`, where results are kept, goes by `keep_days` too, but only
   on `dibs --gc`.
+- An entry a job named directly under `$DIBS_SCRATCH` never goes on a clock, since a tool a job
+  only reads is never written. `dibs --gc --named <entry>` removes one a person names, after a
+  `--dry-run` that says its size and last write, and refuses one a process works in or a
+  `.dibs-keep` keeps.
 
 Nothing goes while a build or a prepare holds it. A prepare's call waits on its sweep, so the sweep
 renames an expired build cache aside at once, where nothing seeds from it, and spends at most

@@ -202,6 +202,7 @@ pub const CALL: &[Flag] = &[
     ),
     Flag::new(&["--gc"], Value::No, "what fills a machine's scratch"),
     Flag::new(&["--days"], Value::Free, "with --gc: how old is old"),
+    Flag::new(&["--named"], Value::Free, "with --gc: remove the one entry a job named"),
     Flag::new(
         &["--dry-run"],
         Value::No,

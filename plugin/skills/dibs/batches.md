@@ -59,9 +59,9 @@ A loop, from a generator:
 
 ```bash
 {
-  echo "[build] dibs run --label gemv-build 'cd \$DIBS_SCRATCH/src && cargo bench --no-run --bench gemv'"
+  echo "[build] dibs run --label gemv-build 'cd \$DIBS_SCRATCH/tmp/src && cargo bench --no-run --bench gemv'"
   for p in rr rc cr; do
-    echo "[gemv-$p after=build cont] dibs run --bench --label gemv-$p 'cd \$DIBS_SCRATCH/src && cargo bench --bench gemv -- $p'"
+    echo "[gemv-$p after=build cont] dibs run --bench --label gemv-$p 'cd \$DIBS_SCRATCH/tmp/src && cargo bench --bench gemv -- $p'"
   done
 } | dibs batch -
 ```

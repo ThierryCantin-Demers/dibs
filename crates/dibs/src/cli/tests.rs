@@ -252,6 +252,16 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
                 days: None,
                 all: false,
                 dry_run: false,
+                named: None,
+            }),
+        ),
+        (
+            vec!["--gc", "--named", "rules-and-declines", "--dry-run"],
+            of(Mode::Gc {
+                days: None,
+                all: false,
+                dry_run: true,
+                named: Some("rules-and-declines".to_string()),
             }),
         ),
         (
@@ -260,6 +270,7 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
                 days: Some(3),
                 all: false,
                 dry_run: true,
+                named: None,
             }),
         ),
         (
@@ -270,6 +281,7 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
                     days: None,
                     all: true,
                     dry_run: true,
+                    named: None,
                 })
             }),
         ),
@@ -439,6 +451,7 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
                 days: None,
                 all: false,
                 dry_run: false,
+                named: None,
             }),
         ),
         (
@@ -741,6 +754,21 @@ fn refusals() -> Vec<(Vec<&'static str>, &'static str, bool)> {
         (
             vec!["--gc", "--all", "--days", "2"],
             "dibs: --gc takes --days or --all, not both: --all goes past every clock.",
+            false,
+        ),
+        (
+            vec!["--gc", "--named", "x", "--all"],
+            "dibs: --gc --named removes the one entry it names, so it takes no --days or --all.",
+            false,
+        ),
+        (
+            vec!["--gc", "--named", "../home"],
+            "dibs: --named takes one entry under scratch, as --gc lists it under named by jobs: no /, no space, no leading . or -.",
+            false,
+        ),
+        (
+            vec!["--named", "x", "--status"],
+            "dibs: --named belongs to --gc.",
             false,
         ),
         (

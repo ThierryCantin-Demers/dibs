@@ -36,7 +36,9 @@ Jobs
   dibs out [job], dibs fetch <job>     what a job wrote, and the files it kept
   dibs --follow <job>                  wait on a job whose call checked in
   dibs --kill <pid|batch-id>           stop a job, or a whole batch
-  dibs --release, dibs --gc --dry-run  a dead holder's lock; what fills scratch
+  dibs --release                       drop a lock whose holder is dead
+  dibs --gc [--dry-run] [--days <n>]   what fills scratch, and reclaim it
+      --named <entry>: one entry a job named, which nothing else removes
   dibs --log [n]                       what ran, and how it ended
   dibs --friction '<line>'             record what got in the way
 Setup
