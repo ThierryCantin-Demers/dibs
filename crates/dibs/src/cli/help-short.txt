@@ -1,58 +1,42 @@
-Run a command on a shared machine under a lock, so concurrent agents cannot spoil each other's
-measurements.
+Run commands on shared machines under a lock, so agents cannot spoil each
+other's measurements.
 
 Recipes
-  dibs <verb> <repo>[@<ref>] <recipe>    <verb> is build, test or bench; @local sends your tree
-  dibs list <repo>                       what a repo defines, and the values each recipe takes
-  dibs runs [label]                      what was measured, and what compares
-  dibs measurement <job|batch>           a run as one measurement, in JSON
-  dibs with <repo>[@<ref>] <service> -- <cmd>
-                                         a command against the repo's servers on the machine
-  dibs shell <repo>[@<ref>] --reason <why> -- <cmd>
-                                         a one-off command in a prepared tree
-  dibs raw --reason <why> -- <cmd>       a one-off command with nothing prepared
-  dibs gaps                              what fit no recipe, and what got in the way
-
+  dibs <verb> <repo>[@<ref>] <recipe>  build, test or bench; @local: your tree
+  dibs list <repo>                     a repo's recipes and the values they take
+  dibs runs [label]                    what was measured, and what compares
+  dibs measurement <job|batch>         a run as one measurement, in JSON
+  dibs with <repo> <service> -- <cmd>  a command against the repo's servers
+  dibs shell <repo> --reason <why> -- <cmd>    a one-off in a prepared tree
+  dibs raw --reason <why> -- <cmd>     a one-off with nothing prepared
+  dibs gaps                            what fit no recipe, what got in the way
 Calls
-  dibs run <cmd>                         shared: builds and tests, several at once
-  dibs run --bench <cmd>                 exclusive: a measurement, alone on the machine
-  dibs --peek <cmd>                      a look that takes no lock
-  dibs --sync <a> <b>                    rsync with the machine, a leading ':' marking its side
-  dibs --hold <cmd>                      a command here while the machine's lock is held
-
+  dibs run [--bench] <cmd>             shared, or alone on the machine
+  dibs --peek <cmd>                    a look that takes no lock
+  dibs --sync <a> <b>                  rsync, ':' marking the machine's side
+  dibs --hold <cmd>                    a command here under the machine's lock
 Batches
-  dibs batch <file|->                    one dibs call per line, one summary at the end
-  dibs batch --detach <file|->           driven on the machine, so it outlives this computer
-  dibs batch --follow <id>               wait on a batch that paused or was detached
-
+  dibs batch <file|->                  one call per line, one summary at the end
+  dibs batch --detach | --follow <id>  driven on the machine, or waited on
 Machines
-  dibs status                            who holds each machine, and the queue with ETAs
-  dibs --watch                           status on a loop, for a person at a terminal
-  dibs --machines                        the inventory, and with -v each machine's cards
-  dibs machines [<machine>]              each machine against what it should have
-  dibs --check <host>                    install dibs's runner there, and say what it has
-  dibs --pick, dibs --which              where a call would go
-  dibs --forget, --measure, --close, --open
-                                         change the inventory, or close a machine you own
-
+  dibs status | --status | --watch     who holds each machine, and the queue
+  dibs --machines | machines           the inventory, and each machine's state
+  dibs --check <host>                  install the runner, say what is there
+  dibs --pick | --which                where a call would go
+  dibs --forget --measure --close --open    change the inventory, or close one
 Jobs
-  dibs --out [job]                       what a job wrote
-  dibs --follow <job>                    wait on a job whose call checked in
-  dibs --fetch <job> [dir]               the files a recipe's job kept
-  dibs --kill <pid|batch-id>             stop a job, or a whole batch
-  dibs --release                         drop a lock left by processes already dead
-  dibs --gc --dry-run                    what fills the machine's scratch
-  dibs --log [n]                         what ran, and how it ended
-  dibs --friction '<line>'               record what got in the way
-
+  dibs --out [job] | --fetch <job>     what a job wrote, and the files it kept
+  dibs --follow <job>                  wait on a job whose call checked in
+  dibs --kill <pid|batch-id>           stop a job, or a whole batch
+  dibs --release | --gc --dry-run      a dead lock; what fills scratch
+  dibs --log [n] | --friction '<line>' what ran; what got in the way
 Setup
-  dibs --update                          pull and reinstall dibs, its recipes and its plugin
-  dibs completions <fish|zsh>            shell completions
-  dibs hook ssh, dibs hook urgent        Claude Code hooks
+  dibs --update                        reinstall dibs, its recipes, its plugin
+  dibs completions <fish|zsh>          shell completions
+  dibs hook ssh | urgent               Claude Code hooks
 
-Common flags
-  --on <machine>   --device <card>   --label <name>   --wait <seconds>   --max <seconds>
-  --low-priority   --urgent '<why>'   --check-in <time>   --dry-run, with a recipe
+Flags  --on <machine>  --device <card>  --label <name>  --wait <s>  --max <s>
+       --low-priority  --urgent '<why>'  --check-in <time>  --dry-run
 
 dibs <command> --help   that command, and every flag it takes
 dibs --help --all       every command and flag, and what each does

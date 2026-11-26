@@ -349,9 +349,10 @@ impl Parser {
                 "--new-series" => self.call.new_series = true,
                 "--stream" => self.call.stream = true,
                 "-h" | "--help" => {
-                    let all = words.iter().any(|w| w == "--all");
+                    let alone = words.len() == 1;
                     return Ok(Invocation::Help(match self.help_topic() {
-                        None if all => Some("all"),
+                        None if alone => None,
+                        None => Some("all"),
                         topic => topic,
                     }));
                 }

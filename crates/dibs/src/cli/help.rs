@@ -215,7 +215,9 @@ impl Help {
             .iter()
             .filter_map(|e| Help::entry(e))
             .collect();
-        text.push_str("\ndibs --help shows every subcommand and flag, and what each exit means.\n");
+        text.push_str(
+            "\ndibs --help --all shows every command and flag, and what each exit means.\n",
+        );
         text
     }
 
@@ -246,26 +248,29 @@ mod tests {
 
     #[test]
     fn the_short_help_names_every_command_of_the_whole_help() {
-        let word = |w: &str| {
-            w.trim_matches(|c: char| ",|[]".contains(c))
-                .trim_start_matches("--")
-                .to_string()
-        };
+        let word = |w: &str| w.trim_matches(|c: char| ",;|[]'".contains(c)).to_string();
         let short: Vec<String> = Help::SHORT.split_whitespace().map(word).collect();
         for line in Help::INTERFACE.lines() {
             let Some(rest) = line.strip_prefix("  dibs ") else {
                 continue;
             };
-            let command = word(rest.split_whitespace().next().unwrap());
-            assert!(short.contains(&command), "{command}");
+            let named = word(rest.split_whitespace().next().unwrap());
+            let commands = match named.as_str() {
+                "<verb>" => vec!["build".to_string(), "test".into(), "bench".into()],
+                _ => vec![named],
+            };
+            for command in commands {
+                assert!(short.contains(&command), "{command}");
+            }
         }
     }
 
     #[test]
-    fn the_short_help_fits_a_terminal() {
+    fn the_short_help_fits_an_80_column_terminal_of_50_rows() {
         for line in Help::SHORT.lines() {
-            assert!(line.chars().count() <= 100, "{line}");
+            assert!(line.chars().count() <= 80, "{line}");
         }
+        assert!(Help::short().lines().count() <= 50);
     }
 
     #[test]

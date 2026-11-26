@@ -54,7 +54,7 @@
 1|                      for --bench and 1800 otherwise, or twice the label's 90th percentile
 1|                      where its history runs longer, said when it starts)
 1| 
-1| dibs --help shows every subcommand and flag, and what each exit means.
+1| dibs --help --all shows every command and flag, and what each exit means.
 
 == dibs machines --help
 -> exit 0
@@ -64,7 +64,7 @@
 1|                                keys are there, and whether its names answer here. A machine
 1|                                in the pool is probed under its shared lock
 1| 
-1| dibs --help shows every subcommand and flag, and what each exit means.
+1| dibs --help --all shows every command and flag, and what each exit means.
 
 == dibs build
 -> exit 2
