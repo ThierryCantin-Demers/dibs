@@ -119,13 +119,26 @@ impl<'a> StepStderr<'a> {
         locks
     }
 
-    /// The working trees the step's call sent, as it announced them: which tree `@local` was
-    /// is the batch's directory, and a batch run from the wrong one reads as wrong only here.
-    pub fn sent(&self) -> Vec<&'a str> {
+    /// The working trees the step's call took as `@local`, a pin's and a comparison's arm's
+    /// included, as it announced them: a batch run from the wrong directory reads as wrong only
+    /// here.
+    pub fn local_trees(&self) -> Vec<&'a str> {
         self.0
             .lines()
-            .filter_map(|l| l.strip_prefix("dibs: preparing "))
-            .filter(|l| l.contains(" from "))
+            .filter_map(|l| {
+                let arm = l
+                    .strip_prefix("  ")
+                    .and_then(|l| l.split_once(": "))
+                    .filter(|(arm, _)| !arm.contains(' '))
+                    .map(|(_, tree)| tree);
+                l.strip_prefix("dibs: preparing ")
+                    .or_else(|| l.strip_prefix("dibs: pinning "))
+                    .or(arm)
+            })
+            .filter(|l| {
+                l.contains(" from ")
+                    && (l.ends_with(" (clean)") || l.ends_with(" (uncommitted changes included)"))
+            })
             .collect()
     }
 

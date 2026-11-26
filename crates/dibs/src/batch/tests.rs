@@ -423,7 +423,7 @@ fn a_step_refused_before_any_job_says_why_under_its_row() {
     );
     assert_eq!(
         out.lines().nth(1),
-        Some("sent app from ./tree (clean)"),
+        Some("@local: app from ./tree (clean)"),
         "which tree @local was is said once, under the header: {out}"
     );
 }
@@ -453,6 +453,27 @@ fn a_step_that_only_restates_its_exit_is_explained_by_what_dibs_said_before_it()
             .why_it_stopped(),
         ["dibs: no recipe 'x'.", "  dibs list app says what it has"],
         "a last line that explains itself stands alone"
+    );
+}
+
+#[test]
+fn the_trees_a_step_took_as_local_are_its_own_its_pins_and_its_arms() {
+    let stderr = StepStderr(
+        "dibs: preparing app from /w/app (clean)\n\
+         dibs: pinning lib from /w/lib (uncommitted changes included)\n\
+         dibs: pinning kit@main at 0123456789ab, as main stands here\n  \
+         local: app from /w/other (clean)\n  \
+         main: app@main\n\
+         dibs: preparing app@main\n\
+         dibs: could not prepare app from ./tree (exit 30)\n",
+    );
+    assert_eq!(
+        stderr.local_trees(),
+        [
+            "app from /w/app (clean)",
+            "lib from /w/lib (uncommitted changes included)",
+            "app from /w/other (clean)",
+        ]
     );
 }
 

@@ -132,14 +132,14 @@ impl Batch<'_> {
                 std::fs::read_to_string(dir.join(format!("{}.err", st.name))).unwrap_or_default()
             })
             .collect();
-        let mut sent: Vec<&str> = Vec::new();
-        for tree in errs.iter().flat_map(|err| StepStderr(err).sent()) {
-            if !sent.contains(&tree) {
-                sent.push(tree);
+        let mut trees: Vec<&str> = Vec::new();
+        for tree in errs.iter().flat_map(|err| StepStderr(err).local_trees()) {
+            if !trees.contains(&tree) {
+                trees.push(tree);
             }
         }
-        for tree in sent {
-            out.push_str(&format!("sent {tree}\n"));
+        for tree in trees {
+            out.push_str(&format!("@local: {tree}\n"));
         }
         let locks: Vec<String> = steps
             .iter()

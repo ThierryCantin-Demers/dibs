@@ -74,7 +74,7 @@
 == dibs build <root>/app@local p --sweep samples=1,2
 -> exit 0
 1| batch <batch>  2 steps, <dur>
-1| sent app from <root>/app (clean)
+1| @local: app from <root>/app (clean)
 1| name       machine  lock       wall    exit  jobs
 1| samples-1  ?        shared       <dur>       0  <job>, <job>
 1| samples-2  ?        shared       <dur>       0  <job>, <job>
