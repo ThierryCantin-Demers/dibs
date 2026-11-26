@@ -14,7 +14,7 @@ use crate::{
         copy::Reflinks,
         runners::Runners,
         spread::Spread as _,
-        sweep::{Section, Sweep, Swept, Verdict},
+        sweep::{DIBS_OWN, Section, Sweep, Swept, Verdict},
     },
 };
 use std::{
@@ -54,8 +54,9 @@ pub struct SweepReport {
     live: bool,
     /// The one entry a job named that a person asked to remove, in place of the sweep.
     named: Option<String>,
-    /// The lock, history and log, which a machine may keep under its scratch.
+    /// The history and log, which a machine may keep under its scratch.
     state: Vec<PathBuf>,
+    lock_dir: Option<PathBuf>,
 }
 
 /// KiB reclaimed and past their clocks.
@@ -200,9 +201,10 @@ impl Asked {
             named: self.named.clone(),
             state: machine
                 .iter()
-                .flat_map(|m| [&m.lock_dir, &m.history, &m.log, &m.shared_state])
+                .flat_map(|m| [&m.history, &m.log, &m.shared_state])
                 .cloned()
                 .collect(),
+            lock_dir: machine.as_ref().map(|m| m.lock_dir.clone()),
         }
     }
 }
@@ -230,11 +232,26 @@ impl SweepReport {
             .sizes
             .of(&path);
         let written = SweepReport::ago(Moment::epoch_now(), path.newest(None));
-        let real = path.canonicalize().ok();
-        if let Some(state) = self.state.iter().find(|s| {
-            let s = s.canonicalize().unwrap_or_else(|_| s.to_path_buf());
-            real.as_ref().is_some_and(|r| s.starts_with(r))
-        }) {
+        let resolve = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        let real = resolve(&path);
+        // What dibs keeps, followed through a symlink to where it is: an entry that holds one stays,
+        // and so does one inside the lock directory, which may be scratch itself.
+        let own = DIBS_OWN.iter().map(|own| self.scratch.join(own));
+        let held = self
+            .state
+            .iter()
+            .cloned()
+            .chain(own)
+            .chain(self.lock_dir.clone());
+        let held = held
+            .into_iter()
+            .find(|kept| resolve(kept).starts_with(&real))
+            .or_else(|| {
+                self.lock_dir
+                    .clone()
+                    .filter(|locks| real.starts_with(resolve(locks)))
+            });
+        if let Some(state) = held {
             SweepReport::say(&format!(
                 "dibs: {} holds this machine's own {}, so it stays.\n",
                 path.display(),
@@ -243,7 +260,7 @@ impl SweepReport {
             return 1;
         }
         let link = fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
-        if let Some(mount) = SweepReport::mount_under(&path).filter(|_| !link) {
+        if let Some(mount) = (!link).then(|| SweepReport::mount_under(&path)).flatten() {
             SweepReport::say(&format!(
                 "dibs: {} is mounted inside {}; unmount it first if it should go.\n",
                 mount.display(),
@@ -302,7 +319,7 @@ impl SweepReport {
         let real = path.canonicalize().ok()?;
         if let Ok(mounts) = fs::read_to_string("/proc/self/mounts") {
             return mounts.lines().find_map(|line| {
-                let point = PathBuf::from(line.split(' ').nth(1)?.replace("\\040", " "));
+                let point = PathBuf::from(SweepReport::unescaped(line.split(' ').nth(1)?));
                 (point != real && point.starts_with(&real)).then_some(point)
             });
         }
@@ -323,6 +340,31 @@ impl SweepReport {
             }
         }
         None
+    }
+
+    /// A mount table field with its octal escapes, such as `\\040` for a space, read back.
+    fn unescaped(field: &str) -> String {
+        let bytes = field.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut at = 0;
+        while at < bytes.len() {
+            let code = bytes.get(at + 1..at + 4).and_then(|d| {
+                std::str::from_utf8(d)
+                    .ok()
+                    .and_then(|d| u8::from_str_radix(d, 8).ok())
+            });
+            match (bytes[at], code) {
+                (b'\\', Some(code)) => {
+                    out.push(code);
+                    at += 4;
+                }
+                (byte, _) => {
+                    out.push(byte);
+                    at += 1;
+                }
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
     }
 
     pub fn run(&self) -> i32 {
@@ -1004,6 +1046,15 @@ impl SweepReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mount_table_field_reads_back_its_escapes() {
+        assert_eq!(
+            SweepReport::unescaped(r"/scratch/run\134archive/my\040data"),
+            r"/scratch/run\archive/my data"
+        );
+        assert_eq!(SweepReport::unescaped(r"/a\b"), r"/a\b");
+    }
 
     #[test]
     fn a_named_request_of_any_other_shape_is_only_looked_at() {

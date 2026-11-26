@@ -610,6 +610,10 @@ impl<'a> Sweep<'a> {
     /// An entry under `tmp`, by the last write anywhere in it, since agents work in trees there
     /// whose top directory a copy dated long ago; kept while a process works in it.
     fn leftover(&self, path: &Path, working: &[PathBuf], now: u64) -> (Fate, u64) {
+        // Gone before it could be dated: another job removed it, and may be making it again.
+        if fs::symlink_metadata(path).is_err() {
+            return (Fate::Kept, now);
+        }
         let cutoff = now.saturating_sub(self.clocks.keep_days.saturating_mul(Span::DAY.0));
         let enough = match self.exact || self.clocks.all {
             true => None,
