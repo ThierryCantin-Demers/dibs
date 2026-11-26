@@ -213,7 +213,12 @@ impl Harness {
     const PLUGIN: &str = "dibs@dibs";
 
     fn refresh(self, out: &mut impl Write) {
-        let installed = self.run(&["plugin", "list"]).is_some_and(|listing| {
+        let listing: &[&str] = match self {
+            Harness::Claude => &["plugin", "list"],
+            // Scoped, since one broken marketplace fails the whole listing.
+            Harness::Codex => &["plugin", "list", "--marketplace", "dibs"],
+        };
+        let installed = self.run(listing).is_some_and(|listing| {
             listing
                 .lines()
                 .any(|line| self.lists_installed(line.trim_start()))
@@ -255,13 +260,14 @@ impl Harness {
         };
     }
 
-    /// Codex lists every plugin its marketplaces offer, installed or not.
+    /// Codex lists every plugin its marketplaces offer, installed or not, and adding one enables
+    /// it, so a disabled plugin is left alone.
     fn lists_installed(self, line: &str) -> bool {
         match self {
             Harness::Claude => line.contains(Self::PLUGIN),
             Harness::Codex => line
                 .strip_prefix(Self::PLUGIN)
-                .is_some_and(|rest| rest.trim_start().starts_with("installed")),
+                .is_some_and(|rest| rest.trim_start().starts_with("installed, enabled")),
         }
     }
 
@@ -679,13 +685,16 @@ mod tests {
     use super::Harness;
 
     #[test]
-    fn a_codex_listing_counts_the_plugin_only_once_installed() {
+    fn a_codex_listing_counts_the_plugin_only_once_installed_and_enabled() {
         let installed = |line: &str| Harness::Codex.lists_installed(line);
         assert!(installed(
             "dibs@dibs  installed, enabled  0.1.0    /cache/dibs/plugin"
         ));
         assert!(!installed(
             "dibs@dibs  not installed             /cache/dibs/plugin"
+        ));
+        assert!(!installed(
+            "dibs@dibs  installed, disabled  0.1.0    /cache/dibs/plugin"
         ));
         assert!(!installed(
             "dibs@dibs-fork  installed, enabled  0.1.0  /cache/fork"
