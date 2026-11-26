@@ -114,6 +114,8 @@ pub struct Asked {
 
 impl Asked {
     pub fn parse(words: &str) -> Asked {
+        // Anything but the exact shape is only looked at: `named=a b 1` must not remove `a`.
+        let shaped = (2..=3).contains(&words.split_whitespace().count());
         let mut words = words.split_whitespace();
         let clock = words.next();
         Asked {
@@ -122,7 +124,7 @@ impl Asked {
             named: clock
                 .and_then(|c| c.strip_prefix("named="))
                 .map(str::to_string),
-            dry: words.next() == Some("1"),
+            dry: !shaped || words.next() != Some("0"),
             live: words.next() == Some("tty"),
         }
     }
@@ -233,21 +235,17 @@ impl SweepReport {
             ));
             return 1;
         }
-        // Renamed out of its name first, so a job starting during a long removal cannot enter it.
-        let aside = self.scratch.join("tmp").join(format!(
-            "{entry}.named.{}-{}",
+        // Renamed out of its name first, so a job starting during a long removal cannot enter it;
+        // beside it, so the rename stays on its filesystem, and a name left behind is removable.
+        let aside = self.scratch.join(format!(
+            "named-removal.{}-{}",
             std::process::id(),
             Moment::epoch_now()
         ));
         let removal = Removal::new(None, &SweepReport::say);
         let done = match self.dry {
             true => "would remove",
-            false
-                if !fs::create_dir_all(self.scratch.join("tmp"))
-                    .is_ok_and(|()| removal.set_aside(&path, &aside)) =>
-            {
-                return 1;
-            }
+            false if !removal.set_aside(&path, &aside) => return 1,
             false if removal.path(&aside) => "removed",
             false => return 1,
         };
@@ -939,6 +937,21 @@ impl SweepReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_named_request_of_any_other_shape_is_only_looked_at() {
+        let asked = Asked::parse("named=build 0");
+        assert_eq!((asked.named.as_deref(), asked.dry), (Some("build"), false));
+        for malformed in [
+            "named=build cache 1",
+            "named=build cache 0",
+            "named=build",
+            "named=b 0 tty x",
+        ] {
+            assert!(Asked::parse(malformed).dry, "{malformed}");
+        }
+        assert!(!Asked::parse("default 0 tty").dry);
+    }
 
     #[test]
     fn sizes_read_as_the_sweep_has_always_printed_them() {

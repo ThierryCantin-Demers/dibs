@@ -28,9 +28,8 @@ pub const PREPARE_LOCK: &str = ".prepare.lock";
 const TEMPORARY: [&str; 2] = [".seed.", ".old."];
 /// What a sweep writes in a cache it found unmarked; a prepare's marker is empty.
 const DATED: &str = "swept\n";
-/// What dibs makes under scratch, and what its client keeps there when scratch is the default
-/// `~/.cache/dibs`; everything else there a job named itself.
-pub const DIBS_OWN: [&str; 15] = [
+/// What dibs makes under scratch; everything else there a job named itself.
+pub const DIBS_OWN: [&str; 10] = [
     "ws",
     "target",
     "jobs",
@@ -41,12 +40,9 @@ pub const DIBS_OWN: [&str; 15] = [
     IMAGES,
     Attempts::DIR,
     BundleManifest::DIR,
-    "detached",
-    "client",
-    "upstream",
-    "sent",
-    "remotes",
 ];
+/// What the client keeps beside them when scratch is its default `~/.cache/dibs`.
+const CLIENT_OWN: [&str; 5] = ["detached", "client", "upstream", "sent", "remotes"];
 
 /// What a sweep walks, in the order it walks it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,15 +232,20 @@ impl<'a> Sweep<'a> {
                 .into_iter()
                 .filter(|path| !Cached::is_lock(path))
                 .collect(),
-            Swept::Named => self
-                .scratch
-                .entries()
-                .into_iter()
-                .filter(|p| {
-                    p.file_name()
-                        .is_some_and(|n| !DIBS_OWN.iter().any(|own| n == *own))
-                })
-                .collect(),
+            Swept::Named => {
+                let client = match self.scratch == self.home.join(".cache/dibs") {
+                    true => &CLIENT_OWN[..],
+                    false => &[],
+                };
+                self.scratch
+                    .entries()
+                    .into_iter()
+                    .filter(|p| {
+                        p.file_name()
+                            .is_some_and(|n| !DIBS_OWN.iter().chain(client).any(|own| n == *own))
+                    })
+                    .collect()
+            }
         }
     }
 
