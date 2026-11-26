@@ -48,7 +48,7 @@
 1|   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran
 1|        72 no runner there, nothing ran    75 busy    76 its batch was cancelled
 1|        77 a --with service failed    124 overran --max
-1|        78 a measurement refused: another tree built into its target since
+1|        78 a measurement refused: another tree built there since
 1| 
 
 == dibs --help --all
@@ -323,5 +323,5 @@
 1|   exit 69 unreachable    70 no room on the target    71 no lock, nothing ran
 1|        72 no runner there, nothing ran    75 busy    76 its batch was cancelled
 1|        77 a --with service failed    124 overran --max
-1|        78 a measurement refused: another tree built into its target since
+1|        78 a recipe's measurement refused: another tree built into its target since
 1| 

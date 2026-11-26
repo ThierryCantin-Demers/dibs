@@ -184,15 +184,18 @@ impl Help {
 
     /// `dibs --help --all`: the interface, then what each exit means.
     pub fn text() -> String {
-        Help::with_exits(Help::INTERFACE)
+        Help::with_exits(Help::INTERFACE, Exit::meaning)
     }
 
     /// `dibs --help`: a line for each command, then what each exit means.
     pub fn short() -> String {
-        Help::with_exits(Help::SHORT)
+        Help::with_exits(Help::SHORT, |exit| match exit {
+            Exit::TargetRebuilt => "a measurement refused: another tree built there since",
+            exit => exit.meaning(),
+        })
     }
 
-    fn with_exits(interface: &str) -> String {
+    fn with_exits(interface: &str, meaning: impl Fn(Exit) -> &'static str) -> String {
         let mut text = interface.to_string();
         for (row, exits) in Help::EXITS.iter().enumerate() {
             let lead = match row {
@@ -201,7 +204,7 @@ impl Help {
             };
             let cells: Vec<String> = exits
                 .iter()
-                .map(|e| format!("{} {}", e.code(), e.meaning()))
+                .map(|e| format!("{} {}", e.code(), meaning(*e)))
                 .collect();
             text.push_str(&format!("{lead}{}\n", cells.join("    ")));
         }
@@ -264,7 +267,20 @@ mod tests {
             ("--fetch", "fetch"),
         ];
         let word = |w: &str| w.trim_matches(|c: char| ",;|[]'".contains(c)).to_string();
-        let short: Vec<String> = Help::SHORT.split_whitespace().map(word).collect();
+        // A row's synopsis ends where two spaces open its description.
+        let synopsis = |line: &str| {
+            let line = line.trim_start();
+            line.find("  ").map_or(line, |end| &line[..end]).to_string()
+        };
+        let short: Vec<String> = Help::SHORT
+            .lines()
+            .flat_map(|line| {
+                match line.trim_start().starts_with("--") || line.starts_with("Flags") {
+                    true => line.split_whitespace().map(word).collect::<Vec<_>>(),
+                    false => synopsis(line).split_whitespace().map(word).collect(),
+                }
+            })
+            .collect();
         let shown = |command: &str| {
             short.iter().any(|w| w == command)
                 || SAME.iter().any(|(a, b)| {
@@ -272,20 +288,21 @@ mod tests {
                         || (command == *b && short.iter().any(|w| w == a))
                 })
         };
+        let verbs = Help::SHORT
+            .lines()
+            .find(|l| synopsis(l).starts_with("dibs <verb>"));
+        for verb in ["build", "test", "bench"] {
+            assert!(verbs.is_some_and(|l| l.contains(verb)), "{verb}");
+        }
         for line in Help::INTERFACE.lines().filter(|l| l.starts_with("  dibs ")) {
+            let line = synopsis(line);
             let words: Vec<&str> = line.split_whitespace().collect();
             let named = words
                 .windows(2)
                 .filter(|pair| pair[0] == "dibs")
                 .map(|pair| word(pair[1]));
             for named in named {
-                let commands = match named.as_str() {
-                    "<verb>" => vec!["build".to_string(), "test".into(), "bench".into()],
-                    _ => vec![named],
-                };
-                for command in commands {
-                    assert!(shown(&command), "{command}");
-                }
+                assert!(shown(&named), "{named}");
             }
         }
     }

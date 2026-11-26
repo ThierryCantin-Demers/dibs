@@ -462,7 +462,7 @@ impl Parser {
     fn sync(mut self, args: &[String]) -> Result<Invocation, CliError> {
         self.word = Word::Sync;
         self.refuse_hold_and_services()?;
-        if args.iter().any(|a| a == "-h" || a == "--help") {
+        if matches!(args, [help] if help == "-h" || help == "--help") {
             return Ok(Invocation::Help(Some("sync")));
         }
         if args.len() < 2 {

@@ -335,6 +335,10 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
             on("m", Mode::Sync(words(&["-a", "./x", ":~/y"]))),
         ),
         (
+            vec!["--on", "m", "--sync", "-h", "./x", ":~/y"],
+            on("m", Mode::Sync(words(&["-h", "./x", ":~/y"]))),
+        ),
+        (
             vec!["--machines", "-v"],
             with(Call {
                 verbose: true,
@@ -492,6 +496,7 @@ fn calls() -> Vec<(Vec<&'static str>, Invocation)> {
         (vec!["--all", "-h"], Invocation::Help(Some("all"))),
         (vec!["--check", "--help"], Invocation::Help(Some("all"))),
         (vec!["--sync", "--help"], Invocation::Help(Some("sync"))),
+        (vec!["--sync", "-h"], Invocation::Help(Some("sync"))),
         (vec!["status", "-h"], Invocation::Help(Some("status"))),
         (vec!["run", "--help"], Invocation::Help(Some("run"))),
         (vec!["fetch", "--help"], Invocation::Help(Some("fetch"))),
