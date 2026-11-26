@@ -17,7 +17,8 @@ What an agent's dibs calls are, cited as `dibs::<rule-name>`, and how it runs wo
 
 ## Rule files
 
-Each sits beside this file. Read the one the work needs before its first call.
+Each sits beside this file, in `plugin/skills/dibs/` of the dibs repository. Read the one the work
+needs before its first call.
 
 | When the work | Read |
 | --- | --- |

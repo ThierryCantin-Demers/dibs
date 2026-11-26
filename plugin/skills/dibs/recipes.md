@@ -18,7 +18,8 @@ How a Recipe runs, compares, and is written, cited as `dibs/recipes::<rule-name>
 - **Artifacts:** the files a Recipe's `artifacts` names, which each step keeps and the run brings
   back (`--artifacts <dir>`, `dibs --fetch <job> [dir]`).
 - **Run Record:** what `dibs runs [label]` shows of a run: when, where, each repo's commit, the
-  Values, the measured step's time, the spread across Reps, and whether the Recipe changed.
+  Values, the measured step's time, the spread across Reps, and whether the Recipe changed, a
+  failed run listed only with `--all`.
 - **Shell:** a one-off `dibs shell <repo>@<ref> --reason '<why>' -- '<command>'`, taking `--bench` for a
   Measurement, whose `cargo bench` or `cargo test` it builds first under the Shared Lock, and
   `--max <seconds>` to run past the default cap; without a repo it runs in the tree the agent is in.
@@ -40,7 +41,7 @@ How a Recipe runs, compares, and is written, cited as `dibs/recipes::<rule-name>
 
 ### shell-measurement-labelled: A Shell Measurement whose command changes in what does not matter, a scratch path or a timestamp, passes the same `--label` every time.
 
-### margin-beats-spread: A difference between Refs smaller than the spread across their Reps is no result.
+### margin-beats-spread: A difference between Refs or Values smaller than the spread across their Reps is no result.
 
 ### autotune-is-fresh-or-shared: A Recipe whose tool keeps an autotune store in its tree, which successive `@local` runs reuse, names that store's variable in `fresh` when each run must tune anew, and its warmup absorbs the tuning.
 

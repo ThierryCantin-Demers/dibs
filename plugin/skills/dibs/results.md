@@ -16,7 +16,7 @@ How what comes back is read, and what each exit asks for, cited as `dibs/results
   a hand-written build that says `built=nothing` compiled no crate, which a shared target, a copy
   that kept mtimes or a stale worktree leaves.
 
-### whole-output-from-out: A Job's output is read with `dibs --on <machine> out <job>`, which for a finished Job shows its tail and the path of the whole log, read for what the tail leaves out, or inline with `--stream`, never kept by a redirect inside the command.
+### whole-output-from-out: A Job's output is read with `dibs --on <machine> out <job>`, which for a finished Job shows its tail and the path of the whole log, read for what the tail leaves out, or inline with `--stream`, and a log once read again with `dibs out <job>`, even once its Machine is gone, never kept by a redirect inside the command.
 
 ## Exits
 
@@ -35,7 +35,7 @@ How what comes back is read, and what each exit asks for, cited as `dibs/results
 | 78 | a Recipe's Measurement was refused, since another tree built into its target after this one |
 | 79 | the Machine's owners closed it, which `dibs status` says with their reason |
 | 80 | a Check-in |
-| 124 | the Job overran its cap and was killed: `--max`, or else 1800 s for shared work and 7200 s for a Measurement, which a Label's history raises to twice its 90th percentile |
+| 124 | the Job overran its cap and was killed: `--max`, or else 30 s for a Peek, 1800 s for shared work, 3600 s for a Sync and 7200 s for a Measurement, which a Label's history raises to twice its 90th percentile |
 
 ### unreachable-not-retried: A Call that exits 69 is not retried in a loop, and is tried once more after a few minutes only when it says the Machine answered.
 
