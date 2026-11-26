@@ -39,8 +39,15 @@ A job that names no machine is placed by its kind:
 | shared, `--device` | `gpu` | every requested card on one machine, then load |
 | exclusive | `bench` | the label's series (machine and card), else a free card of the model |
 
-`--on` still names a machine, and overrides the role. A label already measured stays on its
-machine and card, as now.
+`--on` still names a machine, and overrides the role.
+
+**A label's series is read from the machines, not the caller.** Each benchmark machine's runner
+already knows the labels measured on it and their cards (`dibs-runner/src/series.rs`). Placement
+asks every `bench` machine that could take the call: one with a series of the label takes it;
+several means the most recently measured, and the call says which and where the others are; none
+means a new series on a free card of the model. `--new-series` is resolved the same way. All of
+this happens before any arm is built, so a direct call and a dispatched one resume the same
+series.
 
 ## A call becomes placed jobs
 
@@ -48,70 +55,93 @@ The planner (`execution/schedule.rs`) already orders a call's jobs: every arm's 
 build, then the measurements alternating ABBA. Each job gains a destination, chosen once when
 the call is planned and recorded:
 
-1. Each arm is sent and built on a compile machine. Arms can build on different compile
-   machines at once, so an A/B builds its two arms in parallel.
-2. Each arm's build is sealed into a bundle on its compile machine, while its target still
-   belongs to it.
-3. The bundle is carried to the benchmark machine and staged there.
-4. The measurements run on the one benchmark machine and card set, in today's order. `--reps`
+1. Each arm's source is sealed once: a ref resolves to its commit, and an `@local` tree or pin
+   to a snapshot with a digest. Every machine that receives the arm gets that snapshot and
+   checks its digest, so a branch that moves or a file edited meanwhile cannot put a new tree
+   beside an old binary.
+2. Each arm is built on a compile machine. Arms may build on different compile machines at once
+   only when their build signatures match: the same toolchain, image digest and flags, with no
+   `target-cpu=native`. Otherwise they build one after the other on one machine, so a
+   comparison never measures a difference between compilers.
+3. The build job seals its bundle itself, before it ends and while its target is still claimed
+   by it, by copying what the bundle holds into an immutable store on the compile machine. No
+   other build can replace an executable between cargo reporting it and the seal reading it.
+4. The bundle is carried to the benchmark machine and staged there.
+5. The measurements run on the one benchmark machine and card set, in today's order. `--reps`
    reuses the staged bundles, and a sweep stays a batch of ordinary calls, whose identical
    builds share one bundle by digest.
 
-A shared step after the build that asks for cards, such as a warmup on the card, runs on the
-benchmark machine before the measurements, in recipe order. A call with no exclusive step and
-no card is placed whole on a compile machine.
+**Which shared steps are builds** uses the classification dibs already makes to mark a step
+preemptible (`compiles_only`, `execution/jobs.rs`): a shared step that only compiles goes to the
+compile machine. Any other shared step of a call that has a card, such as a warmup script, runs
+on the benchmark machine in recipe order, beside the measurements. A call with no exclusive step
+and no card is placed whole on a compile machine.
+
+## Deciding to split, before anything runs
+
+The decision is made when the call is planned, for every arm and rep at once, never discovered
+halfway through an A/B. A call splits only when all of these hold:
+
+- every shared step it sends to the compile machine is a recognised compile-only cargo command;
+- every measured step runs a cargo invocation dibs recognises in its text after values are
+  bound (`cargo bench`, `cargo test`, `cargo run`, with their arguments) or an executable under
+  the target by its path, and nothing else that reads the target;
+- no step outside the builds writes into the target or reads `$CARGO_TARGET_DIR`;
+- the flags compile for a CPU baseline, not `native`;
+- no step runs doctests.
+
+A measured step that runs a script is opaque: dibs cannot know what it calls, so the call stays
+whole. Everything else that fails the test also runs whole on the benchmark machine, as every
+call does today, and the summary says which step kept it there and why. A recipe can say
+`split = false` to skip the test. Nothing is refused for not splitting.
+
+At run time the benchmark side still refuses anything the plan did not foresee (below), as a
+refusal of the split, kept distinct from a command of the recipe that exits 78 itself
+(`Stepped.refused`, `execution/base.rs`).
 
 ## Capturing what was built
 
-The build's cargo invocations report what they produced. A job-local `cargo` wrapper on `PATH`
-adds `--message-format=json-render-diagnostics` before any `--`, writes the JSON to a report of
-its own, and gives the caller the diagnostics, exit and any JSON it asked for, unchanged. It
-covers cargo called from scripts as well. Each report records, per invocation, the executables
-cargo built or found fresh, indexed by package, target, kind, profile and features.
+A job-local `cargo` wrapper on `PATH` adds `--message-format=json-render-diagnostics` to the
+subcommands that build (`build`, `bench`, `test`, `run`, `rustc`), before any `--`. Every other
+subcommand, `metadata` and `check` among them, passes through untouched. The JSON goes to a
+report of the job's own; the caller sees the diagnostics, the exit and any JSON it asked for,
+unchanged. Each report records the executables cargo built or found fresh, indexed by package,
+target, kind, profile and features, and the `OUT_DIR` of every build script.
 
 The bundle holds:
 
 - every executable a report names, at its path under the target, both cargo's hashed path in
-  `deps/` and the top-level alias, so a script calling `target/release/x` finds it;
+  `deps/` and the top-level alias, so a step calling `target/release/x` finds it;
 - the shared libraries those executables load from the target, followed through their ELF
   dependencies;
+- the `OUT_DIR` of the build scripts of the workspace's own packages, up to a size cap, since a
+  binary may read a generated file at run time. A call whose `OUT_DIR`s pass the cap stays
+  whole;
 - a launch plan per invocation: what `cargo bench`, `cargo test` or `cargo run` with those
   arguments would have run, in order, with its working directory, its `CARGO_*` environment and
   its library path;
-- a manifest binding each file's digest, path and mode to the tree, pins, lockfile, toolchain,
-  flags and image.
+- a manifest binding each file's digest, path and mode to the sealed source, pins, lockfile,
+  toolchain, flags and image.
 
-The source tree goes to the benchmark machine as `@local` and refs reach machines today, kept
-per tree and sent as a delta. Files a measurement reads from the tree, its scripts, configs and
-data, are there without being declared.
+The sealed source goes to the benchmark machine as trees reach machines today, kept per tree and
+sent as a delta, so scripts, configs and data in the tree are there without being declared.
 
 ## Running it on the benchmark machine
 
 The measured step runs its own command, unchanged. Its `PATH` puts a `cargo` first that answers
 from the launch plans: `cargo bench --bench x -- args` runs the staged `x --bench args` from its
 package root with cargo's environment, as cargo would. An invocation that matches no plan, or
-that would compile anything, exits 78 before running, naming the invocation. Nothing is ever
+that would compile anything, is refused before running, naming the invocation. Nothing is ever
 compiled under the exclusive lock.
 
 Paths compiled into a binary, `env!("CARGO_MANIFEST_DIR")` and `OUT_DIR` among them, name the
-compile machine's tree. The tree and the sparse target therefore sit at the same absolute path
-on both machines (see the open question below).
+compile machine's tree, so the tree and the sparse target sit at the same absolute path on both
+machines (see the open question below).
 
 Staging runs as a shared job on the benchmark machine before the first measurement: it checks
 every digest, that every library resolves, and that glibc, the loader and the card's driver
 accept the binaries, as the pilot's stage does. The measurement checks the staged digests again
 under its lock and exits 78 if anything moved.
-
-## When a call cannot split
-
-A call splits when every cargo invocation of its measured steps matches a launch plan its build
-captured. Otherwise it runs whole on the benchmark machine, as every call does today, and the
-summary says which step kept it there and why. A recipe can say `split = false` to skip the
-attempt. Nothing is refused for not splitting.
-
-Known cases that stay whole until they are handled: a doctest, which rustdoc compiles while
-testing; a measured step that calls cargo by an absolute path; a step that compiles depending on
-what it measured.
 
 ## Moving bundles between machines
 
@@ -135,25 +165,37 @@ out` and `--fetch` find each job on its machine.
 
 ## The dibspatcher
 
-The dibspatcher runs the same planner on ordinary calls and batches, not hand-written splits. A
-submission stores what a detached batch carries today: the call or batch text, the sealed
-`@local` trees and pins, the caller's recipe overrides, label and identity. Every job of a call
-gets an attempt id, not only the last one, so a worker that resumes asks each runner about the
-job it may have started instead of starting another. A kill stops new launches, then every open
-job on every machine. A detached batch whose steps span machines is driven by the dibspatcher;
-one on a single machine is still driven there.
+The dibspatcher runs the same planner on ordinary calls and batches, not hand-written splits.
+
+- **What a submission stores:** what a detached batch carries today, the call or batch text,
+  the sealed trees and pins, the caller's recipe overrides, label and identity, and the caller's
+  execution settings: check-in interval, `--low-priority`, preemptibility and image. A step
+  resumed or added later takes them from the submission.
+- **Every job gets an attempt id,** not only the last one. What a runner keeps for an attempt
+  grows from its trailer to the job's whole result, the `Prepared` of a setup included, so a
+  worker that resumes after any job can carry on from what that job produced, instead of
+  starting it again.
+- **Check-ins:** the worker follows a job that checks in, as a detached driver does, and its
+  submission keeps going. A caller's `dibs dispatch follow` checks in on its own clock, as now.
+- **Kill** stops new launches, then every open job on every machine.
+- **What stays on the direct path:** a `with` whose command runs on the caller's side, and
+  `run --hold`, need the caller's computer, so the dibspatcher refuses them, as a detached batch
+  does. `with --there` is dispatched.
+- A detached batch whose steps span machines is driven by the dibspatcher; one on a single
+  machine is still driven there.
 
 ## Stages
 
 Each ships and is tested on its own:
 
-1. **Roles.** The team inventory, roles, and placement of whole calls by their most demanding
-   job. Shared work leaves the benchmark machines at once.
-2. **Ordinary work through the dibspatcher.** Calls and batches as above, with per-job attempt
-   ids and records, still one machine per call.
-3. **Splitting.** Capture, bundles of several executables, direct transfer, staging, the cargo
-   on the benchmark side, A/B across machines, and the fallback.
-4. **`with` servers** split the same way, their servers' binaries carried like any other.
+1. **Roles.** The team inventory, roles, series read from the machines, and placement of whole
+   calls by their most demanding job. Shared work leaves the benchmark machines at once.
+2. **Ordinary work through the dibspatcher.** Calls and batches as above, with per-job attempts
+   whose results can be replayed, still one machine per call.
+3. **Splitting.** Sealed sources, the split test, capture, bundles of several executables,
+   direct transfer, staging, the cargo on the benchmark side, A/B across machines, and the
+   fallback.
+4. **`with --there` servers** split the same way, their binaries carried like any other.
 
 ## Open questions
 
