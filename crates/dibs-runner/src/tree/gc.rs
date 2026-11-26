@@ -54,6 +54,8 @@ pub struct SweepReport {
     live: bool,
     /// The one entry a job named that a person asked to remove, in place of the sweep.
     named: Option<String>,
+    /// The lock, history and log, which a machine may keep under its scratch.
+    state: Vec<PathBuf>,
 }
 
 /// KiB reclaimed and past their clocks.
@@ -196,6 +198,11 @@ impl Asked {
             dry: self.dry,
             live: self.live,
             named: self.named.clone(),
+            state: machine
+                .iter()
+                .flat_map(|m| [&m.lock_dir, &m.history, &m.log, &m.shared_state])
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -223,6 +230,27 @@ impl SweepReport {
             .sizes
             .of(&path);
         let written = SweepReport::ago(Moment::epoch_now(), path.newest(None));
+        let real = path.canonicalize().ok();
+        if let Some(state) = self.state.iter().find(|s| {
+            let s = s.canonicalize().unwrap_or_else(|_| s.to_path_buf());
+            real.as_ref().is_some_and(|r| s.starts_with(r))
+        }) {
+            SweepReport::say(&format!(
+                "dibs: {} holds this machine's own {}, so it stays.\n",
+                path.display(),
+                state.display()
+            ));
+            return 1;
+        }
+        let link = fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+        if let Some(mount) = SweepReport::mount_under(&path).filter(|_| !link) {
+            SweepReport::say(&format!(
+                "dibs: {} is mounted inside {}; unmount it first if it should go.\n",
+                mount.display(),
+                path.display()
+            ));
+            return 1;
+        }
         // Checked after the walks above, which take minutes on a big entry.
         if path.join(KEEP).exists() {
             SweepReport::say(&format!(
@@ -234,14 +262,6 @@ impl SweepReport {
         if sweep.used_now(&path) {
             SweepReport::say(&format!(
                 "dibs: a process works in {}, so it stays.\n",
-                path.display()
-            ));
-            return 1;
-        }
-        if let Some(mount) = SweepReport::mount_under(&path) {
-            SweepReport::say(&format!(
-                "dibs: {} is mounted inside {}; unmount it first if it should go.\n",
-                mount.display(),
                 path.display()
             ));
             return 1;
@@ -276,8 +296,16 @@ impl SweepReport {
         0
     }
 
-    /// A directory under `path` on another filesystem than it, which removing would walk into.
+    /// A mount under `path`, which removing would walk into: from the mount table where there is
+    /// one, since a bind mount keeps its device number.
     fn mount_under(path: &Path) -> Option<PathBuf> {
+        let real = path.canonicalize().ok()?;
+        if let Ok(mounts) = fs::read_to_string("/proc/self/mounts") {
+            return mounts.lines().find_map(|line| {
+                let point = PathBuf::from(line.split(' ').nth(1)?.replace("\\040", " "));
+                (point != real && point.starts_with(&real)).then_some(point)
+            });
+        }
         let dev = fs::symlink_metadata(path).ok()?.dev();
         let mut dirs = vec![path.to_path_buf()];
         while let Some(dir) = dirs.pop() {
