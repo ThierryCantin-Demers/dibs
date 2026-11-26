@@ -315,8 +315,9 @@ spoiled without it.
   run with the machine held alone, and a server another tree has built over since is refused.
   `--there` runs the command on the machine instead, in the tree, reaching the servers at
   `127.0.0.1:$DIBS_PORT_<NAME>`: client and server on one box, with no network between them.
-- **When no recipe fits work that will run again, write one** in
-  `~/.config/dibs/recipes/<repo>.toml`. `dibs gaps` first: a reason that keeps coming up there is
+- **When no recipe fits work that will run again, write one**, as `<repo>.toml` in the
+  `local recipes` directory `dibs list <repo>` prints, `~/.config/dibs/recipes` unless
+  `DIBS_RECIPES` moves it. `dibs gaps` first: a reason that keeps coming up there is
   the recipe to write. A recipe is a `[build.<name>]`, `[test.<name>]` or `[bench.<name>]` table
   and its steps, each a `lock` and a `run`, with `env` for what the command reads:
 
