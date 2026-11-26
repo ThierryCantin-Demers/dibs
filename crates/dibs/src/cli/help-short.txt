@@ -9,12 +9,13 @@ Recipes
   dibs measurement <job|batch>         a run as one measurement, in JSON
   dibs with <repo> <service> -- <cmd>  a command against the repo's servers
   dibs shell <repo> --reason <why> -- <cmd>    a one-off in a prepared tree
-      --bench  --preemptible
+      before the --: --bench  --preemptible
   dibs raw --reason <why> -- <cmd>     a one-off with nothing prepared
   dibs gaps                            what fit no recipe, what got in the way
 Calls
   dibs run [--bench] <cmd>             shared, or alone on the machine
-      --with <name>='<cmd>'  --ready tcp:<port>  --port <name>  --stream
+      before <cmd>: --with <name>='<cmd>'  --ready tcp:<port>  --port <name>
+                    --stream
   dibs --peek <cmd>                    a look that takes no lock
   dibs --sync <a> <b>                  rsync, ':' marking the machine's side
   dibs --hold <cmd>                    a command here under the machine's lock
