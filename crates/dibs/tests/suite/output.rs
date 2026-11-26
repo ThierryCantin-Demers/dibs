@@ -460,7 +460,10 @@ fn left_by_an_ended_job(s: &mut Sandbox, ignores_term: bool) -> (Gate, u32) {
     };
     let script = format!("{trap}echo $$ > {pidfile}; {}", gate.hold());
     s.spawn(s.command("bash", ["-c", &script]).env("DIBS_JOB", &job));
-    until("the leftover to start", || s.exists("left.pid"));
+    // The redirection makes the file before echo writes it.
+    until("the leftover to start", || {
+        s.exists("left.pid") && s.read("left.pid").trim().parse::<u32>().is_ok()
+    });
     let pid = s.read("left.pid").trim().parse().unwrap();
     (gate, pid)
 }
