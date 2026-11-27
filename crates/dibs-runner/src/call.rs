@@ -1,5 +1,5 @@
 use crate::{clock::Moment, shared::SharedFile, tree};
-use dibs_format::{BatchId, Event, JobId, Label, LockRecord, LogLine, Mode, wire::Request};
+use dibs_format::{Event, JobId, Label, LockRecord, LogLine, Mode, wire::Request};
 use std::path::Path;
 
 /// How much of a command its records keep.
@@ -30,7 +30,7 @@ impl Received {
     pub fn of(request: Request) -> Received {
         let agent = request.agent.one_line(NAME);
         // Compared whole by --kill, so never cut short as the name beside it is.
-        let agent_id = request.agent_id.replace(['\n', '\t'], " ");
+        let agent_id = cleaned_text(&request.agent_id);
         let batch_tag = request
             .batch
             .as_deref()
@@ -93,7 +93,7 @@ impl Received {
         LockRecord {
             mode: self.mode(),
             pid: self.pid,
-            start,
+            start_secs: start,
             label: self.label().clone(),
             agent: self.agent.clone(),
             agent_id: Some(self.agent_id.clone()).filter(|id| !id.is_empty()),
@@ -120,20 +120,20 @@ impl Received {
             .map(|d| format!(" on {d}"))
             .unwrap_or_default();
         LogLine {
-            when: Moment::now().iso(),
+            when: Moment::now().to_iso(),
             event,
             pid: self.pid,
             mode: self.mode(),
             label: self.label().clone(),
-            queued: None,
-            ran: None,
+            queued_secs: None,
+            ran_secs: None,
             exit: None,
             command: match self.one_line.is_empty() {
                 true => self.label().to_string(),
                 false => self.one_line.clone(),
             },
             agent: format!("{}{device}", self.asked()),
-            batch: self.batch_tag.as_deref().map(BatchId::new),
+            batch_tag: self.batch_tag.clone(),
             job: None,
         }
     }
@@ -145,9 +145,16 @@ pub trait OneLine {
     fn one_line(&self, bytes: usize) -> String;
 }
 
+/// `text` with each character that would end a record's field or line, a tab, a newline or a
+/// carriage return, as a space: what the line codecs write it as, so a value compared with one
+/// read back from a record, written by this runner or an older one, is cleaned first.
+pub fn cleaned_text(text: &str) -> String {
+    text.replace(['\n', '\t', '\r'], " ")
+}
+
 impl OneLine for str {
     fn one_line(&self, bytes: usize) -> String {
-        let mut line = self.replace(['\n', '\t'], " ");
+        let mut line = cleaned_text(self);
         let mut end = line.len().min(bytes);
         while !line.is_char_boundary(end) {
             end -= 1;
@@ -165,7 +172,7 @@ pub struct Journal<'a> {
 
 impl Journal<'_> {
     pub fn write(&self, line: &LogLine) {
-        let _ = SharedFile { path: self.path }.append(&line.to_string());
+        let _ = SharedFile { path: self.path }.append(&line.to_line());
     }
 
     /// Cut back to its last `kept` lines once it outgrows `bound`.
@@ -191,5 +198,12 @@ mod tests {
         assert_eq!("a\tb\nc".one_line(10), "a b c");
         assert_eq!("é".one_line(1), "");
         assert_eq!("abcdef".one_line(3), "abc");
+    }
+
+    /// The line codecs write a carriage return as a space, so text compared with what they read
+    /// back must be cleaned of it too.
+    #[test]
+    fn a_carriage_return_is_one_line_as_a_space() {
+        assert_eq!("a\rb".one_line(10), "a b");
     }
 }

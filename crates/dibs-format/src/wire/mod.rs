@@ -4,17 +4,15 @@ mod bundle;
 mod frame;
 mod record;
 mod request;
+mod source;
 mod tree;
 
 pub use bundle::{Bundle, BundleCheck, BundleMake, BundleManifest};
-pub use frame::{Frame, FrameError, Unframer};
-pub use record::{Admitted, Built, CheckedIn, Picked, Record, Trailer};
-pub use request::{Card, Close, MaxFrom, Request, Service, Watch};
+pub use frame::{Frame, FrameBuffer, FrameError};
+pub use record::{Admission, CheckInReport, Compilation, PickedPort, Record, Trailer};
+pub use request::{Card, Close, MaxSource, Request, Service, Watch};
+pub use source::SOURCE_HASH;
 pub use tree::{
-    At, GitDb, GitDbs, Nest, Packages, Place, Prepare, Prepared, Revision, Seeded, Shared, Source,
-    Step, Stepped, Then, Tree,
+    FollowUp, GitDb, GitDbs, Nest, Overlap, Packages, Place, Prepare, PrepareReport, PreparedTree,
+    Revision, SeedReport, Source, Step, StepReport, Tree,
 };
-
-/// The hash of the runner source a machine's `install.sh` built this from, None anywhere else.
-/// Read in the crate the runner's others depend on, so a new hash rebuilds them all.
-pub const SOURCE_HASH: Option<&str> = option_env!("DIBS_RUNNER_HASH");

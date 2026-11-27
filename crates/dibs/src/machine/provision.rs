@@ -256,7 +256,7 @@ impl Provision<'_> {
             "dibs: the runner for this dibs could not be built on {}, so nothing ran. Its build said why, above.\n",
             self.session.name
         ));
-        i32::from(Exit::NoRunner.code())
+        i32::from(Exit::NoRunner.as_code())
     }
 
     /// Says why a first build could not take the lock, and gives the exit for it.
@@ -268,13 +268,13 @@ impl Provision<'_> {
                     "dibs: {name} has no perl, which takes the lock for the first build of dibs's runner, so nothing was built.\n  \
                      A build outside the lock would run beside whatever is measured there. Install perl, then run dibs --check {name} again.\n"
                 ));
-                i32::from(Exit::NoRunner.code())
+                i32::from(Exit::NoRunner.as_code())
             }
             _ => {
                 delivery.say(&format!(
                     "dibs: the lock directory on {name} cannot be written, so the first build of dibs's runner took no lock and nothing was built.\n"
                 ));
-                i32::from(Exit::NoLock.code())
+                i32::from(Exit::NoLock.as_code())
             }
         }
     }
@@ -284,7 +284,7 @@ impl Provision<'_> {
             "dibs: {} has no dibs runner yet, so nothing ran. Install one with:  dibs --check {}\n",
             self.session.name, self.session.name
         ));
-        i32::from(Exit::NoRunner.code())
+        i32::from(Exit::NoRunner.as_code())
     }
 
     /// A call that takes no lock gives its build up rather than queue behind what holds the
@@ -297,7 +297,7 @@ impl Provision<'_> {
              there that may wait, such as:  dibs --on {name} true\n",
             behind.trim_start_matches("dibs: ")
         ));
-        i32::from(Exit::NoRunner.code())
+        i32::from(Exit::NoRunner.as_code())
     }
 
     /// A call that takes no lock does not wait for another call's build either, which may be
@@ -309,7 +309,7 @@ impl Provision<'_> {
                wait for the lock. A call that takes no lock does not wait for it; ask again once that build is done.
 "
         ));
-        i32::from(Exit::NoRunner.code())
+        i32::from(Exit::NoRunner.as_code())
     }
 
     pub fn left_to_build(&self, delivery: &mut Delivery) {
@@ -361,7 +361,7 @@ impl Provision<'_> {
         }
         let status = child.wait();
         let _ = gone.send(Ended::Reaped);
-        let code = status.map(Exit::shell_status).unwrap_or(SSH_FAILED);
+        let code = status.map(Exit::to_shell_code).unwrap_or(SSH_FAILED);
         let mut lines = said.lines();
         Ok(match (code, lines.next()) {
             (0, None) => Background::Installed,
@@ -412,7 +412,7 @@ impl Provision<'_> {
                 "dibs: {name} has no runner for this dibs yet, so it was not asked: {said}\n"
             )),
         }
-        i32::from(Exit::NoRunner.code())
+        i32::from(Exit::NoRunner.as_code())
     }
 
     /// A question asked within a bound builds nothing: the build would queue behind whatever
@@ -422,7 +422,7 @@ impl Provision<'_> {
         delivery.say(&format!(
             "dibs: {name} has no runner for this dibs yet, so it was not asked. A call that runs there builds it first, and so does:  dibs --check {name}\n"
         ));
-        i32::from(Exit::NoRunner.code())
+        i32::from(Exit::NoRunner.as_code())
     }
 
     /// Exits 0 saying nothing when the runner is there. Otherwise claims the pid file, so one
@@ -563,7 +563,7 @@ impl Provision<'_> {
         for reader in readers {
             let _ = reader.join();
         }
-        Ok(match Exit::shell_status(child.wait()?) {
+        Ok(match Exit::to_shell_code(child.wait()?) {
             0 => Installed::Done,
             MISSING => Installed::NoneThere,
             SSH_FAILED => Installed::Unreached,

@@ -1049,10 +1049,11 @@ agent says so, and a session with no title yet is named by its id.
 A holder is called idle when the CPU under it has not moved between two looks, which catches a
 job that hangs after an hour of work as well as one that never started. That takes two looks,
 and a `--watch` left running is what supplies them. `DIBS_IDLE_AFTER` sets how long a stretch of
-nothing has to be, in seconds, before it is worth mentioning. A holder running over twice its
-label's 90th percentile is marked `STUCK?`, in `dibs status` and dibstop alike, and so is one whose
-output has not changed in ten minutes (`DIBS_SILENT_AFTER`) unless its label's own runs take that
-long, with the last line it wrote: a hang that keeps spinning uses CPU, and only its output stops.
+nothing has to be, in seconds, before it is worth mentioning, in the text, in `--json` and in
+dibstop alike. A holder running over twice its label's 90th percentile is marked `STUCK?`, in
+`dibs status` and dibstop alike, and so is one whose output has not changed in ten minutes
+(`DIBS_SILENT_AFTER`) unless its label's own runs take that long, with the last line it wrote: a
+hang that keeps spinning uses CPU, and only its output stops.
 None of these is said of a job whose tree the machine is still laying out: that part is dibs's,
 not the command's, so its line says `preparing its tree` and what the machine said last, such as
 the copy a new tree starts from or the build it waits for.

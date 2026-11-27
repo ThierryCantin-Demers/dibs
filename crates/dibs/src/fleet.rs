@@ -4,6 +4,8 @@
 //! it should have, so a machine set up by hand drifted from the others unseen until a job failed
 //! on it.
 
+pub mod report;
+
 use crate::{
     call::{Asked, Bound, MachineCall},
     caller::Caller,
@@ -13,10 +15,8 @@ use crate::{
     paths::{FileError, Paths},
     recipe::{Checkouts, Manifest, RepoError},
 };
-use dibs_format::{
-    Exit, Label, MachineName, Mode,
-    fleet::{Access, Area, Facts, Finding, Overview, PathCheck, Provisioned, Report, Standing},
-};
+use dibs_format::{Exit, Label, MachineName, Mode, fleet::Facts};
+use report::{Access, Area, Finding, Overview, PathCheck, Provisioning, Report, Standing};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -182,7 +182,7 @@ struct Person {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Machine {
-    provisioned: Provisioned,
+    provisioned: Provisioning,
     /// How to reach a machine not yet in the pool, for the `--check` that adds it.
     ssh: Option<String>,
     #[serde(default)]
@@ -560,7 +560,7 @@ fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> Result<Facts, Unpr
             .trim()
             .to_string()
     };
-    let unreachable = i32::from(Exit::Unreachable.code());
+    let unreachable = i32::from(Exit::Unreachable.as_code());
     match answer.exit {
         None => Err(Unprobed::Late),
         Some(0) => serde_json::from_str(
@@ -640,12 +640,12 @@ fn report(name: &str, m: &Machine, cx: &Context, pool: &BTreeSet<String>) -> Rep
 fn render(reports: &[Report]) -> String {
     let mut s = String::new();
     for r in reports {
-        s += &format!("{}  set up by {}\n", r.machine, r.provisioned);
+        s += &format!("{}  set up by {}\n", r.machine, r.provisioned.to_text());
         for f in &r.findings {
             s += &format!(
                 "  {}  {:<8} {}\n",
                 if f.ok { "ok" } else { "NO" },
-                f.area.name(),
+                f.area.as_str(),
                 f.detail
             );
         }
@@ -682,7 +682,7 @@ pub fn command(
     }
     Ok(match overview.machines.iter().all(Report::as_expected) {
         true => ExitCode::SUCCESS,
-        false => ExitCode::from(Exit::Failed.code()),
+        false => ExitCode::from(Exit::Failed.as_code()),
     })
 }
 
@@ -750,8 +750,8 @@ fn overview(
 
 #[cfg(test)]
 mod tests {
+    use super::report::Provisioner;
     use super::*;
-    use dibs_format::fleet::Provisioner;
 
     fn seen() -> Facts {
         Facts {
@@ -788,7 +788,7 @@ mod tests {
 
     fn machine(profiles: Vec<Profile>) -> Machine {
         Machine {
-            provisioned: Provisioned {
+            provisioned: Provisioning {
                 by: Provisioner::Hand,
                 source: None,
             },

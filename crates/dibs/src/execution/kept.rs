@@ -48,7 +48,7 @@ impl KeptStores {
         }
         let here = Paths::from_env()
             .kept()?
-            .join(FileName::of(&target.series_key()).as_str());
+            .join(FileName::of_text(&target.series_key()).as_str());
         Some(KeptStores {
             machine,
             dirs,

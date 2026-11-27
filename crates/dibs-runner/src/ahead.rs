@@ -6,7 +6,7 @@ use crate::{
     settings::{home, var},
     stop::{Stage, Stopper},
 };
-use dibs_format::{JobId, status::Ahead};
+use dibs_format::{JobId, status::PreemptionState};
 use std::{
     fs::{File, TryLockError},
     path::{Path, PathBuf},
@@ -129,8 +129,11 @@ impl Watch {
         }
         drop(state);
         self.frozen.freeze();
-        self.dir
-            .mark_ahead(self.pid, self.arrived, &Ahead::Paused(bench.clone()));
+        self.dir.mark_ahead(
+            self.pid,
+            self.arrived,
+            &PreemptionState::Paused(bench.clone()),
+        );
         let _ = self.rw.unlock();
         let _ = self.ahead.unlock();
         while !self.resumed() {
@@ -142,7 +145,8 @@ impl Watch {
         signal_group(job, libc::SIGCONT);
         self.frozen
             .thaw(|lasted| self.dir.defer_deadline(self.pid, lasted));
-        self.dir.mark_ahead(self.pid, self.arrived, &Ahead::Running);
+        self.dir
+            .mark_ahead(self.pid, self.arrived, &PreemptionState::Running);
     }
 
     /// `ahead` and `rw` taken again, once no benchmark queued before the job asks and the one

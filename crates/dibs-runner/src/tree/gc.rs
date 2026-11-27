@@ -470,9 +470,13 @@ impl SweepReport {
         }
         SweepReport::say(&format!(
             "  took {}: {}\n",
-            Span(began.elapsed().as_secs()),
+            Span::from_secs(began.elapsed().as_secs()),
             took.iter()
-                .map(|(kind, spent)| format!("{} {}", kind.named(), Span(spent.as_secs())))
+                .map(|(kind, spent)| format!(
+                    "{} {}",
+                    kind.named(),
+                    Span::from_secs(spent.as_secs())
+                ))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -933,7 +937,7 @@ impl Progress {
         format!(
             "    {what}: {} {done} of {total} measured in {}, {}\n",
             Progress::bar(done as u64, total as u64),
-            Span(spent.as_secs()),
+            Span::from_secs(spent.as_secs()),
             Progress::left(done as u64, total as u64, spent)
         )
     }
@@ -950,7 +954,7 @@ impl Progress {
             Progress::bar(kib, of),
             Kib(kib),
             Kib(of),
-            Span(spent.as_secs()),
+            Span::from_secs(spent.as_secs()),
             Progress::left(kib, of, spent)
         )
     }
@@ -968,7 +972,7 @@ impl Progress {
             0 => "no estimate until one is done".to_string(),
             _ => format!(
                 "about {} left",
-                Span(
+                Span::from_secs(
                     (spent.as_secs_f64() * total.saturating_sub(done) as f64 / done as f64) as u64
                 )
             ),
@@ -1080,7 +1084,7 @@ mod tests {
         assert_eq!(Kib(5_722_669_000).to_string(), "5.3T");
         assert_eq!(Bytes(10 * 1024 * 1024 * 1024 + 1).to_string(), "11G");
         assert_eq!(Bytes(9 * 1024 * 1024 * 1024 + 1).to_string(), "9.1G");
-        assert_eq!(SweepReport::ago(Span::DAY.0 * 3, 0), "3 days ago");
+        assert_eq!(SweepReport::ago(Span::DAY.as_secs() * 3, 0), "3 days ago");
     }
 
     #[test]

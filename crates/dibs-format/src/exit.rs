@@ -4,6 +4,10 @@ use std::process::ExitStatus;
 
 /// Every exit dibs gives of its own. A command's own status passes through unchanged, so a code
 /// here can also be a command's, and the trailer's `by=` is what tells them apart.
+///
+/// # Guarantees
+///
+/// - No two exits share a code, so `Exit::from_code(exit.as_code().into())` is `exit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Exit {
     Success,
@@ -44,6 +48,7 @@ pub enum Exit {
 }
 
 impl Exit {
+    /// Every variant, in the order of their codes.
     pub const ALL: [Exit; 18] = [
         Exit::Success,
         Exit::Failed,
@@ -65,7 +70,7 @@ impl Exit {
         Exit::Terminated,
     ];
 
-    pub fn code(self) -> u8 {
+    pub fn as_code(self) -> u8 {
         match self {
             Exit::Success => 0,
             Exit::Failed => 1,
@@ -89,12 +94,12 @@ impl Exit {
     }
 
     /// The code as a process status.
-    pub fn status(self) -> i32 {
-        i32::from(self.code())
+    pub fn as_status(self) -> i32 {
+        i32::from(self.as_code())
     }
 
-    /// The status a shell reports for a process that ended: its code, or 128 and the signal.
-    pub fn shell_status(status: ExitStatus) -> i32 {
+    /// The code a shell reports for a process that ended: its own, or 128 and its signal.
+    pub fn to_shell_code(status: ExitStatus) -> i32 {
         #[cfg(unix)]
         let signal = status.signal();
         // Only a Unix process ends by a signal; nothing else runs one to read.
@@ -106,8 +111,8 @@ impl Exit {
     }
 
     /// The exit dibs gives with this code, if it gives one.
-    pub fn of_code(code: i32) -> Option<Exit> {
-        Exit::ALL.into_iter().find(|e| i32::from(e.code()) == code)
+    pub fn from_code(code: i32) -> Option<Exit> {
+        Exit::ALL.into_iter().find(|e| e.as_status() == code)
     }
 
     /// What it means, in the words `--help` uses.
@@ -139,7 +144,7 @@ impl Exit {
 
 impl From<Exit> for std::process::ExitCode {
     fn from(exit: Exit) -> Self {
-        std::process::ExitCode::from(exit.code())
+        std::process::ExitCode::from(exit.as_code())
     }
 }
 
@@ -150,8 +155,45 @@ mod tests {
     #[test]
     fn every_exit_is_found_by_its_code_and_no_two_share_one() {
         for exit in Exit::ALL {
-            assert_eq!(Exit::of_code(exit.code().into()), Some(exit));
+            assert_eq!(Exit::from_code(exit.as_status()), Some(exit));
         }
-        assert_eq!(Exit::of_code(255), None);
+    }
+
+    #[test]
+    fn a_code_dibs_never_gives_is_no_exit() {
+        assert_eq!(Exit::from_code(255), None);
+    }
+
+    /// Stops compiling when a variant is added, until it is counted here and listed in `ALL`.
+    #[test]
+    fn every_variant_is_in_all() {
+        let counted = |exit: Exit| match exit {
+            Exit::Success
+            | Exit::Failed
+            | Exit::Refused
+            | Exit::Setup
+            | Exit::Unreachable
+            | Exit::NoRoom
+            | Exit::NoLock
+            | Exit::NoRunner
+            | Exit::Busy
+            | Exit::Cancelled
+            | Exit::ServiceFailed
+            | Exit::TargetRebuilt
+            | Exit::Closed
+            | Exit::CheckedIn
+            | Exit::Overran
+            | Exit::HungUp
+            | Exit::Interrupted
+            | Exit::Terminated => 1,
+        };
+        assert_eq!(Exit::ALL.into_iter().map(counted).sum::<usize>(), 18);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_process_ended_by_a_signal_has_128_and_its_signal() {
+        let status = ExitStatus::from_raw(15);
+        assert_eq!(Exit::to_shell_code(status), 143);
     }
 }

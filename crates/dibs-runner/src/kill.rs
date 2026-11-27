@@ -2,7 +2,7 @@
 //! what is broken gets freed.
 
 use crate::{
-    call::{Journal, Received},
+    call::{Journal, Received, cleaned_text},
     clock::{Deadline, Moment, Span},
     lock::{Kind, Lock, LockDir, RecordFile},
     platform::{Descendants as _, Host, Platform as _},
@@ -60,23 +60,14 @@ impl Kill<'_> {
     /// The status as text, which a refusal shows.
     fn shown(&self) -> String {
         self.look.text(
-            &self.look.status(self.call.request.verbose),
+            &self.look.snapshot(self.call.request.verbose),
             self.call.request.tty,
         )
     }
 
-    /// Whose job this is, checked before anything is signalled. An id that names an account, not
-    /// a session, proves nothing, and a record with no id is not grounds to refuse.
+    /// Whose job this is, checked before anything is signalled.
     fn refused(&self, theirs: Option<&str>, anyone: bool) -> Option<Refusal> {
-        match theirs.unwrap_or_default() {
-            _ if anyone => None,
-            id if id.starts_with("shell-") => Some(Refusal::Account),
-            "" => None,
-            id if !self.call.agent_id.is_empty() && id != self.call.agent_id => {
-                Some(Refusal::Someone)
-            }
-            _ => None,
-        }
+        refusal(theirs, &self.call.agent_id, anyone)
     }
 
     pub fn serve(&self) -> i32 {
@@ -115,10 +106,10 @@ impl Kill<'_> {
                 target.name,
                 self.shown()
             ));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let pid = record.pid;
-        let held = Span(Moment::epoch_now().saturating_sub(record.start));
+        let held = Span::from_secs(Moment::epoch_now().saturating_sub(record.start_secs));
         if !RecordFile(&file).written_by(pid) {
             let _ = fs::remove_file(&file);
             self.sink.say(&format!(
@@ -126,7 +117,7 @@ impl Kill<'_> {
                  something else now. The record is gone and nothing was signalled.\n",
                 record.mode, record.label
             ));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
         match self.refused(record.agent_id.as_deref(), target.anyone) {
             Some(Refusal::Someone) => {
@@ -136,7 +127,7 @@ impl Kill<'_> {
                      know it should stop, say so:  dibs --kill {pid} --anyone\n",
                     record.mode, record.label, record.agent
                 ));
-                return Exit::Refused.status();
+                return Exit::Refused.as_status();
             }
             Some(Refusal::Account) => {
                 self.sink.say(&format!(
@@ -148,7 +139,7 @@ impl Kill<'_> {
                     record.label,
                     record.agent_id.as_deref().unwrap_or_default()
                 ));
-                return Exit::Refused.status();
+                return Exit::Refused.as_status();
             }
             None => {}
         }
@@ -203,12 +194,14 @@ impl Kill<'_> {
     /// A process that outlived its job holds no lock, so no record names it; its environment
     /// still names the job, and the job's meta whose it was. It goes with what it started.
     fn leftover(&self, pid: u32, anyone: bool) -> i32 {
-        let Some(job) = Host::variable(pid, "DIBS_JOB").and_then(|job| JobId::checked(&job)) else {
+        let Some(job) =
+            Host::variable(pid, "DIBS_JOB").and_then(|job| JobId::checked_from_text(&job))
+        else {
             self.sink.say(&format!(
                 "dibs: nothing was stopped: pid {pid} holds no lock here, waits for none, and no dibs job started it.\n{}",
                 self.shown()
             ));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let meta = fs::read_to_string(self.look.machine.jobs().join(job.as_str()).join("meta"))
             .ok()
@@ -218,7 +211,7 @@ impl Kill<'_> {
                 "dibs: nothing was stopped: pid {pid} belongs to job {job}, which is still running. Stop the job:\n  \
                  dibs --kill <its pid in dibs status>\n"
             ));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let label = &meta.label;
         if self.refused(meta.who.as_deref(), anyone).is_some() {
@@ -227,7 +220,7 @@ impl Kill<'_> {
                  If you know it should stop:  dibs --kill {pid} --anyone\n",
                 meta.agent
             ));
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         let mut tree = vec![pid];
         tree.extend(Host::processes().below(pid));
@@ -299,7 +292,7 @@ impl Kill<'_> {
                  dibs --kill {id} --anyone\n",
                 record.label, record.agent
             ));
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         let _ = fs::write(self.dir().path.join(format!("cancelled.{id}")), "");
         let mut line = self.call.log_line(Event::Cancelled);
@@ -399,6 +392,19 @@ enum Refusal {
     Account,
 }
 
+/// Why the job whose record names `theirs` is not `ours` to kill. An id that names an account,
+/// not a session, proves nothing, and a record with no id is not grounds to refuse. `theirs` is
+/// cleaned as `ours` was, since a record an older runner wrote may keep a carriage return.
+fn refusal(theirs: Option<&str>, ours: &str, anyone: bool) -> Option<Refusal> {
+    match theirs.map(cleaned_text).unwrap_or_default().as_str() {
+        _ if anyone => None,
+        id if id.starts_with("shell-") => Some(Refusal::Account),
+        "" => None,
+        id if !ours.is_empty() && id != ours => Some(Refusal::Someone),
+        _ => None,
+    }
+}
+
 /// `YYYYMMDD-HHMMSS-N`, a batch's id rather than a pid.
 fn batch_id(target: &str) -> bool {
     let parts: Vec<&str> = target.split('-').collect();
@@ -417,5 +423,10 @@ mod tests {
         assert!(!batch_id("4242"));
         assert!(!batch_id("20261001120000-4242"));
         assert!(!batch_id("2026100-120000-77"));
+    }
+
+    #[test]
+    fn a_record_an_older_runner_wrote_with_a_carriage_return_is_still_the_owners() {
+        assert!(refusal(Some("s\r1"), "s 1", false).is_none());
     }
 }

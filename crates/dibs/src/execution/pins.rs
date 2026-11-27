@@ -96,7 +96,7 @@ fn sources(
         out.entry(key).or_default().insert(n);
         Ok(())
     };
-    for package in Package::all(lock) {
+    for package in Package::all_in_lock(lock) {
         take(Some(package.name), package.source)?;
     }
     Ok(out)
@@ -213,7 +213,7 @@ impl Nest {
             hashed += &format!("{repo} -> {tree}\n");
         }
         Nest {
-            name: format!("pin-{:.10}", Sha256::digest(hashed.as_bytes()).hex()),
+            name: format!("pin-{:.10}", Hex::new(&Sha256::digest(hashed.as_bytes()))),
             config,
             siblings,
         }
@@ -513,7 +513,7 @@ impl Pinned {
             None => std::fs::read_to_string(self.dir.join(path)).ok(),
         };
         let mut out: Vec<Relocked> = Vec::new();
-        for package in locks.iter().flat_map(|lock| Package::all(lock)) {
+        for package in locks.iter().flat_map(|lock| Package::all_in_lock(lock)) {
             let (Some(locked), Some(source)) = (package.version, package.source) else {
                 continue;
             };
@@ -555,7 +555,7 @@ impl Pinned {
             return Ok(());
         };
         let tag = format!("tag={}", self.reference);
-        let locked = Package::all(lock).into_iter().find_map(|package| {
+        let locked = Package::all_in_lock(lock).into_iter().find_map(|package| {
             let (query, locked) = package
                 .source
                 .filter(|_| self.crates.contains_key(&package.name))?

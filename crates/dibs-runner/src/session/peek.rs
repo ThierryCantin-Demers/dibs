@@ -31,11 +31,11 @@ impl<'a> Peek<'a> {
         if let Caller::Channel(channel) = caller
             && !request.watch.off
         {
-            channel.watch(request.watch.lease, Arc::clone(at.stopper), None);
+            channel.watch(request.watch.lease_secs, Arc::clone(at.stopper), None);
         }
         let start = Moment::epoch_now();
-        let cap = (request.max > 0).then(|| Cap {
-            after: Duration::from_secs(request.max),
+        let cap = (request.max_secs > 0).then(|| Cap {
+            after: Duration::from_secs(request.max_secs),
             grace: PEEK_GRACE,
             frozen: None,
         });
@@ -64,7 +64,7 @@ impl<'a> Peek<'a> {
         };
         let peeked = |event| {
             let mut line = at.call.log_line(event);
-            line.ran = Some(took);
+            line.ran_secs = Some(took);
             line.exit = Some(status);
             let command = request.command.one_line(ONE_LINE);
             if !command.is_empty() {
@@ -78,7 +78,7 @@ impl<'a> Peek<'a> {
                 "dibs: that --peek took {} and ran with no lock, beside\n  \
                  whatever is being measured. Anything that costs time belongs in\n  \
                  'dibs <command>', which takes the shared lock.\n",
-                Span(took)
+                Span::from_secs(took)
             ));
             journal.write(&peeked(Event::PeekSlow));
         }

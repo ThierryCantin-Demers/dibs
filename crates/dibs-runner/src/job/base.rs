@@ -205,7 +205,7 @@ impl Job {
                 None => {
                     self.signal_group(libc::SIGTERM);
                     let status = match self.exited.recv_timeout(cap.grace) {
-                        Ok(_) => Exit::Overran.status(),
+                        Ok(_) => Exit::Overran.as_status(),
                         Err(_) => {
                             self.signal_group(libc::SIGKILL);
                             let _ = self.exited.recv();
@@ -223,8 +223,8 @@ impl Job {
         self.end();
         JobEnd {
             status: match status {
-                Some(Ok(status)) => Exit::shell_status(status),
-                _ => Exit::Failed.status(),
+                Some(Ok(status)) => Exit::to_shell_code(status),
+                _ => Exit::Failed.as_status(),
             },
             capped: false,
         }

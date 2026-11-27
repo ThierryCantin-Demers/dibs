@@ -165,7 +165,7 @@ impl<'a> StepStderr<'a> {
         self.0.contains("was cancelled with dibs --kill")
             || self.0.lines().any(|l| {
                 l.starts_with("job ")
-                    && l.contains(&format!("  exit {}  by=dibs", Exit::Cancelled.code()))
+                    && l.contains(&format!("  exit {}  by=dibs", Exit::Cancelled.as_code()))
             })
     }
 
@@ -241,7 +241,7 @@ fn collect_old(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    let keep = std::time::Duration::from_secs(14 * Span::DAY.0);
+    let keep = std::time::Duration::from_secs(14 * Span::DAY.as_secs());
     for e in entries.flatten() {
         let old = e
             .metadata()
@@ -522,7 +522,7 @@ fn drive(
     let _ = std::fs::write(dir.join("summary"), &report);
     print!("{report}");
     let code = if cancelled.is_some() {
-        i32::from(Exit::Cancelled.code())
+        i32::from(Exit::Cancelled.as_code())
     } else if states
         .iter()
         .all(|s| matches!(s, State::Done { exit: 0, .. }))
@@ -742,7 +742,7 @@ impl Driving<'_> {
         self.running.remove(&i);
         let said = self.said(i);
         let followed = self.following.remove(&i);
-        if exit == Exit::CheckedIn.status()
+        if exit == Exit::CheckedIn.as_status()
             && self.cancelled.is_none()
             && let Some(hint) = Hint::read(&said)
         {
@@ -773,7 +773,7 @@ impl Driving<'_> {
             return;
         }
         self.states[i] = State::Done { exit, seconds };
-        if exit == i32::from(Exit::Cancelled.code())
+        if exit == i32::from(Exit::Cancelled.as_code())
             && self.cancelled.is_none()
             && StepStderr(
                 &std::fs::read_to_string(
@@ -872,7 +872,7 @@ impl Driving<'_> {
                 self.dir.display()
             ),
         }
-        Exit::CheckedIn.status()
+        Exit::CheckedIn.as_status()
     }
 
     /// Whether a follow heard how what it waited on ended: a job's trailer, or a batch's end.

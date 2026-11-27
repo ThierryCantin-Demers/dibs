@@ -237,7 +237,7 @@ fn only_a_shared_build_against_pins_checks_they_took() {
 fn a_recipe_s_jobs_are_what_it_will_send_and_run() {
     let names = |jobs: Vec<Pending>| {
         jobs.into_iter()
-            .map(|j| format!("{} {}", j.mode, j.label))
+            .map(|j| format!("{} {}", j.kind, j.label))
             .collect::<Vec<_>>()
     };
     let build_then_bench = resolved(vec![

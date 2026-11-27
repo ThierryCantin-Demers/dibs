@@ -2,11 +2,20 @@
 //! `Reply` lines until `End`. Unlike the runner's frames this is versioned, since a coworker's
 //! dibs and the dibspatcher's are built from different sources.
 
-use crate::wire::{Admitted, Trailer};
+use crate::{
+    Hex, Sha256,
+    wire::{Admission, Trailer},
+};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs, io, path::Path};
 
-/// The version of this conversation a client speaks.
+/// The version of this conversation a client speaks. A dibspatcher refuses an `Ask` of any
+/// other, telling its client to update dibs.
+///
+/// # Guarantees
+///
+/// - It goes up whenever a dibspatcher could misread what a client of the version before sends
+///   it: a call or a reply read another way, or a [`Seal`] computed another way.
 pub const VERSION: u32 = 1;
 
 /// The command a client asks the dibspatcher's account to run; its forced command reads it from
@@ -86,6 +95,7 @@ pub struct NamedCall {
 pub struct SplitCall {
     pub repo: String,
     pub recipe: String,
+    /// The recipe's values by name, read by name and in name order.
     pub values: BTreeMap<String, String>,
 }
 
@@ -96,9 +106,9 @@ pub struct Upload {
     pub repo: String,
     /// The commit its HEAD names.
     pub head: String,
-    /// `Seal::digest` of the files sent beside `.git`.
-    pub digest: String,
-    pub files: u64,
+    /// What the client sent beside `.git`.
+    #[serde(flatten)]
+    pub seal: Seal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,13 +143,18 @@ pub enum Reply {
     },
     Admitted {
         step: String,
-        admitted: Admitted,
+        admitted: Admission,
     },
     End {
         exit: i32,
     },
 }
 
+/// Where a submission or one of its steps stands.
+///
+/// # Guarantees
+///
+/// - `from_str` reads back every name `as_str` gives, and refuses any other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
@@ -173,22 +188,26 @@ impl State {
     }
 }
 
+impl State {
+    const ALL: [State; 7] = [
+        State::Accepted,
+        State::Running,
+        State::Done,
+        State::Failed,
+        State::Cancelled,
+        State::Interrupted,
+        State::Unknown,
+    ];
+}
+
 impl std::str::FromStr for State {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        [
-            State::Accepted,
-            State::Running,
-            State::Done,
-            State::Failed,
-            State::Cancelled,
-            State::Interrupted,
-            State::Unknown,
-        ]
-        .into_iter()
-        .find(|state| state.as_str() == s)
-        .ok_or_else(|| format!("{s:?} is no submission state"))
+        State::ALL
+            .into_iter()
+            .find(|state| state.as_str() == s)
+            .ok_or_else(|| format!("{s:?} is no submission state"))
     }
 }
 
@@ -200,14 +219,16 @@ pub struct Summary {
     /// The work in one line, as `dibs dispatch list` shows it.
     pub what: String,
     pub state: State,
-    /// Seconds since the epoch.
-    pub created: u64,
+    /// When it was stored, in seconds since the epoch.
+    #[serde(rename = "created")]
+    pub created_secs: u64,
     pub exit: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Detail {
     pub summary: Summary,
+    /// In plan order, and read in it, or for the step a caller names.
     pub steps: Vec<StepState>,
     /// What the worker said outside its steps, the reason a submission failed before any.
     pub note: Option<String>,
@@ -218,86 +239,160 @@ pub struct StepState {
     pub name: String,
     pub machine: Option<String>,
     pub state: State,
-    pub attempts: u32,
+    #[serde(rename = "attempts")]
+    pub attempt_count: u32,
     pub trailer: Option<Trailer>,
     pub note: Option<String>,
 }
 
-/// The digest an upload is sealed by: each file's path and SHA-256, in path order, a symlink by
-/// the path it holds. The client computes it over what it sends, the dibspatcher over what
+/// The seal of an upload: a digest of each file's path and contents, in path order, and how many
+/// files it covers. The client computes it over what it sends, the dibspatcher over what
 /// arrived, and a submission whose two differ is never accepted.
-pub struct Seal;
+///
+/// # Guarantees
+///
+/// - The digest is the same whatever order the files are named in, and however often one is.
+/// - A symlink is sealed by the path it holds.
+/// - `file_count` counts each file named once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Seal {
+    pub digest: String,
+    #[serde(rename = "files")]
+    pub file_count: u64,
+}
 
 impl Seal {
-    pub fn of<'a>(
-        root: &std::path::Path,
-        files: impl IntoIterator<Item = &'a str>,
-    ) -> std::io::Result<(String, u64)> {
+    /// The seal of the files named, as paths relative to `root`.
+    ///
+    /// # Assumptions
+    ///
+    /// - Each name is a UTF-8, relative, `/`-separated path, as both the client and the
+    ///   dibspatcher list them: the digest seals the name as it is written.
+    ///
+    /// # Errors
+    ///
+    /// The error reading a file named, or the path a link holds.
+    pub fn of<'a>(root: &Path, files: impl IntoIterator<Item = &'a str>) -> io::Result<Seal> {
         let mut files: Vec<&str> = files.into_iter().collect();
         files.sort_unstable();
         files.dedup();
-        let mut sealed = crate::Sha256::default();
+        let mut sealed = Sha256::default();
         for file in &files {
-            let path = root.join(file);
-            let digest = match std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
-                true => {
-                    crate::Sha256::hex(std::fs::read_link(&path)?.as_os_str().as_encoded_bytes())
-                }
-                false => crate::Sha256::hex_of_file(&path)?,
-            };
-            sealed.update(file.as_bytes());
-            sealed.update(b"\0");
-            sealed.update(digest.as_bytes());
-            sealed.update(b"\n");
+            sealed.update(sealed_line(&root.join(file), file)?.as_bytes());
         }
-        Ok((crate::Hex::hex(&sealed.finish()[..]), files.len() as u64))
-    }
-
-    /// Every file under `root` but its `.git`, as paths relative to it.
-    pub fn listed(root: &std::path::Path) -> std::io::Result<Vec<String>> {
-        let mut found = Vec::new();
-        let mut dirs = vec![std::path::PathBuf::new()];
-        while let Some(rel) = dirs.pop() {
-            for entry in std::fs::read_dir(root.join(&rel))? {
-                let entry = entry?;
-                let path = rel.join(entry.file_name());
-                if rel.as_os_str().is_empty() && entry.file_name() == ".git" {
-                    continue;
-                }
-                if entry.file_type()?.is_dir() {
-                    dirs.push(path);
-                } else {
-                    found.push(path.to_string_lossy().into_owned());
-                }
-            }
-        }
-        Ok(found)
+        Ok(Seal {
+            digest: Hex::new(&sealed.finish()).to_string(),
+            file_count: files.len() as u64,
+        })
     }
 }
+
+/// One file's line of a seal: its path and the digest of what it holds, which for a link is the
+/// path it holds.
+fn sealed_line(path: &Path, file: &str) -> io::Result<String> {
+    let digest = match fs::symlink_metadata(path)?.file_type().is_symlink() {
+        true => Sha256::hex(fs::read_link(path)?.as_os_str().as_encoded_bytes()),
+        false => Sha256::hex_of_file(path)?,
+    };
+    Ok(format!("{file}\0{digest}\n"))
+}
+
+#[cfg(test)]
+mod seal_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr as _;
 
     #[test]
-    fn a_seal_reads_the_same_whatever_order_the_files_are_named_in() {
-        let root = std::env::temp_dir().join(format!("dibs-seal-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("src/.git")).unwrap();
-        std::fs::create_dir_all(root.join(".git")).unwrap();
-        std::fs::write(root.join("a"), "one").unwrap();
-        std::fs::write(root.join("src/b"), "two").unwrap();
-        std::fs::write(root.join(".git/HEAD"), "not sealed").unwrap();
-        std::fs::write(root.join("src/.git/x"), "a nested one is").unwrap();
-        let mut listed = Seal::listed(&root).unwrap();
-        listed.sort();
-        assert_eq!(listed, ["a", "src/.git/x", "src/b"]);
-        let one = Seal::of(&root, ["a", "src/b", "src/.git/x"]).unwrap();
-        let two = Seal::of(&root, listed.iter().map(String::as_str)).unwrap();
-        assert_eq!(one, two);
-        assert_eq!(one.1, 3);
-        std::fs::write(root.join("src/b"), "changed").unwrap();
-        assert_ne!(Seal::of(&root, ["a", "src/b", "src/.git/x"]).unwrap(), one);
-        let _ = std::fs::remove_dir_all(&root);
+    fn every_state_reads_back_from_its_name() {
+        for state in State::ALL {
+            assert_eq!(State::from_str(state.as_str()), Ok(state));
+        }
+    }
+
+    #[test]
+    fn a_name_no_state_has_is_refused() {
+        assert_eq!(
+            State::from_str("Done"),
+            Err(r#""Done" is no submission state"#.to_string())
+        );
+    }
+
+    #[test]
+    fn an_ask_reads_its_call_by_its_tag() {
+        let asks = [
+            r#"{"v":1,"call":"inventory"}"#,
+            r#"{"v":1,"call":{"list":{"all":true}}}"#,
+            r#"{"v":1,"call":{"follow":{"id":"s","check_in":30}}}"#,
+        ]
+        .map(|line| serde_json::from_str::<Ask>(line).unwrap().call);
+        assert_eq!(
+            asks,
+            [
+                Call::Inventory,
+                Call::List { all: true },
+                Call::Follow {
+                    id: "s".into(),
+                    check_in: 30
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_reply_reads_by_its_tag() {
+        let replies = [
+            r#"{"accepted":{"id":"s","duplicate":false}}"#,
+            r#"{"text":{"err":true,"text":"x"}}"#,
+            r#"{"end":{"exit":3}}"#,
+        ]
+        .map(|line| serde_json::from_str::<Reply>(line).unwrap());
+        assert_eq!(
+            replies,
+            [
+                Reply::Accepted {
+                    id: "s".into(),
+                    duplicate: false
+                },
+                Reply::Text {
+                    err: true,
+                    text: "x".into()
+                },
+                Reply::End { exit: 3 },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_inventory_from_a_dibspatcher_keeping_no_files_reads_with_none() {
+        let reply: Reply =
+            serde_json::from_str(r#"{"inventory":{"machines":"m","pools":{}}}"#).unwrap();
+        assert_eq!(
+            reply,
+            Reply::Inventory {
+                machines: "m".into(),
+                pools: BTreeMap::new(),
+                files: None
+            }
+        );
+    }
+
+    #[test]
+    fn an_upload_writes_its_seal_beside_its_head() {
+        let upload = Upload {
+            stage: "k".into(),
+            repo: "r".into(),
+            head: "h".into(),
+            seal: Seal {
+                digest: "d".into(),
+                file_count: 2,
+            },
+        };
+        assert_eq!(
+            serde_json::to_string(&upload).unwrap(),
+            r#"{"stage":"k","repo":"r","head":"h","digest":"d","files":2}"#
+        );
     }
 }

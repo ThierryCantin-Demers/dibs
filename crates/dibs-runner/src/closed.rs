@@ -46,12 +46,12 @@ impl Shutter<'_> {
         let meta = fs::metadata(&path).ok()?;
         Some(Closure {
             by: account_name(meta.uid()),
-            since: meta
+            since_secs: meta
                 .modified()
                 .ok()
                 .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_secs()),
-            close: Close::of_text(&fs::read_to_string(&path).unwrap_or_default()),
+            close: Close::from_text(&fs::read_to_string(&path).unwrap_or_default()),
         })
     }
 
@@ -62,7 +62,7 @@ impl Shutter<'_> {
     }
 
     pub fn close(&self, close: &Close) -> io::Result<()> {
-        let text = close.text();
+        let text = close.to_text();
         let path = self.path();
         let fresh = path.with_extension(format!("{}.new", std::process::id()));
         fs::write(&fresh, text)?;
@@ -112,7 +112,7 @@ pub fn said(closure: &Closure) -> String {
     let mut said = format!(
         "dibs: this machine was closed by {}, {} ago, and nothing new starts until it is opened.\n",
         closure.by,
-        Span(Moment::epoch_now().saturating_sub(closure.since))
+        Span::from_secs(Moment::epoch_now().saturating_sub(closure.since_secs))
     );
     if let Some(reason) = &closure.close.reason {
         said.push_str(&format!("  {reason}\n"));
@@ -136,17 +136,17 @@ impl Owners<'_> {
                 "dibs: could not close {}: {e}\n",
                 self.dir.path.display()
             ));
-            return Exit::NoLock.status();
+            return Exit::NoLock.as_status();
         }
         let Some(closure) = shutter.read() else {
-            return Exit::NoLock.status();
+            return Exit::NoLock.as_status();
         };
         let running = shutter.running(&closure);
         if running.is_empty() {
             self.sink.say(
                 "dibs: closed, and nothing of dibs's runs here now. dibs --open opens it again.\n",
             );
-            return Exit::Success.status();
+            return Exit::Success.as_status();
         }
         let ending = match close.now {
             true => "being stopped",
@@ -166,21 +166,23 @@ impl Owners<'_> {
         loop {
             if shutter.read().is_none() {
                 self.sink.say("dibs: opened again meanwhile.\n");
-                return Exit::Success.status();
+                return Exit::Success.as_status();
             }
             if shutter.running(&closure).is_empty() {
                 self.sink.say("dibs: nothing of dibs's runs here now.\n");
-                return Exit::Success.status();
+                return Exit::Success.as_status();
             }
             let present = match caller.as_mut() {
-                Some(channel) => channel.attend(Instant::now() + POLL, watch.lease, &mut heard),
+                Some(channel) => {
+                    channel.attend(Instant::now() + POLL, watch.lease_secs, &mut heard)
+                }
                 None => {
                     thread::sleep(POLL);
                     true
                 }
             };
             if !present {
-                return Exit::Interrupted.status();
+                return Exit::Interrupted.as_status();
             }
         }
     }
@@ -190,7 +192,7 @@ impl Owners<'_> {
         let shutter = Shutter { dir: self.dir };
         let Some(closure) = shutter.read() else {
             self.sink.say("dibs: this machine was not closed.\n");
-            return Exit::Success.status();
+            return Exit::Success.as_status();
         };
         if closure.by != own_account() && !anyone {
             self.sink.say(&format!(
@@ -198,20 +200,20 @@ impl Owners<'_> {
                  Opening it is theirs to decide. If they asked you to:  dibs --open --anyone\n",
                 closure.by
             ));
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         match shutter.open() {
             Ok(_) => {
                 self.sink
                     .say("dibs: open. Calls waiting for it start in their turn.\n");
-                Exit::Success.status()
+                Exit::Success.as_status()
             }
             Err(e) => {
                 self.sink.say(&format!(
                     "dibs: could not open {}: {e}\n",
                     self.dir.path.display()
                 ));
-                Exit::NoLock.status()
+                Exit::NoLock.as_status()
             }
         }
     }

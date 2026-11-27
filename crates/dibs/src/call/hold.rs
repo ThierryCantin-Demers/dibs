@@ -7,7 +7,7 @@ use crate::{
     itself::Itself,
     machine::{Held, Holder, Interrupt, Reach, Relayed},
 };
-use dibs_format::{Exit, Mode, wire::Picked};
+use dibs_format::{Exit, Mode, wire::PickedPort};
 use std::{
     fmt,
     io::ErrorKind,
@@ -69,7 +69,7 @@ impl Hold<'_> {
         if let Some(unreached) = self.unreached(&ports) {
             eprintln!("{unreached}");
             done(&shared);
-            release.send(i32::from(Exit::ServiceFailed.code()));
+            release.send(i32::from(Exit::ServiceFailed.as_code()));
             return Ok(holder_exit(holder.join()));
         }
         eprintln!(
@@ -88,7 +88,7 @@ impl Hold<'_> {
                         stop_early(&self.at, guarded.id());
                     }
                 }
-                guarded.wait().map(Exit::shell_status).unwrap_or(1)
+                guarded.wait().map(Exit::to_shell_code).unwrap_or(1)
             }
             Err(e) => {
                 eprintln!("dibs: could not run {}: {e}", self.command.shell_string());
@@ -103,7 +103,7 @@ impl Hold<'_> {
 
     /// The first `--ready tcp:` service this computer cannot connect to, which the command here
     /// would fail at: ready on the machine, but behind its firewall or on its loopback only.
-    fn unreached(&self, ports: &[Picked]) -> Option<Unconnected> {
+    fn unreached(&self, ports: &[PickedPort]) -> Option<Unconnected> {
         let mut host = None;
         for service in self.services {
             let Some(ready) = service
@@ -148,7 +148,7 @@ impl Hold<'_> {
 
     /// The guard that runs the command, with the machine's ports and the hold it runs inside in
     /// its environment.
-    fn guard(&self, ports: &[Picked]) -> std::io::Result<std::process::Command> {
+    fn guard(&self, ports: &[PickedPort]) -> std::io::Result<std::process::Command> {
         let mut command = Itself::command();
         command
             .arg(Guard::WORD)
@@ -327,7 +327,7 @@ impl Guard {
             }
         });
         relayed.to(pid);
-        let status = running.wait().map(Exit::shell_status).unwrap_or(1);
+        let status = running.wait().map(Exit::to_shell_code).unwrap_or(1);
         drop(interrupt);
         done.store(true, Ordering::SeqCst);
         relayed.pass_on();

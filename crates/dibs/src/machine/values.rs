@@ -5,16 +5,9 @@ use crate::{
 };
 use dibs_format::{
     Alias, Label, Mode,
-    wire::{self, Request},
+    wire::{self, MaxSource, Request, Watch},
 };
 use std::collections::BTreeMap;
-
-/// Where `--max` came from, which decides whether history may raise it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MaxFrom {
-    Given,
-    Default,
-}
 
 /// One call's values, which the runner is sent as its request.
 #[derive(Debug, Clone)]
@@ -23,7 +16,7 @@ pub struct CallValues {
     pub label: Label,
     pub wait: Option<u64>,
     pub max: u64,
-    pub max_from: MaxFrom,
+    pub max_from: MaxSource,
     pub verbose: bool,
     pub json: bool,
     pub card: Card,
@@ -61,16 +54,6 @@ pub struct CallValues {
     pub image: Option<String>,
 }
 
-/// How the runner learns its caller is gone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Watch {
-    /// Nothing to watch: the caller's death reaches it some other way, or not at all.
-    pub off: bool,
-    pub hold: bool,
-    /// Seconds of silence that count as gone; 0 waits for the channel to close.
-    pub lease: u64,
-}
-
 impl CallValues {
     fn wire_card(card: &Card, alias: &str) -> wire::Card {
         let some = |s: &str| (!s.is_empty()).then(|| s.to_string());
@@ -84,7 +67,7 @@ impl CallValues {
                 .map(str::to_string)
                 .collect(),
             chip: some(&card.chip),
-            twins: card.twins,
+            twin_count: card.twins,
         }
     }
 
@@ -120,12 +103,9 @@ impl CallValues {
             mode: self.mode,
             label: self.label.clone(),
             command: self.command.clone(),
-            wait: self.wait,
-            max: self.max,
-            max_from: match self.max_from {
-                MaxFrom::Given => wire::MaxFrom::Given,
-                MaxFrom::Default => wire::MaxFrom::Default,
-            },
+            wait_secs: self.wait,
+            max_secs: self.max,
+            max_source: self.max_from,
             verbose: self.verbose,
             json: self.json,
             stream: self.stream,
@@ -145,11 +125,7 @@ impl CallValues {
             user: self.caller.user.clone(),
             subagent: self.caller.subagent.clone(),
             batch: some(&self.batch),
-            watch: wire::Watch {
-                off: watch.off,
-                hold: watch.hold,
-                lease: watch.lease,
-            },
+            watch,
             new_series: self.new_series,
             metrics: self.metrics,
             aliases: self.aliases.clone(),
@@ -173,8 +149,8 @@ impl CallValues {
                 })
                 .collect(),
             tree: self.tree.clone(),
-            ready_within: u64::from(self.ready_within),
-            check_in: self
+            ready_within_secs: u64::from(self.ready_within),
+            check_in_secs: self
                 .check_in
                 .filter(|_| matches!(self.mode, Mode::Shared | Mode::Bench)),
             attempt: self.attempt.clone(),

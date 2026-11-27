@@ -87,7 +87,7 @@ impl Probe<'_> {
     pub fn serve(&self, sink: &Sink) -> i32 {
         let facts = Tools::here().facts();
         if self.json {
-            sink.out(facts.line().as_bytes());
+            sink.out(facts.to_line().as_bytes());
             return 0;
         }
         let machine = self.machine;

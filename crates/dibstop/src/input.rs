@@ -170,14 +170,14 @@ impl App {
         }
         let starts = it
             .eta
-            .map(|e| format!("~{}", Span(e)))
+            .map(|e| format!("~{}", Span::from_secs(e)))
             .unwrap_or_else(|| "no telling".into());
         self.overlay = Some(Overlay::new(
             format!("{} is still queued", it.label),
             format!(
                 "It has no processes yet: it is waiting for the lock.\n\n\
                  waiting   {}\n starts in {starts}\n agent     {}\n\n{}",
-                Span(it.time),
+                Span::from_secs(it.time),
                 it.who(),
                 it.cmd
             ),

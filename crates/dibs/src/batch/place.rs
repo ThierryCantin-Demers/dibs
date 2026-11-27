@@ -7,7 +7,7 @@ use super::{
     parse::{BatchError, Step, StepKind},
 };
 use crate::{
-    call::{CallError, MachineCall, Planned},
+    call::{CallError, MachineCall},
     caller::Caller,
     cli::{Call, Mode},
     cli::{RecipeCall, RecipeVerb},
@@ -18,7 +18,7 @@ use crate::{
     placement::Placement,
     recipe::{Checkouts, run_label},
 };
-use dibs_format::{Alias, Label, MachineName, Mode as JobMode};
+use dibs_format::{Alias, Label, MachineName, Mode as JobMode, PendingStepKind};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -117,7 +117,9 @@ impl Rows<'_> {
             return with.bench;
         }
         match step.recipe.as_ref().and_then(Job::of_batch_line) {
-            Some(jobs) => jobs.iter().any(|p| p.mode == Planned::Job(JobMode::Bench)),
+            Some(jobs) => jobs
+                .iter()
+                .any(|p| p.kind == PendingStepKind::Job(JobMode::Bench)),
             None => step.measures(),
         }
     }
@@ -296,7 +298,7 @@ impl Rows<'_> {
         match jobs {
             Some(jobs) => Some(
                 jobs.into_iter()
-                    .filter(|p| p.mode == Planned::Job(JobMode::Bench))
+                    .filter(|p| p.kind == PendingStepKind::Job(JobMode::Bench))
                     .map(|p| p.label)
                     .collect(),
             ),

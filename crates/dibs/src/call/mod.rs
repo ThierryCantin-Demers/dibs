@@ -28,7 +28,7 @@ pub use kept::reached_its_job;
 pub use kill::{Driver, DriverClaim, Sender};
 pub use local::Destination;
 pub use machine::{Asked, Bound, MachineCall};
-pub use origin::{BatchStep, Origin, Pending, Planned, RecipeJob};
+pub use origin::{BatchStep, Origin, Pending, RecipeJob};
 pub use output::Output;
 pub use series::Series;
 pub use sync::{Rsh, Sync};

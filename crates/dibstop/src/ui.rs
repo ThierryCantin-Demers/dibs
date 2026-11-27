@@ -362,7 +362,7 @@ fn job_row(it: &Item, selected: bool, w: &Widths) -> Row<'static> {
     cells.extend([
         Span::styled(fit(&it.who(), w.agent), base.fg(hue)),
         Span::styled(
-            DibsSpan(it.time).to_string(),
+            DibsSpan::from_secs(it.time).to_string(),
             base.add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -405,14 +405,14 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
     ];
     let eta = |none: &str| {
         it.eta
-            .map(|e| format!("~{}", DibsSpan(e)))
+            .map(|e| format!("~{}", DibsSpan::from_secs(e)))
             .unwrap_or_else(|| none.into())
     };
     if it.holding {
-        let cpu = DibsSpan(it.cpu.unwrap_or(0));
+        let cpu = DibsSpan::from_secs(it.cpu.unwrap_or(0));
         lines.push(Line::from(vec![
             Span::styled("running ", DIM),
-            Span::raw(DibsSpan(it.time).to_string()),
+            Span::raw(DibsSpan::from_secs(it.time).to_string()),
             Span::styled("   cpu ", DIM),
             Span::raw(match it.rate {
                 Some(r) => format!("{cpu} across all cores, {} right now", cores(r)),
@@ -424,7 +424,7 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
     } else {
         lines.push(Line::from(vec![
             Span::styled("waiting ", DIM),
-            Span::raw(DibsSpan(it.time).to_string()),
+            Span::raw(DibsSpan::from_secs(it.time).to_string()),
             Span::styled("   starts in ", DIM),
             Span::raw(eta("no telling")),
         ]));
@@ -443,12 +443,12 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
         let mut first = vec![
             Span::styled("batch ", DIM),
             Span::raw(b.id.to_string()),
-            Span::styled(format!("   step {} of {}: ", b.k, b.n), DIM),
+            Span::styled(format!("   step {} of {}: ", b.k, b.step_count), DIM),
             Span::raw(b.step.clone()),
         ];
         if let Some(w) = b.within {
             first.push(Span::styled(
-                format!("   job {} of {} in this step", w.job, w.jobs),
+                format!("   job {} of {} in this step", w.job, w.job_count),
                 DIM,
             ));
         }

@@ -11,7 +11,7 @@ use std::{
 };
 
 /// A stamp untouched this long belongs to a session that is gone.
-const STAMP_LIFETIME: Duration = Duration::from_secs(31 * Span::DAY.0);
+const STAMP_LIFETIME: Duration = Duration::from_secs(31 * Span::DAY.as_secs());
 const LISTED: usize = 10;
 /// How long an upstream's answer stands before a call asks again.
 const ASKED_EVERY: Duration = Duration::from_secs(3600);
@@ -105,7 +105,7 @@ impl Update {
 
     pub fn run_into(&self, out: &mut impl Write, err: &mut impl Write) -> i32 {
         self.update(out, err)
-            .unwrap_or_else(|exit| i32::from(exit.code()))
+            .unwrap_or_else(|exit| i32::from(exit.as_code()))
     }
 
     fn update(&self, out: &mut impl Write, err: &mut impl Write) -> Result<i32, Exit> {

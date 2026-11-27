@@ -79,10 +79,10 @@ impl<'a> Complaints<'a> {
             seen.entry(Complaint::key(&n.text))
                 .and_modify(|c| {
                     c.times += 1;
-                    if n.when >= c.last.when {
+                    if n.when_secs >= c.last.when_secs {
                         c.last = n;
                     }
-                    if n.when < c.first.when {
+                    if n.when_secs < c.first.when_secs {
                         c.first = n;
                     }
                 })
@@ -93,7 +93,11 @@ impl<'a> Complaints<'a> {
                 });
         }
         let mut recurring_first: Vec<Complaint<'a>> = seen.into_values().collect();
-        recurring_first.sort_by(|a, b| b.times.cmp(&a.times).then(b.last.when.cmp(&a.last.when)));
+        recurring_first.sort_by(|a, b| {
+            b.times
+                .cmp(&a.times)
+                .then(b.last.when_secs.cmp(&a.last.when_secs))
+        });
         Complaints { recurring_first }
     }
 }
@@ -119,8 +123,8 @@ impl fmt::Display for Complaints<'_> {
             } else {
                 format!(", dibs {}", last.version)
             };
-            let was = Moment::in_zone(first.when, 0).minute();
-            let now = Moment::in_zone(last.when, 0).minute();
+            let was = Moment::in_zone(first.when_secs, 0).minute();
+            let now = Moment::in_zone(last.when_secs, 0).minute();
             if *times > 1 && was != now {
                 writeln!(f, "       first {was}, last {now}{by}{at}")?;
             } else {

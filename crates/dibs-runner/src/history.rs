@@ -1,4 +1,4 @@
-use crate::shared::SharedFile;
+use crate::{call::cleaned_text, shared::SharedFile};
 pub use dibs_format::status::Scope;
 use dibs_format::{HistoryLine, Label, Mode};
 use std::{collections::HashMap, fs, path::Path};
@@ -83,7 +83,7 @@ impl History {
             Some(a) => mode
                 .iter()
                 .copied()
-                .filter(|l| l.agent.as_deref() == Some(a))
+                .filter(|l| l.agent.as_deref().map(cleaned_text).as_deref() == Some(a))
                 .collect(),
             None => Vec::new(),
         };
@@ -101,7 +101,7 @@ impl History {
             Scope::This => runs.len().saturating_sub(newest),
             Scope::Agent | Scope::Mode => 0,
         };
-        let mut seconds: Vec<u64> = runs[from..].iter().map(|l| l.seconds).collect();
+        let mut seconds: Vec<u64> = runs[from..].iter().map(|l| l.secs).collect();
         seconds.sort_unstable();
         Estimate::of(&seconds, scope, other)
     }
@@ -109,7 +109,7 @@ impl History {
     /// Records a run that did what it set out to, compacting the file past its bound.
     pub fn append(path: &Path, line: &HistoryLine) {
         let file = SharedFile { path };
-        let _ = file.append(&line.to_string());
+        let _ = file.append(&line.to_line());
         let _ = file.rewrite(|text| (text.lines().count() > BOUND).then(|| compacted(text)));
     }
 }

@@ -204,7 +204,7 @@ impl Help {
             };
             let cells: Vec<String> = exits
                 .iter()
-                .map(|e| format!("{} {}", e.code(), meaning(*e)))
+                .map(|e| format!("{} {}", e.as_code(), meaning(*e)))
                 .collect();
             text.push_str(&format!("{lead}{}\n", cells.join("    ")));
         }

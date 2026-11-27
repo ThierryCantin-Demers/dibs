@@ -558,7 +558,7 @@ impl<'a> Detach<'a> {
                     "dibs: the dibs that drives a detached batch could not be built on {}, so nothing was sent. Its build said why, above.",
                     self.name
                 );
-                Some(i32::from(Exit::NoRunner.code()))
+                Some(i32::from(Exit::NoRunner.as_code()))
             }
         }
     }
@@ -857,10 +857,10 @@ impl<'a> Detach<'a> {
             Ok(out) => out,
             Err(e) => {
                 eprintln!("dibs: batch {} could not be started: {e}", self.id);
-                return Some(Exit::Failed.status());
+                return Some(Exit::Failed.as_status());
             }
         };
-        match Exit::shell_status(out.status) {
+        match Exit::to_shell_code(out.status) {
             0 => {
                 eprintln!(
                     "dibs: batch {} started on {}, {}. This call follows it to its summary.",
@@ -875,7 +875,7 @@ impl<'a> Detach<'a> {
                     "dibs: {} has no dibs of this version to drive the batch, so it was not started",
                     self.name
                 );
-                Some(i32::from(Exit::NoRunner.code()))
+                Some(i32::from(Exit::NoRunner.as_code()))
             }
             code => Some(self.session.exit(code, &self.target)),
         }
@@ -920,25 +920,25 @@ impl<'a> Detach<'a> {
                  dibs --kill {id}  stops the batch",
                 self.name
             );
-            return Ok(Exit::CheckedIn.status());
+            return Ok(Exit::CheckedIn.as_status());
         }
         let json = reading.join().unwrap_or_default();
         let status = child
             .wait()
-            .map(Exit::shell_status)
-            .unwrap_or(Exit::Failed.status());
+            .map(Exit::to_shell_code)
+            .unwrap_or(Exit::Failed.as_status());
         if status == SSH_FAILED {
             eprintln!(
                 "dibs: lost {} while following batch {}, which carries on there. Its summary, once it has ended:\n    dibs batch --follow {}",
                 self.name, self.id, self.id
             );
-            return Ok(i32::from(Exit::Unreachable.code()));
+            return Ok(i32::from(Exit::Unreachable.as_code()));
         }
         match serde_json::from_str::<Followed>(json.trim()) {
             Ok(followed) if status == 0 => {
                 let code = self.collect(followed);
                 let cancelled =
-                    code == i32::from(Exit::Cancelled.code()) || Sender::cancelled(&self.dir);
+                    code == i32::from(Exit::Cancelled.as_code()) || Sender::cancelled(&self.dir);
                 if let Some(kept) = self.kept().filter(|_| !cancelled) {
                     kept.fetch();
                 }
@@ -987,7 +987,7 @@ impl<'a> Detach<'a> {
                 "dibs: batch {} ended on {} without a summary; what its driver said is above",
                 self.id, self.name
             );
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let summary = summary.replace(&followed.dir, &self.dir.display().to_string());
         let _ = fs::write(self.dir.join("summary"), &summary);
@@ -996,7 +996,7 @@ impl<'a> Detach<'a> {
             "its jobs ran on {}:  dibs --on {} --out <job>",
             self.name, self.name
         );
-        followed.exit.unwrap_or(Exit::Failed.status())
+        followed.exit.unwrap_or(Exit::Failed.as_status())
     }
 }
 

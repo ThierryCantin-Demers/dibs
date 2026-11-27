@@ -86,7 +86,7 @@ impl Detached {
     pub fn serve(words: &[String]) -> i32 {
         let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else {
             eprintln!("dibs: no HOME, so there is nowhere a detached batch is kept");
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         };
         let detached = Detached {
             dir: PathBuf::from(home).join(Detached::DIR),
@@ -100,7 +100,7 @@ impl Detached {
                     "dibs: {} starts and follows a detached batch on its machine, and is not for calling directly",
                     Detached::WORD
                 );
-                Exit::Refused.status()
+                Exit::Refused.as_status()
             }
         }
     }
@@ -125,7 +125,7 @@ impl Detached {
             Ok(instructions) => instructions,
             Err(e) => {
                 eprintln!("dibs: nothing usable was sent for batch {id}: {e}");
-                return Exit::Refused.status();
+                return Exit::Refused.as_status();
             }
         };
         self.collect_old(id);
@@ -159,7 +159,7 @@ impl Detached {
             Ok(child) => child,
             Err(e) => {
                 eprintln!("dibs: the driver of batch {id} could not be started: {e}");
-                return Exit::Failed.status();
+                return Exit::Failed.as_status();
             }
         };
         let mut said = String::new();
@@ -175,7 +175,7 @@ impl Detached {
         eprint!("{}", fs::read_to_string(&errors).unwrap_or_default());
         eprintln!("dibs: the driver of batch {id} ended before it held the batch");
         match code {
-            0 => Exit::Failed.status(),
+            0 => Exit::Failed.as_status(),
             code => code,
         }
     }
@@ -263,7 +263,7 @@ impl Detached {
             Ok(text) => text,
             Err(e) => {
                 eprintln!("dibs: batch {id} has no steps here: {e}");
-                return Exit::Refused.status();
+                return Exit::Refused.as_status();
             }
         };
         let opts = Options {
@@ -279,7 +279,7 @@ impl Detached {
         };
         let code = run(&text, &opts).unwrap_or_else(|e| {
             eprintln!("dibs: {e}");
-            Exit::Refused.status()
+            Exit::Refused.as_status()
         });
         let _ = fs::write(sent.join(Detached::EXIT), format!("{code}\n"));
         self.keep_repos(&sent);
@@ -316,7 +316,7 @@ impl Detached {
 
     /// What earlier batches were sent, once old enough that nobody follows them any more.
     fn collect_old(&self, id: &BatchId) {
-        let keep = std::time::Duration::from_secs(14 * Span::DAY.0);
+        let keep = std::time::Duration::from_secs(14 * Span::DAY.as_secs());
         let Ok(entries) = fs::read_dir(&self.dir) else {
             return;
         };
@@ -364,19 +364,19 @@ impl Detached {
 
     fn follow(&self, id: &BatchId) -> i32 {
         let Some(dir) = self.client().batches().map(|d| d.join(id.as_str())) else {
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         };
         let sent = self.sent(id);
         if !sent.is_dir() {
             eprintln!("dibs: no batch {id} was detached here");
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         // The driver holds this for as long as it runs, so taking it waits for the end.
         let driver = File::open(dir.join(Driver::RECORD));
         let ending = File::open(sent.join(Detached::ENDING));
         for file in [driver, ending].iter().flatten() {
             if !Detached::shared_once_read(file) {
-                return Exit::Failed.status();
+                return Exit::Failed.as_status();
             }
         }
         // The batch has ended: a newline says so before its logs are read, and JSON ignores it.
@@ -409,7 +409,7 @@ impl Detached {
             }
             Err(e) => {
                 eprintln!("dibs: batch {id} could not be told: {e}");
-                Exit::Failed.status()
+                Exit::Failed.as_status()
             }
         }
     }

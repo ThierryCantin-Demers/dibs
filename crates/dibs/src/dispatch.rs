@@ -9,7 +9,7 @@ use crate::{
     recipe::Checkouts,
 };
 use dibs_format::{
-    Exit, Hex as _, Moment,
+    Exit, Hex, Moment,
     dibspatcher::{
         API_COMMAND, Ask, Call, Detail, NamedCall, Reply, STAGE_PREFIX, Seal, SplitCall,
         Submission, Summary, Upload, VERSION, Work,
@@ -50,7 +50,7 @@ pub fn serve(words: &[String]) -> i32 {
         Ok(o) => o,
         Err(why) => {
             eprintln!("dibs: {why}");
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
     };
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
@@ -59,7 +59,7 @@ pub fn serve(words: &[String]) -> i32 {
             .and_then(|(work, sent)| dibspatcher.submit(work, None, sent))
             .unwrap_or_else(|why| {
                 eprintln!("dibs: {why}");
-                Exit::Refused.status()
+                Exit::Refused.as_status()
             });
     }
     let mut follow = true;
@@ -73,7 +73,7 @@ pub fn serve(words: &[String]) -> i32 {
                 Some(k) => key = Some(k.to_string()),
                 None => {
                     eprintln!("dibs: --key needs the key a submission was sent under");
-                    return Exit::Refused.status();
+                    return Exit::Refused.as_status();
                 }
             },
             word => given.push(word),
@@ -101,7 +101,7 @@ pub fn serve(words: &[String]) -> i32 {
     };
     result.unwrap_or_else(|why| {
         eprintln!("dibs: {why}");
-        Exit::Refused.status()
+        Exit::Refused.as_status()
     })
 }
 
@@ -145,14 +145,7 @@ fn split(target: &str, recipe: &str, values: &[&str]) -> Result<(Work, (Upload, 
         recipe: recipe.to_string(),
         values: given,
     });
-    let upload = Upload {
-        stage: String::new(),
-        repo: name,
-        head: String::new(),
-        digest: String::new(),
-        files: 0,
-    };
-    let upload = Sending { dir: dir.clone() }.prepared(upload)?;
+    let upload = Sending { dir: dir.clone() }.prepared(name)?;
     Ok((work, (upload, dir)))
 }
 
@@ -251,20 +244,23 @@ impl Sending {
         Ok(files)
     }
 
-    /// The upload's seal and head, computed before anything is sent: what the dibspatcher must
-    /// find when it arrives.
-    fn prepared(&self, mut upload: Upload) -> Result<Upload, String> {
+    /// The upload of `repo`, its seal and head computed before anything is sent: what the
+    /// dibspatcher must find when it arrives. Its stage is named once its key is known.
+    fn prepared(&self, repo: String) -> Result<Upload, String> {
         let files = self.files()?;
-        let (digest, count) = Seal::of(&self.dir, files.iter().map(String::as_str))
+        let seal = Seal::of(&self.dir, files.iter().map(String::as_str))
             .map_err(|e| format!("{} could not be read to be sent: {e}", self.dir.display()))?;
-        upload.digest = digest;
-        upload.files = count;
-        upload.head = Git(&self.dir)
+        let head = Git(&self.dir)
             .run(&["rev-parse", "HEAD"])
             .map_err(|e| e.to_string())?
             .trim()
             .to_string();
-        Ok(upload)
+        Ok(Upload {
+            stage: String::new(),
+            repo,
+            head,
+            seal,
+        })
     }
 }
 
@@ -397,7 +393,7 @@ impl Dibspatcher {
             }
         }
         let status = child.wait().map_err(|e| e.to_string())?;
-        Ok(exit.unwrap_or_else(|| Exit::shell_status(status)))
+        Ok(exit.unwrap_or_else(|| Exit::to_shell_code(status)))
     }
 
     /// An ask made again with the same submission, so a lost connection never stores it twice.
@@ -446,7 +442,7 @@ impl Dibspatcher {
                      The same command with --key {key} asks again, and is that submission if it was taken.",
                     self.ssh
                 );
-                return Ok(Exit::Unreachable.status());
+                return Ok(Exit::Unreachable.as_status());
             }
             return Ok(code);
         };
@@ -472,7 +468,7 @@ impl Dibspatcher {
         let stage = format!("{}:{STAGE_PREFIX}{}/", self.ssh, upload.stage);
         eprintln!(
             "dibs: sending {} ({} files and its git directory) to the dibspatcher",
-            upload.repo, upload.files
+            upload.repo, upload.seal.file_count
         );
         let tree = [
             "-rlp".to_string(),
@@ -562,7 +558,7 @@ impl Dibspatcher {
             eprintln!(
                 "dibs: lost the dibspatcher while following {id}, which carries on there.\n  dibs dispatch follow {id}  follows it again"
             );
-            return Ok(Exit::Unreachable.status());
+            return Ok(Exit::Unreachable.as_status());
         }
         Ok(code)
     }
@@ -575,8 +571,8 @@ fn rsync(rsh: &str, args: &[String]) -> i32 {
         .args(args)
         .stdin(Stdio::null())
         .status()
-        .map(Exit::shell_status)
-        .unwrap_or(Exit::Failed.status())
+        .map(Exit::to_shell_code)
+        .unwrap_or(Exit::Failed.as_status())
 }
 
 /// A submission's key: when it was made here, and randomness, so a retry is the one submission.
@@ -586,7 +582,7 @@ fn key() -> String {
         use std::io::Read as _;
         let _ = random.read_exact(&mut bytes);
     }
-    format!("k{}-{}", Moment::now().compact(), bytes[..].hex())
+    format!("k{}-{}", Moment::now().to_compact(), Hex::new(&bytes))
 }
 
 /// What the dibspatcher's replies are shown as.
@@ -629,7 +625,7 @@ impl Shown {
             }
             Reply::Text { err: true, text } => eprint!("{text}"),
             Reply::Text { err: false, text } => print!("{text}"),
-            Reply::Trailer { step, trailer } => eprintln!("{step}: {trailer}"),
+            Reply::Trailer { step, trailer } => eprintln!("{step}: {}", trailer.to_line()),
             Reply::Admitted { step, admitted } => eprintln!("{step}: {admitted:?}"),
             Reply::End { .. } => {}
         }
@@ -645,7 +641,7 @@ fn line(summary: &Summary) -> String {
             .exit
             .map(|e| format!("exit {e}"))
             .unwrap_or_default(),
-        Moment::at(summary.created).minute(),
+        Moment::at_epoch_secs(summary.created_secs).minute(),
         summary.coworker,
         summary.what
     )
@@ -663,7 +659,7 @@ fn status(detail: &Detail) -> String {
             step.state.as_str(),
             step.machine.as_deref().unwrap_or("dibspatcher"),
             match (&step.trailer, &step.note) {
-                (Some(trailer), _) => trailer.to_string(),
+                (Some(trailer), _) => trailer.to_line(),
                 (None, Some(note)) => note.clone(),
                 (None, None) => String::new(),
             }

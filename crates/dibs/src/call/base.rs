@@ -10,13 +10,16 @@ use crate::{
     cli::{Call, Command, PortName, Run, RunLock, Service, check_in},
     inventory::{Inventory, InventoryError, Machine, Role},
     machine::{
-        CallValues, Card, CardError, Delivery, Fleet, Here, Liveness, MaxFrom, Named, Session,
-        Target, TargetEnv, TargetError,
+        CallValues, Card, CardError, Delivery, Fleet, Here, Liveness, Named, Session, Target,
+        TargetEnv, TargetError,
     },
     paths::Paths,
     placement::{Placement, Reading, Unplaced},
 };
-use dibs_format::{Alias, Exit, Label, Mode, wire::Trailer};
+use dibs_format::{
+    Alias, Exit, Label, Mode,
+    wire::{MaxSource, Trailer},
+};
 use dibs_runner::short_hostname;
 use std::{
     collections::BTreeMap,
@@ -387,7 +390,7 @@ impl<'a> LockedCall<'a> {
             series.record(&entry, &caller.name, call.new_series);
         }
         let checked_in =
-            status == Exit::CheckedIn.status() && session.said.checked_in_job().is_some();
+            status == Exit::CheckedIn.as_status() && session.said.checked_in_job().is_some();
         if serial
             && checked_in
             && env.series_check
@@ -493,7 +496,7 @@ impl<'a> LockedCall<'a> {
             batch: match self.origin {
                 Origin::Recipe(RecipeJob {
                     batch: Some(batch), ..
-                }) if carries_batch(self.mode) => batch.sent(),
+                }) if carries_batch(self.mode) => batch.to_sent(),
                 _ => values.batch.clone(),
             },
             fingerprint: match self.origin {
@@ -533,8 +536,8 @@ pub struct Request<'a> {
 impl Request<'_> {
     pub fn values(&self, label: Label, card: Card, command: String) -> CallValues {
         let (max, max_from) = match self.call.max {
-            Some(max) => (max, MaxFrom::Given),
-            None => (default_max(self.mode), MaxFrom::Default),
+            Some(max) => (max, MaxSource::Given),
+            None => (default_max(self.mode), MaxSource::Default),
         };
         let stream = self.call.stream || set("DIBS_STREAM").is_some_and(|v| v == "1");
         let caller = match self.mode {
@@ -548,7 +551,9 @@ impl Request<'_> {
             _ => Caller::default(),
         };
         let batch = match carries_batch(self.mode) {
-            true => BatchStep::from_env().map(|b| b.sent()).unwrap_or_default(),
+            true => BatchStep::from_env()
+                .map(|b| b.to_sent())
+                .unwrap_or_default(),
             false => String::new(),
         };
         CallValues {
@@ -600,7 +605,7 @@ impl Request<'_> {
         call.label
             .clone()
             .unwrap_or_else(|| Label::new(directory_name()))
-            .filed()
+            .to_filed()
     }
 }
 
@@ -703,10 +708,10 @@ fn directory_name() -> String {
 impl CallError {
     pub fn exit(&self) -> i32 {
         match self {
-            CallError::Unplaced(e) => i32::from(e.exit().code()),
-            CallError::Target(e) => i32::from(e.exit().code()),
-            CallError::Io(_) => i32::from(Exit::Failed.code()),
-            _ => i32::from(Exit::Refused.code()),
+            CallError::Unplaced(e) => i32::from(e.exit().as_code()),
+            CallError::Target(e) => i32::from(e.exit().as_code()),
+            CallError::Io(_) => i32::from(Exit::Failed.as_code()),
+            _ => i32::from(Exit::Refused.as_code()),
         }
     }
 }

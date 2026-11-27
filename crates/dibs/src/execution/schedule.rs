@@ -3,11 +3,11 @@ use super::{
     refs::Side,
 };
 use crate::{
-    call::{Pending, Planned},
+    call::Pending,
     cli::RecipeCall,
     recipe::{self, Lock, Resolved},
 };
-use dibs_format::{Label, Mode};
+use dibs_format::{Label, Mode, PendingStepKind};
 
 /// One job of a recipe run, in the order they are sent.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -98,7 +98,7 @@ impl Job {
         };
         let job = |label: String, mode: Mode, tag: String| Pending {
             name: format!("{label}{tag}"),
-            mode: Planned::Job(mode),
+            kind: PendingStepKind::Job(mode),
             label: Label::new(label),
             here: true,
         };

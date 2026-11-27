@@ -1,6 +1,6 @@
 use dibs_format::{
     Exit,
-    wire::{Admitted, CheckedIn, Frame, Record},
+    wire::{Admission, CheckInReport, Frame, Record},
 };
 use std::{
     fs::File,
@@ -95,8 +95,8 @@ impl Sink {
                 self.frame(Frame::Record(record));
             }
             (Kind::Plain, Record::Trailer(trailer))
-            | (Kind::Plain, Record::Admitted(Admitted::Ended(trailer))) => {
-                self.say(&format!("{trailer}\n"))
+            | (Kind::Plain, Record::Admitted(Admission::Ended(trailer))) => {
+                self.say(&format!("{}\n", trailer.to_line()))
             }
             (
                 Kind::Plain,
@@ -106,7 +106,7 @@ impl Sink {
                 | Record::Stepped(_)
                 | Record::CheckedIn(_)
                 | Record::Admitted(
-                    Admitted::Running { .. } | Admitted::Lost { .. } | Admitted::Never,
+                    Admission::Running { .. } | Admission::Lost { .. } | Admission::Never,
                 ),
             ) => {}
         }
@@ -141,22 +141,22 @@ impl Sink {
         }
         // Flushed: stdout is line-buffered, and `_exit` would drop the code after the newline.
         let _ = out
-            .write_all(&Frame::Exit(code).encode())
+            .write_all(&Frame::Exit(code).to_bytes())
             .and_then(|()| out.flush());
     }
 
     /// The caller's last words and exit 80; what the call says from here on goes to `report`,
     /// for whoever follows the job, and the caller's streams are let go so its connection can end.
     /// Nothing is let go when the caller cannot be told.
-    pub fn hand_over(&self, checked: CheckedIn, text: &str, report: &File) -> io::Result<()> {
+    pub fn hand_over(&self, checked: CheckInReport, text: &str, report: &File) -> io::Result<()> {
         let null = File::options().read(true).write(true).open("/dev/null")?;
         let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
         for frame in [
             Frame::Record(Record::CheckedIn(checked)),
             Frame::Err(text.as_bytes().to_vec()),
-            Frame::Exit(Exit::CheckedIn.status()),
+            Frame::Exit(Exit::CheckedIn.as_status()),
         ] {
-            out.write_all(&frame.encode())?;
+            out.write_all(&frame.to_bytes())?;
         }
         out.flush()?;
         for (from, to) in [
@@ -174,7 +174,7 @@ impl Sink {
     }
 
     fn frame(&self, frame: Frame) -> bool {
-        self.write(&frame.encode())
+        self.write(&frame.to_bytes())
     }
 
     /// Whether the bytes reached whoever reads stdout.

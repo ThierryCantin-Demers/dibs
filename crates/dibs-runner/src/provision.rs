@@ -1,7 +1,7 @@
 use crate::{channel::Caller, session::Visit, sink::Sink, stop::Signals, tree::Runners};
 use dibs_format::{
     Exit, Label, Mode,
-    wire::{MaxFrom, Request, Watch},
+    wire::{MaxSource, Request, Watch},
 };
 use std::{
     fs::{self, File, OpenOptions},
@@ -101,12 +101,12 @@ pub fn build(hash: &str, built: Built) -> i32 {
     let sink = Sink::plain();
     if !Runners::names_a_version(hash) {
         sink.say(&format!("dibs-runner: {hash:?} is not a runner's hash\n"));
-        return Exit::Refused.status();
+        return Exit::Refused.as_status();
     }
     let mut tree = Vec::new();
     if io::stdin().read_to_end(&mut tree).is_err() || tree.is_empty() {
         sink.say("dibs-runner: no tree arrived on stdin to build\n");
-        return Exit::Refused.status();
+        return Exit::Refused.as_status();
     }
     let runners = Runners::here();
     let _one_at_a_time = match BuildLock::take(&runners, &sink) {
@@ -116,7 +116,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
                 "dibs-runner: {} could not be locked: {e}\n",
                 runners.build_lock().display()
             ));
-            return Exit::NoRoom.status();
+            return Exit::NoRoom.as_status();
         }
     };
     let pid = std::process::id();
@@ -127,7 +127,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
             "dibs-runner: the tree could not be kept in {}: {e}\n",
             runners.dir().display()
         ));
-        return Exit::NoRoom.status();
+        return Exit::NoRoom.as_status();
     }
     let command = format!(
         "[ \"$({installed} {says} 2>/dev/null)\" = {hash} ] && {{ echo '{name} {hash} is installed already.'; exit 0; }}\n\
@@ -143,9 +143,9 @@ pub fn build(hash: &str, built: Built) -> i32 {
         mode: Mode::Shared,
         label: Label::new(built.name()),
         command,
-        wait: None,
-        max: BUILD_MAX,
-        max_from: MaxFrom::Given,
+        wait_secs: None,
+        max_secs: BUILD_MAX,
+        max_source: MaxSource::Given,
         verbose: false,
         json: false,
         stream: false,
@@ -163,11 +163,11 @@ pub fn build(hash: &str, built: Built) -> i32 {
         watch: Watch {
             off: true,
             hold: false,
-            lease: 0,
+            lease_secs: 0,
         },
         ports: Vec::new(),
         services: Vec::new(),
-        ready_within: 0,
+        ready_within_secs: 0,
         new_series: false,
         preempt: false,
         when_open: false,
@@ -175,7 +175,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
         low_priority: false,
         urgent: None,
         tree: None,
-        check_in: None,
+        check_in_secs: None,
         attempt: None,
         lookup: false,
         image: None,

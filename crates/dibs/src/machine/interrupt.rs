@@ -195,7 +195,7 @@ impl Cancel {
         unsafe {
             if signal == libc::SIGTERM && !mark.is_null() && libc::access(mark, libc::F_OK) == 0 {
                 libc::write(2, SAID.as_ptr().cast(), SAID.len());
-                libc::_exit(i32::from(Exit::Cancelled.code()));
+                libc::_exit(i32::from(Exit::Cancelled.as_code()));
             }
             libc::signal(signal, libc::SIG_DFL);
             libc::raise(signal);

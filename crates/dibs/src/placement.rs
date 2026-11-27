@@ -147,7 +147,7 @@ impl Reading {
         self.series
             .iter()
             .filter(|s| s.label == label)
-            .map(|s| s.at)
+            .map(|s| s.at_secs)
             .max()
     }
 
@@ -164,8 +164,8 @@ impl Reading {
     pub fn series_card(&self, labels: &[Label]) -> Option<&str> {
         self.series
             .iter()
-            .filter(|s| labels.iter().any(|l| l.filed().as_str() == s.label))
-            .max_by_key(|s| s.at)
+            .filter(|s| labels.iter().any(|l| l.to_filed().as_str() == s.label))
+            .max_by_key(|s| s.at_secs)
             .map(|s| s.card.as_str())
     }
 
@@ -427,7 +427,7 @@ impl Placement<'_> {
             answer,
         } in answers
         {
-            if answer.exit == Some(i32::from(Exit::NoRunner.code())) {
+            if answer.exit == Some(i32::from(Exit::NoRunner.as_code())) {
                 down.clear(&name);
                 let entry = self.machine.fleet.entry(name.as_str());
                 candidates.push(Candidate {
@@ -493,8 +493,8 @@ impl Placement<'_> {
     ) -> Result<MachineName, Unplaced> {
         let call = self.machine.call;
         // As the runners and the series here file them.
-        let labels: &[Label] = &labels.iter().map(Label::filed).collect::<Vec<_>>();
-        let fresh: &[Label] = &fresh.iter().map(Label::filed).collect::<Vec<_>>();
+        let labels: &[Label] = &labels.iter().map(Label::to_filed).collect::<Vec<_>>();
+        let fresh: &[Label] = &fresh.iter().map(Label::to_filed).collect::<Vec<_>>();
         let Some(inventory) = self.machine.fleet.inventory.as_ref() else {
             return Err(Unplaced::NoRole { role: Role::Bench });
         };
@@ -757,7 +757,7 @@ mod tests {
         let series = |label: &str, at| SeriesHere {
             label: label.into(),
             card: "none".into(),
-            at,
+            at_secs: at,
         };
         let mut old = machine("old", LockState::Idle, 0);
         let mut new = machine("new", LockState::Idle, 0);

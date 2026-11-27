@@ -21,6 +21,10 @@ impl Lock {
 }
 
 /// What a call does on the machine, as its records spell it.
+///
+/// # Guarantees
+///
+/// - `from_str` reads back every name `as_str` writes, and refuses any other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mode {
@@ -104,5 +108,47 @@ impl FromStr for Mode {
             .into_iter()
             .find(|m| m.as_str() == s)
             .ok_or_else(|| format!("no mode is called {s:?}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_mode_reads_back_from_its_name() {
+        for mode in Mode::ALL {
+            assert_eq!(mode.as_str().parse::<Mode>(), Ok(mode));
+        }
+    }
+
+    #[test]
+    fn a_name_no_mode_has_is_refused() {
+        assert!("sprint".parse::<Mode>().is_err());
+    }
+
+    /// Stops compiling when a variant is added, until it is counted here and listed in `ALL`.
+    #[test]
+    fn every_variant_is_in_all() {
+        let counted = |mode: Mode| match mode {
+            Mode::Shared
+            | Mode::Bench
+            | Mode::Peek
+            | Mode::Rsh
+            | Mode::Status
+            | Mode::Watch
+            | Mode::Log
+            | Mode::Check
+            | Mode::Out
+            | Mode::Follow
+            | Mode::Fetch
+            | Mode::Kill
+            | Mode::KillForce
+            | Mode::Release
+            | Mode::Gc
+            | Mode::Close
+            | Mode::Open => 1,
+        };
+        assert_eq!(Mode::ALL.into_iter().map(counted).sum::<usize>(), 17);
     }
 }

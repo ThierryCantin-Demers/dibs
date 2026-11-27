@@ -42,7 +42,8 @@ impl Eta {
             pending_known: true,
         };
         for holder in holders {
-            match estimate(holder).and_then(|e| e.remaining(now.saturating_sub(holder.start))) {
+            match estimate(holder).and_then(|e| e.remaining(now.saturating_sub(holder.start_secs)))
+            {
                 Some(left) => eta.at = eta.at.max(left),
                 None => eta.known = false,
             }
@@ -97,7 +98,7 @@ impl Queue<'_> {
         let holders = self.dir.records(Kind::Holder);
         let mut waiting = self.dir.records(Kind::Waiting);
         waiting.retain(|w| w.pid == self.call.pid || !self.dir.idle_only(w.pid));
-        waiting.sort_by_key(|w| w.start);
+        waiting.sort_by_key(|w| w.start_secs);
         let mut eta = Eta::behind(&holders, now, |h| self.estimate(h));
         let mut ahead = 0;
         let mut mine = None;
@@ -137,7 +138,7 @@ impl Queue<'_> {
             line.push_str(&format!(", with {ahead} queued first"));
         }
         if let Some(eta) = mine.filter(|e| *e > 0) {
-            line.push_str(&format!(", ~{} until it starts", Span(eta)));
+            line.push_str(&format!(", ~{} until it starts", Span::from_secs(eta)));
         }
         format!("{line}. dibs status shows the queue.\n")
     }
@@ -157,7 +158,7 @@ impl Queue<'_> {
             .records(Kind::Waiting)
             .into_iter()
             .filter(|w| w.mode == Mode::Bench && !self.dir.idle_only(w.pid) && Host::exists(w.pid))
-            .map(|w| w.start)
+            .map(|w| w.start_secs)
             .collect();
         if self.call.mode() == Mode::Rsh {
             return block && !benchmarks.is_empty();

@@ -34,9 +34,9 @@ use crate::{
     tree::{Commands, Copier, KeptCopy, Mark, Stepping},
 };
 use dibs_format::{
-    By, Event, Exit, HistoryLine, JobId, Mode,
-    status::Ahead,
-    wire::{Bundle, BundleMake, MaxFrom, Record},
+    Event, Exit, ExitSource, HistoryLine, JobId, Mode,
+    status::PreemptionState,
+    wire::{Bundle, BundleMake, MaxSource, Record},
 };
 use std::{
     fs::{self, File},
@@ -130,9 +130,9 @@ impl Yielded {
     fn status(&self) -> Option<i32> {
         match self {
             Yielded::Free | Yielded::Waited => None,
-            Yielded::GaveUp => Some(Exit::Busy.status()),
-            Yielded::Cancelled => Some(Exit::Cancelled.status()),
-            Yielded::Closed => Some(Exit::Closed.status()),
+            Yielded::GaveUp => Some(Exit::Busy.as_status()),
+            Yielded::Cancelled => Some(Exit::Cancelled.as_status()),
+            Yielded::Closed => Some(Exit::Closed.as_status()),
         }
     }
 }
@@ -204,7 +204,7 @@ pub struct Hosted {
     /// A port or a service failed the call, which ends with 77.
     pub failed: bool,
     /// Who gave the status when the job's tree ended the call before its command.
-    pub laid: Option<By>,
+    pub laid: Option<ExitSource>,
     /// The cap stopped the call, rather than its command ending 124 itself.
     pub overran: bool,
     /// What a `--low-priority` job spent parked without the lock, which it did not run.
@@ -245,7 +245,7 @@ impl<'a> Run<'a> {
             .map(Binding::check)
         {
             self.at.sink.say(&refused.to_string());
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         let mut arrived = match self.arrive() {
             Ok(arrived) => arrived,
@@ -255,7 +255,7 @@ impl<'a> Run<'a> {
         let max = self.cap(&history);
         match caller {
             Caller::Channel(channel) if !request.watch.off => channel.watch(
-                request.watch.lease,
+                request.watch.lease_secs,
                 Arc::clone(self.at.stopper),
                 arrived.held.clone(),
             ),
@@ -273,12 +273,12 @@ impl<'a> Run<'a> {
                     Idled::Cancelled => {
                         let mut state = self.at.stopper.state();
                         self.abandon(&arrived.job, &mut state);
-                        return Exit::Cancelled.status();
+                        return Exit::Cancelled.as_status();
                     }
                     Idled::GaveUp => {
                         let mut state = self.at.stopper.state();
                         self.abandon(&arrived.job, &mut state);
-                        return Exit::Busy.status();
+                        return Exit::Busy.as_status();
                     }
                 }
                 if self.at.call.mode() == Mode::Bench {
@@ -357,7 +357,7 @@ impl<'a> Run<'a> {
             });
         let shut = closed::Watch::start(self.at.dir.clone(), Arc::clone(self.at.stopper));
         let check_in = request
-            .check_in
+            .check_in_secs
             // A job its cap stops first wakes its caller then anyway.
             .filter(|every| {
                 begun.log.is_some() && !request.watch.hold && (max == 0 || *every < max)
@@ -420,7 +420,7 @@ impl<'a> Run<'a> {
                     self.at
                         .sink
                         .say(&format!("dibs: attempt {id} could not be looked up: {e}\n"));
-                    Exit::Refused.status()
+                    Exit::Refused.as_status()
                 }
             });
         }
@@ -436,7 +436,7 @@ impl<'a> Run<'a> {
                     self.at.sink.say(&format!(
                         "dibs: attempt {id} could not be admitted, so nothing ran: {e}\n"
                     ));
-                    return Err(Exit::Refused.status());
+                    return Err(Exit::Refused.as_status());
                 }
             },
             None => None,
@@ -449,7 +449,7 @@ impl<'a> Run<'a> {
                         "dibs: could not make {}, so nothing is held.\n",
                         self.at.dir.file("hold", pid).display()
                     ));
-                    return Err(Exit::NoLock.status());
+                    return Err(Exit::NoLock.as_status());
                 }
             },
             false => None,
@@ -459,7 +459,11 @@ impl<'a> Run<'a> {
         let machine = matches!(claim, Some(Takes::Machine));
         // A whole-machine benchmark's record and the card benchmarks it lets ahead appear at once;
         // without the guard it lists none, and lets none ahead.
-        let within = guard_wait(request.wait.map(|wait| since + Duration::from_secs(wait)));
+        let within = guard_wait(
+            request
+                .wait_secs
+                .map(|wait| since + Duration::from_secs(wait)),
+        );
         let window = machine.then(|| self.at.dir.join_guard(within));
         // Before the record, so nobody reads it as a benchmark of the whole machine.
         if let Some(Takes::Cards(pcis)) = &claim {
@@ -528,7 +532,7 @@ impl<'a> Run<'a> {
                 ));
                 let mut state = self.at.stopper.state();
                 self.abandon(&arrived.job, &mut state);
-                return Err(Exit::Closed.status());
+                return Err(Exit::Closed.as_status());
             }
             if !told {
                 self.at.sink.say(&format!(
@@ -568,7 +572,7 @@ impl<'a> Run<'a> {
                 self.at.dir.path.display()
             ));
             self.at.dir.clear(pid);
-            Exit::NoLock.status()
+            Exit::NoLock.as_status()
         };
         let lock = Lock::open(self.at.dir).map_err(|e| refused(&e))?;
         let claim = match self.at.dir.claim_urgent() {
@@ -584,7 +588,7 @@ impl<'a> Run<'a> {
                 ));
                 let mut state = self.at.stopper.state();
                 self.abandon(&arrived.job, &mut state);
-                return Err(Exit::Refused.status());
+                return Err(Exit::Refused.as_status());
             }
             Err(e) => return Err(refused(&e)),
         };
@@ -620,13 +624,13 @@ impl<'a> Run<'a> {
                 told = true;
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
-                let wait = request.wait.unwrap_or_default();
+                let wait = request.wait_secs.unwrap_or_default();
                 self.at.sink.say(&format!(
                     "dibs: still busy after {wait}s, gave up: what cannot be parked still runs.\n"
                 ));
                 let mut state = self.at.stopper.state();
                 self.abandon(&arrived.job, &mut state);
-                return Err(Exit::Busy.status());
+                return Err(Exit::Busy.as_status());
             }
             std::thread::sleep(BENCH_POLL);
         }
@@ -685,7 +689,7 @@ impl<'a> Run<'a> {
                 self.at.dir.park(pid, &now.job);
             }
             if until.is_some_and(|until| Instant::now() >= until) {
-                let wait = self.at.call.request.wait.unwrap_or_default();
+                let wait = self.at.call.request.wait_secs.unwrap_or_default();
                 self.at.sink.say(&format!(
                     "dibs: still busy after {wait}s, gave up: the urgent job still runs.\n"
                 ));
@@ -790,7 +794,7 @@ impl<'a> Run<'a> {
                 }
             }
             if until.is_some_and(|until| Instant::now() >= until) {
-                let wait = self.at.call.request.wait.unwrap_or_default();
+                let wait = self.at.call.request.wait_secs.unwrap_or_default();
                 self.at.sink.say(&format!(
                     "dibs: still busy after {wait}s, gave up: --low-priority waits for an idle machine.\n"
                 ));
@@ -902,7 +906,7 @@ impl<'a> Run<'a> {
         self.at
             .call
             .request
-            .wait
+            .wait_secs
             .map(|wait| arrived.since + Duration::from_secs(wait))
     }
 
@@ -932,7 +936,7 @@ impl<'a> Run<'a> {
                     self.at.dir.path.display()
                 ));
                 self.at.dir.clear(pid);
-                return Err(Exit::NoLock.status());
+                return Err(Exit::NoLock.as_status());
             }
         };
         let queue = Queue {
@@ -941,7 +945,7 @@ impl<'a> Run<'a> {
             call: self.at.call,
         };
         let deadline = request
-            .wait
+            .wait_secs
             .map(|wait| Instant::now() + Duration::from_secs(wait));
         let mut told = false;
         let taken = loop {
@@ -971,13 +975,13 @@ impl<'a> Run<'a> {
         match taken {
             Ok(true) => {}
             Ok(false) => {
-                let wait = request.wait.unwrap_or_default();
+                let wait = request.wait_secs.unwrap_or_default();
                 self.at
                     .sink
                     .say(&format!("dibs: still busy after {wait}s, gave up.\n"));
                 let mut state = self.at.stopper.state();
                 self.abandon(&arrived.job, &mut state);
-                return Err(Exit::Busy.status());
+                return Err(Exit::Busy.as_status());
             }
             Err(e) => {
                 self.at.sink.say(&format!(
@@ -985,7 +989,7 @@ impl<'a> Run<'a> {
                     self.at.dir.path.display()
                 ));
                 self.at.dir.clear(pid);
-                return Err(Exit::NoLock.status());
+                return Err(Exit::NoLock.as_status());
             }
         }
         let now = Moment::epoch_now();
@@ -1014,7 +1018,7 @@ impl<'a> Run<'a> {
                     self.at.dir.path.display()
                 ));
                 self.at.dir.clear(pid);
-                return Err(Exit::NoLock.status());
+                return Err(Exit::NoLock.as_status());
             }
         };
         let queue = Queue {
@@ -1033,12 +1037,12 @@ impl<'a> Run<'a> {
             settings: self.at.settings,
             asking: pid,
         };
-        let shown = || look.text(&look.status(request.verbose), request.tty);
+        let shown = || look.text(&look.snapshot(request.verbose), request.tty);
         // Waiting for an idle machine has already spent some of it.
         let deadline = match self.waits_idle() {
             true => self.wait_until(arrived),
             false => request
-                .wait
+                .wait_secs
                 .map(|wait| Instant::now() + Duration::from_secs(wait)),
         };
         let block = lock.free(Hold::Shared) && !lock.free(Hold::Exclusive);
@@ -1071,7 +1075,7 @@ impl<'a> Run<'a> {
             }
             false => Ok(Waited::GaveUpAtGate),
         });
-        let wait = request.wait.unwrap_or_default();
+        let wait = request.wait_secs.unwrap_or_default();
         let gave_up = match waited {
             Ok(Waited::Held) => None,
             Ok(Waited::GaveUpAtLock) => Some(format!("dibs: still busy after {wait}s, gave up.\n")),
@@ -1085,7 +1089,7 @@ impl<'a> Run<'a> {
                     self.at.dir.path.display()
                 ));
                 self.at.dir.clear(pid);
-                return Err(Exit::NoLock.status());
+                return Err(Exit::NoLock.as_status());
             }
         };
         lock.leave_gate();
@@ -1101,7 +1105,7 @@ impl<'a> Run<'a> {
                         self.at.dir.path.display()
                     ));
                     self.at.dir.clear(pid);
-                    return Err(Exit::NoLock.status());
+                    return Err(Exit::NoLock.as_status());
                 }
             },
             (gave_up, _) => gave_up,
@@ -1111,7 +1115,7 @@ impl<'a> Run<'a> {
             self.at.sink.say(&shown());
             let mut state = self.at.stopper.state();
             self.abandon(&arrived.job, &mut state);
-            return Err(Exit::Busy.status());
+            return Err(Exit::Busy.as_status());
         }
         let now = Moment::epoch_now();
         Ok(Acquired {
@@ -1163,7 +1167,7 @@ impl<'a> Run<'a> {
             self.at.dir.path.display()
         ));
         self.at.dir.clear(self.at.call.pid);
-        Exit::NoLock.status()
+        Exit::NoLock.as_status()
     }
 
     /// A card benchmark joins the ones running when its cards are free, and takes the machine as
@@ -1309,7 +1313,7 @@ impl<'a> Run<'a> {
                     };
                     self.at
                         .sink
-                        .say(&look.text(&look.status(true), request.tty));
+                        .say(&look.text(&look.snapshot(true), request.tty));
                 }
                 told = true;
             }
@@ -1337,26 +1341,26 @@ impl<'a> Run<'a> {
         let Some((cards, adopted)) = held else {
             lock.leave_gate();
             let _ = fs::remove_file(dir.file("pause", pid));
-            let wait = request.wait.unwrap_or_default();
+            let wait = request.wait_secs.unwrap_or_default();
             self.at
                 .sink
                 .say(&format!("dibs: still busy after {wait}s, gave up.\n"));
             let mut state = self.at.stopper.state();
             self.abandon(&arrived.job, &mut state);
-            return Err(Exit::Busy.status());
+            return Err(Exit::Busy.as_status());
         };
         if !adopted
             && !self
                 .pause_ahead(&lock, arrived, deadline)
                 .map_err(no_lock)?
         {
-            let wait = request.wait.unwrap_or_default();
+            let wait = request.wait_secs.unwrap_or_default();
             self.at.sink.say(&format!(
                 "dibs: still busy after {wait}s, gave up: a job queued before it still runs.\n"
             ));
             let mut state = self.at.stopper.state();
             self.abandon(&arrived.job, &mut state);
-            return Err(Exit::Busy.status());
+            return Err(Exit::Busy.as_status());
         }
         Ok(self.with_cards(lock, cards, arrived))
     }
@@ -1512,7 +1516,7 @@ impl<'a> Run<'a> {
         if acquired.ahead {
             self.at
                 .dir
-                .mark_ahead(self.at.call.pid, arrived.order, &Ahead::Running);
+                .mark_ahead(self.at.call.pid, arrived.order, &PreemptionState::Running);
         }
         self.at
             .dir
@@ -1520,7 +1524,7 @@ impl<'a> Run<'a> {
         if acquired.waited >= SAY_ACQUIRED_AFTER {
             self.at.sink.say(&format!(
                 "dibs: acquired the {mode} lock after {}\n",
-                Span(acquired.waited)
+                Span::from_secs(acquired.waited)
             ));
         }
         Host::stay_awake(self.at.call.pid);
@@ -1535,7 +1539,7 @@ impl<'a> Run<'a> {
                 "dibs: attempt {id} could not be marked started, so it did not run: {e}\n"
             ));
             self.abandon(job, state);
-            return Err(Exit::Setup.status());
+            return Err(Exit::Setup.as_status());
         }
         let dir = self.at.machine.jobs().join(job.as_str());
         let kept = match transfer {
@@ -1556,7 +1560,7 @@ impl<'a> Run<'a> {
                 host = self.at.machine.host
             ));
             self.abandon(job, state);
-            return Err(Exit::NoRoom.status());
+            return Err(Exit::NoRoom.as_status());
         }
         let log = (!transfer && kept.is_ok()).then(|| dir.join("log"));
         if log.is_some() {
@@ -1611,7 +1615,7 @@ impl<'a> Run<'a> {
                 },
                 services: None,
                 failed: false,
-                laid: Some(By::Dibs),
+                laid: Some(ExitSource::Dibs),
                 overran: false,
                 idled: Duration::ZERO,
             };
@@ -1639,8 +1643,8 @@ impl<'a> Run<'a> {
                 drop(state);
                 self.at.sink.say(&why);
                 begun.touch_log();
-                hosted.laid = Some(By::Dibs);
-                hosted.status = Exit::Setup.status();
+                hosted.laid = Some(ExitSource::Dibs);
+                hosted.status = Exit::Setup.as_status();
                 return hosted;
             }
         };
@@ -1666,7 +1670,7 @@ impl<'a> Run<'a> {
                     drop(state);
                     begun.touch_log();
                     hosted.laid = Some(by);
-                    hosted.overran = status == Exit::Overran.status();
+                    hosted.overran = status == Exit::Overran.as_status();
                     hosted.status = status;
                     return hosted;
                 }
@@ -1686,8 +1690,8 @@ impl<'a> Run<'a> {
                     "dibs: building in an image needs a tree dibs lays out, from a recipe or `dibs shell <repo>@<ref>`, since only it gets a target of the image's own\n",
                 );
                 begun.touch_log();
-                hosted.laid = Some(By::Dibs);
-                hosted.status = Exit::Setup.status();
+                hosted.laid = Some(ExitSource::Dibs);
+                hosted.status = Exit::Setup.as_status();
                 return hosted;
             }
             Some(image) => {
@@ -1700,11 +1704,11 @@ impl<'a> Run<'a> {
                         drop(state);
                         self.at.sink.say(&unready.why);
                         begun.touch_log();
-                        hosted.laid = Some(By::Dibs);
+                        hosted.laid = Some(ExitSource::Dibs);
                         hosted.overran = unready.overran;
                         hosted.status = match unready.overran {
-                            true => Exit::Overran.status(),
-                            false => Exit::Setup.status(),
+                            true => Exit::Overran.as_status(),
+                            false => Exit::Setup.as_status(),
                         };
                         return hosted;
                     }
@@ -1720,8 +1724,8 @@ impl<'a> Run<'a> {
                 Begins::Refused => {
                     drop(state);
                     begun.touch_log();
-                    hosted.laid = Some(By::Dibs);
-                    hosted.status = Exit::TargetRebuilt.status();
+                    hosted.laid = Some(ExitSource::Dibs);
+                    hosted.status = Exit::TargetRebuilt.as_status();
                     return hosted;
                 }
                 Begins::Runs(started) => running = Some(started),
@@ -1735,8 +1739,8 @@ impl<'a> Run<'a> {
                         drop(state);
                         say(&format!("dibs: {why}, so the command did not run.\n"));
                         begun.touch_log();
-                        hosted.laid = Some(By::Dibs);
-                        hosted.status = Exit::TargetRebuilt.status();
+                        hosted.laid = Some(ExitSource::Dibs);
+                        hosted.status = Exit::TargetRebuilt.as_status();
                         return hosted;
                     }
                 }
@@ -1779,7 +1783,7 @@ impl<'a> Run<'a> {
                     .is_some_and(|b| self.at.dir.cancelled(b))
             };
             let readied = services.ready(
-                request.ready_within,
+                request.ready_within_secs,
                 deadline,
                 &Readiness {
                     ports: &hosted.ports,
@@ -1802,12 +1806,12 @@ impl<'a> Run<'a> {
             (true, _) => {
                 drop(state);
                 begun.touch_log();
-                Exit::ServiceFailed.status()
+                Exit::ServiceFailed.as_status()
             }
             (false, true) => {
                 drop(state);
                 begun.touch_log();
-                Exit::Overran.status()
+                Exit::Overran.as_status()
             }
             (false, false) => {
                 let command = arrived.held.as_ref().map(HoldFifo::command);
@@ -1834,7 +1838,7 @@ impl<'a> Run<'a> {
                         state = held;
                         if let Some(status) = yielded.status() {
                             drop(state);
-                            hosted.laid = Some(By::Dibs);
+                            hosted.laid = Some(ExitSource::Dibs);
                             unlocked = true;
                             // Never run, its build left nothing half made.
                             if runs == 0
@@ -1879,15 +1883,15 @@ impl<'a> Run<'a> {
                         state = held;
                         if let Some(status) = yielded.status() {
                             drop(state);
-                            hosted.laid = Some(By::Dibs);
+                            hosted.laid = Some(ExitSource::Dibs);
                             break status;
                         }
                         waited |= yielded == Yielded::Waited;
                     }
                     if runs > 0 && self.cancelled() {
                         drop(state);
-                        hosted.laid = Some(By::Dibs);
-                        break Exit::Cancelled.status();
+                        hosted.laid = Some(ExitSource::Dibs);
+                        break Exit::Cancelled.as_status();
                     }
                     // Parked while a benchmark had it frozen, it waits to be let go; parked first,
                     // since that benchmark may itself wait parked behind the urgent job.
@@ -1942,7 +1946,7 @@ impl<'a> Run<'a> {
                     if self.at.call.mode() == Mode::Rsh {
                         Channel::watch_transfer(
                             work.pid,
-                            request.watch.lease,
+                            request.watch.lease_secs,
                             Arc::clone(self.at.stopper),
                         );
                     }
@@ -2000,7 +2004,7 @@ impl<'a> Run<'a> {
             && let Some(running) = running
             && layout.step_ends(step, stepping, &mut hosted.status, hosted.overran, running)
         {
-            hosted.laid = Some(By::Dibs);
+            hosted.laid = Some(ExitSource::Dibs);
         }
         if hosted.status == 0
             && let Some(Bundle::Make(make)) = &request.bundle
@@ -2018,8 +2022,8 @@ impl<'a> Run<'a> {
                 )),
                 Err(why) => {
                     say(&format!("dibs: no bundle was kept: {why}\n"));
-                    hosted.status = Exit::Setup.status();
-                    hosted.laid = Some(By::Dibs);
+                    hosted.status = Exit::Setup.as_status();
+                    hosted.laid = Some(ExitSource::Dibs);
                 }
             }
         }
@@ -2056,7 +2060,7 @@ impl<'a> Run<'a> {
                     self.at.sink,
                 );
                 hosted.failed = true;
-                Exit::ServiceFailed.status()
+                Exit::ServiceFailed.as_status()
             }
             _ => status,
         }
@@ -2075,9 +2079,9 @@ impl<'a> Run<'a> {
             .is_some_and(|b| self.at.dir.cancelled(b));
         let closed = self.at.stopper.state().closed;
         let status = if cancelled {
-            Exit::Cancelled.status()
+            Exit::Cancelled.as_status()
         } else if closed {
-            Exit::Closed.status()
+            Exit::Closed.as_status()
         } else {
             end.hosted.status
         };
@@ -2088,26 +2092,26 @@ impl<'a> Run<'a> {
             let mut state = self.at.stopper.state();
             state.set_stage(Stage::Finishing);
             let mut line = self.at.call.log_line(Event::Finished);
-            line.queued = Some(end.acquired.waited);
-            line.ran = Some(ran);
+            line.queued_secs = Some(end.acquired.waited);
+            line.ran_secs = Some(ran);
             line.exit = Some(status);
             line.job = Some(job.clone());
             self.at.journal().write(&line);
             state.logged_end = true;
         }
         let ended = end.begun.log.as_ref().map(|log| {
-            let by = match Exit::of_code(status) {
+            let by = match Exit::from_code(status) {
                 _ if !cancelled
                     && !closed
                     && let Some(by) = end.hosted.laid =>
                 {
                     by
                 }
-                Some(Exit::Overran) if end.hosted.overran => By::Dibs,
-                Some(Exit::Cancelled) if cancelled => By::Dibs,
-                Some(Exit::Closed) if closed => By::Dibs,
-                Some(Exit::ServiceFailed) if end.hosted.failed => By::Dibs,
-                _ => By::Command,
+                Some(Exit::Overran) if end.hosted.overran => ExitSource::Dibs,
+                Some(Exit::Cancelled) if cancelled => ExitSource::Dibs,
+                Some(Exit::Closed) if closed => ExitSource::Dibs,
+                Some(Exit::ServiceFailed) if end.hosted.failed => ExitSource::Dibs,
+                _ => ExitSource::Command,
             };
             Ended::new(
                 self.at,
@@ -2139,7 +2143,7 @@ impl<'a> Run<'a> {
                 &HistoryLine {
                     mode,
                     label: self.at.call.label().clone(),
-                    seconds: ran,
+                    secs: ran,
                     agent: Some(self.at.call.agent.clone()),
                     fingerprint: request.fingerprint.clone(),
                 },
@@ -2153,7 +2157,7 @@ impl<'a> Run<'a> {
         if let Some(ended) = &ended {
             ended.report();
         }
-        if status == Exit::Overran.status() && end.hosted.overran {
+        if status == Exit::Overran.as_status() && end.hosted.overran {
             self.overran(end.max);
         }
         status
@@ -2205,9 +2209,9 @@ impl<'a> Run<'a> {
     /// benchmark: a transfer and a sweep keep their mode's cap.
     fn cap(&self, history: &History) -> u64 {
         let request = &self.at.call.request;
-        let max = request.max;
+        let max = request.max_secs;
         let a_job = matches!(self.at.call.mode(), Mode::Shared | Mode::Bench);
-        if !a_job || request.max_from != MaxFrom::Default || request.watch.hold || max == 0 {
+        if !a_job || request.max_source != MaxSource::Default || request.watch.hold || max == 0 {
             return max;
         }
         let Some(estimate) = history.estimate_kept(Key {
@@ -2228,9 +2232,9 @@ impl<'a> Run<'a> {
         self.at.sink.say(&format!(
             "dibs: 90% of {} runs of this took up to {}, so it may hold the lock for {} rather than {}. --max sets it.\n",
             estimate.runs,
-            Span(estimate.high),
-            Span(raised),
-            Span(max)
+            Span::from_secs(estimate.high),
+            Span::from_secs(raised),
+            Span::from_secs(max)
         ));
         raised
     }
@@ -2291,7 +2295,10 @@ fn no_room(error: &io::Error) -> bool {
 
 /// A job's id: when it arrived, in the machine's zone, and the pid of the runner that took it.
 fn job_id(start: u64, pid: u32) -> JobId {
-    JobId::new(format!("{}-{pid}", Moment::at(start).compact()))
+    JobId::new(format!(
+        "{}-{pid}",
+        Moment::at_epoch_secs(start).to_compact()
+    ))
 }
 
 #[cfg(test)]

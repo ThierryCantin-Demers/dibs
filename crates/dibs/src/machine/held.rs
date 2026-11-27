@@ -1,5 +1,5 @@
 use crate::machine::session::Message;
-use dibs_format::wire::Picked;
+use dibs_format::wire::PickedPort;
 use std::{
     io,
     sync::mpsc::{Receiver, Sender},
@@ -16,7 +16,7 @@ pub struct Holder {
 
 /// The lock is held for the command here.
 pub struct Held {
-    pub ports: Vec<Picked>,
+    pub ports: Vec<PickedPort>,
     pub release: Release,
 }
 

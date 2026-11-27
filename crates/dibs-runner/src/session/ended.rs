@@ -4,8 +4,8 @@ use crate::{
     session::run::{Hosted, Serving},
 };
 use dibs_format::{
-    By, JobId, JobMeta,
-    wire::{Built, Record, Trailer},
+    ExitSource, JobId, JobMeta,
+    wire::{Compilation, Record, Trailer},
 };
 use std::{fs, path::PathBuf};
 
@@ -20,7 +20,7 @@ pub struct Tally<'a> {
     pub waited: u64,
     pub ran: u64,
     pub status: i32,
-    pub by: By,
+    pub by: ExitSource,
 }
 
 /// A job that has ended, which its caller is told about.
@@ -41,16 +41,16 @@ impl<'a> Ended<'a> {
         let meta = JobMeta {
             mode: call.mode(),
             label: call.label().clone(),
-            queued: tally.waited,
-            ran: tally.ran,
+            queued_secs: tally.waited,
+            ran_secs: tally.ran,
             exit: tally.status,
             by: tally.by,
             agent: call.agent.clone(),
-            lines: tally.read.lines as u64,
+            line_count: tally.read.lines as u64,
             who: (!call.agent_id.is_empty()).then(|| call.agent_id.clone()),
             user: call.user.clone(),
         };
-        let _ = fs::write(tally.job_dir.join("meta"), meta.to_string());
+        let _ = fs::write(tally.job_dir.join("meta"), meta.to_text());
         if let Some(id) = &call.request.attempt {
             Attempts::under(&self.at.machine.scratch).ended(id, &self.trailer());
         }
@@ -63,12 +63,12 @@ impl<'a> Ended<'a> {
             job: tally.job.clone(),
             mode: call.mode(),
             label: call.label().clone(),
-            queued: tally.waited,
-            ran: tally.ran,
+            queued_secs: tally.waited,
+            ran_secs: tally.ran,
             exit: tally.status,
             by: tally.by,
             built: tally.read.built,
-            tests: tally.read.tests,
+            test_count: tally.read.tests,
         }
     }
 
@@ -109,7 +109,7 @@ impl<'a> Ended<'a> {
             ));
         }
         after.push_str(&tally.hosted.lines(host));
-        if built == Some(Built::Nothing) {
+        if built == Some(Compilation::Nothing) {
             after.push_str(
                 "  built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary.\n",
             );

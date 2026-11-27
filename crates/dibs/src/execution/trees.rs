@@ -137,7 +137,7 @@ impl TreeSpec<'_> {
 
 impl TreePlan {
     /// Laid out at the head of a job, which then does `then`.
-    pub fn tree(&self, then: wire::Then) -> wire::Tree {
+    pub fn tree(&self, then: wire::FollowUp) -> wire::Tree {
         wire::Tree {
             place: wire::Place::Prepare(Box::new(self.prepare.clone())),
             then,
@@ -146,7 +146,7 @@ impl TreePlan {
     }
 
     /// Sends each git database the machine said it lacks.
-    pub fn send_missing(&self, backend: &Jobs, prepared: &wire::Prepared) {
+    pub fn send_missing(&self, backend: &Jobs, prepared: &wire::PrepareReport) {
         let Some(asked) = &prepared.gitdbs else {
             return;
         };
@@ -202,25 +202,25 @@ pub trait Announce {
     fn announce(&self);
 }
 
-impl Announce for wire::Prepared {
+impl Announce for wire::PrepareReport {
     fn announce(&self) {
         eprintln!("dibs: {}", self.worktree);
         let Some(seeded) = &self.seeded else {
             return;
         };
         let from = &seeded.from;
-        if let (Some(mine), Some(shared)) = (self.reseeded, seeded.shared) {
+        if let (Some(mine), Some(shared)) = (self.reseeded_count, seeded.shared) {
             eprintln!(
                 "dibs: this tree's target had built {mine} of the {} groups in its lockfile and {from} has {}, so the tree now starts from {from}'s",
-                shared.of, shared.have
+                shared.of_count, shared.have_count
             );
             return;
         }
         match seeded.shared {
             Some(shared) => eprintln!(
                 "dibs: target directory copied from {from}, whose builds match {} of the {} groups in this tree's lockfile{}",
-                shared.have,
-                shared.of,
+                shared.have_count,
+                shared.of_count,
                 if seeded.sources {
                     ", with its sources so unchanged crates stay built"
                 } else {

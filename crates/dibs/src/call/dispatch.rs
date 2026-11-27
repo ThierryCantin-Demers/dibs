@@ -77,7 +77,7 @@ impl Dispatch<'_> {
             Words::Close(close) => machine()?.answer(Asked {
                 mode: Mode::Close,
                 label: Label::new("close"),
-                command: close.text(),
+                command: close.to_text(),
                 streamed: true,
             }),
             Words::Open { anyone } => machine()?.answer(Asked::plain(

@@ -29,7 +29,7 @@ fn shown(path: &Path, rel: &str, modes: bool) -> String {
     if modes {
         line += &format!("  {:o}", meta.permissions().mode() & 0o7777);
     }
-    line += match age > Duration::from_secs(Span::DAY.0) {
+    line += match age > Duration::from_secs(Span::DAY.as_secs()) {
         true => "  old",
         false => "  new",
     };
@@ -162,7 +162,7 @@ fn a_tree_starts_again_only_from_a_sibling_a_tenth_of_its_lockfile_ahead() {
         m.sibling("demo-local-mine", &all[..5]);
         m.sources("mine", "mine.rs");
         m.sibling("demo-local-other", &all[..ahead]);
-        let again = m.prepared(&local("mine", &all)).reseeded.is_some();
+        let again = m.prepared(&local("mine", &all)).reseeded_count.is_some();
         said += &format!(
             "its own target has 5 of 20, a sibling {ahead}: {}\n",
             match again {

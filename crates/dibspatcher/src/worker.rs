@@ -10,9 +10,11 @@ use crate::{
     store::{Attempt, Fence, Settled, Step, Store},
 };
 use dibs_format::{
-    By, Exit, Sha256,
+    Exit, ExitSource, Sha256,
     dibspatcher::{NamedCall, Seal, State, Submission, Work},
-    wire::{Admitted, Built, Bundle, BundleCheck, BundleMake, BundleManifest, Record, Trailer},
+    wire::{
+        Admission, Bundle, BundleCheck, BundleMake, BundleManifest, Compilation, Record, Trailer,
+    },
 };
 use std::{
     collections::BTreeMap,
@@ -89,21 +91,21 @@ pub fn run(home: &Home, id: &str) -> i32 {
         }
         Ok((Err(fs::TryLockError::Error(e)), _)) | Err(e) => {
             eprintln!("dibspatcher: {id}'s lock: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     let store = match Store::open(&home.store()) {
         Ok(store) => store,
         Err(e) => {
             eprintln!("dibspatcher: the store: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     let (coworker, submission) = match store.submission(id) {
         Ok(Some(found)) => found,
         other => {
             eprintln!("dibspatcher: no submission {id} to drive ({other:?})");
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
     };
     listen_for_stop();
@@ -111,7 +113,7 @@ pub fn run(home: &Home, id: &str) -> i32 {
         Ok(fence) => fence,
         Err(e) => {
             eprintln!("dibspatcher: {id} could not be claimed: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     spawn::tell(&fifo, DRIVING);
@@ -177,7 +179,7 @@ impl Ended {
     fn killed(trailer: Option<Trailer>, note: &str) -> Ended {
         Ended {
             state: State::Cancelled,
-            exit: Exit::Cancelled.status(),
+            exit: Exit::Cancelled.as_status(),
             trailer,
             note: Some(note.into()),
             attempt: None,
@@ -219,8 +221,8 @@ impl Worker<'_> {
             }
             if step.state.ended() {
                 let exit = step.exit.unwrap_or(match step.state {
-                    State::Cancelled => Exit::Cancelled.status(),
-                    _ => Exit::Failed.status(),
+                    State::Cancelled => Exit::Cancelled.as_status(),
+                    _ => Exit::Failed.as_status(),
                 });
                 return self.finish(step.state, exit, None);
             }
@@ -266,7 +268,7 @@ impl Worker<'_> {
                     "dibspatcher: {}'s step {} could not be recorded: {e}",
                     self.id, step.name
                 );
-                return Exit::Failed.status();
+                return Exit::Failed.as_status();
             }
             if ended.state != State::Done {
                 return self.finish(ended.state, ended.exit, ended.note.as_deref());
@@ -297,14 +299,14 @@ impl Worker<'_> {
             None,
             Settled {
                 state: State::Cancelled,
-                exit: Exit::Cancelled.status(),
+                exit: Exit::Cancelled.as_status(),
                 trailer: None,
                 note: Some("killed"),
             },
         );
         self.finish(
             State::Cancelled,
-            Exit::Cancelled.status(),
+            Exit::Cancelled.as_status(),
             Some("killed with dibs dispatch kill"),
         )
     }
@@ -325,7 +327,7 @@ impl Worker<'_> {
             (Work::Split(_), "stage", Some(split)) => self.stage(step, split),
             (Work::Split(_), "measure", Some(split)) => self.measure(step, split),
             _ => Ok(Ended::failed(
-                Exit::Refused.status(),
+                Exit::Refused.as_status(),
                 format!("this worker does not know the step {}", step.name),
             )),
         }
@@ -415,13 +417,13 @@ impl Worker<'_> {
                 upload.head
             ));
         }
-        let listed = Seal::listed(&tree).map_err(|e| e.to_string())?;
-        let (digest, files) =
+        let listed = crate::staged::files(&tree).map_err(|e| e.to_string())?;
+        let sealed =
             Seal::of(&tree, listed.iter().map(String::as_str)).map_err(|e| e.to_string())?;
-        if digest != upload.digest || files != upload.files {
+        if sealed != upload.seal {
             return Err(format!(
-                "the tree taken is not the one accepted ({files} files sealed {digest:.12}, accepted {} sealed {:.12})",
-                upload.files, upload.digest
+                "the tree taken is not the one accepted ({} files sealed {:.12}, accepted {} sealed {:.12})",
+                sealed.file_count, sealed.digest, upload.seal.file_count, upload.seal.digest
             ));
         }
         Ok(root)
@@ -433,7 +435,7 @@ impl Worker<'_> {
         }
         let root = match self.root(split) {
             Ok(root) => root,
-            Err(why) => return Ok(Ended::failed(Exit::Setup.status(), why)),
+            Err(why) => return Ok(Ended::failed(Exit::Setup.as_status(), why)),
         };
         // The compile machine keys the tree by coworker and repo, so their builds take turns.
         let lock = self.home.tree_lock(self.coworker, &split.repo);
@@ -534,7 +536,7 @@ impl Worker<'_> {
             Some(m) => m,
             None => {
                 return Ok(Ended::failed(
-                    Exit::Setup.status(),
+                    Exit::Setup.as_status(),
                     "the bundle came without a manifest",
                 ));
             }
@@ -542,7 +544,7 @@ impl Worker<'_> {
         let digest = Sha256::hex_of_file(&fetched.join(&manifest.exe)).unwrap_or_default();
         if digest != manifest.digest {
             return Ok(Ended::failed(
-                Exit::TargetRebuilt.status(),
+                Exit::TargetRebuilt.as_status(),
                 format!(
                     "the bundle's {} is {digest}, not the {} its manifest names",
                     manifest.exe, manifest.digest
@@ -552,9 +554,9 @@ impl Worker<'_> {
         let built = self.trailer_of("build").and_then(|t| t.built);
         let inputs = self.inputs(&manifest);
         let attested = self.store.attested(&digest, &inputs).unwrap_or(false);
-        if built == Some(Built::Nothing) && !attested {
+        if built == Some(Compilation::Nothing) && !attested {
             return Ok(Ended::failed(
-                Exit::TargetRebuilt.status(),
+                Exit::TargetRebuilt.as_status(),
                 "the build compiled nothing, and no earlier build of these exact inputs attests the executable it left",
             ));
         }
@@ -575,7 +577,7 @@ impl Worker<'_> {
             }
             if let Err(e) = fs::rename(&fetched, &kept) {
                 return Ok(Ended::failed(
-                    Exit::Failed.status(),
+                    Exit::Failed.as_status(),
                     format!("the bundle could not be kept: {e}"),
                 ));
             }
@@ -610,7 +612,7 @@ impl Worker<'_> {
         let upload = self.submission.upload.as_ref();
         let mut bound = serde_json::json!({
             "head": upload.map(|u| u.head.clone()),
-            "tree": upload.map(|u| u.digest.clone()),
+            "tree": upload.map(|u| u.seal.digest.clone()),
             "lockfile": manifest.lockfile,
             "rustc": manifest.rustc,
             "rustflags": manifest.rustflags,
@@ -649,7 +651,10 @@ impl Worker<'_> {
             return self.attempted(step, &split.gpu, &[], &[], None, Kind::Again);
         }
         let Some(check) = self.check() else {
-            return Ok(Ended::failed(Exit::Setup.status(), "no bundle was relayed"));
+            return Ok(Ended::failed(
+                Exit::Setup.as_status(),
+                "no bundle was relayed",
+            ));
         };
         let digest = self.digest().unwrap_or_default();
         let links = match is_static(&self.home.bundle(&digest).join(&split.name)) {
@@ -691,7 +696,10 @@ impl Worker<'_> {
             return self.attempted(step, &split.gpu, &[], &[], None, Kind::Once);
         }
         let Some(check) = self.check() else {
-            return Ok(Ended::failed(Exit::Setup.status(), "no bundle was relayed"));
+            return Ok(Ended::failed(
+                Exit::Setup.as_status(),
+                "no bundle was relayed",
+            ));
         };
         let exports: String = std::iter::once(("DIBS_SUBMISSION".to_string(), self.id.to_string()))
             .chain(split.env.clone())
@@ -761,7 +769,7 @@ impl Worker<'_> {
                 _ if killed => return Ok(Ended::killed(None, "killed with dibs dispatch kill")),
                 Some(ended) if ended.k >= ATTEMPTS => {
                     return Ok(Ended::failed(
-                        Exit::Failed.status(),
+                        Exit::Failed.as_status(),
                         format!("{} attempts and none told how it went", ended.k),
                     ));
                 }
@@ -776,7 +784,7 @@ impl Worker<'_> {
                 Ok(Err(_)) => return Err(Leave),
                 Err(e) => {
                     return Ok(Ended::failed(
-                        Exit::Failed.status(),
+                        Exit::Failed.as_status(),
                         format!("the store: {e}"),
                     ));
                 }
@@ -827,7 +835,7 @@ impl Worker<'_> {
             }
             if killed {
                 match &heard {
-                    Some(Record::Admitted(Admitted::Running { job, pid })) => {
+                    Some(Record::Admitted(Admission::Running { job, pid })) => {
                         // Its call belongs to a worker before this one, so the job is stopped on
                         // its machine; the attempt stays open until it is seen to end.
                         let _ = append(&log, &format!("stopping job {job} of an earlier worker\n"));
@@ -868,8 +876,9 @@ impl Worker<'_> {
             }
             match heard {
                 Some(Record::Trailer(trailer))
-                | Some(Record::Admitted(Admitted::Ended(trailer))) => {
-                    let gone = trailer.by == By::Dibs && [129, 130, 143].contains(&trailer.exit);
+                | Some(Record::Admitted(Admission::Ended(trailer))) => {
+                    let gone =
+                        trailer.by == ExitSource::Dibs && [129, 130, 143].contains(&trailer.exit);
                     match (trailer.exit, gone, kind) {
                         (0, _, _) => return close(Ended::done(Some(trailer), None)),
                         (_, true, Kind::Again) => again(),
@@ -893,7 +902,7 @@ impl Worker<'_> {
                         }
                     }
                 }
-                Some(Record::Admitted(Admitted::Running { job, .. })) => {
+                Some(Record::Admitted(Admission::Running { job, .. })) => {
                     let _ = append(
                         &log,
                         &format!(
@@ -904,13 +913,13 @@ impl Worker<'_> {
                     // Told to stop, the next pass stops the job if it was a kill, or leaves.
                     pause(still_running());
                 }
-                Some(Record::Admitted(Admitted::Lost { started: false, .. })) => again(),
-                Some(Record::Admitted(Admitted::Lost { job, .. })) => match kind {
+                Some(Record::Admitted(Admission::Lost { started: false, .. })) => again(),
+                Some(Record::Admitted(Admission::Lost { job, .. })) => match kind {
                     Kind::Again => again(),
                     Kind::Once => {
                         return close(Ended {
                             state: State::Unknown,
-                            exit: Exit::Failed.status(),
+                            exit: Exit::Failed.as_status(),
                             trailer: None,
                             note: Some(format!(
                                 "job {job} ran, and its runner went without saying how: not run again"
@@ -979,7 +988,7 @@ impl Worker<'_> {
         let shown: Vec<String> = args.iter().map(|a| shell_word(a)).collect();
         let _ = append(log, &format!("$ dibs {}\n", shown.join(" ")));
         let Ok(out) = File::options().create(true).append(true).open(log) else {
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let mut command = dibs();
         command
@@ -1016,15 +1025,15 @@ impl Worker<'_> {
             Ok(child) => child,
             Err(e) => {
                 let _ = append(log, &format!("dibs could not start: {e}\n"));
-                return Exit::Failed.status();
+                return Exit::Failed.as_status();
             }
         };
         let mut stopped = false;
         loop {
             match child.try_wait() {
-                Ok(Some(status)) => return Exit::shell_status(status),
+                Ok(Some(status)) => return Exit::to_shell_code(status),
                 Ok(None) => {}
-                Err(_) => return Exit::Failed.status(),
+                Err(_) => return Exit::Failed.as_status(),
             }
             if stoppable && STOP.load(Ordering::SeqCst) && !stopped {
                 stopped = true;
@@ -1040,7 +1049,7 @@ impl Worker<'_> {
 fn outcome(state: State, exit: i32) -> i32 {
     match state {
         State::Done => 0,
-        _ if exit == 0 => Exit::Failed.status(),
+        _ if exit == 0 => Exit::Failed.as_status(),
         _ => exit,
     }
 }
@@ -1055,12 +1064,12 @@ fn away(code: i32) -> bool {
         Exit::NoRunner,
     ]
     .iter()
-    .any(|e| e.status() == code)
+    .any(|e| e.as_status() == code)
 }
 
 fn trailer_in(record: Option<&Record>) -> Option<Trailer> {
     match record? {
-        Record::Trailer(t) | Record::Admitted(Admitted::Ended(t)) => Some(t.clone()),
+        Record::Trailer(t) | Record::Admitted(Admission::Ended(t)) => Some(t.clone()),
         _ => None,
     }
 }

@@ -43,7 +43,7 @@ impl ScratchFile {
     fn unguessable() -> io::Result<String> {
         let mut bytes = [0u8; NAME_BYTES];
         File::open("/dev/urandom")?.read_exact(&mut bytes)?;
-        Ok(bytes.hex())
+        Ok(Hex::new(&bytes).to_string())
     }
 }
 

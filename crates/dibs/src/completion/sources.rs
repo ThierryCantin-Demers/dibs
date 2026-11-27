@@ -261,7 +261,10 @@ fn described(machine: &Machine) -> String {
         said.push("does not measure".to_string());
     }
     if let Some(expires) = machine.expires {
-        said.push(format!("leased until {}", Moment::at(expires).minute()));
+        said.push(format!(
+            "leased until {}",
+            Moment::at_epoch_secs(expires).minute()
+        ));
     }
     said.retain(|s| !s.is_empty());
     said.join(", ")

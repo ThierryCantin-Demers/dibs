@@ -1,12 +1,12 @@
 use super::detach::DetachError;
 use crate::{
-    call::{CallError, Pending, Planned},
+    call::{CallError, Pending},
     cli::{CliError, Invocation, Mode, RecipeCall, RecipeVerb, RunLock},
     machine::Card,
     paths::FileError,
     recipe::{RecipeError, Resolved},
 };
-use dibs_format::{Label, Mode as JobMode};
+use dibs_format::{Label, Mode as JobMode, PendingStepKind};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -536,16 +536,16 @@ impl Step {
     /// The history key dibs will file a step under, which is what its estimate is looked up by.
     pub fn pending(&self, here: bool, cwd: &str) -> Pending {
         let directory = || cwd.rsplit('/').next().unwrap_or_default().to_string();
-        let (mode, default) = match self.lock {
-            StepKind::Sync => (Planned::Job(JobMode::Rsh), "sync".to_string()),
-            StepKind::Recipe => (Planned::Recipe, String::new()),
-            StepKind::Shared => (Planned::Job(JobMode::Shared), directory()),
-            StepKind::Bench => (Planned::Job(JobMode::Bench), directory()),
-            StepKind::Peek => (Planned::Job(JobMode::Peek), directory()),
+        let (kind, default) = match self.lock {
+            StepKind::Sync => (PendingStepKind::Job(JobMode::Rsh), "sync".to_string()),
+            StepKind::Recipe => (PendingStepKind::Recipe, String::new()),
+            StepKind::Shared => (PendingStepKind::Job(JobMode::Shared), directory()),
+            StepKind::Bench => (PendingStepKind::Job(JobMode::Bench), directory()),
+            StepKind::Peek => (PendingStepKind::Job(JobMode::Peek), directory()),
         };
         Pending {
             name: self.name.clone(),
-            mode,
+            kind,
             label: Label::new(self.label.clone().unwrap_or(default)),
             here,
         }

@@ -122,7 +122,7 @@ impl Caller {
 
     /// The id as a file name.
     pub fn file_name(&self) -> String {
-        FileName::of(&self.id).into()
+        FileName::of_text(&self.id).into()
     }
 }
 

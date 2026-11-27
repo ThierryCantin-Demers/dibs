@@ -3,6 +3,11 @@ use std::str::FromStr;
 
 /// One line of `friction.jsonl`: what got in the way, from the session that hit it. The field
 /// order is the line's, which is alphabetical.
+///
+/// # Guarantees
+///
+/// - A note `new` makes is one line of single spaces, its text at most 280 characters, its
+///   `by` 48 and its `version` 40.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FrictionNote {
     #[serde(default)]
@@ -10,8 +15,9 @@ pub struct FrictionNote {
     /// The dibs that was running, by commit.
     #[serde(default, rename = "dibs")]
     pub version: String,
+    /// Seconds since the epoch.
     #[serde(default, rename = "t")]
-    pub when: u64,
+    pub when_secs: u64,
     #[serde(default)]
     pub text: String,
 }
@@ -25,13 +31,13 @@ impl FrictionNote {
     /// Whitespace collapsed to one line, because what makes the list readable later is that each
     /// report is one, and two sessions reporting the same thing have to land on the same text to
     /// be counted as two. None when there is no text left.
-    pub fn new(text: &str, by: &str, version: &str, when: u64) -> Option<FrictionNote> {
+    pub fn new(text: &str, by: &str, version: &str, when_secs: u64) -> Option<FrictionNote> {
         let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
         if text.is_empty() {
             return None;
         }
         Some(FrictionNote {
-            when,
+            when_secs,
             text: text.chars().take(Self::TEXT_CHARS).collect(),
             by: by.chars().take(Self::BY_CHARS).collect(),
             version: version.chars().take(Self::VERSION_CHARS).collect(),
@@ -72,12 +78,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(note.text, "the trailer says built=nothing but it did build");
+    }
+
+    #[test]
+    fn a_report_of_only_whitespace_is_no_note() {
         assert!(FrictionNote::new("   ", "a", "abc", 10).is_none());
     }
 
     #[test]
     fn a_line_missing_fields_reads_with_them_empty() {
         let note: FrictionNote = r#"{"text":"only this"}"#.parse().unwrap();
-        assert_eq!((note.text.as_str(), note.when), ("only this", 0));
+        assert_eq!((note.text.as_str(), note.when_secs), ("only this", 0));
     }
 }

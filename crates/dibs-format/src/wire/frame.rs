@@ -17,19 +17,24 @@ pub enum Frame {
 /// Why bytes did not read as frames. Nothing after one can be trusted, so a reader stops there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameError {
+    /// A header that is not a word, a space and a length that fits, or no header line within its
+    /// longest.
     Header(String),
+    /// A header whose word names no frame.
     Kind(String),
+    /// A payload that does not read as its kind's.
     Payload { kind: &'static str, why: String },
 }
 
 /// A header is a short word and a length, so a longer line is not one.
-const HEADER_MAX: usize = 32;
+const HEADER_MAX_BYTES: usize = 32;
 
 impl Frame {
-    pub fn encode(&self) -> Vec<u8> {
+    /// The frame as it crosses the stream: its header, then its payload.
+    pub fn to_bytes(&self) -> Vec<u8> {
         let payload = match self {
-            Frame::Request(request) => serde_json::to_vec(request).unwrap_or_default(),
-            Frame::Record(record) => serde_json::to_vec(record).unwrap_or_default(),
+            Frame::Request(request) => serde_json::to_vec(request).expect("a frame serializes"),
+            Frame::Record(record) => serde_json::to_vec(record).expect("a frame serializes"),
             Frame::Beat => Vec::new(),
             Frame::Release(status) | Frame::Exit(status) => status.to_string().into_bytes(),
             Frame::Out(bytes) | Frame::Err(bytes) => bytes.clone(),
@@ -38,7 +43,9 @@ impl Frame {
         frame.extend_from_slice(&payload);
         frame
     }
+}
 
+impl Frame {
     fn kind(&self) -> &'static str {
         match self {
             Frame::Request(_) => "request",
@@ -51,7 +58,7 @@ impl Frame {
         }
     }
 
-    fn decode(kind: &str, payload: Vec<u8>) -> Result<Frame, FrameError> {
+    fn decode(kind: &str, payload: &[u8]) -> Result<Frame, FrameError> {
         let json = |kind| {
             move |e: serde_json::Error| FrameError::Payload {
                 kind,
@@ -59,21 +66,21 @@ impl Frame {
             }
         };
         let status = |kind| {
-            let text = String::from_utf8_lossy(&payload);
+            let text = String::from_utf8_lossy(payload);
             text.parse().map_err(|_| FrameError::Payload {
                 kind,
                 why: format!("{text:?} is not a status"),
             })
         };
         match kind {
-            "request" => serde_json::from_slice(&payload)
+            "request" => serde_json::from_slice(payload)
                 .map(|request| Frame::Request(Box::new(request)))
                 .map_err(json("request")),
             "beat" => Ok(Frame::Beat),
             "release" => status("release").map(Frame::Release),
-            "out" => Ok(Frame::Out(payload)),
-            "err" => Ok(Frame::Err(payload)),
-            "record" => serde_json::from_slice(&payload)
+            "out" => Ok(Frame::Out(payload.to_vec())),
+            "err" => Ok(Frame::Err(payload.to_vec())),
+            "record" => serde_json::from_slice(payload)
                 .map(Frame::Record)
                 .map_err(json("record")),
             "exit" => status("exit").map(Frame::Exit),
@@ -82,62 +89,110 @@ impl Frame {
     }
 }
 
-/// Frames read back out of what a stream has carried so far.
+/// What a stream has carried so far, read back out as frames.
+///
+/// # Guarantees
+///
+/// - Every frame [`Frame::to_bytes`] writes reads back equal, however its bytes are split
+///   between feeds.
+/// - A reader that feeds no more than [`FrameBuffer::wanted`] bytes at a time never takes a byte
+///   past the frame, which a transfer's raw stream follows.
 #[derive(Debug, Default)]
-pub struct Unframer {
+pub struct FrameBuffer {
+    /// The bytes fed and not yet read as a frame, fed at the end and taken from the front.
     carried: Vec<u8>,
 }
 
-impl Unframer {
-    pub fn feed(&mut self, bytes: &[u8]) {
+impl FrameBuffer {
+    /// Carries `bytes` after those fed before.
+    pub fn feed_bytes(&mut self, bytes: &[u8]) {
         self.carried.extend_from_slice(bytes);
     }
 
-    /// The next whole frame, or None until more of it has been fed.
+    /// The next whole frame, taken out of what was fed, or None until more of it has been fed.
+    ///
+    /// # Errors
+    ///
+    /// [`FrameError`]: a frame whose header does not read is left where it is, and one whose kind
+    /// or payload does not read is taken out.
     pub fn next_frame(&mut self) -> Result<Option<Frame>, FrameError> {
-        let window = &self.carried[..self.carried.len().min(HEADER_MAX)];
+        take_frame(&mut self.carried)
+    }
+
+    /// How many more bytes the next frame needs: one at a time until its header reads, then the
+    /// rest of it exactly.
+    ///
+    /// # Assumptions
+    ///
+    /// - [`FrameBuffer::next_frame`] returned None since the last feed.
+    pub fn wanted(&self) -> usize {
+        Header::wanted_by(&self.carried)
+    }
+}
+
+/// The frame `carried` starts with, drained from it once whole; a header that does not read
+/// leaves `carried` as it was.
+fn take_frame(carried: &mut Vec<u8>) -> Result<Option<Frame>, FrameError> {
+    let Some(header) = Header::at_front(carried)? else {
+        return Ok(None);
+    };
+    let Some(payload) = carried.get(header.line_bytes..header.frame_bytes) else {
+        return Ok(None);
+    };
+    let frame = Frame::decode(&header.kind, payload);
+    carried.drain(..header.frame_bytes);
+    frame.map(Some)
+}
+
+/// The header line at the front of a stream's carried bytes.
+struct Header {
+    pub kind: String,
+    /// The header line's length, its newline counted.
+    pub line_bytes: usize,
+    /// The whole frame's length, header and payload.
+    pub frame_bytes: usize,
+}
+
+impl Header {
+    /// The header `carried` starts with, or None while it has no newline within a header's
+    /// longest.
+    fn at_front(carried: &[u8]) -> Result<Option<Header>, FrameError> {
+        let window = &carried[..carried.len().min(HEADER_MAX_BYTES)];
         let Some(end) = window.iter().position(|b| *b == b'\n') else {
-            return match self.carried.len() < HEADER_MAX {
+            return match carried.len() < HEADER_MAX_BYTES {
                 true => Ok(None),
                 false => Err(FrameError::Header(
                     String::from_utf8_lossy(window).into_owned(),
                 )),
             };
         };
-        let header = String::from_utf8_lossy(&self.carried[..end]).into_owned();
-        let Some((kind, length)) = header.split_once(' ') else {
-            return Err(FrameError::Header(header));
+        let line = String::from_utf8_lossy(&window[..end]).into_owned();
+        let refused = || FrameError::Header(line.clone());
+        let Some((kind, length)) = line.split_once(' ') else {
+            return Err(refused());
         };
-        let length: usize = length
-            .parse()
-            .map_err(|_| FrameError::Header(header.clone()))?;
-        let start = end + 1;
-        if self.carried.len() < start + length {
-            return Ok(None);
+        let line_bytes = end + 1;
+        let Some(frame_bytes) = length
+            .parse::<usize>()
+            .ok()
+            .and_then(|length| line_bytes.checked_add(length))
+        else {
+            return Err(refused());
+        };
+        Ok(Some(Header {
+            kind: kind.to_string(),
+            line_bytes,
+            frame_bytes,
+        }))
+    }
+
+    /// How many more bytes the frame `carried` starts with needs: one while its header does not
+    /// read, and at least one.
+    fn wanted_by(carried: &[u8]) -> usize {
+        match Header::at_front(carried) {
+            Ok(Some(header)) => header.frame_bytes.saturating_sub(carried.len()).max(1),
+            Ok(None) | Err(_) => 1,
         }
-        let payload = self.carried[start..start + length].to_vec();
-        self.carried.drain(..start + length);
-        Frame::decode(kind, payload).map(Some)
-    }
-
-    /// How many more bytes the next frame needs: one at a time until its header is in, then the
-    /// rest of it exactly. A reader that takes no more than this never takes what follows the
-    /// frame, which a transfer's raw stream does.
-    pub fn wanted(&self) -> usize {
-        let window = &self.carried[..self.carried.len().min(HEADER_MAX)];
-        let Some(end) = window.iter().position(|b| *b == b'\n') else {
-            return 1;
-        };
-        let length = String::from_utf8_lossy(&window[..end])
-            .split_once(' ')
-            .and_then(|(_, length)| length.parse::<usize>().ok())
-            .unwrap_or_default();
-        (end + 1 + length).saturating_sub(self.carried.len()).max(1)
-    }
-
-    /// Whether part of a frame is still waiting for the rest.
-    pub fn is_empty(&self) -> bool {
-        self.carried.is_empty()
     }
 }
 
@@ -157,54 +212,9 @@ impl std::error::Error for FrameError {}
 mod tests {
     use super::*;
     use crate::{
-        By, JobId, Label, Mode,
-        wire::{MaxFrom, Trailer, Watch},
+        ExitSource, JobId, Label, Mode,
+        wire::{Trailer, request::tests::request},
     };
-
-    fn request() -> Request {
-        Request {
-            mode: Mode::Shared,
-            label: Label::new("build"),
-            command: "echo 'a\nb'\t$HOME".into(),
-            wait: None,
-            max: 7200,
-            max_from: MaxFrom::Default,
-            verbose: false,
-            json: false,
-            stream: false,
-            tty: false,
-            card: None,
-            also: Vec::new(),
-            fingerprint: None,
-            agent: "session".into(),
-            agent_id: "id".into(),
-            user: None,
-            subagent: None,
-            metrics: false,
-            aliases: Default::default(),
-            batch: None,
-            watch: Watch {
-                off: false,
-                hold: false,
-                lease: 120,
-            },
-            ports: vec!["api".into()],
-            services: Vec::new(),
-            ready_within: 300,
-            new_series: false,
-            preempt: false,
-            when_open: false,
-            workspace: None,
-            low_priority: false,
-            urgent: None,
-            tree: None,
-            check_in: None,
-            attempt: None,
-            lookup: false,
-            image: None,
-            bundle: None,
-        }
-    }
 
     fn every_kind() -> Vec<Frame> {
         vec![
@@ -217,77 +227,123 @@ mod tests {
                 job: JobId::new("20261001-120000-1"),
                 mode: Mode::Bench,
                 label: Label::new("b"),
-                queued: 1,
-                ran: 2,
+                queued_secs: 1,
+                ran_secs: 2,
                 exit: 0,
-                by: By::Command,
+                by: ExitSource::Command,
                 built: None,
-                tests: None,
+                test_count: None,
             })),
             Frame::Exit(124),
         ]
     }
 
-    #[test]
-    fn every_kind_reads_back_as_it_was_sent() {
-        let frames = every_kind();
-        let mut unframer = Unframer::default();
-        unframer.feed(&frames.iter().flat_map(Frame::encode).collect::<Vec<_>>());
-        for frame in frames {
-            assert_eq!(unframer.next_frame(), Ok(Some(frame)));
-        }
-        assert_eq!(unframer.next_frame(), Ok(None));
-        assert!(unframer.is_empty());
+    fn refusal(bytes: &[u8]) -> FrameError {
+        let mut buffer = FrameBuffer::default();
+        buffer.feed_bytes(bytes);
+        buffer.next_frame().unwrap_err()
     }
 
     #[test]
-    fn a_frame_fed_a_byte_at_a_time_reads_once_it_is_whole() {
-        let mut unframer = Unframer::default();
-        let bytes: Vec<u8> = every_kind().iter().flat_map(Frame::encode).collect();
+    fn every_kind_fed_a_byte_at_a_time_reads_back_as_it_was_sent() {
+        let mut buffer = FrameBuffer::default();
         let mut read = Vec::new();
-        for byte in bytes {
-            unframer.feed(&[byte]);
-            while let Some(frame) = unframer.next_frame().unwrap() {
+        for byte in every_kind().iter().flat_map(Frame::to_bytes) {
+            buffer.feed_bytes(&[byte]);
+            while let Some(frame) = buffer.next_frame().unwrap() {
                 read.push(frame);
             }
         }
         assert_eq!(read, every_kind());
+        assert_eq!(buffer.next_frame(), Ok(None));
     }
 
     #[test]
     fn a_reader_taking_what_is_wanted_leaves_what_follows_the_frame() {
-        let mut stream = Frame::Request(Box::new(request())).encode();
+        let mut stream = Frame::Request(Box::new(request())).to_bytes();
         stream.extend_from_slice(b"rsync's own bytes");
-        let mut unframer = Unframer::default();
+        let mut buffer = FrameBuffer::default();
         let mut at = 0;
         let mut frame = None;
         while frame.is_none() {
-            let end = (at + unframer.wanted()).min(stream.len());
-            unframer.feed(&stream[at..end]);
+            let end = (at + buffer.wanted()).min(stream.len());
+            buffer.feed_bytes(&stream[at..end]);
             at = end;
-            frame = unframer.next_frame().unwrap();
+            frame = buffer.next_frame().unwrap();
         }
         assert_eq!(frame, Some(Frame::Request(Box::new(request()))));
         assert_eq!(&stream[at..], b"rsync's own bytes");
     }
 
     #[test]
-    fn the_header_is_a_word_and_a_length() {
-        assert_eq!(Frame::Exit(0).encode(), b"exit 1\n0");
-        assert_eq!(Frame::Beat.encode(), b"beat 0\n");
+    fn one_byte_is_wanted_while_the_length_does_not_read() {
+        let mut buffer = FrameBuffer::default();
+        buffer.feed_bytes(b"out many\n");
+        assert_eq!(buffer.wanted(), 1);
     }
 
     #[test]
-    fn what_is_not_a_frame_is_refused() {
-        let refused = |bytes: &[u8]| {
-            let mut unframer = Unframer::default();
-            unframer.feed(bytes);
-            unframer.next_frame().is_err()
-        };
-        assert!(refused(b"nonsense 0\n"));
-        assert!(refused(b"out many\n"));
-        assert!(refused(&[b'x'; HEADER_MAX]));
-        assert!(refused(b"exit 2\nno"));
-        assert!(refused(b"request 2\n{}"));
+    fn the_header_is_a_word_and_a_length() {
+        assert_eq!(Frame::Exit(0).to_bytes(), b"exit 1\n0");
+        assert_eq!(Frame::Beat.to_bytes(), b"beat 0\n");
+    }
+
+    #[test]
+    fn an_unknown_kind_is_refused_as_a_kind() {
+        assert_eq!(
+            refusal(b"nonsense 0\n"),
+            FrameError::Kind("nonsense".into())
+        );
+    }
+
+    #[test]
+    fn a_length_that_is_not_a_number_is_refused_as_a_header() {
+        assert_eq!(
+            refusal(b"out many\n"),
+            FrameError::Header("out many".into())
+        );
+    }
+
+    #[test]
+    fn no_newline_within_a_header_s_longest_is_refused_as_a_header() {
+        assert_eq!(
+            refusal(&[b'x'; HEADER_MAX_BYTES]),
+            FrameError::Header("x".repeat(HEADER_MAX_BYTES))
+        );
+    }
+
+    #[test]
+    fn a_header_with_no_space_is_refused_as_a_header() {
+        assert_eq!(refusal(b"out\n"), FrameError::Header("out".into()));
+    }
+
+    #[test]
+    fn a_length_past_the_largest_is_refused_as_a_header() {
+        assert_eq!(
+            refusal(b"out 18446744073709551615\n"),
+            FrameError::Header("out 18446744073709551615".into())
+        );
+    }
+
+    #[test]
+    fn a_status_that_is_not_a_number_is_refused_as_a_payload() {
+        assert_eq!(
+            refusal(b"exit 2\nno"),
+            FrameError::Payload {
+                kind: "exit",
+                why: "\"no\" is not a status".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_payload_that_is_not_its_kind_s_json_is_refused_as_a_payload() {
+        assert!(matches!(
+            refusal(b"request 2\n{}"),
+            FrameError::Payload {
+                kind: "request",
+                ..
+            }
+        ));
     }
 }

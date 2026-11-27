@@ -36,8 +36,6 @@
       "est_scope": "this",
       "remaining": {70},
       "remaining_kind": "typical",
-      "idle_for": {30},
-      "idle_kind": "never",
       "batch": {
         "id": "<batch>",
         "step": "build",
@@ -104,9 +102,7 @@
       "est_scope": "this",
       "est_wide": true,
       "remaining": {210},
-      "remaining_kind": "bound",
-      "idle_for": {30},
-      "idle_kind": "never"
+      "remaining_kind": "bound"
     },
     {
       "mode": "shared",
@@ -124,9 +120,7 @@
       "est_n": 1,
       "est_scope": "this",
       "remaining": {90},
-      "remaining_kind": "typical",
-      "idle_for": {30},
-      "idle_kind": "never"
+      "remaining_kind": "typical"
     },
     {
       "mode": "shared",
@@ -142,9 +136,7 @@
       "est_lo": 0,
       "est_hi": 0,
       "est_n": 3,
-      "est_scope": "this",
-      "idle_for": {30},
-      "idle_kind": "never"
+      "est_scope": "this"
     },
     {
       "mode": "shared",
@@ -160,9 +152,7 @@
       "est_lo": 20,
       "est_hi": 20,
       "est_n": 3,
-      "est_scope": "agent",
-      "idle_for": {30},
-      "idle_kind": "never"
+      "est_scope": "agent"
     },
     {
       "mode": "shared",
@@ -181,9 +171,7 @@
       "est_scope": "mode",
       "est_wide": true,
       "remaining": {270},
-      "remaining_kind": "bound",
-      "idle_for": {30},
-      "idle_kind": "never"
+      "remaining_kind": "bound"
     },
     {
       "mode": "shared",
@@ -200,9 +188,7 @@
       "est_hi": 20,
       "est_n": 3,
       "est_scope": "this",
-      "est_other_values": true,
-      "idle_for": {600},
-      "idle_kind": "never"
+      "est_other_values": true
     },
     {
       "mode": "shared",
@@ -219,9 +205,7 @@
       "est_hi": 20,
       "est_n": 3,
       "est_scope": "this",
-      "overrun": true,
-      "idle_for": {600},
-      "idle_kind": "never"
+      "overrun": true
     },
     {
       "mode": "rsh",
@@ -232,9 +216,7 @@
       "cmd": "rsync --server",
       "started": <n>,
       "elapsed": {5},
-      "cpu": <n>,
-      "idle_for": {5},
-      "idle_kind": "never"
+      "cpu": <n>
     },
     {
       "mode": "shared",
@@ -253,9 +235,7 @@
       "est_scope": "mode",
       "est_wide": true,
       "remaining": {260},
-      "remaining_kind": "bound",
-      "idle_for": {40},
-      "idle_kind": "never"
+      "remaining_kind": "bound"
     }
   ],
   "queue": []

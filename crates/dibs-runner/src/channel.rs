@@ -3,7 +3,7 @@ use crate::{
     platform::{Host, Platform as _},
     stop::Stopper,
 };
-use dibs_format::wire::{Frame, FrameError, Request, Unframer};
+use dibs_format::wire::{Frame, FrameBuffer, FrameError, Request};
 use std::{
     fmt,
     fs::File,
@@ -17,7 +17,7 @@ use std::{
 /// The caller's side of the stream: the request, then what says it is still there.
 pub struct Channel {
     input: File,
-    unframer: Unframer,
+    buffer: FrameBuffer,
 }
 
 /// How the runner hears whether its caller is still there.
@@ -69,7 +69,7 @@ impl Channel {
     pub fn stdin() -> io::Result<Channel> {
         Ok(Channel {
             input: File::from(io::stdin().as_fd().try_clone_to_owned()?),
-            unframer: Unframer::default(),
+            buffer: FrameBuffer::default(),
         })
     }
 
@@ -84,19 +84,19 @@ impl Channel {
     /// The next frame, the end of the stream, or silence for `within`.
     fn hear(&mut self, within: Option<Duration>) -> Result<Heard, ChannelError> {
         let mut chunk = [0u8; 4096];
-        let mut frame = self.unframer.next_frame().map_err(ChannelError::Frame)?;
+        let mut frame = self.buffer.next_frame().map_err(ChannelError::Frame)?;
         while frame.is_none() {
             if within.is_some_and(|span| !self.readable(span)) {
                 return Ok(Heard::Silent);
             }
-            let wanted = self.unframer.wanted().min(chunk.len());
+            let wanted = self.buffer.wanted().min(chunk.len());
             match self.input.read(&mut chunk[..wanted]) {
                 Ok(0) => return Ok(Heard::Ended),
-                Ok(n) => self.unframer.feed(&chunk[..n]),
+                Ok(n) => self.buffer.feed_bytes(&chunk[..n]),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(ChannelError::Read(e)),
             }
-            frame = self.unframer.next_frame().map_err(ChannelError::Frame)?;
+            frame = self.buffer.next_frame().map_err(ChannelError::Frame)?;
         }
         Ok(frame.map_or(Heard::Ended, Heard::Frame))
     }

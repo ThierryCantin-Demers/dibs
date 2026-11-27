@@ -174,7 +174,7 @@ impl Record {
             .filter(|(a, _)| a.is_empty())
             .map(|(_, s)| *s);
         Record {
-            when: run.when,
+            when: run.when_secs,
             verb: run.verb,
             label: run.label,
             device: run.device.map(|d| d.to_string()),
@@ -198,7 +198,7 @@ impl Record {
                 .iter()
                 .map(|a| (a.name.clone(), Record::sorted(&a.revisions)))
                 .collect(),
-            reps: u64::from(run.reps),
+            reps: u64::from(run.rep_count),
             failed,
             anyway: run.anyway,
             new_series: run.new_series,

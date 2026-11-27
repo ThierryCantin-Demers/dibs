@@ -38,8 +38,8 @@ pub fn serve() -> i32 {
         Ok(channel) => channel,
         Err(e) => {
             sink.say(&format!("dibs-runner: stdin could not be read: {e}\n"));
-            sink.exit(Exit::Refused.status());
-            return Exit::Refused.status();
+            sink.exit(Exit::Refused.as_status());
+            return Exit::Refused.as_status();
         }
     };
     let code = match channel.request() {
@@ -54,7 +54,7 @@ pub fn serve() -> i32 {
         Ok(request) => Visit::new(request, sink.clone()).serve(Caller::Channel(channel), signals),
         Err(e) => {
             sink.say(&format!("dibs-runner: {e}\n"));
-            Exit::Refused.status()
+            Exit::Refused.as_status()
         }
     };
     sink.exit(code);
@@ -94,7 +94,7 @@ impl Visit {
             self.sink.say(
                 "dibs: a lookup is a run or a benchmark naming the attempt it asks after, so nothing ran\n",
             );
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         if self.call.mode() != Mode::Check {
             for refused in &self.settings.refused {
@@ -105,7 +105,7 @@ impl Visit {
             Ok(machine) => machine,
             Err(none) => {
                 self.sink.say(&none.said());
-                return Exit::NoLock.status();
+                return Exit::NoLock.as_status();
             }
         };
         let dir = LockDir {
@@ -150,7 +150,7 @@ impl Visit {
                     sink: &self.sink,
                 };
                 return owners.close(
-                    &Close::of_text(&self.call.request.command),
+                    &Close::from_text(&self.call.request.command),
                     caller.channel(),
                     self.call.request.watch,
                 );
@@ -180,7 +180,7 @@ impl Visit {
             Ok(environment) => environment,
             Err(Unpinned(said)) => {
                 self.sink.say(&said);
-                return Exit::Refused.status();
+                return Exit::Refused.as_status();
             }
         };
         if let Some(batch) = self.call.batch_id()
@@ -195,7 +195,7 @@ impl Visit {
                 self.call.request.command.one_line(REFUSED_LINE)
             );
             Journal { path: &machine.log }.write(&line);
-            return Exit::Cancelled.status();
+            return Exit::Cancelled.as_status();
         }
         if matches!(
             self.call.mode(),
@@ -215,7 +215,7 @@ impl Visit {
                 self.call.request.command.one_line(REFUSED_LINE)
             );
             Journal { path: &machine.log }.write(&line);
-            return Exit::Closed.status();
+            return Exit::Closed.as_status();
         }
         let at = Serving {
             machine: &machine,
@@ -240,13 +240,13 @@ impl Visit {
             Mode::Follow => kept.follow(
                 self.call.label().as_str(),
                 caller,
-                self.call.request.watch.lease,
+                self.call.request.watch.lease_secs,
             ),
             Mode::Fetch => kept.fetch(self.call.label().as_str()),
             mode => {
                 self.sink
                     .say(&format!("dibs-runner: no {mode} call is served here\n"));
-                Exit::Refused.status()
+                Exit::Refused.as_status()
             }
         }
     }

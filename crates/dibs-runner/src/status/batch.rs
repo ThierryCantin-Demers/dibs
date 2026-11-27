@@ -3,8 +3,8 @@ use crate::{
     queue::Eta,
 };
 use dibs_format::{
-    BatchPlan, Mode, PendingKind, Span,
-    status::{BatchShown, Left},
+    BatchPlan, Mode, PendingStepKind, Span,
+    status::{BatchShown, BatchTimeLeft},
 };
 
 /// Steps named in full; the rest are counted.
@@ -38,13 +38,9 @@ impl Plan<'_> {
         let mut next = Vec::new();
         for step in self.plan.pending.iter().filter(|step| step.here) {
             here += 1;
-            let mode = match step.kind {
-                PendingKind::Job(Mode::Peek) => {
-                    next.push(step.name.clone());
-                    continue;
-                }
-                PendingKind::Job(mode) => Some(mode),
-                PendingKind::Recipe => None,
+            let Some(mode) = estimated_as(step.kind) else {
+                next.push(step.name.clone());
+                continue;
             };
             let bench = mode == Some(Mode::Bench);
             let mut start = left;
@@ -87,7 +83,7 @@ impl Plan<'_> {
                             eta.pending = ends - eta.at;
                         }
                     }
-                    format!(" ~{}", Span(estimate.median))
+                    format!(" ~{}", Span::from_secs(estimate.median))
                 }
                 None => {
                     partial = true;
@@ -101,15 +97,25 @@ impl Plan<'_> {
             id: self.plan.batch,
             step: self.plan.step,
             k: self.plan.position,
-            n: self.plan.total,
+            step_count: self.plan.step_count,
             within: self.plan.within,
-            here,
+            here_count: here,
             next: named(next),
-            left: left.map(|left| Left {
-                left,
+            left: left.map(|left_secs| BatchTimeLeft {
+                left_secs,
                 left_partial: partial,
             }),
         }
+    }
+}
+
+/// The mode a step still to come is estimated under: none for a peek, which is named without an
+/// estimate, and a mode of none for a recipe, which has no single history.
+fn estimated_as(kind: PendingStepKind) -> Option<Option<Mode>> {
+    match kind {
+        PendingStepKind::Job(Mode::Peek) => None,
+        PendingStepKind::Job(mode) => Some(Some(mode)),
+        PendingStepKind::Recipe => Some(None),
     }
 }
 

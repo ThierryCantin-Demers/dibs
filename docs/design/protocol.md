@@ -37,7 +37,7 @@ Every message, both ways, is one frame: a header line, then the payload.
 | `release` | to the runner | a held command's exit, in decimal: the end of a hold, not the caller going away |
 | `out` | to the client | bytes for the caller's stdout |
 | `err` | to the client | bytes for the caller's stderr |
-| `record` | to the client | a fact as JSON: the job's trailer, which the client prints on stderr, that a hold's lock is held, with the ports picked for it, or the tree laid out ahead of the job's command |
+| `record` | to the client | a fact as JSON: the job's trailer, which the client prints on stderr (`trailer`); that a hold's lock is held, with the ports picked for it (`holding`); that a transfer's streams are rsync's from here on (`transferring`); the tree laid out ahead of the job's command (`prepared`); what was done around a recipe step's command (`stepped`); that the job ran past its check-in and goes on without the call (`checkedin`); or how an attempt admitted before went (`admitted`) |
 | `exit` | to the client, last | the call's exit, in decimal |
 
 The runner's own stderr carries only what is not a frame, a panic for instance, and the client
@@ -229,7 +229,8 @@ read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
   them. The client's `build.rs` packs the tree and computes the hash, and the client embeds both.
 - A client only ever runs the runner at its own hash. There is no version field and no
   negotiation: the frames can change in any commit, because no runner ever reads a frame from a
-  client built from other source.
+  client built from other source. The calls that take no lock and the JSON that is stored are the
+  exceptions, under "What must stay compatible" below.
 - A runner knows its own hash: `install.sh` gives it to cargo as `DIBS_RUNNER_HASH`, which
   `dibs-format` compiles in, so a new hash rebuilds every crate of the tree whatever its files'
   times say. `dibs-runner hash` prints it. `serve <hash>` for a hash not its own says so on stderr
@@ -247,7 +248,15 @@ read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
 ### What must stay compatible
 
 - **Frames and the request:** a call that takes no lock can reach an older runner, so a field or
-  variant such a call uses is not renamed or removed. A new field is ignored by an older runner.
+  variant such a call uses is not renamed or removed. A new field is ignored by an older runner,
+  and reads as absent in the newest runner when an older client leaves it out.
+- **The status document:** `status --json` is read by dibstop and by agents, from runners of
+  other versions. A field keeps its name. A reader passes over a field it does not know, reads
+  `caches` and `clones` as empty when they are absent, and reads a lock state it does not know as
+  `other`.
+- **The JSON that is stored:** a job's `trailer.json`, the records a call appends to the file
+  `$DIBS_TRAILERS` names, and the trailers dibspatcher keeps in its store. Every later version
+  reads what an earlier one wrote, so a stored field or variant keeps its name.
 - **The bootstrap line and `build <hash>`**, above: every version keeps them.
 - **The files on the machine:** every version reads them, and so does the bash half until the
   last client has switched. A name keeps its meaning, a record's line only gains fields at its

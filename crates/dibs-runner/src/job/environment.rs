@@ -4,7 +4,7 @@ use crate::{
     settings::{home, var},
     stop::Signals,
 };
-use dibs_format::wire::{Card, Picked};
+use dibs_format::wire::{Card, PickedPort};
 use std::{
     collections::{BTreeMap, HashSet},
     os::fd::RawFd,
@@ -92,7 +92,7 @@ impl Environment {
         self.vars.insert(name, value);
     }
 
-    pub fn port(&mut self, picked: &Picked) {
+    pub fn port(&mut self, picked: &PickedPort) {
         self.ports.insert(
             format!("DIBS_PORT_{}", picked.name.to_ascii_uppercase()),
             picked.port.to_string(),
@@ -421,7 +421,7 @@ impl Pinned<'_> {
         vars.insert("DRI_PRIME", format!("pci-{}", pci.replace([':', '.'], "_")));
         vars.insert("MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE", "1".into());
         if let Some(chip) = &card.chip
-            && card.twins == 1
+            && card.twin_count == 1
         {
             vars.insert("MESA_VK_DEVICE_SELECT", chip.clone());
         }

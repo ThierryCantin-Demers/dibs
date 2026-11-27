@@ -7,7 +7,7 @@ use crate::tree::{
     git::Unstopped,
     packages::{Cache, Lines},
 };
-use dibs_format::wire::{Seeded, Shared};
+use dibs_format::wire::{Overlap, SeedReport};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -125,7 +125,7 @@ struct Taken {
 pub struct Copied {
     target: PathBuf,
     sources: Option<PathBuf>,
-    seeded: Seeded,
+    seeded: SeedReport,
 }
 
 impl<'a> Seed<'a> {
@@ -146,7 +146,7 @@ impl<'a> Seed<'a> {
     }
 
     /// A new tree's target, and its sources when the sibling has some.
-    pub fn run(&self, unstopped: Unstopped) -> Option<Seeded> {
+    pub fn run(&self, unstopped: Unstopped) -> Option<SeedReport> {
         self.copy(Existing::Kept)?
             .place(self.tree.target, self.tree.worktree, unstopped)
     }
@@ -221,8 +221,11 @@ impl<'a> Seed<'a> {
             let from = name(&sibling.dir);
             return Some(Copied {
                 sources: self.sources(&from, existing),
-                seeded: Seeded {
-                    shared: self.tree.packages.map(|p| Shared { have, of: p.len() }),
+                seeded: SeedReport {
+                    shared: self.tree.packages.map(|p| Overlap {
+                        have_count: have,
+                        of_count: p.len(),
+                    }),
                     sources: false,
                     from,
                 },
@@ -348,7 +351,12 @@ impl<'a> Seed<'a> {
 
 impl Copied {
     /// In place of a tree that has no target yet; its sources only where it has none either.
-    pub fn place(mut self, target: &Path, worktree: &Path, unstopped: Unstopped) -> Option<Seeded> {
+    pub fn place(
+        mut self,
+        target: &Path,
+        worktree: &Path,
+        unstopped: Unstopped,
+    ) -> Option<SeedReport> {
         let mut placed = false;
         unstopped(&mut || {
             placed = fs::rename(&self.target, target).is_ok();
@@ -376,7 +384,7 @@ impl Copied {
         stamp: &Stamp,
         say: &dyn Fn(&str),
         unstopped: Unstopped,
-    ) -> Option<Seeded> {
+    ) -> Option<SeedReport> {
         let aside = format!(".old.{}", stamp.as_str());
         let (old_target, old_tree) = (suffixed(target, &aside), suffixed(worktree, &aside));
         let mut replaced = false;

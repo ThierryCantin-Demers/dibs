@@ -9,8 +9,8 @@ use crate::{
     tree::{BuildMark, Commands, Spot, Stepping, TreeConfig, Trees, Turn},
 };
 use dibs_format::{
-    By, Exit, Mode, Pair, Pairs,
-    wire::{Place, Record, Step, Stepped, Then, Tree},
+    Exit, ExitSource, Mode, Pair, Pairs,
+    wire::{FollowUp, Place, Record, Step, StepReport, Tree},
 };
 use std::{
     path::{Path, PathBuf},
@@ -25,7 +25,7 @@ pub enum Laid {
     /// tree take turns rather than rename each other's files away.
     Transfer(Option<Turn>),
     /// Nothing more runs: the prepare was the job, failed, or waits for a git dependency.
-    Done { status: i32, by: By },
+    Done { status: i32, by: ExitSource },
 }
 
 /// A recipe step about to run: refused, or running with the machine's state when it is a
@@ -104,8 +104,8 @@ impl<'a> Layout<'a> {
             Err(error) => {
                 say(&error.to_string());
                 return Laid::Done {
-                    status: error.exit().status(),
-                    by: By::Dibs,
+                    status: error.exit().as_status(),
+                    by: ExitSource::Dibs,
                 };
             }
         };
@@ -115,18 +115,18 @@ impl<'a> Layout<'a> {
         let missing = prepared.awaits_gitdbs();
         let worktree = PathBuf::from(&prepared.worktree);
         match tree.then {
-            Then::Nothing => Laid::Done {
+            FollowUp::Nothing => Laid::Done {
                 status: 0,
-                by: By::Command,
+                by: ExitSource::Command,
             },
-            Then::Step if missing => {
+            FollowUp::Step if missing => {
                 say("dibs: a git dependency has to be sent first; the step runs once it is\n");
                 Laid::Done {
-                    status: Exit::Setup.status(),
-                    by: By::Dibs,
+                    status: Exit::Setup.as_status(),
+                    by: ExitSource::Dibs,
                 }
             }
-            Then::Step => {
+            FollowUp::Step => {
                 environment.in_tree(worktree.clone(), Some(prepared.target.clone()));
                 environment.copies(&prepared.copies);
                 Laid::Run(Some(Spot {
@@ -136,7 +136,7 @@ impl<'a> Layout<'a> {
             }
             // The transfer names the tree's directory, so a tree never prepared cannot turn
             // `--delete` on wherever the job happened to start.
-            Then::Transfer => {
+            FollowUp::Transfer => {
                 environment.in_tree(
                     worktree.parent().unwrap_or(Path::new("/")).to_path_buf(),
                     None,
@@ -174,8 +174,8 @@ impl<'a> Layout<'a> {
         match Turn::by(lock, deadline) {
             Ok(Some(turn)) => Ok(turn),
             Ok(None) => Err(Laid::Done {
-                status: Exit::Overran.status(),
-                by: By::Dibs,
+                status: Exit::Overran.as_status(),
+                by: ExitSource::Dibs,
             }),
             Err(e) => {
                 say(&format!(
@@ -183,8 +183,8 @@ impl<'a> Layout<'a> {
                     worktree.display()
                 ));
                 Err(Laid::Done {
-                    status: Exit::Setup.status(),
-                    by: By::Dibs,
+                    status: Exit::Setup.as_status(),
+                    by: ExitSource::Dibs,
                 })
             }
         }
@@ -194,24 +194,22 @@ impl<'a> Layout<'a> {
     /// since, the machine's state, and a build's claim on its target.
     pub fn step_begins(&self, step: &Step, stepping: &Stepping) -> Begins {
         if step.check && stepping.refused() {
-            self.at.sink.record(Record::Stepped(Stepped {
+            self.at.sink.record(Record::Stepped(StepReport {
                 refused: true,
-                ..Stepped::default()
+                ..StepReport::default()
             }));
             return Begins::Refused;
         }
         let state = step.state.then(|| {
-            Pairs(
-                Host::machine_state()
-                    .split_whitespace()
-                    .filter_map(|kv| kv.split_once('='))
-                    .filter(|(_, value)| !value.is_empty())
-                    .map(|(name, value)| Pair {
-                        name: name.to_string(),
-                        value: value.to_string(),
-                    })
-                    .collect(),
-            )
+            Host::machine_state()
+                .split_whitespace()
+                .filter_map(|kv| kv.split_once('='))
+                .filter(|(_, value)| !value.is_empty())
+                .map(|(name, value)| Pair {
+                    name: name.to_string(),
+                    value: value.to_string(),
+                })
+                .collect::<Pairs>()
         });
         if step.claim {
             stepping.claim();
@@ -247,12 +245,12 @@ impl<'a> Layout<'a> {
         let artifacts = stepping.keep(&step.artifacts);
         let unpinned = !step.pinned.is_empty() && stepping.unpinned(&step.pinned, *status);
         if unpinned {
-            *status = Exit::Setup.status();
+            *status = Exit::Setup.as_status();
         }
-        self.at.sink.record(Record::Stepped(Stepped {
+        self.at.sink.record(Record::Stepped(StepReport {
             refused: false,
             state: running.state,
-            artifacts,
+            artifact_count: artifacts,
         }));
         unpinned
     }

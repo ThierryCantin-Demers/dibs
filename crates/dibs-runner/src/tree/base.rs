@@ -13,7 +13,9 @@ use crate::{
         turn::Turn,
     },
 };
-use dibs_format::wire::{GitDb, GitDbs, Nest, Prepare, Prepared, Revision, Seeded, Source};
+use dibs_format::wire::{
+    GitDb, GitDbs, Nest, Prepare, PrepareReport, Revision, SeedReport, Source,
+};
 use std::{
     collections::BTreeMap,
     fs, io,
@@ -168,7 +170,7 @@ struct Placed {
     worktree: PathBuf,
     target: PathBuf,
     sha: String,
-    seeded: Option<Seeded>,
+    seeded: Option<SeedReport>,
     reseeded: Option<u64>,
     copies: BTreeMap<String, String>,
 }
@@ -176,7 +178,7 @@ struct Placed {
 /// A local tree's target that had built clearly less of its lockfile than a sibling has, and
 /// what replaced it.
 struct Reseeded {
-    seeded: Seeded,
+    seeded: SeedReport,
     mine: u64,
 }
 
@@ -202,7 +204,7 @@ impl<'a> Trees<'a> {
         ))
     }
 
-    pub fn prepare(&self, prepare: &Prepare) -> Result<Prepared, PrepareError> {
+    pub fn prepare(&self, prepare: &Prepare) -> Result<PrepareReport, PrepareError> {
         Trees::placed(prepare)?;
         let packages = prepare
             .packages
@@ -237,7 +239,7 @@ impl<'a> Trees<'a> {
             Source::Fetched { .. } => laid.sha.clone(),
         };
         let gitdbs = self.within_cap(Ok(self.gitdbs(&prepare.gitdbs)))?;
-        Ok(Prepared {
+        Ok(PrepareReport {
             worktree: laid.worktree.display().to_string(),
             target: laid.target.display().to_string(),
             revision: Revision {
@@ -245,7 +247,7 @@ impl<'a> Trees<'a> {
                 sha,
             },
             seeded: laid.seeded,
-            reseeded: laid.reseeded,
+            reseeded_count: laid.reseeded,
             gitdbs,
             copies: laid.copies,
         })

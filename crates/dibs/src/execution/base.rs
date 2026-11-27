@@ -32,7 +32,7 @@ pub struct ArmTree {
     pub token: String,
     pub plan: TreePlan,
     pub local: Option<super::Local>,
-    pub prepared: Option<wire::Prepared>,
+    pub prepared: Option<wire::PrepareReport>,
 }
 
 pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
@@ -143,7 +143,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     ..args
                 };
                 if refused_before_building(&backend, rec, &step_labels, &args) {
-                    return Ok(ExitCode::from(Exit::Refused.code()));
+                    return Ok(ExitCode::from(Exit::Refused.as_code()));
                 }
                 args
             }
@@ -241,7 +241,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         ..args
     };
     if refused_before_building(&backend, rec, &step_labels, &args) {
-        return Ok(ExitCode::from(Exit::Refused.code()));
+        return Ok(ExitCode::from(Exit::Refused.as_code()));
     }
     let kept = KeptStores::of(backend.machine.clone(), &tree_copies);
     if let Some(kept) = &kept {
@@ -257,7 +257,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         tree: None,
         last: false,
     };
-    let mut announce = |prepared: &wire::Prepared| prepared.announce();
+    let mut announce = |prepared: &wire::PrepareReport| prepared.announce();
 
     // The pinned trees go first: the patch names where they landed.
     let pin_jobs: Vec<RecipeJob> = (0..pins.len()).map(env_of).collect();
@@ -388,7 +388,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 let t = &mut trees[a];
                 let local = t.local.as_ref().expect("a sent tree is local");
                 let send = JobRequest {
-                    tree: Some(t.plan.tree(wire::Then::Transfer)),
+                    tree: Some(t.plan.tree(wire::FollowUp::Transfer)),
                     ..setup
                 };
                 let Reported {
@@ -415,7 +415,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             Job::Setup(a) => {
                 let t = &mut trees[a];
                 let prepare = JobRequest {
-                    tree: Some(t.plan.tree(wire::Then::Nothing)),
+                    tree: Some(t.plan.tree(wire::FollowUp::Nothing)),
                     ..setup
                 };
                 let title = preparing_title(&repo_name, arms[a].fetch.as_deref().unwrap_or(""));
@@ -465,10 +465,10 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             command: run,
             around,
         } = StepPlan::of(rec, step, &t.token, &fresh, args.anyway, patched.as_ref());
-        let record = |out: &JobOutcome, stepped: Option<&wire::Stepped>| StepRecord {
+        let record = |out: &JobOutcome, stepped: Option<&wire::StepReport>| StepRecord {
             arm: compared.then(|| arms[arm].name.clone()),
             rep: rep.filter(|_| args.reps > 1),
-            artifacts: stepped.and_then(|s| s.artifacts),
+            artifact_count: stepped.and_then(|s| s.artifact_count),
             ..out.step_record(lock)
         };
         if fold {
@@ -481,7 +481,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             let folded = JobRequest {
                 tree: Some(wire::Tree {
                     step: Some(around.clone()),
-                    ..t.plan.tree(wire::Then::Step)
+                    ..t.plan.tree(wire::FollowUp::Step)
                 }),
                 ..req
             };
@@ -501,7 +501,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             t.prepared = Some(prepared);
             if !waited {
                 if stepped.as_ref().is_some_and(|s| s.refused) {
-                    return Ok(ExitCode::from(Exit::TargetRebuilt.code()));
+                    return Ok(ExitCode::from(Exit::TargetRebuilt.as_code()));
                 }
                 if let Some(read) = stepped
                     .as_ref()
@@ -524,10 +524,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             .as_ref()
             .expect("an arm is prepared before its steps run");
         let there = JobRequest {
-            tree: Some(wire::Tree {
-                step: Some(around),
-                ..p.tree()
-            }),
+            tree: Some(p.tree(around)),
             ..req
         };
         eprintln!(
@@ -545,7 +542,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         } = backend.run_reporting(&there, &run, &mut |_| {});
         // The machine has said why; a refusal is not a run, so it leaves no record.
         if stepped.as_ref().is_some_and(|s| s.refused) {
-            return Ok(ExitCode::from(Exit::TargetRebuilt.code()));
+            return Ok(ExitCode::from(Exit::TargetRebuilt.as_code()));
         }
         if let Some(read) = stepped
             .as_ref()
@@ -568,7 +565,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         kept.fetch();
     }
 
-    let revision = |p: &wire::Prepared| p.revision.clone();
+    let revision = |p: &wire::PrepareReport| p.revision.clone();
     let pinned_revisions: Vec<Revision> = pinned.iter().map(revision).collect();
     let prepared = |a: usize| trees[a].prepared.as_ref();
     let revisions_of = |a: usize| -> Vec<Revision> {
@@ -582,7 +579,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         eprint!("{}", Arm::measured_summary(&arms, &steps, &revisions_of));
     }
     let record = RunRecord {
-        when: Moment::epoch_now(),
+        when_secs: Moment::epoch_now(),
         label,
         repo: repo_name.clone(),
         variant: Repo(&dir).variant(&repo_name),
@@ -642,7 +639,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                 })
                 .collect(),
         },
-        reps: args.reps,
+        rep_count: args.reps,
         batch: BatchStep::from_env().map(|s| BatchId::from(s.batch)),
         anyway: args.anyway,
         new_series: args.new_series,
@@ -662,7 +659,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             copies: tree_copies,
         }
         .keep(&job);
-        return Ok(ExitCode::from(Exit::CheckedIn.code()));
+        return Ok(ExitCode::from(Exit::CheckedIn.as_code()));
     }
     RunLog::here()?.append(&record)?;
 
@@ -771,7 +768,7 @@ fn refused_before_building(
 /// A step's command, and what the machine does around it.
 /// The pinned trees as the machine laid them out, and the nest whose patch points a build at them.
 pub struct LaidPins {
-    pub trees: Vec<wire::Prepared>,
+    pub trees: Vec<wire::PrepareReport>,
     pub nest: Option<Nest>,
 }
 
@@ -865,13 +862,15 @@ impl Pinned {
                         ),
                     }
                     let send = JobRequest {
-                        tree: Some(plan.tree(wire::Then::Transfer)),
+                        tree: Some(plan.tree(wire::FollowUp::Transfer)),
                         ..setup
                     };
-                    let reported =
-                        l.send(from, backend, &send, &mut |prepared: &wire::Prepared| {
-                            prepared.announce()
-                        });
+                    let reported = l.send(
+                        from,
+                        backend,
+                        &send,
+                        &mut |prepared: &wire::PrepareReport| prepared.announce(),
+                    );
                     drop(lock);
                     if reported.prepared.is_none() || reported.outcome.status != 0 {
                         return Err(RunError::Call {
@@ -887,7 +886,7 @@ impl Pinned {
                 None => {
                     eprintln!("dibs: pinning {}@{}", p.repo, p.reference);
                     let prepare = JobRequest {
-                        tree: Some(plan.tree(wire::Then::Nothing)),
+                        tree: Some(plan.tree(wire::FollowUp::Nothing)),
                         ..setup
                     };
                     let title = preparing_title(&p.repo, &p.reference);
@@ -906,7 +905,7 @@ impl Pinned {
             };
             let Some(prepared) = reported.prepared else {
                 return Err(RunError::Call {
-                    exit: Exit::Setup.status(),
+                    exit: Exit::Setup.as_status(),
                     failed: Unprepared::NoPath,
                 });
             };
@@ -1051,7 +1050,7 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
     );
     let steps = vec![out.step_record(Lock::Shared)];
     RunLog::here()?.append(&RunRecord {
-        when: Moment::epoch_now(),
+        when_secs: Moment::epoch_now(),
         verb: RunVerb::Raw,
         label: "raw".into(),
         repo: String::new(),
@@ -1069,7 +1068,7 @@ pub fn raw(args: &RecipeCall) -> Result<ExitCode, RunError> {
         batch: BatchStep::from_env().map(|s| BatchId::from(s.batch)),
         refs: None,
         arms: Vec::new(),
-        reps: 1,
+        rep_count: 1,
         anyway: false,
         new_series: false,
         fresh: Pairs::default(),

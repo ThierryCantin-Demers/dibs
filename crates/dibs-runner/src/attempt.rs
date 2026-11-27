@@ -4,7 +4,7 @@
 
 use dibs_format::{
     JobId,
-    wire::{Admitted, Trailer},
+    wire::{Admission, Trailer},
 };
 use std::{
     fs::{self, File},
@@ -41,15 +41,15 @@ impl Attempts {
 
     /// The attempt admitted for `job`, or how the attempt admitted before has gone. An id that
     /// is not one path component is refused.
-    pub fn admit(&self, id: &str, job: &JobId) -> io::Result<Result<Receipt, Admitted>> {
+    pub fn admit(&self, id: &str, job: &JobId) -> io::Result<Result<Receipt, Admission>> {
         self.publish(id, Some(job))
     }
 
     /// How attempt `id` went, without admitting it. One never admitted here is closed instead,
     /// so a request for it still on its way finds it ended and never runs: `Never`.
-    pub fn look(&self, id: &str) -> io::Result<Admitted> {
+    pub fn look(&self, id: &str) -> io::Result<Admission> {
         match self.publish(id, None)? {
-            Ok(_) => Ok(Admitted::Never),
+            Ok(_) => Ok(Admission::Never),
             Err(admitted) => Ok(admitted),
         }
     }
@@ -57,7 +57,7 @@ impl Attempts {
     /// Publishes attempt `id`'s directory whole by a rename, so whoever finds it finds its
     /// receipt already locked and naming its job; with no job, a closed one that nothing holds.
     /// Or how the one there went.
-    fn publish(&self, id: &str, job: Option<&JobId>) -> io::Result<Result<Receipt, Admitted>> {
+    fn publish(&self, id: &str, job: Option<&JobId>) -> io::Result<Result<Receipt, Admission>> {
         let attempt = self.dir.join(Attempts::checked(id)?);
         fs::create_dir_all(&self.dir)?;
         let part = self
@@ -126,24 +126,24 @@ impl Attempts {
     }
 
     /// How the attempt at `dir` went: its runner still holds it, or it left a trailer, or not.
-    fn seen(dir: &Path) -> io::Result<Admitted> {
+    fn seen(dir: &Path) -> io::Result<Admission> {
         let receipt = dir.join(RECEIPT);
         let file = File::open(&receipt)?;
         let named = fs::read_to_string(&receipt)?;
         if named.trim().is_empty() {
-            return Ok(Admitted::Never);
+            return Ok(Admission::Never);
         }
         let job = JobId::new(named.trim());
         if let Err(fs::TryLockError::WouldBlock) = file.try_lock_shared() {
             let pid = Attempts::holder(&job);
-            return Ok(Admitted::Running { job, pid });
+            return Ok(Admission::Running { job, pid });
         }
         match fs::read(dir.join(TRAILER))
             .ok()
             .and_then(|text| serde_json::from_slice::<Trailer>(&text).ok())
         {
-            Some(trailer) => Ok(Admitted::Ended(trailer)),
-            None => Ok(Admitted::Lost {
+            Some(trailer) => Ok(Admission::Ended(trailer)),
+            None => Ok(Admission::Lost {
                 started: dir.join(STARTED).exists(),
                 job,
             }),
@@ -163,7 +163,7 @@ impl Attempts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dibs_format::{By, Label, Mode};
+    use dibs_format::{ExitSource, Label, Mode};
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("dibs-attempts-{name}-{}", std::process::id()));
@@ -181,7 +181,7 @@ mod tests {
         let again = attempts.admit("sub-1.build.1", &job).unwrap();
         assert_eq!(
             again.unwrap_err(),
-            Admitted::Running {
+            Admission::Running {
                 job: job.clone(),
                 pid: 4242
             }
@@ -189,7 +189,7 @@ mod tests {
         drop(receipt);
         assert_eq!(
             attempts.admit("sub-1.build.1", &job).unwrap().unwrap_err(),
-            Admitted::Lost {
+            Admission::Lost {
                 job: job.clone(),
                 started: false
             },
@@ -198,23 +198,23 @@ mod tests {
         attempts.started("sub-1.build.1").unwrap();
         assert!(matches!(
             attempts.admit("sub-1.build.1", &job).unwrap(),
-            Err(Admitted::Lost { started: true, .. })
+            Err(Admission::Lost { started: true, .. })
         ));
         let trailer = Trailer {
             job: job.clone(),
             mode: Mode::Shared,
             label: Label::new("build"),
-            queued: 0,
-            ran: 2,
+            queued_secs: 0,
+            ran_secs: 2,
             exit: 0,
-            by: By::Command,
+            by: ExitSource::Command,
             built: None,
-            tests: None,
+            test_count: None,
         };
         attempts.ended("sub-1.build.1", &trailer);
         assert_eq!(
             attempts.admit("sub-1.build.1", &job).unwrap().unwrap_err(),
-            Admitted::Ended(trailer)
+            Admission::Ended(trailer)
         );
         let _ = fs::remove_dir_all(&dir);
     }
@@ -223,13 +223,13 @@ mod tests {
     fn an_attempt_asked_after_before_it_arrives_never_runs() {
         let dir = scratch("looked");
         let attempts = Attempts::under(&dir);
-        assert_eq!(attempts.look("sub-1.measure.1").unwrap(), Admitted::Never);
+        assert_eq!(attempts.look("sub-1.measure.1").unwrap(), Admission::Never);
         assert_eq!(
             attempts
                 .admit("sub-1.measure.1", &JobId::new("1-2"))
                 .unwrap()
                 .unwrap_err(),
-            Admitted::Never
+            Admission::Never
         );
         let _ = fs::remove_dir_all(&dir);
     }

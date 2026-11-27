@@ -5,7 +5,7 @@ use crate::{
     platform::{Descendants as _, Host, Platform as _},
     sink::Sink,
 };
-use dibs_format::{Event, Exit, JobId, wire::CheckedIn};
+use dibs_format::{Event, Exit, JobId, wire::CheckInReport};
 use std::{
     fs::{self, File},
     os::unix::process::CommandExt as _,
@@ -144,7 +144,7 @@ impl Stopper {
     /// stops nothing. False when the call is already ending, or nothing could be handed over.
     /// The caller is told without the state held, so a stop is never kept waiting on a caller
     /// that stopped reading.
-    pub fn hand_over(&self, checked: CheckedIn, text: &str, report: &File) -> bool {
+    pub fn hand_over(&self, checked: CheckInReport, text: &str, report: &File) -> bool {
         {
             let mut state = self.state();
             if !matches!(
@@ -176,7 +176,7 @@ impl Stopper {
     /// Its machine closed with `--now`: stopped as for a caller gone, ending with exit 79.
     pub fn closed(&self, why: &str) {
         self.state().closed = true;
-        self.stop_for(Event::Killed, why, Exit::Closed.status());
+        self.stop_for(Event::Killed, why, Exit::Closed.as_status());
     }
 
     fn stop_for(&self, event: Event, why: &str, code: i32) {

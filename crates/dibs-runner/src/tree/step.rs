@@ -269,7 +269,7 @@ impl<'a> Stepping<'a> {
         };
         let left: Vec<String> = locks
             .iter()
-            .flat_map(|lock| Package::all(&fs::read_to_string(lock).unwrap_or_default()))
+            .flat_map(|lock| Package::all_in_lock(&fs::read_to_string(lock).unwrap_or_default()))
             .filter(|p| names.contains(&p.name))
             .filter_map(|p| {
                 let version = p.version.map(|v| format!(" {v}")).unwrap_or_default();

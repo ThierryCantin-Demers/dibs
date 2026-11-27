@@ -1,4 +1,4 @@
-use dibs_format::status::{Idle, IdleKind};
+use dibs_format::status::{IdleKind, Idleness};
 use std::{
     fs::{File, OpenOptions},
     io::{Read as _, Seek as _, SeekFrom, Write as _},
@@ -11,7 +11,7 @@ use std::{
 pub struct Sample {
     /// Cores' worth, in hundredths, since the last look.
     pub rate: Option<u64>,
-    pub idle: Option<Idle>,
+    pub idle: Option<Idleness>,
 }
 
 /// When a job was last seen working.
@@ -88,12 +88,12 @@ impl Look<'_> {
             }
         }
         let idle = match worked {
-            Worked::Never => Some(Idle {
-                idle_for: self.now.saturating_sub(self.start),
+            Worked::Never => Some(Idleness {
+                idle_for_secs: self.now.saturating_sub(self.start),
                 idle_kind: IdleKind::Never,
             }),
-            Worked::At(t) if prev.is_some_and(|prev| self.ticks <= prev) => Some(Idle {
-                idle_for: self.now.saturating_sub(t),
+            Worked::At(t) if prev.is_some_and(|prev| self.ticks <= prev) => Some(Idleness {
+                idle_for_secs: self.now.saturating_sub(t),
                 idle_kind: IdleKind::Stalled,
             }),
             _ => None,
@@ -130,7 +130,7 @@ mod tests {
         let file = dir.join("cpu.1");
         let first = look(&file, 0, 1010);
         assert_eq!(
-            first.idle.map(|i| (i.idle_for, i.idle_kind)),
+            first.idle.map(|i| (i.idle_for_secs, i.idle_kind)),
             Some((10, IdleKind::Never))
         );
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "0 - 1010\n");
@@ -138,7 +138,7 @@ mod tests {
         assert_eq!((working.rate, working.idle), (Some(100), None));
         let stalled = look(&file, 300, 1020);
         assert_eq!(
-            stalled.idle.map(|i| (i.idle_for, i.idle_kind)),
+            stalled.idle.map(|i| (i.idle_for_secs, i.idle_kind)),
             Some((7, IdleKind::Stalled))
         );
         assert_eq!(stalled.rate, Some(0));

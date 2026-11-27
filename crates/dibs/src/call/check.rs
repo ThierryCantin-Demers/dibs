@@ -34,7 +34,7 @@ impl MachineCall<'_> {
                 "dibs: {name} is one of the team's machines, so its entry is the dibspatcher's to record:\n  \
                  run dibs --check --write there, where its inventory is kept."
             );
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         }
         let provision = Provision {
             session: &Session::new(&target, &self.here),
@@ -55,7 +55,7 @@ impl MachineCall<'_> {
         }
         if target.machine.is_none() && target.hostname.is_empty() {
             eprintln!("dibs --check --write: name the machine, with --on or a host");
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         }
         let answer = self.capture(
             Asked::plain(Mode::Check, Label::new("check-write")),
@@ -77,7 +77,7 @@ impl MachineCall<'_> {
             .filter(|n| !n.as_str().is_empty())
         else {
             eprintln!("dibs: the machine reported no usable name; give it one with --on");
-            return Ok(i32::from(Exit::Failed.code()));
+            return Ok(i32::from(Exit::Failed.as_code()));
         };
         let entry = report
             .entry
@@ -93,7 +93,7 @@ impl MachineCall<'_> {
                 "dibs: the machine reported itself as {name}, one of the team's machines, so its entry is the\n  \
                  dibspatcher's to record: run dibs --check --write there, where its inventory is kept."
             );
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         }
         let file = self
             .fleet
@@ -102,7 +102,7 @@ impl MachineCall<'_> {
             .or_else(|| self.fleet.path.clone());
         let Some(file) = file.filter(|file| Inventory::write(file, &name, &entry).is_ok()) else {
             eprintln!("dibs: could not write {}", self.fleet.shown());
-            return Ok(i32::from(Exit::Failed.code()));
+            return Ok(i32::from(Exit::Failed.as_code()));
         };
         println!("  recorded as [machine.{name}] in {}", file.display());
         Ok(status)
