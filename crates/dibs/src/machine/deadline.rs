@@ -57,6 +57,14 @@ impl Deadline {
         }
     }
 
+    /// The same instant for other work, whose running out marks nothing passed for this one.
+    pub fn alongside(&self) -> Deadline {
+        Deadline {
+            at: self.at,
+            shared: Arc::default(),
+        }
+    }
+
     /// No bound in time: the call runs until it ends, or until the `Stop` is dropped.
     pub fn stoppable() -> Stoppable {
         let shared = Arc::<Stopping>::default();

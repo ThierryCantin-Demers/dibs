@@ -427,7 +427,7 @@ impl Placement<'_> {
             answer,
         } in answers
         {
-            if answer.output.is_empty() && answer.exit == Some(i32::from(Exit::NoRunner.code())) {
+            if answer.exit == Some(i32::from(Exit::NoRunner.code())) {
                 down.clear(&name);
                 let entry = self.machine.fleet.entry(name.as_str());
                 candidates.push(Candidate {

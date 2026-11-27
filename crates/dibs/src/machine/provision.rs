@@ -354,7 +354,7 @@ impl Provision<'_> {
             let _ = stdin.write_all(source);
         });
         let (gone, ended) = mpsc::channel();
-        deadline.watch(child.id(), gone.clone(), ended);
+        deadline.alongside().watch(child.id(), gone.clone(), ended);
         let mut said = String::new();
         if let Some(mut out) = child.stdout.take() {
             let _ = out.read_to_string(&mut said);
@@ -426,17 +426,22 @@ impl Provision<'_> {
     }
 
     /// Exits 0 saying nothing when the runner is there. Otherwise claims the pid file, so one
-    /// build runs however many questions arrive at once, and starts the newest runner building it
+    /// build runs however many questions arrive at once (a dead owner's claim is taken over under
+    /// a mutex, and a running build is said only of a live one), and starts the newest runner building it
     /// from the source on stdin, once the whole of it has arrived, without waiting for it.
     fn background_line(bytes: usize) -> String {
         let hash = Runner::HASH;
         format!(
             "sh -c 'd=$HOME/.cache/dibs/runner; [ \"$(\"$d/{hash}/dibs-runner\" hash 2>/dev/null)\" = {hash} ] && exit 0; \
-             p=$d/.background-{hash}; mkdir -p \"$d\"; claim() {{ (set -C; echo $$ > \"$p.pid\") 2>/dev/null; }}; \
-             if ! claim; then if kill -0 \"$(cat \"$p.pid\" 2>/dev/null)\" 2>/dev/null || {{ rm -f \"$p.pid\"; ! claim; }}; then echo {RUNNING}; tail -n 1 \"$p.log\" 2>/dev/null; exit 0; fi; fi; \
+             p=$d/.background-{hash}; mkdir -p \"$d\" || exit 1; \
+             claim() {{ (set -C; echo $$ > \"$p.pid\") 2>/dev/null; }}; live() {{ kill -0 \"$(cat \"$p.pid\" 2>/dev/null)\" 2>/dev/null; }}; \
+             running() {{ echo {RUNNING}; tail -n 1 \"$p.log\" 2>/dev/null; exit 0; }}; \
+             if ! claim; then live && running; find \"$p.recover\" -prune -mmin +1 -exec rmdir {{}} \\; 2>/dev/null; \
+             mkdir \"$p.recover\" 2>/dev/null || exit 1; live && {{ rmdir \"$p.recover\"; running; }}; \
+             rm -f \"$p.pid\"; claim; c=$?; rmdir \"$p.recover\"; [ $c -eq 0 ] || exit 1; fi; \
              r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || {{ rm -f \"$p.pid\"; exit {MISSING}; }}; \
              t=$p.$$.tar; cat > \"$t\"; n=$(wc -c < \"$t\"); [ $n -eq {bytes} ] || {{ rm -f \"$t\" \"$p.pid\"; exit 1; }}; \
-             ( \"$r\" build {hash} < \"$t\" > \"$p.log\" 2>&1; rm -f \"$t\" \"$p.pid\" ) < /dev/null > /dev/null 2>&1 & echo $! > \"$p.pid\"; echo {STARTED}'"
+             ( \"$r\" build {hash} < \"$t\" > \"$p.log\" 2>&1 && rm -f \"$p.log\"; rm -f \"$t\" \"$p.pid\" ) < /dev/null > /dev/null 2>&1 & echo $! > \"$p.pid\"; echo {STARTED}'"
         )
     }
 
@@ -572,6 +577,75 @@ impl Provision<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+
+    /// The background line run as a login shell runs it, under `home`, with `source` on stdin.
+    fn background(home: &std::path::Path, source: &[u8]) -> (i32, String) {
+        let mut child = Command::new("sh")
+            .args(["-c", &Provision::background_line(source.len())])
+            .env("HOME", home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let _ = child.stdin.take().unwrap().write_all(source);
+        let out = child.wait_with_output().unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("dibs-bg-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_dead_owners_claim_is_taken_over_and_a_live_one_is_said_running() {
+        let home = scratch("claim");
+        let runners = home.join(".cache/dibs/runner");
+        std::fs::create_dir_all(runners.join("older")).unwrap();
+        let older = runners.join("older/dibs-runner");
+        std::fs::write(&older, "#!/bin/sh\nexec sleep 5\n").unwrap();
+        Command::new("chmod")
+            .args(["755"])
+            .arg(&older)
+            .status()
+            .unwrap();
+        let pid = runners.join(format!(".background-{}.pid", Runner::HASH));
+        std::fs::write(&pid, "999999999\n").unwrap();
+        let (code, said) = background(&home, b"source");
+        assert_eq!(
+            (code, said.trim()),
+            (0, STARTED),
+            "a dead owner's claim is taken over"
+        );
+        let (code, said) = background(&home, b"source");
+        assert_eq!(
+            (code, said.lines().next()),
+            (0, Some(RUNNING)),
+            "the build it started is live"
+        );
+        let running: i32 = std::fs::read_to_string(&pid)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // SAFETY: kill only signals the build this test started.
+        unsafe { libc::kill(running, libc::SIGKILL) };
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_cache_that_cannot_be_written_is_never_said_to_be_building() {
+        let (code, said) = background(std::path::Path::new("/dev/null"), b"source");
+        assert_ne!(code, 0, "{said}");
+        assert!(!said.contains(RUNNING) && !said.contains(STARTED), "{said}");
+    }
 
     #[test]
     fn the_first_build_reads_the_same_inside_single_quotes_in_every_shell() {
