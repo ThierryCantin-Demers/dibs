@@ -5,7 +5,7 @@ use crate::{
         held::{Held, Holder, Release},
         interrupt::Interrupt,
         lines::{Listener, Stream},
-        provision::{Installed, Provision, Queueing},
+        provision::{Background, Installed, Provision, Queueing},
         session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Said, Session},
         ssh::Ssh,
         values::{CallValues, Watch},
@@ -201,13 +201,23 @@ impl Served<'_> {
             session: self.session,
             live: self.live,
         };
-        if self.deadline.as_ref().is_some_and(Deadline::timed) {
-            if self.values.an_older_runner_answers()
-                && let Attempted::Exit(code) = self.attempt(Reached::Newest, delivery)?
-            {
-                return Ok(code);
-            }
-            return Ok(provision.not_for_a_question(delivery));
+        if let Some(deadline) = self.deadline.as_ref().filter(|d| d.timed()) {
+            let older = match self.values.an_older_runner_answers() {
+                true => match self.attempt(Reached::Newest, delivery)? {
+                    Attempted::Exit(code) => Some(code),
+                    Attempted::Missing | Attempted::BrokeOff => None,
+                },
+                false => None,
+            };
+            // A question waits on no build, but starts one, so the next question is answered.
+            let background = match Served::provisions() {
+                true => provision.in_background(deadline)?,
+                false => Background::Unknown,
+            };
+            return Ok(match older {
+                Some(code) => code,
+                None => provision.for_a_question(background, self.values.json, delivery),
+            });
         }
         // A build can wait on more than the lock, such as cargo's package cache, which every
         // cargo of the machine's account shares; a look never waits on one.
@@ -252,7 +262,7 @@ impl Served<'_> {
     /// Where `DIBS_NO_PROVISION=1` says runners are installed by hand, the call ends 72 rather
     /// than build one: a build reads and writes on the machine before it holds the lock.
     fn unprovisioned(&self, delivery: &mut Delivery) -> Option<i32> {
-        if std::env::var("DIBS_NO_PROVISION").ok().as_deref() != Some("1") {
+        if Served::provisions() {
             return None;
         }
         delivery.say(&format!(
@@ -261,6 +271,10 @@ impl Served<'_> {
             Runner::HASH
         ));
         Some(i32::from(Exit::NoRunner.code()))
+    }
+
+    fn provisions() -> bool {
+        std::env::var("DIBS_NO_PROVISION").ok().as_deref() != Some("1")
     }
 
     /// A call whose runner cannot be built yet, made of the runner already there when it can

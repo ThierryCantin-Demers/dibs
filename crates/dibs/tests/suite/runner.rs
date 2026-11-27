@@ -274,14 +274,41 @@ fn a_question_within_a_bound_builds_no_runner() {
 }
 
 #[test]
-fn a_question_within_a_bound_is_answered_by_an_older_runner() {
+fn a_question_within_a_bound_is_answered_by_an_older_runner_and_builds_this_one_meanwhile() {
     let mut s = Sandbox::new();
     without_this_runner(&mut s, true);
     s.machines("[machine.box-a]\nssh = \"dibs@box-a\"\nhostname = \"box-a\"\n");
     let out = s.remote(s.dibs(["status", "--all"])).run();
     assert_eq!(out.code, 0, "{}", out.all());
     assert_eq!(out.all().lines_with("it was not asked"), 0, "{}", out.all());
-    assert!(!installed(&s), "nothing was built");
+    until("this version's runner to be built", || installed(&s));
+}
+
+#[test]
+fn a_question_no_runner_there_answers_starts_a_build_and_the_next_one_is_answered() {
+    let mut s = Sandbox::new();
+    without_this_runner(&mut s, false);
+    s.write_exec(
+        "home/.cache/dibs/runner/0000000000000000/dibs-runner",
+        &stale_runner(),
+    );
+    s.machines("[machine.box-a]\nssh = \"dibs@box-a\"\nhostname = \"box-a\"\n");
+    let first = s.remote(s.dibs(["status", "--all", "--json"])).run();
+    assert_eq!(
+        first.stdout.lines_with("\"runner\":\"building\""),
+        1,
+        "the machine is shown as building, not as giving no answer: {}",
+        first.all()
+    );
+    until("this version's runner to be built", || installed(&s));
+    let next = s.remote(s.dibs(["status", "--all"])).run();
+    assert_eq!(next.code, 0, "{}", next.all());
+    assert_eq!(
+        next.all().lines_with("it was not asked"),
+        0,
+        "{}",
+        next.all()
+    );
 }
 
 /// The source of a runner left under this build's hash by a cargo that copied a stale binary.

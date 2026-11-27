@@ -278,8 +278,10 @@ read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
   the target every version shares. A build that finds a runner naming its hash already installed
   when its turn comes stops there.
 - **A question asked within a bound** (every machine's status, placement, a batch's kill on every
-  machine) builds nothing, since a build queues behind whatever holds the machine: the newest runner
-  there answers it, and with none it says the machine has no runner yet, and exits 72.
+  machine) waits on no build, since a build queues behind whatever holds the machine: the newest
+  runner there answers it, and with none that can it says the machine has no runner yet, and exits
+  72. Either way it has that runner build this version's as a shared job nothing waits on, once:
+  a later question finds it running by its pid file and says its last line instead.
 - **A machine with no runner at all** refuses the call with exit 72, naming `dibs --check`.
 - **`dibs --check <machine>`** installs the first runner: it streams the tree into a shell line that
   runs the same `install.sh`. No runner exists yet to take the lock, so perl takes it: its `flock`

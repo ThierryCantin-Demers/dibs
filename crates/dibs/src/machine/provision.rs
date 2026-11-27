@@ -1,4 +1,5 @@
 use crate::machine::{
+    deadline::{Deadline, Ended},
     lines::Stream,
     served::{Client, Delivery, LineBuffers, MISSING, Runner},
     session::{Liveness, Route, SSH_FAILED, Session},
@@ -60,6 +61,23 @@ const NO_LOCK_TAKER: i32 = 73;
 /// Printed by the line that builds through the newest runner once it has found one, so a build
 /// is announced only when one starts.
 const BUILDING: &str = "dibs-runner-build-starts";
+/// What the far shell says when it started a build that no call waits for.
+const STARTED: &str = "dibs-runner-build-started";
+/// What it says, then the build's last line, when one an earlier question started still runs.
+const RUNNING: &str = "dibs-runner-build-running";
+
+/// What a question found when it had this version's runner built there without waiting for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Background {
+    /// The runner is there by now.
+    Installed,
+    Started,
+    /// A build an earlier question started still runs; its last line, empty before it says one.
+    Running(String),
+    NoneThere,
+    /// Not reached, or not settled within the question's bound.
+    Unknown,
+}
 /// Written by the first build once a second on macOS, whose pipes say nothing when their reader
 /// goes: the write failing is how it learns its caller went.
 const ALIVE: &str = "dibs-first-build-alive";
@@ -308,6 +326,95 @@ impl Provision<'_> {
         ));
     }
 
+    /// Has the newest runner there build this version's as a shared job that no call waits for,
+    /// unless one is running already, and returns within the question's bound.
+    pub fn in_background(&self, deadline: &Deadline) -> io::Result<Background> {
+        let Route::Ssh { host, dial } = &self.session.route else {
+            return Ok(Background::Installed);
+        };
+        let source = Built::Runner.source();
+        let mut ssh = Ssh::to(dial);
+        ssh.args(Ssh::options())
+            .arg(host)
+            .arg(Provision::background_line(source.len()));
+        // SAFETY: the closure makes async-signal-safe calls only.
+        unsafe {
+            ssh.pre_exec(|| {
+                Ssh::parent_death_signal();
+                Ok(())
+            });
+        }
+        ssh.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = ssh.spawn()?;
+        drop(ssh);
+        let mut stdin = child.stdin.take().expect("stdin was piped");
+        thread::spawn(move || {
+            let _ = stdin.write_all(source);
+        });
+        let (gone, ended) = mpsc::channel();
+        deadline.watch(child.id(), gone.clone(), ended);
+        let mut said = String::new();
+        if let Some(mut out) = child.stdout.take() {
+            let _ = out.read_to_string(&mut said);
+        }
+        let status = child.wait();
+        let _ = gone.send(Ended::Reaped);
+        let code = status.map(Exit::shell_status).unwrap_or(SSH_FAILED);
+        let mut lines = said.lines();
+        Ok(match (code, lines.next()) {
+            (0, None) => Background::Installed,
+            (0, Some(STARTED)) => Background::Started,
+            (0, Some(RUNNING)) => Background::Running(lines.next().unwrap_or("").to_string()),
+            (MISSING, _) => Background::NoneThere,
+            _ => Background::Unknown,
+        })
+    }
+
+    /// What a question says of a machine it did not ask because its runner is not built yet.
+    pub fn for_a_question(
+        &self,
+        background: Background,
+        json: bool,
+        delivery: &mut Delivery,
+    ) -> i32 {
+        let name = &self.session.name;
+        let (state, said) = match &background {
+            Background::Started => (
+                "building",
+                "its build has started there as a shared job; ask again once it is built."
+                    .to_string(),
+            ),
+            Background::Running(last) if last.is_empty() => (
+                "building",
+                "a build started for an earlier question is running there.".to_string(),
+            ),
+            Background::Running(last) => (
+                "building",
+                format!("a build started for an earlier question is running there: {last}"),
+            ),
+            Background::Installed => ("built", "it is built by now; ask again.".to_string()),
+            Background::NoneThere | Background::Unknown => {
+                return self.not_for_a_question(delivery);
+            }
+        };
+        match json {
+            true => {
+                let record = serde_json::json!({ "runner": state, "said": said });
+                delivery.give(
+                    Stream::Out,
+                    format!("{record}\n").as_bytes(),
+                    &mut LineBuffers::default(),
+                );
+            }
+            false => delivery.say(&format!(
+                "dibs: {name} has no runner for this dibs yet, so it was not asked: {said}\n"
+            )),
+        }
+        i32::from(Exit::NoRunner.code())
+    }
+
     /// A question asked within a bound builds nothing: the build would queue behind whatever
     /// holds the machine, for as long as that takes.
     pub fn not_for_a_question(&self, delivery: &mut Delivery) -> i32 {
@@ -316,6 +423,19 @@ impl Provision<'_> {
             "dibs: {name} has no runner for this dibs yet, so it was not asked. A call that runs there builds it first, and so does:  dibs --check {name}\n"
         ));
         i32::from(Exit::NoRunner.code())
+    }
+
+    /// Exits 0 saying nothing when the runner is there. Otherwise starts the newest one building
+    /// it from the source on stdin, once the whole of it has arrived, without waiting for it.
+    fn background_line(bytes: usize) -> String {
+        let hash = Runner::HASH;
+        format!(
+            "sh -c 'd=$HOME/.cache/dibs/runner; [ \"$(\"$d/{hash}/dibs-runner\" hash 2>/dev/null)\" = {hash} ] && exit 0; \
+             p=$d/.background-{hash}; if [ -f \"$p.pid\" ] && kill -0 \"$(cat \"$p.pid\")\" 2>/dev/null; then echo {RUNNING}; tail -n 1 \"$p.log\" 2>/dev/null; exit 0; fi; \
+             r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || exit {MISSING}; \
+             t=$p.$$.tar; cat > \"$t\"; n=$(wc -c < \"$t\"); [ $n -eq {bytes} ] || {{ rm -f \"$t\"; exit 1; }}; \
+             ( \"$r\" build {hash} < \"$t\" > \"$p.log\" 2>&1; rm -f \"$t\" \"$p.pid\" ) < /dev/null > /dev/null 2>&1 & echo $! > \"$p.pid\"; echo {STARTED}'"
+        )
     }
 
     /// Exits 0 when the runner is there, and otherwise has the newest one build it.
