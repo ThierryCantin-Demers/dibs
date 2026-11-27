@@ -434,14 +434,14 @@ impl Provision<'_> {
         format!(
             "sh -c 'd=$HOME/.cache/dibs/runner; [ \"$(\"$d/{hash}/dibs-runner\" hash 2>/dev/null)\" = {hash} ] && exit 0; \
              p=$d/.background-{hash}; mkdir -p \"$d\" || exit 1; \
-             claim() {{ (set -C; echo $$ > \"$p.pid\") 2>/dev/null; }}; live() {{ kill -0 \"$(cat \"$p.pid\" 2>/dev/null)\" 2>/dev/null; }}; \
+             claim() {{ (set -C; echo $$ > \"$p.pid\") 2>/dev/null; }}; live() {{ q=$(cat \"$p.pid\" 2>/dev/null); [ -n \"$q\" ] && ps -p \"$q\" -o args= 2>/dev/null | grep -q \"background-{hash}\"; }}; \
              running() {{ echo {RUNNING}; tail -n 1 \"$p.log\" 2>/dev/null; exit 0; }}; \
              if ! claim; then live && running; find \"$p.recover\" -prune -mmin +1 -exec rmdir {{}} \\; 2>/dev/null; \
              mkdir \"$p.recover\" 2>/dev/null || exit 1; live && {{ rmdir \"$p.recover\"; running; }}; \
              rm -f \"$p.pid\"; claim; c=$?; rmdir \"$p.recover\"; [ $c -eq 0 ] || exit 1; fi; \
-             r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || {{ rm -f \"$p.pid\"; exit {MISSING}; }}; \
+             r=; for f in $(ls -t \"$d\"/*/dibs-runner 2>/dev/null); do [ -x \"$f\" ] && {{ r=$f; break; }}; done; [ -n \"$r\" ] || {{ rm -f \"$p.pid\"; exit {MISSING}; }}; \
              t=$p.$$.tar; cat > \"$t\"; n=$(wc -c < \"$t\"); [ $n -eq {bytes} ] || {{ rm -f \"$t\" \"$p.pid\"; exit 1; }}; \
-             ( \"$r\" build {hash} < \"$t\" > \"$p.log\" 2>&1 && rm -f \"$p.log\"; rm -f \"$t\" \"$p.pid\" ) < /dev/null > /dev/null 2>&1 & echo $! > \"$p.pid\"; echo {STARTED}'"
+             ( \"$r\" build {hash} < \"$t\" > \"$p.log\" 2>&1 && rm -f \"$p.log\"; rm -f \"$t\" \"$p.pid\" ) < /dev/null > /dev/null 2>&1 & echo $! > \"$p.pid.$$\" && mv \"$p.pid.$$\" \"$p.pid\"; echo {STARTED}'"
         )
     }
 
@@ -617,7 +617,7 @@ mod tests {
             .status()
             .unwrap();
         let pid = runners.join(format!(".background-{}.pid", Runner::HASH));
-        std::fs::write(&pid, "999999999\n").unwrap();
+        std::fs::write(&pid, "1\n").unwrap();
         let (code, said) = background(&home, b"source");
         assert_eq!(
             (code, said.trim()),
