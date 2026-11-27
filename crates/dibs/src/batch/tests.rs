@@ -4,8 +4,8 @@ use super::{
     parse::{Step, StepKind, parse, split_words},
     plan::Batch,
 };
-use crate::call::{BatchStep, Pending, Planned};
-use dibs_format::{Label, Mode};
+use crate::call::{BatchStep, Pending};
+use dibs_format::{Label, Mode, PendingStepKind};
 use std::path::Path;
 
 fn names(v: &[usize], steps: &[Step]) -> Vec<String> {
@@ -252,7 +252,7 @@ fn shared_steps_overlap_on_one_machine_when_marked_or_on_cards_of_their_own() {
 fn call(name: &str, mode: Mode) -> Pending {
     Pending {
         name: name.into(),
-        mode: Planned::Job(mode),
+        kind: PendingStepKind::Job(mode),
         label: Label::new(format!("{name}/x")),
         here: true,
     }

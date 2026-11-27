@@ -46,7 +46,7 @@ impl Look<'_> {
         self.dir.prune();
         let records = self.dir.records(Kind::Holder);
         let mut waiting = self.dir.records(Kind::Waiting);
-        waiting.sort_by_key(|w| w.start);
+        waiting.sort_by_key(|w| w.start_secs);
         let now = Moment::epoch_now();
         let tail = self.tail(&records, &waiting, now);
         let mut free = Eta {
@@ -165,7 +165,7 @@ impl Look<'_> {
 
     fn holder(&self, record: &LockRecord, now: u64, tail: &Tail, free: &mut Eta) -> Holder {
         let pid = record.pid;
-        let elapsed = now.saturating_sub(record.start);
+        let elapsed = now.saturating_sub(record.start_secs);
         let tree = Tree::of(pid);
         let ticks = tree.work_ticks();
         let output = tree
@@ -178,7 +178,7 @@ impl Look<'_> {
             ticks,
             clock_ticks: Host::clock_ticks(),
             now,
-            start: record.start,
+            start: record.start_secs,
         }
         .sample();
         let unseen = self.dir.works_unseen(pid);
@@ -220,9 +220,9 @@ impl Look<'_> {
             device: record.device.clone(),
             cmd: record.command.clone(),
             command: self.command(pid),
-            started: record.start,
+            started: record.start_secs,
             elapsed,
-            killed_at: self.killed_at(pid, record.start),
+            killed_at: self.killed_at(pid, record.start_secs),
             cpu: ticks / Host::clock_ticks(),
             estimate: shown,
             output,
@@ -269,8 +269,8 @@ impl Look<'_> {
             device: record.device.clone(),
             cmd: record.command.clone(),
             command: self.command(record.pid),
-            arrived: record.start,
-            waiting: now.saturating_sub(record.start),
+            arrived: record.start_secs,
+            waiting: now.saturating_sub(record.start_secs),
             eta: starts,
             low_priority,
             urgent: self.dir.urgent_why(record.pid),

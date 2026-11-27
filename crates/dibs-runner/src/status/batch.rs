@@ -3,7 +3,7 @@ use crate::{
     queue::Eta,
 };
 use dibs_format::{
-    BatchPlan, Mode, PendingKind, Span,
+    BatchPlan, Mode, PendingStepKind, Span,
     status::{BatchShown, Left},
 };
 
@@ -38,13 +38,9 @@ impl Plan<'_> {
         let mut next = Vec::new();
         for step in self.plan.pending.iter().filter(|step| step.here) {
             here += 1;
-            let mode = match step.kind {
-                PendingKind::Job(Mode::Peek) => {
-                    next.push(step.name.clone());
-                    continue;
-                }
-                PendingKind::Job(mode) => Some(mode),
-                PendingKind::Recipe => None,
+            let Some(mode) = estimated_as(step.kind) else {
+                next.push(step.name.clone());
+                continue;
             };
             let bench = mode == Some(Mode::Bench);
             let mut start = left;
@@ -101,7 +97,7 @@ impl Plan<'_> {
             id: self.plan.batch,
             step: self.plan.step,
             k: self.plan.position,
-            n: self.plan.total,
+            n: self.plan.step_count,
             within: self.plan.within,
             here,
             next: named(next),
@@ -110,6 +106,16 @@ impl Plan<'_> {
                 left_partial: partial,
             }),
         }
+    }
+}
+
+/// The mode a step still to come is estimated under: none for a peek, which is named without an
+/// estimate, and a mode of none for a recipe, which has no single history.
+fn estimated_as(kind: PendingStepKind) -> Option<Option<Mode>> {
+    match kind {
+        PendingStepKind::Job(Mode::Peek) => None,
+        PendingStepKind::Job(mode) => Some(Some(mode)),
+        PendingStepKind::Recipe => Some(None),
     }
 }
 

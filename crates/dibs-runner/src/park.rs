@@ -67,7 +67,7 @@ impl Parking {
                             .records(Kind::Holder)
                             .into_iter()
                             .find(|r| r.pid == pid)
-                            .map_or(now, |r| r.start);
+                            .map_or(now, |r| r.start_secs);
                         dir.mark_stopped(pid, Some((now.saturating_sub(began), now, &cause)));
                     }
                     state.set_stage(Stage::Parked);

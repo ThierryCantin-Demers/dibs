@@ -493,7 +493,7 @@ impl<'a> LockedCall<'a> {
             batch: match self.origin {
                 Origin::Recipe(RecipeJob {
                     batch: Some(batch), ..
-                }) if carries_batch(self.mode) => batch.sent(),
+                }) if carries_batch(self.mode) => batch.to_sent(),
                 _ => values.batch.clone(),
             },
             fingerprint: match self.origin {
@@ -548,7 +548,9 @@ impl Request<'_> {
             _ => Caller::default(),
         };
         let batch = match carries_batch(self.mode) {
-            true => BatchStep::from_env().map(|b| b.sent()).unwrap_or_default(),
+            true => BatchStep::from_env()
+                .map(|b| b.to_sent())
+                .unwrap_or_default(),
             false => String::new(),
         };
         CallValues {

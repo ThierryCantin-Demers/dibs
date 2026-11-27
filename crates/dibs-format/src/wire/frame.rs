@@ -157,7 +157,7 @@ impl std::error::Error for FrameError {}
 mod tests {
     use super::*;
     use crate::{
-        By, JobId, Label, Mode,
+        ExitSource, JobId, Label, Mode,
         wire::{MaxFrom, Trailer, Watch},
     };
 
@@ -220,7 +220,7 @@ mod tests {
                 queued: 1,
                 ran: 2,
                 exit: 0,
-                by: By::Command,
+                by: ExitSource::Command,
                 built: None,
                 tests: None,
             })),

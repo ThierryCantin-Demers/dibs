@@ -64,7 +64,7 @@ impl<'a> Peek<'a> {
         };
         let peeked = |event| {
             let mut line = at.call.log_line(event);
-            line.ran = Some(took);
+            line.ran_secs = Some(took);
             line.exit = Some(status);
             let command = request.command.one_line(ONE_LINE);
             if !command.is_empty() {

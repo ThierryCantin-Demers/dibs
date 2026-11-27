@@ -463,7 +463,7 @@ impl LockDir {
         let fresh = self
             .path
             .join(format!(".new.{}.{}", kind.prefix(), record.pid));
-        if fs::write(&fresh, format!("{record}\n")).is_ok() {
+        if fs::write(&fresh, format!("{}\n", record.to_line())).is_ok() {
             let _ = fs::rename(&fresh, self.file(kind.prefix(), record.pid));
         }
     }

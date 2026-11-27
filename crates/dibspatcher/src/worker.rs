@@ -10,7 +10,7 @@ use crate::{
     store::{Attempt, Fence, Settled, Step, Store},
 };
 use dibs_format::{
-    By, Exit, Sha256,
+    Exit, ExitSource, Sha256,
     dibspatcher::{NamedCall, Seal, State, Submission, Work},
     wire::{Admitted, Built, Bundle, BundleCheck, BundleMake, BundleManifest, Record, Trailer},
 };
@@ -875,7 +875,8 @@ impl Worker<'_> {
             match heard {
                 Some(Record::Trailer(trailer))
                 | Some(Record::Admitted(Admitted::Ended(trailer))) => {
-                    let gone = trailer.by == By::Dibs && [129, 130, 143].contains(&trailer.exit);
+                    let gone =
+                        trailer.by == ExitSource::Dibs && [129, 130, 143].contains(&trailer.exit);
                     match (trailer.exit, gone, kind) {
                         (0, _, _) => return close(Ended::done(Some(trailer), None)),
                         (_, true, Kind::Again) => again(),

@@ -1,5 +1,6 @@
-use dibs_format::{Label, Mode, status::Within, wire::Tree};
-use std::fmt;
+use dibs_format::{
+    BatchId, BatchPlan, Label, PendingStep, PendingStepKind, status::Within, wire::Tree,
+};
 
 /// Who makes a call.
 #[derive(Debug, Clone, Copy)]
@@ -31,7 +32,8 @@ pub struct RecipeJob {
 pub struct BatchStep {
     pub batch: String,
     pub step: String,
-    /// `k<TAB>n`, then one pending step per line.
+    /// `k<TAB>n`, or `k<TAB>n<TAB>job<TAB>jobs` for one of a recipe's jobs, then one pending step
+    /// per line.
     pub plan: String,
 }
 
@@ -60,8 +62,11 @@ impl BatchStep {
         ]
     }
 
-    /// What a step of a batch is started with. `DIBS_BATCH_PLAN` is `k<TAB>n` and then one pending
-    /// step per line; dibs sends it with the job and the machine keeps it beside the holder.
+    /// What a step of a batch is started with. `DIBS_BATCH_PLAN` is the plan's count line,
+    /// `k<TAB>n` or `k<TAB>n<TAB>job<TAB>jobs` when `within` names one of a recipe's jobs, and
+    /// then one pending step per line; dibs sends it with the job and the machine keeps it beside
+    /// the holder. The batch and the step are taken from the plan's head line, which holds no tab
+    /// but the one between them.
     pub fn new(
         id: &str,
         step: &str,
@@ -70,24 +75,21 @@ impl BatchStep {
         within: Option<Within>,
         pending: &[Pending],
     ) -> BatchStep {
-        let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
-        let mut plan = match within {
-            Some(w) => format!("{k}\t{n}\t{}\t{}\n", w.job, w.jobs),
-            None => format!("{k}\t{n}\n"),
-        };
-        for p in pending {
-            plan.push_str(&format!(
-                "{}\t{}\t{}\t{}\n",
-                clean(&p.name),
-                p.mode,
-                p.label.to_filed(),
-                u8::from(p.here)
-            ));
+        let text = BatchPlan {
+            batch: BatchId::new(id),
+            step: step.to_string(),
+            position: k,
+            step_count: n,
+            within,
+            pending: pending.iter().map(Pending::to_step).collect(),
         }
+        .to_text();
+        let (head, plan) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+        let (batch, named) = head.split_once('\t').unwrap_or((head, ""));
         BatchStep {
-            batch: clean(id),
-            step: clean(step),
-            plan,
+            batch: batch.to_string(),
+            step: named.to_string(),
+            plan: plan.to_string(),
         }
     }
 
@@ -104,40 +106,22 @@ impl BatchStep {
         calls: &[Pending],
         k: usize,
     ) -> Option<BatchStep> {
-        let pending = &calls[k + 1..];
         match outer {
-            Some(outer) => {
-                let (head, rest) = outer
-                    .plan
-                    .split_once('\n')
-                    .unwrap_or((outer.plan.as_str(), ""));
-                let mut nums = head
-                    .split('\t')
-                    .map(|x| x.trim().parse::<usize>().unwrap_or(0));
-                let (bk, bn) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0));
-                let step = format!("{}: {}", outer.step, calls[k].name);
-                let within = (calls.len() > 1).then(|| Within {
-                    job: k + 1,
-                    jobs: calls.len(),
-                });
-                let mut env = BatchStep::new(&outer.batch, &step, bk, bn, within, pending);
-                env.plan.push_str(rest);
-                Some(env)
-            }
+            Some(outer) => Some(BatchStep::inside(outer, calls, k)),
             None if calls.len() > 1 => Some(BatchStep::new(
                 own_id,
                 &calls[k].name,
                 k + 1,
                 calls.len(),
                 None,
-                pending,
+                &calls[k + 1..],
             )),
             None => None,
         }
     }
 
     /// As the machine keeps it beside the holder.
-    pub fn sent(&self) -> String {
+    pub fn to_sent(&self) -> String {
         let text = format!("{}\t{}\n{}\n", self.batch, self.step, self.plan);
         let kept: String = text
             .split_inclusive('\n')
@@ -147,29 +131,50 @@ impl BatchStep {
     }
 }
 
+impl BatchStep {
+    /// The plan `calls[k]` carries inside `outer`, whose count line is read leniently and whose
+    /// steps still to come are passed along as they are: it comes from another process's
+    /// environment, and refusing it would drop the call's batch.
+    fn inside(outer: BatchStep, calls: &[Pending], k: usize) -> BatchStep {
+        let (head, rest) = outer
+            .plan
+            .split_once('\n')
+            .unwrap_or((outer.plan.as_str(), ""));
+        let mut nums = head
+            .split('\t')
+            .map(|x| x.trim().parse::<usize>().unwrap_or(0));
+        let (bk, bn) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0));
+        let step = format!("{}: {}", outer.step, calls[k].name);
+        let within = (calls.len() > 1).then(|| Within {
+            job: k + 1,
+            jobs: calls.len(),
+        });
+        let mut env = BatchStep::new(&outer.batch, &step, bk, bn, within, &calls[k + 1..]);
+        env.plan.push_str(rest);
+        env
+    }
+}
+
 /// A step not yet started, as the machine's `--status` reads it to say how long a batch has left.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pending {
     pub name: String,
-    pub mode: Planned,
+    /// What its duration is filed under.
+    pub kind: PendingStepKind,
+    /// The label as its row names it, which placement reads before the machine files it.
     pub label: Label,
     /// On the same machine as the step carrying the plan.
     pub here: bool,
 }
 
-/// What a pending step's duration is filed under: a mode, or a recipe, which runs several jobs
-/// under labels of their own and so has no single history.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Planned {
-    Job(Mode),
-    Recipe,
-}
-
-impl fmt::Display for Planned {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Planned::Job(mode) => f.write_str(mode.as_str()),
-            Planned::Recipe => f.write_str("recipe"),
+impl Pending {
+    /// The step as the plan names it, under its filed label.
+    pub fn to_step(&self) -> PendingStep {
+        PendingStep {
+            name: self.name.clone(),
+            kind: self.kind,
+            label: self.label.to_filed(),
+            here: self.here,
         }
     }
 }

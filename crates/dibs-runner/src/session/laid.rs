@@ -9,7 +9,7 @@ use crate::{
     tree::{BuildMark, Commands, Spot, Stepping, TreeConfig, Trees, Turn},
 };
 use dibs_format::{
-    By, Exit, Mode, Pair, Pairs,
+    Exit, ExitSource, Mode, Pair, Pairs,
     wire::{Place, Record, Step, Stepped, Then, Tree},
 };
 use std::{
@@ -25,7 +25,7 @@ pub enum Laid {
     /// tree take turns rather than rename each other's files away.
     Transfer(Option<Turn>),
     /// Nothing more runs: the prepare was the job, failed, or waits for a git dependency.
-    Done { status: i32, by: By },
+    Done { status: i32, by: ExitSource },
 }
 
 /// A recipe step about to run: refused, or running with the machine's state when it is a
@@ -105,7 +105,7 @@ impl<'a> Layout<'a> {
                 say(&error.to_string());
                 return Laid::Done {
                     status: error.exit().as_status(),
-                    by: By::Dibs,
+                    by: ExitSource::Dibs,
                 };
             }
         };
@@ -117,13 +117,13 @@ impl<'a> Layout<'a> {
         match tree.then {
             Then::Nothing => Laid::Done {
                 status: 0,
-                by: By::Command,
+                by: ExitSource::Command,
             },
             Then::Step if missing => {
                 say("dibs: a git dependency has to be sent first; the step runs once it is\n");
                 Laid::Done {
                     status: Exit::Setup.as_status(),
-                    by: By::Dibs,
+                    by: ExitSource::Dibs,
                 }
             }
             Then::Step => {
@@ -175,7 +175,7 @@ impl<'a> Layout<'a> {
             Ok(Some(turn)) => Ok(turn),
             Ok(None) => Err(Laid::Done {
                 status: Exit::Overran.as_status(),
-                by: By::Dibs,
+                by: ExitSource::Dibs,
             }),
             Err(e) => {
                 say(&format!(
@@ -184,7 +184,7 @@ impl<'a> Layout<'a> {
                 ));
                 Err(Laid::Done {
                     status: Exit::Setup.as_status(),
-                    by: By::Dibs,
+                    by: ExitSource::Dibs,
                 })
             }
         }

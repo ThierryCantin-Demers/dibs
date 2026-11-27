@@ -167,7 +167,7 @@ impl KeptJobs<'_> {
         let ended = meta.as_ref().map(|m| {
             format!(
                 "job {}  {}  {}  ran {}s  exit {}",
-                asked.target, m.mode, m.label, m.ran, m.exit
+                asked.target, m.mode, m.label, m.ran_secs, m.exit
             )
         });
         let command = fs::read(dir.join("cmd")).unwrap_or_default();
@@ -208,7 +208,7 @@ impl KeptJobs<'_> {
                 continue;
             }
             found = true;
-            let age = Span::from_secs(Moment::epoch_now().saturating_sub(holder.start));
+            let age = Span::from_secs(Moment::epoch_now().saturating_sub(holder.start_secs));
             let mut said = format!(
                 "{}  {}  pid {}  ({age})\n  from {}\n",
                 holder.mode, holder.label, holder.pid, holder.agent

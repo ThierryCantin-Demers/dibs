@@ -2,7 +2,7 @@
 //! what is broken gets freed.
 
 use crate::{
-    call::{Journal, Received},
+    call::{Journal, Received, cleaned_text},
     clock::{Deadline, Moment, Span},
     lock::{Kind, Lock, LockDir, RecordFile},
     platform::{Descendants as _, Host, Platform as _},
@@ -65,18 +65,9 @@ impl Kill<'_> {
         )
     }
 
-    /// Whose job this is, checked before anything is signalled. An id that names an account, not
-    /// a session, proves nothing, and a record with no id is not grounds to refuse.
+    /// Whose job this is, checked before anything is signalled.
     fn refused(&self, theirs: Option<&str>, anyone: bool) -> Option<Refusal> {
-        match theirs.unwrap_or_default() {
-            _ if anyone => None,
-            id if id.starts_with("shell-") => Some(Refusal::Account),
-            "" => None,
-            id if !self.call.agent_id.is_empty() && id != self.call.agent_id => {
-                Some(Refusal::Someone)
-            }
-            _ => None,
-        }
+        refusal(theirs, &self.call.agent_id, anyone)
     }
 
     pub fn serve(&self) -> i32 {
@@ -118,7 +109,7 @@ impl Kill<'_> {
             return Exit::Failed.as_status();
         };
         let pid = record.pid;
-        let held = Span::from_secs(Moment::epoch_now().saturating_sub(record.start));
+        let held = Span::from_secs(Moment::epoch_now().saturating_sub(record.start_secs));
         if !RecordFile(&file).written_by(pid) {
             let _ = fs::remove_file(&file);
             self.sink.say(&format!(
@@ -401,6 +392,19 @@ enum Refusal {
     Account,
 }
 
+/// Why the job whose record names `theirs` is not `ours` to kill. An id that names an account,
+/// not a session, proves nothing, and a record with no id is not grounds to refuse. `theirs` is
+/// cleaned as `ours` was, since a record an older runner wrote may keep a carriage return.
+fn refusal(theirs: Option<&str>, ours: &str, anyone: bool) -> Option<Refusal> {
+    match theirs.map(cleaned_text).unwrap_or_default().as_str() {
+        _ if anyone => None,
+        id if id.starts_with("shell-") => Some(Refusal::Account),
+        "" => None,
+        id if !ours.is_empty() && id != ours => Some(Refusal::Someone),
+        _ => None,
+    }
+}
+
 /// `YYYYMMDD-HHMMSS-N`, a batch's id rather than a pid.
 fn batch_id(target: &str) -> bool {
     let parts: Vec<&str> = target.split('-').collect();
@@ -419,5 +423,10 @@ mod tests {
         assert!(!batch_id("4242"));
         assert!(!batch_id("20261001120000-4242"));
         assert!(!batch_id("2026100-120000-77"));
+    }
+
+    #[test]
+    fn a_record_an_older_runner_wrote_with_a_carriage_return_is_still_the_owners() {
+        assert!(refusal(Some("s\r1"), "s 1", false).is_none());
     }
 }

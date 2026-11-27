@@ -163,7 +163,7 @@ impl Attempts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dibs_format::{By, Label, Mode};
+    use dibs_format::{ExitSource, Label, Mode};
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("dibs-attempts-{name}-{}", std::process::id()));
@@ -207,7 +207,7 @@ mod tests {
             queued: 0,
             ran: 2,
             exit: 0,
-            by: By::Command,
+            by: ExitSource::Command,
             built: None,
             tests: None,
         };

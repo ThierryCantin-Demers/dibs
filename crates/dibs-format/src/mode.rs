@@ -21,6 +21,10 @@ impl Lock {
 }
 
 /// What a call does on the machine, as its records spell it.
+///
+/// # Guarantees
+///
+/// - `from_str` reads back every name `as_str` writes, and refuses any other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mode {

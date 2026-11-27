@@ -1,13 +1,15 @@
-mod base;
+mod error;
+mod field;
 mod history;
 mod lock;
 mod log;
 mod meta;
 mod plan;
+mod reader;
 
-pub use base::LineError;
+pub use error::LineError;
 pub use history::HistoryLine;
 pub use lock::LockRecord;
 pub use log::{Event, LogLine};
-pub use meta::{By, JobMeta};
-pub use plan::{BatchPlan, PendingKind, PendingStep};
+pub use meta::{ExitSource, JobMeta};
+pub use plan::{BatchPlan, PendingStep, PendingStepKind};

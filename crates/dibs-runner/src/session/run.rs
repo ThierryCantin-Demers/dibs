@@ -34,7 +34,7 @@ use crate::{
     tree::{Commands, Copier, KeptCopy, Mark, Stepping},
 };
 use dibs_format::{
-    By, Event, Exit, HistoryLine, JobId, Mode,
+    Event, Exit, ExitSource, HistoryLine, JobId, Mode,
     status::Ahead,
     wire::{Bundle, BundleMake, MaxFrom, Record},
 };
@@ -204,7 +204,7 @@ pub struct Hosted {
     /// A port or a service failed the call, which ends with 77.
     pub failed: bool,
     /// Who gave the status when the job's tree ended the call before its command.
-    pub laid: Option<By>,
+    pub laid: Option<ExitSource>,
     /// The cap stopped the call, rather than its command ending 124 itself.
     pub overran: bool,
     /// What a `--low-priority` job spent parked without the lock, which it did not run.
@@ -1611,7 +1611,7 @@ impl<'a> Run<'a> {
                 },
                 services: None,
                 failed: false,
-                laid: Some(By::Dibs),
+                laid: Some(ExitSource::Dibs),
                 overran: false,
                 idled: Duration::ZERO,
             };
@@ -1639,7 +1639,7 @@ impl<'a> Run<'a> {
                 drop(state);
                 self.at.sink.say(&why);
                 begun.touch_log();
-                hosted.laid = Some(By::Dibs);
+                hosted.laid = Some(ExitSource::Dibs);
                 hosted.status = Exit::Setup.as_status();
                 return hosted;
             }
@@ -1686,7 +1686,7 @@ impl<'a> Run<'a> {
                     "dibs: building in an image needs a tree dibs lays out, from a recipe or `dibs shell <repo>@<ref>`, since only it gets a target of the image's own\n",
                 );
                 begun.touch_log();
-                hosted.laid = Some(By::Dibs);
+                hosted.laid = Some(ExitSource::Dibs);
                 hosted.status = Exit::Setup.as_status();
                 return hosted;
             }
@@ -1700,7 +1700,7 @@ impl<'a> Run<'a> {
                         drop(state);
                         self.at.sink.say(&unready.why);
                         begun.touch_log();
-                        hosted.laid = Some(By::Dibs);
+                        hosted.laid = Some(ExitSource::Dibs);
                         hosted.overran = unready.overran;
                         hosted.status = match unready.overran {
                             true => Exit::Overran.as_status(),
@@ -1720,7 +1720,7 @@ impl<'a> Run<'a> {
                 Begins::Refused => {
                     drop(state);
                     begun.touch_log();
-                    hosted.laid = Some(By::Dibs);
+                    hosted.laid = Some(ExitSource::Dibs);
                     hosted.status = Exit::TargetRebuilt.as_status();
                     return hosted;
                 }
@@ -1735,7 +1735,7 @@ impl<'a> Run<'a> {
                         drop(state);
                         say(&format!("dibs: {why}, so the command did not run.\n"));
                         begun.touch_log();
-                        hosted.laid = Some(By::Dibs);
+                        hosted.laid = Some(ExitSource::Dibs);
                         hosted.status = Exit::TargetRebuilt.as_status();
                         return hosted;
                     }
@@ -1834,7 +1834,7 @@ impl<'a> Run<'a> {
                         state = held;
                         if let Some(status) = yielded.status() {
                             drop(state);
-                            hosted.laid = Some(By::Dibs);
+                            hosted.laid = Some(ExitSource::Dibs);
                             unlocked = true;
                             // Never run, its build left nothing half made.
                             if runs == 0
@@ -1879,14 +1879,14 @@ impl<'a> Run<'a> {
                         state = held;
                         if let Some(status) = yielded.status() {
                             drop(state);
-                            hosted.laid = Some(By::Dibs);
+                            hosted.laid = Some(ExitSource::Dibs);
                             break status;
                         }
                         waited |= yielded == Yielded::Waited;
                     }
                     if runs > 0 && self.cancelled() {
                         drop(state);
-                        hosted.laid = Some(By::Dibs);
+                        hosted.laid = Some(ExitSource::Dibs);
                         break Exit::Cancelled.as_status();
                     }
                     // Parked while a benchmark had it frozen, it waits to be let go; parked first,
@@ -2000,7 +2000,7 @@ impl<'a> Run<'a> {
             && let Some(running) = running
             && layout.step_ends(step, stepping, &mut hosted.status, hosted.overran, running)
         {
-            hosted.laid = Some(By::Dibs);
+            hosted.laid = Some(ExitSource::Dibs);
         }
         if hosted.status == 0
             && let Some(Bundle::Make(make)) = &request.bundle
@@ -2019,7 +2019,7 @@ impl<'a> Run<'a> {
                 Err(why) => {
                     say(&format!("dibs: no bundle was kept: {why}\n"));
                     hosted.status = Exit::Setup.as_status();
-                    hosted.laid = Some(By::Dibs);
+                    hosted.laid = Some(ExitSource::Dibs);
                 }
             }
         }
@@ -2088,8 +2088,8 @@ impl<'a> Run<'a> {
             let mut state = self.at.stopper.state();
             state.set_stage(Stage::Finishing);
             let mut line = self.at.call.log_line(Event::Finished);
-            line.queued = Some(end.acquired.waited);
-            line.ran = Some(ran);
+            line.queued_secs = Some(end.acquired.waited);
+            line.ran_secs = Some(ran);
             line.exit = Some(status);
             line.job = Some(job.clone());
             self.at.journal().write(&line);
@@ -2103,11 +2103,11 @@ impl<'a> Run<'a> {
                 {
                     by
                 }
-                Some(Exit::Overran) if end.hosted.overran => By::Dibs,
-                Some(Exit::Cancelled) if cancelled => By::Dibs,
-                Some(Exit::Closed) if closed => By::Dibs,
-                Some(Exit::ServiceFailed) if end.hosted.failed => By::Dibs,
-                _ => By::Command,
+                Some(Exit::Overran) if end.hosted.overran => ExitSource::Dibs,
+                Some(Exit::Cancelled) if cancelled => ExitSource::Dibs,
+                Some(Exit::Closed) if closed => ExitSource::Dibs,
+                Some(Exit::ServiceFailed) if end.hosted.failed => ExitSource::Dibs,
+                _ => ExitSource::Command,
             };
             Ended::new(
                 self.at,
@@ -2139,7 +2139,7 @@ impl<'a> Run<'a> {
                 &HistoryLine {
                     mode,
                     label: self.at.call.label().clone(),
-                    seconds: ran,
+                    secs: ran,
                     agent: Some(self.at.call.agent.clone()),
                     fingerprint: request.fingerprint.clone(),
                 },

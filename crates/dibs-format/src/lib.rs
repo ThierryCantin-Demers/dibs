@@ -1,7 +1,8 @@
 //! What dibs writes and reads, as data: no I/O happens here past reading the clock.
 //!
-//! Each line codec reads every shape a released dibs has written and writes the shape the
-//! machines write today, byte for byte, so a client and a machine on different versions agree.
+//! Each tab-separated record writes the shape the machines write today, byte for byte, and
+//! reads every shape a released dibs has written, so a client and a machine on different
+//! versions agree; a [`LogLine`] is only written.
 //!
 //! Values are kept in their own types: the ids [`Label`], [`JobId`], [`BatchId`],
 //! [`MachineName`] and [`Alias`], and [`FileName`], text as a machine files it; time as a
@@ -41,8 +42,8 @@ pub use friction::FrictionNote;
 pub use hex::Hex;
 pub use ids::{Alias, BatchId, FileName, JobId, Label, MachineName};
 pub use lines::{
-    BatchPlan, By, Event, HistoryLine, JobMeta, LineError, LockRecord, LogLine, PendingKind,
-    PendingStep,
+    BatchPlan, Event, ExitSource, HistoryLine, JobMeta, LineError, LockRecord, LogLine,
+    PendingStep, PendingStepKind,
 };
 pub use mode::{Lock, Mode};
 pub use moment::Moment;

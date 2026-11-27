@@ -1,5 +1,5 @@
 use crate::{
-    By, JobId, Label, Mode,
+    ExitSource, JobId, Label, Mode,
     wire::{Prepared, Stepped},
 };
 use serde::{Deserialize, Serialize};
@@ -78,7 +78,7 @@ pub struct Trailer {
     pub queued: u64,
     pub ran: u64,
     pub exit: i32,
-    pub by: By,
+    pub by: ExitSource,
     /// What cargo compiled, when the log shows cargo finishing.
     pub built: Option<Built>,
     /// The tests cargo's test runs ran together, when it ran any test binary: 0 is an exit 0 a
@@ -127,7 +127,7 @@ mod tests {
             queued: 0,
             ran: 3,
             exit: 0,
-            by: By::Command,
+            by: ExitSource::Command,
             built: None,
             tests: None,
         };
