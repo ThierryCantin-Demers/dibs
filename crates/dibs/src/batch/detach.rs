@@ -36,7 +36,7 @@ use std::{
     os::unix::process::CommandExt as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::mpsc,
+    sync::mpsc::{self, RecvTimeoutError},
     thread,
     time::Duration,
 };
@@ -891,29 +891,32 @@ impl<'a> Detach<'a> {
             .stderr(Stdio::inherit())
             .spawn()
             .map_err(CallError::Io)?;
-        let pid = child.id();
-        let (ended, end) = mpsc::channel();
-        let waiting = thread::spawn(move || {
-            let mut json = String::new();
-            if let Some(mut out) = child.stdout.take() {
-                let _ = out.read_to_string(&mut json);
+        let out = child.stdout.take();
+        let (heard, hearing) = mpsc::channel();
+        let reading = thread::spawn(move || {
+            let mut json = Vec::new();
+            if let Some(mut out) = out {
+                let mut first = [0u8; 1];
+                if let Ok(1) = out.read(&mut first) {
+                    json.push(first[0]);
+                }
+                let _ = heard.send(());
+                let _ = out.read_to_end(&mut json);
             }
-            let status = child
-                .wait()
-                .map(Exit::shell_status)
-                .unwrap_or(Exit::Failed.status());
-            let _ = ended.send(());
-            (json, status)
+            String::from_utf8_lossy(&json).into_owned()
         });
-        let checked_in = Detach::check_in()
-            .is_some_and(|seconds| end.recv_timeout(Duration::from_secs(seconds)).is_err());
+        // The batch has ended once its result starts to arrive, however long the rest takes.
+        let checked_in = Detach::check_in().is_some_and(|seconds| {
+            hearing.recv_timeout(Duration::from_secs(seconds)) == Err(RecvTimeoutError::Timeout)
+        });
         if checked_in {
-            // SAFETY: kill only signals the follow this call started, which it has not reaped.
-            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+            let _ = child.kill();
         }
-        let (json, status) = waiting
-            .join()
-            .unwrap_or_else(|_| (String::new(), Exit::Failed.status()));
+        let json = reading.join().unwrap_or_default();
+        let status = child
+            .wait()
+            .map(Exit::shell_status)
+            .unwrap_or(Exit::Failed.status());
         let finished = status == 0 && serde_json::from_str::<Followed>(json.trim()).is_ok();
         if checked_in && !finished {
             let id = &self.id;

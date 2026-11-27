@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     ffi::OsString,
-    fs::{self, File},
+    fs::{self, File, TryLockError},
     io::{BufRead as _, BufReader, Write as _},
     os::unix::process::CommandExt as _,
     path::{Path, PathBuf},
@@ -341,6 +341,27 @@ impl Detached {
     }
 
     /// Waits for the batch's driver to end, then prints what the sender keeps of it.
+    /// Takes `file`'s shared lock once its holder lets go, unless nobody reads this follow any
+    /// more: a call that checked in leaves no follow waiting here.
+    fn shared_once_read(file: &File) -> bool {
+        loop {
+            match file.try_lock_shared() {
+                Ok(()) | Err(TryLockError::Error(_)) => return true,
+                Err(TryLockError::WouldBlock) => {}
+            }
+            let mut out = libc::pollfd {
+                fd: libc::STDOUT_FILENO,
+                events: 0,
+                revents: 0,
+            };
+            // SAFETY: one pollfd, and the count says one.
+            let ready = unsafe { libc::poll(&mut out, 1, 1000) };
+            if ready > 0 && out.revents & (libc::POLLERR | libc::POLLHUP) != 0 {
+                return false;
+            }
+        }
+    }
+
     fn follow(&self, id: &BatchId) -> i32 {
         let Some(dir) = self.client().batches().map(|d| d.join(id.as_str())) else {
             return Exit::Refused.status();
@@ -351,11 +372,12 @@ impl Detached {
             return Exit::Refused.status();
         }
         // The driver holds this for as long as it runs, so taking it waits for the end.
-        if let Ok(driver) = File::open(dir.join(Driver::RECORD)) {
-            let _ = driver.lock_shared();
-        }
-        if let Ok(ending) = File::open(sent.join(Detached::ENDING)) {
-            let _ = ending.lock_shared();
+        let driver = File::open(dir.join(Driver::RECORD));
+        let ending = File::open(sent.join(Detached::ENDING));
+        for file in [driver, ending].iter().flatten() {
+            if !Detached::shared_once_read(file) {
+                return Exit::Failed.status();
+            }
         }
         let read = |path: PathBuf| fs::read_to_string(path).unwrap_or_default();
         let files = fs::read_dir(&dir)
