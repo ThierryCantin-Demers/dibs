@@ -439,7 +439,7 @@ impl Provision<'_> {
              if ! claim; then live && running; find \"$p.recover\" -prune -mmin +1 -exec rmdir {{}} \\; 2>/dev/null; \
              mkdir \"$p.recover\" 2>/dev/null || exit 1; live && {{ rmdir \"$p.recover\"; running; }}; \
              rm -f \"$p.pid\"; claim; c=$?; rmdir \"$p.recover\"; [ $c -eq 0 ] || exit 1; fi; \
-             r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | while IFS= read -r f; do [ -x \"$f\" ] && {{ echo \"$f\"; break; }}; done); [ -n \"$r\" ] || {{ rm -f \"$p.pid\"; exit {MISSING}; }}; \
+             r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | while IFS= read -r f; do [ -x \"$f\" ] && {{ printf \"%s\\n\" \"$f\"; break; }}; done); [ -n \"$r\" ] || {{ rm -f \"$p.pid\"; exit {MISSING}; }}; \
              t=$p.$$.tar; cat > \"$t\"; n=$(wc -c < \"$t\"); [ $n -eq {bytes} ] || {{ rm -f \"$t\" \"$p.pid\"; exit 1; }}; \
              ( \"$r\" build {hash} < \"$t\" > \"$p.log\" 2>&1 && rm -f \"$p.log\"; rm -f \"$t\" \"$p.pid\" ) < /dev/null > /dev/null 2>&1 & echo $! > \"$p.pid.$$\" && mv \"$p.pid.$$\" \"$p.pid\"; echo {STARTED}'"
         )
