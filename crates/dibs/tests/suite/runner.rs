@@ -274,14 +274,14 @@ fn a_question_within_a_bound_builds_no_runner() {
 }
 
 #[test]
-fn a_question_within_a_bound_is_answered_by_an_older_runner_and_builds_this_one_meanwhile() {
+fn a_question_within_a_bound_is_answered_by_an_older_runner() {
     let mut s = Sandbox::new();
     without_this_runner(&mut s, true);
     s.machines("[machine.box-a]\nssh = \"dibs@box-a\"\nhostname = \"box-a\"\n");
     let out = s.remote(s.dibs(["status", "--all"])).run();
     assert_eq!(out.code, 0, "{}", out.all());
     assert_eq!(out.all().lines_with("it was not asked"), 0, "{}", out.all());
-    until("this version's runner to be built", || installed(&s));
+    assert!(!installed(&s), "nothing was built");
 }
 
 #[test]

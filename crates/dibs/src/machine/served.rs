@@ -12,7 +12,7 @@ use crate::{
     },
 };
 use dibs_format::{
-    Exit, Span,
+    Exit, Mode, Span,
     wire::{Admitted, CheckedIn, Frame, Picked, Prepared, Record, Stepped, Trailer, Unframer},
 };
 use std::{
@@ -209,15 +209,16 @@ impl Served<'_> {
                 },
                 false => None,
             };
+            if let Some(code) = older {
+                return Ok(code);
+            }
             // A question waits on no build, but starts one, so the next question is answered.
             let background = match Served::provisions() {
                 true => provision.in_background(deadline)?,
                 false => Background::Unknown,
             };
-            return Ok(match older {
-                Some(code) => code,
-                None => provision.for_a_question(background, self.values.json, delivery),
-            });
+            let json = self.values.json && self.values.mode == Mode::Status;
+            return Ok(provision.for_a_question(background, json, delivery));
         }
         // A build can wait on more than the lock, such as cargo's package cache, which every
         // cargo of the machine's account shares; a look never waits on one.

@@ -94,8 +94,8 @@ process:
   command of a `--hold`. Only the `dibs` command makes those calls, one at a time.
 
 `dibs machines` and placement never wait on a provision, since each asks within a bound and a build
-would queue: a machine without the runner for this dibs is asked through the runner it has, and
-that runner starts building this one as a shared job nothing waits on, so the next question is
-answered by it. One whose runner cannot answer shows "has no runner for this dibs yet, so it was
-not asked" with the build's state, or `{"runner":"building","said":...}` under `--json`. A watch has no bound, so it builds
+would queue: a machine without the runner for this dibs is asked through the runner it has. One whose
+runner cannot answer shows "has no runner for this dibs yet, so it was not asked" with the build's
+state, or `{"runner":"building","said":...}` under `status --json`, and that runner starts
+building this one as a shared job nothing waits on, so the next question is answered. A watch has no bound, so it builds
 the runner first, as a call would, and a viewer says so meanwhile.

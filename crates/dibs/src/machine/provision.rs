@@ -425,15 +425,17 @@ impl Provision<'_> {
         i32::from(Exit::NoRunner.code())
     }
 
-    /// Exits 0 saying nothing when the runner is there. Otherwise starts the newest one building
-    /// it from the source on stdin, once the whole of it has arrived, without waiting for it.
+    /// Exits 0 saying nothing when the runner is there. Otherwise claims the pid file, so one
+    /// build runs however many questions arrive at once, and starts the newest runner building it
+    /// from the source on stdin, once the whole of it has arrived, without waiting for it.
     fn background_line(bytes: usize) -> String {
         let hash = Runner::HASH;
         format!(
             "sh -c 'd=$HOME/.cache/dibs/runner; [ \"$(\"$d/{hash}/dibs-runner\" hash 2>/dev/null)\" = {hash} ] && exit 0; \
-             p=$d/.background-{hash}; if [ -f \"$p.pid\" ] && kill -0 \"$(cat \"$p.pid\")\" 2>/dev/null; then echo {RUNNING}; tail -n 1 \"$p.log\" 2>/dev/null; exit 0; fi; \
-             r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || exit {MISSING}; \
-             t=$p.$$.tar; cat > \"$t\"; n=$(wc -c < \"$t\"); [ $n -eq {bytes} ] || {{ rm -f \"$t\"; exit 1; }}; \
+             p=$d/.background-{hash}; mkdir -p \"$d\"; claim() {{ (set -C; echo $$ > \"$p.pid\") 2>/dev/null; }}; \
+             if ! claim; then if kill -0 \"$(cat \"$p.pid\" 2>/dev/null)\" 2>/dev/null || {{ rm -f \"$p.pid\"; ! claim; }}; then echo {RUNNING}; tail -n 1 \"$p.log\" 2>/dev/null; exit 0; fi; fi; \
+             r=$(ls -t \"$d\"/*/dibs-runner 2>/dev/null | head -n 1); [ -n \"$r\" ] || {{ rm -f \"$p.pid\"; exit {MISSING}; }}; \
+             t=$p.$$.tar; cat > \"$t\"; n=$(wc -c < \"$t\"); [ $n -eq {bytes} ] || {{ rm -f \"$t\" \"$p.pid\"; exit 1; }}; \
              ( \"$r\" build {hash} < \"$t\" > \"$p.log\" 2>&1; rm -f \"$t\" \"$p.pid\" ) < /dev/null > /dev/null 2>&1 & echo $! > \"$p.pid\"; echo {STARTED}'"
         )
     }
