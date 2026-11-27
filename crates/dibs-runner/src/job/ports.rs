@@ -2,7 +2,7 @@ use crate::{
     lock::LockDir,
     platform::{Host, Platform as _},
 };
-use dibs_format::wire::Picked;
+use dibs_format::wire::PickedPort;
 use std::{
     fmt,
     fs::{File, OpenOptions},
@@ -25,7 +25,7 @@ pub struct PortRange {
 /// naming this process, so two calls at once are never given the same one, and prune clears it
 /// once the process is gone.
 pub struct Ports {
-    pub picked: Vec<Picked>,
+    pub picked: Vec<PickedPort>,
     /// The first name the range had no port for, and every name after it.
     pub unpicked: Vec<String>,
 }
@@ -34,7 +34,7 @@ impl Ports {
     pub fn take(names: &[String], range: PortRange, dir: &LockDir, pid: u32) -> Ports {
         let mut random = Random::open();
         let listening = Host::listening();
-        let mut picked: Vec<Picked> = Vec::new();
+        let mut picked: Vec<PickedPort> = Vec::new();
         for (at, name) in names.iter().enumerate() {
             let port = (0..TRIES)
                 .map(|_| range.low + random.below(u32::from(range.high - range.low) + 1) as u16)
@@ -45,7 +45,7 @@ impl Ports {
                         && reserve(dir, *port, pid)
                 });
             match port {
-                Some(port) => picked.push(Picked {
+                Some(port) => picked.push(PickedPort {
                     name: name.clone(),
                     port,
                 }),

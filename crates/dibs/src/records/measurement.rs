@@ -167,7 +167,11 @@ pub fn measurement_of(records: &[RunRecord], id: &str) -> Result<Measurement, Un
         }
         _ => format!("dibs jobs {}", jobs.join(", ")),
     };
-    let earliest = runs.iter().map(|r| r.when).min().unwrap_or(first.when);
+    let earliest = runs
+        .iter()
+        .map(|r| r.when_secs)
+        .min()
+        .unwrap_or(first.when_secs);
     let moment = Moment::in_zone(earliest, 0);
     Ok(Measurement {
         measured_at: format!("{}T{}Z", moment.day(), moment.clock()),

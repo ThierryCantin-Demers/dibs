@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tree {
     pub place: Place,
-    pub then: Then,
+    pub then: FollowUp,
     /// What the runner does around a recipe step's command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<Step>,
@@ -25,36 +25,43 @@ pub struct Step {
     pub check: bool,
     /// A measurement, which records the state the machine was in.
     pub state: bool,
-    /// Files the step keeps beside its log: paths in the tree, or under `$CARGO_TARGET_DIR/`.
+    /// Files the step keeps beside its log: paths in the tree, or under `$CARGO_TARGET_DIR/`,
+    /// kept in the order named.
     pub artifacts: Vec<String>,
-    /// Crates a pin replaces, which must no longer come from where they came before.
+    /// Crates a pin replaces, which must no longer come from where they came before, each looked
+    /// for in the tree's lockfiles.
     pub pinned: Vec<String>,
 }
 
 /// What the runner did around a step's command.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Stepped {
+pub struct StepReport {
     /// The measurement was refused before it ran.
     pub refused: bool,
     /// The machine's state as the measurement started, values it had none for left out.
     pub state: Option<Pairs>,
     /// How many files the step kept, when it kept any.
-    pub artifacts: Option<u32>,
+    #[serde(rename = "artifacts")]
+    pub artifact_count: Option<u32>,
 }
 
+/// Where a job's tree comes from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Place {
+    /// Laid out at the job's head.
     Prepare(Box<Prepare>),
-    At(At),
+    /// Laid out by an earlier call.
+    At(PreparedTree),
 }
 
 /// A tree already prepared, and the build cache it is given.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct At {
+pub struct PreparedTree {
     pub worktree: String,
     pub target: String,
-    /// Each variable a step gets, and the target's copy of a machine directory it names.
+    /// Each variable a step gets, and the target's copy of a machine directory it names, all
+    /// set on the step's command.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub copies: BTreeMap<String, String>,
 }
@@ -66,24 +73,28 @@ pub struct Prepare {
     pub repo: String,
     pub source: Source,
     pub nest: Option<Nest>,
-    /// Paths a new tree starts without when its sources are copied from a sibling's.
+    /// Paths a new tree starts without when its sources are copied from a sibling's, each
+    /// removed in turn.
     pub fresh: Vec<String>,
     /// Directories of the machine's, by the variable that names each, that the tree's target
     /// keeps a copy of for what runs there: a tool's store that one binary rewrites for itself.
+    /// Each is copied in turn.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub copies: BTreeMap<String, String>,
-    /// The file at the top of a copied directory, by its variable, naming the version that
-    /// wrote it: such a directory holds one version's files, which only that version reads.
+    /// The file at the top of a copied directory, looked up by its variable, naming the version
+    /// that wrote it: such a directory holds one version's files, which only that version reads.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub stamps: BTreeMap<String, String>,
     /// The version the tree's root Cargo.toml gives, which is what a stamp is compared with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     pub packages: Option<Packages>,
-    /// Git dependencies this computer could send, which the machine is asked whether it lacks.
+    /// Git dependencies this computer could send, each of which the machine is asked whether it
+    /// lacks, in turn.
     pub gitdbs: Vec<GitDb>,
 }
 
+/// Where a prepared tree's sources come from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
@@ -106,11 +117,12 @@ pub enum Source {
 }
 
 /// The directory a pinned tree is nested in, the cargo config that points it at the pins, and
-/// the pinned trees to put beside it, by repo name.
+/// the pinned trees to put beside it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Nest {
     pub name: String,
     pub config: String,
+    /// The pinned trees, by repo name: each laid out in turn, and asked whether it names a repo.
     #[serde(default)]
     pub siblings: BTreeMap<String, String>,
 }
@@ -120,6 +132,7 @@ pub struct Nest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Packages {
     pub token: String,
+    /// The hashes, sorted, each written as one line of the target's record.
     pub lines: Vec<String>,
 }
 
@@ -133,7 +146,7 @@ pub struct GitDb {
 /// What follows a prepare in the same job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Then {
+pub enum FollowUp {
     /// The job is the prepare.
     Nothing,
     /// A recipe step, run in the worktree with the target exported; it waits while a git
@@ -145,30 +158,32 @@ pub enum Then {
 
 /// What a prepare left, which the client says and records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Prepared {
+pub struct PrepareReport {
     pub worktree: String,
     pub target: String,
     pub revision: Revision,
-    pub seeded: Option<Seeded>,
+    pub seeded: Option<SeedReport>,
     /// How many of its lockfile's groups this tree's own target had, when a sibling's replaced it.
-    pub reseeded: Option<u64>,
+    #[serde(rename = "reseeded")]
+    pub reseeded_count: Option<u64>,
     pub gitdbs: Option<GitDbs>,
-    /// Where the target keeps its copy of each directory the prepare named, by variable.
+    /// Where the target keeps its copy of each directory the prepare named, by variable, all set
+    /// on a step's command.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub copies: BTreeMap<String, String>,
 }
 
-impl Prepared {
-    /// This tree as laid out, for a step that runs in it.
-    pub fn tree(&self) -> Tree {
+impl PrepareReport {
+    /// This tree as laid out, for `step` to run in.
+    pub fn tree(&self, step: Step) -> Tree {
         Tree {
-            place: Place::At(At {
+            place: Place::At(PreparedTree {
                 worktree: self.worktree.clone(),
                 target: self.target.clone(),
                 copies: self.copies.clone(),
             }),
-            then: Then::Step,
-            step: None,
+            then: FollowUp::Step,
+            step: Some(step),
         }
     }
 
@@ -178,6 +193,7 @@ impl Prepared {
     }
 }
 
+/// The commit a repo's tree was laid out at.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revision {
     pub repo: String,
@@ -186,23 +202,26 @@ pub struct Revision {
 
 /// The sibling target a new one was copied from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Seeded {
+pub struct SeedReport {
     pub from: String,
-    /// How many of this tree's packages the sibling had built, out of how many.
-    pub shared: Option<Shared>,
+    pub shared: Option<Overlap>,
     /// The sibling's sources came too, so unchanged files keep the times they were built at.
     pub sources: bool,
 }
 
+/// How many of a tree's packages a sibling had built, out of how many.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Shared {
-    pub have: u64,
-    pub of: u64,
+pub struct Overlap {
+    #[serde(rename = "have")]
+    pub have_count: u64,
+    #[serde(rename = "of")]
+    pub of_count: u64,
 }
 
 /// Where the machine's cargo keeps git databases, and which of those asked about it lacks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitDbs {
     pub dir: String,
+    /// Those the client sends, in turn.
     pub missing: Vec<GitDb>,
 }

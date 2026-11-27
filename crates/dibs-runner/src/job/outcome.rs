@@ -1,5 +1,5 @@
 use crate::clock::Span;
-use dibs_format::{JobId, JobMeta, wire::Built};
+use dibs_format::{JobId, JobMeta, wire::Compilation};
 use std::{
     fs::{self, File},
     io::{self, BufRead as _, BufReader, Read as _, Seek as _, SeekFrom},
@@ -83,7 +83,7 @@ impl Digest<'_> {
 /// it measures the previous binary.
 pub struct LogRead {
     pub lines: usize,
-    pub built: Option<Built>,
+    pub built: Option<Compilation>,
     /// The tests cargo's `test result:` lines say ran, passed or failed; None without one.
     pub tests: Option<u64>,
 }
@@ -115,8 +115,8 @@ impl LogRead {
         LogRead {
             lines,
             built: finished.then_some(match compiled {
-                0 => Built::Nothing,
-                n => Built::Crates(n),
+                0 => Compilation::Nothing,
+                n => Compilation::Crates(n),
             }),
             tests,
         }
@@ -241,11 +241,11 @@ mod tests {
         let log = "   Compiling a v1\n    Checking b v1\n    Finished `release` profile [optimized] target(s) in 3.2s\n";
         assert_eq!(
             (read(log).lines, read(log).built),
-            (3, Some(Built::Crates(2)))
+            (3, Some(Compilation::Crates(2)))
         );
         assert_eq!(
             read("    Finished `dev` profile target(s) in 0.1s\n").built,
-            Some(Built::Nothing)
+            Some(Compilation::Nothing)
         );
         assert_eq!(read("   Compiling a v1\n").built, None);
     }

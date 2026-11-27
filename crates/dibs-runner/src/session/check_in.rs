@@ -6,7 +6,7 @@ use crate::{
     kept::tail,
     stop::{Stage, Stopper},
 };
-use dibs_format::{JobId, Span, wire::CheckedIn};
+use dibs_format::{JobId, Span, wire::CheckInReport};
 use std::{
     fs::{self, File},
     io::{Read as _, Seek as _, SeekFrom},
@@ -50,16 +50,16 @@ impl CheckIns<'_> {
         self.dir.join("check-in")
     }
 
-    fn write_latest(&self, n: u32, checked: &CheckedIn, text: &str) {
+    fn write_latest(&self, n: u32, checked: &CheckInReport, text: &str) {
         let part = self.latest().with_extension("part");
-        let first = format!("{n}\t{}\t{}", checked.pid, checked.every);
+        let first = format!("{n}\t{}\t{}", checked.pid, checked.every_secs);
         if fs::write(&part, format!("{first}\n{text}")).is_ok() {
             let _ = fs::rename(&part, self.latest());
         }
     }
 
     /// The number of the latest check-in, its record for a job by this id, and its text.
-    pub fn read_latest(&self, job: &JobId) -> Option<(u32, CheckedIn, String)> {
+    pub fn read_latest(&self, job: &JobId) -> Option<(u32, CheckInReport, String)> {
         let text = fs::read_to_string(self.latest()).ok()?;
         let (first, said) = text.split_once('\n')?;
         let mut fields = first.split('\t').map(str::parse::<u64>);
@@ -68,10 +68,10 @@ impl CheckIns<'_> {
         else {
             return None;
         };
-        let checked = CheckedIn {
+        let checked = CheckInReport {
             job: job.clone(),
             pid: u32::try_from(pid).ok()?,
-            every,
+            every_secs: every,
         };
         Some((u32::try_from(n).ok()?, checked, said.to_string()))
     }
@@ -143,17 +143,22 @@ impl Job {
         handed: bool,
     ) -> bool {
         let check_ins = CheckIns { dir: &self.dir };
-        let checked = CheckedIn {
+        let checked = CheckInReport {
             job: self.id.clone(),
             pid: self.pid,
-            every: every.as_secs(),
+            every_secs: every.as_secs(),
         };
         let text = self.text(ran);
         check_ins.write_latest(n, &checked, &text);
         handed || Job::hand_over(&check_ins, checked, &text, stopper)
     }
 
-    fn hand_over(check_ins: &CheckIns, checked: CheckedIn, text: &str, stopper: &Stopper) -> bool {
+    fn hand_over(
+        check_ins: &CheckIns,
+        checked: CheckInReport,
+        text: &str,
+        stopper: &Stopper,
+    ) -> bool {
         let Ok(handed) = File::create(check_ins.handed()) else {
             return false;
         };

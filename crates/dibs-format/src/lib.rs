@@ -7,7 +7,7 @@
 //! Values are kept in their own types: the ids [`Label`], [`JobId`], [`BatchId`],
 //! [`MachineName`] and [`Alias`], and [`FileName`], text as a machine files it; time as a
 //! [`Moment`] and a duration as a [`Span`]; and bytes as [`Hex`], as [`Base64`], or digested by
-//! [`Sha256`].
+//! [`Sha256`]. A stream's frames are read back out by a [`wire::FrameBuffer`].
 //!
 //! # Examples
 //!

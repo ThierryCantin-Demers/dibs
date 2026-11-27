@@ -31,11 +31,11 @@ impl<'a> Peek<'a> {
         if let Caller::Channel(channel) = caller
             && !request.watch.off
         {
-            channel.watch(request.watch.lease, Arc::clone(at.stopper), None);
+            channel.watch(request.watch.lease_secs, Arc::clone(at.stopper), None);
         }
         let start = Moment::epoch_now();
-        let cap = (request.max > 0).then(|| Cap {
-            after: Duration::from_secs(request.max),
+        let cap = (request.max_secs > 0).then(|| Cap {
+            after: Duration::from_secs(request.max_secs),
             grace: PEEK_GRACE,
             frozen: None,
         });

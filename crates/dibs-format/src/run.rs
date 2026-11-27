@@ -22,6 +22,7 @@ pub enum RunVerb {
     With,
 }
 
+/// How a run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Outcome {
@@ -30,6 +31,11 @@ pub enum Outcome {
 }
 
 impl Outcome {
+    /// How a run of these steps ended.
+    ///
+    /// # Guarantees
+    ///
+    /// - Ok when every step exited 0, a run of no steps included.
     pub fn of_steps(steps: &[StepRecord]) -> Outcome {
         match steps.iter().all(|s| s.status == 0) {
             true => Outcome::Ok,
@@ -46,20 +52,30 @@ pub struct Pair {
 }
 
 /// Named values written as a JSON object in the order they were recorded.
+///
+/// # Guarantees
+///
+/// - Iterates, writes and reads its values in the order they were recorded, a repeated name
+///   each time it was.
+/// - `sorted` keeps a repeated name's last value.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Pairs(pub Vec<Pair>);
+pub struct Pairs(
+    /// Read in the order recorded.
+    pub Vec<Pair>,
+);
 
 impl Pairs {
+    /// Whether no value was recorded.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
+    /// The values, in the order they were recorded.
     pub fn iter(&self) -> impl Iterator<Item = &Pair> {
         self.0.iter()
     }
 
-    /// By name, the way a reader that did not keep the order saw them; a repeated name keeps
-    /// its last value.
+    /// By name, the way a reader that did not keep the order saw them.
     pub fn sorted(&self) -> BTreeMap<&str, &str> {
         self.iter()
             .map(|p| (p.name.as_str(), p.value.as_str()))
@@ -149,8 +165,8 @@ pub struct StepRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rep: Option<u32>,
     /// How many files it kept for the caller.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifacts: Option<u32>,
+    #[serde(rename = "artifacts", default, skip_serializing_if = "Option::is_none")]
+    pub artifact_count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job: Option<JobId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -173,10 +189,24 @@ pub struct ArmRecord {
 }
 
 /// What was measured, one line of `runs.jsonl` per run. The field order is the line's.
+///
+/// # Assumptions
+///
+/// - A run has at least one rep.
+///
+/// # Guarantees
+///
+/// - A line [`RunRecord::to_line`] wrote, or that a released dibs appended to `runs.jsonl`,
+///   writes back byte for byte. Other JSON that reads, with its keys in another order, its
+///   defaults written out or fields it does not know, does not.
+/// - Control characters other than newline and tab are written as `\u00XX`, as every line
+///   already in a `runs.jsonl` has them.
+/// - A field a line leaves out reads as its default, one rep for `rep_count`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRecord {
+    /// When the run was recorded, since the epoch.
     #[serde(rename = "t")]
-    pub when: u64,
+    pub when_secs: u64,
     pub verb: RunVerb,
     pub label: String,
     /// The repo's identity, which the label only starts with.
@@ -214,13 +244,15 @@ pub struct RunRecord {
     /// A comparison's `@` as it was given, such as `main..local`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refs: Option<String>,
+    /// A comparison's arms, in the order given.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub arms: Vec<ArmRecord>,
     #[serde(
+        rename = "reps",
         default = "RunRecord::single_rep",
         skip_serializing_if = "RunRecord::is_single_rep"
     )]
-    pub reps: u32,
+    pub rep_count: u32,
     /// Measured with `--anyway` over a target another tree had built into.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub anyway: bool,
@@ -235,13 +267,16 @@ pub struct RunRecord {
     /// What the machine read of itself as the measurement took the lock.
     #[serde(default, skip_serializing_if = "Pairs::is_empty")]
     pub state: Pairs,
+    /// The recipe's parameters, read by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, String>,
+    /// The recipe's steps, in the order written.
     #[serde(default)]
     pub procedure: Vec<ProcedureStep>,
     /// Empty for a comparison, whose arms carry their own.
     #[serde(default)]
     pub revisions: Pairs,
+    /// The jobs, in the order they started.
     #[serde(default)]
     pub steps: Vec<StepRecord>,
     /// Absent from a line written before outcomes were recorded.
@@ -250,14 +285,6 @@ pub struct RunRecord {
 }
 
 impl RunRecord {
-    fn single_rep() -> u32 {
-        1
-    }
-
-    fn is_single_rep(reps: &u32) -> bool {
-        *reps <= 1
-    }
-
     /// Whether the run failed, from its outcome, or from its steps on a line without one.
     pub fn failed(&self) -> bool {
         self.outcome
@@ -268,10 +295,20 @@ impl RunRecord {
     /// The line `runs.jsonl` holds for this run, without its newline.
     pub fn to_line(&self) -> String {
         let mut line = Vec::new();
-        let mut serializer = serde_json::Serializer::with_formatter(&mut line, RecordEscapes);
+        let mut serializer = serde_json::Serializer::with_formatter(&mut line, RunLineFormatter);
         self.serialize(&mut serializer)
             .expect("a run record serializes");
         String::from_utf8(line).expect("JSON is UTF-8")
+    }
+}
+
+impl RunRecord {
+    fn single_rep() -> u32 {
+        1
+    }
+
+    fn is_single_rep(rep_count: &u32) -> bool {
+        *rep_count <= 1
     }
 }
 
@@ -283,11 +320,10 @@ impl FromStr for RunRecord {
     }
 }
 
-/// Compact JSON whose control characters other than newline and tab are written as `\u00XX`,
-/// as every record already in a `runs.jsonl` has them.
-struct RecordEscapes;
+/// Writes a [`RunRecord`]'s line as compact JSON, with the escapes its Guarantees name.
+struct RunLineFormatter;
 
-impl Formatter for RecordEscapes {
+impl Formatter for RunLineFormatter {
     fn write_char_escape<W: ?Sized + io::Write>(
         &mut self,
         writer: &mut W,
@@ -316,7 +352,7 @@ mod tests {
 
     const RECIPE: &str = r#"{"t":1759300000,"verb":"build","label":"app/build/rec","repo":"app","recipe":"rec","fingerprint":"2593baf3b5dbbcce","isolation":"machine","backend":"dibs","procedure":[{"lock":"shared","run":"true"}],"revisions":{"app":"local:abc1234+dirty-0123456789ab"},"steps":[{"lock":"shared","status":0,"seconds":1,"job":"20261001-120000-4242","log":"host:/r/scratch/jobs/20261001-120000-4242/log"}],"outcome":"ok"}"#;
     const COMPARISON: &str = r#"{"t":1,"verb":"bench","label":"app/bench/b@gpu0","repo":"app","variant":"app-wt","recipe":"b","fingerprint":"f","isolation":"machine","backend":"dibs","machine":"m1","device":"gpu0","seeded":"t1","batch":"b1","refs":"main..local","arms":[{"name":"main","fetched":"origin/main","revisions":{"app":"aaa","dep":"ddd"}},{"name":"local","revisions":{"app":"bbb"},"seeded":"t2"}],"reps":2,"anyway":true,"new_series":true,"fresh":{"STORE":"x-r1"},"state":{"gov":"performance"},"params":{"a":"1","b":"two"},"procedure":[{"lock":"shared","run":"export K='v'; cargo build"},{"lock":"exclusive","run":"cargo bench"}],"revisions":{},"steps":[{"lock":"exclusive","status":0,"seconds":9,"arm":"main","rep":1,"artifacts":2,"job":"j1","built":"3","log":"l1"},{"lock":"exclusive","status":1,"seconds":8,"arm":"local","rep":2}],"outcome":"failed"}"#;
-    const RAW: &str = r#"{"t":42,"verb":"raw","label":"raw","recipe":"","fingerprint":"","isolation":"machine","backend":"dibs","reason":"no recipe \"fits\"\tyet\nat all\u000d\u0001","procedure":[{"lock":"shared","run":"echo 'a\\b'"}],"revisions":{},"steps":[{"lock":"shared","status":0,"seconds":0}],"outcome":"ok"}"#;
+    const RAW: &str = r#"{"t":42,"verb":"raw","label":"raw","recipe":"","fingerprint":"","isolation":"machine","backend":"dibs","reason":"no recipe \"fits\"\tyet\nat all\u000d\u0001\u0008\u000c","procedure":[{"lock":"shared","run":"echo 'a\\b'"}],"revisions":{},"steps":[{"lock":"shared","status":0,"seconds":0}],"outcome":"ok"}"#;
 
     #[test]
     fn the_lines_runs_jsonl_holds_read_and_write_back_byte_for_byte() {
@@ -328,22 +364,42 @@ mod tests {
 
     #[test]
     fn named_values_keep_the_order_they_were_recorded_in() {
-        let record: RunRecord = COMPARISON.parse().unwrap();
-        let names: Vec<&str> = record.arms[0]
-            .revisions
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect();
-        assert_eq!(names, ["app", "dep"]);
-        assert_eq!(record.reps, 2);
-        assert!(record.failed());
+        let line = r#"{"t":1,"verb":"build","label":"l","revisions":{"dep":"d","app":"a"}}"#;
+        let record: RunRecord = line.parse().unwrap();
+        let names: Vec<&str> = record.revisions.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["dep", "app"]);
+    }
+
+    #[test]
+    fn named_values_sorted_keep_a_repeated_name_s_last_value() {
+        let pairs = Pairs::from(vec![
+            ("b".to_string(), "1".to_string()),
+            ("a".to_string(), "2".to_string()),
+            ("b".to_string(), "3".to_string()),
+        ]);
+        assert_eq!(
+            pairs.sorted().into_iter().collect::<Vec<_>>(),
+            [("a", "2"), ("b", "3")]
+        );
+    }
+
+    #[test]
+    fn a_recorded_outcome_decides_failed_over_the_steps() {
+        let line = r#"{"t":1,"verb":"build","label":"l","steps":[{"lock":"shared","status":3,"seconds":1}],"outcome":"ok"}"#;
+        let record: RunRecord = line.parse().unwrap();
+        assert!(!record.failed());
     }
 
     #[test]
     fn a_line_from_before_outcomes_were_recorded_fails_by_its_steps() {
         let line = r#"{"t":1,"verb":"build","label":"l","steps":[{"lock":"shared","status":3,"seconds":1}]}"#;
         let record: RunRecord = line.parse().unwrap();
-        assert_eq!((record.outcome, record.reps), (None, 1));
+        assert_eq!((record.outcome, record.rep_count), (None, 1));
         assert!(record.failed());
+    }
+
+    #[test]
+    fn a_run_of_no_steps_is_ok() {
+        assert_eq!(Outcome::of_steps(&[]), Outcome::Ok);
     }
 }

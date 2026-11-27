@@ -116,7 +116,7 @@ impl Bundles {
             .map_err(|e| format!("{} could not be kept: {e}", exe.display()))?;
         let digest = Sha256::hex_of_file(&part.join(&file)).map_err(|e| format!("{file}: {e}"))?;
         let manifest = BundleManifest {
-            size: fs::metadata(part.join(&file)).map(|m| m.len()).unwrap_or(0),
+            size_bytes: fs::metadata(part.join(&file)).map(|m| m.len()).unwrap_or(0),
             exe: file,
             digest,
             package: make.package.clone(),
@@ -285,7 +285,19 @@ mod tests {
         let manifest = BundleManifest {
             exe: "mnist".into(),
             digest: digest.clone(),
-            ..BundleManifest::default()
+            size_bytes: 11,
+            package: "demo".into(),
+            kind: "bin".into(),
+            name: "mnist".into(),
+            profile: "release".into(),
+            cargo: vec!["build".into(), "--release".into()],
+            rustflags: String::new(),
+            rustc: String::new(),
+            lockfile: String::new(),
+            tree: String::new(),
+            job: String::new(),
+            host: String::new(),
+            inputs: Default::default(),
         };
         fs::write(
             dir.join(BundleManifest::FILE),

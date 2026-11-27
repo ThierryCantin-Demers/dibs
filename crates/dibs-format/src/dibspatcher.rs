@@ -2,7 +2,7 @@
 //! `Reply` lines until `End`. Unlike the runner's frames this is versioned, since a coworker's
 //! dibs and the dibspatcher's are built from different sources.
 
-use crate::wire::{Admitted, Trailer};
+use crate::wire::{Admission, Trailer};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -133,7 +133,7 @@ pub enum Reply {
     },
     Admitted {
         step: String,
-        admitted: Admitted,
+        admitted: Admission,
     },
     End {
         exit: i32,

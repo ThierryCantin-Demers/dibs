@@ -1,0 +1,3 @@
+/// The hash of the runner source a machine's `install.sh` built this from, None anywhere else.
+/// Read in the crate the runner's others depend on, so a new hash rebuilds them all.
+pub const SOURCE_HASH: Option<&str> = option_env!("DIBS_RUNNER_HASH");

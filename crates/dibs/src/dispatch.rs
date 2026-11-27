@@ -629,7 +629,7 @@ impl Shown {
             }
             Reply::Text { err: true, text } => eprint!("{text}"),
             Reply::Text { err: false, text } => print!("{text}"),
-            Reply::Trailer { step, trailer } => eprintln!("{step}: {trailer}"),
+            Reply::Trailer { step, trailer } => eprintln!("{step}: {}", trailer.to_line()),
             Reply::Admitted { step, admitted } => eprintln!("{step}: {admitted:?}"),
             Reply::End { .. } => {}
         }
@@ -663,7 +663,7 @@ fn status(detail: &Detail) -> String {
             step.state.as_str(),
             step.machine.as_deref().unwrap_or("dibspatcher"),
             match (&step.trailer, &step.note) {
-                (Some(trailer), _) => trailer.to_string(),
+                (Some(trailer), _) => trailer.to_line(),
                 (None, Some(note)) => note.clone(),
                 (None, None) => String::new(),
             }

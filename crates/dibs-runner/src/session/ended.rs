@@ -5,7 +5,7 @@ use crate::{
 };
 use dibs_format::{
     ExitSource, JobId, JobMeta,
-    wire::{Built, Record, Trailer},
+    wire::{Compilation, Record, Trailer},
 };
 use std::{fs, path::PathBuf};
 
@@ -63,12 +63,12 @@ impl<'a> Ended<'a> {
             job: tally.job.clone(),
             mode: call.mode(),
             label: call.label().clone(),
-            queued: tally.waited,
-            ran: tally.ran,
+            queued_secs: tally.waited,
+            ran_secs: tally.ran,
             exit: tally.status,
             by: tally.by,
             built: tally.read.built,
-            tests: tally.read.tests,
+            test_count: tally.read.tests,
         }
     }
 
@@ -109,7 +109,7 @@ impl<'a> Ended<'a> {
             ));
         }
         after.push_str(&tally.hosted.lines(host));
-        if built == Some(Built::Nothing) {
+        if built == Some(Compilation::Nothing) {
             after.push_str(
                 "  built nothing: cargo compiled 0 crates, so a measurement after this measures the previous binary.\n",
             );

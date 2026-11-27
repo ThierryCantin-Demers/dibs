@@ -36,7 +36,7 @@ use crate::{
 use dibs_format::{
     Event, Exit, ExitSource, HistoryLine, JobId, Mode,
     status::Ahead,
-    wire::{Bundle, BundleMake, MaxFrom, Record},
+    wire::{Bundle, BundleMake, MaxSource, Record},
 };
 use std::{
     fs::{self, File},
@@ -255,7 +255,7 @@ impl<'a> Run<'a> {
         let max = self.cap(&history);
         match caller {
             Caller::Channel(channel) if !request.watch.off => channel.watch(
-                request.watch.lease,
+                request.watch.lease_secs,
                 Arc::clone(self.at.stopper),
                 arrived.held.clone(),
             ),
@@ -357,7 +357,7 @@ impl<'a> Run<'a> {
             });
         let shut = closed::Watch::start(self.at.dir.clone(), Arc::clone(self.at.stopper));
         let check_in = request
-            .check_in
+            .check_in_secs
             // A job its cap stops first wakes its caller then anyway.
             .filter(|every| {
                 begun.log.is_some() && !request.watch.hold && (max == 0 || *every < max)
@@ -459,7 +459,11 @@ impl<'a> Run<'a> {
         let machine = matches!(claim, Some(Takes::Machine));
         // A whole-machine benchmark's record and the card benchmarks it lets ahead appear at once;
         // without the guard it lists none, and lets none ahead.
-        let within = guard_wait(request.wait.map(|wait| since + Duration::from_secs(wait)));
+        let within = guard_wait(
+            request
+                .wait_secs
+                .map(|wait| since + Duration::from_secs(wait)),
+        );
         let window = machine.then(|| self.at.dir.join_guard(within));
         // Before the record, so nobody reads it as a benchmark of the whole machine.
         if let Some(Takes::Cards(pcis)) = &claim {
@@ -620,7 +624,7 @@ impl<'a> Run<'a> {
                 told = true;
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
-                let wait = request.wait.unwrap_or_default();
+                let wait = request.wait_secs.unwrap_or_default();
                 self.at.sink.say(&format!(
                     "dibs: still busy after {wait}s, gave up: what cannot be parked still runs.\n"
                 ));
@@ -685,7 +689,7 @@ impl<'a> Run<'a> {
                 self.at.dir.park(pid, &now.job);
             }
             if until.is_some_and(|until| Instant::now() >= until) {
-                let wait = self.at.call.request.wait.unwrap_or_default();
+                let wait = self.at.call.request.wait_secs.unwrap_or_default();
                 self.at.sink.say(&format!(
                     "dibs: still busy after {wait}s, gave up: the urgent job still runs.\n"
                 ));
@@ -790,7 +794,7 @@ impl<'a> Run<'a> {
                 }
             }
             if until.is_some_and(|until| Instant::now() >= until) {
-                let wait = self.at.call.request.wait.unwrap_or_default();
+                let wait = self.at.call.request.wait_secs.unwrap_or_default();
                 self.at.sink.say(&format!(
                     "dibs: still busy after {wait}s, gave up: --low-priority waits for an idle machine.\n"
                 ));
@@ -902,7 +906,7 @@ impl<'a> Run<'a> {
         self.at
             .call
             .request
-            .wait
+            .wait_secs
             .map(|wait| arrived.since + Duration::from_secs(wait))
     }
 
@@ -941,7 +945,7 @@ impl<'a> Run<'a> {
             call: self.at.call,
         };
         let deadline = request
-            .wait
+            .wait_secs
             .map(|wait| Instant::now() + Duration::from_secs(wait));
         let mut told = false;
         let taken = loop {
@@ -971,7 +975,7 @@ impl<'a> Run<'a> {
         match taken {
             Ok(true) => {}
             Ok(false) => {
-                let wait = request.wait.unwrap_or_default();
+                let wait = request.wait_secs.unwrap_or_default();
                 self.at
                     .sink
                     .say(&format!("dibs: still busy after {wait}s, gave up.\n"));
@@ -1038,7 +1042,7 @@ impl<'a> Run<'a> {
         let deadline = match self.waits_idle() {
             true => self.wait_until(arrived),
             false => request
-                .wait
+                .wait_secs
                 .map(|wait| Instant::now() + Duration::from_secs(wait)),
         };
         let block = lock.free(Hold::Shared) && !lock.free(Hold::Exclusive);
@@ -1071,7 +1075,7 @@ impl<'a> Run<'a> {
             }
             false => Ok(Waited::GaveUpAtGate),
         });
-        let wait = request.wait.unwrap_or_default();
+        let wait = request.wait_secs.unwrap_or_default();
         let gave_up = match waited {
             Ok(Waited::Held) => None,
             Ok(Waited::GaveUpAtLock) => Some(format!("dibs: still busy after {wait}s, gave up.\n")),
@@ -1337,7 +1341,7 @@ impl<'a> Run<'a> {
         let Some((cards, adopted)) = held else {
             lock.leave_gate();
             let _ = fs::remove_file(dir.file("pause", pid));
-            let wait = request.wait.unwrap_or_default();
+            let wait = request.wait_secs.unwrap_or_default();
             self.at
                 .sink
                 .say(&format!("dibs: still busy after {wait}s, gave up.\n"));
@@ -1350,7 +1354,7 @@ impl<'a> Run<'a> {
                 .pause_ahead(&lock, arrived, deadline)
                 .map_err(no_lock)?
         {
-            let wait = request.wait.unwrap_or_default();
+            let wait = request.wait_secs.unwrap_or_default();
             self.at.sink.say(&format!(
                 "dibs: still busy after {wait}s, gave up: a job queued before it still runs.\n"
             ));
@@ -1779,7 +1783,7 @@ impl<'a> Run<'a> {
                     .is_some_and(|b| self.at.dir.cancelled(b))
             };
             let readied = services.ready(
-                request.ready_within,
+                request.ready_within_secs,
                 deadline,
                 &Readiness {
                     ports: &hosted.ports,
@@ -1942,7 +1946,7 @@ impl<'a> Run<'a> {
                     if self.at.call.mode() == Mode::Rsh {
                         Channel::watch_transfer(
                             work.pid,
-                            request.watch.lease,
+                            request.watch.lease_secs,
                             Arc::clone(self.at.stopper),
                         );
                     }
@@ -2205,9 +2209,9 @@ impl<'a> Run<'a> {
     /// benchmark: a transfer and a sweep keep their mode's cap.
     fn cap(&self, history: &History) -> u64 {
         let request = &self.at.call.request;
-        let max = request.max;
+        let max = request.max_secs;
         let a_job = matches!(self.at.call.mode(), Mode::Shared | Mode::Bench);
-        if !a_job || request.max_from != MaxFrom::Default || request.watch.hold || max == 0 {
+        if !a_job || request.max_source != MaxSource::Default || request.watch.hold || max == 0 {
             return max;
         }
         let Some(estimate) = history.estimate_kept(Key {

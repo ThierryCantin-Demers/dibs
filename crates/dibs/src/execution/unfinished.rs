@@ -13,7 +13,7 @@ use crate::{
     paths::Paths,
     records::RunLog,
 };
-use dibs_format::{JobId, Moment, Outcome, RunRecord, wire::Prepared};
+use dibs_format::{JobId, Moment, Outcome, RunRecord, wire::PrepareReport};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -62,7 +62,7 @@ impl Unfinished {
     /// Follows the job to its end, then finishes the run kept at `path`.
     pub fn follow(path: &Path, job: &JobId, call: &Call, caller: &Caller) -> Result<i32, RunError> {
         let machine = MachineCall::new(call, caller)?;
-        let mut on_prepared = |_: &Prepared| {};
+        let mut on_prepared = |_: &PrepareReport| {};
         let mut reader = Reader::new(&mut on_prepared);
         let exit = Jobs::exit(machine.follow_into(job, &mut Output::Listening(&mut reader)));
         let reported = reader.reported(exit);
@@ -113,7 +113,7 @@ impl Unfinished {
         *last = dibs_format::StepRecord {
             arm: last.arm.take(),
             rep: last.rep,
-            artifacts: stepped.and_then(|s| s.artifacts),
+            artifact_count: stepped.and_then(|s| s.artifact_count),
             seconds,
             ..reported.outcome.step_record(last.lock)
         };
@@ -124,7 +124,7 @@ impl Unfinished {
             record.state = state;
         }
         record.outcome = Some(Outcome::of_steps(&record.steps));
-        record.when = Moment::epoch_now();
+        record.when_secs = Moment::epoch_now();
         let log = RunLog::here()?;
         let job = record.steps.last().and_then(|s| s.job.clone());
         if job.is_some_and(|job| log.names_job(job.as_str())) {

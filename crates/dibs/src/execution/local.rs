@@ -308,7 +308,7 @@ impl Local {
         from: &Path,
         backend: &Jobs,
         req: &JobRequest,
-        on_prepared: &mut dyn FnMut(&wire::Prepared),
+        on_prepared: &mut dyn FnMut(&wire::PrepareReport),
     ) -> Reported {
         if let Some(missing) = self.carried.missing(from) {
             eprintln!(

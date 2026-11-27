@@ -7,7 +7,7 @@ use crate::{
     itself::Itself,
     machine::{Held, Holder, Interrupt, Reach, Relayed},
 };
-use dibs_format::{Exit, Mode, wire::Picked};
+use dibs_format::{Exit, Mode, wire::PickedPort};
 use std::{
     fmt,
     io::ErrorKind,
@@ -103,7 +103,7 @@ impl Hold<'_> {
 
     /// The first `--ready tcp:` service this computer cannot connect to, which the command here
     /// would fail at: ready on the machine, but behind its firewall or on its loopback only.
-    fn unreached(&self, ports: &[Picked]) -> Option<Unconnected> {
+    fn unreached(&self, ports: &[PickedPort]) -> Option<Unconnected> {
         let mut host = None;
         for service in self.services {
             let Some(ready) = service
@@ -148,7 +148,7 @@ impl Hold<'_> {
 
     /// The guard that runs the command, with the machine's ports and the hold it runs inside in
     /// its environment.
-    fn guard(&self, ports: &[Picked]) -> std::io::Result<std::process::Command> {
+    fn guard(&self, ports: &[PickedPort]) -> std::io::Result<std::process::Command> {
         let mut command = Itself::command();
         command
             .arg(Guard::WORD)

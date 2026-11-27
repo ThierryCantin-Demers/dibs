@@ -51,7 +51,7 @@ impl Shutter<'_> {
                 .ok()
                 .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_secs()),
-            close: Close::of_text(&fs::read_to_string(&path).unwrap_or_default()),
+            close: Close::from_text(&fs::read_to_string(&path).unwrap_or_default()),
         })
     }
 
@@ -62,7 +62,7 @@ impl Shutter<'_> {
     }
 
     pub fn close(&self, close: &Close) -> io::Result<()> {
-        let text = close.text();
+        let text = close.to_text();
         let path = self.path();
         let fresh = path.with_extension(format!("{}.new", std::process::id()));
         fs::write(&fresh, text)?;
@@ -173,7 +173,9 @@ impl Owners<'_> {
                 return Exit::Success.as_status();
             }
             let present = match caller.as_mut() {
-                Some(channel) => channel.attend(Instant::now() + POLL, watch.lease, &mut heard),
+                Some(channel) => {
+                    channel.attend(Instant::now() + POLL, watch.lease_secs, &mut heard)
+                }
                 None => {
                     thread::sleep(POLL);
                     true

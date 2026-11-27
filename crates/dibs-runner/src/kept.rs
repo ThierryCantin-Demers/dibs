@@ -12,7 +12,7 @@ use crate::{
 };
 use dibs_format::{
     Base64, Exit, JobId, JobMeta,
-    wire::{Frame, Record, Unframer},
+    wire::{Frame, FrameBuffer, Record},
 };
 use std::{
     fs::{self, File},
@@ -120,29 +120,37 @@ impl KeptJobs<'_> {
     /// What the call that let go of the job would have said at its end, and its exit, read a
     /// piece at a time: a streamed job's report holds all it wrote after the hand-over.
     fn relay(&self, report: &Path, target: &str) -> i32 {
-        let mut unframer = Unframer::default();
-        let mut chunk = vec![0u8; 64 * 1024];
-        if let Ok(mut report) = File::open(report) {
-            while let Ok(n @ 1..) = report.read(&mut chunk) {
-                unframer.feed(&chunk[..n]);
-                while let Ok(Some(frame)) = unframer.next_frame() {
-                    match frame {
-                        Frame::Out(bytes) => {
-                            self.sink.out(&bytes);
-                        }
-                        Frame::Err(bytes) => self.sink.err(&bytes),
-                        Frame::Record(record) => self.sink.record(record),
-                        Frame::Exit(code) => return code,
-                        Frame::Request(_) | Frame::Beat | Frame::Release(_) => {}
-                    }
-                }
-            }
+        if let Some(code) = self.relayed(report) {
+            return code;
         }
         self.sink.say(&format!(
             "dibs: the runner of job {target} ended without saying how the job did: dibs --on {} --out {target} reads its log\n",
             self.machine.host
         ));
         Exit::Failed.as_status()
+    }
+
+    /// The exit the report ends with, each frame before it passed on; None for a report that
+    /// ends without one, or stops reading as frames.
+    fn relayed(&self, report: &Path) -> Option<i32> {
+        let mut report = File::open(report).ok()?;
+        let mut buffer = FrameBuffer::default();
+        let mut chunk = vec![0u8; 64 * 1024];
+        while let Ok(n @ 1..) = report.read(&mut chunk) {
+            buffer.feed_bytes(&chunk[..n]);
+            while let Some(frame) = buffer.next_frame().ok()? {
+                match frame {
+                    Frame::Out(bytes) => {
+                        self.sink.out(&bytes);
+                    }
+                    Frame::Err(bytes) => self.sink.err(&bytes),
+                    Frame::Record(record) => self.sink.record(record),
+                    Frame::Exit(code) => return Some(code),
+                    Frame::Request(_) | Frame::Beat | Frame::Release(_) => {}
+                }
+            }
+        }
+        None
     }
 
     /// A job by its id, running or finished; the whole of a finished one's log for the caller to

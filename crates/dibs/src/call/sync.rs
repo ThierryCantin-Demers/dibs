@@ -14,7 +14,7 @@ use crate::{
 };
 use dibs_format::{
     Exit, Label, Mode,
-    wire::{Prepared, Tree},
+    wire::{PrepareReport, Tree},
 };
 use std::{
     fmt, io,
@@ -287,7 +287,7 @@ impl<'a> Transport<'a> {
     }
 
     /// The tree the machine laid out, as the transport wrote it down.
-    fn prepared(&self) -> Option<Prepared> {
+    fn prepared(&self) -> Option<PrepareReport> {
         let tree = self.tree.as_ref()?;
         serde_json::from_slice(&std::fs::read(&tree.prepared).ok()?).ok()
     }

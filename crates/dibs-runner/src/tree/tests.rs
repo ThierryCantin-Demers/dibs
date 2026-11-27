@@ -10,7 +10,7 @@ use crate::{
 };
 use dibs_format::{
     Exit,
-    wire::{GitDb, Nest, Packages, Prepare, Prepared, Source},
+    wire::{GitDb, Nest, Packages, Prepare, PrepareReport, Source},
 };
 use std::{
     cell::RefCell,
@@ -97,7 +97,7 @@ impl Machine {
         )
     }
 
-    fn prepare(&self, prepare: &Prepare) -> (Result<Prepared, Exit>, String) {
+    fn prepare(&self, prepare: &Prepare) -> (Result<PrepareReport, Exit>, String) {
         self.prepare_hearing(prepare, &|_| {})
     }
 
@@ -106,7 +106,7 @@ impl Machine {
         &self,
         prepare: &Prepare,
         hear: &dyn Fn(&str),
-    ) -> (Result<Prepared, Exit>, String) {
+    ) -> (Result<PrepareReport, Exit>, String) {
         let said = RefCell::new(String::new());
         let say = |text: &str| {
             said.borrow_mut().push_str(text);
@@ -134,7 +134,7 @@ impl Machine {
         (prepared, said.into_inner())
     }
 
-    pub fn prepared(&self, prepare: &Prepare) -> Prepared {
+    pub fn prepared(&self, prepare: &Prepare) -> PrepareReport {
         let (prepared, said) = self.prepare(prepare);
         prepared.unwrap_or_else(|e| panic!("{e:?}: {said}"))
     }
@@ -893,7 +893,10 @@ fn the_sibling_that_built_the_most_of_this_lockfile_wins_over_a_newer_one() {
     m.sibling("demo-local-newer", &["aaa", "ccc"]);
     let seeded = m.prepared(&local("new", &["aaa", "bbb"])).seeded.unwrap();
     assert_eq!(seeded.from, "demo-local-old");
-    assert_eq!(seeded.shared.map(|s| (s.have, s.of)), Some((2, 2)));
+    assert_eq!(
+        seeded.shared.map(|s| (s.have_count, s.of_count)),
+        Some((2, 2))
+    );
 }
 
 #[test]
@@ -915,10 +918,13 @@ fn an_existing_tree_far_behind_a_sibling_starts_again_from_it() {
     m.sibling("demo-local-mine", &["aaa", "ccc"]);
     m.sources("mine", "mine.rs");
     let p = m.prepared(&local("mine", &["aaa", "bbb"]));
-    assert_eq!(p.reseeded, Some(1));
+    assert_eq!(p.reseeded_count, Some(1));
     let seeded = p.seeded.unwrap();
     assert_eq!(seeded.from, "demo-local-moved");
-    assert_eq!(seeded.shared.map(|s| (s.have, s.of)), Some((2, 2)));
+    assert_eq!(
+        seeded.shared.map(|s| (s.have_count, s.of_count)),
+        Some((2, 2))
+    );
     let (t, ws) = (PathBuf::from(&p.target), PathBuf::from(&p.worktree));
     assert!(t.join("debug/deps/libdemo-local-moved.rlib").exists());
     assert!(!t.join("debug/deps/libdemo-local-mine.rlib").exists());
@@ -947,7 +953,7 @@ fn a_reseed_moves_its_tree_only_where_no_stop_lands() {
         counted.fetch_add(1, Ordering::Relaxed);
     });
     assert_eq!(
-        m.prepared(&local("mine", &["aaa", "bbb"])).reseeded,
+        m.prepared(&local("mine", &["aaa", "bbb"])).reseeded_count,
         Some(1)
     );
     assert_eq!(guarded.load(Ordering::Relaxed), 1);
@@ -963,7 +969,7 @@ fn a_tree_prepared_moments_ago_or_worked_in_is_never_moved_aside() {
     fs::write(mine.join(".dibs-used"), "").unwrap();
     let p = m.prepared(&local("mine", &["aaa", "bbb"]));
     assert_eq!(
-        p.reseeded, None,
+        p.reseeded_count, None,
         "another call's job may be about to enter a tree prepared a moment ago"
     );
     aged(&mine.join(".dibs-used"));
@@ -976,7 +982,10 @@ fn a_tree_prepared_moments_ago_or_worked_in_is_never_moved_aside() {
     let p = m.prepared(&local("mine", &["aaa", "bbb"]));
     let _ = worker.kill();
     let _ = worker.wait();
-    assert_eq!(p.reseeded, None, "and a process working in it is using it");
+    assert_eq!(
+        p.reseeded_count, None,
+        "and a process working in it is using it"
+    );
     assert!(ws.join("mine.rs").exists(), "so it keeps its own");
 }
 
@@ -992,7 +1001,7 @@ fn a_reseed_that_cannot_remove_what_it_replaced_still_prepares_the_tree() {
     run(&stuck, "chmod 500 .");
     let (prepared, said) = m.prepare(&local("mine", &["aaa", "bbb"]));
     run(&m.p("scratch"), "chmod -R u+w target");
-    assert_eq!(prepared.unwrap().reseeded, Some(1), "{said}");
+    assert_eq!(prepared.unwrap().reseeded_count, Some(1), "{said}");
     assert!(
         said.contains("could not remove all of what the reseed replaced; the next sweep takes it"),
         "{said}"
@@ -1049,7 +1058,7 @@ fn a_reseed_never_replaces_a_tree_another_prepare_handed_over_while_it_copied() 
     });
     assert_eq!(first, Heard::Queued, "the second prepare waits its turn");
     let (reseeded, said) = reseeded;
-    assert_eq!(reseeded.unwrap().reseeded, Some(0), "{said}");
+    assert_eq!(reseeded.unwrap().reseeded_count, Some(0), "{said}");
     assert!(
         ws.join("synced.rs").exists(),
         "what was sent once the reseed had decided is still there"
@@ -1082,7 +1091,7 @@ fn a_reseed_keeps_a_tree_a_process_entered_while_it_copied() {
         drop(entered.stdin.take());
         entered.wait().unwrap();
     }
-    assert_eq!(prepared.unwrap().reseeded, None, "{said}");
+    assert_eq!(prepared.unwrap().reseeded_count, None, "{said}");
     assert!(ws.join("mine.rs").exists(), "it keeps its own");
     let left: Vec<_> = fs::read_dir(m.p("scratch/target"))
         .unwrap()
@@ -1099,13 +1108,13 @@ fn an_existing_tree_close_to_its_siblings_or_being_built_keeps_its_own() {
     m.sibling("demo-local-mine", &["aaa", "bbb"]);
     m.sources("mine", "mine.rs");
     let p = m.prepared(&local("mine", &["aaa", "bbb"]));
-    assert_eq!((p.reseeded, p.seeded), (None, None));
+    assert_eq!((p.reseeded_count, p.seeded), (None, None));
     let behind = m.sibling("demo-local-behind", &["ccc"]);
     m.sources("behind", "behind.rs");
     let build = File::open(behind.join("debug/.cargo-lock")).unwrap();
     build.lock().unwrap();
     let p = m.prepared(&local("behind", &["aaa", "bbb"]));
-    assert_eq!(p.reseeded, None, "a build holds it");
+    assert_eq!(p.reseeded_count, None, "a build holds it");
     assert!(m.p("scratch/ws/demo/local-behind/behind.rs").exists());
 }
 
@@ -1118,7 +1127,7 @@ fn a_reseed_never_waits_on_its_own_target_set_aside() {
     m.sources("mine", "mine.rs");
     let (prepared, said) = m.prepare(&local("mine", &["aaa"]));
     assert!(!said.contains("waiting"), "{said}");
-    assert_eq!(prepared.unwrap().reseeded, None);
+    assert_eq!(prepared.unwrap().reseeded_count, None);
     assert!(mine.join("debug/deps/libdemo-local-mine.rlib").exists());
 }
 

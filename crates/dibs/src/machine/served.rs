@@ -8,12 +8,15 @@ use crate::{
         provision::{Background, Installed, Provision, Queueing},
         session::{Answer, Kept, Liveness, Message, Route, SSH_FAILED, Said, Session},
         ssh::Ssh,
-        values::{CallValues, Watch},
+        values::CallValues,
     },
 };
 use dibs_format::{
     Exit, Mode, Span,
-    wire::{Admitted, CheckedIn, Frame, Picked, Prepared, Record, Stepped, Trailer, Unframer},
+    wire::{
+        Admission, CheckInReport, Frame, FrameBuffer, PickedPort, PrepareReport, Record,
+        StepReport, Trailer, Watch,
+    },
 };
 use std::{
     fs::File,
@@ -135,12 +138,12 @@ pub enum Heard {
     Err(Vec<u8>),
     /// A line the runner or ssh wrote on stderr, outside any frame.
     Line(Vec<u8>),
-    Holding(Vec<Picked>),
-    Prepared(Box<Prepared>),
-    Stepped(Stepped),
+    Holding(Vec<PickedPort>),
+    Prepared(Box<PrepareReport>),
+    Stepped(StepReport),
     Trailer(Trailer),
-    CheckedIn(CheckedIn),
-    Admitted(Admitted),
+    CheckedIn(CheckInReport),
+    Admitted(Admission),
     Exit(i32),
     Broken(String),
 }
@@ -349,7 +352,7 @@ impl Served<'_> {
                 Watch {
                     off: self.live.no_watchdog && !hold,
                     hold,
-                    lease: 0,
+                    lease_secs: 0,
                 },
             ),
             Route::Ssh { host, dial } => {
@@ -371,7 +374,14 @@ impl Served<'_> {
                     });
                 }
                 let lease = if off { 0 } else { self.live.lease };
-                (ssh, Watch { off, hold, lease })
+                (
+                    ssh,
+                    Watch {
+                        off,
+                        hold,
+                        lease_secs: lease,
+                    },
+                )
             }
         };
         if hold {
@@ -437,7 +447,7 @@ impl Served<'_> {
         let watch = Watch {
             off: true,
             hold: false,
-            lease: match self.live.no_live || self.live.no_watchdog {
+            lease_secs: match self.live.no_live || self.live.no_watchdog {
                 true => 0,
                 false => self.live.lease,
             },
@@ -456,19 +466,19 @@ impl Served<'_> {
             .stderr
             .take()
             .map(|err| Relayed::start(err, self.session.said.clone()));
-        let request = Frame::Request(Box::new(self.values.request(watch))).encode();
+        let request = Frame::Request(Box::new(self.values.request(watch))).to_bytes();
         let said = stdin.write_all(&request).ok().and_then(|()| {
-            let mut unframer = Unframer::default();
+            let mut buffer = FrameBuffer::default();
             let mut chunk = [0u8; 256];
             let mut last = None;
             while !matches!(
                 last,
                 Some(Frame::Record(Record::Transferring) | Frame::Exit(_))
             ) {
-                let wanted = unframer.wanted().min(chunk.len());
+                let wanted = buffer.wanted().min(chunk.len());
                 let n = stdout.read(&mut chunk[..wanted]).ok().filter(|n| *n > 0)?;
-                unframer.feed(&chunk[..n]);
-                let Some(frame) = unframer.next_frame().ok()? else {
+                buffer.feed_bytes(&chunk[..n]);
+                let Some(frame) = buffer.next_frame().ok()? else {
                     continue;
                 };
                 match &frame {
@@ -544,10 +554,10 @@ impl Served<'_> {
         let mut child = command.spawn()?;
         let runner = child.id();
         drop(command);
-        let request = Frame::Request(Box::new(self.values.request(watch))).encode();
+        let request = Frame::Request(Box::new(self.values.request(watch))).to_bytes();
         let stdin = child.stdin.take().expect("stdin was piped");
         let (channel, messages) = mpsc::channel();
-        let beat = (watch.lease > 0).then(|| Duration::from_millis(watch.lease * 250));
+        let beat = (watch.lease_secs > 0).then(|| Duration::from_millis(watch.lease_secs * 250));
         thread::spawn(move || feed(stdin, request, beat, messages));
         let release = self.holding.as_ref().map(|_| channel.clone());
 
@@ -610,26 +620,27 @@ impl Served<'_> {
                 Heard::Trailer(trailer) => {
                     Noted::record(&Record::Trailer(trailer.clone()));
                     self.session.said.ended(&trailer);
-                    let line = format!("{trailer}\n");
+                    let line = format!("{}\n", trailer.to_line());
                     delivery.give(Stream::Err, line.as_bytes(), &mut buffers);
                 }
                 Heard::Admitted(admitted) => {
                     Noted::record(&Record::Admitted(admitted.clone()));
                     let said = match &admitted {
-                        Admitted::Ended(trailer) => {
+                        Admission::Ended(trailer) => {
                             self.session.said.ended(trailer);
                             format!(
-                                "dibs: this attempt ran before as job {}, and is not run again. How it ended:\n{trailer}\n",
-                                trailer.job
+                                "dibs: this attempt ran before as job {}, and is not run again. How it ended:\n{}\n",
+                                trailer.job,
+                                trailer.to_line()
                             )
                         }
-                        Admitted::Running { job, pid } => format!(
+                        Admission::Running { job, pid } => format!(
                             "dibs: this attempt runs already as job {job}, under runner {pid}, and is not started again\n"
                         ),
-                        Admitted::Never => {
+                        Admission::Never => {
                             "dibs: this attempt was never admitted here, and asked after only, is not started\n".to_string()
                         }
-                        Admitted::Lost { job, .. } => format!(
+                        Admission::Lost { job, .. } => format!(
                             "dibs: this attempt was admitted before as job {job}, whose runner is gone without saying how it ended\n"
                         ),
                     };
@@ -684,7 +695,7 @@ impl Served<'_> {
 impl Served<'_> {
     /// How to follow or stop a job its call let go of, sent as this call was: by its inventory
     /// entry, or by nothing where nothing named the machine.
-    fn ways_on(&self, checked: &CheckedIn) -> String {
+    fn ways_on(&self, checked: &CheckInReport) -> String {
         let job = &checked.job;
         let on = self
             .session
@@ -694,7 +705,7 @@ impl Served<'_> {
         format!(
             "  dibs {on}--follow {job}  waits for it: it ends with the job, or after another {} of running\n  \
              dibs {on}--kill {}  stops it\n",
-            Span::from_secs(checked.every),
+            Span::from_secs(checked.every_secs),
             checked.pid
         )
     }
@@ -801,19 +812,19 @@ impl Delivery<'_> {
         }
     }
 
-    fn prepared(&mut self, prepared: &Prepared) {
+    fn prepared(&mut self, prepared: &PrepareReport) {
         if let Delivery::Listening(listener) = self {
             listener.prepared(prepared);
         }
     }
 
-    fn stepped(&mut self, stepped: &Stepped) {
+    fn stepped(&mut self, stepped: &StepReport) {
         if let Delivery::Listening(listener) = self {
             listener.stepped(stepped);
         }
     }
 
-    fn checked_in(&mut self, checked: &CheckedIn) {
+    fn checked_in(&mut self, checked: &CheckInReport) {
         if let Delivery::Listening(listener) = self {
             listener.checked_in(checked);
         }
@@ -854,7 +865,7 @@ fn feed(
         }
     });
     for frame in frames {
-        if stdin.write_all(&frame.encode()).is_err() {
+        if stdin.write_all(&frame.to_bytes()).is_err() {
             return;
         }
     }
@@ -862,11 +873,11 @@ fn feed(
 
 /// Frames off the runner's stdout, each passed on as it is whole.
 fn read_frames(mut out: impl Read, tell: mpsc::Sender<Heard>) {
-    let mut unframer = Unframer::default();
+    let mut buffer = FrameBuffer::default();
     let mut chunk = [0u8; 8192];
     while let Ok(n @ 1..) = out.read(&mut chunk) {
-        unframer.feed(&chunk[..n]);
-        while let Some(frame) = match unframer.next_frame() {
+        buffer.feed_bytes(&chunk[..n]);
+        while let Some(frame) = match buffer.next_frame() {
             Ok(frame) => frame,
             Err(e) => {
                 let _ = tell.send(Heard::Broken(e.to_string()));

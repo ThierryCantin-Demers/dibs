@@ -5,7 +5,7 @@
 pub use dibs_format::Moment;
 use dibs_format::{
     Label, Mode,
-    wire::{Frame, MaxFrom, Request, Watch},
+    wire::{Frame, MaxSource, Request, Watch},
 };
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -81,7 +81,7 @@ pub fn watched_request_frame(mode: Mode, label: &str, command: &str) -> String {
 }
 
 pub fn frame(request: Request) -> String {
-    String::from_utf8(Frame::Request(Box::new(request)).encode()).unwrap()
+    String::from_utf8(Frame::Request(Box::new(request)).to_bytes()).unwrap()
 }
 
 /// A call as a client sends it, unwatched.
@@ -90,9 +90,9 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         mode,
         label: Label::new(label),
         command: command.into(),
-        wait: None,
-        max: 0,
-        max_from: MaxFrom::Given,
+        wait_secs: None,
+        max_secs: 0,
+        max_source: MaxSource::Given,
         verbose: false,
         json: false,
         stream: false,
@@ -110,11 +110,11 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         watch: Watch {
             off: true,
             hold: false,
-            lease: 0,
+            lease_secs: 0,
         },
         ports: Vec::new(),
         services: Vec::new(),
-        ready_within: 0,
+        ready_within_secs: 0,
         new_series: false,
         preempt: false,
         when_open: false,
@@ -122,7 +122,7 @@ pub fn request(mode: Mode, label: &str, command: &str) -> Request {
         low_priority: false,
         urgent: None,
         tree: None,
-        check_in: None,
+        check_in_secs: None,
         attempt: None,
         lookup: false,
         image: None,

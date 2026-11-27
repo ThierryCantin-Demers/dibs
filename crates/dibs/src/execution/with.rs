@@ -226,7 +226,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let procedure = svc.procedure(command, lock);
     let image = image_digest();
     let mut record = RunRecord {
-        when: Moment::epoch_now(),
+        when_secs: Moment::epoch_now(),
         verb: RunVerb::With,
         label: label.clone(),
         repo: repo_name.clone(),
@@ -247,7 +247,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         batch: BatchStep::from_env().map(|s| BatchId::from(s.batch)),
         refs: None,
         arms: Vec::new(),
-        reps: 1,
+        rep_count: 1,
         anyway: args.anyway,
         new_series: args.new_series,
         fresh: Pairs::default(),
@@ -294,7 +294,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     let reported = match &local {
         Some(l) => {
             let send = JobRequest {
-                tree: Some(plan.tree(wire::Then::Transfer)),
+                tree: Some(plan.tree(wire::FollowUp::Transfer)),
                 ..setup
             };
             let reported = l.send(&from, &backend, &send, &mut |p| p.announce());
@@ -311,7 +311,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         }
         None => {
             let prepare = JobRequest {
-                tree: Some(plan.tree(wire::Then::Nothing)),
+                tree: Some(plan.tree(wire::FollowUp::Nothing)),
                 ..setup
             };
             let title = preparing_title(&repo_name, reference);
@@ -369,17 +369,14 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             max: None,
             new_series: false,
             preempt: false,
-            tree: Some(wire::Tree {
-                step: Some(wire::Step {
-                    claim: BuildSignature::of(build).is_some(),
-                    pinned: match BuildSignature::of(build) {
-                        Some(_) => patched.iter().cloned().collect(),
-                        None => Vec::new(),
-                    },
-                    ..wire::Step::default()
-                }),
-                ..prepared.tree()
-            }),
+            tree: Some(prepared.tree(wire::Step {
+                claim: BuildSignature::of(build).is_some(),
+                pinned: match BuildSignature::of(build) {
+                    Some(_) => patched.iter().cloned().collect(),
+                    None => Vec::new(),
+                },
+                ..wire::Step::default()
+            })),
         };
         let out = backend.run(&req, build);
         record.steps.push(out.step_record(Lock::Shared));
@@ -410,13 +407,10 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     };
     // Timed, the servers are refused before they start when another tree has built over them.
     let job = RecipeJob {
-        tree: Some(wire::Tree {
-            step: Some(wire::Step {
-                check: guarded,
-                ..wire::Step::default()
-            }),
-            ..prepared.tree()
-        }),
+        tree: Some(prepared.tree(wire::Step {
+            check: guarded,
+            ..wire::Step::default()
+        })),
         ..RecipeJob::default()
     };
     let started = Instant::now();
@@ -485,7 +479,7 @@ fn served(
 
 /// Kept beside the recipe runs, dated when it ended as theirs are.
 fn keep(mut record: RunRecord) -> Result<(), RunError> {
-    record.when = Moment::epoch_now();
+    record.when_secs = Moment::epoch_now();
     record.outcome = Some(Outcome::of_steps(&record.steps));
     RunLog::here()?.append(&record)?;
     Ok(())

@@ -10,13 +10,16 @@ use crate::{
     cli::{Call, Command, PortName, Run, RunLock, Service, check_in},
     inventory::{Inventory, InventoryError, Machine, Role},
     machine::{
-        CallValues, Card, CardError, Delivery, Fleet, Here, Liveness, MaxFrom, Named, Session,
-        Target, TargetEnv, TargetError,
+        CallValues, Card, CardError, Delivery, Fleet, Here, Liveness, Named, Session, Target,
+        TargetEnv, TargetError,
     },
     paths::Paths,
     placement::{Placement, Reading, Unplaced},
 };
-use dibs_format::{Alias, Exit, Label, Mode, wire::Trailer};
+use dibs_format::{
+    Alias, Exit, Label, Mode,
+    wire::{MaxSource, Trailer},
+};
 use dibs_runner::short_hostname;
 use std::{
     collections::BTreeMap,
@@ -533,8 +536,8 @@ pub struct Request<'a> {
 impl Request<'_> {
     pub fn values(&self, label: Label, card: Card, command: String) -> CallValues {
         let (max, max_from) = match self.call.max {
-            Some(max) => (max, MaxFrom::Given),
-            None => (default_max(self.mode), MaxFrom::Default),
+            Some(max) => (max, MaxSource::Given),
+            None => (default_max(self.mode), MaxSource::Default),
         };
         let stream = self.call.stream || set("DIBS_STREAM").is_some_and(|v| v == "1");
         let caller = match self.mode {

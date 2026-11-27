@@ -1,5 +1,5 @@
 use crate::machine::{Listener, Stream};
-use dibs_format::wire::Prepared;
+use dibs_format::wire::PrepareReport;
 
 /// Where a call's output goes, what this side says about it included.
 pub enum Output<'a> {
@@ -30,7 +30,7 @@ impl Output<'_> {
     }
 
     /// The job's tree, laid out, for whoever listens for it.
-    pub fn prepared(&mut self, prepared: &Prepared) {
+    pub fn prepared(&mut self, prepared: &PrepareReport) {
         if let Output::Listening(listener) = self {
             listener.prepared(prepared);
         }

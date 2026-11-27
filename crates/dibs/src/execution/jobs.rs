@@ -13,7 +13,7 @@ use crate::{
 };
 use dibs_format::{
     Alias, Exit, JobId, Label, MachineName, StepRecord,
-    wire::{Built, CheckedIn, Prepared, Stepped, Tree},
+    wire::{CheckInReport, Compilation, PrepareReport, StepReport, Tree},
 };
 use std::{io::Write as _, path::PathBuf, time::Instant};
 
@@ -51,8 +51,8 @@ pub struct JobOutcome {
 /// A job's outcome, the tree the machine laid out for it, and what it did around a step.
 pub struct Reported {
     pub outcome: JobOutcome,
-    pub prepared: Option<Prepared>,
-    pub stepped: Option<Stepped>,
+    pub prepared: Option<PrepareReport>,
+    pub stepped: Option<StepReport>,
 }
 
 impl JobRequest<'_> {
@@ -71,15 +71,15 @@ impl JobOutcome {
         let trailer = ran.trailer.as_ref();
         JobOutcome {
             status: ran.exit,
-            seconds: trailer.map_or_else(|| started.elapsed().as_secs(), |t| t.ran),
+            seconds: trailer.map_or_else(|| started.elapsed().as_secs(), |t| t.ran_secs),
             trailer: trailer.map(|t| Trailer {
                 job: t.job.to_string(),
                 built: t.built.map(|built| match built {
-                    Built::Crates(n) => n.to_string(),
-                    Built::Nothing => "nothing".into(),
+                    Compilation::Crates(n) => n.to_string(),
+                    Compilation::Nothing => "nothing".into(),
                 }),
                 log: None,
-                ran: Some(t.ran),
+                ran: Some(t.ran_secs),
             }),
             checked_in: None,
         }
@@ -94,7 +94,7 @@ impl JobOutcome {
             seconds: self.seconds,
             arm: None,
             rep: None,
-            artifacts: None,
+            artifact_count: None,
             job: trailer.map(|t| JobId::new(t.job.as_str())),
             built: trailer.and_then(|t| t.built.clone()),
             log: trailer.and_then(|t| t.log.clone()),
@@ -143,16 +143,16 @@ impl Trailer {
 
 /// A job's output as it arrives: passed through, with what the recipe layer reads kept aside.
 pub(super) struct Reader<'a> {
-    on_prepared: &'a mut dyn FnMut(&Prepared),
-    prepared: Option<Prepared>,
-    stepped: Option<Stepped>,
+    on_prepared: &'a mut dyn FnMut(&PrepareReport),
+    prepared: Option<PrepareReport>,
+    stepped: Option<StepReport>,
     trailer: Option<Trailer>,
     checked_in: Option<JobId>,
     start: Instant,
 }
 
 impl<'a> Reader<'a> {
-    pub(super) fn new(on_prepared: &'a mut dyn FnMut(&Prepared)) -> Reader<'a> {
+    pub(super) fn new(on_prepared: &'a mut dyn FnMut(&PrepareReport)) -> Reader<'a> {
         Reader {
             on_prepared,
             prepared: None,
@@ -205,16 +205,16 @@ impl Listener for Reader<'_> {
         Reader::pass(stream, line);
     }
 
-    fn prepared(&mut self, prepared: &Prepared) {
+    fn prepared(&mut self, prepared: &PrepareReport) {
         (self.on_prepared)(prepared);
         self.prepared = Some(prepared.clone());
     }
 
-    fn stepped(&mut self, stepped: &Stepped) {
+    fn stepped(&mut self, stepped: &StepReport) {
         self.stepped = Some(stepped.clone());
     }
 
-    fn checked_in(&mut self, checked: &CheckedIn) {
+    fn checked_in(&mut self, checked: &CheckInReport) {
         self.checked_in = Some(checked.job.clone());
     }
 }
@@ -357,7 +357,7 @@ impl Jobs {
         &self,
         req: &JobRequest,
         command: &str,
-        on_prepared: &mut dyn FnMut(&Prepared),
+        on_prepared: &mut dyn FnMut(&PrepareReport),
     ) -> Reported {
         self.read(req, command, Reader::new(on_prepared))
     }
@@ -378,7 +378,7 @@ impl Jobs {
         &self,
         req: &JobRequest,
         args: &[String],
-        on_prepared: &mut dyn FnMut(&Prepared),
+        on_prepared: &mut dyn FnMut(&PrepareReport),
     ) -> Reported {
         let mut reader = Reader::new(on_prepared);
         let call = self.call(req, "");
@@ -412,7 +412,10 @@ impl Jobs {
     /// Every job that kept files has them fetched, into `to` when given: under the job's arm and
     /// rep when a comparison or reps would otherwise write one path twice.
     pub fn fetch_artifacts(&self, steps: &[StepRecord], to: Option<&str>, compared: bool) {
-        for s in steps.iter().filter(|s| s.artifacts.is_some_and(|n| n > 0)) {
+        for s in steps
+            .iter()
+            .filter(|s| s.artifact_count.is_some_and(|n| n > 0))
+        {
             let Some(job) = &s.job else { continue };
             let dest = to.map(|dir| {
                 let mut dest = PathBuf::from(dir);
@@ -554,7 +557,7 @@ mod tests {
 
     #[test]
     fn a_steps_seconds_are_the_time_it_held_the_lock_not_its_queue() {
-        let mut on_prepared = |_: &Prepared| {};
+        let mut on_prepared = |_: &PrepareReport| {};
         let mut reader = Reader::new(&mut on_prepared);
         reader.start = Instant::now() - std::time::Duration::from_secs(122);
         reader.line(
@@ -562,7 +565,7 @@ mod tests {
             b"job 1-3  bench  a/bench/x  queued 93s  ran 28s  exit 0  by=command\n",
         );
         assert_eq!(reader.reported(0).outcome.seconds, 28);
-        let mut on_prepared = |_: &Prepared| {};
+        let mut on_prepared = |_: &PrepareReport| {};
         let mut reader = Reader::new(&mut on_prepared);
         reader.start = Instant::now() - std::time::Duration::from_secs(5);
         assert_eq!(

@@ -150,7 +150,7 @@ impl Visit {
                     sink: &self.sink,
                 };
                 return owners.close(
-                    &Close::of_text(&self.call.request.command),
+                    &Close::from_text(&self.call.request.command),
                     caller.channel(),
                     self.call.request.watch,
                 );
@@ -240,7 +240,7 @@ impl Visit {
             Mode::Follow => kept.follow(
                 self.call.label().as_str(),
                 caller,
-                self.call.request.watch.lease,
+                self.call.request.watch.lease_secs,
             ),
             Mode::Fetch => kept.fetch(self.call.label().as_str()),
             mode => {

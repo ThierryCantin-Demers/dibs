@@ -64,7 +64,7 @@ impl Views<'_> {
             let due = Instant::now() + Duration::from_secs(every);
             present = self.sink.out(tick.as_bytes())
                 && match channel.as_mut() {
-                    Some(channel) => channel.attend(due, watch.lease, &mut heard),
+                    Some(channel) => channel.attend(due, watch.lease_secs, &mut heard),
                     None => {
                         thread::sleep(Duration::from_secs(every));
                         true

@@ -14,8 +14,9 @@ pub enum Bundle {
 /// What a build keeps, and from which of cargo's artifacts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleMake {
-    /// The `cargo build` arguments the step's command built with, as the manifest records them.
-    /// The command writes cargo's JSON report of that build to `$DIBS_CARGO_REPORT`.
+    /// The `cargo build` arguments the step's command built with, in order, as the manifest
+    /// records them. The command writes cargo's JSON report of that build to
+    /// `$DIBS_CARGO_REPORT`.
     pub cargo: Vec<String>,
     pub package: String,
     /// Cargo's target kind: `bin` or `example`.
@@ -23,7 +24,7 @@ pub struct BundleMake {
     pub name: String,
     /// The directory under `bundles` it is kept in.
     pub into: String,
-    /// Set for the step's command, `RUSTFLAGS` above all.
+    /// Set for the step's command, all of it, and `RUSTFLAGS` looked up by name for the manifest.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     /// What the caller binds the bundle to besides what the machine reads, recorded as given.
@@ -43,19 +44,21 @@ pub struct BundleCheck {
     pub digest: String,
 }
 
-/// What a bundle's `manifest.json` holds beside its executable.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What a bundle's `manifest.json` holds beside its executable, which a person reads too.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleManifest {
     /// The executable's file name in the bundle.
     pub exe: String,
     /// The SHA-256 of the executable, in hex: the bundle's identity.
     pub digest: String,
-    pub size: u64,
+    #[serde(rename = "size")]
+    pub size_bytes: u64,
     pub package: String,
     pub kind: String,
     pub name: String,
-    /// Cargo's profile, as its report names it.
+    /// Cargo's profile, as the build's cargo arguments name it: `dev` when they name none.
     pub profile: String,
+    /// The build's cargo arguments, in order.
     pub cargo: Vec<String>,
     /// `RUSTFLAGS` as the build saw it.
     pub rustflags: String,
@@ -68,6 +71,7 @@ pub struct BundleManifest {
     /// The job that built it.
     pub job: String,
     pub host: String,
+    /// What the caller bound the bundle to, each looked up by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub inputs: BTreeMap<String, String>,
 }

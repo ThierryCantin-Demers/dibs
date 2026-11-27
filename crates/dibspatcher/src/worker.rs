@@ -12,7 +12,9 @@ use crate::{
 use dibs_format::{
     Exit, ExitSource, Sha256,
     dibspatcher::{NamedCall, Seal, State, Submission, Work},
-    wire::{Admitted, Built, Bundle, BundleCheck, BundleMake, BundleManifest, Record, Trailer},
+    wire::{
+        Admission, Bundle, BundleCheck, BundleMake, BundleManifest, Compilation, Record, Trailer,
+    },
 };
 use std::{
     collections::BTreeMap,
@@ -552,7 +554,7 @@ impl Worker<'_> {
         let built = self.trailer_of("build").and_then(|t| t.built);
         let inputs = self.inputs(&manifest);
         let attested = self.store.attested(&digest, &inputs).unwrap_or(false);
-        if built == Some(Built::Nothing) && !attested {
+        if built == Some(Compilation::Nothing) && !attested {
             return Ok(Ended::failed(
                 Exit::TargetRebuilt.as_status(),
                 "the build compiled nothing, and no earlier build of these exact inputs attests the executable it left",
@@ -833,7 +835,7 @@ impl Worker<'_> {
             }
             if killed {
                 match &heard {
-                    Some(Record::Admitted(Admitted::Running { job, pid })) => {
+                    Some(Record::Admitted(Admission::Running { job, pid })) => {
                         // Its call belongs to a worker before this one, so the job is stopped on
                         // its machine; the attempt stays open until it is seen to end.
                         let _ = append(&log, &format!("stopping job {job} of an earlier worker\n"));
@@ -874,7 +876,7 @@ impl Worker<'_> {
             }
             match heard {
                 Some(Record::Trailer(trailer))
-                | Some(Record::Admitted(Admitted::Ended(trailer))) => {
+                | Some(Record::Admitted(Admission::Ended(trailer))) => {
                     let gone =
                         trailer.by == ExitSource::Dibs && [129, 130, 143].contains(&trailer.exit);
                     match (trailer.exit, gone, kind) {
@@ -900,7 +902,7 @@ impl Worker<'_> {
                         }
                     }
                 }
-                Some(Record::Admitted(Admitted::Running { job, .. })) => {
+                Some(Record::Admitted(Admission::Running { job, .. })) => {
                     let _ = append(
                         &log,
                         &format!(
@@ -911,8 +913,8 @@ impl Worker<'_> {
                     // Told to stop, the next pass stops the job if it was a kill, or leaves.
                     pause(still_running());
                 }
-                Some(Record::Admitted(Admitted::Lost { started: false, .. })) => again(),
-                Some(Record::Admitted(Admitted::Lost { job, .. })) => match kind {
+                Some(Record::Admitted(Admission::Lost { started: false, .. })) => again(),
+                Some(Record::Admitted(Admission::Lost { job, .. })) => match kind {
                     Kind::Again => again(),
                     Kind::Once => {
                         return close(Ended {
@@ -1067,7 +1069,7 @@ fn away(code: i32) -> bool {
 
 fn trailer_in(record: Option<&Record>) -> Option<Trailer> {
     match record? {
-        Record::Trailer(t) | Record::Admitted(Admitted::Ended(t)) => Some(t.clone()),
+        Record::Trailer(t) | Record::Admitted(Admission::Ended(t)) => Some(t.clone()),
         _ => None,
     }
 }

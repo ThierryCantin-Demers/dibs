@@ -26,4 +26,4 @@ pub use session::{
 pub use ssh::{Dial, Ssh};
 pub use target::{Fleet, Named, Target, TargetEnv, TargetError};
 pub use unreachable::Unreachable;
-pub use values::{CallValues, MaxFrom, Watch};
+pub use values::CallValues;

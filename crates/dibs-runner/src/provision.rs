@@ -1,7 +1,7 @@
 use crate::{channel::Caller, session::Visit, sink::Sink, stop::Signals, tree::Runners};
 use dibs_format::{
     Exit, Label, Mode,
-    wire::{MaxFrom, Request, Watch},
+    wire::{MaxSource, Request, Watch},
 };
 use std::{
     fs::{self, File, OpenOptions},
@@ -143,9 +143,9 @@ pub fn build(hash: &str, built: Built) -> i32 {
         mode: Mode::Shared,
         label: Label::new(built.name()),
         command,
-        wait: None,
-        max: BUILD_MAX,
-        max_from: MaxFrom::Given,
+        wait_secs: None,
+        max_secs: BUILD_MAX,
+        max_source: MaxSource::Given,
         verbose: false,
         json: false,
         stream: false,
@@ -163,11 +163,11 @@ pub fn build(hash: &str, built: Built) -> i32 {
         watch: Watch {
             off: true,
             hold: false,
-            lease: 0,
+            lease_secs: 0,
         },
         ports: Vec::new(),
         services: Vec::new(),
-        ready_within: 0,
+        ready_within_secs: 0,
         new_series: false,
         preempt: false,
         when_open: false,
@@ -175,7 +175,7 @@ pub fn build(hash: &str, built: Built) -> i32 {
         low_priority: false,
         urgent: None,
         tree: None,
-        check_in: None,
+        check_in_secs: None,
         attempt: None,
         lookup: false,
         image: None,
