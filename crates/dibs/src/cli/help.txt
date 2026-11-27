@@ -47,7 +47,8 @@ Recipes: a repo's builds, tests and benchmarks, prepared and recorded.
   dibs batch --detach <file|-> the same, driven on the one machine its steps go to, so it
                                carries on when this computer sleeps or leaves. Each repo a
                                step names is sent there whole, with your recipes and
-                               machines; a step that acts on this computer is refused
+                               machines; a step that acts on this computer is refused.
+                               It follows the batch, and checks in as a job does
   dibs batch --follow <id>     a detached batch's summary, once it has ended, or a batch
                                paused by a check-in, followed and run to its end
 

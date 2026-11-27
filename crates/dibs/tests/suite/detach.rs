@@ -443,3 +443,48 @@ fn a_repo_named_by_a_path_is_sent_under_its_repos_name() {
         out.all()
     );
 }
+
+#[test]
+fn a_detached_batch_checks_in_and_runs_on_until_it_is_followed() {
+    let s = detaching();
+    let gate = s.gate("held");
+    let steps = format!(
+        "[held] dibs --on box-a --label detached-held '{}'\n",
+        gate.hold()
+    );
+    s.write("steps", &steps);
+    let out = s
+        .dibs(["batch", "--detach", &s.p("steps")])
+        .env("DIBS_CHECK_IN", "2s")
+        .run();
+    assert_eq!(out.code, 80, "{}", out.all());
+    let id = out
+        .stderr
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("dibs batch --follow "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no follow line:\n{}", out.all()))
+        .to_string();
+    assert_eq!(
+        out.stderr.lines_with(&format!(
+            "dibs: batch {id} checked in: it runs on without this call on box-a"
+        )),
+        1,
+        "{}",
+        out.all()
+    );
+    gate.open();
+    let followed = s
+        .dibs(["batch", "--follow", &id])
+        .env("DIBS_CHECK_IN", "off")
+        .run();
+    assert_eq!(followed.code, 0, "{}", followed.all());
+    assert_eq!(
+        followed
+            .stdout
+            .lines_matching(&format!("^batch {id}  1 step")),
+        1,
+        "the batch ran on after the call let go, and its follow brings its summary home: {}",
+        followed.all()
+    );
+}

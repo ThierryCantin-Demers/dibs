@@ -109,7 +109,8 @@
 1|   dibs batch --detach <file|-> the same, driven on the one machine its steps go to, so it
 1|                                carries on when this computer sleeps or leaves. Each repo a
 1|                                step names is sent there whole, with your recipes and
-1|                                machines; a step that acts on this computer is refused
+1|                                machines; a step that acts on this computer is refused.
+1|                                It follows the batch, and checks in as a job does
 1|   dibs batch --follow <id>     a detached batch's summary, once it has ended, or a batch
 1|                                paused by a check-in, followed and run to its end
 1| 

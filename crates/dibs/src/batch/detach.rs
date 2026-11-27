@@ -10,10 +10,11 @@ use super::{
 };
 use crate::{
     call::{
-        CallError, Driver, IMAGE, LOW_PRIORITY, MachineCall, Origin, Output, Sender, Series, Sync,
+        CHECK_IN, CallError, DEFAULT_CHECK_IN, Driver, IMAGE, LOW_PRIORITY, MachineCall, Origin,
+        Output, Sender, Series, Sync,
     },
     caller::Caller,
-    cli::{Call, Invocation, Mode, RecipeCall, RecipeVerb},
+    cli::{Call, Invocation, Mode, RecipeCall, RecipeVerb, check_in},
     execution::{Carried, KeptStores, Repo, SentFrom, private},
     git::{Git, GitError},
     gitdeps::{CargoHome, GitPin},
@@ -35,6 +36,9 @@ use std::{
     os::unix::process::CommandExt as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::mpsc,
+    thread,
+    time::Duration,
 };
 
 /// Why a batch cannot be detached, said before anything is sent.
@@ -877,7 +881,8 @@ impl<'a> Detach<'a> {
         }
     }
 
-    /// Waits there for the batch to end, then files here what it left and prints its summary.
+    /// Waits there for the batch to end, then files here what it left and prints its summary;
+    /// or checks in, as a job's call does, and leaves the batch running there.
     fn follow(&self) -> Result<i32, BatchError> {
         let mut child = self
             .client("follow")
@@ -886,14 +891,40 @@ impl<'a> Detach<'a> {
             .stderr(Stdio::inherit())
             .spawn()
             .map_err(CallError::Io)?;
-        let mut json = String::new();
-        if let Some(mut out) = child.stdout.take() {
-            let _ = out.read_to_string(&mut json);
+        let pid = child.id();
+        let (ended, end) = mpsc::channel();
+        let waiting = thread::spawn(move || {
+            let mut json = String::new();
+            if let Some(mut out) = child.stdout.take() {
+                let _ = out.read_to_string(&mut json);
+            }
+            let status = child
+                .wait()
+                .map(Exit::shell_status)
+                .unwrap_or(Exit::Failed.status());
+            let _ = ended.send(());
+            (json, status)
+        });
+        let checked_in = Detach::check_in()
+            .is_some_and(|seconds| end.recv_timeout(Duration::from_secs(seconds)).is_err());
+        if checked_in {
+            // SAFETY: kill only signals the follow this call started, which it has not reaped.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
         }
-        let status = child
-            .wait()
-            .map(Exit::shell_status)
-            .unwrap_or(Exit::Failed.status());
+        let (json, status) = waiting
+            .join()
+            .unwrap_or_else(|_| (String::new(), Exit::Failed.status()));
+        let finished = status == 0 && serde_json::from_str::<Followed>(json.trim()).is_ok();
+        if checked_in && !finished {
+            let id = &self.id;
+            eprintln!(
+                "dibs: batch {id} checked in: it runs on without this call on {}.\n  \
+                 dibs batch --follow {id}  waits for it; it checks in again as a job does\n  \
+                 dibs --kill {id}  stops the batch",
+                self.name
+            );
+            return Ok(Exit::CheckedIn.status());
+        }
         if status == SSH_FAILED {
             eprintln!(
                 "dibs: lost {} while following batch {}, which carries on there. Its summary, once it has ended:\n    dibs batch --follow {}",
@@ -918,6 +949,16 @@ impl<'a> Detach<'a> {
                 );
                 Ok(status.max(1))
             }
+        }
+    }
+
+    /// Seconds a follow waits before it checks in: `DIBS_CHECK_IN` as a call reads it, `off`
+    /// for never.
+    fn check_in() -> Option<u64> {
+        match std::env::var(CHECK_IN).ok().map(|v| check_in(&v)) {
+            Some(Ok(0)) => None,
+            Some(Ok(seconds)) => Some(seconds),
+            _ => Some(DEFAULT_CHECK_IN),
         }
     }
 

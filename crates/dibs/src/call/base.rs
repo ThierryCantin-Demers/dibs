@@ -623,7 +623,7 @@ fn carries_batch(mode: Mode) -> bool {
 }
 
 /// Seconds a job runs before its call lets go of it when `--check-in` does not say.
-const DEFAULT_CHECK_IN: u64 = 1800;
+pub const DEFAULT_CHECK_IN: u64 = 1800;
 
 /// `--check-in` for every call made where it is set: a recipe's or a batch's, which take no
 /// flag of their own for it, and `off` in the steps of a driver nobody waits on.

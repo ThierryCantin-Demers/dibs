@@ -631,7 +631,9 @@ A batch whose step checks in pauses: no further step starts, the steps already r
 check in, and the batch exits 80 with each one's check-in and `dibs batch --follow <id>`. That
 follows the jobs those steps let go of, from the directory the batch was started in, then runs
 the steps still to come, and checks in again as a job does; a second follow waits for the first.
-A detached batch's steps never check in, since nobody waits on its driver.
+A detached batch's steps never check in, since nobody waits on its driver. The call that follows it
+does: after the same 30 minutes (`DIBS_CHECK_IN`), `dibs batch --detach` or `dibs batch --follow`
+lets go of the batch, which runs on there, and exits 80 with `dibs batch --follow <id>`.
 
 ## Holding a lock for a command run elsewhere
 

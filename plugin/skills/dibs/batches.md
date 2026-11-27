@@ -38,6 +38,8 @@ How several Calls become one, and what keeps a Job running, cited as
 
 ### cut-off-followed: A Detached Batch whose Call exits 69 and says the Batch carries on is followed in the background with the `dibs batch --follow <id>` line it printed.
 
+### detached-checks-in: The Call that follows a Detached Batch checks in after 30 minutes and exits 80, and the Batch runs on until that `dibs batch --follow <id>` is followed.
+
 ## Check-ins
 
 ### stuck-before-kill: A Job is killed at its Check-in, with the `--kill` line it printed, only when what it printed shows it stuck, never because its log is quiet.
