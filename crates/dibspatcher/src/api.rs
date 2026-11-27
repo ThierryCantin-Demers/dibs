@@ -6,6 +6,7 @@ use crate::{
     settings::Settings,
     spawn,
     split::{self, Refusal},
+    staged,
     store::{Planned, Store},
     worker,
 };
@@ -137,6 +138,30 @@ fn refused(why: impl Into<String>) -> (String, i32) {
     (why.into(), Exit::Refused.as_status())
 }
 
+/// A stage whose tree is not what was sent, emptied so the next send under its key starts clean:
+/// files an earlier send left would otherwise be sealed with it every time. A stage a submission
+/// was accepted from under the same key meanwhile is its, and is kept. What a refusal tells the
+/// client to do next.
+///
+/// # Assumptions
+///
+/// - The caller holds the stage's lock, which an accepted submission's caller held until it was
+///   stored.
+fn cleared(store: &Store, coworker: &str, key: &str, stage: &std::path::Path) -> String {
+    match store.find(coworker, key) {
+        Ok(None) => removed(stage),
+        Ok(Some(id)) => format!("submission {id} was accepted from it meanwhile, so it is kept"),
+        Err(e) => format!("the store cannot say whether its key was taken ({e}), so it is kept"),
+    }
+}
+
+fn removed(stage: &std::path::Path) -> String {
+    match std::fs::remove_dir_all(stage) {
+        Ok(()) => "its stage is cleared, so send it again".to_string(),
+        Err(e) => format!("its stage could not be cleared ({e}), so it may be refused again"),
+    }
+}
+
 struct Api<'a> {
     home: &'a Home,
     coworker: &'a str,
@@ -164,8 +189,10 @@ impl Api<'_> {
             return Ok(0);
         }
         let inventory = Inventory::load();
-        let (what, plan, resolved) = match &submission.work {
-            Work::Call(call) => self.plan_call(call, &inventory)?,
+        // A split's stage stays locked until it is stored, so a send under the same key that
+        // does not seal cannot clear the stage an accepted one was taken from.
+        let ((what, plan, resolved), held) = match &submission.work {
+            Work::Call(call) => (self.plan_call(call, &inventory)?, None),
             Work::Split(call) => {
                 if !component(&call.repo)
                     || submission
@@ -183,11 +210,14 @@ impl Api<'_> {
                 let text = std::fs::read_to_string(self.home.splits(&call.repo)).ok();
                 let resolved = split::resolve(call, text.as_deref(), &settings, &pools, &inventory)
                     .map_err(|Refusal(why)| refused(why))?;
-                self.seal(&submission)?;
+                let held = self.seal(&submission)?;
                 (
-                    resolved.what(),
-                    resolved.plan(),
-                    serde_json::to_string(&resolved).ok(),
+                    (
+                        resolved.what(),
+                        resolved.plan(),
+                        serde_json::to_string(&resolved).ok(),
+                    ),
+                    Some(held),
                 )
             }
         };
@@ -201,6 +231,7 @@ impl Api<'_> {
                 resolved.as_deref(),
             )
             .map_err(failed)?;
+        drop(held);
         self.started(&id)?;
         send(&Reply::Accepted { id, duplicate });
         Ok(0)
@@ -238,8 +269,9 @@ impl Api<'_> {
         Ok((what, plan, None))
     }
 
-    /// The upload a split names, as it arrived, must be what the client sealed.
-    fn seal(&self, submission: &Submission) -> Result<(), (String, i32)> {
+    /// The upload a split names, as it arrived, must be what the client sealed. The stage's
+    /// lock, held for the caller to keep until the submission is stored.
+    fn seal(&self, submission: &Submission) -> Result<File, (String, i32)> {
         let Some(upload) = &submission.upload else {
             return Err(refused(
                 "a split is built from your working tree, sent ahead as @local",
@@ -253,18 +285,22 @@ impl Api<'_> {
             .staging(self.coworker)
             .join(STAGE_PREFIX)
             .join(&upload.stage);
-        let _held = self
+        let held = self
             .home
             .stage_lock(self.coworker, &upload.stage)
             .map_err(|e| refused(format!("the stage's lock: {e}")))?;
-        let listed = Seal::listed(&stage)
+        let listed = staged::files(&stage)
             .map_err(|e| refused(format!("nothing was staged under {}: {e}", upload.stage)))?;
-        let (digest, files) = Seal::of(&stage, listed.iter().map(String::as_str))
+        let sealed = Seal::of(&stage, listed.iter().map(String::as_str))
             .map_err(|e| refused(format!("the staged tree cannot be read: {e}")))?;
-        if digest != upload.digest || files != upload.files {
+        if sealed != upload.seal {
             return Err(refused(format!(
-                "the staged tree is not what was sent ({files} files sealed {digest:.12}, sent {} sealed {:.12}): send it again",
-                upload.files, upload.digest
+                "the staged tree is not what was sent ({} files sealed {:.12}, sent {} sealed {:.12}): {}",
+                sealed.file_count,
+                sealed.digest,
+                upload.seal.file_count,
+                upload.seal.digest,
+                cleared(self.store, self.coworker, &submission.key, &stage)
             )));
         }
         let git = stage.join(".git");
@@ -281,7 +317,7 @@ impl Api<'_> {
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
         match head {
-            Some(head) if head == upload.head => Ok(()),
+            Some(head) if head == upload.head => Ok(held),
             other => Err(refused(format!(
                 "the staged repo's HEAD is {}, not {}: send it again",
                 other.as_deref().unwrap_or("unreadable"),
@@ -551,6 +587,9 @@ impl Upload {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod stage_tests;
 
 #[cfg(test)]
 mod tests {

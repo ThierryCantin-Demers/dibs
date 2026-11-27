@@ -343,12 +343,12 @@ impl View {
             ui.horizontal_wrapped(|ui| {
                 ui.weak("batch");
                 ui.label(batch.id.to_string());
-                ui.weak(format!("step {} of {}:", batch.k, batch.n));
+                ui.weak(format!("step {} of {}:", batch.k, batch.step_count));
                 ui.label(&batch.step);
                 if let Some(within) = batch.within {
                     ui.weak(format!(
                         "job {} of {} in this step",
-                        within.job, within.jobs
+                        within.job, within.job_count
                     ));
                 }
                 if let Some(left) = batch.left_text() {

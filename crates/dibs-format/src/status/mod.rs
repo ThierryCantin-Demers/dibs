@@ -1,14 +1,12 @@
-//! What `dibs status` says of one machine, as one document: its JSON is the document, and its
-//! text is rendered from it.
+//! What `dibs status --json` says of one machine, as one document. The runner renders its text
+//! from the same values, with what only the text shows beside them.
 
 mod base;
 mod metrics;
-mod text;
 
 pub use base::{
-    Ahead, BatchShown, Closure, Holder, Idle, IdleKind, IdleWait, Left, Leftover, Listing,
-    LockState, Orphan, Overrun, Remaining, Scene, Scope, SeriesHere, Service, Shown, Silent,
-    Status, Stopped, Waiter, Within,
+    BatchShown, BatchTimeLeft, Closure, Holder, HolderState, IdleKind, IdleWait, Idleness, JobCall,
+    LockState, LowPriorityStop, Overrun, PreemptionState, RecipePlace, RemainingBasis, Scope,
+    SeriesHere, ShownEstimate, Silence, Status, Waiter,
 };
 pub use metrics::{Disk, DiskRole, GpuMetrics, Metrics, Quota, QuotaKind, Vendor};
-pub use text::Text;

@@ -57,6 +57,7 @@ pub fn state_words(state: LockState) -> (&'static str, Tone) {
         LockState::Idle => ("idle", Tone::Free),
         LockState::Busy => ("in use", Tone::InUse),
         LockState::Orphan => ("LOCKED BY AN ORPHAN", Tone::Alarm),
+        LockState::Other => ("in a state this dibstop does not know", Tone::InUse),
     }
 }
 
@@ -71,5 +72,13 @@ mod tests {
             "ssh: connect to host m port 22: No route to host"
         );
         assert_eq!(plain("a\tb\x1b[31mc\u{7}"), "a b[31mc");
+    }
+
+    #[test]
+    fn a_state_from_a_newer_runner_is_said_to_be_unknown() {
+        assert_eq!(
+            state_words(LockState::Other),
+            ("in a state this dibstop does not know", Tone::InUse)
+        );
     }
 }

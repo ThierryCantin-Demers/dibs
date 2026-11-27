@@ -46,7 +46,7 @@ impl Shutter<'_> {
         let meta = fs::metadata(&path).ok()?;
         Some(Closure {
             by: account_name(meta.uid()),
-            since: meta
+            since_secs: meta
                 .modified()
                 .ok()
                 .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
@@ -112,7 +112,7 @@ pub fn said(closure: &Closure) -> String {
     let mut said = format!(
         "dibs: this machine was closed by {}, {} ago, and nothing new starts until it is opened.\n",
         closure.by,
-        Span::from_secs(Moment::epoch_now().saturating_sub(closure.since))
+        Span::from_secs(Moment::epoch_now().saturating_sub(closure.since_secs))
     );
     if let Some(reason) = &closure.close.reason {
         said.push_str(&format!("  {reason}\n"));

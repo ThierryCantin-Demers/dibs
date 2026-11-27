@@ -417,13 +417,13 @@ impl Worker<'_> {
                 upload.head
             ));
         }
-        let listed = Seal::listed(&tree).map_err(|e| e.to_string())?;
-        let (digest, files) =
+        let listed = crate::staged::files(&tree).map_err(|e| e.to_string())?;
+        let sealed =
             Seal::of(&tree, listed.iter().map(String::as_str)).map_err(|e| e.to_string())?;
-        if digest != upload.digest || files != upload.files {
+        if sealed != upload.seal {
             return Err(format!(
-                "the tree taken is not the one accepted ({files} files sealed {digest:.12}, accepted {} sealed {:.12})",
-                upload.files, upload.digest
+                "the tree taken is not the one accepted ({} files sealed {:.12}, accepted {} sealed {:.12})",
+                sealed.file_count, sealed.digest, upload.seal.file_count, upload.seal.digest
             ));
         }
         Ok(root)
@@ -612,7 +612,7 @@ impl Worker<'_> {
         let upload = self.submission.upload.as_ref();
         let mut bound = serde_json::json!({
             "head": upload.map(|u| u.head.clone()),
-            "tree": upload.map(|u| u.digest.clone()),
+            "tree": upload.map(|u| u.seal.digest.clone()),
             "lockfile": manifest.lockfile,
             "rustc": manifest.rustc,
             "rustflags": manifest.rustflags,

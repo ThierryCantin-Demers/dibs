@@ -443,12 +443,12 @@ fn job_detail(it: &Item) -> Paragraph<'static> {
         let mut first = vec![
             Span::styled("batch ", DIM),
             Span::raw(b.id.to_string()),
-            Span::styled(format!("   step {} of {}: ", b.k, b.n), DIM),
+            Span::styled(format!("   step {} of {}: ", b.k, b.step_count), DIM),
             Span::raw(b.step.clone()),
         ];
         if let Some(w) = b.within {
             first.push(Span::styled(
-                format!("   job {} of {} in this step", w.job, w.jobs),
+                format!("   job {} of {} in this step", w.job, w.job_count),
                 DIM,
             ));
         }

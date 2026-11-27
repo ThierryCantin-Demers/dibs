@@ -71,7 +71,7 @@ pub fn here(path: &std::path::Path) -> Vec<dibs_format::status::SeriesHere> {
         .map(|l| dibs_format::status::SeriesHere {
             label: l.field(0).to_string(),
             card: l.field(1).to_string(),
-            at: l.field(3).parse().unwrap_or(0),
+            at_secs: l.field(3).parse().unwrap_or(0),
         })
         .collect()
 }

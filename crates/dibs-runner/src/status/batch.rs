@@ -4,7 +4,7 @@ use crate::{
 };
 use dibs_format::{
     BatchPlan, Mode, PendingStepKind, Span,
-    status::{BatchShown, Left},
+    status::{BatchShown, BatchTimeLeft},
 };
 
 /// Steps named in full; the rest are counted.
@@ -97,12 +97,12 @@ impl Plan<'_> {
             id: self.plan.batch,
             step: self.plan.step,
             k: self.plan.position,
-            n: self.plan.step_count,
+            step_count: self.plan.step_count,
             within: self.plan.within,
-            here,
+            here_count: here,
             next: named(next),
-            left: left.map(|left| Left {
-                left,
+            left: left.map(|left_secs| BatchTimeLeft {
+                left_secs,
                 left_partial: partial,
             }),
         }

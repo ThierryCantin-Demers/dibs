@@ -11,16 +11,19 @@ use crate::{
     status::{
         batch::{Plan, Tail},
         cpu,
+        scene::{Leftover, Listing, Orphan, Scene, Service},
+        text::Snapshot,
     },
 };
 use dibs_format::{
     JobId, JobMeta, LockRecord, Mode,
     status::{
-        Ahead, BatchShown, Holder, IdleWait, Leftover, Listing, LockState, Orphan, Remaining,
-        Scene, Service, Shown, Silent, Status, Stopped, Text, Waiter,
+        BatchShown, Holder, HolderState, IdleWait, Idleness, JobCall, LockState, LowPriorityStop,
+        PreemptionState, RemainingBasis, ShownEstimate, Silence, Status, Waiter,
     },
 };
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{Read as _, Seek as _, SeekFrom},
     num::NonZero,
@@ -42,7 +45,15 @@ pub struct Look<'a> {
 
 impl Look<'_> {
     /// The status as it stands; with `listed`, the lock directory's entries too.
-    pub fn status(&self, listed: bool) -> Status {
+    ///
+    /// # Guarantees
+    ///
+    /// - `state` is `Bench` or `Shared` exactly when `holders` is not empty.
+    /// - A holder's `idle` is set only once its tree has used no CPU for longer than
+    ///   `idle_after`, and only where [`HolderState::of`] then says it is idle: never while it is
+    ///   urgent with the machine to itself, parked, frozen or preparing.
+    /// - A waiter's `idle_wait` is Some exactly when its `low_priority` is set.
+    pub fn snapshot(&self, listed: bool) -> Snapshot {
         self.dir.prune();
         let records = self.dir.records(Kind::Holder);
         let mut waiting = self.dir.records(Kind::Waiting);
@@ -68,6 +79,10 @@ impl Look<'_> {
             host: self.machine.host.clone(),
             listing: listed.then(|| self.listing()),
             leftovers: self.leftovers(),
+            services: records
+                .iter()
+                .map(|record| (record.pid, self.services(record.pid)))
+                .collect::<BTreeMap<_, _>>(),
             ..Scene::default()
         };
         let bench = records.iter().any(|r| r.mode == Mode::Bench);
@@ -92,11 +107,11 @@ impl Look<'_> {
                 }
             }
         };
-        Status {
-            t: now,
+        let status = Status {
+            read_secs: now,
             state,
-            cores: std::thread::available_parallelism().map_or(1, NonZero::get) as u64,
-            load: load(),
+            core_count: std::thread::available_parallelism().map_or(1, NonZero::get) as u64,
+            load_hundredths: load(),
             caches: caches(&self.machine.scratch.join("target")),
             clones: clones(&home().join("prog")),
             holders,
@@ -104,8 +119,8 @@ impl Look<'_> {
             closed: (Shutter { dir: self.dir }).read(),
             metrics: None,
             series: crate::series::here(&self.machine.history.with_file_name("cards")),
-            scene,
-        }
+        };
+        Snapshot { status, scene }
     }
 
     /// Processes of this account whose environment names a job that has written its meta, which
@@ -129,13 +144,8 @@ impl Look<'_> {
     }
 
     /// The status as text, coloured when the caller's stdout is a terminal.
-    pub fn text(&self, status: &Status, tty: bool) -> String {
-        Text {
-            status,
-            colour: tty && crate::settings::var("NO_COLOR").is_none(),
-            idle_after: self.settings.idle_after,
-        }
-        .to_string()
+    pub fn text(&self, snapshot: &Snapshot, tty: bool) -> String {
+        snapshot.to_text(tty && crate::settings::var("NO_COLOR").is_none())
     }
 
     fn estimate(&self, record: &LockRecord, fingerprint: Option<&str>) -> Option<Estimate> {
@@ -184,7 +194,6 @@ impl Look<'_> {
         let unseen = self.dir.works_unseen(pid);
         let written = output.as_deref().and_then(|file| age(Path::new(file)));
         let writing = written.is_some_and(|age| (age as i64) < self.settings.wrote_within);
-        let idle = sample.idle.filter(|_| !writing && !unseen);
         let estimate = self.estimate(record, record.fingerprint.as_deref());
         let shown = estimate.map(|e| shown(e, elapsed));
         let prepare = self.dir.prepare_of(pid);
@@ -198,8 +207,8 @@ impl Look<'_> {
             .zip(written)
             .filter(|&(_, age)| age as i64 > self.settings.silent_after)
             .filter(|_| !usual && prepare.is_none())
-            .map(|(file, silent_for)| Silent {
-                silent_for,
+            .map(|(file, silent_for_secs)| Silence {
+                silent_for_secs,
                 silent_line: last_line(Path::new(file)),
             });
         let left = estimate.and_then(|e| e.remaining(elapsed));
@@ -209,25 +218,17 @@ impl Look<'_> {
             Some(left) => free.at = free.at.max(left),
             None => free.known = false,
         }
-        Holder {
-            mode: record.mode,
-            pid,
+        let mut holder = Holder {
+            call: self.call(record),
             job: record.job.clone(),
-            label: record.label.clone(),
-            agent: record.agent.clone(),
-            user: self.user(record.pid),
-            subagent: self.subagent(pid),
-            device: record.device.clone(),
-            cmd: record.command.clone(),
-            command: self.command(pid),
-            started: record.start_secs,
-            elapsed,
+            started_secs: record.start_secs,
+            elapsed_secs: elapsed,
             killed_at: self.killed_at(pid, record.start_secs),
-            cpu: ticks / Host::clock_ticks(),
+            cpu_secs: ticks / Host::clock_ticks(),
             estimate: shown,
             output,
             cpu_rate: sample.rate,
-            idle,
+            idle: sample.idle.filter(|_| !writing && !unseen),
             silent,
             batch: self.batch(pid, left, tail),
             prepare,
@@ -235,7 +236,23 @@ impl Look<'_> {
             urgent: self.dir.urgent_why(pid),
             parked: self.dir.parked_for(pid),
             low_priority: self.dir.idle_only(pid),
-            services: self.services(pid),
+        };
+        holder.idle = idle_shown(&holder, self.settings.idle_after);
+        holder
+    }
+
+    /// The call a lock record and the files beside it say a job was started by.
+    fn call(&self, record: &LockRecord) -> JobCall {
+        JobCall {
+            mode: record.mode,
+            pid: record.pid,
+            label: record.label.clone(),
+            agent: record.agent.clone(),
+            user: self.user(record.pid),
+            subagent: self.subagent(record.pid),
+            device: record.device.clone(),
+            cmd: record.command.clone(),
+            command: self.command(record.pid),
         }
     }
 
@@ -260,17 +277,9 @@ impl Look<'_> {
         });
         Waiter {
             position,
-            mode: record.mode,
-            pid: record.pid,
-            label: record.label.clone(),
-            agent: record.agent.clone(),
-            user: self.user(record.pid),
-            subagent: self.subagent(record.pid),
-            device: record.device.clone(),
-            cmd: record.command.clone(),
-            command: self.command(record.pid),
-            arrived: record.start_secs,
-            waiting: now.saturating_sub(record.start_secs),
+            call: self.call(record),
+            arrived_secs: record.start_secs,
+            waiting_secs: now.saturating_sub(record.start_secs),
             eta: starts,
             low_priority,
             urgent: self.dir.urgent_why(record.pid),
@@ -284,12 +293,15 @@ impl Look<'_> {
                     quiet_for: quiet
                         .and_then(|(since, _)| since)
                         .map(|since| now.saturating_sub(since)),
-                    settle: quiet.map_or(self.settings.idle_settle, |(_, settle)| settle),
-                    stopped: self.dir.stopped(record.pid).map(|(ran, at, by)| Stopped {
-                        ran,
-                        ago: now.saturating_sub(at),
-                        by,
-                    }),
+                    settle_secs: quiet.map_or(self.settings.idle_settle, |(_, settle)| settle),
+                    stopped: self
+                        .dir
+                        .stopped(record.pid)
+                        .map(|(ran, at, by)| LowPriorityStop {
+                            ran_secs: ran,
+                            ago_secs: now.saturating_sub(at),
+                            by,
+                        }),
                 }
             }),
             batch: self.batch(record.pid, left, tail),
@@ -304,7 +316,7 @@ impl Look<'_> {
     /// On the clock `elapsed` counts by, whole seconds since the epoch. None while frozen or
     /// parked, whose ends move the deadline.
     fn killed_at(&self, pid: u32, start: u64) -> Option<u64> {
-        let waiting = matches!(self.dir.ahead_of(pid), Some(Ahead::Paused(_)))
+        let waiting = matches!(self.dir.ahead_of(pid), Some(PreemptionState::Paused(_)))
             || self.dir.parked_for(pid).is_some();
         let at = self.dir.deadline(pid).filter(|_| !waiting)?;
         Some((at.floor() as u64).saturating_sub(start))
@@ -358,26 +370,37 @@ impl Look<'_> {
             dir: self.dir.path.clone(),
             entries,
             history: self.machine.history.clone(),
-            runs: fs::read_to_string(&self.machine.history).map_or(0, |text| text.lines().count()),
+            run_count: fs::read_to_string(&self.machine.history)
+                .map_or(0, |text| text.lines().count()),
         }
     }
 }
 
+/// The holder's idleness as its document says it: past `idle_after_secs`, and only where every
+/// view would say it, so none while it is urgent with the machine to itself, waits or prepares.
+fn idle_shown(holder: &Holder, idle_after_secs: i64) -> Option<Idleness> {
+    holder
+        .idle
+        .clone()
+        .filter(|idle| idle.idle_for_secs as i64 > idle_after_secs)
+        .filter(|_| matches!(HolderState::of(holder), HolderState::Idle(_)))
+}
+
 /// An estimate as the status shows it, measured against how long the job has run.
-fn shown(estimate: Estimate, elapsed: u64) -> Shown {
+fn shown(estimate: Estimate, elapsed: u64) -> ShownEstimate {
     let remaining = estimate.remaining(elapsed);
-    Shown {
-        median: estimate.median,
-        low: estimate.low,
-        high: estimate.high,
-        runs: estimate.runs,
+    ShownEstimate {
+        median_secs: estimate.median,
+        low_secs: estimate.low,
+        high_secs: estimate.high,
+        run_count: estimate.runs,
         scope: estimate.scope,
         wide: estimate.runs >= 4 && estimate.high > (estimate.low + 1) * 3,
         other: estimate.other,
         remaining,
         remaining_kind: remaining.map(|_| match elapsed < estimate.median {
-            true => Remaining::Typical,
-            false => Remaining::Bound,
+            true => RemainingBasis::Typical,
+            false => RemainingBasis::Bound,
         }),
         overrun: estimate.scope == Scope::This
             && !estimate.other
@@ -471,6 +494,95 @@ fn named_dirs(parent: &Path, keep: impl Fn(&PathBuf) -> bool) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dibs_format::{Label, status::IdleKind};
+
+    const IDLE_AFTER_SECS: i64 = 60;
+
+    fn holder(mode: Mode) -> Holder {
+        Holder {
+            call: JobCall {
+                mode,
+                pid: 7,
+                label: Label::new("b"),
+                agent: "a".into(),
+                user: None,
+                subagent: None,
+                device: None,
+                cmd: "c".into(),
+                command: None,
+            },
+            job: None,
+            started_secs: 0,
+            elapsed_secs: 600,
+            killed_at: None,
+            cpu_secs: 0,
+            estimate: None,
+            output: None,
+            cpu_rate: None,
+            idle: None,
+            silent: None,
+            batch: None,
+            prepare: None,
+            ahead: None,
+            urgent: None,
+            parked: None,
+            low_priority: false,
+        }
+    }
+
+    /// What the document says of `holder`'s idleness once its tree has been idle `secs`.
+    fn shown_idle_for(mut holder: Holder, secs: u64) -> Option<Idleness> {
+        holder.idle = Some(Idleness {
+            idle_for_secs: secs,
+            idle_kind: IdleKind::Never,
+        });
+        idle_shown(&holder, IDLE_AFTER_SECS)
+    }
+
+    #[test]
+    fn a_holder_idle_past_the_threshold_is_called_idle() {
+        assert!(shown_idle_for(holder(Mode::Shared), 61).is_some());
+    }
+
+    #[test]
+    fn a_holder_idle_no_longer_than_the_threshold_is_not() {
+        assert_eq!(shown_idle_for(holder(Mode::Shared), 60), None);
+    }
+
+    #[test]
+    fn a_preparing_holder_is_not_called_idle() {
+        let mut preparing = holder(Mode::Shared);
+        preparing.prepare = Some(String::new());
+        assert_eq!(shown_idle_for(preparing, 600), None);
+    }
+
+    #[test]
+    fn a_holder_parked_for_an_urgent_job_is_not_called_idle() {
+        let mut parked = holder(Mode::Shared);
+        parked.parked = Some(JobId::new("20261001120000-9"));
+        assert_eq!(shown_idle_for(parked, 600), None);
+    }
+
+    #[test]
+    fn a_holder_frozen_for_a_benchmark_is_not_called_idle() {
+        let mut frozen = holder(Mode::Shared);
+        frozen.ahead = Some(PreemptionState::Paused(JobId::new("20261001120000-9")));
+        assert_eq!(shown_idle_for(frozen, 600), None);
+    }
+
+    #[test]
+    fn an_urgent_benchmark_is_not_called_idle() {
+        let mut urgent = holder(Mode::Bench);
+        urgent.urgent = Some("demo".into());
+        assert_eq!(shown_idle_for(urgent, 600), None);
+    }
+
+    #[test]
+    fn an_urgent_shared_job_is_still_called_idle() {
+        let mut urgent = holder(Mode::Shared);
+        urgent.urgent = Some("demo".into());
+        assert!(shown_idle_for(urgent, 600).is_some());
+    }
 
     #[test]
     fn only_a_services_own_log_is_left_out_of_a_holders_output() {

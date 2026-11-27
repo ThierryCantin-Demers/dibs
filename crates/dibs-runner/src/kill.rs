@@ -60,7 +60,7 @@ impl Kill<'_> {
     /// The status as text, which a refusal shows.
     fn shown(&self) -> String {
         self.look.text(
-            &self.look.status(self.call.request.verbose),
+            &self.look.snapshot(self.call.request.verbose),
             self.call.request.tty,
         )
     }

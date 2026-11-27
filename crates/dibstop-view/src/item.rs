@@ -2,7 +2,10 @@
 
 use dibs_format::{
     Alias, JobId, Label, Mode, Span,
-    status::{Ahead, BatchShown, Holder, IdleKind, IdleWait, Scope, Shown, Status, Waiter},
+    status::{
+        BatchShown, Holder, HolderState, IdleKind, Idleness, Overrun, PreemptionState, Scope,
+        ShownEstimate, Silence, Status, Waiter,
+    },
 };
 
 #[derive(Clone)]
@@ -83,7 +86,7 @@ impl Item {
             alarm,
         } = Verdict::of_holder(h);
         let priority = Priority::of(h.urgent.is_some(), h.low_priority);
-        let said = match (&h.urgent, priority, h.mode) {
+        let said = match (&h.urgent, priority, h.call.mode) {
             (Some(why), _, Mode::Shared) => {
                 format!("Urgent: {why}. It went around the queued benchmarks. ")
             }
@@ -99,23 +102,23 @@ impl Item {
         long.insert_str(0, &said);
         Item {
             machine: machine.to_string(),
-            device: h.device.clone(),
+            device: h.call.device.clone(),
             holding: true,
             slot: match (&h.ahead, priority) {
-                (Some(Ahead::Paused(_)), _) => "FROZEN".into(),
+                (Some(PreemptionState::Paused(_)), _) => "FROZEN".into(),
                 (_, Some(Priority::Urgent)) => "URGENT".into(),
                 (_, Some(Priority::Low)) => "LOW PRIO".into(),
                 _ => "HOLDING".into(),
             },
-            mode: h.mode,
-            pid: h.pid,
+            mode: h.call.mode,
+            pid: h.call.pid,
             job: h.job.clone(),
-            label: h.label.clone(),
-            agent: h.agent.clone(),
-            user: h.user.clone(),
-            cmd: h.cmd.clone(),
-            time: h.elapsed,
-            cpu: Some(h.cpu),
+            label: h.call.label.clone(),
+            agent: h.call.agent.clone(),
+            user: h.call.user.clone(),
+            cmd: h.call.cmd.clone(),
+            time: h.elapsed_secs,
+            cpu: Some(h.cpu_secs),
             rate: h.cpu_rate,
             eta: h.estimate.as_ref().and_then(|e| e.remaining),
             note,
@@ -131,21 +134,21 @@ impl Item {
         let Verdict { note, long, alarm } = Verdict::of_queued(q);
         Item {
             machine: machine.to_string(),
-            device: q.device.clone(),
+            device: q.call.device.clone(),
             holding: false,
             slot: match Priority::of(q.urgent.is_some(), q.low_priority) {
                 Some(Priority::Urgent) => format!("urgent {}", q.position),
                 Some(Priority::Low) => format!("low prio {}", q.position),
                 None => format!("queued {}", q.position),
             },
-            mode: q.mode,
-            pid: q.pid,
+            mode: q.call.mode,
+            pid: q.call.pid,
             job: None,
-            label: q.label.clone(),
-            agent: q.agent.clone(),
-            user: q.user.clone(),
-            cmd: q.cmd.clone(),
-            time: q.waiting,
+            label: q.call.label.clone(),
+            agent: q.call.agent.clone(),
+            user: q.call.user.clone(),
+            cmd: q.call.cmd.clone(),
+            time: q.waiting_secs,
             cpu: None,
             rate: None,
             eta: q.eta,
@@ -157,6 +160,17 @@ impl Item {
             priority: Priority::of(q.urgent.is_some(), q.low_priority),
         }
     }
+}
+
+/// A low-priority waiter's note and pane, around what it `waits` for.
+fn low_priority(waits: String) -> (String, String) {
+    (
+        format!("low priority: {waits}"),
+        format!(
+            "Low priority: it starts only once nothing but other low-priority work or a \
+             transfer runs or waits on the machine. It {waits}."
+        ),
+    )
 }
 
 fn runs(n: usize) -> String {
@@ -177,18 +191,18 @@ pub trait Progress {
 
 impl Progress for BatchShown {
     fn progress(&self) -> String {
-        let step = format!("step {}/{}", self.k, self.n);
+        let step = format!("step {}/{}", self.k, self.step_count);
         match &self.left {
-            Some(l) if l.left_partial => format!("{step}, >{} left", Span::from_secs(l.left)),
-            Some(l) => format!("{step}, ~{} left", Span::from_secs(l.left)),
+            Some(l) if l.left_partial => format!("{step}, >{} left", Span::from_secs(l.left_secs)),
+            Some(l) => format!("{step}, ~{} left", Span::from_secs(l.left_secs)),
             None => step,
         }
     }
 
     fn left_text(&self) -> Option<String> {
         self.left.as_ref().map(|l| match l.left_partial {
-            true => format!("over {}", Span::from_secs(l.left)),
-            false => format!("~{}", Span::from_secs(l.left)),
+            true => format!("over {}", Span::from_secs(l.left_secs)),
+            false => format!("~{}", Span::from_secs(l.left_secs)),
         })
     }
 }
@@ -202,97 +216,133 @@ struct Verdict {
 }
 
 impl Verdict {
+    /// In this view's words, what `HolderState` says comes first.
     fn of_holder(h: &Holder) -> Verdict {
-        if let Some(Ahead::Paused(bench)) = &h.ahead {
-            return Verdict {
-                note: format!("frozen for benchmark {bench}"),
-                long: format!(
-                    "It only compiles, and the benchmark {bench} was queued before it, so it is \
-                     frozen while that benchmark runs and picks up where it stopped afterwards. It \
-                     is waiting its turn, not stuck."
-                ),
-                alarm: false,
-            };
+        match HolderState::of(h) {
+            HolderState::UrgentAlone(why) => Verdict::urgent_alone(why),
+            HolderState::Parked(urgent) => Verdict::parked(urgent),
+            HolderState::Frozen(bench) => Verdict::frozen(bench),
+            HolderState::Preparing(doing) => Verdict::preparing(doing),
+            HolderState::Idle(idle) => Verdict::idle(h, idle),
+            HolderState::Silent(silent) => Verdict::silent(silent),
+            HolderState::Overrun(overrun, shown) => Verdict::overrun(h, overrun, shown),
+            HolderState::Estimated(shown) => Verdict::of_estimate(h.call.mode, shown),
+            HolderState::Unestimated => Verdict::unestimated(),
         }
-        if let Some(doing) = h.preparing() {
-            return Verdict {
-                note: format!("preparing: {doing}"),
-                long: format!(
-                    "The machine is laying out its tree before the command runs, and said last: \
-                     {doing}. A copy or a cleanup on a slow disk can take minutes, none of it the \
-                     command's."
-                ),
-                alarm: false,
-            };
-        }
-        if let Some(idle) = &h.idle {
-            let f = Span::from_secs(idle.idle_for);
-            let never = idle.idle_kind == IdleKind::Never;
-            return Verdict {
-                note: match never {
-                    true => format!("no cpu at all in {f}"),
-                    false => format!("{} cpu, none in {f}", Span::from_secs(h.cpu)),
-                },
-                long: match never {
-                    true => format!(
-                        "It has burned no CPU at all in the {} since it acquired the lock: it is \
-                         waiting on something. Stop it with K.",
-                        Span::from_secs(h.elapsed)
-                    ),
-                    false => format!(
-                        "It has burned {} of CPU in total, but none of it in the last {f}, so it has \
-                         stopped doing anything. Stop it with K.",
-                        Span::from_secs(h.cpu)
-                    ),
-                },
-                alarm: true,
-            };
-        }
-        if let Some(silent) = &h.silent {
-            let last = match silent.silent_line.as_str() {
-                "" => String::new(),
-                line => format!(" Its last line: {line}"),
-            };
-            return Verdict {
-                note: silent.to_string(),
-                long: format!(
-                    "Its output has not changed in {}, longer than its own history accounts for, \
-                     so it may be hung rather than slow.{last} Stop it with K.",
-                    Span::from_secs(silent.silent_for)
-                ),
-                alarm: true,
-            };
-        }
-        let Some(shown) = &h.estimate else {
-            return Verdict {
-                note: "no history for this one yet".into(),
-                long: "Nothing recorded for this job or for its mode, so there is no honest \
-                       estimate of how much longer it has."
-                    .into(),
-                alarm: false,
-            };
-        };
-        if let Some(overrun) = shown.overrun() {
-            return Verdict {
-                note: overrun.to_string(),
-                long: format!(
-                    "It has been running {}, over twice the 90th percentile of its {}, {}.",
-                    Span::from_secs(h.elapsed),
-                    runs(shown.runs),
-                    Span::from_secs(overrun.high)
-                ),
-                alarm: true,
-            };
-        }
-        Verdict::of_estimate(h.mode, shown)
     }
 
-    fn of_estimate(mode: Mode, shown: &Shown) -> Verdict {
-        let usual = match shown.median {
+    fn urgent_alone(why: &str) -> Verdict {
+        Verdict {
+            note: format!("urgent: {why}"),
+            long: "Nothing else runs here until it ends.".into(),
+            alarm: false,
+        }
+    }
+
+    fn parked(urgent: &JobId) -> Verdict {
+        Verdict {
+            note: format!("parked for urgent job {urgent}"),
+            long: format!(
+                "It is parked while the urgent job {urgent} runs, and runs again from the \
+                 start after it. It is waiting its turn, not stuck."
+            ),
+            alarm: false,
+        }
+    }
+
+    fn frozen(bench: &JobId) -> Verdict {
+        Verdict {
+            note: format!("frozen for benchmark {bench}"),
+            long: format!(
+                "It only compiles, and the benchmark {bench} was queued before it, so it is \
+                 frozen while that benchmark runs and picks up where it stopped afterwards. It \
+                 is waiting its turn, not stuck."
+            ),
+            alarm: false,
+        }
+    }
+
+    fn preparing(doing: &str) -> Verdict {
+        Verdict {
+            note: format!("preparing: {doing}"),
+            long: format!(
+                "The machine is laying out its tree before the command runs, and said last: \
+                 {doing}. A copy or a cleanup on a slow disk can take minutes, none of it the \
+                 command's."
+            ),
+            alarm: false,
+        }
+    }
+
+    fn idle(h: &Holder, idle: &Idleness) -> Verdict {
+        let f = Span::from_secs(idle.idle_for_secs);
+        let never = idle.idle_kind == IdleKind::Never;
+        Verdict {
+            note: match never {
+                true => format!("no cpu at all in {f}"),
+                false => format!("{} cpu, none in {f}", Span::from_secs(h.cpu_secs)),
+            },
+            long: match never {
+                true => format!(
+                    "It has burned no CPU at all in the {} since it acquired the lock: it is \
+                     waiting on something. Stop it with K.",
+                    Span::from_secs(h.elapsed_secs)
+                ),
+                false => format!(
+                    "It has burned {} of CPU in total, but none of it in the last {f}, so it has \
+                     stopped doing anything. Stop it with K.",
+                    Span::from_secs(h.cpu_secs)
+                ),
+            },
+            alarm: true,
+        }
+    }
+
+    fn silent(silent: &Silence) -> Verdict {
+        let last = match silent.silent_line.as_str() {
+            "" => String::new(),
+            line => format!(" Its last line: {line}"),
+        };
+        Verdict {
+            note: silent.to_text(),
+            long: format!(
+                "Its output has not changed in {}, longer than its own history accounts for, \
+                 so it may be hung rather than slow.{last} Stop it with K.",
+                Span::from_secs(silent.silent_for_secs)
+            ),
+            alarm: true,
+        }
+    }
+
+    fn overrun(h: &Holder, overrun: Overrun, shown: &ShownEstimate) -> Verdict {
+        Verdict {
+            note: overrun.to_text(),
+            long: format!(
+                "It has been running {}, over twice the 90th percentile of its {}, {}.",
+                Span::from_secs(h.elapsed_secs),
+                runs(shown.run_count),
+                Span::from_secs(overrun.high_secs)
+            ),
+            alarm: true,
+        }
+    }
+
+    fn unestimated() -> Verdict {
+        Verdict {
+            note: "no history for this one yet".into(),
+            long: "Nothing recorded for this job or for its mode, so there is no honest \
+                   estimate of how much longer it has."
+                .into(),
+            alarm: false,
+        }
+    }
+
+    fn of_estimate(mode: Mode, shown: &ShownEstimate) -> Verdict {
+        let usual = match shown.median_secs {
             0 => "under a second".to_string(),
             e => Span::from_secs(e).to_string(),
         };
-        let runs = runs(shown.runs);
+        let runs = runs(shown.run_count);
         let (note, long) = match shown.scope {
             Scope::This if shown.other => (
                 format!("other values: {usual} over {runs}"),
@@ -303,7 +353,7 @@ impl Verdict {
                 ),
             ),
             // One sample is a fact about one run, not a habit.
-            Scope::This if shown.runs == 1 => (
+            Scope::This if shown.run_count == 1 => (
                 format!("ran once, in {usual}"),
                 format!("This job has run once before, in {usual}."),
             ),
@@ -334,23 +384,18 @@ impl Verdict {
     }
 
     fn of_queued(q: &Waiter) -> Verdict {
-        let (note, long) = match (q.low_priority, q.eta) {
-            (true, _) => (
-                format!("low priority: {}", IdleWait::said(q.idle_wait.as_ref())),
-                format!(
-                    "Low priority: it starts only once nothing but other low-priority work or a \
-                     transfer runs or waits on the machine. It {}.",
-                    IdleWait::said(q.idle_wait.as_ref())
-                ),
-            ),
-            (false, Some(e)) => (
+        let (note, long) = match (q.low_priority, &q.idle_wait, q.eta) {
+            (true, Some(wait), _) => low_priority(wait.to_text()),
+            // From a runner older than `idle_wait`.
+            (true, None, _) => low_priority("waits for an idle machine".into()),
+            (false, _, Some(e)) => (
                 format!("starts in ~{}", Span::from_secs(e)),
                 format!(
                     "Waiting for the lock. Nothing ahead of it is expected to take more than {}.",
                     Span::from_secs(e)
                 ),
             ),
-            (false, None) => (
+            (false, _, None) => (
                 "no telling when".into(),
                 "Waiting for the lock. Something ahead of it is already past its usual \
                  duration, so there is no honest estimate of when this one starts."
@@ -364,7 +409,7 @@ impl Verdict {
                 alarm: false,
             };
         };
-        let does = match q.mode {
+        let does = match q.call.mode {
             Mode::Shared => "It goes around the queued benchmarks.",
             _ => {
                 "Once it holds the lock, the shared jobs are parked for it and run again from \
@@ -483,6 +528,45 @@ mod tests {
         );
         let running = status(&holder("b", r#","ahead":"running""#), "");
         assert_eq!(Item::all("m", &running)[0].slot, "HOLDING");
+    }
+
+    const IDLE: &str = r#","idle_for":600,"idle_kind":"never""#;
+
+    #[test]
+    fn an_urgent_benchmark_is_said_urgent_before_idle() {
+        let urgent = holder("b", &format!(r#"{IDLE},"urgent":"demo""#))
+            .replace(r#""mode":"shared""#, r#""mode":"bench""#);
+        let v = Item::all("m", &status(&urgent, ""));
+        assert_eq!((v[0].note.as_str(), v[0].alarm), ("urgent: demo", false));
+    }
+
+    #[test]
+    fn a_parked_job_is_waiting_its_turn_not_idle() {
+        let parked = holder("b", &format!(r#"{IDLE},"parked":"20261103120000-9""#));
+        let v = Item::all("m", &status(&parked, ""));
+        assert_eq!(
+            (v[0].note.as_str(), v[0].alarm),
+            ("parked for urgent job 20261103120000-9", false)
+        );
+    }
+
+    #[test]
+    fn a_preparing_job_is_said_preparing_before_idle() {
+        let preparing = holder("b", &format!(r#"{IDLE},"prepare":"copying""#));
+        let v = Item::all("m", &status(&preparing, ""));
+        assert_eq!(
+            (v[0].note.as_str(), v[0].alarm),
+            ("preparing: copying", false)
+        );
+    }
+
+    #[test]
+    fn an_idle_job_is_said_idle_and_alarms() {
+        let v = Item::all("m", &status(&holder("b", IDLE), ""));
+        assert_eq!(
+            (v[0].note.as_str(), v[0].alarm),
+            ("no cpu at all in 10m00s", true)
+        );
     }
 
     #[test]

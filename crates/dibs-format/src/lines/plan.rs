@@ -1,7 +1,7 @@
 use crate::{
     BatchId, Label, Mode,
     lines::{error::LineError, field::Field, reader::FieldReader},
-    status::Within,
+    status::RecipePlace,
 };
 use std::{fmt, str::FromStr};
 
@@ -73,7 +73,7 @@ pub struct BatchPlan {
     /// The step's number, counting from 1.
     pub position: usize,
     pub step_count: usize,
-    pub within: Option<Within>,
+    pub within: Option<RecipePlace>,
     /// The steps still to come, read in the order they run.
     pub pending: Vec<PendingStep>,
 }
@@ -83,7 +83,7 @@ impl BatchPlan {
     pub fn to_text(&self) -> String {
         let within = self
             .within
-            .map(|within| format!("\t{}\t{}", within.job, within.jobs))
+            .map(|within| format!("\t{}\t{}", within.job, within.job_count))
             .unwrap_or_default();
         let pending: String = self
             .pending
@@ -126,9 +126,9 @@ impl FromStr for BatchPlan {
             position: count.read_parsed("position")?,
             step_count: count.read_parsed("total")?,
             within: match count.count() {
-                4.. => Some(Within {
+                4.. => Some(RecipePlace {
                     job: count.read_parsed("job")?,
-                    jobs: count.read_parsed("jobs")?,
+                    job_count: count.read_parsed("jobs")?,
                 }),
                 _ => None,
             },

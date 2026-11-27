@@ -35,7 +35,7 @@ use crate::{
 };
 use dibs_format::{
     Event, Exit, ExitSource, HistoryLine, JobId, Mode,
-    status::Ahead,
+    status::PreemptionState,
     wire::{Bundle, BundleMake, MaxSource, Record},
 };
 use std::{
@@ -1037,7 +1037,7 @@ impl<'a> Run<'a> {
             settings: self.at.settings,
             asking: pid,
         };
-        let shown = || look.text(&look.status(request.verbose), request.tty);
+        let shown = || look.text(&look.snapshot(request.verbose), request.tty);
         // Waiting for an idle machine has already spent some of it.
         let deadline = match self.waits_idle() {
             true => self.wait_until(arrived),
@@ -1313,7 +1313,7 @@ impl<'a> Run<'a> {
                     };
                     self.at
                         .sink
-                        .say(&look.text(&look.status(true), request.tty));
+                        .say(&look.text(&look.snapshot(true), request.tty));
                 }
                 told = true;
             }
@@ -1516,7 +1516,7 @@ impl<'a> Run<'a> {
         if acquired.ahead {
             self.at
                 .dir
-                .mark_ahead(self.at.call.pid, arrived.order, &Ahead::Running);
+                .mark_ahead(self.at.call.pid, arrived.order, &PreemptionState::Running);
         }
         self.at
             .dir

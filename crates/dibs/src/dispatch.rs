@@ -145,14 +145,7 @@ fn split(target: &str, recipe: &str, values: &[&str]) -> Result<(Work, (Upload, 
         recipe: recipe.to_string(),
         values: given,
     });
-    let upload = Upload {
-        stage: String::new(),
-        repo: name,
-        head: String::new(),
-        digest: String::new(),
-        files: 0,
-    };
-    let upload = Sending { dir: dir.clone() }.prepared(upload)?;
+    let upload = Sending { dir: dir.clone() }.prepared(name)?;
     Ok((work, (upload, dir)))
 }
 
@@ -251,20 +244,23 @@ impl Sending {
         Ok(files)
     }
 
-    /// The upload's seal and head, computed before anything is sent: what the dibspatcher must
-    /// find when it arrives.
-    fn prepared(&self, mut upload: Upload) -> Result<Upload, String> {
+    /// The upload of `repo`, its seal and head computed before anything is sent: what the
+    /// dibspatcher must find when it arrives. Its stage is named once its key is known.
+    fn prepared(&self, repo: String) -> Result<Upload, String> {
         let files = self.files()?;
-        let (digest, count) = Seal::of(&self.dir, files.iter().map(String::as_str))
+        let seal = Seal::of(&self.dir, files.iter().map(String::as_str))
             .map_err(|e| format!("{} could not be read to be sent: {e}", self.dir.display()))?;
-        upload.digest = digest;
-        upload.files = count;
-        upload.head = Git(&self.dir)
+        let head = Git(&self.dir)
             .run(&["rev-parse", "HEAD"])
             .map_err(|e| e.to_string())?
             .trim()
             .to_string();
-        Ok(upload)
+        Ok(Upload {
+            stage: String::new(),
+            repo,
+            head,
+            seal,
+        })
     }
 }
 
@@ -472,7 +468,7 @@ impl Dibspatcher {
         let stage = format!("{}:{STAGE_PREFIX}{}/", self.ssh, upload.stage);
         eprintln!(
             "dibs: sending {} ({} files and its git directory) to the dibspatcher",
-            upload.repo, upload.files
+            upload.repo, upload.seal.file_count
         );
         let tree = [
             "-rlp".to_string(),
@@ -645,7 +641,7 @@ fn line(summary: &Summary) -> String {
             .exit
             .map(|e| format!("exit {e}"))
             .unwrap_or_default(),
-        Moment::at_epoch_secs(summary.created).minute(),
+        Moment::at_epoch_secs(summary.created_secs).minute(),
         summary.coworker,
         summary.what
     )

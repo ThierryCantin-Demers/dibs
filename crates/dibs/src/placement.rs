@@ -147,7 +147,7 @@ impl Reading {
         self.series
             .iter()
             .filter(|s| s.label == label)
-            .map(|s| s.at)
+            .map(|s| s.at_secs)
             .max()
     }
 
@@ -165,7 +165,7 @@ impl Reading {
         self.series
             .iter()
             .filter(|s| labels.iter().any(|l| l.to_filed().as_str() == s.label))
-            .max_by_key(|s| s.at)
+            .max_by_key(|s| s.at_secs)
             .map(|s| s.card.as_str())
     }
 
@@ -757,7 +757,7 @@ mod tests {
         let series = |label: &str, at| SeriesHere {
             label: label.into(),
             card: "none".into(),
-            at,
+            at_secs: at,
         };
         let mut old = machine("old", LockState::Idle, 0);
         let mut new = machine("new", LockState::Idle, 0);

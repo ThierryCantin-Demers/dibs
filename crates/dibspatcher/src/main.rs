@@ -8,6 +8,7 @@ mod serve;
 mod settings;
 mod spawn;
 mod split;
+mod staged;
 mod store;
 mod worker;
 

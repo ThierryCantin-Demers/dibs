@@ -16,8 +16,10 @@ pub struct Metrics {
     pub mem_used: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mem_total: Option<u64>,
+    /// In the order the runner reads them, and written in it: no dibs program reads them back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gpus: Vec<GpuMetrics>,
+    /// In the order the runner reads them, and written in it: no dibs program reads them back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disks: Vec<Disk>,
 }
@@ -29,16 +31,18 @@ pub struct Disk {
     pub mount: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fstype: Option<String>,
-    /// Bytes.
-    pub total: u64,
-    /// Bytes this account may still write, before any quota.
-    pub free: u64,
+    #[serde(rename = "total")]
+    pub total_bytes: u64,
+    /// What this account may still write, before any quota.
+    #[serde(rename = "free")]
+    pub free_bytes: u64,
     /// Each quota that counts what this account writes there, with a limit: a full quota stops
-    /// a job as a full disk does.
+    /// a job as a full disk does. Only written, in the order the runner reads them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quotas: Vec<Quota>,
     /// Scratch's top-level entries that live here rather than on scratch's own filesystem, by
-    /// a symlink or a mount: `ws` and `target` moved to a bigger array, for one.
+    /// a symlink or a mount: `ws` and `target` moved to a bigger array, for one. Only written,
+    /// in the order the runner finds them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
 }
@@ -61,10 +65,11 @@ pub struct Quota {
     pub kind: QuotaKind,
     /// The user, group or project id it is kept for.
     pub id: u32,
-    /// Bytes: the hard limit, or the soft one where there is none.
-    pub limit: u64,
-    /// Bytes.
-    pub used: u64,
+    /// The hard limit, or the soft one where there is none.
+    #[serde(rename = "limit")]
+    pub limit_bytes: u64,
+    #[serde(rename = "used")]
+    pub used_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,6 +109,7 @@ pub struct GpuMetrics {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock_mhz: Option<u32>,
     /// What holds the clock down, empty when nothing does; absent where the driver does not say.
+    /// Only written, in the order the driver names them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub throttle: Option<Vec<String>>,
 }
@@ -131,5 +137,42 @@ impl GpuMetrics {
             clock_mhz: None,
             throttle: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_disk_writes_its_role_as_its_tag_and_leaves_out_what_it_lacks() {
+        let disk = Disk {
+            role: DiskRole::SystemTmp,
+            mount: "/tmp".into(),
+            fstype: None,
+            total_bytes: 2,
+            free_bytes: 1,
+            quotas: Vec::new(),
+            paths: Vec::new(),
+        };
+        assert_eq!(
+            serde_json::to_string(&disk).unwrap(),
+            r#"{"role":"system-tmp","mount":"/tmp","total":2,"free":1}"#
+        );
+    }
+
+    #[test]
+    fn a_card_asleep_writes_only_that_it_sleeps() {
+        let mut card = GpuMetrics::of("0000:01:00.0".into(), Vendor::Nvidia);
+        card.suspended = true;
+        assert_eq!(
+            serde_json::to_string(&card).unwrap(),
+            r#"{"pci":"0000:01:00.0","vendor":"nvidia","suspended":true}"#
+        );
+    }
+
+    #[test]
+    fn metrics_with_no_reading_write_nothing() {
+        assert_eq!(serde_json::to_string(&Metrics::default()).unwrap(), "{}");
     }
 }

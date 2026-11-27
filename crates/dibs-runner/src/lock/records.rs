@@ -2,7 +2,7 @@ use crate::{
     job::Tether,
     platform::{Host, Platform as _},
 };
-use dibs_format::{JobId, LockRecord, Span, status::Ahead};
+use dibs_format::{JobId, LockRecord, Span, status::PreemptionState};
 use std::{
     fs::{self, File, OpenOptions, TryLockError},
     io,
@@ -405,15 +405,15 @@ impl LockDir {
 
     /// `ahead.<pid>`: a preemptible job, when it arrived in nanoseconds, and the benchmark that
     /// has frozen it, if one has.
-    pub fn mark_ahead(&self, pid: u32, arrived: u128, ahead: &Ahead) {
+    pub fn mark_ahead(&self, pid: u32, arrived: u128, ahead: &PreemptionState) {
         let said = match ahead {
-            Ahead::Running => format!("{arrived}\n"),
-            Ahead::Paused(bench) => format!("{arrived} {bench}\n"),
+            PreemptionState::Running => format!("{arrived}\n"),
+            PreemptionState::Paused(bench) => format!("{arrived} {bench}\n"),
         };
         let _ = fs::write(self.file("ahead", pid), said);
     }
 
-    pub fn ahead_of(&self, pid: u32) -> Option<Ahead> {
+    pub fn ahead_of(&self, pid: u32) -> Option<PreemptionState> {
         let said = fs::read_to_string(self.file("ahead", pid)).ok()?;
         Some(
             match said
@@ -421,8 +421,8 @@ impl LockDir {
                 .nth(1)
                 .and_then(JobId::checked_from_text)
             {
-                Some(bench) => Ahead::Paused(bench),
-                None => Ahead::Running,
+                Some(bench) => PreemptionState::Paused(bench),
+                None => PreemptionState::Running,
             },
         )
     }

@@ -250,6 +250,10 @@ read, and each batch's output. `crates/dibs/src/paths.rs` names every one.
 - **Frames and the request:** a call that takes no lock can reach an older runner, so a field or
   variant such a call uses is not renamed or removed. A new field is ignored by an older runner,
   and reads as absent in the newest runner when an older client leaves it out.
+- **The status document:** `status --json` is read by dibstop and by agents, from runners of
+  other versions. A field keeps its name. A reader passes over a field it does not know, reads
+  `caches` and `clones` as empty when they are absent, and reads a lock state it does not know as
+  `other`.
 - **The JSON that is stored:** a job's `trailer.json`, the records a call appends to the file
   `$DIBS_TRAILERS` names, and the trailers dibspatcher keeps in its store. Every later version
   reads what an earlier one wrote, so a stored field or variant keeps its name.

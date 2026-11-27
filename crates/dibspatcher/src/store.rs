@@ -319,7 +319,7 @@ impl Store {
                     name: r.get(0)?,
                     machine: r.get(1)?,
                     state: state(&r.get::<_, String>(2)?),
-                    attempts: r.get::<_, i64>(3)? as u32,
+                    attempt_count: r.get::<_, i64>(3)? as u32,
                     trailer: r
                         .get::<_, Option<String>>(4)?
                         .and_then(|t| serde_json::from_str::<Trailer>(&t).ok()),
@@ -570,7 +570,7 @@ fn summary(r: &rusqlite::Row) -> rusqlite::Result<Summary> {
         agent: r.get(2)?,
         what: r.get(3)?,
         state: state(&r.get::<_, String>(4)?),
-        created: r.get::<_, i64>(5)? as u64,
+        created_secs: r.get::<_, i64>(5)? as u64,
         exit: r.get(6)?,
     })
 }

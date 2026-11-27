@@ -51,8 +51,8 @@ pub fn disks(machine: &Site) -> Vec<Disk> {
             role,
             mount: free.mount.display().to_string(),
             fstype: Host::filesystem(&dir),
-            total: free.size,
-            free: free.available,
+            total_bytes: free.size,
+            free_bytes: free.available,
             quotas: quotas(&dir),
             paths: entries
                 .iter()
@@ -158,8 +158,8 @@ mod linux {
         (asked == 0 && limit > 0).then(|| Quota {
             kind,
             id,
-            limit: limit * 1024,
-            used: found.curspace,
+            limit_bytes: limit * 1024,
+            used_bytes: found.curspace,
         })
     }
 }

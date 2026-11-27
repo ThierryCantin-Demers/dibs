@@ -1,8 +1,8 @@
 //! A window on `dibs machines`: what each machine lacks against what it should have, probed in
 //! this process through the dibs library.
 
+use dibs::fleet::report::{Area, Overview, Report, Standing};
 use dibs::fleet::{self, FleetError};
-use dibs_format::fleet::{Area, Overview, Report, Standing};
 use eframe::egui::{self, Color32, RichText, Ui};
 use std::{
     sync::mpsc,
@@ -132,7 +132,7 @@ impl App {
                 ui.strong("machine");
                 ui.strong("set up by");
                 for area in Area::ALL {
-                    ui.strong(area.name());
+                    ui.strong(area.as_str());
                 }
                 ui.end_row();
                 for r in &self.overview.machines {
@@ -140,7 +140,7 @@ impl App {
                     if ui.selectable_label(chosen, &r.machine).clicked() {
                         self.selected = (!chosen).then(|| r.machine.clone());
                     }
-                    ui.label(r.provisioned.to_string());
+                    ui.label(r.provisioned.to_text());
                     for area in Area::ALL {
                         area_cell(ui, r, area);
                     }
@@ -193,7 +193,7 @@ impl App {
                 self.selected = None;
             }
         });
-        ui.label(format!("Set up by {}.", r.provisioned));
+        ui.label(format!("Set up by {}.", r.provisioned.to_text()));
         if let Some(why) = &r.unprobed {
             ui.colored_label(ui.visuals().warn_fg_color, format!("Not probed: {why}"));
         }
@@ -213,7 +213,7 @@ impl App {
                     ui,
                     matches!(standing, Standing::Key | Standing::Tailnet),
                     who,
-                    standing.name(),
+                    standing.as_str(),
                 );
             }
             for fp in &r.access.strangers {
@@ -221,7 +221,7 @@ impl App {
             }
             section(ui, "Checks");
             for f in &r.findings {
-                mark(ui, f.ok, f.area.name(), &f.detail);
+                mark(ui, f.ok, f.area.as_str(), &f.detail);
             }
         });
     }
@@ -264,7 +264,7 @@ fn area_cell(ui: &mut Ui, r: &Report, area: Area) {
 }
 
 fn standing_cell(ui: &mut Ui, r: &Report, who: &str) {
-    let text = |s: Standing| RichText::new(s.name());
+    let text = |s: Standing| RichText::new(s.as_str());
     match r.access.people.get(who) {
         Some(s @ (Standing::Key | Standing::Tailnet)) => ui.label(text(*s).color(GOOD)),
         Some(s @ Standing::Missing) => ui.label(text(*s).color(ui.visuals().error_fg_color)),

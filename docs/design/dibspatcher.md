@@ -17,7 +17,10 @@ forced command reads `SSH_ORIGINAL_COMMAND` and allows two things:
 - `rsync --server` writing into `staging/<coworker>/stage/<key>/`, with a short list of options
   and no symlinked component on the way. This is how `@local` trees arrive. Before git runs in
   one, its config is replaced by the service's own, keeping only how to read the repo and its
-  origin, and its hooks are removed, so nothing sent runs a program here.
+  origin, and its hooks are removed, so nothing sent runs a program here. A tree that is not
+  what the client sealed is refused and its stage cleared, so the next send under that key does
+  not carry the files an earlier one left. The stage stays locked from its seal until its
+  submission is stored, and one a submission was accepted from is never cleared.
 
 ## Durable state
 

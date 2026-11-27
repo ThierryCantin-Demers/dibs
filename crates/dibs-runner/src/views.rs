@@ -1,7 +1,13 @@
 //! What is read of the machine without the lock: its status, a watch of it, and its log.
 
-use crate::{channel::Channel, clock::Moment, metrics, sink::Sink, status::Look};
-use dibs_format::{status::Status, wire::Request};
+use crate::{
+    channel::Channel,
+    clock::Moment,
+    metrics,
+    sink::Sink,
+    status::{Look, Snapshot},
+};
+use dibs_format::wire::Request;
 use std::{
     fs, thread,
     time::{Duration, Instant},
@@ -22,23 +28,23 @@ pub struct Views<'a> {
 
 impl Views<'_> {
     pub fn status(&self) -> i32 {
-        let mut status = self.look.status(self.request.verbose);
+        let mut snapshot = self.look.snapshot(self.request.verbose);
         if self.request.metrics {
-            status.metrics = Some(metrics::read(
+            snapshot.status.metrics = Some(metrics::read(
                 self.look.machine,
                 self.look.dir,
                 &self.request.aliases,
             ));
         }
-        self.sink.out(self.shown(&status).as_bytes());
+        self.sink.out(self.shown(&snapshot).as_bytes());
         0
     }
 
     /// The status as JSON on one line, or as text.
-    fn shown(&self, status: &Status) -> String {
+    fn shown(&self, snapshot: &Snapshot) -> String {
         match self.request.json {
-            true => status.line(),
-            false => self.look.text(status, self.request.tty),
+            true => snapshot.status.to_line(),
+            false => self.look.text(snapshot, self.request.tty),
         }
     }
 
@@ -51,14 +57,14 @@ impl Views<'_> {
         let mut heard = Instant::now();
         let mut present = true;
         while present {
-            let status = self.look.status(self.request.verbose);
+            let snapshot = self.look.snapshot(self.request.verbose);
             let tick = match self.request.json {
-                true => self.shown(&status),
+                true => self.shown(&snapshot),
                 false => format!(
                     "{}{}   every {every}s, ctrl-c to stop\n{}",
                     if self.request.tty { CLEAR } else { "" },
                     Moment::now().clock(),
-                    self.shown(&status)
+                    self.shown(&snapshot)
                 ),
             };
             let due = Instant::now() + Duration::from_secs(every);

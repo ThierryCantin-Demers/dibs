@@ -1,5 +1,5 @@
 use dibs_format::{
-    BatchId, BatchPlan, Label, PendingStep, PendingStepKind, status::Within, wire::Tree,
+    BatchId, BatchPlan, Label, PendingStep, PendingStepKind, status::RecipePlace, wire::Tree,
 };
 
 /// Who makes a call.
@@ -72,7 +72,7 @@ impl BatchStep {
         step: &str,
         k: usize,
         n: usize,
-        within: Option<Within>,
+        within: Option<RecipePlace>,
         pending: &[Pending],
     ) -> BatchStep {
         let text = BatchPlan {
@@ -145,9 +145,9 @@ impl BatchStep {
             .map(|x| x.trim().parse::<usize>().unwrap_or(0));
         let (bk, bn) = (nums.next().unwrap_or(0), nums.next().unwrap_or(0));
         let step = format!("{}: {}", outer.step, calls[k].name);
-        let within = (calls.len() > 1).then(|| Within {
+        let within = (calls.len() > 1).then(|| RecipePlace {
             job: k + 1,
-            jobs: calls.len(),
+            job_count: calls.len(),
         });
         let mut env = BatchStep::new(&outer.batch, &step, bk, bn, within, &calls[k + 1..]);
         env.plan.push_str(rest);

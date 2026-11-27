@@ -1,4 +1,5 @@
-//! What dibs writes and reads, as data: no I/O happens here past reading the clock.
+//! What dibs writes and reads, as data: no I/O happens here past reading the clock, and reading
+//! the files [`Sha256::hex_of_file`] digests and [`dibspatcher::Seal::of`] seals.
 //!
 //! Each tab-separated record writes the shape the machines write today, byte for byte, and
 //! reads every shape a released dibs has written, so a client and a machine on different
@@ -26,6 +27,7 @@ pub mod fleet;
 mod friction;
 mod hex;
 mod ids;
+mod json;
 mod lines;
 pub mod lockfile;
 mod mode;
