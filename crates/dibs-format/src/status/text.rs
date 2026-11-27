@@ -156,7 +156,7 @@ impl Text<'_> {
         }
         let cap = holder
             .killed_at
-            .map(|at| format!(", {}cap {}{}", p.dim, Span(at), p.off))
+            .map(|at| format!(", {}cap {}{}", p.dim, Span::from_secs(at), p.off))
             .unwrap_or_default();
         let lead = format!(
             "  {}{}{}  {}{}{}  {}{}{}{cap}  {}pid {}{}{job}{ahead}",
@@ -167,7 +167,7 @@ impl Text<'_> {
             row.label,
             p.off,
             p.bold,
-            Span(holder.elapsed),
+            Span::from_secs(holder.elapsed),
             p.off,
             p.dim,
             holder.pid,
@@ -217,11 +217,11 @@ impl Text<'_> {
             .filter(|idle| idle.idle_for as i64 > self.idle_after)
         {
             let said = match idle.idle_kind {
-                IdleKind::Never => format!("no CPU at all in {}", Span(idle.idle_for)),
+                IdleKind::Never => format!("no CPU at all in {}", Span::from_secs(idle.idle_for)),
                 IdleKind::Stalled => format!(
                     "{}s of CPU, none of it in the last {}",
                     holder.cpu,
-                    Span(idle.idle_for)
+                    Span::from_secs(idle.idle_for)
                 ),
             };
             let _ = writeln!(
@@ -312,7 +312,12 @@ impl Text<'_> {
                 p.off
             ),
             (Some(0), _) => format!("   {}[starts as soon as the lock frees]{}", p.dim, p.off),
-            (Some(eta), _) => format!("   {}[~{} until it starts]{}", p.dim, Span(eta), p.off),
+            (Some(eta), _) => format!(
+                "   {}[~{} until it starts]{}",
+                p.dim,
+                Span::from_secs(eta),
+                p.off
+            ),
             (None, _) => String::new(),
         };
         let when = match &waiter.urgent {
@@ -332,7 +337,7 @@ impl Text<'_> {
             row.label,
             p.off,
             p.bold,
-            Span(waiter.waiting),
+            Span::from_secs(waiter.waiting),
             p.off,
             p.dim,
             waiter.pid,
@@ -440,7 +445,7 @@ impl fmt::Display for Text<'_> {
                 p.busy,
                 closed.by,
                 p.off,
-                Span(status.t.saturating_sub(closed.since))
+                Span::from_secs(status.t.saturating_sub(closed.since))
             );
             if let Some(reason) = &closed.close.reason {
                 let _ = writeln!(out, "  {reason}");
@@ -490,28 +495,35 @@ impl Shown {
     fn said(&self, mode: Mode) -> String {
         let mut left = match (self.remaining, self.remaining_kind) {
             (Some(left), Some(Remaining::Bound)) => {
-                format!("under {} left if it runs true to form", Span(left))
+                format!(
+                    "under {} left if it runs true to form",
+                    Span::from_secs(left)
+                )
             }
-            (Some(left), _) => format!("~{} left", Span(left)),
+            (Some(left), _) => format!("~{} left", Span::from_secs(left)),
             (None, _) => "longer than it has ever taken".to_string(),
         };
         let mut usual = if self.wide {
             let low = match self.low {
                 0 => "under a second".to_string(),
-                low => Span(low).to_string(),
+                low => Span::from_secs(low).to_string(),
             };
             format!(
                 "anywhere from {low} to {} over {} runs",
-                Span(self.high),
+                Span::from_secs(self.high),
                 self.runs
             )
         } else if self.median == 0 {
             left.clear();
             format!("under a second over {} runs", self.runs)
         } else if self.runs == 1 {
-            format!("ran once, in {}", Span(self.median))
+            format!("ran once, in {}", Span::from_secs(self.median))
         } else {
-            format!("usually {} over {} runs", Span(self.median), self.runs)
+            format!(
+                "usually {} over {} runs",
+                Span::from_secs(self.median),
+                self.runs
+            )
         };
         usual = match self.scope {
             Scope::Agent => format!("nothing on this one; this agent's other {mode} jobs: {usual}"),
@@ -544,7 +556,7 @@ fn last_line(out: &mut String, p: &Palette, silent: Option<&Silent>) {
             out,
             "    {}its last line, {} ago:{} {}",
             p.warn,
-            Span(silent.silent_for),
+            Span::from_secs(silent.silent_for),
             p.off,
             silent.silent_line
         );
@@ -569,9 +581,9 @@ fn batch_lines(out: &mut String, p: &Palette, batch: &BatchShown, estimated: boo
         None => "unknown, this step's own time cannot be estimated".to_string(),
         Some(left) if left.left_partial => format!(
             "over {}, since some of what is ahead has no history",
-            Span(left.left)
+            Span::from_secs(left.left)
         ),
-        Some(left) => format!("~{}", Span(left.left)),
+        Some(left) => format!("~{}", Span::from_secs(left.left)),
     };
     let _ = writeln!(out, "    {}batch time left here: {said}{}", p.dim, p.off);
 }

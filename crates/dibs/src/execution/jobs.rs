@@ -188,7 +188,7 @@ impl<'a> Reader<'a> {
                 trailer: self.trailer,
                 checked_in: self
                     .checked_in
-                    .filter(|_| status == Exit::CheckedIn.status()),
+                    .filter(|_| status == Exit::CheckedIn.as_status()),
             },
             prepared: self.prepared,
             stepped: self.stepped,
@@ -472,7 +472,7 @@ impl Jobs {
         let Mode::Run(run) = &call.mode else {
             unreachable!("a recipe's call is a run");
         };
-        let labels: Vec<Label> = labels.iter().map(|l| Label::new(*l).filed()).collect();
+        let labels: Vec<Label> = labels.iter().map(|l| Label::new(*l).to_filed()).collect();
         let cards = LockedCall::run_of(run).concrete(&call, &labels)?;
         Ok(Some(cards.map_or(device.to_string(), |c| c.to_string())))
     }

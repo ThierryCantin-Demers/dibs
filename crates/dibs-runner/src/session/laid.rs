@@ -104,7 +104,7 @@ impl<'a> Layout<'a> {
             Err(error) => {
                 say(&error.to_string());
                 return Laid::Done {
-                    status: error.exit().status(),
+                    status: error.exit().as_status(),
                     by: By::Dibs,
                 };
             }
@@ -122,7 +122,7 @@ impl<'a> Layout<'a> {
             Then::Step if missing => {
                 say("dibs: a git dependency has to be sent first; the step runs once it is\n");
                 Laid::Done {
-                    status: Exit::Setup.status(),
+                    status: Exit::Setup.as_status(),
                     by: By::Dibs,
                 }
             }
@@ -174,7 +174,7 @@ impl<'a> Layout<'a> {
         match Turn::by(lock, deadline) {
             Ok(Some(turn)) => Ok(turn),
             Ok(None) => Err(Laid::Done {
-                status: Exit::Overran.status(),
+                status: Exit::Overran.as_status(),
                 by: By::Dibs,
             }),
             Err(e) => {
@@ -183,7 +183,7 @@ impl<'a> Layout<'a> {
                     worktree.display()
                 ));
                 Err(Laid::Done {
-                    status: Exit::Setup.status(),
+                    status: Exit::Setup.as_status(),
                     by: By::Dibs,
                 })
             }
@@ -247,7 +247,7 @@ impl<'a> Layout<'a> {
         let artifacts = stepping.keep(&step.artifacts);
         let unpinned = !step.pinned.is_empty() && stepping.unpinned(&step.pinned, *status);
         if unpinned {
-            *status = Exit::Setup.status();
+            *status = Exit::Setup.as_status();
         }
         self.at.sink.record(Record::Stepped(Stepped {
             refused: false,

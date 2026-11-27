@@ -272,7 +272,7 @@ impl Local {
         let content = format!(
             "{head}{}-{:.12}",
             if dirty { "+dirty" } else { "" },
-            h.finalize().hex()
+            Hex::new(&h.finalize()).to_string()
         );
         let mut k = Sha256::new();
         k.update(
@@ -282,7 +282,7 @@ impl Local {
                 .as_encoded_bytes(),
         );
         Ok(Local {
-            key: format!("{:.10}", k.finalize().hex()),
+            key: format!("{:.10}", Hex::new(&k.finalize())),
             target: None,
             content,
             dirty,
@@ -570,8 +570,8 @@ impl Checkout {
         Ok(Checkout {
             dir: checkout,
             sha: sha.to_string(),
-            key: format!("{:.10}", k.finalize().hex()),
-            target: format!("{:.10}", t.finalize().hex()),
+            key: format!("{:.10}", Hex::new(&k.finalize())),
+            target: format!("{:.10}", Hex::new(&t.finalize())),
             lock: Some(lock),
             why,
         })
@@ -716,7 +716,7 @@ impl Fetched {
 /// trip to the host; a remote that cannot be asked counts as public, which is what it was taken
 /// for before anything asked.
 pub fn private(url: &str) -> bool {
-    const WEEK: u64 = 7 * Span::DAY.0;
+    const WEEK: u64 = 7 * Span::DAY.as_secs();
     let Some(url) = anonymous_url(url) else {
         return false;
     };

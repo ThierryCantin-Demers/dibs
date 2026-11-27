@@ -614,7 +614,7 @@ impl<'a> Sweep<'a> {
         if fs::symlink_metadata(path).is_err() {
             return (Fate::Kept, now);
         }
-        let cutoff = now.saturating_sub(self.clocks.keep_days.saturating_mul(Span::DAY.0));
+        let cutoff = now.saturating_sub(self.clocks.keep_days.saturating_mul(Span::DAY.as_secs()));
         let enough = match self.exact || self.clocks.all {
             true => None,
             false => Some(cutoff),
@@ -634,7 +634,11 @@ impl<'a> Sweep<'a> {
     /// What a job named, by the last write anywhere in it: a build deep inside keeps all of it.
     /// Kept while a process works in it, or while it holds a person's keep marker.
     fn named(&self, path: &Path, now: u64) -> (Fate, u64) {
-        let cutoff = now.saturating_sub(self.clocks.named_keep_days.saturating_mul(Span::DAY.0));
+        let cutoff = now.saturating_sub(
+            self.clocks
+                .named_keep_days
+                .saturating_mul(Span::DAY.as_secs()),
+        );
         let enough = match self.exact || self.clocks.all {
             true => None,
             false => Some(cutoff),

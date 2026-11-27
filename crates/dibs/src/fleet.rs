@@ -560,7 +560,7 @@ fn probe(name: &str, m: &Machine, pool: &BTreeSet<String>) -> Result<Facts, Unpr
             .trim()
             .to_string()
     };
-    let unreachable = i32::from(Exit::Unreachable.code());
+    let unreachable = i32::from(Exit::Unreachable.as_code());
     match answer.exit {
         None => Err(Unprobed::Late),
         Some(0) => serde_json::from_str(
@@ -682,7 +682,7 @@ pub fn command(
     }
     Ok(match overview.machines.iter().all(Report::as_expected) {
         true => ExitCode::SUCCESS,
-        false => ExitCode::from(Exit::Failed.code()),
+        false => ExitCode::from(Exit::Failed.as_code()),
     })
 }
 

@@ -271,7 +271,7 @@ impl Served<'_> {
              Install it in a maintenance window: dibs --check <machine>.\n",
             Runner::HASH
         ));
-        Some(i32::from(Exit::NoRunner.code()))
+        Some(i32::from(Exit::NoRunner.as_code()))
     }
 
     fn provisions() -> bool {
@@ -317,10 +317,10 @@ impl Served<'_> {
             delivery.say(&format!(
                 "dibs: ssh to {} broke off before the login; trying again in {}\n",
                 self.session.name,
-                Span(pause)
+                Span::from_secs(pause)
             ));
             if !Interrupt::pause(Duration::from_secs(pause)) {
-                return Ok(Attempted::Exit(i32::from(Exit::Interrupted.code())));
+                return Ok(Attempted::Exit(i32::from(Exit::Interrupted.as_code())));
             }
         }
         match attempt(delivery)? {
@@ -503,7 +503,7 @@ impl Served<'_> {
                 relayed.settle();
             }
             Interrupt::pass_on(status);
-            return Ok(match (said, Exit::shell_status(status)) {
+            return Ok(match (said, Exit::to_shell_code(status)) {
                 (None, code) if RUNNER_ABSENT.contains(&code) => Attempted::Missing,
                 (None, code) if self.broke_off(code) => Attempted::BrokeOff,
                 (_, code) => Attempted::Exit(code),
@@ -531,7 +531,7 @@ impl Served<'_> {
             relayed.settle();
         }
         Interrupt::pass_on(status);
-        Ok(Attempted::Exit(Exit::shell_status(status)))
+        Ok(Attempted::Exit(Exit::to_shell_code(status)))
     }
 
     fn attempt(&self, reached: Reached, delivery: &mut Delivery) -> io::Result<Attempted> {
@@ -638,7 +638,7 @@ impl Served<'_> {
                 Heard::Exit(code) => {
                     self.session.said.exited();
                     exit = Some(code);
-                    if code == Exit::CheckedIn.status()
+                    if code == Exit::CheckedIn.as_status()
                         && let Some(checked) = &checked
                     {
                         let said = self.ways_on(checked);
@@ -655,12 +655,12 @@ impl Served<'_> {
         delivery.flush(&mut buffers);
         // A job the runner let go of outlives it, and sshd keeps the session open until the
         // runner exits; the runner said its last, so its ssh goes, and a local runner is left.
-        if exit == Some(Exit::CheckedIn.status()) && checked.is_some() {
+        if exit == Some(Exit::CheckedIn.as_status()) && checked.is_some() {
             if self.over_ssh() {
                 // SAFETY: kill only sends a signal, to the ssh this call started.
                 unsafe { libc::kill(runner as libc::pid_t, libc::SIGTERM) };
             }
-            return Ok(Attempted::Exit(Exit::CheckedIn.status()));
+            return Ok(Attempted::Exit(Exit::CheckedIn.as_status()));
         }
         let _ = frames.join();
         if let Some(err) = err {
@@ -671,12 +671,12 @@ impl Served<'_> {
             .unwrap_or_else(|_| Err(io::Error::other("the wait for the runner panicked")))?;
         Ok(match exit {
             Some(code) => Attempted::Exit(code),
-            None if Interrupt::heard() => Attempted::Exit(i32::from(Exit::Interrupted.code())),
-            None if !any && RUNNER_ABSENT.contains(&Exit::shell_status(status)) => {
+            None if Interrupt::heard() => Attempted::Exit(i32::from(Exit::Interrupted.as_code())),
+            None if !any && RUNNER_ABSENT.contains(&Exit::to_shell_code(status)) => {
                 Attempted::Missing
             }
-            None if !any && self.broke_off(Exit::shell_status(status)) => Attempted::BrokeOff,
-            None => Attempted::Exit(Exit::shell_status(status)),
+            None if !any && self.broke_off(Exit::to_shell_code(status)) => Attempted::BrokeOff,
+            None => Attempted::Exit(Exit::to_shell_code(status)),
         })
     }
 }
@@ -694,7 +694,7 @@ impl Served<'_> {
         format!(
             "  dibs {on}--follow {job}  waits for it: it ends with the job, or after another {} of running\n  \
              dibs {on}--kill {}  stops it\n",
-            Span(checked.every),
+            Span::from_secs(checked.every),
             checked.pid
         )
     }

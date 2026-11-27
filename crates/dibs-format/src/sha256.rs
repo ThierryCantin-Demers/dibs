@@ -1,7 +1,7 @@
 //! SHA-256, here rather than a dependency: the runner links this crate, and every machine builds
 //! the runner from source with nothing but what it already fetches.
 
-use crate::Hex as _;
+use crate::Hex;
 use std::io::{self, Read};
 
 const K: [u32; 64] = [
@@ -15,7 +15,15 @@ const K: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-/// A digest being computed.
+/// A SHA-256 digest being computed. Its digests are written in lowercase hex.
+///
+/// # Assumptions
+///
+/// - Less than 2^61 bytes go into one digest.
+///
+/// # Guarantees
+///
+/// - It is the digest FIPS 180-4 defines.
 #[derive(Clone)]
 pub struct Sha256 {
     state: [u32; 8],
@@ -39,103 +47,119 @@ impl Default for Sha256 {
 }
 
 impl Sha256 {
-    pub fn update(&mut self, mut bytes: &[u8]) {
-        self.length = self.length.wrapping_add(bytes.len() as u64);
-        while !bytes.is_empty() {
-            let n = (64 - self.filled).min(bytes.len());
-            self.block[self.filled..self.filled + n].copy_from_slice(&bytes[..n]);
-            self.filled += n;
-            bytes = &bytes[n..];
-            if self.filled == 64 {
-                let block = self.block;
-                self.compress(&block);
-                self.filled = 0;
-            }
-        }
+    pub fn update(&mut self, bytes: &[u8]) {
+        absorb(self, bytes);
     }
 
-    pub fn finish(mut self) -> [u8; 32] {
-        let bits = self.length.wrapping_mul(8);
-        self.update(&[0x80]);
-        while self.filled != 56 {
-            self.update(&[0]);
-        }
-        self.update(&bits.to_be_bytes());
-        let mut out = [0u8; 32];
-        for (chunk, word) in out.chunks_mut(4).zip(self.state) {
-            chunk.copy_from_slice(&word.to_be_bytes());
-        }
-        out
+    pub fn finish(self) -> [u8; 32] {
+        finished(self)
     }
 
-    /// The digest of `bytes`, in lowercase hex.
+    /// The digest of `bytes`.
     pub fn hex(bytes: &[u8]) -> String {
-        let mut sha = Sha256::default();
-        sha.update(bytes);
-        hex(&sha.finish())
+        hex_bytes(bytes)
     }
 
-    /// The digest of everything `reader` gives, in lowercase hex.
-    pub fn hex_of(mut reader: impl Read) -> io::Result<String> {
-        let mut sha = Sha256::default();
-        let mut chunk = vec![0u8; 256 * 1024];
-        loop {
-            match reader.read(&mut chunk) {
-                Ok(0) => return Ok(hex(&sha.finish())),
-                Ok(n) => sha.update(&chunk[..n]),
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
+    /// The digest of everything `reader` gives.
+    pub fn hex_of(reader: impl Read) -> io::Result<String> {
+        hex_read(reader)
     }
 
-    /// The digest of a file's bytes, in lowercase hex.
+    /// The digest of a file's bytes.
     pub fn hex_of_file(path: &std::path::Path) -> io::Result<String> {
         Sha256::hex_of(std::fs::File::open(path)?)
     }
+}
 
-    fn compress(&mut self, block: &[u8; 64]) {
-        let mut w = [0u32; 64];
-        for (i, word) in block.chunks(4).enumerate() {
-            w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
-        }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = self.state;
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ (!e & g);
-            let t1 = h
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(K[i])
-                .wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let t2 = s0.wrapping_add(maj);
-            h = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(t1);
-            d = c;
-            c = b;
-            b = a;
-            a = t1.wrapping_add(t2);
-        }
-        for (state, add) in self.state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
-            *state = state.wrapping_add(add);
+/// Takes `bytes` into the digest, compressing each block as it fills.
+fn absorb(sha: &mut Sha256, mut bytes: &[u8]) {
+    sha.length = sha.length.wrapping_add(bytes.len() as u64);
+    while !bytes.is_empty() {
+        let n = (64 - sha.filled).min(bytes.len());
+        sha.block[sha.filled..sha.filled + n].copy_from_slice(&bytes[..n]);
+        sha.filled += n;
+        bytes = &bytes[n..];
+        if sha.filled == 64 {
+            let block = sha.block;
+            compress(&mut sha.state, &block);
+            sha.filled = 0;
         }
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.hex()
+/// Pads the digest with its length in bits and gives its state as bytes.
+fn finished(mut sha: Sha256) -> [u8; 32] {
+    let bits = sha.length.wrapping_mul(8);
+    absorb(&mut sha, &[0x80]);
+    while sha.filled != 56 {
+        absorb(&mut sha, &[0]);
+    }
+    absorb(&mut sha, &bits.to_be_bytes());
+    let mut out = [0u8; 32];
+    for (chunk, word) in out.chunks_mut(4).zip(sha.state) {
+        chunk.copy_from_slice(&word.to_be_bytes());
+    }
+    out
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut sha = Sha256::default();
+    absorb(&mut sha, bytes);
+    Hex::new(&finished(sha)).to_string()
+}
+
+/// The digest of everything `reader` gives, read a chunk at a time.
+fn hex_read(mut reader: impl Read) -> io::Result<String> {
+    let mut sha = Sha256::default();
+    let mut chunk = vec![0u8; 256 * 1024];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => return Ok(Hex::new(&sha.finish()).to_string()),
+            Ok(n) => sha.update(&chunk[..n]),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// One block's rounds, added into `state`.
+fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
+    let mut w = [0u32; 64];
+    for (i, word) in block.chunks(4).enumerate() {
+        w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+    }
+    for i in 16..64 {
+        let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+        let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16]
+            .wrapping_add(s0)
+            .wrapping_add(w[i - 7])
+            .wrapping_add(s1);
+    }
+    let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
+    for i in 0..64 {
+        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        let ch = (e & f) ^ (!e & g);
+        let t1 = h
+            .wrapping_add(s1)
+            .wrapping_add(ch)
+            .wrapping_add(K[i])
+            .wrapping_add(w[i]);
+        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let maj = (a & b) ^ (a & c) ^ (b & c);
+        let t2 = s0.wrapping_add(maj);
+        h = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(t1);
+        d = c;
+        c = b;
+        b = a;
+        a = t1.wrapping_add(t2);
+    }
+    for (word, add) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+        *word = word.wrapping_add(add);
+    }
 }
 
 #[cfg(test)]

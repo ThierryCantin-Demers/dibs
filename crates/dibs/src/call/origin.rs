@@ -80,7 +80,7 @@ impl BatchStep {
                 "{}\t{}\t{}\t{}\n",
                 clean(&p.name),
                 p.mode,
-                p.label.filed(),
+                p.label.to_filed(),
                 u8::from(p.here)
             ));
         }

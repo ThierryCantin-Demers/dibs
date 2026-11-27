@@ -319,7 +319,7 @@ impl fmt::Display for TargetError {
             TargetError::Ended { name, at, file } => writeln!(
                 f,
                 "dibs: {name}'s lease ended {} ago, so it is gone; {} still lists it.",
-                Span(Moment::epoch_now().saturating_sub(*at)),
+                Span::from_secs(Moment::epoch_now().saturating_sub(*at)),
                 file.display()
             ),
             TargetError::NoSuchMachine {

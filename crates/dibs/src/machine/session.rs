@@ -279,7 +279,7 @@ impl Session {
                 if !Interrupt::heard() && !self.said.runner_exited() =>
             {
                 Diagnosis {
-                    exit: i32::from(Exit::Unreachable.code()),
+                    exit: i32::from(Exit::Unreachable.as_code()),
                     said: Unreachable {
                         target,
                         said: self.said.text(),

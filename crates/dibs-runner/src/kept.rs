@@ -11,7 +11,7 @@ use crate::{
     sink::Sink,
 };
 use dibs_format::{
-    Exit, JobId, JobMeta, base64,
+    Base64, Exit, JobId, JobMeta,
     wire::{Frame, Record, Unframer},
 };
 use std::{
@@ -71,20 +71,20 @@ impl KeptJobs<'_> {
     pub fn follow(&self, target: &str, caller: Caller, lease: u64) -> i32 {
         let jobs = self.machine.jobs();
         let host = &self.machine.host;
-        let Some((id, dir)) = JobId::checked(target)
+        let Some((id, dir)) = JobId::checked_from_text(target)
             .map(|id| (id.clone(), jobs.join(id.as_str())))
             .filter(|(_, dir)| dir.is_dir())
         else {
             self.sink
                 .say(&format!("no job {target} under {}\n", jobs.display()));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let check_ins = CheckIns { dir: &dir };
         let Ok(handed) = File::open(check_ins.handed()) else {
             self.sink.say(&format!(
                 "dibs: job {target} was never let go of by its call, so there is nothing to follow: dibs --on {host} --out {target} reads its log\n"
             ));
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         };
         let seen = check_ins.read_latest(&id).map_or(0, |(n, _, _)| n);
         let mut channel = match caller {
@@ -101,7 +101,7 @@ impl KeptJobs<'_> {
             {
                 self.sink.record(Record::CheckedIn(checked));
                 self.sink.say(&text);
-                return Exit::CheckedIn.status();
+                return Exit::CheckedIn.as_status();
             }
             let until = Instant::now() + FOLLOW_TICK;
             let present = match &mut channel {
@@ -112,7 +112,7 @@ impl KeptJobs<'_> {
                 }
             };
             if !present {
-                return Exit::Terminated.status();
+                return Exit::Terminated.as_status();
             }
         }
     }
@@ -142,14 +142,14 @@ impl KeptJobs<'_> {
             "dibs: the runner of job {target} ended without saying how the job did: dibs --on {} --out {target} reads its log\n",
             self.machine.host
         ));
-        Exit::Failed.status()
+        Exit::Failed.as_status()
     }
 
     /// A job by its id, running or finished; the whole of a finished one's log for the caller to
     /// keep, when that is what it asked for.
     fn job(&self, asked: &Asked) -> i32 {
         let jobs = self.machine.jobs();
-        let Some(dir) = JobId::checked(asked.target)
+        let Some(dir) = JobId::checked_from_text(asked.target)
             .map(|id| jobs.join(id.as_str()))
             .filter(|dir| dir.join("log").is_file())
         else {
@@ -158,7 +158,7 @@ impl KeptJobs<'_> {
                 asked.target,
                 jobs.display()
             ));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let log = dir.join("log");
         let meta = fs::read_to_string(dir.join("meta"))
@@ -208,7 +208,7 @@ impl KeptJobs<'_> {
                 continue;
             }
             found = true;
-            let age = Span(Moment::epoch_now().saturating_sub(holder.start));
+            let age = Span::from_secs(Moment::epoch_now().saturating_sub(holder.start));
             let mut said = format!(
                 "{}  {}  pid {}  ({age})\n  from {}\n",
                 holder.mode, holder.label, holder.pid, holder.agent
@@ -276,20 +276,20 @@ impl KeptJobs<'_> {
     /// A job's kept files as a base64 tar, capped, since no lock is taken to send them.
     pub fn fetch(&self, job: &str) -> i32 {
         let jobs = self.machine.jobs();
-        let Some(dir) = JobId::checked(job)
+        let Some(dir) = JobId::checked_from_text(job)
             .map(|id| jobs.join(id.as_str()))
             .filter(|dir| dir.is_dir())
         else {
             self.sink
                 .say(&format!("no job {job} under {}\n", jobs.display()));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let files = dir.join("artifacts");
         if !files.is_dir() {
             self.sink.say(&format!(
                 "job {job} kept no files: its recipe names no artifacts, or it wrote none of them\n"
             ));
-            return Exit::Setup.status();
+            return Exit::Setup.as_status();
         }
         let size = apparent_size(&files);
         if size > FILES_MAX {
@@ -298,7 +298,7 @@ impl KeptJobs<'_> {
                  dibs --sync -a :{}/ ./\n",
                 files.display()
             ));
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         let tar = Command::new("tar")
             .arg("-C")
@@ -310,7 +310,8 @@ impl KeptJobs<'_> {
         match tar {
             Ok(tar) if tar.status.success() => {
                 self.sink.out(format!("{FETCHED}\n").as_bytes());
-                self.sink.out(base64::encode_lines(&tar.stdout).as_bytes());
+                self.sink
+                    .out(Base64::encode(&tar.stdout).to_lines().as_bytes());
                 0
             }
             _ => {

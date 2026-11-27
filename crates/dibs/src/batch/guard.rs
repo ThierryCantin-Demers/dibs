@@ -82,6 +82,6 @@ impl StepGuard {
             // SAFETY: signals this process's own group, which holds the step and nothing else.
             unsafe { libc::kill(0, libc::SIGTERM) };
         });
-        step.wait().map(Exit::shell_status).unwrap_or(1)
+        step.wait().map(Exit::to_shell_code).unwrap_or(1)
     }
 }

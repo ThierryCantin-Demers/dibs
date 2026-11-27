@@ -67,7 +67,7 @@ impl Sync<'_> {
             Ok(rsync) => rsync,
             Err(missing) => {
                 output.say(&missing.to_string());
-                return Ok(i32::from(Exit::Refused.code()));
+                return Ok(i32::from(Exit::Refused.as_code()));
             }
         };
         if rsync.mkpath() && !args.iter().any(|a| a == "--mkpath" || a == "--no-mkpath") {
@@ -181,7 +181,7 @@ impl Sync<'_> {
             output.prepared(&prepared);
         }
         drop(deferred);
-        let status = Exit::shell_status(status?);
+        let status = Exit::to_shell_code(status?);
         let exit = match (status, transport.exit()) {
             (0, _) => 0,
             (_, Some(code @ (64..=78))) => code,
@@ -195,7 +195,7 @@ impl Sync<'_> {
                      dibs --on {machine} --gc --dry-run says what fills it. Tell the person you work for,\n  \
                      and do not delete anything on a shared machine to make room.\n"
                 ));
-                i32::from(Exit::NoRoom.code())
+                i32::from(Exit::NoRoom.as_code())
             }
             (status, _) => status,
         };
@@ -358,7 +358,7 @@ impl Rsh {
                 "dibs: {} is rsync's transport, not for calling directly",
                 Rsh::WORD
             );
-            return i32::from(Exit::Refused.code());
+            return i32::from(Exit::Refused.as_code());
         };
         let caller = Caller::from_env();
         let exit = rsh.transfer(&caller).unwrap_or_else(|e| {
@@ -428,7 +428,7 @@ impl Rsh {
         }
         if session.route == Route::Here {
             eprintln!("dibs: --sync reaches the machine from elsewhere. You are on it: use cp.");
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         }
         machine.somewhere(&target)?;
         let mut values = CallValues {

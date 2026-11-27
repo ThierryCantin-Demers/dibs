@@ -46,8 +46,8 @@ impl Admitted {
     pub fn status(&self) -> i32 {
         match self {
             Admitted::Ended(trailer) => trailer.exit,
-            Admitted::Running { .. } => crate::Exit::Busy.status(),
-            Admitted::Lost { .. } | Admitted::Never => crate::Exit::Failed.status(),
+            Admitted::Running { .. } => crate::Exit::Busy.as_status(),
+            Admitted::Lost { .. } | Admitted::Never => crate::Exit::Failed.as_status(),
         }
     }
 }

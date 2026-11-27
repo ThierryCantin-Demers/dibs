@@ -9,7 +9,7 @@ use crate::{
     machine::{CallValues, Delivery, Liveness, Session, Target},
     render::{Indented, KeptLog},
 };
-use dibs_format::{Exit, JobId, Label, Mode, base64};
+use dibs_format::{Base64, Exit, JobId, Label, Mode};
 use std::{
     fs,
     io::{self, Write},
@@ -97,7 +97,7 @@ impl MachineCall<'_> {
 /// or its cap ends with no trailer, while a follow that never reached the job, found no such job
 /// or checked in again exits below these.
 pub fn reached_its_job(exit: i32) -> bool {
-    exit >= Exit::Overran.status()
+    exit >= Exit::Overran.as_status()
 }
 
 /// A job's log and files as this computer keeps them, fetched from its machine the first time
@@ -180,7 +180,7 @@ impl<'a> KeptJob<'a> {
             else {
                 report.write_all(&raw)?;
                 return Ok(match answer.exit.unwrap_or_default() {
-                    0 => i32::from(Exit::Failed.code()),
+                    0 => i32::from(Exit::Failed.as_code()),
                     exit => exit,
                 });
             };
@@ -189,7 +189,7 @@ impl<'a> KeptJob<'a> {
                     "dibs: the files of job {job} arrived but could not be unpacked into {}",
                     kept.display()
                 );
-                return Ok(i32::from(Exit::Failed.code()));
+                return Ok(i32::from(Exit::Failed.as_code()));
             }
         }
         let files = files_under(&kept);
@@ -220,7 +220,7 @@ impl<'a> KeptJob<'a> {
                     .status()
                     .is_ok_and(|s| s.success());
             if !copied {
-                return Ok(i32::from(Exit::Failed.code()));
+                return Ok(i32::from(Exit::Failed.as_code()));
             }
             writeln!(report, "dibs: copied into {into}")?;
         }
@@ -258,7 +258,7 @@ impl<'a> WholeLog<'a> {
 fn unpack(tar: &[u8], into: &Path) -> bool {
     let part = into.with_extension("part");
     let _ = fs::remove_dir_all(&part);
-    let unpacked = base64::decode(tar)
+    let unpacked = Base64::decode(tar)
         .is_some_and(|bytes| fs::create_dir_all(&part).is_ok() && untar(&bytes, &part))
         && fs::rename(&part, into).is_ok();
     if !unpacked {

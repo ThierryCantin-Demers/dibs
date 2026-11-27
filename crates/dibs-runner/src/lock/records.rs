@@ -17,7 +17,7 @@ pub const GUARD_WAIT: Duration = Duration::from_secs(5);
 /// it now; two seconds of slack for the rounding.
 const SAME_PROCESS_SLACK: u64 = 2;
 /// A batch's cancellation refuses its later steps here for a day.
-const CANCELLED_FOR: Duration = Duration::from_secs(Span::DAY.0);
+const CANCELLED_FOR: Duration = Duration::from_secs(Span::DAY.as_secs());
 /// What `idle.<pid>` holds for a job that only waits for an idle machine and is not parked once it
 /// runs, as a transfer; a parked job's is empty.
 const IDLE_WAITS: &str = "waits";
@@ -416,7 +416,11 @@ impl LockDir {
     pub fn ahead_of(&self, pid: u32) -> Option<Ahead> {
         let said = fs::read_to_string(self.file("ahead", pid)).ok()?;
         Some(
-            match said.split_whitespace().nth(1).and_then(JobId::checked) {
+            match said
+                .split_whitespace()
+                .nth(1)
+                .and_then(JobId::checked_from_text)
+            {
                 Some(bench) => Ahead::Paused(bench),
                 None => Ahead::Running,
             },
@@ -449,7 +453,7 @@ impl LockDir {
             let said = fs::read_to_string(&file).ok()?;
             let (at, job) = said.trim().split_once(' ')?;
             let alive = RecordFile(&file).alive();
-            (alive && at.parse::<u128>().ok()? <= arrived).then(|| JobId::checked(job))?
+            (alive && at.parse::<u128>().ok()? <= arrived).then(|| JobId::checked_from_text(job))?
         })
     }
 
@@ -508,7 +512,7 @@ impl LockDir {
         let mut fields = said.trim_end_matches('\n').splitn(3, '\t');
         Some(Urgent {
             pid,
-            job: JobId::checked(fields.next()?)?,
+            job: JobId::checked_from_text(fields.next()?)?,
             agent: fields.next()?.to_string(),
             why: fields.next().unwrap_or_default().to_string(),
         })
@@ -524,7 +528,7 @@ impl LockDir {
     }
 
     pub fn parked_for(&self, pid: u32) -> Option<JobId> {
-        JobId::checked(fs::read_to_string(self.file("parked", pid)).ok()?.trim())
+        JobId::checked_from_text(fs::read_to_string(self.file("parked", pid)).ok()?.trim())
     }
 
     /// The live holders besides `pid` that are not parked for its urgent job `job`, which it

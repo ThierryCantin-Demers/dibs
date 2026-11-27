@@ -1823,7 +1823,7 @@ fn a_build_mark_stays_held_while_the_builds_own_processes_live_after_the_runner_
     mark.hand_to(&mut command);
     let mut build = command.spawn().unwrap();
     mark.ended(JobEnd {
-        status: Exit::Overran.status(),
+        status: Exit::Overran.as_status(),
         capped: true,
     });
     let own = s

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 /// A machine deletes a target directory unused this long unless set otherwise, so a memo of one
 /// is kept no longer.
-const AFFINITY_SECS: u64 = Clocks::DEFAULT.target_keep_days * Span::DAY.0;
+const AFFINITY_SECS: u64 = Clocks::DEFAULT.target_keep_days * Span::DAY.as_secs();
 
 /// Which machine holds each repo's build cache. Kept beside the run record, on this side, since
 /// it describes the pool rather than any one machine in it.
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn affinity_is_one_machine_per_repo_and_expires_with_the_cache() {
-        let day = Span::DAY.0;
+        let day = Span::DAY.as_secs();
         let text = Claims("cubek\tbox-a\n").with("cubek", "box-b", 10 * day);
         let text = Claims(&text).with("burn", "box-a", 12 * day);
         assert_eq!(

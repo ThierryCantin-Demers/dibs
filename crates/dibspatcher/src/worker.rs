@@ -89,21 +89,21 @@ pub fn run(home: &Home, id: &str) -> i32 {
         }
         Ok((Err(fs::TryLockError::Error(e)), _)) | Err(e) => {
             eprintln!("dibspatcher: {id}'s lock: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     let store = match Store::open(&home.store()) {
         Ok(store) => store,
         Err(e) => {
             eprintln!("dibspatcher: the store: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     let (coworker, submission) = match store.submission(id) {
         Ok(Some(found)) => found,
         other => {
             eprintln!("dibspatcher: no submission {id} to drive ({other:?})");
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
     };
     listen_for_stop();
@@ -111,7 +111,7 @@ pub fn run(home: &Home, id: &str) -> i32 {
         Ok(fence) => fence,
         Err(e) => {
             eprintln!("dibspatcher: {id} could not be claimed: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     spawn::tell(&fifo, DRIVING);
@@ -177,7 +177,7 @@ impl Ended {
     fn killed(trailer: Option<Trailer>, note: &str) -> Ended {
         Ended {
             state: State::Cancelled,
-            exit: Exit::Cancelled.status(),
+            exit: Exit::Cancelled.as_status(),
             trailer,
             note: Some(note.into()),
             attempt: None,
@@ -219,8 +219,8 @@ impl Worker<'_> {
             }
             if step.state.ended() {
                 let exit = step.exit.unwrap_or(match step.state {
-                    State::Cancelled => Exit::Cancelled.status(),
-                    _ => Exit::Failed.status(),
+                    State::Cancelled => Exit::Cancelled.as_status(),
+                    _ => Exit::Failed.as_status(),
                 });
                 return self.finish(step.state, exit, None);
             }
@@ -266,7 +266,7 @@ impl Worker<'_> {
                     "dibspatcher: {}'s step {} could not be recorded: {e}",
                     self.id, step.name
                 );
-                return Exit::Failed.status();
+                return Exit::Failed.as_status();
             }
             if ended.state != State::Done {
                 return self.finish(ended.state, ended.exit, ended.note.as_deref());
@@ -297,14 +297,14 @@ impl Worker<'_> {
             None,
             Settled {
                 state: State::Cancelled,
-                exit: Exit::Cancelled.status(),
+                exit: Exit::Cancelled.as_status(),
                 trailer: None,
                 note: Some("killed"),
             },
         );
         self.finish(
             State::Cancelled,
-            Exit::Cancelled.status(),
+            Exit::Cancelled.as_status(),
             Some("killed with dibs dispatch kill"),
         )
     }
@@ -325,7 +325,7 @@ impl Worker<'_> {
             (Work::Split(_), "stage", Some(split)) => self.stage(step, split),
             (Work::Split(_), "measure", Some(split)) => self.measure(step, split),
             _ => Ok(Ended::failed(
-                Exit::Refused.status(),
+                Exit::Refused.as_status(),
                 format!("this worker does not know the step {}", step.name),
             )),
         }
@@ -433,7 +433,7 @@ impl Worker<'_> {
         }
         let root = match self.root(split) {
             Ok(root) => root,
-            Err(why) => return Ok(Ended::failed(Exit::Setup.status(), why)),
+            Err(why) => return Ok(Ended::failed(Exit::Setup.as_status(), why)),
         };
         // The compile machine keys the tree by coworker and repo, so their builds take turns.
         let lock = self.home.tree_lock(self.coworker, &split.repo);
@@ -534,7 +534,7 @@ impl Worker<'_> {
             Some(m) => m,
             None => {
                 return Ok(Ended::failed(
-                    Exit::Setup.status(),
+                    Exit::Setup.as_status(),
                     "the bundle came without a manifest",
                 ));
             }
@@ -542,7 +542,7 @@ impl Worker<'_> {
         let digest = Sha256::hex_of_file(&fetched.join(&manifest.exe)).unwrap_or_default();
         if digest != manifest.digest {
             return Ok(Ended::failed(
-                Exit::TargetRebuilt.status(),
+                Exit::TargetRebuilt.as_status(),
                 format!(
                     "the bundle's {} is {digest}, not the {} its manifest names",
                     manifest.exe, manifest.digest
@@ -554,7 +554,7 @@ impl Worker<'_> {
         let attested = self.store.attested(&digest, &inputs).unwrap_or(false);
         if built == Some(Built::Nothing) && !attested {
             return Ok(Ended::failed(
-                Exit::TargetRebuilt.status(),
+                Exit::TargetRebuilt.as_status(),
                 "the build compiled nothing, and no earlier build of these exact inputs attests the executable it left",
             ));
         }
@@ -575,7 +575,7 @@ impl Worker<'_> {
             }
             if let Err(e) = fs::rename(&fetched, &kept) {
                 return Ok(Ended::failed(
-                    Exit::Failed.status(),
+                    Exit::Failed.as_status(),
                     format!("the bundle could not be kept: {e}"),
                 ));
             }
@@ -649,7 +649,10 @@ impl Worker<'_> {
             return self.attempted(step, &split.gpu, &[], &[], None, Kind::Again);
         }
         let Some(check) = self.check() else {
-            return Ok(Ended::failed(Exit::Setup.status(), "no bundle was relayed"));
+            return Ok(Ended::failed(
+                Exit::Setup.as_status(),
+                "no bundle was relayed",
+            ));
         };
         let digest = self.digest().unwrap_or_default();
         let links = match is_static(&self.home.bundle(&digest).join(&split.name)) {
@@ -691,7 +694,10 @@ impl Worker<'_> {
             return self.attempted(step, &split.gpu, &[], &[], None, Kind::Once);
         }
         let Some(check) = self.check() else {
-            return Ok(Ended::failed(Exit::Setup.status(), "no bundle was relayed"));
+            return Ok(Ended::failed(
+                Exit::Setup.as_status(),
+                "no bundle was relayed",
+            ));
         };
         let exports: String = std::iter::once(("DIBS_SUBMISSION".to_string(), self.id.to_string()))
             .chain(split.env.clone())
@@ -761,7 +767,7 @@ impl Worker<'_> {
                 _ if killed => return Ok(Ended::killed(None, "killed with dibs dispatch kill")),
                 Some(ended) if ended.k >= ATTEMPTS => {
                     return Ok(Ended::failed(
-                        Exit::Failed.status(),
+                        Exit::Failed.as_status(),
                         format!("{} attempts and none told how it went", ended.k),
                     ));
                 }
@@ -776,7 +782,7 @@ impl Worker<'_> {
                 Ok(Err(_)) => return Err(Leave),
                 Err(e) => {
                     return Ok(Ended::failed(
-                        Exit::Failed.status(),
+                        Exit::Failed.as_status(),
                         format!("the store: {e}"),
                     ));
                 }
@@ -910,7 +916,7 @@ impl Worker<'_> {
                     Kind::Once => {
                         return close(Ended {
                             state: State::Unknown,
-                            exit: Exit::Failed.status(),
+                            exit: Exit::Failed.as_status(),
                             trailer: None,
                             note: Some(format!(
                                 "job {job} ran, and its runner went without saying how: not run again"
@@ -979,7 +985,7 @@ impl Worker<'_> {
         let shown: Vec<String> = args.iter().map(|a| shell_word(a)).collect();
         let _ = append(log, &format!("$ dibs {}\n", shown.join(" ")));
         let Ok(out) = File::options().create(true).append(true).open(log) else {
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let mut command = dibs();
         command
@@ -1016,15 +1022,15 @@ impl Worker<'_> {
             Ok(child) => child,
             Err(e) => {
                 let _ = append(log, &format!("dibs could not start: {e}\n"));
-                return Exit::Failed.status();
+                return Exit::Failed.as_status();
             }
         };
         let mut stopped = false;
         loop {
             match child.try_wait() {
-                Ok(Some(status)) => return Exit::shell_status(status),
+                Ok(Some(status)) => return Exit::to_shell_code(status),
                 Ok(None) => {}
-                Err(_) => return Exit::Failed.status(),
+                Err(_) => return Exit::Failed.as_status(),
             }
             if stoppable && STOP.load(Ordering::SeqCst) && !stopped {
                 stopped = true;
@@ -1040,7 +1046,7 @@ impl Worker<'_> {
 fn outcome(state: State, exit: i32) -> i32 {
     match state {
         State::Done => 0,
-        _ if exit == 0 => Exit::Failed.status(),
+        _ if exit == 0 => Exit::Failed.as_status(),
         _ => exit,
     }
 }
@@ -1055,7 +1061,7 @@ fn away(code: i32) -> bool {
         Exit::NoRunner,
     ]
     .iter()
-    .any(|e| e.status() == code)
+    .any(|e| e.as_status() == code)
 }
 
 fn trailer_in(record: Option<&Record>) -> Option<Trailer> {

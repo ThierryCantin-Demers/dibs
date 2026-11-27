@@ -67,12 +67,12 @@ impl Clocks {
 
     /// Whether what was last used at `when` has gone unused for more than `keep` days of 24 hours.
     pub fn past(&self, now: u64, when: u64, keep: u64) -> bool {
-        self.all || now.saturating_sub(when) > keep.saturating_mul(Span::DAY.0)
+        self.all || now.saturating_sub(when) > keep.saturating_mul(Span::DAY.as_secs())
     }
 
     /// Whole days from `when` to `now`.
     pub fn days(now: u64, when: u64) -> u64 {
-        now.saturating_sub(when) / Span::DAY.0
+        now.saturating_sub(when) / Span::DAY.as_secs()
     }
 }
 
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn a_days_clock_runs_out_after_that_many_24_hours() {
-        let (now, hour) = (Span::DAY.0 * 10, 3600);
+        let (now, hour) = (Span::DAY.as_secs() * 10, 3600);
         let clocks = Clocks::DEFAULT;
         assert!(!clocks.past(now, now - 23 * hour, 1));
         assert!(

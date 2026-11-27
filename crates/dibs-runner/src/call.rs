@@ -120,7 +120,7 @@ impl Received {
             .map(|d| format!(" on {d}"))
             .unwrap_or_default();
         LogLine {
-            when: Moment::now().iso(),
+            when: Moment::now().to_iso(),
             event,
             pid: self.pid,
             mode: self.mode(),

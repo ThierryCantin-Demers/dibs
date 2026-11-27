@@ -2,8 +2,23 @@
 //!
 //! Each line codec reads every shape a released dibs has written and writes the shape the
 //! machines write today, byte for byte, so a client and a machine on different versions agree.
+//!
+//! Values are kept in their own types: the ids [`Label`], [`JobId`], [`BatchId`],
+//! [`MachineName`] and [`Alias`], and [`FileName`], text as a machine files it; time as a
+//! [`Moment`] and a duration as a [`Span`]; and bytes as [`Hex`], as [`Base64`], or digested by
+//! [`Sha256`].
+//!
+//! # Examples
+//!
+//! ```
+//! use dibs_format::{Moment, Span};
+//!
+//! let started = Moment::in_zone(1_789_745_748, 0);
+//! let ran = Span::from_secs(185);
+//! assert_eq!(format!("{} for {ran}", started.minute()), "2026-09-18 15:35 for 3m05s");
+//! ```
 
-pub mod base64;
+mod base64;
 pub mod dibspatcher;
 mod exit;
 pub mod fleet;
@@ -20,6 +35,7 @@ mod span;
 pub mod status;
 pub mod wire;
 
+pub use base64::Base64;
 pub use exit::Exit;
 pub use friction::FrictionNote;
 pub use hex::Hex;

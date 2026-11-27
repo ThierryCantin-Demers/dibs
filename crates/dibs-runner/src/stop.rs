@@ -176,7 +176,7 @@ impl Stopper {
     /// Its machine closed with `--now`: stopped as for a caller gone, ending with exit 79.
     pub fn closed(&self, why: &str) {
         self.state().closed = true;
-        self.stop_for(Event::Killed, why, Exit::Closed.status());
+        self.stop_for(Event::Killed, why, Exit::Closed.as_status());
     }
 
     fn stop_for(&self, event: Event, why: &str, code: i32) {

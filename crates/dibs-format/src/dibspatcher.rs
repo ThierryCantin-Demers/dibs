@@ -250,7 +250,10 @@ impl Seal {
             sealed.update(digest.as_bytes());
             sealed.update(b"\n");
         }
-        Ok((crate::Hex::hex(&sealed.finish()[..]), files.len() as u64))
+        Ok((
+            crate::Hex::new(&sealed.finish()).to_string(),
+            files.len() as u64,
+        ))
     }
 
     /// Every file under `root` but its `.git`, as paths relative to it.

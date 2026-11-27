@@ -323,7 +323,7 @@ pub enum Unprepared {
 
 impl RunError {
     pub fn exit(&self) -> u8 {
-        let refused = Exit::Refused.code();
+        let refused = Exit::Refused.as_code();
         let exit = match self {
             RunError::Call { exit, .. } => *exit,
             RunError::Unsent(e) => e.exit(),

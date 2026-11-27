@@ -137,7 +137,7 @@ impl Queue<'_> {
             line.push_str(&format!(", with {ahead} queued first"));
         }
         if let Some(eta) = mine.filter(|e| *e > 0) {
-            line.push_str(&format!(", ~{} until it starts", Span(eta)));
+            line.push_str(&format!(", ~{} until it starts", Span::from_secs(eta)));
         }
         format!("{line}. dibs status shows the queue.\n")
     }

@@ -584,8 +584,8 @@ fn new_id() -> String {
     }
     format!(
         "o{}-{}",
-        Moment::now().dashed(),
-        dibs_format::Hex::hex(&bytes[..])
+        Moment::now().to_dashed(),
+        dibs_format::Hex::new(&bytes)
     )
 }
 

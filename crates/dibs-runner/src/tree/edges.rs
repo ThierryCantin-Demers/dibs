@@ -29,7 +29,7 @@ fn shown(path: &Path, rel: &str, modes: bool) -> String {
     if modes {
         line += &format!("  {:o}", meta.permissions().mode() & 0o7777);
     }
-    line += match age > Duration::from_secs(Span::DAY.0) {
+    line += match age > Duration::from_secs(Span::DAY.as_secs()) {
         true => "  old",
         false => "  new",
     };

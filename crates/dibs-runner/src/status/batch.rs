@@ -87,7 +87,7 @@ impl Plan<'_> {
                             eta.pending = ends - eta.at;
                         }
                     }
-                    format!(" ~{}", Span(estimate.median))
+                    format!(" ~{}", Span::from_secs(estimate.median))
                 }
                 None => {
                     partial = true;

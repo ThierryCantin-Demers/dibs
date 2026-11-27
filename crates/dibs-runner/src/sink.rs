@@ -154,7 +154,7 @@ impl Sink {
         for frame in [
             Frame::Record(Record::CheckedIn(checked)),
             Frame::Err(text.as_bytes().to_vec()),
-            Frame::Exit(Exit::CheckedIn.status()),
+            Frame::Exit(Exit::CheckedIn.as_status()),
         ] {
             out.write_all(&frame.encode())?;
         }

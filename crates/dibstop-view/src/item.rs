@@ -179,16 +179,16 @@ impl Progress for BatchShown {
     fn progress(&self) -> String {
         let step = format!("step {}/{}", self.k, self.n);
         match &self.left {
-            Some(l) if l.left_partial => format!("{step}, >{} left", Span(l.left)),
-            Some(l) => format!("{step}, ~{} left", Span(l.left)),
+            Some(l) if l.left_partial => format!("{step}, >{} left", Span::from_secs(l.left)),
+            Some(l) => format!("{step}, ~{} left", Span::from_secs(l.left)),
             None => step,
         }
     }
 
     fn left_text(&self) -> Option<String> {
         self.left.as_ref().map(|l| match l.left_partial {
-            true => format!("over {}", Span(l.left)),
-            false => format!("~{}", Span(l.left)),
+            true => format!("over {}", Span::from_secs(l.left)),
+            false => format!("~{}", Span::from_secs(l.left)),
         })
     }
 }
@@ -226,23 +226,23 @@ impl Verdict {
             };
         }
         if let Some(idle) = &h.idle {
-            let f = Span(idle.idle_for);
+            let f = Span::from_secs(idle.idle_for);
             let never = idle.idle_kind == IdleKind::Never;
             return Verdict {
                 note: match never {
                     true => format!("no cpu at all in {f}"),
-                    false => format!("{} cpu, none in {f}", Span(h.cpu)),
+                    false => format!("{} cpu, none in {f}", Span::from_secs(h.cpu)),
                 },
                 long: match never {
                     true => format!(
                         "It has burned no CPU at all in the {} since it acquired the lock: it is \
                          waiting on something. Stop it with K.",
-                        Span(h.elapsed)
+                        Span::from_secs(h.elapsed)
                     ),
                     false => format!(
                         "It has burned {} of CPU in total, but none of it in the last {f}, so it has \
                          stopped doing anything. Stop it with K.",
-                        Span(h.cpu)
+                        Span::from_secs(h.cpu)
                     ),
                 },
                 alarm: true,
@@ -258,7 +258,7 @@ impl Verdict {
                 long: format!(
                     "Its output has not changed in {}, longer than its own history accounts for, \
                      so it may be hung rather than slow.{last} Stop it with K.",
-                    Span(silent.silent_for)
+                    Span::from_secs(silent.silent_for)
                 ),
                 alarm: true,
             };
@@ -277,9 +277,9 @@ impl Verdict {
                 note: overrun.to_string(),
                 long: format!(
                     "It has been running {}, over twice the 90th percentile of its {}, {}.",
-                    Span(h.elapsed),
+                    Span::from_secs(h.elapsed),
                     runs(shown.runs),
-                    Span(overrun.high)
+                    Span::from_secs(overrun.high)
                 ),
                 alarm: true,
             };
@@ -290,7 +290,7 @@ impl Verdict {
     fn of_estimate(mode: Mode, shown: &Shown) -> Verdict {
         let usual = match shown.median {
             0 => "under a second".to_string(),
-            e => Span(e).to_string(),
+            e => Span::from_secs(e).to_string(),
         };
         let runs = runs(shown.runs);
         let (note, long) = match shown.scope {
@@ -344,10 +344,10 @@ impl Verdict {
                 ),
             ),
             (false, Some(e)) => (
-                format!("starts in ~{}", Span(e)),
+                format!("starts in ~{}", Span::from_secs(e)),
                 format!(
                     "Waiting for the lock. Nothing ahead of it is expected to take more than {}.",
-                    Span(e)
+                    Span::from_secs(e)
                 ),
             ),
             (false, None) => (

@@ -139,7 +139,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
             tree: None,
         };
         if !backend.preflight(&req) {
-            return Ok(ExitCode::from(Exit::Refused.code()));
+            return Ok(ExitCode::from(Exit::Refused.as_code()));
         }
     }
 
@@ -333,7 +333,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
     };
     let Some(prepared) = reported.prepared else {
         return Err(RunError::Call {
-            exit: Exit::Setup.status(),
+            exit: Exit::Setup.as_status(),
             failed: Unprepared::NoPath,
         });
     };
@@ -434,7 +434,7 @@ pub fn with_service(args: &RecipeCall) -> Result<ExitCode, RunError> {
         kept.fetch();
     }
     // The machine refused to time a server another tree built over; a refusal is not a run.
-    if !(guarded && ran.exit == i32::from(Exit::TargetRebuilt.code())) {
+    if !(guarded && ran.exit == i32::from(Exit::TargetRebuilt.as_code())) {
         record
             .steps
             .push(JobOutcome::ran(&ran, started).step_record(lock));

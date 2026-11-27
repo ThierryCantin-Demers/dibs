@@ -27,7 +27,7 @@ impl MachineCall<'_> {
         else {
             eprintln!("no inventory at {}", self.fleet.shown());
             eprintln!("Write one with:  dibs --check <host> --write");
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         };
         print!(
             "{}",
@@ -93,11 +93,11 @@ impl MachineCall<'_> {
                 "  It has no name to give --on. Record it with:  dibs --check {} --write",
                 target.host
             );
-            return Ok(i32::from(Exit::Failed.code()));
+            return Ok(i32::from(Exit::Failed.as_code()));
         }
         if self.here.local {
             eprintln!("dibs: this call runs on this computer, under DIBS_LOCAL.");
-            return Ok(i32::from(Exit::Failed.code()));
+            return Ok(i32::from(Exit::Failed.as_code()));
         }
         match known > 1 {
             true => eprintln!(
@@ -107,14 +107,14 @@ impl MachineCall<'_> {
                 "dibs: no machine: no --on, no DIBS_ON, no DIBS_HOST, and no inventory at {shown}."
             ),
         }
-        Ok(i32::from(Exit::Refused.code()))
+        Ok(i32::from(Exit::Refused.as_code()))
     }
 
     /// `dibs --forget <machine>`: its entry and its devices, gone from the inventory.
     pub fn forget(&self, name: &MachineName) -> Result<i32, CallError> {
         let Some(path) = self.fleet.path.as_deref().filter(|p| p.is_file()) else {
             eprintln!("no inventory at {}", self.fleet.shown());
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         };
         match Inventory::forget(path, name) {
             Ok(()) => {
@@ -123,11 +123,11 @@ impl MachineCall<'_> {
             }
             Err(InventoryError::NoSuchMachine(_)) => {
                 eprintln!("dibs: no machine named '{name}'");
-                Ok(i32::from(Exit::Refused.code()))
+                Ok(i32::from(Exit::Refused.as_code()))
             }
             Err(e) => {
                 eprintln!("dibs: {e}");
-                Ok(i32::from(Exit::Failed.code()))
+                Ok(i32::from(Exit::Failed.as_code()))
             }
         }
     }
@@ -136,13 +136,13 @@ impl MachineCall<'_> {
     pub fn measure(&self, name: &MachineName, measures: bool) -> Result<i32, CallError> {
         let Some(entry) = self.fleet.entry(name.as_str()) else {
             eprintln!("dibs: no machine named '{name}'");
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         };
         if entry.team {
             eprintln!(
                 "dibs: {name} is one of the team's machines, so whether it measures is set in the dibspatcher's inventory."
             );
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         }
         let path = entry.source.clone();
         match Inventory::set_measure(&path, name, measures) {
@@ -157,7 +157,7 @@ impl MachineCall<'_> {
             }
             Err(e) => {
                 eprintln!("dibs: {e}");
-                Ok(i32::from(Exit::Failed.code()))
+                Ok(i32::from(Exit::Failed.as_code()))
             }
         }
     }

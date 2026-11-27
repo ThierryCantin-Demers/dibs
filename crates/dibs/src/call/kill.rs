@@ -105,7 +105,7 @@ impl Kill<'_> {
                 true => Exit::Success,
                 false => Exit::Failed,
             }
-            .code(),
+            .as_code(),
         ))
     }
 }
@@ -167,7 +167,7 @@ impl<'a> Driver<'a> {
             eprintln!(
                 "dibs: batch {batch} was started by another session. If it should stop:  dibs --kill {batch} --anyone"
             );
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         }
         fs::write(self.dir.join("cancel"), "")?;
         eprintln!(

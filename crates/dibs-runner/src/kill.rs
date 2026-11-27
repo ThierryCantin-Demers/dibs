@@ -115,10 +115,10 @@ impl Kill<'_> {
                 target.name,
                 self.shown()
             ));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let pid = record.pid;
-        let held = Span(Moment::epoch_now().saturating_sub(record.start));
+        let held = Span::from_secs(Moment::epoch_now().saturating_sub(record.start));
         if !RecordFile(&file).written_by(pid) {
             let _ = fs::remove_file(&file);
             self.sink.say(&format!(
@@ -126,7 +126,7 @@ impl Kill<'_> {
                  something else now. The record is gone and nothing was signalled.\n",
                 record.mode, record.label
             ));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
         match self.refused(record.agent_id.as_deref(), target.anyone) {
             Some(Refusal::Someone) => {
@@ -136,7 +136,7 @@ impl Kill<'_> {
                      know it should stop, say so:  dibs --kill {pid} --anyone\n",
                     record.mode, record.label, record.agent
                 ));
-                return Exit::Refused.status();
+                return Exit::Refused.as_status();
             }
             Some(Refusal::Account) => {
                 self.sink.say(&format!(
@@ -148,7 +148,7 @@ impl Kill<'_> {
                     record.label,
                     record.agent_id.as_deref().unwrap_or_default()
                 ));
-                return Exit::Refused.status();
+                return Exit::Refused.as_status();
             }
             None => {}
         }
@@ -203,12 +203,14 @@ impl Kill<'_> {
     /// A process that outlived its job holds no lock, so no record names it; its environment
     /// still names the job, and the job's meta whose it was. It goes with what it started.
     fn leftover(&self, pid: u32, anyone: bool) -> i32 {
-        let Some(job) = Host::variable(pid, "DIBS_JOB").and_then(|job| JobId::checked(&job)) else {
+        let Some(job) =
+            Host::variable(pid, "DIBS_JOB").and_then(|job| JobId::checked_from_text(&job))
+        else {
             self.sink.say(&format!(
                 "dibs: nothing was stopped: pid {pid} holds no lock here, waits for none, and no dibs job started it.\n{}",
                 self.shown()
             ));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let meta = fs::read_to_string(self.look.machine.jobs().join(job.as_str()).join("meta"))
             .ok()
@@ -218,7 +220,7 @@ impl Kill<'_> {
                 "dibs: nothing was stopped: pid {pid} belongs to job {job}, which is still running. Stop the job:\n  \
                  dibs --kill <its pid in dibs status>\n"
             ));
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         };
         let label = &meta.label;
         if self.refused(meta.who.as_deref(), anyone).is_some() {
@@ -227,7 +229,7 @@ impl Kill<'_> {
                  If you know it should stop:  dibs --kill {pid} --anyone\n",
                 meta.agent
             ));
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         let mut tree = vec![pid];
         tree.extend(Host::processes().below(pid));
@@ -299,7 +301,7 @@ impl Kill<'_> {
                  dibs --kill {id} --anyone\n",
                 record.label, record.agent
             ));
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         let _ = fs::write(self.dir().path.join(format!("cancelled.{id}")), "");
         let mut line = self.call.log_line(Event::Cancelled);

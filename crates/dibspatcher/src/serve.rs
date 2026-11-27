@@ -15,7 +15,7 @@ use std::os::unix::{io::AsRawFd as _, process::CommandExt as _};
 pub fn serve(home: &Home, coworker: &str) -> i32 {
     if !component(coworker) {
         eprintln!("dibspatcher: {coworker:?} names no coworker");
-        return Exit::Refused.status();
+        return Exit::Refused.as_status();
     }
     let asked = std::env::var("SSH_ORIGINAL_COMMAND").unwrap_or_default();
     let words: Vec<&str> = asked.split_whitespace().collect();
@@ -28,7 +28,7 @@ pub fn serve(home: &Home, coworker: &str) -> i32 {
             eprintln!(
                 "dibspatcher: this key serves `{API_COMMAND}` and uploads to {STAGE_PREFIX}, not {asked:?}"
             );
-            Exit::Refused.status()
+            Exit::Refused.as_status()
         }
     }
 }
@@ -40,13 +40,13 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
         Ok(last) => last,
         Err(why) => {
             eprintln!("dibspatcher: refused upload: {why}");
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
     };
     let staging = home.staging(coworker);
     if let Err(e) = std::fs::create_dir_all(staging.join(STAGE_PREFIX)) {
         eprintln!("dibspatcher: {}: {e}", staging.display());
-        return Exit::NoRoom.status();
+        return Exit::NoRoom.as_status();
     }
     // rsync warns of a missing copy to send against, as on a repo's first upload.
     if let Some(last) = last {
@@ -63,7 +63,7 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
         walked.push(part);
         if std::fs::symlink_metadata(&walked).is_ok_and(|m| m.file_type().is_symlink()) {
             eprintln!("dibspatcher: refused upload: {dest} is a link");
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
     }
     let key = dest
@@ -74,7 +74,7 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
         Ok(held) => held,
         Err(e) => {
             eprintln!("dibspatcher: the stage's lock: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     // Kept open across the exec, so rsync holds the stage until it exits.
@@ -86,7 +86,7 @@ fn receive(home: &Home, coworker: &str, args: &[&str]) -> i32 {
         .current_dir(&staging)
         .exec();
     eprintln!("dibspatcher: rsync could not start: {error}");
-    Exit::Failed.status()
+    Exit::Failed.as_status()
 }
 
 struct Upload;

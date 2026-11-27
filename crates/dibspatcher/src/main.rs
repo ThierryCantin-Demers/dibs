@@ -36,7 +36,7 @@ fn main() -> ExitCode {
             Ok(gate) => Some(gate),
             Err(e) => {
                 eprintln!("dibspatcher: the store's gate cannot be held: {e}");
-                return ExitCode::from(Exit::Failed.code());
+                return ExitCode::from(Exit::Failed.as_code());
             }
         },
     };
@@ -50,7 +50,7 @@ fn main() -> ExitCode {
         ["restore", from] => restore(&home, Path::new(from)),
         _ => {
             eprintln!("{USAGE}");
-            Exit::Refused.status()
+            Exit::Refused.as_status()
         }
     };
     ExitCode::from(code.rem_euclid(256) as u8)
@@ -59,7 +59,7 @@ fn main() -> ExitCode {
 fn open(home: &Home) -> Result<Store, i32> {
     Store::open(&home.store()).map_err(|e| {
         eprintln!("dibspatcher: the store at {}: {e}", home.store().display());
-        Exit::Failed.status()
+        Exit::Failed.as_status()
     })
 }
 
@@ -72,7 +72,7 @@ fn resume(home: &Home) -> i32 {
         Ok(ids) => ids,
         Err(e) => {
             eprintln!("dibspatcher: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     let mut code = 0;
@@ -91,7 +91,7 @@ fn resume(home: &Home) -> i32 {
             Ok(false) => println!("{id}: driven already"),
             Err(why) => {
                 eprintln!("{id}: {why}");
-                code = Exit::Failed.status();
+                code = Exit::Failed.as_status();
             }
         }
     }
@@ -105,13 +105,13 @@ fn pool(home: &Home, pool: &str, machines: &[&str]) -> i32 {
     };
     if !home::component(pool) || !machines.iter().all(|m| home::component(m)) {
         eprintln!("dibspatcher: a pool and its machines are each one name");
-        return Exit::Refused.status();
+        return Exit::Refused.as_status();
     }
     if !machines.is_empty() {
         let machines: Vec<String> = machines.iter().map(|m| m.to_string()).collect();
         if let Err(e) = store.set_pool(pool, &machines) {
             eprintln!("dibspatcher: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     }
     let pools = store.pools().unwrap_or_default();
@@ -145,7 +145,7 @@ fn backup(home: &Home, to: &Path) -> i32 {
         }
         Err(e) => {
             eprintln!("dibspatcher: the backup failed: {e}");
-            Exit::Failed.status()
+            Exit::Failed.as_status()
         }
     }
 }
@@ -156,7 +156,7 @@ fn backup(home: &Home, to: &Path) -> i32 {
 fn restore(home: &Home, from: &Path) -> i32 {
     if let Err(e) = Store::inspect(from) {
         eprintln!("dibspatcher: {} is no store: {e}", from.display());
-        return Exit::Refused.status();
+        return Exit::Refused.as_status();
     }
     let gate = match home.gate().map(|f| (f.try_lock(), f)) {
         Ok((Ok(()), gate)) => gate,
@@ -164,11 +164,11 @@ fn restore(home: &Home, from: &Path) -> i32 {
             eprintln!(
                 "dibspatcher: workers or calls still use the store; stop them first (systemctl --user stop 'dibspatcher-*'), then restore"
             );
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
         Err(e) => {
             eprintln!("dibspatcher: the store's gate: {e}");
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     let store = home.store();
@@ -184,7 +184,7 @@ fn restore(home: &Home, from: &Path) -> i32 {
         Err(e) => {
             let _ = std::fs::remove_file(&restoring);
             eprintln!("dibspatcher: {} could not be restored: {e}", from.display());
-            return Exit::Failed.status();
+            return Exit::Failed.as_status();
         }
     };
     if store.exists() {
@@ -199,7 +199,7 @@ fn restore(home: &Home, from: &Path) -> i32 {
                     "dibspatcher: {} could not be set aside: {e}",
                     from.display()
                 );
-                return Exit::Failed.status();
+                return Exit::Failed.as_status();
             }
         }
         println!(
@@ -209,13 +209,13 @@ fn restore(home: &Home, from: &Path) -> i32 {
     }
     if let Err(e) = std::fs::rename(&restoring, &store) {
         eprintln!("dibspatcher: the restored store could not be put in place: {e}");
-        return Exit::Failed.status();
+        return Exit::Failed.as_status();
     }
     println!("restored {} as epoch {epoch}", from.display());
     // Held on, shared, so the resume uses the store as every other process does.
     if let Err(e) = gate.lock_shared() {
         eprintln!("dibspatcher: the store's gate: {e}");
-        return Exit::Failed.status();
+        return Exit::Failed.as_status();
     }
     resume(home)
 }

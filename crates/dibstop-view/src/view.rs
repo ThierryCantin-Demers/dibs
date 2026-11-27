@@ -259,7 +259,7 @@ impl View {
                         ui.weak(&it.machine);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let time = Span(it.time).to_string();
+                        let time = Span::from_secs(it.time).to_string();
                         match it.holding {
                             true => ui.label(RichText::new(format!("for {time}")).strong()),
                             false => ui.weak(format!("waited {time}")),
@@ -282,7 +282,7 @@ impl View {
                     }
                     // A queued job's note already says when it starts.
                     if let Some(eta) = it.eta.filter(|_| it.holding) {
-                        ui.weak(format!("job ~{} left", Span(eta)));
+                        ui.weak(format!("job ~{} left", Span::from_secs(eta)));
                     }
                 });
                 if !it.note.is_empty() {
@@ -310,14 +310,14 @@ impl View {
         ui.label(RichText::new(&it.cmd).monospace());
         let eta = |none: &str| {
             it.eta
-                .map(|eta| format!("~{}", Span(eta)))
+                .map(|eta| format!("~{}", Span::from_secs(eta)))
                 .unwrap_or_else(|| none.into())
         };
         ui.horizontal_wrapped(|ui| match it.holding {
             true => {
-                let cpu = Span(it.cpu.unwrap_or(0));
+                let cpu = Span::from_secs(it.cpu.unwrap_or(0));
                 ui.weak("running");
-                ui.label(Span(it.time).to_string());
+                ui.label(Span::from_secs(it.time).to_string());
                 ui.weak("cpu");
                 ui.label(match it.rate {
                     Some(rate) => format!("{cpu} across all cores, {} right now", cores(rate)),
@@ -328,7 +328,7 @@ impl View {
             }
             false => {
                 ui.weak("waiting");
-                ui.label(Span(it.time).to_string());
+                ui.label(Span::from_secs(it.time).to_string());
                 ui.weak("starts in");
                 ui.label(eta("unknown"));
             }

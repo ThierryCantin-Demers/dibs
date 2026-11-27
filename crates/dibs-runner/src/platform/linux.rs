@@ -473,7 +473,10 @@ fn lists_children() -> bool {
 
 /// `[[dd-]hh:]mm:ss`, as ps prints a process's elapsed time.
 fn elapsed(seconds: u64) -> String {
-    let (days, hours) = (seconds / Span::DAY.0, seconds % Span::DAY.0 / 3600);
+    let (days, hours) = (
+        seconds / Span::DAY.as_secs(),
+        seconds % Span::DAY.as_secs() / 3600,
+    );
     let clock = format!("{:02}:{:02}", seconds % 3600 / 60, seconds % 60);
     match (days, hours) {
         (0, 0) => clock,

@@ -175,7 +175,7 @@ impl Repeat<'_> {
                         "{} exit {}, {} ago",
                         dir.file_name().unwrap_or_default().to_string_lossy(),
                         meta.exit,
-                        Span(age)
+                        Span::from_secs(age)
                     )
                 })
             })

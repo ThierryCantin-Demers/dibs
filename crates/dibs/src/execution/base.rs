@@ -143,7 +143,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
                     ..args
                 };
                 if refused_before_building(&backend, rec, &step_labels, &args) {
-                    return Ok(ExitCode::from(Exit::Refused.code()));
+                    return Ok(ExitCode::from(Exit::Refused.as_code()));
                 }
                 args
             }
@@ -241,7 +241,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         ..args
     };
     if refused_before_building(&backend, rec, &step_labels, &args) {
-        return Ok(ExitCode::from(Exit::Refused.code()));
+        return Ok(ExitCode::from(Exit::Refused.as_code()));
     }
     let kept = KeptStores::of(backend.machine.clone(), &tree_copies);
     if let Some(kept) = &kept {
@@ -501,7 +501,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             t.prepared = Some(prepared);
             if !waited {
                 if stepped.as_ref().is_some_and(|s| s.refused) {
-                    return Ok(ExitCode::from(Exit::TargetRebuilt.code()));
+                    return Ok(ExitCode::from(Exit::TargetRebuilt.as_code()));
                 }
                 if let Some(read) = stepped
                     .as_ref()
@@ -545,7 +545,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
         } = backend.run_reporting(&there, &run, &mut |_| {});
         // The machine has said why; a refusal is not a run, so it leaves no record.
         if stepped.as_ref().is_some_and(|s| s.refused) {
-            return Ok(ExitCode::from(Exit::TargetRebuilt.code()));
+            return Ok(ExitCode::from(Exit::TargetRebuilt.as_code()));
         }
         if let Some(read) = stepped
             .as_ref()
@@ -662,7 +662,7 @@ pub fn run_recipe(args: RecipeCall) -> Result<ExitCode, RunError> {
             copies: tree_copies,
         }
         .keep(&job);
-        return Ok(ExitCode::from(Exit::CheckedIn.code()));
+        return Ok(ExitCode::from(Exit::CheckedIn.as_code()));
     }
     RunLog::here()?.append(&record)?;
 
@@ -906,7 +906,7 @@ impl Pinned {
             };
             let Some(prepared) = reported.prepared else {
                 return Err(RunError::Call {
-                    exit: Exit::Setup.status(),
+                    exit: Exit::Setup.as_status(),
                     failed: Unprepared::NoPath,
                 });
             };

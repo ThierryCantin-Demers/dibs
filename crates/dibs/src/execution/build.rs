@@ -107,7 +107,7 @@ impl BuildSignature {
         let short = |text: &str| {
             format!(
                 "{:.12}",
-                Sha256::digest(format!("{signature}\n{text}").as_bytes()).hex()
+                Hex::new(&Sha256::digest(format!("{signature}\n{text}").as_bytes()))
             )
         };
         let mut lines = std::collections::BTreeSet::new();
@@ -124,7 +124,7 @@ impl BuildSignature {
                 buckets[i].push(key);
             }
         };
-        for package in Package::all(lock) {
+        for package in Package::all_in_lock(lock) {
             take(Some(package.name), package.version, package.source);
         }
         for (i, mut keys) in buckets.into_iter().enumerate() {

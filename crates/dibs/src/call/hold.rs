@@ -69,7 +69,7 @@ impl Hold<'_> {
         if let Some(unreached) = self.unreached(&ports) {
             eprintln!("{unreached}");
             done(&shared);
-            release.send(i32::from(Exit::ServiceFailed.code()));
+            release.send(i32::from(Exit::ServiceFailed.as_code()));
             return Ok(holder_exit(holder.join()));
         }
         eprintln!(
@@ -88,7 +88,7 @@ impl Hold<'_> {
                         stop_early(&self.at, guarded.id());
                     }
                 }
-                guarded.wait().map(Exit::shell_status).unwrap_or(1)
+                guarded.wait().map(Exit::to_shell_code).unwrap_or(1)
             }
             Err(e) => {
                 eprintln!("dibs: could not run {}: {e}", self.command.shell_string());
@@ -327,7 +327,7 @@ impl Guard {
             }
         });
         relayed.to(pid);
-        let status = running.wait().map(Exit::shell_status).unwrap_or(1);
+        let status = running.wait().map(Exit::to_shell_code).unwrap_or(1);
         drop(interrupt);
         done.store(true, Ordering::SeqCst);
         relayed.pass_on();

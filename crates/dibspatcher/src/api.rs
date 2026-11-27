@@ -25,7 +25,7 @@ use std::{
 pub fn serve(home: &Home, coworker: &str) -> i32 {
     let mut line = String::new();
     if std::io::stdin().lock().read_line(&mut line).is_err() || line.trim().is_empty() {
-        return refuse("no request was read".into(), Exit::Refused.status());
+        return refuse("no request was read".into(), Exit::Refused.as_status());
     }
     let ask: Ask = match serde_json::from_str(&line) {
         Ok(ask) => ask,
@@ -34,7 +34,7 @@ pub fn serve(home: &Home, coworker: &str) -> i32 {
                 format!(
                     "the request cannot be read ({e}); this dibspatcher speaks version {VERSION}"
                 ),
-                Exit::Refused.status(),
+                Exit::Refused.as_status(),
             );
         }
     };
@@ -44,7 +44,7 @@ pub fn serve(home: &Home, coworker: &str) -> i32 {
                 "this dibspatcher speaks version {VERSION} of the API, not {}: update dibs",
                 ask.v
             ),
-            Exit::Refused.status(),
+            Exit::Refused.as_status(),
         );
     }
     let store = match Store::open(&home.store()) {
@@ -52,7 +52,7 @@ pub fn serve(home: &Home, coworker: &str) -> i32 {
         Err(e) => {
             return refuse(
                 format!("the store cannot be opened: {e}"),
-                Exit::Failed.status(),
+                Exit::Failed.as_status(),
             );
         }
     };
@@ -129,12 +129,12 @@ type Plan = (String, Vec<Planned>, Option<String>);
 fn failed(e: impl std::fmt::Display) -> (String, i32) {
     (
         format!("the dibspatcher's store failed: {e}"),
-        Exit::Failed.status(),
+        Exit::Failed.as_status(),
     )
 }
 
 fn refused(why: impl Into<String>) -> (String, i32) {
-    (why.into(), Exit::Refused.status())
+    (why.into(), Exit::Refused.as_status())
 }
 
 struct Api<'a> {
@@ -305,7 +305,7 @@ impl Api<'_> {
         spawn::worker(self.home, id, || self.ended(id)).map_err(|why| {
             (
                 format!("submission {id} is stored, but {why}"),
-                Exit::Failed.status(),
+                Exit::Failed.as_status(),
             )
         })
     }
@@ -356,7 +356,12 @@ impl Api<'_> {
                 let out = worker::dibs()
                     .args(["--on", machine, "--out", trailer.job.as_str()])
                     .output()
-                    .map_err(|e| (format!("dibs could not be run: {e}"), Exit::Failed.status()))?;
+                    .map_err(|e| {
+                        (
+                            format!("dibs could not be run: {e}"),
+                            Exit::Failed.as_status(),
+                        )
+                    })?;
                 send(&Reply::Text {
                     err: false,
                     text: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -398,7 +403,7 @@ impl Api<'_> {
                     "dibs: submission {id} still runs after {}s, and goes on without this call.\n  dibs dispatch follow {id}  follows it again\n  dibs dispatch kill {id}  stops it\n",
                     within.as_secs()
                 ));
-                return Ok(Exit::CheckedIn.status());
+                return Ok(Exit::CheckedIn.as_status());
             }
             let detail = self
                 .store
@@ -424,7 +429,7 @@ impl Api<'_> {
         }
         let exit = detail.summary.exit.unwrap_or(match detail.summary.state {
             State::Done => 0,
-            _ => Exit::Failed.status(),
+            _ => Exit::Failed.as_status(),
         });
         send(&Reply::Status(detail));
         Ok(exit)
@@ -464,7 +469,7 @@ impl Api<'_> {
                 spawn::worker(self.home, id, || self.ended(id)).map_err(|why| {
                     (
                         format!("submission {id} is marked killed, but {why}"),
-                        Exit::Failed.status(),
+                        Exit::Failed.as_status(),
                     )
                 })?;
                 say(format!("dibs: submission {id} is being stopped\n"));
@@ -481,7 +486,7 @@ impl Api<'_> {
                     "the dibspatcher's inventory could not be read: {}",
                     inventory.unread.join("; ")
                 ),
-                Exit::Failed.status(),
+                Exit::Failed.as_status(),
             ));
         }
         send(&Reply::Inventory {

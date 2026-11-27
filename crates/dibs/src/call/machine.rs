@@ -101,7 +101,7 @@ impl<'a> MachineCall<'a> {
             call,
             caller: self.caller,
         }
-        .values(asked.label.filed(), card, asked.command);
+        .values(asked.label.to_filed(), card, asked.command);
         let aliases = match (values.metrics, target.entry(&self.fleet)) {
             (true, Some(entry)) => entry
                 .devices

@@ -121,7 +121,7 @@ impl GitPin {
     /// Every git source in a lockfile, once each.
     pub fn all(lock: &str) -> Vec<GitPin> {
         let mut out: Vec<GitPin> = Vec::new();
-        for package in Package::all(lock) {
+        for package in Package::all_in_lock(lock) {
             let Some(src) = package
                 .source
                 .as_deref()

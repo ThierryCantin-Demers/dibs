@@ -267,16 +267,20 @@ impl IdleWait {
         match (&w.behind, w.quiet_for) {
             (Some(behind), _) => said += &format!(", behind {behind}"),
             (None, Some(quiet)) => {
-                said += &format!(", quiet {} of {}", Span(quiet), Span(w.settle))
+                said += &format!(
+                    ", quiet {} of {}",
+                    Span::from_secs(quiet),
+                    Span::from_secs(w.settle)
+                )
             }
             (None, None) => {}
         }
         if let Some(s) = &w.stopped {
             said += &format!(
                 "; ran {} until {} came {} ago, and runs again from the start",
-                Span(s.ran),
+                Span::from_secs(s.ran),
                 s.by,
-                Span(s.ago)
+                Span::from_secs(s.ago)
             );
         }
         said
@@ -328,7 +332,7 @@ impl Shown {
 
 impl fmt::Display for Overrun {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "over 2x its p90, {}", Span(self.high))
+        write!(f, "over 2x its p90, {}", Span::from_secs(self.high))
     }
 }
 
@@ -382,7 +386,7 @@ pub struct Silent {
 
 impl fmt::Display for Silent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "no output in {}", Span(self.silent_for))
+        write!(f, "no output in {}", Span::from_secs(self.silent_for))
     }
 }
 

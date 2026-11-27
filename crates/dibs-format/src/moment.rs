@@ -2,6 +2,10 @@ use crate::Span;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A moment on a clock some seconds east of UTC, as records, ids and messages spell it.
+///
+/// # Guarantees
+///
+/// - Its date is the proleptic Gregorian one, either side of 1970.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Moment {
     year: i64,
@@ -10,7 +14,6 @@ pub struct Moment {
     hour: i64,
     minute: i64,
     second: i64,
-    /// Seconds east of UTC.
     offset: i64,
 }
 
@@ -19,6 +22,7 @@ fn local_offset(epoch: u64) -> i64 {
     let time = epoch as libc::time_t;
     // SAFETY: tm is plain data, and localtime_r fills it from a valid time.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: both pointers are to live locals; a time it cannot convert leaves tm zeroed, so UTC.
     unsafe { libc::localtime_r(&time, &mut tm) };
     tm.tm_gmtoff as i64
 }
@@ -29,10 +33,29 @@ fn local_offset(_epoch: u64) -> i64 {
     0
 }
 
+fn iso_text(moment: &Moment) -> String {
+    format!(
+        "{}T{}{}",
+        moment.day(),
+        moment.clock(),
+        offset_text(moment.offset)
+    )
+}
+
+/// `+02:00`, `-05:00`: an offset as `date -Is` ends with it.
+fn offset_text(offset_secs: i64) -> String {
+    let sign = match offset_secs < 0 {
+        true => '-',
+        false => '+',
+    };
+    let offset = offset_secs.unsigned_abs();
+    format!("{sign}{:02}:{:02}", offset / 3600, offset % 3600 / 60)
+}
+
 impl Moment {
     /// Now, in this computer's zone.
     pub fn now() -> Moment {
-        Moment::at(Moment::epoch_now())
+        Moment::at_epoch_secs(Moment::epoch_now())
     }
 
     /// Seconds since the epoch.
@@ -44,13 +67,17 @@ impl Moment {
     }
 
     /// `epoch` in this computer's zone, with the offset it had then.
-    pub fn at(epoch: u64) -> Moment {
+    pub fn at_epoch_secs(epoch: u64) -> Moment {
         Moment::in_zone(epoch, local_offset(epoch))
     }
 
     /// `epoch` on a clock `offset` seconds east of UTC, by the days-to-civil conversion.
+    ///
+    /// # Assumptions
+    ///
+    /// - `epoch` fits in an `i64`.
     pub fn in_zone(epoch: u64, offset: i64) -> Moment {
-        let day = Span::DAY.0 as i64;
+        let day = Span::DAY.as_secs() as i64;
         let t = epoch as i64 + offset;
         let (days, secs) = (t.div_euclid(day), t.rem_euclid(day));
         let z = days + 719468;
@@ -77,16 +104,8 @@ impl Moment {
     }
 
     /// As `date -Is` prints it: `2026-10-01T12:00:00+02:00`.
-    pub fn iso(&self) -> String {
-        let sign = if self.offset < 0 { '-' } else { '+' };
-        let offset = self.offset.unsigned_abs();
-        format!(
-            "{}T{}{sign}{:02}:{:02}",
-            self.day(),
-            self.clock(),
-            offset / 3600,
-            offset % 3600 / 60
-        )
+    pub fn to_iso(&self) -> String {
+        iso_text(self)
     }
 
     /// `2026-10-01`, as `date +%F` prints it.
@@ -105,7 +124,7 @@ impl Moment {
     }
 
     /// `20261001120000`, the start of a job id.
-    pub fn compact(&self) -> String {
+    pub fn to_compact(&self) -> String {
         format!(
             "{:04}{:02}{:02}{:02}{:02}{:02}",
             self.year, self.month, self.day, self.hour, self.minute, self.second
@@ -113,7 +132,7 @@ impl Moment {
     }
 
     /// `20261001-120000`, the start of a batch id.
-    pub fn dashed(&self) -> String {
+    pub fn to_dashed(&self) -> String {
         format!(
             "{:04}{:02}{:02}-{:02}{:02}{:02}",
             self.year, self.month, self.day, self.hour, self.minute, self.second
@@ -134,21 +153,37 @@ mod tests {
     }
 
     #[test]
-    fn a_moment_spells_itself_as_date_does() {
+    fn a_moment_east_of_utc_spells_itself_as_date_does() {
         let moment = Moment::in_zone(1789745748, 2 * 3600 + 30 * 60);
-        assert_eq!(moment.iso(), "2026-09-18T18:05:48+02:30");
-        assert_eq!(moment.compact(), "20260918180548");
-        assert_eq!(moment.dashed(), "20260918-180548");
+        assert_eq!(moment.to_iso(), "2026-09-18T18:05:48+02:30");
+    }
+
+    #[test]
+    fn a_moment_west_of_utc_spells_itself_as_date_does() {
+        let moment = Moment::in_zone(0, -5 * 3600);
+        assert_eq!(moment.to_iso(), "1969-12-31T19:00:00-05:00");
+    }
+
+    #[test]
+    fn a_moment_starts_a_job_id_with_its_digits() {
         assert_eq!(
-            Moment::in_zone(0, -5 * 3600).iso(),
-            "1969-12-31T19:00:00-05:00"
+            Moment::in_zone(1789745748, 0).to_compact(),
+            "20260918153548"
+        );
+    }
+
+    #[test]
+    fn a_moment_starts_a_batch_id_with_its_digits_split_at_the_day() {
+        assert_eq!(
+            Moment::in_zone(1789745748, 0).to_dashed(),
+            "20260918-153548"
         );
     }
 
     #[test]
     fn now_here_is_now_on_its_own_offset() {
         let epoch = Moment::epoch_now();
-        let here = Moment::at(epoch);
+        let here = Moment::at_epoch_secs(epoch);
         assert_eq!(here, Moment::in_zone(epoch, here.offset()));
     }
 }

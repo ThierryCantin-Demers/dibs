@@ -387,7 +387,7 @@ impl<'a> LockedCall<'a> {
             series.record(&entry, &caller.name, call.new_series);
         }
         let checked_in =
-            status == Exit::CheckedIn.status() && session.said.checked_in_job().is_some();
+            status == Exit::CheckedIn.as_status() && session.said.checked_in_job().is_some();
         if serial
             && checked_in
             && env.series_check
@@ -600,7 +600,7 @@ impl Request<'_> {
         call.label
             .clone()
             .unwrap_or_else(|| Label::new(directory_name()))
-            .filed()
+            .to_filed()
     }
 }
 
@@ -703,10 +703,10 @@ fn directory_name() -> String {
 impl CallError {
     pub fn exit(&self) -> i32 {
         match self {
-            CallError::Unplaced(e) => i32::from(e.exit().code()),
-            CallError::Target(e) => i32::from(e.exit().code()),
-            CallError::Io(_) => i32::from(Exit::Failed.code()),
-            _ => i32::from(Exit::Refused.code()),
+            CallError::Unplaced(e) => i32::from(e.exit().as_code()),
+            CallError::Target(e) => i32::from(e.exit().as_code()),
+            CallError::Io(_) => i32::from(Exit::Failed.as_code()),
+            _ => i32::from(Exit::Refused.as_code()),
         }
     }
 }

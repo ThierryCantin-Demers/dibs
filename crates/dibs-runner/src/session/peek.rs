@@ -78,7 +78,7 @@ impl<'a> Peek<'a> {
                 "dibs: that --peek took {} and ran with no lock, beside\n  \
                  whatever is being measured. Anything that costs time belongs in\n  \
                  'dibs <command>', which takes the shared lock.\n",
-                Span(took)
+                Span::from_secs(took)
             ));
             journal.write(&peeked(Event::PeekSlow));
         }

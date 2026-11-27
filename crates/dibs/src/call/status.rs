@@ -24,7 +24,7 @@ impl MachineCall<'_> {
         }
         if !self.fleet.exists() {
             eprintln!("no inventory at {}", self.fleet.shown());
-            return Ok(i32::from(Exit::Refused.code()));
+            return Ok(i32::from(Exit::Refused.as_code()));
         }
         let names = self.fleet.names();
         let bound = Bound::polled(STATUS_POLL_SECS, Kept::Everything);

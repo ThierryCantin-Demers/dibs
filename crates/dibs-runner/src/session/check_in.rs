@@ -178,7 +178,7 @@ impl Job {
             "dibs: job {} has run {} (time frozen or parked not counted) and still runs. \
              This call lets go of it, and the job goes on.\n",
             self.id,
-            Span(ran.as_secs())
+            Span::from_secs(ran.as_secs())
         );
         text.push_str(&format!("  log, last {LOG_LINES} lines:\n"));
         text.push_str(&last_lines(&self.dir.join("log"), LOG_LINES));

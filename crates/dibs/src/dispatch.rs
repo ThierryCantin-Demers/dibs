@@ -9,7 +9,7 @@ use crate::{
     recipe::Checkouts,
 };
 use dibs_format::{
-    Exit, Hex as _, Moment,
+    Exit, Hex, Moment,
     dibspatcher::{
         API_COMMAND, Ask, Call, Detail, NamedCall, Reply, STAGE_PREFIX, Seal, SplitCall,
         Submission, Summary, Upload, VERSION, Work,
@@ -50,7 +50,7 @@ pub fn serve(words: &[String]) -> i32 {
         Ok(o) => o,
         Err(why) => {
             eprintln!("dibs: {why}");
-            return Exit::Refused.status();
+            return Exit::Refused.as_status();
         }
     };
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
@@ -59,7 +59,7 @@ pub fn serve(words: &[String]) -> i32 {
             .and_then(|(work, sent)| dibspatcher.submit(work, None, sent))
             .unwrap_or_else(|why| {
                 eprintln!("dibs: {why}");
-                Exit::Refused.status()
+                Exit::Refused.as_status()
             });
     }
     let mut follow = true;
@@ -73,7 +73,7 @@ pub fn serve(words: &[String]) -> i32 {
                 Some(k) => key = Some(k.to_string()),
                 None => {
                     eprintln!("dibs: --key needs the key a submission was sent under");
-                    return Exit::Refused.status();
+                    return Exit::Refused.as_status();
                 }
             },
             word => given.push(word),
@@ -101,7 +101,7 @@ pub fn serve(words: &[String]) -> i32 {
     };
     result.unwrap_or_else(|why| {
         eprintln!("dibs: {why}");
-        Exit::Refused.status()
+        Exit::Refused.as_status()
     })
 }
 
@@ -397,7 +397,7 @@ impl Dibspatcher {
             }
         }
         let status = child.wait().map_err(|e| e.to_string())?;
-        Ok(exit.unwrap_or_else(|| Exit::shell_status(status)))
+        Ok(exit.unwrap_or_else(|| Exit::to_shell_code(status)))
     }
 
     /// An ask made again with the same submission, so a lost connection never stores it twice.
@@ -446,7 +446,7 @@ impl Dibspatcher {
                      The same command with --key {key} asks again, and is that submission if it was taken.",
                     self.ssh
                 );
-                return Ok(Exit::Unreachable.status());
+                return Ok(Exit::Unreachable.as_status());
             }
             return Ok(code);
         };
@@ -562,7 +562,7 @@ impl Dibspatcher {
             eprintln!(
                 "dibs: lost the dibspatcher while following {id}, which carries on there.\n  dibs dispatch follow {id}  follows it again"
             );
-            return Ok(Exit::Unreachable.status());
+            return Ok(Exit::Unreachable.as_status());
         }
         Ok(code)
     }
@@ -575,8 +575,8 @@ fn rsync(rsh: &str, args: &[String]) -> i32 {
         .args(args)
         .stdin(Stdio::null())
         .status()
-        .map(Exit::shell_status)
-        .unwrap_or(Exit::Failed.status())
+        .map(Exit::to_shell_code)
+        .unwrap_or(Exit::Failed.as_status())
 }
 
 /// A submission's key: when it was made here, and randomness, so a retry is the one submission.
@@ -586,7 +586,7 @@ fn key() -> String {
         use std::io::Read as _;
         let _ = random.read_exact(&mut bytes);
     }
-    format!("k{}-{}", Moment::now().compact(), bytes[..].hex())
+    format!("k{}-{}", Moment::now().to_compact(), Hex::new(&bytes))
 }
 
 /// What the dibspatcher's replies are shown as.
@@ -645,7 +645,7 @@ fn line(summary: &Summary) -> String {
             .exit
             .map(|e| format!("exit {e}"))
             .unwrap_or_default(),
-        Moment::at(summary.created).minute(),
+        Moment::at_epoch_secs(summary.created).minute(),
         summary.coworker,
         summary.what
     )

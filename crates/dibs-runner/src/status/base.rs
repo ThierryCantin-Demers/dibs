@@ -115,7 +115,7 @@ impl Look<'_> {
         Host::processes()
             .iter()
             .filter_map(|process| {
-                let job = JobId::checked(&Host::variable(process.pid, "DIBS_JOB")?)?;
+                let job = JobId::checked_from_text(&Host::variable(process.pid, "DIBS_JOB")?)?;
                 let meta = fs::read_to_string(jobs.join(job.as_str()).join("meta")).ok()?;
                 let meta: JobMeta = meta.parse().ok()?;
                 Some(Leftover {
