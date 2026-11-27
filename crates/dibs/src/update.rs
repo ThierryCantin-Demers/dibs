@@ -73,6 +73,8 @@ pub struct Update {
     pub prefix: Option<PathBuf>,
     /// Whether to refresh the agent plugin in each harness that has it installed.
     pub plugin: bool,
+    /// Whether to fetch the team's machines from the dibspatcher this computer names.
+    pub team: bool,
 }
 
 impl Update {
@@ -86,6 +88,7 @@ impl Update {
             caller: Caller::from_env(),
             prefix: Update::installed_under(),
             plugin: true,
+            team: true,
         }
     }
 
@@ -150,7 +153,11 @@ impl Update {
             }
         }
         self.pull_recipes(out, err)?;
-        match Team::at(&Paths::from_env()).refresh() {
+        match self
+            .team
+            .then(|| Team::at(&Paths::from_env()).refresh())
+            .flatten()
+        {
             Some(Ok(count)) => {
                 let _ = writeln!(out, "the team's machines: {count}, from the dibspatcher");
             }
