@@ -910,15 +910,9 @@ impl<'a> Detach<'a> {
             hearing.recv_timeout(Duration::from_secs(seconds)) == Err(RecvTimeoutError::Timeout)
         });
         if checked_in {
+            // The reader is left behind: a descendant of the child can hold its pipe open.
             let _ = child.kill();
-        }
-        let json = reading.join().unwrap_or_default();
-        let status = child
-            .wait()
-            .map(Exit::shell_status)
-            .unwrap_or(Exit::Failed.status());
-        let finished = status == 0 && serde_json::from_str::<Followed>(json.trim()).is_ok();
-        if checked_in && !finished {
+            let _ = child.wait();
             let id = &self.id;
             eprintln!(
                 "dibs: batch {id} checked in: it runs on without this call on {}.\n  \
@@ -928,6 +922,11 @@ impl<'a> Detach<'a> {
             );
             return Ok(Exit::CheckedIn.status());
         }
+        let json = reading.join().unwrap_or_default();
+        let status = child
+            .wait()
+            .map(Exit::shell_status)
+            .unwrap_or(Exit::Failed.status());
         if status == SSH_FAILED {
             eprintln!(
                 "dibs: lost {} while following batch {}, which carries on there. Its summary, once it has ended:\n    dibs batch --follow {}",

@@ -379,6 +379,9 @@ impl Detached {
                 return Exit::Failed.status();
             }
         }
+        // The batch has ended: a newline says so before its logs are read, and JSON ignores it.
+        let mut out = std::io::stdout();
+        let _ = out.write_all(b"\n").and_then(|()| out.flush());
         let read = |path: PathBuf| fs::read_to_string(path).unwrap_or_default();
         let files = fs::read_dir(&dir)
             .into_iter()
